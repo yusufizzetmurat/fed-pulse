@@ -1,0 +1,156 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b1220;
+  --panel: #111b2f;
+  --panel-border: #22324d;
+  --text-primary: #e6eefc;
+  --text-muted: #9fb0d1;
+  --accent: #38bdf8;
+  --accent-strong: #0ea5e9;
+  --danger: #f87171;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
+  background: radial-gradient(circle at top left, #13213a 0%, var(--bg) 52%);
+  color: var(--text-primary);
+}
+
+.container {
+  max-width: 1024px;
+  margin: 0 auto;
+  padding: 2.5rem 1rem 3rem;
+}
+
+.pageHeader {
+  margin-bottom: 1.25rem;
+}
+
+.kicker {
+  margin: 0 0 0.35rem;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+h1 {
+  margin: 0;
+  font-size: 2rem;
+  line-height: 1.15;
+}
+
+.card {
+  background: color-mix(in srgb, var(--panel) 90%, black 10%);
+  border: 1px solid var(--panel-border);
+  border-radius: 0.8rem;
+  padding: 1.1rem;
+  margin-bottom: 1.1rem;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+}
+
+.inputCard {
+  padding: 1.25rem;
+}
+
+.resultGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.metricCard h2 {
+  margin: 0 0 0.8rem;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.metricValue {
+  margin: 0;
+  font-size: 1.9rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.metricMeta {
+  margin-top: 0.45rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+textarea {
+  width: 100%;
+  padding: 0.75rem;
+  background: #0f1729;
+  color: var(--text-primary);
+  border: 1px solid #30486c;
+  border-radius: 0.5rem;
+  margin-bottom: 0.75rem;
+  resize: vertical;
+}
+
+input,
+select {
+  width: 100%;
+  padding: 0.62rem 0.7rem;
+  background: #0f1729;
+  color: var(--text-primary);
+  border: 1px solid #30486c;
+  border-radius: 0.5rem;
+}
+
+.controlRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 0.85rem;
+}
+
+button {
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0.7rem 1rem;
+  background: linear-gradient(135deg, var(--accent-strong), var(--accent));
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.error {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+pre {
+  background: #0a1120;
+  color: #c9d7f5;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  overflow: auto;
+}
+
+@media (max-width: 760px) {
+  .resultGrid,
+  .controlRow {
+    grid-template-columns: 1fr;
+  }
+}

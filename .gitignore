@@ -1,0 +1,38 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Node / Next.js
+node_modules/
+.next/
+npm-debug.log*
+
+# Local environment files
+.env
+.env.*
+
+# Docker/runtime artifacts
+*.log
+
+# Generated data and model weights
+data/*
+!data/.gitkeep
+models/
+*.pt
+*.pth
+*.bin
+*.safetensors
+
+# Project notes to ignore
+PHASE_1_MVP.md
+PHASE_2_RESEARCH DATA.md
+PROJECT_CONTEXT.md

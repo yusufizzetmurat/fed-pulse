@@ -1,0 +1,11 @@
+--index-url https://download.pytorch.org/whl/cu121
+--extra-index-url https://pypi.org/simple
+
+torch
+fastapi
+uvicorn[standard]
+transformers
+python-multipart
+requests
+beautifulsoup4
+yfinance
