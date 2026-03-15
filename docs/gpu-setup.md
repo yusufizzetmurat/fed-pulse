@@ -1,7 +1,7 @@
 # GPU Setup Notes (RTX 4080)
 
 ## 1) NVIDIA Container Toolkit
-On the RTX 4080 machine, install and verify NVIDIA Container Toolkit so Docker can access GPU devices.
+Install and verify NVIDIA Container Toolkit so Docker can access GPU devices.
 
 Quick check:
 - `nvidia-smi` on host

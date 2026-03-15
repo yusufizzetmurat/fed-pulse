@@ -4,7 +4,13 @@ import json
 import sys
 from pathlib import Path
 
-from fastapi.testclient import TestClient
+import pytest
+
+pytest.importorskip("fastapi")
+pytest.importorskip("torch")
+pytest.importorskip("transformers")
+pytest.importorskip("yfinance")
+from fastapi.testclient import TestClient  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 MINUTES_PATH_CANDIDATES = [ROOT / "data" / "fomc_minutes.json", Path("/data/fomc_minutes.json")]

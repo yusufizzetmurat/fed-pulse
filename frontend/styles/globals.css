@@ -1,13 +1,13 @@
 :root {
   color-scheme: dark;
-  --bg: #0b1220;
-  --panel: #111b2f;
-  --panel-border: #22324d;
-  --text-primary: #e6eefc;
-  --text-muted: #9fb0d1;
-  --accent: #38bdf8;
-  --accent-strong: #0ea5e9;
-  --danger: #f87171;
+  --bg: #050a16;
+  --panel: rgba(17, 27, 47, 0.54);
+  --panel-border: rgba(154, 177, 216, 0.22);
+  --text-primary: #eaf0ff;
+  --text-muted: #9eb0d4;
+  --accent: #57d2ff;
+  --accent-strong: #1fa9dc;
+  --danger: #ff8a8a;
 }
 
 * {
@@ -16,59 +16,63 @@
 
 body {
   margin: 0;
-  font-family: "Segoe UI", "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
-  background: radial-gradient(circle at top left, #13213a 0%, var(--bg) 52%);
+  font-family: "Inter", "Roboto Mono", "SF Mono", "SF Pro Text", -apple-system, monospace;
+  font-size: 16px;
+  background:
+    radial-gradient(circle at 16% 10%, #112a57 0%, transparent 32%),
+    radial-gradient(circle at 90% 0%, #0c2449 0%, transparent 28%),
+    linear-gradient(170deg, #030712 0%, var(--bg) 60%);
   color: var(--text-primary);
 }
 
 .container {
-  max-width: 1024px;
+  max-width: 1240px;
   margin: 0 auto;
-  padding: 2.5rem 1rem 3rem;
+  padding: 2.2rem 1.2rem 3rem;
 }
 
 .pageHeader {
-  margin-bottom: 1.25rem;
-}
-
-.kicker {
-  margin: 0 0 0.35rem;
-  color: var(--accent);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-size: 0.78rem;
-  font-weight: 600;
+  margin-bottom: 1.1rem;
 }
 
 h1 {
   margin: 0;
-  font-size: 2rem;
+  font-size: 2.25rem;
   line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  margin-top: 0.55rem;
+  color: var(--text-muted);
+  font-size: 0.98rem;
 }
 
 .card {
-  background: color-mix(in srgb, var(--panel) 90%, black 10%);
+  background: var(--panel);
   border: 1px solid var(--panel-border);
-  border-radius: 0.8rem;
-  padding: 1.1rem;
-  margin-bottom: 1.1rem;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+  border-radius: 16px;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 20px 50px rgba(2, 8, 23, 0.35);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 
 .inputCard {
-  padding: 1.25rem;
+  padding: 1.5rem;
 }
 
 .resultGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
 }
 
 .metricCard h2 {
   margin: 0 0 0.8rem;
   color: var(--text-muted);
-  font-size: 0.95rem;
+  font-size: 1rem;
   font-weight: 600;
 }
 
@@ -85,6 +89,12 @@ h1 {
   font-size: 0.9rem;
 }
 
+.metricSub {
+  margin: 0.5rem 0 0;
+  color: #c9d7f8;
+  font-size: 0.88rem;
+}
+
 label {
   display: block;
   margin-bottom: 0.5rem;
@@ -94,30 +104,171 @@ label {
 
 textarea {
   width: 100%;
-  padding: 0.75rem;
-  background: #0f1729;
+  padding: 0.9rem;
+  background: rgba(8, 18, 40, 0.84);
   color: var(--text-primary);
-  border: 1px solid #30486c;
+  border: 1px solid rgba(88, 132, 205, 0.36);
   border-radius: 0.5rem;
   margin-bottom: 0.75rem;
   resize: vertical;
 }
 
+.terminalInput {
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Monaco, monospace;
+  line-height: 1.5;
+  min-height: 180px;
+  box-shadow: inset 0 0 0 1px rgba(118, 171, 248, 0.08);
+}
+
+.controlInput,
 input,
 select {
   width: 100%;
-  padding: 0.62rem 0.7rem;
-  background: #0f1729;
+  min-height: 44px;
+  padding: 0.7rem 0.8rem;
+  background: rgba(8, 18, 40, 0.84);
   color: var(--text-primary);
-  border: 1px solid #30486c;
+  border: 1px solid rgba(88, 132, 205, 0.36);
   border-radius: 0.5rem;
+}
+
+.controlInput:focus,
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: rgba(95, 168, 255, 0.8);
+  box-shadow: 0 0 0 2px rgba(95, 168, 255, 0.2);
 }
 
 .controlRow {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.controlHint {
+  margin: 0.42rem 0 0;
+  color: #9eb0d4;
+  font-size: 0.8rem;
+}
+
+.chartCard h2 {
+  margin: 0 0 0.7rem;
+  font-size: 1rem;
+}
+
+.chartWrap {
+  width: 100%;
+  height: 280px;
+}
+
+.chartTooltip {
+  background: rgba(5, 10, 25, 0.94);
+  border: 1px solid rgba(122, 159, 219, 0.34);
+  border-radius: 10px;
+  padding: 0.45rem 0.6rem;
+}
+
+.chartTooltip p {
+  margin: 0.16rem 0;
+  font-size: 0.82rem;
+}
+
+.rowBetween {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 0.8rem;
-  margin-bottom: 0.85rem;
+  margin-bottom: 0.45rem;
+}
+
+.ghostBtn {
+  background: transparent;
+  border: 1px solid rgba(130, 165, 226, 0.35);
+  color: #b9caf0;
+  padding: 0.35rem 0.55rem;
+  border-radius: 0.45rem;
+}
+
+.toggleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.4rem 0 1rem;
+}
+
+.toggleLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #cbd8f6;
+}
+
+.actionRow {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.helperText {
+  color: #9eb0d4;
+  font-size: 0.85rem;
+}
+
+.metadataGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.metadataItem {
+  background: rgba(7, 18, 42, 0.72);
+  border: 1px solid rgba(110, 141, 196, 0.25);
+  border-radius: 10px;
+  padding: 0.7rem 0.75rem;
+}
+
+.metadataItem span {
+  display: block;
+  font-size: 0.78rem;
+  color: #9eb0d4;
+  margin-bottom: 0.3rem;
+}
+
+.metadataItem strong {
+  font-size: 0.95rem;
+}
+
+.metricBadgeCard h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.badgeGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.badgeItem {
+  background: rgba(8, 18, 42, 0.74);
+  border: 1px solid rgba(113, 143, 196, 0.24);
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+}
+
+.badgeItem span {
+  display: block;
+  color: #9eb0d4;
+  font-size: 0.78rem;
+  margin-bottom: 0.25rem;
+}
+
+.badgeItem strong {
+  font-size: 0.98rem;
 }
 
 button {
@@ -138,6 +289,7 @@ button:disabled {
 .error {
   color: var(--danger);
   font-weight: 600;
+  margin: 0.2rem 0 1rem;
 }
 
 pre {
@@ -150,7 +302,15 @@ pre {
 
 @media (max-width: 760px) {
   .resultGrid,
-  .controlRow {
+  .controlRow,
+  .metadataGrid,
+  .badgeGrid {
     grid-template-columns: 1fr;
+  }
+
+  .toggleRow,
+  .actionRow {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

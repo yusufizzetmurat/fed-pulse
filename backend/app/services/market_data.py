@@ -23,14 +23,11 @@ def _parse_iso_date(value: str) -> date:
         raise ValueError("date must be in YYYY-MM-DD format") from exc
 
 
-def _download_close_series(symbol: str, requested_date: date, lookback_days: int, extra_days: int):
-    start = requested_date - timedelta(days=lookback_days + extra_days)
-    end = requested_date + timedelta(days=1)
-    frame = yf.download(
-        symbol,
+def _download_close_series_in_window(symbol: str, start: date, end: date):
+    ticker = yf.Ticker(symbol)
+    frame = ticker.history(
         start=start.isoformat(),
         end=end.isoformat(),
-        progress=False,
         auto_adjust=True,
     )
     if frame.empty:
@@ -40,6 +37,12 @@ def _download_close_series(symbol: str, requested_date: date, lookback_days: int
     if close_series.empty:
         raise RuntimeError(f"No close prices available for {symbol}")
     return close_series
+
+
+def _download_close_series(symbol: str, requested_date: date, lookback_days: int, extra_days: int):
+    start = requested_date - timedelta(days=lookback_days + extra_days)
+    end = requested_date + timedelta(days=1)
+    return _download_close_series_in_window(symbol=symbol, start=start, end=end)
 
 
 def fetch_market_snapshot(
@@ -124,3 +127,51 @@ def fetch_market_sequence(
             }
         )
     return points
+
+
+def fetch_market_history(
+    target_date: str,
+    symbol: str = "^GSPC",
+    history_length: int = 30,
+    lookback_days: int = 45,
+) -> list[dict[str, float | str]]:
+    return fetch_market_sequence(
+        target_date=target_date,
+        symbol=symbol,
+        sequence_length=history_length,
+        lookback_days=lookback_days,
+    )
+
+
+def fetch_realized_forward(
+    target_date: str,
+    symbol: str = "^GSPC",
+    steps: int = 3,
+    lookback_days: int = 45,
+) -> list[dict[str, float | str]]:
+    if steps < 1:
+        raise ValueError("steps must be >= 1")
+
+    requested_date = _parse_iso_date(target_date)
+    start = requested_date - timedelta(days=lookback_days)
+    end = requested_date + timedelta(days=max(steps * 4, 16))
+
+    close_series = _download_close_series_in_window(symbol=symbol, start=start, end=end)
+    returns = close_series.pct_change().dropna()
+    rolling = returns.rolling(5).std()
+
+    future = close_series.loc[close_series.index.date > requested_date]
+    if future.empty:
+        return []
+
+    realized: list[dict[str, float | str]] = []
+    for idx, close_value in future.head(steps).items():
+        vol = rolling.loc[:idx].iloc[-1] if not rolling.loc[:idx].dropna().empty else 0.0
+        realized.append(
+            {
+                "date": idx.date().isoformat(),
+                "close": float(close_value),
+                "volatility_5d": float(vol),
+            }
+        )
+    return realized
