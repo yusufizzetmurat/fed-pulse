@@ -39,7 +39,9 @@ Provide a single API workflow that combines text sentiment with market indicator
 
 ## Series Metadata
 - `series.timestamps`, `series.history_close`, `series.history_volatility`
-- `series.forecast_timestamps`, `series.forecast_close`, `series.forecast_volatility`
+- `series.forecast_timestamps`, `series.forecast_close`, `series.forecast_close_lower`, `series.forecast_close_upper`
+- `series.forecast_volatility`, `series.forecast_volatility_lower`, `series.forecast_volatility_upper`
+- `series.forecast_confidence_level`
 - optional when `include_realized=true` and data is available:
   - `series.realized_timestamps`, `series.realized_close`, `series.realized_volatility`
 - chart scaling aid:
@@ -57,4 +59,5 @@ Provide a single API workflow that combines text sentiment with market indicator
 - `backend/app/services/sentiment.py`
 - `backend/app/services/market_data.py`
 - `backend/app/services/forecaster.py`
+- `backend/app/train_forecaster.py`
 - Orchestration in `backend/app/main.py`

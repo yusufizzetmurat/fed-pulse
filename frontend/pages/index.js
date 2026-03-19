@@ -2,9 +2,10 @@ import { useMemo, useState } from "react";
 import axios from "axios";
 import {
   Area,
-  AreaChart,
   CartesianGrid,
+  ComposedChart,
   Legend,
+  Line,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -38,6 +39,49 @@ function toSignalLabel(label) {
     return "Dovish";
   }
   return value || "Unknown";
+}
+
+function getErrorTone(kind, value, baseline = 0) {
+  if (value == null || !Number.isFinite(value)) {
+    return "neutral";
+  }
+
+  if (kind === "mape") {
+    if (value <= 2) {
+      return "low";
+    }
+    if (value <= 5) {
+      return "medium";
+    }
+    return "high";
+  }
+
+  const normalized = baseline > 0 ? (value / baseline) * 100 : value;
+  if (normalized <= 1) {
+    return "low";
+  }
+  if (normalized <= 2.5) {
+    return "medium";
+  }
+  return "high";
+}
+
+function getErrorToneLabel(tone) {
+  if (tone === "low") {
+    return "Low error";
+  }
+  if (tone === "medium") {
+    return "Medium error";
+  }
+  if (tone === "high") {
+    return "High error";
+  }
+  return "Awaiting data";
+}
+
+function toNumericOrNull(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 export default function Home() {
@@ -97,14 +141,26 @@ export default function Home() {
         timestamp,
         history: Number(result.series.history_close?.[index] || 0),
         forecast: null,
+        forecastLower: null,
+        forecastUpper: null,
+        forecastBand: null,
         realized: null,
       });
     });
     (result.series.forecast_timestamps || []).forEach((timestamp, index) => {
+      const forecast = toNumericOrNull(result.series.forecast_close?.[index]);
+      const forecastLower = toNumericOrNull(result.series.forecast_close_lower?.[index]);
+      const forecastUpper = toNumericOrNull(result.series.forecast_close_upper?.[index]);
       rows.push({
         timestamp,
         history: null,
-        forecast: Number(result.series.forecast_close?.[index] || 0),
+        forecast,
+        forecastLower,
+        forecastUpper,
+        forecastBand:
+          forecastLower != null && forecastUpper != null
+            ? Math.max(forecastUpper - forecastLower, 0)
+            : null,
         realized: null,
       });
     });
@@ -114,7 +170,15 @@ export default function Home() {
       if (existing) {
         existing.realized = value;
       } else {
-        rows.push({ timestamp, history: null, forecast: null, realized: value });
+        rows.push({
+          timestamp,
+          history: null,
+          forecast: null,
+          forecastLower: null,
+          forecastUpper: null,
+          forecastBand: null,
+          realized: value,
+        });
       }
     });
     return rows;
@@ -130,14 +194,26 @@ export default function Home() {
         timestamp,
         history: Number(result.series.history_volatility?.[index] || 0),
         forecast: null,
+        forecastLower: null,
+        forecastUpper: null,
+        forecastBand: null,
         realized: null,
       });
     });
     (result.series.forecast_timestamps || []).forEach((timestamp, index) => {
+      const forecast = toNumericOrNull(result.series.forecast_volatility?.[index]);
+      const forecastLower = toNumericOrNull(result.series.forecast_volatility_lower?.[index]);
+      const forecastUpper = toNumericOrNull(result.series.forecast_volatility_upper?.[index]);
       rows.push({
         timestamp,
         history: null,
-        forecast: Number(result.series.forecast_volatility?.[index] || 0),
+        forecast,
+        forecastLower,
+        forecastUpper,
+        forecastBand:
+          forecastLower != null && forecastUpper != null
+            ? Math.max(forecastUpper - forecastLower, 0)
+            : null,
         realized: null,
       });
     });
@@ -147,7 +223,15 @@ export default function Home() {
       if (existing) {
         existing.realized = value;
       } else {
-        rows.push({ timestamp, history: null, forecast: null, realized: value });
+        rows.push({
+          timestamp,
+          history: null,
+          forecast: null,
+          forecastLower: null,
+          forecastUpper: null,
+          forecastBand: null,
+          realized: value,
+        });
       }
     });
     return rows;
@@ -216,6 +300,12 @@ export default function Home() {
 
   const historySplitTimestamp = result?.series?.timestamps?.[result?.series?.timestamps?.length - 1];
   const volScale = result?.series?.volatility_scale || { suggested_ymin: 0.0, suggested_ymax: 1.0 };
+  const forecastConfidencePct = Math.round(
+    Number(result?.series?.forecast_confidence_level || 0.8) * 100
+  );
+  const forecastConfidenceLabel = `${forecastConfidencePct}% Confidence Range`;
+  const hasCloseConfidence = Boolean(result?.series?.forecast_close_lower?.length);
+  const hasVolConfidence = Boolean(result?.series?.forecast_volatility_lower?.length);
 
   const formatDateTick = (value) => {
     if (!value) {
@@ -231,22 +321,119 @@ export default function Home() {
 
   const formatPrice = (value) =>
     `$${Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+  const formatPriceDelta = (value) =>
+    `${Number(value || 0) >= 0 ? "+" : "-"}$${Math.abs(Number(value || 0)).toLocaleString("en-US", {
+      maximumFractionDigits: 2,
+    })}`;
+  const formatPercentDelta = (value) =>
+    `${Number(value || 0) >= 0 ? "+" : ""}${Number(value || 0).toFixed(2)}%`;
   const formatVol = (value) => `${(Number(value || 0) * 100).toFixed(2)}%`;
+
+  const closeDelta = useMemo(() => {
+    const predicted = Number(result?.prediction?.close);
+    const current = Number(result?.market?.close);
+
+    if (!Number.isFinite(predicted) || !Number.isFinite(current)) {
+      return null;
+    }
+
+    const delta = predicted - current;
+    return {
+      current,
+      delta,
+      pct: current ? (delta / current) * 100 : 0,
+      tone: delta > 0 ? "up" : delta < 0 ? "down" : "flat",
+    };
+  }, [result]);
+
+  const errorBadges = useMemo(() => {
+    const closeBaseline = Math.max(
+      Math.abs(Number(result?.market?.close || result?.prediction?.close || 0)),
+      1e-6
+    );
+    const volBaseline = Math.max(
+      Math.abs(Number(result?.market?.volatility_5d || result?.prediction?.volatility || 0)),
+      1e-6
+    );
+
+    const formatRelativeHint = (value, baseline, label) => {
+      if (value == null || !Number.isFinite(value)) {
+        return "Awaiting realized observations";
+      }
+      return `~${((value / baseline) * 100).toFixed(2)}% of ${label}`;
+    };
+
+    return [
+      {
+        label: "Close MAPE",
+        value:
+          errorMetrics.close.mape == null ? "N/A" : `${errorMetrics.close.mape.toFixed(2)}%`,
+        tone: getErrorTone("mape", errorMetrics.close.mape),
+        toneLabel: getErrorToneLabel(getErrorTone("mape", errorMetrics.close.mape)),
+        meta: "Percentage miss vs realized close",
+      },
+      {
+        label: "Close RMSE",
+        value: errorMetrics.close.rmse == null ? "N/A" : errorMetrics.close.rmse.toFixed(4),
+        tone: getErrorTone("rmse", errorMetrics.close.rmse, closeBaseline),
+        toneLabel: getErrorToneLabel(
+          getErrorTone("rmse", errorMetrics.close.rmse, closeBaseline)
+        ),
+        meta: formatRelativeHint(errorMetrics.close.rmse, closeBaseline, "current spot"),
+      },
+      {
+        label: "Volatility MAPE",
+        value: errorMetrics.vol.mape == null ? "N/A" : `${errorMetrics.vol.mape.toFixed(2)}%`,
+        tone: getErrorTone("mape", errorMetrics.vol.mape),
+        toneLabel: getErrorToneLabel(getErrorTone("mape", errorMetrics.vol.mape)),
+        meta: "Percentage miss vs realized volatility",
+      },
+      {
+        label: "Volatility RMSE",
+        value: errorMetrics.vol.rmse == null ? "N/A" : errorMetrics.vol.rmse.toFixed(6),
+        tone: getErrorTone("rmse", errorMetrics.vol.rmse, volBaseline),
+        toneLabel: getErrorToneLabel(getErrorTone("rmse", errorMetrics.vol.rmse, volBaseline)),
+        meta: formatRelativeHint(errorMetrics.vol.rmse, volBaseline, "5d vol proxy"),
+      },
+    ];
+  }, [errorMetrics, result]);
 
   const renderTooltip = ({ active, payload, label }) => {
     if (!active || !payload?.length) {
       return null;
     }
+    const row = payload[0]?.payload || {};
+    const isVolatilityChart = payload.some((item) =>
+      String(item?.name || "").toLowerCase().includes("volatility")
+    );
+    const formatValue = isVolatilityChart ? formatVol : formatPrice;
+    const historyLabel = isVolatilityChart ? "History Volatility" : "History Close";
+    const realizedLabel = isVolatilityChart ? "Realized Volatility" : "Realized Close";
+    const tooltipRows = [];
+
+    if (row.history != null) {
+      tooltipRows.push({ label: historyLabel, value: formatValue(row.history) });
+    }
+    if (row.forecast != null) {
+      tooltipRows.push({ label: "Forecast Estimate", value: formatValue(row.forecast) });
+      if (row.forecastLower != null && row.forecastUpper != null) {
+        tooltipRows.push({
+          label: forecastConfidenceLabel,
+          value: `${formatValue(row.forecastLower)} - ${formatValue(row.forecastUpper)}`,
+        });
+      }
+    }
+    if (row.realized != null) {
+      tooltipRows.push({ label: realizedLabel, value: formatValue(row.realized) });
+    }
     return (
       <div className="chartTooltip">
         <p>{formatDateTick(label)}</p>
-        {payload
-          .filter((item) => item?.value != null)
-          .map((item) => (
-            <p key={`${label}-${item.name}`}>
-              {item.name}: {Number(item.value).toFixed(4)}
-            </p>
-          ))}
+        {tooltipRows.map((item) => (
+          <p key={`${label}-${item.label}`}>
+            {item.label}: {item.value}
+          </p>
+        ))}
       </div>
     );
   };
@@ -388,10 +575,18 @@ export default function Home() {
 
             <article className="card metricCard">
               <h2>Predicted Close</h2>
-              <p className="metricValue">
-                {Number(result?.prediction?.close || 0).toFixed(2)}
-              </p>
+              <p className="metricValue">{formatPrice(result?.prediction?.close || 0)}</p>
               <p className="metricMeta">Symbol: {result?.market?.symbol || symbol}</p>
+              <div className={`deltaHighlight deltaHighlight--${closeDelta?.tone || "flat"}`}>
+                <span className="deltaLabel">Spread vs Current Market Close</span>
+                <div className="deltaValueRow">
+                  <strong>{closeDelta ? formatPriceDelta(closeDelta.delta) : "N/A"}</strong>
+                  <span>{closeDelta ? formatPercentDelta(closeDelta.pct) : "No spot close available"}</span>
+                </div>
+                <p className="deltaMeta">
+                  Current market close: {closeDelta ? formatPrice(closeDelta.current) : "N/A"}
+                </p>
+              </div>
               <p className="metricSub">
                 Forecast change: {closeSummary.pct >= 0 ? "+" : ""}
                 {closeSummary.pct.toFixed(2)}%
@@ -403,30 +598,16 @@ export default function Home() {
             <h2>Forecast Error Snapshot</h2>
             {errorMetrics.hasRealized ? (
               <div className="badgeGrid">
-                <div className="badgeItem">
-                  <span>Close MAPE</span>
-                  <strong>
-                    {errorMetrics.close.mape == null ? "N/A" : `${errorMetrics.close.mape.toFixed(2)}%`}
-                  </strong>
-                </div>
-                <div className="badgeItem">
-                  <span>Close RMSE</span>
-                  <strong>
-                    {errorMetrics.close.rmse == null ? "N/A" : errorMetrics.close.rmse.toFixed(4)}
-                  </strong>
-                </div>
-                <div className="badgeItem">
-                  <span>Volatility MAPE</span>
-                  <strong>
-                    {errorMetrics.vol.mape == null ? "N/A" : `${errorMetrics.vol.mape.toFixed(2)}%`}
-                  </strong>
-                </div>
-                <div className="badgeItem">
-                  <span>Volatility RMSE</span>
-                  <strong>
-                    {errorMetrics.vol.rmse == null ? "N/A" : errorMetrics.vol.rmse.toFixed(6)}
-                  </strong>
-                </div>
+                {errorBadges.map((badge) => (
+                  <div key={badge.label} className={`badgeItem badgeItem--${badge.tone}`}>
+                    <div className="badgeHeader">
+                      <span>{badge.label}</span>
+                      <small className={`badgeTone badgeTone--${badge.tone}`}>{badge.toneLabel}</small>
+                    </div>
+                    <strong>{badge.value}</strong>
+                    <p className="badgeMeta">{badge.meta}</p>
+                  </div>
+                ))}
               </div>
             ) : (
               <p className="metricMeta">
@@ -437,9 +618,13 @@ export default function Home() {
 
           <section className="card chartCard">
             <h2>Close Price Forecast</h2>
+            <p className="chartNote">
+              Forecast estimate is shown as a solid line. The shaded band marks the{" "}
+              {forecastConfidenceLabel.toLowerCase()}.
+            </p>
             <div className="chartWrap">
               <ResponsiveContainer width="100%" height={300}>
-                <AreaChart data={closeSeries}>
+                <ComposedChart data={closeSeries}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2f4264" />
                   <XAxis
                     dataKey="timestamp"
@@ -458,13 +643,58 @@ export default function Home() {
                     fill="url(#closeHistoryGradient)"
                     strokeWidth={2}
                   />
-                  <Area
+                  {hasCloseConfidence ? (
+                    <>
+                      <Area
+                        type="monotone"
+                        dataKey="forecastLower"
+                        stackId="closeConfidence"
+                        stroke="none"
+                        fill="transparent"
+                        legendType="none"
+                        isAnimationActive={false}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="forecastBand"
+                        name={forecastConfidenceLabel}
+                        stackId="closeConfidence"
+                        stroke="none"
+                        fill="url(#closeConfidenceGradient)"
+                        isAnimationActive={false}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="forecastUpper"
+                        stroke="#fbbf24"
+                        strokeOpacity={0.38}
+                        strokeDasharray="6 4"
+                        strokeWidth={1.25}
+                        dot={false}
+                        legendType="none"
+                        isAnimationActive={false}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="forecastLower"
+                        stroke="#fbbf24"
+                        strokeOpacity={0.38}
+                        strokeDasharray="6 4"
+                        strokeWidth={1.25}
+                        dot={false}
+                        legendType="none"
+                        isAnimationActive={false}
+                      />
+                    </>
+                  ) : null}
+                  <Line
                     type="monotone"
                     dataKey="forecast"
-                    name="Forecast Close"
+                    name="Forecast Estimate"
                     stroke="#f59e0b"
-                    fill="url(#closeForecastGradient)"
-                    strokeWidth={2}
+                    strokeWidth={3}
+                    dot={false}
+                    activeDot={{ r: 4, stroke: "#f59e0b", fill: "#fff7ed" }}
                   />
                   {includeRealized ? (
                     <Area
@@ -485,21 +715,29 @@ export default function Home() {
                       <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.36} />
                       <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.02} />
                     </linearGradient>
+                    <linearGradient id="closeConfidenceGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.28} />
+                      <stop offset="100%" stopColor="#f59e0b" stopOpacity={0.06} />
+                    </linearGradient>
                     <linearGradient id="closeRealizedGradient" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#34d399" stopOpacity={0.30} />
                       <stop offset="95%" stopColor="#34d399" stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
-                </AreaChart>
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           </section>
 
           <section className="card chartCard">
             <h2>Volatility Forecast</h2>
+            <p className="chartNote">
+              Forecast estimate is shown as a solid line. The shaded band marks the{" "}
+              {forecastConfidenceLabel.toLowerCase()}.
+            </p>
             <div className="chartWrap">
               <ResponsiveContainer width="100%" height={300}>
-                <AreaChart data={volatilitySeries}>
+                <ComposedChart data={volatilitySeries}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2f4264" />
                   <XAxis
                     dataKey="timestamp"
@@ -522,13 +760,58 @@ export default function Home() {
                     fill="url(#volHistoryGradient)"
                     strokeWidth={2}
                   />
-                  <Area
+                  {hasVolConfidence ? (
+                    <>
+                      <Area
+                        type="monotone"
+                        dataKey="forecastLower"
+                        stackId="volConfidence"
+                        stroke="none"
+                        fill="transparent"
+                        legendType="none"
+                        isAnimationActive={false}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="forecastBand"
+                        name={forecastConfidenceLabel}
+                        stackId="volConfidence"
+                        stroke="none"
+                        fill="url(#volConfidenceGradient)"
+                        isAnimationActive={false}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="forecastUpper"
+                        stroke="#fb7185"
+                        strokeOpacity={0.42}
+                        strokeDasharray="6 4"
+                        strokeWidth={1.25}
+                        dot={false}
+                        legendType="none"
+                        isAnimationActive={false}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="forecastLower"
+                        stroke="#fb7185"
+                        strokeOpacity={0.42}
+                        strokeDasharray="6 4"
+                        strokeWidth={1.25}
+                        dot={false}
+                        legendType="none"
+                        isAnimationActive={false}
+                      />
+                    </>
+                  ) : null}
+                  <Line
                     type="monotone"
                     dataKey="forecast"
-                    name="Forecast Volatility"
+                    name="Forecast Estimate"
                     stroke="#f43f5e"
-                    fill="url(#volForecastGradient)"
-                    strokeWidth={2}
+                    strokeWidth={3}
+                    dot={false}
+                    activeDot={{ r: 4, stroke: "#f43f5e", fill: "#ffe4e6" }}
                   />
                   {includeRealized ? (
                     <Area
@@ -549,12 +832,16 @@ export default function Home() {
                       <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.34} />
                       <stop offset="95%" stopColor="#f43f5e" stopOpacity={0.02} />
                     </linearGradient>
+                    <linearGradient id="volConfidenceGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.24} />
+                      <stop offset="100%" stopColor="#f43f5e" stopOpacity={0.05} />
+                    </linearGradient>
                     <linearGradient id="volRealizedGradient" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#34d399" stopOpacity={0.30} />
                       <stop offset="95%" stopColor="#34d399" stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
-                </AreaChart>
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           </section>

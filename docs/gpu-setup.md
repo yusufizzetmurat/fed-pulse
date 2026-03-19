@@ -20,3 +20,18 @@ If `data/` is gitignored (recommended), new machines must regenerate local artif
 ## 4) Cross-machine note
 Keep `backend/requirements.txt` as portable default.
 Use `backend/requirements-gpu-cu121.txt` only on CUDA-capable NVIDIA hosts.
+
+## 5) Professional training entrypoint
+Once your `data/` directory contains prepared training series, run the trainer directly.
+
+Local Python example:
+- `cd backend && python -m app.train_forecaster --device cuda`
+
+Docker example:
+- `docker compose exec backend python -m app.train_forecaster --device cuda --data-dir /data`
+
+The trainer will:
+- detect and use CUDA when available
+- read JSON, JSONL, and CSV datasets from the target data directory
+- build sequence windows for training/validation
+- save the best checkpoint to `backend/models/forecaster_best.pt`

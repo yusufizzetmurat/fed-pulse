@@ -40,7 +40,12 @@ class ForecastSeriesResponse(BaseModel):
     history_volatility: list[float]
     forecast_timestamps: list[str]
     forecast_close: list[float]
+    forecast_close_lower: list[float]
+    forecast_close_upper: list[float]
     forecast_volatility: list[float]
+    forecast_volatility_lower: list[float]
+    forecast_volatility_upper: list[float]
+    forecast_confidence_level: float
     realized_timestamps: list[str] | None = None
     realized_close: list[float] | None = None
     realized_volatility: list[float] | None = None

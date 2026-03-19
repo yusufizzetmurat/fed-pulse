@@ -15,8 +15,8 @@ Deliver a one-click user flow that surfaces sentiment plus charted quantitative 
 4. UI shows:
    - sentiment signal and confidence
    - predicted close and predicted volatility summaries
-   - close-price history + forecast chart
-   - volatility history + forecast chart
+  - close-price history + forecast chart with confidence band
+  - volatility history + forecast chart with confidence band
    - supporting market context
 
 ## State Model
@@ -57,4 +57,4 @@ Deliver a one-click user flow that surfaces sentiment plus charted quantitative 
   - `sentiment: { label, score, raw }`
   - `prediction: { close, volatility, horizon }`
   - `market: { symbol, requested_date, date_used, close, volatility_5d, lookback_days }`
-  - `series: { timestamps, history_close, history_volatility, forecast_timestamps, forecast_close, forecast_volatility, realized_timestamps?, realized_close?, realized_volatility?, volatility_scale }`
+  - `series: { timestamps, history_close, history_volatility, forecast_timestamps, forecast_close, forecast_close_lower, forecast_close_upper, forecast_volatility, forecast_volatility_lower, forecast_volatility_upper, forecast_confidence_level, realized_timestamps?, realized_close?, realized_volatility?, volatility_scale }`

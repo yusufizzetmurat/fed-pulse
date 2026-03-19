@@ -48,7 +48,12 @@ def test_analyze_happy_path_with_realized_overlay(monkeypatch):
                 "history_volatility": [0.011, 0.01],
                 "forecast_timestamps": ["2026-03-13+1", "2026-03-13+2", "2026-03-13+3"],
                 "forecast_close": [5605.0, 5608.0, 5610.0],
+                "forecast_close_lower": [5589.0, 5588.0, 5587.0],
+                "forecast_close_upper": [5621.0, 5628.0, 5633.0],
                 "forecast_volatility": [0.0115, 0.0118, 0.012],
+                "forecast_volatility_lower": [0.0110, 0.0111, 0.0112],
+                "forecast_volatility_upper": [0.0120, 0.0125, 0.0128],
+                "forecast_confidence_level": 0.8,
                 "volatility_scale": {"suggested_ymin": 0.0, "suggested_ymax": 0.02},
             },
         },
@@ -80,6 +85,7 @@ def test_analyze_happy_path_with_realized_overlay(monkeypatch):
     payload = response.json()
     assert "sentiment" in payload and "prediction" in payload and "market" in payload and "series" in payload
     assert payload["series"]["realized_timestamps"] == ["2026-03-14", "2026-03-15", "2026-03-16"]
+    assert payload["series"]["forecast_confidence_level"] == 0.8
 
 
 def test_analyze_invalid_mode_returns_422():

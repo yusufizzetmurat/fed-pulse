@@ -86,3 +86,8 @@ def test_analyze_contract_e2e_with_real_forecaster(monkeypatch):
     assert payload["prediction"]["horizon"] == "3d"
     assert len(payload["series"]["forecast_close"]) == 3
     assert len(payload["series"]["forecast_volatility"]) == 3
+    assert len(payload["series"]["forecast_close_lower"]) == 3
+    assert len(payload["series"]["forecast_close_upper"]) == 3
+    assert len(payload["series"]["forecast_volatility_lower"]) == 3
+    assert len(payload["series"]["forecast_volatility_upper"]) == 3
+    assert payload["series"]["forecast_confidence_level"] == 0.8

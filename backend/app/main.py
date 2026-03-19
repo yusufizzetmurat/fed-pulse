@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.schemas import AnalyzeRequest, AnalyzeResponse
-from app.services.forecaster import FeatureVector, forecast_quantitative_series, parse_horizon_steps
+from app.services.forecaster import build_feature_vectors, forecast_quantitative_series, parse_horizon_steps
 from app.services.market_data import fetch_market_history, fetch_market_snapshot, fetch_realized_forward
 from app.services.sentiment import analyze_text
 
@@ -73,15 +73,7 @@ def analyze(payload: AnalyzeRequest):
         market = fetch_market_snapshot(target_date=payload.date, symbol=payload.symbol)
         market_history = fetch_market_history(target_date=payload.date, symbol=payload.symbol, history_length=30)
 
-        history_vectors = [
-            FeatureVector(
-                date=str(point["date"]),
-                sentiment_score=float(sentiment["score"]),
-                market_close=float(point["close"]),
-                market_volatility=float(point["volatility_5d"]),
-            )
-            for point in market_history
-        ]
+        history_vectors = build_feature_vectors(market_history, sentiment_score=float(sentiment["score"]))
         forecast = forecast_quantitative_series(
             vectors=history_vectors,
             forecast_mode=mode,
