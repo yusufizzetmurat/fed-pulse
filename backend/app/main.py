@@ -98,6 +98,7 @@ def analyze(payload: AnalyzeRequest):
             "sentiment": sentiment,
             "prediction": forecast["prediction"],
             "market": market,
+            "model": forecast["model"],
             "series": forecast["series"],
         }
     except ValueError as exc:

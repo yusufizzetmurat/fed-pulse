@@ -328,6 +328,8 @@ export default function Home() {
   const formatPercentDelta = (value) =>
     `${Number(value || 0) >= 0 ? "+" : ""}${Number(value || 0).toFixed(2)}%`;
   const formatVol = (value) => `${(Number(value || 0) * 100).toFixed(2)}%`;
+  const formatMetric = (value, digits = 6) =>
+    Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : "N/A";
 
   const closeDelta = useMemo(() => {
     const predicted = Number(result?.prediction?.close);
@@ -397,6 +399,126 @@ export default function Home() {
       },
     ];
   }, [errorMetrics, result]);
+
+  const currentSpotBandCheck = useMemo(() => {
+    const lower = toNumericOrNull(
+      result?.series?.forecast_close_lower?.[result?.series?.forecast_close_lower?.length - 1]
+    );
+    const upper = toNumericOrNull(
+      result?.series?.forecast_close_upper?.[result?.series?.forecast_close_upper?.length - 1]
+    );
+    const current = toNumericOrNull(result?.market?.close);
+    if (lower == null || upper == null || current == null) {
+      return null;
+    }
+    const withinBand = current >= lower && current <= upper;
+    const distance = withinBand ? 0 : current < lower ? lower - current : current - upper;
+    const reference = Math.max(Math.abs(current), 1e-6);
+    return {
+      withinBand,
+      lower,
+      upper,
+      current,
+      distance,
+      distancePct: (distance / reference) * 100,
+      tone: withinBand ? "good" : distance / reference <= 0.015 ? "caution" : "danger",
+    };
+  }, [result]);
+
+  const realizedBandCheck = useMemo(() => {
+    const realized = result?.series?.realized_close || [];
+    const lowerBand = result?.series?.forecast_close_lower || [];
+    const upperBand = result?.series?.forecast_close_upper || [];
+    const overlap = Math.min(realized.length, lowerBand.length, upperBand.length);
+    if (!overlap) {
+      return null;
+    }
+
+    const realizedValue = toNumericOrNull(realized[overlap - 1]);
+    const lower = toNumericOrNull(lowerBand[overlap - 1]);
+    const upper = toNumericOrNull(upperBand[overlap - 1]);
+    if (realizedValue == null || lower == null || upper == null) {
+      return null;
+    }
+
+    const withinBand = realizedValue >= lower && realizedValue <= upper;
+    const distance = withinBand ? 0 : realizedValue < lower ? lower - realizedValue : realizedValue - upper;
+    const reference = Math.max(Math.abs(realizedValue), 1e-6);
+    return {
+      withinBand,
+      realizedValue,
+      lower,
+      upper,
+      distance,
+      distancePct: (distance / reference) * 100,
+      tone: withinBand ? "good" : distance / reference <= 0.02 ? "caution" : "danger",
+    };
+  }, [result]);
+
+  const evaluationCards = useMemo(() => {
+    const diagnostics = result?.model;
+    if (!diagnostics) {
+      return [];
+    }
+
+    const runtimeLabel =
+      diagnostics.runtime_mode === "quick_train" ? "Quick-train adaptation active" : "Best checkpoint inference";
+    const checkpointLabel = diagnostics.checkpoint_loaded
+      ? "Saved checkpoint is loaded for analysis"
+      : "No saved checkpoint found, using runtime initialization";
+
+    return [
+      {
+        label: "Runtime State",
+        tone: diagnostics.checkpoint_loaded ? "good" : "neutral",
+        title: runtimeLabel,
+        value: checkpointLabel,
+        meta: `LSTM ${diagnostics.hidden_size} hidden x ${diagnostics.num_layers} layer(s), dropout ${Number(
+          diagnostics.dropout || 0
+        ).toFixed(2)}${
+          Number.isFinite(Number(diagnostics.combined_rmse))
+            ? `, best RMSE ${formatMetric(diagnostics.combined_rmse, 6)}`
+            : ""
+        }`,
+      },
+      {
+        label: "Current Spot Check",
+        tone: currentSpotBandCheck?.tone || "neutral",
+        title: currentSpotBandCheck
+          ? currentSpotBandCheck.withinBand
+            ? "Current market close sits inside the projected band"
+            : "Current market close sits outside the projected band"
+          : "Projected band check unavailable",
+        value: currentSpotBandCheck
+          ? `${formatPrice(currentSpotBandCheck.lower)} to ${formatPrice(currentSpotBandCheck.upper)}`
+          : "Run a forecast with confidence bands enabled",
+        meta: currentSpotBandCheck
+          ? currentSpotBandCheck.withinBand
+            ? `Spot close ${formatPrice(currentSpotBandCheck.current)} remains within the ${forecastConfidenceLabel.toLowerCase()}.`
+            : `Spot close is ${formatPercentDelta(currentSpotBandCheck.distancePct)} beyond the outer band.`
+          : "Confidence bands are required to evaluate the live spot.",
+      },
+      {
+        label: "Realized Validation",
+        tone: realizedBandCheck?.tone || "neutral",
+        title: realizedBandCheck
+          ? realizedBandCheck.withinBand
+            ? "Latest realized close landed inside the forecast band"
+            : "Latest realized close broke outside the forecast band"
+          : "Realized overlay not available",
+        value: realizedBandCheck
+          ? `${formatPrice(realizedBandCheck.lower)} to ${formatPrice(realizedBandCheck.upper)}`
+          : errorMetrics.hasRealized
+          ? "Realized close mismatch"
+          : "Enable realized overlay for past dates",
+        meta: realizedBandCheck
+          ? `Realized close ${formatPrice(realizedBandCheck.realizedValue)} vs close MAPE ${
+              errorMetrics.close.mape == null ? "N/A" : `${errorMetrics.close.mape.toFixed(2)}%`
+            }.`
+          : "Choose a historical date and enable the realized overlay to validate this checkpoint.",
+      },
+    ];
+  }, [currentSpotBandCheck, errorMetrics, forecastConfidenceLabel, realizedBandCheck, result]);
 
   const renderTooltip = ({ active, payload, label }) => {
     if (!active || !payload?.length) {
@@ -614,6 +736,24 @@ export default function Home() {
                 Enable <strong>realized overlay</strong> and choose a past date to calculate MAPE/RMSE.
               </p>
             )}
+          </section>
+
+          <section className="card evaluationCard">
+            <h2>Model Evaluation Snapshot</h2>
+            <p className="chartNote">
+              Uses the active checkpoint metadata plus live and realized band checks to judge whether the
+              forecast is behaving credibly.
+            </p>
+            <div className="evaluationGrid">
+              {evaluationCards.map((card) => (
+                <article key={card.label} className={`evaluationItem evaluationItem--${card.tone}`}>
+                  <span className="evaluationLabel">{card.label}</span>
+                  <strong>{card.title}</strong>
+                  <p className="evaluationValue">{card.value}</p>
+                  <p className="evaluationMeta">{card.meta}</p>
+                </article>
+              ))}
+            </div>
           </section>
 
           <section className="card chartCard">
@@ -866,6 +1006,12 @@ export default function Home() {
             </p>
             <p>
               <strong>Forecast Mode:</strong> {forecastMode}
+            </p>
+            <p>
+              <strong>Model Hidden Size:</strong> {result?.model?.hidden_size ?? "N/A"}
+            </p>
+            <p>
+              <strong>Checkpoint Loaded:</strong> {result?.model?.checkpoint_loaded ? "Yes" : "No"}
             </p>
             <p>
               <strong>Prediction Horizon:</strong> {horizon}

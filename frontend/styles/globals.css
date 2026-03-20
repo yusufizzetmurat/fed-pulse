@@ -460,6 +460,86 @@ textarea:focus {
   color: #b8c9ea;
 }
 
+.evaluationGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.evaluationItem {
+  position: relative;
+  border-radius: 14px;
+  padding: 0.95rem 1rem;
+  border: 1px solid rgba(112, 140, 195, 0.24);
+  background: linear-gradient(180deg, rgba(13, 24, 48, 0.96) 0%, rgba(8, 16, 34, 0.98) 100%);
+  min-height: 156px;
+}
+
+.evaluationItem::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  border-radius: 14px 14px 0 0;
+  background: rgba(125, 145, 189, 0.55);
+}
+
+.evaluationLabel {
+  display: block;
+  color: #9eb0d4;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.55rem;
+}
+
+.evaluationItem strong {
+  display: block;
+  font-size: 1.02rem;
+  line-height: 1.35;
+}
+
+.evaluationValue {
+  margin: 0.55rem 0 0;
+  color: #edf4ff;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.evaluationMeta {
+  margin: 0.45rem 0 0;
+  color: #b5c6ea;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.evaluationItem--good {
+  border-color: rgba(52, 211, 153, 0.28);
+  background: linear-gradient(180deg, rgba(7, 41, 34, 0.62) 0%, rgba(8, 16, 34, 0.98) 100%);
+}
+
+.evaluationItem--good::before {
+  background: linear-gradient(90deg, rgba(74, 222, 128, 0.95), rgba(16, 185, 129, 0.85));
+}
+
+.evaluationItem--caution {
+  border-color: rgba(245, 158, 11, 0.3);
+  background: linear-gradient(180deg, rgba(61, 37, 10, 0.62) 0%, rgba(8, 16, 34, 0.98) 100%);
+}
+
+.evaluationItem--caution::before {
+  background: linear-gradient(90deg, rgba(251, 191, 36, 0.95), rgba(245, 158, 11, 0.88));
+}
+
+.evaluationItem--danger {
+  border-color: rgba(248, 113, 113, 0.3);
+  background: linear-gradient(180deg, rgba(64, 24, 26, 0.62) 0%, rgba(8, 16, 34, 0.98) 100%);
+}
+
+.evaluationItem--danger::before {
+  background: linear-gradient(90deg, rgba(248, 113, 113, 0.95), rgba(239, 68, 68, 0.88));
+}
+
 button {
   border: none;
   border-radius: 0.5rem;
@@ -493,7 +573,8 @@ pre {
   .resultGrid,
   .controlRow,
   .metadataGrid,
-  .badgeGrid {
+  .badgeGrid,
+  .evaluationGrid {
     grid-template-columns: 1fr;
   }
 

@@ -4,12 +4,26 @@ import threading
 from collections import defaultdict
 from typing import Any
 
+import torch
 from transformers import pipeline
 
 MODEL_ID = "gtfintechlab/fomc-roberta-any-exp"
 FALLBACK_MODEL_ID = "distilbert-base-uncased-finetuned-sst-2-english"
 _classifier = None
 _classifier_lock = threading.Lock()
+
+
+def _resolve_pipeline_device() -> int:
+    return 0 if torch.cuda.is_available() else -1
+
+
+def _build_pipeline(model_id: str, device: int):
+    return pipeline(
+        "text-classification",
+        model=model_id,
+        return_all_scores=True,
+        device=device,
+    )
 
 
 def _get_classifier():
@@ -21,11 +35,28 @@ def _get_classifier():
         if _classifier is not None:
             return _classifier
 
-        try:
-            _classifier = pipeline("text-classification", model=MODEL_ID, return_all_scores=True)
-        except Exception:
-            # Keep MVP usable if the target model is unavailable or private.
-            _classifier = pipeline("text-classification", model=FALLBACK_MODEL_ID, return_all_scores=True)
+        device = _resolve_pipeline_device()
+        attempts = [
+            (MODEL_ID, device),
+            (FALLBACK_MODEL_ID, device),
+        ]
+        if device != -1:
+            attempts.extend(
+                [
+                    (MODEL_ID, -1),
+                    (FALLBACK_MODEL_ID, -1),
+                ]
+            )
+
+        last_error: Exception | None = None
+        for model_id, target_device in attempts:
+            try:
+                _classifier = _build_pipeline(model_id, target_device)
+                break
+            except Exception as exc:
+                last_error = exc
+        if _classifier is None and last_error is not None:
+            raise last_error
     return _classifier
 
 

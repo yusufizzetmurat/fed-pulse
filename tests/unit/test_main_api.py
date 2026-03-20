@@ -42,6 +42,21 @@ def test_analyze_happy_path_with_realized_overlay(monkeypatch):
         "forecast_quantitative_series",
         lambda **_: {
             "prediction": {"close": 5610.0, "volatility": 0.012, "horizon": "3d"},
+            "model": {
+                "checkpoint_path": "backend/models/forecaster_best.pt",
+                "checkpoint_loaded": True,
+                "runtime_mode": "fast",
+                "hidden_size": 64,
+                "num_layers": 2,
+                "dropout": 0.15,
+                "head_hidden_size": 32,
+                "best_loss": 0.0123,
+                "combined_rmse": 0.0456,
+                "adaptation_epochs_completed": None,
+                "adaptation_best_epoch": None,
+                "adaptation_loss": None,
+                "adaptation_combined_rmse": None,
+            },
             "series": {
                 "timestamps": ["2026-03-12", "2026-03-13"],
                 "history_close": [5580.0, 5600.0],
@@ -84,8 +99,10 @@ def test_analyze_happy_path_with_realized_overlay(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert "sentiment" in payload and "prediction" in payload and "market" in payload and "series" in payload
+    assert "model" in payload
     assert payload["series"]["realized_timestamps"] == ["2026-03-14", "2026-03-15", "2026-03-16"]
     assert payload["series"]["forecast_confidence_level"] == 0.8
+    assert payload["model"]["checkpoint_loaded"] is True
 
 
 def test_analyze_invalid_mode_returns_422():

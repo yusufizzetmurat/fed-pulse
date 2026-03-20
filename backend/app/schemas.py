@@ -34,6 +34,22 @@ class PredictionResponse(BaseModel):
     horizon: str
 
 
+class ModelDiagnosticsResponse(BaseModel):
+    checkpoint_path: str
+    checkpoint_loaded: bool
+    runtime_mode: str
+    hidden_size: int
+    num_layers: int
+    dropout: float
+    head_hidden_size: int
+    best_loss: float | None = None
+    combined_rmse: float | None = None
+    adaptation_epochs_completed: int | None = None
+    adaptation_best_epoch: int | None = None
+    adaptation_loss: float | None = None
+    adaptation_combined_rmse: float | None = None
+
+
 class ForecastSeriesResponse(BaseModel):
     timestamps: list[str]
     history_close: list[float]
@@ -56,4 +72,5 @@ class AnalyzeResponse(BaseModel):
     sentiment: SentimentResponse
     prediction: PredictionResponse
     market: MarketDataResponse
+    model: ModelDiagnosticsResponse
     series: ForecastSeriesResponse
