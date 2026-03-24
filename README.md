@@ -17,6 +17,16 @@ This project focuses on three practical research questions:
 - `frontend/`: single-page interface for analysis requests, charting, diagnostics, and overlay checks.
 - `data/`: raw, interim, processed, and artifact outputs used by the pipeline.
 
+## Project Documentation
+
+Method and policy documents are kept in `docs/`:
+
+- `docs/project-guide.md`
+- `docs/benchmark-policy.md`
+- `docs/data-and-training-contracts.md`
+- `docs/architecture-overview.md`
+- `docs/run-templates.md`
+
 ## Running the System
 
 ### Recommended
