@@ -175,3 +175,21 @@ def fetch_realized_forward(
             }
         )
     return realized
+
+
+def fetch_forward_trading_dates(
+    target_date: str,
+    symbol: str = "^GSPC",
+    steps: int = 3,
+    lookback_days: int = 45,
+) -> list[str]:
+    if steps < 1:
+        raise ValueError("steps must be >= 1")
+
+    requested_date = _parse_iso_date(target_date)
+    start = requested_date - timedelta(days=lookback_days)
+    end = requested_date + timedelta(days=max(steps * 4, 16))
+
+    close_series = _download_close_series_in_window(symbol=symbol, start=start, end=end)
+    future = close_series.loc[close_series.index.date > requested_date]
+    return [idx.date().isoformat() for idx in future.head(steps).index]

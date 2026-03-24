@@ -6,7 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.schemas import AnalyzeRequest, AnalyzeResponse
 from app.services.forecaster import build_feature_vectors, forecast_quantitative_series, parse_horizon_steps
-from app.services.market_data import fetch_market_history, fetch_market_snapshot, fetch_realized_forward
+from app.services.market_data import (
+    fetch_forward_trading_dates,
+    fetch_market_history,
+    fetch_market_snapshot,
+    fetch_realized_forward,
+)
 from app.services.sentiment import analyze_text
 
 app = FastAPI(title="FOMC Sentiment API", version="0.1.0")
@@ -72,16 +77,22 @@ def analyze(payload: AnalyzeRequest):
         sentiment = analyze_text(payload.text)
         market = fetch_market_snapshot(target_date=payload.date, symbol=payload.symbol)
         market_history = fetch_market_history(target_date=payload.date, symbol=payload.symbol, history_length=30)
+        horizon_steps = parse_horizon_steps(payload.horizon)
+        forecast_dates = fetch_forward_trading_dates(
+            target_date=payload.date,
+            symbol=payload.symbol,
+            steps=horizon_steps,
+        )
 
         history_vectors = build_feature_vectors(market_history, sentiment_score=float(sentiment["score"]))
         forecast = forecast_quantitative_series(
             vectors=history_vectors,
             forecast_mode=mode,
             horizon=payload.horizon,
+            forecast_dates=forecast_dates,
         )
 
         if payload.include_realized:
-            horizon_steps = parse_horizon_steps(payload.horizon)
             realized = fetch_realized_forward(
                 target_date=payload.date,
                 symbol=payload.symbol,

@@ -84,6 +84,14 @@ function toNumericOrNull(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function normalizeTimestamp(value) {
+  if (!value) {
+    return "";
+  }
+  // Keep date-like keys stable across forecast and realized series.
+  return String(value).split("+")[0];
+}
+
 export default function Home() {
   const [text, setText] = useState(DEFAULT_TEXT);
   const [date, setDate] = useState(DEFAULT_DATE);
@@ -135,106 +143,108 @@ export default function Home() {
     if (!result?.series) {
       return [];
     }
-    const rows = [];
-    (result.series.timestamps || []).forEach((timestamp, index) => {
-      rows.push({
-        timestamp,
-        history: Number(result.series.history_close?.[index] || 0),
-        forecast: null,
-        forecastLower: null,
-        forecastUpper: null,
-        forecastBand: null,
-        realized: null,
-      });
-    });
-    (result.series.forecast_timestamps || []).forEach((timestamp, index) => {
-      const forecast = toNumericOrNull(result.series.forecast_close?.[index]);
-      const forecastLower = toNumericOrNull(result.series.forecast_close_lower?.[index]);
-      const forecastUpper = toNumericOrNull(result.series.forecast_close_upper?.[index]);
-      rows.push({
-        timestamp,
-        history: null,
-        forecast,
-        forecastLower,
-        forecastUpper,
-        forecastBand:
-          forecastLower != null && forecastUpper != null
-            ? Math.max(forecastUpper - forecastLower, 0)
-            : null,
-        realized: null,
-      });
-    });
-    (result.series.realized_timestamps || []).forEach((timestamp, index) => {
-      const existing = rows.find((item) => item.timestamp === timestamp);
-      const value = Number(result.series.realized_close?.[index] || 0);
-      if (existing) {
-        existing.realized = value;
-      } else {
-        rows.push({
+    const byTimestamp = new Map();
+    const ensureRow = (rawTimestamp) => {
+      const timestamp = normalizeTimestamp(rawTimestamp);
+      if (!timestamp) {
+        return null;
+      }
+      if (!byTimestamp.has(timestamp)) {
+        byTimestamp.set(timestamp, {
           timestamp,
           history: null,
           forecast: null,
           forecastLower: null,
           forecastUpper: null,
           forecastBand: null,
-          realized: value,
+          realized: null,
         });
       }
+      return byTimestamp.get(timestamp);
+    };
+
+    (result.series.timestamps || []).forEach((timestamp, index) => {
+      const row = ensureRow(timestamp);
+      if (row) {
+        row.history = toNumericOrNull(result.series.history_close?.[index]);
+      }
     });
-    return rows;
+    (result.series.forecast_timestamps || []).forEach((timestamp, index) => {
+      const row = ensureRow(timestamp);
+      const forecast = toNumericOrNull(result.series.forecast_close?.[index]);
+      const forecastLower = toNumericOrNull(result.series.forecast_close_lower?.[index]);
+      const forecastUpper = toNumericOrNull(result.series.forecast_close_upper?.[index]);
+      if (row) {
+        row.forecast = forecast;
+        row.forecastLower = forecastLower;
+        row.forecastUpper = forecastUpper;
+        row.forecastBand =
+          forecastLower != null && forecastUpper != null
+            ? Math.max(forecastUpper - forecastLower, 0)
+            : null;
+      }
+    });
+    (result.series.realized_timestamps || []).forEach((timestamp, index) => {
+      const row = ensureRow(timestamp);
+      if (row) {
+        row.realized = toNumericOrNull(result.series.realized_close?.[index]);
+      }
+    });
+    return Array.from(byTimestamp.values()).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   }, [result]);
 
   const volatilitySeries = useMemo(() => {
     if (!result?.series) {
       return [];
     }
-    const rows = [];
-    (result.series.timestamps || []).forEach((timestamp, index) => {
-      rows.push({
-        timestamp,
-        history: Number(result.series.history_volatility?.[index] || 0),
-        forecast: null,
-        forecastLower: null,
-        forecastUpper: null,
-        forecastBand: null,
-        realized: null,
-      });
-    });
-    (result.series.forecast_timestamps || []).forEach((timestamp, index) => {
-      const forecast = toNumericOrNull(result.series.forecast_volatility?.[index]);
-      const forecastLower = toNumericOrNull(result.series.forecast_volatility_lower?.[index]);
-      const forecastUpper = toNumericOrNull(result.series.forecast_volatility_upper?.[index]);
-      rows.push({
-        timestamp,
-        history: null,
-        forecast,
-        forecastLower,
-        forecastUpper,
-        forecastBand:
-          forecastLower != null && forecastUpper != null
-            ? Math.max(forecastUpper - forecastLower, 0)
-            : null,
-        realized: null,
-      });
-    });
-    (result.series.realized_timestamps || []).forEach((timestamp, index) => {
-      const existing = rows.find((item) => item.timestamp === timestamp);
-      const value = Number(result.series.realized_volatility?.[index] || 0);
-      if (existing) {
-        existing.realized = value;
-      } else {
-        rows.push({
+    const byTimestamp = new Map();
+    const ensureRow = (rawTimestamp) => {
+      const timestamp = normalizeTimestamp(rawTimestamp);
+      if (!timestamp) {
+        return null;
+      }
+      if (!byTimestamp.has(timestamp)) {
+        byTimestamp.set(timestamp, {
           timestamp,
           history: null,
           forecast: null,
           forecastLower: null,
           forecastUpper: null,
           forecastBand: null,
-          realized: value,
+          realized: null,
         });
       }
+      return byTimestamp.get(timestamp);
+    };
+
+    (result.series.timestamps || []).forEach((timestamp, index) => {
+      const row = ensureRow(timestamp);
+      if (row) {
+        row.history = toNumericOrNull(result.series.history_volatility?.[index]);
+      }
     });
-    return rows;
+    (result.series.forecast_timestamps || []).forEach((timestamp, index) => {
+      const row = ensureRow(timestamp);
+      const forecast = toNumericOrNull(result.series.forecast_volatility?.[index]);
+      const forecastLower = toNumericOrNull(result.series.forecast_volatility_lower?.[index]);
+      const forecastUpper = toNumericOrNull(result.series.forecast_volatility_upper?.[index]);
+      if (row) {
+        row.forecast = forecast;
+        row.forecastLower = forecastLower;
+        row.forecastUpper = forecastUpper;
+        row.forecastBand =
+          forecastLower != null && forecastUpper != null
+            ? Math.max(forecastUpper - forecastLower, 0)
+            : null;
+      }
+    });
+    (result.series.realized_timestamps || []).forEach((timestamp, index) => {
+      const row = ensureRow(timestamp);
+      if (row) {
+        row.realized = toNumericOrNull(result.series.realized_volatility?.[index]);
+      }
+    });
+    return Array.from(byTimestamp.values()).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   }, [result]);
 
   const closeSummary = useMemo(() => {
@@ -263,25 +273,51 @@ export default function Home() {
   }, [result]);
 
   const errorMetrics = useMemo(() => {
-    const forecastClose = result?.series?.forecast_close || [];
-    const realizedClose = result?.series?.realized_close || [];
-    const forecastVol = result?.series?.forecast_volatility || [];
-    const realizedVol = result?.series?.realized_volatility || [];
+    const buildPairs = (forecastTs, forecastValues, realizedTs, realizedValues) => {
+      const forecastByTs = new Map();
+      (forecastTs || []).forEach((ts, idx) => {
+        const key = normalizeTimestamp(ts);
+        const value = toNumericOrNull(forecastValues?.[idx]);
+        if (key && value != null) {
+          forecastByTs.set(key, value);
+        }
+      });
+      const pairs = [];
+      (realizedTs || []).forEach((ts, idx) => {
+        const key = normalizeTimestamp(ts);
+        const realized = toNumericOrNull(realizedValues?.[idx]);
+        const forecast = key ? forecastByTs.get(key) : null;
+        if (forecast != null && realized != null) {
+          pairs.push([forecast, realized]);
+        }
+      });
+      return pairs;
+    };
 
-    const calc = (pred, actual) => {
-      const pairs = pred
-        .map((value, idx) => [Number(value), Number(actual[idx])])
-        .filter(([p, a]) => Number.isFinite(p) && Number.isFinite(a));
+    const closePairs = buildPairs(
+      result?.series?.forecast_timestamps,
+      result?.series?.forecast_close,
+      result?.series?.realized_timestamps,
+      result?.series?.realized_close
+    );
+    const volPairs = buildPairs(
+      result?.series?.forecast_timestamps,
+      result?.series?.forecast_volatility,
+      result?.series?.realized_timestamps,
+      result?.series?.realized_volatility
+    );
+
+    const calc = (pairs) => {
       if (!pairs.length) {
         return { mape: null, rmse: null };
       }
       const mapeVals = pairs
-        .filter(([, a]) => Math.abs(a) > 1e-12)
-        .map(([p, a]) => Math.abs((a - p) / a));
+        .filter(([, actual]) => Math.abs(actual) > 1e-12)
+        .map(([predicted, actual]) => Math.abs((actual - predicted) / actual));
       const rmse =
         Math.sqrt(
-          pairs.reduce((acc, [p, a]) => {
-            const err = a - p;
+          pairs.reduce((acc, [predicted, actual]) => {
+            const err = actual - predicted;
             return acc + err * err;
           }, 0) / pairs.length
         ) || 0;
@@ -292,9 +328,9 @@ export default function Home() {
     };
 
     return {
-      close: calc(forecastClose, realizedClose),
-      vol: calc(forecastVol, realizedVol),
-      hasRealized: Boolean(realizedClose.length && realizedVol.length),
+      close: calc(closePairs),
+      vol: calc(volPairs),
+      hasRealized: Boolean(closePairs.length || volPairs.length),
     };
   }, [result]);
 
@@ -426,20 +462,38 @@ export default function Home() {
   }, [result]);
 
   const realizedBandCheck = useMemo(() => {
-    const realized = result?.series?.realized_close || [];
+    const forecastTs = result?.series?.forecast_timestamps || [];
     const lowerBand = result?.series?.forecast_close_lower || [];
     const upperBand = result?.series?.forecast_close_upper || [];
-    const overlap = Math.min(realized.length, lowerBand.length, upperBand.length);
-    if (!overlap) {
-      return null;
-    }
+    const realizedTs = result?.series?.realized_timestamps || [];
+    const realizedClose = result?.series?.realized_close || [];
 
-    const realizedValue = toNumericOrNull(realized[overlap - 1]);
-    const lower = toNumericOrNull(lowerBand[overlap - 1]);
-    const upper = toNumericOrNull(upperBand[overlap - 1]);
-    if (realizedValue == null || lower == null || upper == null) {
+    const forecastByTs = new Map();
+    forecastTs.forEach((ts, idx) => {
+      const key = normalizeTimestamp(ts);
+      const lower = toNumericOrNull(lowerBand[idx]);
+      const upper = toNumericOrNull(upperBand[idx]);
+      if (key && lower != null && upper != null) {
+        forecastByTs.set(key, { lower, upper });
+      }
+    });
+
+    const overlaps = [];
+    realizedTs.forEach((ts, idx) => {
+      const key = normalizeTimestamp(ts);
+      const realizedValue = toNumericOrNull(realizedClose[idx]);
+      const band = key ? forecastByTs.get(key) : null;
+      if (key && band && realizedValue != null) {
+        overlaps.push({ ts: key, realizedValue, lower: band.lower, upper: band.upper });
+      }
+    });
+
+    if (!overlaps.length) {
       return null;
     }
+    overlaps.sort((a, b) => a.ts.localeCompare(b.ts));
+    const latest = overlaps[overlaps.length - 1];
+    const { realizedValue, lower, upper } = latest;
 
     const withinBand = realizedValue >= lower && realizedValue <= upper;
     const distance = withinBand ? 0 : realizedValue < lower ? lower - realizedValue : realizedValue - upper;

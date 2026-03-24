@@ -893,6 +893,7 @@ def forecast_quantitative_series(
     vectors: list[FeatureVector],
     forecast_mode: str = "fast",
     horizon: str = "3d",
+    forecast_dates: list[str] | None = None,
 ) -> dict[str, object]:
     if not vectors:
         vectors = [FeatureVector(date="", sentiment_score=0.0, market_close=0.0, market_volatility=0.0)]
@@ -930,7 +931,10 @@ def forecast_quantitative_series(
         fixed_sequence = build_last5_sequence(rolling)
         next_close, next_vol = _predict_next_point(model, fixed_sequence)
         last_vector = fixed_sequence[-1]
-        next_date_label = f"{last_date}+{step + 1}" if last_date else f"t+{step + 1}"
+        if forecast_dates and step < len(forecast_dates):
+            next_date_label = str(forecast_dates[step])
+        else:
+            next_date_label = f"{last_date}+{step + 1}" if last_date else f"t+{step + 1}"
         next_vector = FeatureVector.from_market_state(
             date=next_date_label,
             sentiment_score=float(last_vector.sentiment_score),

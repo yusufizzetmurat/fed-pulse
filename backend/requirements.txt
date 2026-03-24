@@ -6,4 +6,8 @@ python-multipart
 requests
 beautifulsoup4
 yfinance
+pandas
+pyarrow
+datasets
+kagglehub
 pytest
