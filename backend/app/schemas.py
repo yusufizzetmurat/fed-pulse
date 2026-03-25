@@ -6,7 +6,7 @@ class AnalyzeRequest(BaseModel):
     date: str = Field(..., description="Document date in ISO format: YYYY-MM-DD")
     symbol: str = Field("^GSPC", description="Market ticker, e.g. ^GSPC or DX-Y.NYB")
     horizon: str = Field("3d", description="Forecast horizon label")
-    forecast_mode: str = Field("fast", description="Forecast mode: fast or quick_train")
+    forecast_mode: str = Field("fast", description="Forecast mode: fast, quick_train, or real_train")
     include_realized: bool = Field(
         False,
         description="When true and date is in the past, include realized forward series overlay.",
@@ -36,12 +36,15 @@ class PredictionResponse(BaseModel):
 
 class ModelDiagnosticsResponse(BaseModel):
     checkpoint_path: str
+    checkpoint_exists: bool
     checkpoint_loaded: bool
     runtime_mode: str
     hidden_size: int
     num_layers: int
     dropout: float
     head_hidden_size: int
+    close_scale: float
+    sequence_length: int
     best_loss: float | None = None
     combined_rmse: float | None = None
     adaptation_epochs_completed: int | None = None
@@ -74,3 +77,18 @@ class AnalyzeResponse(BaseModel):
     market: MarketDataResponse
     model: ModelDiagnosticsResponse
     series: ForecastSeriesResponse
+
+
+class TrainJobAcceptedResponse(BaseModel):
+    status: str = "queued"
+    job_id: str
+    message: str
+
+
+class TrainJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    error: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    result: AnalyzeResponse | None = None

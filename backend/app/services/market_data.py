@@ -135,11 +135,12 @@ def fetch_market_history(
     history_length: int = 30,
     lookback_days: int = 45,
 ) -> list[dict[str, float | str]]:
+    adaptive_lookback = max(lookback_days, int(history_length * 2.2) + 20)
     return fetch_market_sequence(
         target_date=target_date,
         symbol=symbol,
         sequence_length=history_length,
-        lookback_days=lookback_days,
+        lookback_days=adaptive_lookback,
     )
 
 

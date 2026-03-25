@@ -92,6 +92,12 @@ function normalizeTimestamp(value) {
   return String(value).split("+")[0];
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 export default function Home() {
   const [text, setText] = useState(DEFAULT_TEXT);
   const [date, setDate] = useState(DEFAULT_DATE);
@@ -103,6 +109,7 @@ export default function Home() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [trainJob, setTrainJob] = useState(null);
 
   const apiBaseUrl = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -117,6 +124,7 @@ export default function Home() {
     event.preventDefault();
     setLoading(true);
     setError("");
+    setTrainJob(null);
 
     try {
       const response = await axios.post(`${apiBaseUrl}/analyze`, {
@@ -127,7 +135,51 @@ export default function Home() {
         horizon,
         include_realized: includeRealized,
       });
-      setResult(response.data);
+      if (forecastMode === "real_train") {
+        const jobId = response?.data?.job_id;
+        if (!jobId) {
+          throw new Error("Real Train did not return a job id.");
+        }
+        setResult(null);
+        setTrainJob({
+          job_id: jobId,
+          status: response?.data?.status || "queued",
+          message: response?.data?.message || "Real Train queued.",
+          error: null,
+        });
+
+        const maxPollCount = 180;
+        for (let pollIndex = 0; pollIndex < maxPollCount; pollIndex += 1) {
+          await sleep(2000);
+          const statusResponse = await axios.get(`${apiBaseUrl}/train-jobs/${jobId}`);
+          const state = statusResponse?.data || {};
+          setTrainJob((current) => ({
+            ...(current || {}),
+            ...state,
+            message:
+              state.status === "running"
+                ? "Real Train is running with 252-day history and writing checkpoint..."
+                : state.status === "queued"
+                ? "Real Train is queued..."
+                : state.status === "succeeded"
+                ? "Real Train completed. Rendering results."
+                : current?.message || "",
+          }));
+
+          if (state.status === "succeeded") {
+            setResult(state.result || null);
+            setLoading(false);
+            return;
+          }
+          if (state.status === "failed") {
+            throw new Error(state.error || "Real Train job failed.");
+          }
+        }
+
+        throw new Error("Real Train timed out while waiting for completion.");
+      }
+
+      setResult(response.data || null);
     } catch (requestError) {
       setResult(null);
       setError(
@@ -682,8 +734,11 @@ export default function Home() {
             >
               <option value="fast">Fast</option>
               <option value="quick_train">Quick Train</option>
+              <option value="real_train">Real Train</option>
             </select>
-            <p className="controlHint">Fast is low-latency. Quick Train adapts to recent history.</p>
+            <p className="controlHint">
+              Fast is low-latency. Quick Train adapts briefly. Real Train runs async on 252-day history.
+            </p>
           </div>
           <div className="controlGroup">
             <label htmlFor="horizon">Prediction Horizon</label>
@@ -718,13 +773,34 @@ export default function Home() {
         </div>
         <div className="actionRow">
           <button type="submit" disabled={loading}>
-            {loading ? "Running Quant Analysis..." : "Analyze"}
+            {loading
+              ? forecastMode === "real_train"
+                ? "Running Real Train..."
+                : "Running Quant Analysis..."
+              : "Analyze"}
           </button>
           <span className="helperText">All metadata fields stay visible after each run.</span>
         </div>
       </form>
 
       {error ? <p className="error">{error}</p> : null}
+      {trainJob ? (
+        <section className="card">
+          <h2>Real Train Job</h2>
+          <p>
+            <strong>Job ID:</strong> {trainJob.job_id}
+          </p>
+          <p>
+            <strong>Status:</strong> {trainJob.status || "queued"}
+          </p>
+          <p>{trainJob.message || "Waiting for job updates..."}</p>
+          {trainJob.error ? (
+            <p className="error">
+              <strong>Error:</strong> {trainJob.error}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
 
       {result ? (
         <>

@@ -11,6 +11,7 @@ from typing import Any, Iterable, Sequence
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
 SEQUENCE_LENGTH = 5
@@ -128,13 +129,16 @@ class ForecasterModel(nn.Module):
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(head_hidden_size, 2),
-            nn.Sigmoid(),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         output, _ = self.lstm(x)
         last_step = output[:, -1, :]
-        return self.head(last_step)
+        raw = self.head(last_step)
+        close = raw[:, 0:1]
+        # Volatility must stay non-negative, while close remains unconstrained.
+        volatility = F.softplus(raw[:, 1:2])
+        return torch.cat((close, volatility), dim=1)
 
 
 @dataclass
@@ -265,12 +269,23 @@ def _checkpoint_metadata(
     metrics = adaptation_summary.metrics if adaptation_summary and adaptation_summary.metrics else payload_metrics
     metadata: dict[str, Any] = {
         "checkpoint_path": str(checkpoint_path),
+        "checkpoint_exists": checkpoint_path.exists(),
         "checkpoint_loaded": bool(payload),
         "runtime_mode": runtime_mode,
         "hidden_size": model_config.hidden_size,
         "num_layers": model_config.num_layers,
         "dropout": model_config.dropout,
         "head_hidden_size": model_config.head_hidden_size,
+        "close_scale": (
+            float(payload.get("close_scale", DEFAULT_CLOSE_SCALE))
+            if isinstance(payload, dict)
+            else float(DEFAULT_CLOSE_SCALE)
+        ),
+        "sequence_length": (
+            int(payload.get("sequence_length", SEQUENCE_LENGTH))
+            if isinstance(payload, dict)
+            else int(SEQUENCE_LENGTH)
+        ),
         "best_loss": payload_metrics.loss if payload_metrics else payload.get("best_loss") if isinstance(payload, dict) else None,
         "combined_rmse": payload_metrics.combined_rmse if payload_metrics else None,
         "adaptation_epochs_completed": adaptation_summary.epochs_completed if adaptation_summary else None,
@@ -571,8 +586,8 @@ def _build_training_tensors(
             sequences.append([item.as_list() for item in window])
             targets.append(
                 [
-                    min(max(target.market_close / DEFAULT_CLOSE_SCALE, 0.0), 1.0),
-                    min(max(target.market_volatility, 0.0), 1.0),
+                    target.market_close / DEFAULT_CLOSE_SCALE,
+                    max(target.market_volatility, 0.0),
                 ]
             )
 
@@ -794,9 +809,36 @@ def _predict_next_point(model: ForecasterModel, sequence: list[FeatureVector]) -
     x = torch.tensor([[item.as_list() for item in sequence]], dtype=torch.float32, device=device)
     with torch.no_grad():
         out = model(x).squeeze(0)
-    pred_close = float(out[0].item()) * DEFAULT_CLOSE_SCALE
+    close_scale = float((_model_artifact_metadata or {}).get("close_scale", DEFAULT_CLOSE_SCALE))
+    pred_close = float(out[0].item()) * close_scale
     pred_vol = float(out[1].item())
     return pred_close, pred_vol
+
+
+def checkpoint_exists(checkpoint_path: str | Path = BEST_MODEL_PATH) -> bool:
+    return Path(checkpoint_path).exists()
+
+
+def bootstrap_checkpoint(
+    *,
+    vectors: list[FeatureVector],
+    epochs: int = 80,
+    batch_size: int = 64,
+    learning_rate: float = 3e-4,
+    validation_split: float = 0.2,
+    early_stopping_patience: int = 10,
+    checkpoint_path: str | Path = BEST_MODEL_PATH,
+) -> TrainingResult:
+    return train_model(
+        vectors=vectors,
+        epochs=epochs,
+        batch_size=batch_size,
+        learning_rate=learning_rate,
+        validation_split=validation_split,
+        early_stopping_patience=early_stopping_patience,
+        checkpoint_path=checkpoint_path,
+        save_checkpoint=True,
+    )
 
 
 def _sample_std(values: Iterable[float]) -> float:
