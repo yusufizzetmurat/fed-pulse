@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -25,6 +26,8 @@ class PreparedTrainingRecord:
     document_type: str
     title: str
     source_file: str
+    document_date: str = ""
+    elapsed_days: float = 0.0
 
 
 @dataclass
@@ -126,9 +129,13 @@ def build_training_groups(
             except Exception:
                 skipped_symbol_pairs += 1
                 continue
+            date_used = str(market["date_used"])
+            elapsed_days = float(
+                (datetime.date.fromisoformat(date_used) - datetime.date.fromisoformat(date_value)).days
+            )
             grouped_records[symbol].append(
                 PreparedTrainingRecord(
-                    date=str(market["date_used"]),
+                    date=date_used,
                     sentiment_score=sentiment_score,
                     close=float(market["close"]),
                     volatility_5d=float(market["volatility_5d"]),
@@ -136,6 +143,8 @@ def build_training_groups(
                     document_type=document_type,
                     title=title,
                     source_file=source_file,
+                    document_date=date_value,
+                    elapsed_days=elapsed_days,
                 )
             )
 
