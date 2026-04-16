@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import csv
+import datetime
 import json
 import math
 import threading
@@ -15,7 +16,7 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
 SEQUENCE_LENGTH = 5
-FEATURE_SIZE = 5  # [sentiment_score, market_close, market_volatility, close_change_pct, volatility_change]
+FEATURE_SIZE = 6  # [sentiment_score, market_close, market_volatility, close_change_pct, volatility_change, elapsed_time]
 FORECAST_CONFIDENCE_LEVEL = 0.8
 CONFIDENCE_Z_SCORE = 1.2816  # Approximate central 80% interval
 DEFAULT_CLOSE_SCALE = 10000.0
@@ -149,6 +150,7 @@ class FeatureVector:
     market_volatility: float
     close_change_pct: float = 0.0
     volatility_change: float = 0.0
+    elapsed_time: float = 0.0
 
     @classmethod
     def from_market_state(
@@ -160,6 +162,7 @@ class FeatureVector:
         market_volatility: float,
         previous_close: float | None = None,
         previous_volatility: float | None = None,
+        elapsed_time: float = 0.0,
     ) -> "FeatureVector":
         close_change_pct = 0.0
         if previous_close is not None and abs(previous_close) > 1e-12:
@@ -176,6 +179,7 @@ class FeatureVector:
             market_volatility=float(market_volatility),
             close_change_pct=float(close_change_pct),
             volatility_change=float(volatility_change),
+            elapsed_time=float(elapsed_time),
         )
 
     def as_list(self, close_scale: float = DEFAULT_CLOSE_SCALE) -> list[float]:
@@ -185,6 +189,7 @@ class FeatureVector:
             float(self.market_volatility),
             max(min(float(self.close_change_pct), 1.0), -1.0),
             max(min(float(self.volatility_change), 1.0), -1.0),
+            float(self.elapsed_time) / 30.0,
         ]
 
 
@@ -380,16 +385,26 @@ def _extract_required_float(record: dict[str, Any], keys: Sequence[str]) -> floa
 def build_feature_vectors(
     records: Sequence[dict[str, Any]],
     sentiment_score: float | None = None,
+    document_date: str | None = None,
 ) -> list[FeatureVector]:
     vectors: list[FeatureVector] = []
     previous_close: float | None = None
     previous_volatility: float | None = None
+
+    parsed_doc_date: datetime.date | None = None
+    if document_date:
+        parsed_doc_date = datetime.date.fromisoformat(document_date)
 
     sorted_records = sorted(records, key=lambda item: str(item.get("date", item.get("timestamp", ""))))
     for record in sorted_records:
         date_value = str(record.get("date", record.get("timestamp", "")))
         if not date_value:
             continue
+
+        elapsed_time = 0.0
+        if parsed_doc_date is not None:
+            record_date = datetime.date.fromisoformat(date_value[:10])
+            elapsed_time = float((record_date - parsed_doc_date).days)
 
         close_value = _extract_required_float(record, ("close", "market_close"))
         volatility_value = _extract_required_float(
@@ -405,6 +420,7 @@ def build_feature_vectors(
                 market_volatility=volatility_value,
                 previous_close=previous_close,
                 previous_volatility=previous_volatility,
+                elapsed_time=elapsed_time,
             )
         )
         previous_close = close_value

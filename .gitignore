@@ -32,7 +32,6 @@ models/
 *.bin
 *.safetensors
 
-# Project notes to ignore
-PHASE_1_MVP.md
-PHASE_2_RESEARCH DATA.md
-PROJECT_CONTEXT.md
+# Ignore all root markdown files except README
+/*.md
+!README.md

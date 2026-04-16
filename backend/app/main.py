@@ -113,7 +113,7 @@ def _build_analyze_response(
         steps=horizon_steps,
     )
 
-    history_vectors = build_feature_vectors(market_history, sentiment_score=float(sentiment["score"]))
+    history_vectors = build_feature_vectors(market_history, sentiment_score=float(sentiment["score"]), document_date=payload.date)
     forecast = forecast_quantitative_series(
         vectors=history_vectors,
         forecast_mode=mode,
@@ -150,7 +150,7 @@ def _run_real_train_job(job_id: str, payload: AnalyzeRequest) -> None:
             symbol=payload.symbol,
             history_length=REAL_TRAIN_HISTORY_LENGTH,
         )
-        history_vectors = build_feature_vectors(market_history, sentiment_score=float(sentiment["score"]))
+        history_vectors = build_feature_vectors(market_history, sentiment_score=float(sentiment["score"]), document_date=payload.date)
 
         # Real Train intentionally runs a stronger checkpoint update over 252-day context.
         bootstrap_checkpoint(
@@ -220,6 +220,7 @@ def analyze(payload: AnalyzeRequest):
             warmup_vectors = build_feature_vectors(
                 warmup_history,
                 sentiment_score=float(warmup_sentiment["score"]),
+                document_date=payload.date,
             )
             bootstrap_checkpoint(
                 vectors=warmup_vectors,
