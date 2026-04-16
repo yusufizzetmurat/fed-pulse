@@ -17,6 +17,8 @@ from torch.utils.data import DataLoader, TensorDataset
 
 SEQUENCE_LENGTH = 5
 FEATURE_SIZE = 6  # [sentiment_score, market_close, market_volatility, close_change_pct, volatility_change, elapsed_time]
+SENTIMENT_FEATURE_INDEX = 0
+ELAPSED_TIME_FEATURE_INDEX = 5
 FORECAST_CONFIDENCE_LEVEL = 0.8
 CONFIDENCE_Z_SCORE = 1.2816  # Approximate central 80% interval
 DEFAULT_CLOSE_SCALE = 10000.0
@@ -29,6 +31,7 @@ DEFAULT_HIDDEN_SIZE = 64
 DEFAULT_NUM_LAYERS = 2
 DEFAULT_DROPOUT = 0.15
 DEFAULT_HEAD_HIDDEN_SIZE = 32
+DEFAULT_INITIAL_DECAY_RATE = 0.1
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
@@ -46,6 +49,7 @@ class ModelConfig:
     num_layers: int = DEFAULT_NUM_LAYERS
     dropout: float = DEFAULT_DROPOUT
     head_hidden_size: int = DEFAULT_HEAD_HIDDEN_SIZE
+    initial_decay_rate: float = DEFAULT_INITIAL_DECAY_RATE
 
     @classmethod
     def from_model(cls, model: "ForecasterModel") -> "ModelConfig":
@@ -55,6 +59,7 @@ class ModelConfig:
             num_layers=model.num_layers,
             dropout=model.dropout,
             head_hidden_size=model.head_hidden_size,
+            initial_decay_rate=model.initial_decay_rate,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -101,6 +106,31 @@ class TrainingResult:
     summary: TrainingRunSummary
 
 
+class TimeDecayAttention(nn.Module):
+    """Dampens the sentiment feature by exp(-lambda * elapsed_time) per timestep.
+
+    lambda = softplus(raw_lambda) so it stays non-negative while remaining
+    smoothly differentiable. elapsed_time is read from feature index 5 of the
+    input tensor (days since the FOMC document, normalized by 30 upstream).
+    """
+
+    def __init__(self, initial_decay_rate: float = DEFAULT_INITIAL_DECAY_RATE):
+        super().__init__()
+        raw_init = math.log(math.expm1(max(float(initial_decay_rate), 1e-6)))
+        self.raw_lambda = nn.Parameter(torch.tensor(raw_init, dtype=torch.float32))
+
+    @property
+    def decay_rate(self) -> torch.Tensor:
+        return F.softplus(self.raw_lambda)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        elapsed = x[..., ELAPSED_TIME_FEATURE_INDEX]
+        decay = torch.exp(-self.decay_rate * elapsed)
+        out = x.clone()
+        out[..., SENTIMENT_FEATURE_INDEX] = out[..., SENTIMENT_FEATURE_INDEX] * decay
+        return out
+
+
 class ForecasterModel(nn.Module):
     def __init__(
         self,
@@ -109,6 +139,7 @@ class ForecasterModel(nn.Module):
         num_layers: int = DEFAULT_NUM_LAYERS,
         dropout: float = DEFAULT_DROPOUT,
         head_hidden_size: int = DEFAULT_HEAD_HIDDEN_SIZE,
+        initial_decay_rate: float = DEFAULT_INITIAL_DECAY_RATE,
     ):
         super().__init__()
         self.input_size = input_size
@@ -116,6 +147,8 @@ class ForecasterModel(nn.Module):
         self.num_layers = num_layers
         self.dropout = dropout
         self.head_hidden_size = head_hidden_size
+        self.initial_decay_rate = float(initial_decay_rate)
+        self.time_decay = TimeDecayAttention(initial_decay_rate)
         lstm_dropout = dropout if num_layers > 1 else 0.0
         self.lstm = nn.LSTM(
             input_size=input_size,
@@ -133,6 +166,7 @@ class ForecasterModel(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.time_decay(x)
         output, _ = self.lstm(x)
         last_step = output[:, -1, :]
         raw = self.head(last_step)
@@ -226,6 +260,7 @@ def _coerce_model_config(model_config: ModelConfig | dict[str, Any] | None = Non
             num_layers=int(model_config.get("num_layers", DEFAULT_NUM_LAYERS)),
             dropout=float(model_config.get("dropout", DEFAULT_DROPOUT)),
             head_hidden_size=int(model_config.get("head_hidden_size", DEFAULT_HEAD_HIDDEN_SIZE)),
+            initial_decay_rate=float(model_config.get("initial_decay_rate", DEFAULT_INITIAL_DECAY_RATE)),
         )
     return ModelConfig()
 
@@ -340,7 +375,7 @@ def _load_model_checkpoint(
     if payload is None:
         return None
     state_dict = payload["model_state_dict"]
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict=False)
     return payload
 
 
@@ -358,7 +393,7 @@ def _get_model() -> ForecasterModel:
                 device=device,
             )
             if payload is not None:
-                model.load_state_dict(payload["model_state_dict"])
+                model.load_state_dict(payload["model_state_dict"], strict=False)
             model.eval()
             _model = model
             _model_artifact_metadata = _checkpoint_metadata(payload, BEST_MODEL_PATH, model=model)
