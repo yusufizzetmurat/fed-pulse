@@ -7,8 +7,13 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from app.services.forecaster import (  # noqa: E402
+    ELAPSED_TIME_FEATURE_INDEX,
+    FEATURE_SIZE,
     FeatureVector,
+    ForecasterModel,
     ModelConfig,
+    SENTIMENT_FEATURE_INDEX,
+    TimeDecayAttention,
     build_feature_vectors,
     build_last5_sequence,
     forecast_quantitative_series,
@@ -157,3 +162,78 @@ def test_train_model_checkpoint_contains_training_metadata(tmp_path):
     assert payload["training_summary"]["metrics"]["combined_rmse"] == pytest.approx(
         result.summary.metrics.combined_rmse
     )
+
+
+def _time_decay_input(batch: int, seq_len: int, elapsed: float) -> torch.Tensor:
+    x = torch.randn(batch, seq_len, FEATURE_SIZE)
+    x[..., ELAPSED_TIME_FEATURE_INDEX] = elapsed
+    return x
+
+
+def test_time_decay_attention_preserves_shape():
+    layer = TimeDecayAttention()
+    x = _time_decay_input(batch=2, seq_len=5, elapsed=0.5)
+    out = layer(x)
+    assert out.shape == x.shape
+    assert out.dtype == x.dtype
+
+
+def test_time_decay_attention_identity_when_elapsed_is_zero():
+    layer = TimeDecayAttention()
+    x = _time_decay_input(batch=3, seq_len=5, elapsed=0.0)
+    out = layer(x)
+    assert torch.allclose(out, x, atol=1e-6)
+
+
+def test_time_decay_attention_dampens_sentiment_for_positive_elapsed():
+    layer = TimeDecayAttention(initial_decay_rate=0.5)
+    x = torch.ones(2, 5, FEATURE_SIZE)
+    x[..., SENTIMENT_FEATURE_INDEX] = 1.0
+    x[..., ELAPSED_TIME_FEATURE_INDEX] = torch.tensor([0.0, 0.2, 0.4, 0.6, 0.8])
+    out = layer(x)
+    sentiment_out = out[..., SENTIMENT_FEATURE_INDEX]
+    # elapsed=0 leaves sentiment untouched; later timesteps decay monotonically.
+    assert sentiment_out[0, 0].item() == pytest.approx(1.0, abs=1e-6)
+    for b in range(sentiment_out.shape[0]):
+        diffs = sentiment_out[b, 1:] - sentiment_out[b, :-1]
+        assert torch.all(diffs < 0)
+    # Non-sentiment columns must be untouched.
+    for idx in range(FEATURE_SIZE):
+        if idx == SENTIMENT_FEATURE_INDEX:
+            continue
+        assert torch.allclose(out[..., idx], x[..., idx])
+
+
+def test_time_decay_attention_dampens_sentiment_for_negative_elapsed():
+    layer = TimeDecayAttention(initial_decay_rate=0.5)
+    x = torch.ones(2, 5, FEATURE_SIZE)
+    x[..., SENTIMENT_FEATURE_INDEX] = 1.0
+    x[..., ELAPSED_TIME_FEATURE_INDEX] = torch.tensor([0.0, -0.2, -0.4, -0.6, -0.8])
+    out = layer(x)
+    sentiment_out = out[..., SENTIMENT_FEATURE_INDEX]
+    # Negative (past) elapsed must damp, not amplify — decay is symmetric in time.
+    assert sentiment_out[0, 0].item() == pytest.approx(1.0, abs=1e-6)
+    assert torch.all(sentiment_out <= 1.0 + 1e-6)
+    for b in range(sentiment_out.shape[0]):
+        diffs = sentiment_out[b, 1:] - sentiment_out[b, :-1]
+        assert torch.all(diffs < 0)
+
+
+def test_time_decay_attention_gradient_flows_to_raw_lambda():
+    layer = TimeDecayAttention()
+    x = _time_decay_input(batch=2, seq_len=5, elapsed=0.5)
+    out = layer(x)
+    out.sum().backward()
+    assert layer.raw_lambda.grad is not None
+    assert layer.raw_lambda.grad.abs().item() > 0.0
+
+
+def test_forecaster_model_exposes_time_decay_layer():
+    model = ForecasterModel()
+    assert isinstance(model.time_decay, TimeDecayAttention)
+    x = torch.randn(1, 5, FEATURE_SIZE)
+    x[..., ELAPSED_TIME_FEATURE_INDEX] = 0.1
+    out = model(x)
+    assert out.shape == (1, 2)
+    # Volatility head output is non-negative by construction.
+    assert out[0, 1].item() >= 0.0
