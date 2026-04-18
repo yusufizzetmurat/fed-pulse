@@ -204,6 +204,21 @@ def test_time_decay_attention_dampens_sentiment_for_positive_elapsed():
         assert torch.allclose(out[..., idx], x[..., idx])
 
 
+def test_time_decay_attention_dampens_sentiment_for_negative_elapsed():
+    layer = TimeDecayAttention(initial_decay_rate=0.5)
+    x = torch.ones(2, 5, FEATURE_SIZE)
+    x[..., SENTIMENT_FEATURE_INDEX] = 1.0
+    x[..., ELAPSED_TIME_FEATURE_INDEX] = torch.tensor([0.0, -0.2, -0.4, -0.6, -0.8])
+    out = layer(x)
+    sentiment_out = out[..., SENTIMENT_FEATURE_INDEX]
+    # Negative (past) elapsed must damp, not amplify — decay is symmetric in time.
+    assert sentiment_out[0, 0].item() == pytest.approx(1.0, abs=1e-6)
+    assert torch.all(sentiment_out <= 1.0 + 1e-6)
+    for b in range(sentiment_out.shape[0]):
+        diffs = sentiment_out[b, 1:] - sentiment_out[b, :-1]
+        assert torch.all(diffs < 0)
+
+
 def test_time_decay_attention_gradient_flows_to_raw_lambda():
     layer = TimeDecayAttention()
     x = _time_decay_input(batch=2, seq_len=5, elapsed=0.5)

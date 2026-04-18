@@ -82,7 +82,7 @@ def test_analyze_contract_e2e_with_real_forecaster(monkeypatch):
     )
     assert response.status_code == 200
     payload = response.json()
-    assert set(payload.keys()) == {"sentiment", "prediction", "market", "series"}
+    assert set(payload.keys()) == {"sentiment", "prediction", "market", "model", "series"}
     assert payload["prediction"]["horizon"] == "3d"
     assert len(payload["series"]["forecast_close"]) == 3
     assert len(payload["series"]["forecast_volatility"]) == 3

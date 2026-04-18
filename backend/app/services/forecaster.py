@@ -5,6 +5,7 @@ import csv
 import datetime
 import json
 import math
+import sys
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -107,11 +108,13 @@ class TrainingResult:
 
 
 class TimeDecayAttention(nn.Module):
-    """Dampens the sentiment feature by exp(-lambda * elapsed_time) per timestep.
+    """Dampens the sentiment feature by exp(-lambda * |elapsed_time|) per timestep.
 
     lambda = softplus(raw_lambda) so it stays non-negative while remaining
     smoothly differentiable. elapsed_time is read from feature index 5 of the
-    input tensor (days since the FOMC document, normalized by 30 upstream).
+    input tensor (days between the FOMC document and the record, normalized by
+    30 upstream). The absolute value makes decay symmetric in time so past bars
+    (elapsed < 0) attenuate rather than amplify.
     """
 
     def __init__(self, initial_decay_rate: float = DEFAULT_INITIAL_DECAY_RATE):
@@ -124,11 +127,12 @@ class TimeDecayAttention(nn.Module):
         return F.softplus(self.raw_lambda)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        elapsed = x[..., ELAPSED_TIME_FEATURE_INDEX]
-        decay = torch.exp(-self.decay_rate * elapsed)
-        out = x.clone()
-        out[..., SENTIMENT_FEATURE_INDEX] = out[..., SENTIMENT_FEATURE_INDEX] * decay
-        return out
+        elapsed = x[..., ELAPSED_TIME_FEATURE_INDEX].abs()
+        decay = torch.exp(-self.decay_rate * elapsed).unsqueeze(-1)
+        feature_mask = torch.zeros(x.shape[-1], dtype=x.dtype, device=x.device)
+        feature_mask[SENTIMENT_FEATURE_INDEX] = 1.0
+        scale = (1.0 - feature_mask) + decay * feature_mask
+        return x * scale
 
 
 class ForecasterModel(nn.Module):
@@ -265,14 +269,38 @@ def _coerce_model_config(model_config: ModelConfig | dict[str, Any] | None = Non
     return ModelConfig()
 
 
+def _checkpoint_input_size(payload: dict[str, Any]) -> int | None:
+    model_config = payload.get("model_config")
+    if isinstance(model_config, dict) and "input_size" in model_config:
+        try:
+            return int(model_config["input_size"])
+        except (TypeError, ValueError):
+            return None
+    if "input_size" in payload:
+        try:
+            return int(payload["input_size"])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _read_checkpoint_payload(checkpoint_path: Path, device: torch.device) -> dict[str, Any] | None:
     if not checkpoint_path.exists():
         return None
 
     payload = torch.load(checkpoint_path, map_location=device)
-    if isinstance(payload, dict) and "model_state_dict" in payload:
-        return payload
-    return {"model_state_dict": payload}
+    if not (isinstance(payload, dict) and "model_state_dict" in payload):
+        payload = {"model_state_dict": payload}
+
+    saved_input_size = _checkpoint_input_size(payload)
+    if saved_input_size is not None and saved_input_size != FEATURE_SIZE:
+        print(
+            f"[forecaster] ignoring checkpoint {checkpoint_path}: input_size={saved_input_size} "
+            f"incompatible with current FEATURE_SIZE={FEATURE_SIZE}",
+            file=sys.stderr,
+        )
+        return None
+    return payload
 
 
 def _metrics_from_payload(payload: dict[str, Any] | None) -> EvaluationMetrics | None:
@@ -366,6 +394,18 @@ def _save_model_checkpoint(model: ForecasterModel, checkpoint_path: Path, summar
     torch.save(_checkpoint_payload(model, summary), checkpoint_path)
 
 
+def _load_state_dict_loose(model: ForecasterModel, state_dict: dict[str, Any], source: str) -> None:
+    """Load a checkpoint non-strictly and surface any missing/unexpected keys."""
+    result = model.load_state_dict(state_dict, strict=False)
+    missing = list(getattr(result, "missing_keys", []) or [])
+    unexpected = list(getattr(result, "unexpected_keys", []) or [])
+    if missing or unexpected:
+        print(
+            f"[forecaster] checkpoint {source}: missing={missing} unexpected={unexpected}",
+            file=sys.stderr,
+        )
+
+
 def _load_model_checkpoint(
     model: ForecasterModel,
     checkpoint_path: Path,
@@ -374,8 +414,7 @@ def _load_model_checkpoint(
     payload = _read_checkpoint_payload(checkpoint_path, device)
     if payload is None:
         return None
-    state_dict = payload["model_state_dict"]
-    model.load_state_dict(state_dict, strict=False)
+    _load_state_dict_loose(model, payload["model_state_dict"], str(checkpoint_path))
     return payload
 
 
@@ -393,7 +432,7 @@ def _get_model() -> ForecasterModel:
                 device=device,
             )
             if payload is not None:
-                model.load_state_dict(payload["model_state_dict"], strict=False)
+                _load_state_dict_loose(model, payload["model_state_dict"], str(BEST_MODEL_PATH))
             model.eval()
             _model = model
             _model_artifact_metadata = _checkpoint_metadata(payload, BEST_MODEL_PATH, model=model)
@@ -928,9 +967,9 @@ def _build_confidence_bands(
         close_width = max(pred_close, 1.0) * close_sigma * CONFIDENCE_Z_SCORE * horizon_scale
         vol_width = vol_sigma * CONFIDENCE_Z_SCORE * horizon_scale
 
-        forecast_close_lower.append(max(0.0, pred_close - close_width))
+        forecast_close_lower.append(min(max(0.0, pred_close - close_width), pred_close))
         forecast_close_upper.append(pred_close + close_width)
-        forecast_vol_lower.append(max(0.0, pred_vol - vol_width))
+        forecast_vol_lower.append(min(max(0.0, pred_vol - vol_width), pred_vol))
         forecast_vol_upper.append(pred_vol + vol_width)
 
     return (
