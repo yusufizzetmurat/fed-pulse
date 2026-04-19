@@ -57,6 +57,10 @@ def _set_all_seeds(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def _hf_token() -> str | None:
+    return os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN") or None
+
+
 def _load_registry_rows(package_dir: Path) -> list[EvalRow]:
     path = package_dir / "registry_normalized.jsonl"
     rows: list[EvalRow] = []
@@ -194,13 +198,17 @@ def main() -> int:
         )
     print(f"[pilot] fold={args.fold_id} train_rows={len(train_rows)} test_rows={len(test_rows)}")
 
-    tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
+    hf_token = _hf_token()
+    if hf_token:
+        print(f"[pilot] using HF token (len={len(hf_token)})")
+    tokenizer = AutoTokenizer.from_pretrained(args.checkpoint, token=hf_token)
     model = AutoModelForSequenceClassification.from_pretrained(
         args.checkpoint,
         num_labels=len(LABELS),
         id2label=ID2LABEL,
         label2id=LABEL2ID,
         ignore_mismatched_sizes=True,
+        token=hf_token,
     )
 
     train_ds = TextClassificationDataset(train_rows, tokenizer, max_length=args.max_length)
