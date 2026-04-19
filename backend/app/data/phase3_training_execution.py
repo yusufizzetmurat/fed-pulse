@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
 import statistics
 import time
@@ -12,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import torch
 from transformers import pipeline
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -33,12 +36,37 @@ MODEL_SPECS = {
     "fomc_roberta": {
         "model_version": "mv_fomc_roberta_fast_v1.0.0",
         "checkpoints": [
-            "gtfintechlab/fomc-roberta-any-exp",
+            # Chen et al. 2023 FinBERT-FOMC with Sentiment Focus relabelling.
+            # Public on HF, outputs {Positive, Negative, Neutral} which
+            # _map_prediction_label converts to {hawkish, dovish, neutral}.
+            "ZiweiChen/FinBERT-FOMC",
+            # Primary target for Phase 4 (gated; requires HF access + token).
+            "gtfintechlab/FOMC-RoBERTa",
             "cardiffnlp/twitter-roberta-base-sentiment-latest",
             "distilbert-base-uncased-finetuned-sst-2-english",
         ],
     },
 }
+
+SANITY_MODELS = {
+    "majority": {
+        "model_version": "mv_sanity_majority_v1.0.0",
+        "strategy": "majority",
+    },
+    "random_class": {
+        "model_version": "mv_sanity_random_v1.0.0",
+        "strategy": "random",
+    },
+}
+
+
+def _set_all_seeds(seed: int) -> None:
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 @dataclass
@@ -57,7 +85,11 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--training-package-id", required=True, help="Training package id under data/processed.")
     parser.add_argument("--mode", choices=("smoke", "full"), default="smoke")
-    parser.add_argument("--model", choices=tuple(MODEL_SPECS.keys()), default="bert")
+    parser.add_argument(
+        "--model",
+        choices=tuple(list(MODEL_SPECS.keys()) + list(SANITY_MODELS.keys())),
+        default="bert",
+    )
     parser.add_argument("--seed", type=int, default=11, help="Smoke-mode seed.")
     parser.add_argument("--owner", default="unknown")
     parser.add_argument("--artifact-root", default=str(DEFAULT_ARTIFACT_ROOT))
@@ -241,6 +273,31 @@ def _latency_summary(latencies_ms: list[float]) -> dict[str, float]:
     return {"p50_ms": _pct(0.50), "p95_ms": _pct(0.95)}
 
 
+def _majority_label(rows: list[EvalRow]) -> str:
+    counter = Counter(row.label for row in rows)
+    return counter.most_common(1)[0][0]
+
+
+def _sanity_predict(
+    strategy: str,
+    texts: list[str],
+    *,
+    rng: random.Random,
+    majority_label: str,
+) -> tuple[list[str], list[float]]:
+    t0 = time.perf_counter()
+    if strategy == "majority":
+        preds = [majority_label] * len(texts)
+    elif strategy == "random":
+        preds = [rng.choice(list(LABELS)) for _ in texts]
+    else:
+        preds = ["neutral"] * len(texts)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    per_item_ms = elapsed_ms / max(len(texts), 1) if texts else 0.0
+    latencies = [per_item_ms] * len(texts)
+    return preds, latencies
+
+
 def _run_single(
     *,
     model_key: str,
@@ -251,26 +308,36 @@ def _run_single(
     max_eval_rows_per_fold: int,
     batch_size: int,
 ) -> dict[str, Any]:
-    model_spec = MODEL_SPECS[model_key]
-    classifier = None
-    checkpoint_used = ""
-    checkpoint_errors: list[str] = []
-    for checkpoint in model_spec["checkpoints"]:
-        try:
-            classifier = pipeline(
-                "text-classification",
-                model=checkpoint,
-                return_all_scores=True,
+    _set_all_seeds(seed)
+
+    is_sanity = model_key in SANITY_MODELS
+    if is_sanity:
+        model_spec = SANITY_MODELS[model_key]
+        classifier = None
+        checkpoint_used = f"sanity:{model_spec['strategy']}"
+        majority = _majority_label(rows)
+        sanity_rng = random.Random(seed)
+    else:
+        model_spec = MODEL_SPECS[model_key]
+        classifier = None
+        checkpoint_used = ""
+        checkpoint_errors: list[str] = []
+        for checkpoint in model_spec["checkpoints"]:
+            try:
+                classifier = pipeline(
+                    "text-classification",
+                    model=checkpoint,
+                    return_all_scores=True,
+                )
+                checkpoint_used = checkpoint
+                break
+            except Exception as exc:  # pragma: no cover - network/model availability variability
+                checkpoint_errors.append(f"{checkpoint}: {exc}")
+        if classifier is None:
+            raise RuntimeError(
+                "Unable to load any checkpoint for "
+                f"{model_key}. Errors: {' | '.join(checkpoint_errors)}"
             )
-            checkpoint_used = checkpoint
-            break
-        except Exception as exc:  # pragma: no cover - network/model availability variability
-            checkpoint_errors.append(f"{checkpoint}: {exc}")
-    if classifier is None:
-        raise RuntimeError(
-            "Unable to load any checkpoint for "
-            f"{model_key}. Errors: {' | '.join(checkpoint_errors)}"
-        )
 
     y_true: list[str] = []
     y_pred: list[str] = []
@@ -286,7 +353,15 @@ def _run_single(
 
         texts = [row.text for row in sampled]
         truths = [row.label for row in sampled]
-        preds, fold_latencies = _infer_labels(classifier, texts, batch_size=batch_size)
+        if is_sanity:
+            preds, fold_latencies = _sanity_predict(
+                model_spec["strategy"],
+                texts,
+                rng=sanity_rng,
+                majority_label=majority,
+            )
+        else:
+            preds, fold_latencies = _infer_labels(classifier, texts, batch_size=batch_size)
 
         y_true.extend(truths)
         y_pred.extend(preds)
@@ -305,11 +380,15 @@ def _run_single(
     reg_like_metrics = _compute_rmse_mape(y_true, y_pred)
     latency = _latency_summary(latencies_ms)
 
+    fallback_used = False
+    if not is_sanity:
+        fallback_used = checkpoint_used != model_spec["checkpoints"][0]
+
     metrics = {
         "model_key": model_key,
         "model_version": model_spec["model_version"],
         "checkpoint": checkpoint_used,
-        "checkpoint_fallback_used": checkpoint_used != model_spec["checkpoints"][0],
+        "checkpoint_fallback_used": fallback_used,
         "seed": seed,
         "evaluated_rows": len(y_true),
         "classification": cls_metrics,
@@ -350,6 +429,7 @@ def main() -> int:
         run_plan = [(args.model, args.seed)]
     else:
         run_plan = [(model_key, seed) for model_key in MODEL_SPECS for seed in DEFAULT_SEEDS]
+        run_plan += [(model_key, seed) for model_key in SANITY_MODELS for seed in DEFAULT_SEEDS]
 
     all_results: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
