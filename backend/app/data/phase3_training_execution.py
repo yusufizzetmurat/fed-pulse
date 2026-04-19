@@ -69,6 +69,10 @@ def _set_all_seeds(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def _hf_token() -> str | None:
+    return os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN") or None
+
+
 @dataclass
 class EvalRow:
     text: str
@@ -322,12 +326,14 @@ def _run_single(
         classifier = None
         checkpoint_used = ""
         checkpoint_errors: list[str] = []
+        hf_token = _hf_token()
         for checkpoint in model_spec["checkpoints"]:
             try:
                 classifier = pipeline(
                     "text-classification",
                     model=checkpoint,
                     return_all_scores=True,
+                    token=hf_token,
                 )
                 checkpoint_used = checkpoint
                 break
