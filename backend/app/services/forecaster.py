@@ -32,7 +32,8 @@ DEFAULT_HIDDEN_SIZE = 64
 DEFAULT_NUM_LAYERS = 2
 DEFAULT_DROPOUT = 0.15
 DEFAULT_HEAD_HIDDEN_SIZE = 32
-DEFAULT_INITIAL_DECAY_RATE = 0.1
+DEFAULT_INITIAL_DECAY_RATE = 1.5
+DEFAULT_CHUNK_DECAY_RATE = 1.0 / 30.0
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
@@ -135,6 +136,81 @@ class TimeDecayAttention(nn.Module):
         return x * scale
 
 
+class ChunkAttentionPooler(nn.Module):
+    """Variant B from the Phase 4 attention plan: attention over chunk embeddings
+    with values multiplicatively damped by exp(-lambda * |elapsed_days|).
+
+    A single learnable query token attends to the chunk embeddings (keys), and
+    the values are decayed by chunk-elapsed-time before the weighted sum. Output
+    is a single pooled vector per document plus the attention weights and decay
+    coefficients for downstream UI/visualization.
+    """
+
+    def __init__(
+        self,
+        embedding_size: int,
+        initial_decay_rate: float = DEFAULT_CHUNK_DECAY_RATE,
+    ):
+        super().__init__()
+        self.embedding_size = int(embedding_size)
+        raw_init = math.log(math.expm1(max(float(initial_decay_rate), 1e-6)))
+        self.raw_lambda = nn.Parameter(torch.tensor(raw_init, dtype=torch.float32))
+        self.q_proj = nn.Linear(self.embedding_size, self.embedding_size, bias=False)
+        self.k_proj = nn.Linear(self.embedding_size, self.embedding_size, bias=False)
+        self.v_proj = nn.Linear(self.embedding_size, self.embedding_size, bias=False)
+        self.query_token = nn.Parameter(torch.zeros(self.embedding_size))
+        nn.init.normal_(self.query_token, std=0.02)
+
+    @property
+    def decay_rate(self) -> torch.Tensor:
+        return F.softplus(self.raw_lambda)
+
+    def forward(
+        self,
+        embeddings: torch.Tensor,
+        elapsed_days: torch.Tensor,
+        mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        unbatched = embeddings.dim() == 2
+        if unbatched:
+            embeddings = embeddings.unsqueeze(0)
+            elapsed_days = elapsed_days.unsqueeze(0)
+            if mask is not None:
+                mask = mask.unsqueeze(0)
+
+        batch_size, num_chunks, dim = embeddings.shape
+        if dim != self.embedding_size:
+            raise ValueError(
+                f"ChunkAttentionPooler embedding_size={self.embedding_size} "
+                f"does not match input dim={dim}"
+            )
+
+        q = self.q_proj(self.query_token).expand(batch_size, dim)
+        k = self.k_proj(embeddings)
+        v = self.v_proj(embeddings)
+
+        decay_coeffs = torch.exp(-self.decay_rate * elapsed_days.abs())
+        if mask is not None:
+            decay_coeffs = decay_coeffs * mask
+        v_decayed = v * decay_coeffs.unsqueeze(-1)
+
+        scores = torch.einsum("bd,bnd->bn", q, k) / math.sqrt(dim)
+        if mask is not None:
+            scores = scores.masked_fill(mask == 0, float("-inf"))
+        weights = F.softmax(scores, dim=-1)
+        # If a row was fully masked, softmax produces NaNs — zero them out.
+        weights = torch.nan_to_num(weights, nan=0.0)
+        pooled = torch.einsum("bn,bnd->bd", weights, v_decayed)
+
+        if unbatched:
+            return pooled.squeeze(0), weights.squeeze(0), decay_coeffs.squeeze(0)
+        return pooled, weights, decay_coeffs
+
+
+DEFAULT_CHUNK_EMBEDDING_SIZE = 768
+DEFAULT_CHUNK_PROJECTION_DIM = 8
+
+
 class ForecasterModel(nn.Module):
     def __init__(
         self,
@@ -144,6 +220,11 @@ class ForecasterModel(nn.Module):
         dropout: float = DEFAULT_DROPOUT,
         head_hidden_size: int = DEFAULT_HEAD_HIDDEN_SIZE,
         initial_decay_rate: float = DEFAULT_INITIAL_DECAY_RATE,
+        *,
+        use_time_decay: bool = True,
+        use_chunk_attention: bool = False,
+        chunk_embedding_size: int = DEFAULT_CHUNK_EMBEDDING_SIZE,
+        chunk_projection_dim: int = DEFAULT_CHUNK_PROJECTION_DIM,
     ):
         super().__init__()
         self.input_size = input_size
@@ -152,10 +233,33 @@ class ForecasterModel(nn.Module):
         self.dropout = dropout
         self.head_hidden_size = head_hidden_size
         self.initial_decay_rate = float(initial_decay_rate)
+        self.use_time_decay = bool(use_time_decay)
+        self.use_chunk_attention = bool(use_chunk_attention)
+        self.chunk_embedding_size = int(chunk_embedding_size)
+        self.chunk_projection_dim = int(chunk_projection_dim) if self.use_chunk_attention else 0
         self.time_decay = TimeDecayAttention(initial_decay_rate)
+        if self.use_chunk_attention:
+            self.chunk_pooler: ChunkAttentionPooler | None = ChunkAttentionPooler(
+                embedding_size=self.chunk_embedding_size,
+                initial_decay_rate=DEFAULT_CHUNK_DECAY_RATE,
+            )
+            self.chunk_projection: nn.Linear | None = nn.Linear(
+                self.chunk_embedding_size, self.chunk_projection_dim, bias=True
+            )
+            # Zero-init so Variant B starts equivalent to baseline; the model
+            # only departs from the baseline subspace if the chunk signal
+            # actually reduces loss. Avoids drowning 6 base features under
+            # 8 dims of random-init noise on a small training set.
+            nn.init.zeros_(self.chunk_projection.weight)
+            nn.init.zeros_(self.chunk_projection.bias)
+        else:
+            self.chunk_pooler = None
+            self.chunk_projection = None
+        lstm_input_size = input_size + self.chunk_projection_dim
+        self.lstm_input_size = lstm_input_size
         lstm_dropout = dropout if num_layers > 1 else 0.0
         self.lstm = nn.LSTM(
-            input_size=input_size,
+            input_size=lstm_input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=lstm_dropout,
@@ -169,8 +273,27 @@ class ForecasterModel(nn.Module):
             nn.Linear(head_hidden_size, 2),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.time_decay(x)
+    def forward(
+        self,
+        x: torch.Tensor,
+        chunks: torch.Tensor | None = None,
+        elapsed_days: torch.Tensor | None = None,
+        chunk_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if self.use_time_decay:
+            x = self.time_decay(x)
+        if self.use_chunk_attention:
+            if self.chunk_pooler is None or self.chunk_projection is None:
+                raise RuntimeError("chunk_pooler not initialised but use_chunk_attention=True")
+            if chunks is None or elapsed_days is None:
+                raise ValueError("ForecasterModel requires chunks/elapsed_days when use_chunk_attention=True")
+            pooled, _, _ = self.chunk_pooler(chunks, elapsed_days, mask=chunk_mask)
+            projected = self.chunk_projection(pooled)
+            if projected.dim() == 1:
+                projected = projected.unsqueeze(0)
+            seq_len = x.shape[1]
+            broadcast = projected.unsqueeze(1).expand(-1, seq_len, -1)
+            x = torch.cat([x, broadcast], dim=-1)
         output, _ = self.lstm(x)
         last_step = output[:, -1, :]
         raw = self.head(last_step)
@@ -178,6 +301,21 @@ class ForecasterModel(nn.Module):
         # Volatility must stay non-negative, while close remains unconstrained.
         volatility = F.softplus(raw[:, 1:2])
         return torch.cat((close, volatility), dim=1)
+
+    def attention_diagnostics(
+        self,
+        chunks: torch.Tensor,
+        elapsed_days: torch.Tensor,
+        chunk_mask: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor] | None:
+        if not self.use_chunk_attention or self.chunk_pooler is None:
+            return None
+        pooled, weights, decay_coeffs = self.chunk_pooler(chunks, elapsed_days, mask=chunk_mask)
+        return {
+            "pooled": pooled.detach(),
+            "weights": weights.detach(),
+            "decay_coeffs": decay_coeffs.detach(),
+        }
 
 
 @dataclass
@@ -189,6 +327,7 @@ class FeatureVector:
     close_change_pct: float = 0.0
     volatility_change: float = 0.0
     elapsed_time: float = 0.0
+    text_embedding: list[float] | None = None
 
     @classmethod
     def from_market_state(
@@ -201,6 +340,7 @@ class FeatureVector:
         previous_close: float | None = None,
         previous_volatility: float | None = None,
         elapsed_time: float = 0.0,
+        text_embedding: list[float] | None = None,
     ) -> "FeatureVector":
         close_change_pct = 0.0
         if previous_close is not None and abs(previous_close) > 1e-12:
@@ -218,6 +358,7 @@ class FeatureVector:
             close_change_pct=float(close_change_pct),
             volatility_change=float(volatility_change),
             elapsed_time=float(elapsed_time),
+            text_embedding=list(text_embedding) if text_embedding is not None else None,
         )
 
     def as_list(self, close_scale: float = DEFAULT_CLOSE_SCALE) -> list[float]:
@@ -335,6 +476,9 @@ def _checkpoint_metadata(
     )
     payload_metrics = _metrics_from_payload(payload)
     metrics = adaptation_summary.metrics if adaptation_summary and adaptation_summary.metrics else payload_metrics
+    decay_rate: float | None = None
+    if model is not None and hasattr(model, "time_decay"):
+        decay_rate = float(model.time_decay.decay_rate.detach().cpu().item())
     metadata: dict[str, Any] = {
         "checkpoint_path": str(checkpoint_path),
         "checkpoint_exists": checkpoint_path.exists(),
@@ -360,6 +504,8 @@ def _checkpoint_metadata(
         "adaptation_best_epoch": adaptation_summary.best_epoch if adaptation_summary else None,
         "adaptation_loss": metrics.loss if adaptation_summary and metrics else None,
         "adaptation_combined_rmse": metrics.combined_rmse if adaptation_summary and metrics else None,
+        "decay_rate": decay_rate,
+        "chunk_attention": None,
     }
     return metadata
 
@@ -460,6 +606,7 @@ def build_feature_vectors(
     records: Sequence[dict[str, Any]],
     sentiment_score: float | None = None,
     document_date: str | None = None,
+    text_embedding: list[float] | None = None,
 ) -> list[FeatureVector]:
     vectors: list[FeatureVector] = []
     previous_close: float | None = None
@@ -486,6 +633,7 @@ def build_feature_vectors(
             ("volatility_5d", "market_volatility", "volatility"),
         )
         row_sentiment = float(record.get("sentiment_score", sentiment_score if sentiment_score is not None else 0.0))
+        row_embedding = record.get("text_embedding") if isinstance(record.get("text_embedding"), list) else text_embedding
         vectors.append(
             FeatureVector.from_market_state(
                 date=date_value,
@@ -495,6 +643,7 @@ def build_feature_vectors(
                 previous_close=previous_close,
                 previous_volatility=previous_volatility,
                 elapsed_time=elapsed_time,
+                text_embedding=row_embedding,
             )
         )
         previous_close = close_value

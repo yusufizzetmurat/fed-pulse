@@ -178,8 +178,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = _parse_args()
+def run_one(args: argparse.Namespace, *, artifact_dir: Path | None = None) -> dict[str, Any]:
     _set_all_seeds(args.seed)
 
     package_dir = DEFAULT_DATA_DIR / "processed" / args.training_package_id
@@ -214,7 +213,8 @@ def main() -> int:
     train_ds = TextClassificationDataset(train_rows, tokenizer, max_length=args.max_length)
 
     run_token = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    artifact_dir = Path(args.artifact_root) / f"pilot_finetune_{run_token}"
+    if artifact_dir is None:
+        artifact_dir = Path(args.artifact_root) / f"pilot_finetune_{run_token}"
     artifact_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_dir = artifact_dir / "hf_checkpoints"
 
@@ -299,6 +299,12 @@ def main() -> int:
 
     (artifact_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print(f"[pilot] metrics written to {artifact_dir / 'metrics.json'}")
+    return metrics
+
+
+def main() -> int:
+    args = _parse_args()
+    run_one(args)
     return 0
 
 

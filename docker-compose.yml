@@ -10,6 +10,9 @@ services:
       - ./backend:/app
       - ./tests:/app/tests:ro
       - ./data:/data
+    env_file:
+      - path: .env
+        required: false
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
@@ -27,6 +30,9 @@ services:
       - ./backend:/app
       - ./tests:/app/tests:ro
       - ./data:/data
+    env_file:
+      - path: .env
+        required: false
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app

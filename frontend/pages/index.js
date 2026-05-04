@@ -2,7 +2,10 @@ import { useMemo, useState } from "react";
 import axios from "axios";
 import {
   Area,
+  Bar,
+  BarChart,
   CartesianGrid,
+  Cell,
   ComposedChart,
   Legend,
   Line,
@@ -666,6 +669,42 @@ export default function Home() {
     );
   };
 
+  const chunkAttention = useMemo(() => {
+    const attention = result?.model?.chunk_attention;
+    if (!attention) return null;
+    const weights = Array.isArray(attention.weights) ? attention.weights : [];
+    const decay = Array.isArray(attention.decay_coeffs) ? attention.decay_coeffs : [];
+    const previews = Array.isArray(attention.chunk_previews) ? attention.chunk_previews : [];
+    if (!weights.length) return null;
+    const rows = weights.map((weight, idx) => ({
+      index: idx,
+      label: previews[idx] ? previews[idx].slice(0, 80) : `chunk ${idx}`,
+      preview: previews[idx] || "",
+      weight: Number(weight) || 0,
+      decay: Number(decay[idx]) || 0,
+      weightPct: ((Number(weight) || 0) * 100).toFixed(1),
+    }));
+    return {
+      rows,
+      lambdaValue: Number(attention.lambda_value) || 0,
+      chunkCount: attention.chunk_count ?? rows.length,
+    };
+  }, [result]);
+
+  const renderAttentionTooltip = ({ active, payload }) => {
+    if (!active || !payload || !payload.length) return null;
+    const row = payload[0]?.payload;
+    if (!row) return null;
+    return (
+      <div className="chartTooltip">
+        <p><strong>chunk {row.index}</strong></p>
+        <p>weight: {row.weightPct}%</p>
+        <p>decay coefficient: {row.decay.toFixed(3)}</p>
+        {row.preview ? <p className="attentionTooltipPreview">{row.preview}</p> : null}
+      </div>
+    );
+  };
+
   return (
     <main className="container">
       <header className="pageHeader">
@@ -885,6 +924,57 @@ export default function Home() {
               ))}
             </div>
           </section>
+
+          {chunkAttention ? (
+            <section className="card chartCard">
+              <h2>Attention Heatmap</h2>
+              <p className="chartNote">
+                Per-chunk attention weights from past FOMC documents within the lookback window.
+                Decay coefficient = exp(-λ·|Δt|), λ = {chunkAttention.lambdaValue.toFixed(4)} on
+                {" "}{chunkAttention.chunkCount} chunks.
+              </p>
+              <div className="chartWrap">
+                <ResponsiveContainer width="100%" height={Math.max(180, chunkAttention.rows.length * 28)}>
+                  <BarChart
+                    data={chunkAttention.rows}
+                    layout="vertical"
+                    margin={{ left: 16, right: 24, top: 8, bottom: 8 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#2f4264" />
+                    <XAxis
+                      type="number"
+                      domain={[0, 1]}
+                      tickFormatter={(v) => `${(v * 100).toFixed(0)}%`}
+                      tick={{ fill: "#b8c9ea", fontSize: 12 }}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="label"
+                      width={220}
+                      tick={{ fill: "#b8c9ea", fontSize: 11 }}
+                    />
+                    <Tooltip content={renderAttentionTooltip} />
+                    <Bar dataKey="weight" name="attention weight">
+                      {chunkAttention.rows.map((row) => (
+                        <Cell
+                          key={`weight-${row.index}`}
+                          fill={`rgba(56, 189, 248, ${0.25 + 0.75 * row.weight})`}
+                        />
+                      ))}
+                    </Bar>
+                    <Bar dataKey="decay" name="decay coefficient">
+                      {chunkAttention.rows.map((row) => (
+                        <Cell
+                          key={`decay-${row.index}`}
+                          fill={`rgba(244, 114, 182, ${0.2 + 0.6 * row.decay})`}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </section>
+          ) : null}
 
           <section className="card chartCard">
             <h2>Close Price Forecast</h2>

@@ -34,6 +34,14 @@ class PredictionResponse(BaseModel):
     horizon: str
 
 
+class ChunkAttentionDiagnostics(BaseModel):
+    chunk_count: int
+    weights: list[float]
+    decay_coeffs: list[float]
+    chunk_previews: list[str]
+    lambda_value: float
+
+
 class ModelDiagnosticsResponse(BaseModel):
     checkpoint_path: str
     checkpoint_exists: bool
@@ -51,6 +59,8 @@ class ModelDiagnosticsResponse(BaseModel):
     adaptation_best_epoch: int | None = None
     adaptation_loss: float | None = None
     adaptation_combined_rmse: float | None = None
+    decay_rate: float | None = None
+    chunk_attention: ChunkAttentionDiagnostics | None = None
 
 
 class ForecastSeriesResponse(BaseModel):
