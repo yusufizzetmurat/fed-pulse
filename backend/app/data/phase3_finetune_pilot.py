@@ -46,6 +46,7 @@ class EvalRow:
     text: str
     label: str
     event_date: str
+    record_id: str = ""
 
 
 def _set_all_seeds(seed: int) -> None:
@@ -74,8 +75,9 @@ def _load_registry_rows(package_dir: Path) -> list[EvalRow]:
         label = str(payload.get("mapped_label", "")).strip().lower()
         text = str(payload.get("text", "")).strip()
         event_date = str(payload.get("event_date", "")).strip()
+        record_id = str(payload.get("record_id", "")).strip()
         if label in LABELS and text and event_date:
-            rows.append(EvalRow(text=text, label=label, event_date=event_date))
+            rows.append(EvalRow(text=text, label=label, event_date=event_date, record_id=record_id))
     return rows
 
 
@@ -159,6 +161,36 @@ def _latency_summary(latencies_ms: list[float]) -> dict[str, float]:
         return values[idx]
 
     return {"p50_ms": _pct(0.50), "p95_ms": _pct(0.95)}
+
+
+def write_predictions_jsonl(
+    *,
+    record_ids: list[str],
+    gold_labels: list[str],
+    predicted_labels: list[str],
+    output_path: Path,
+) -> None:
+    """Persist per-row test predictions as JSONL.
+
+    Each line: {record_id, mapped_label, predicted_label}. Consumed by
+    app.data.source_type_stratified_analysis to compute per-source-type
+    metrics without re-running training. Raises ValueError if the three
+    input lists have different lengths.
+    """
+    if not (len(record_ids) == len(gold_labels) == len(predicted_labels)):
+        raise ValueError(
+            "record_ids, gold_labels, predicted_labels must have the same length; "
+            f"got {len(record_ids)}, {len(gold_labels)}, {len(predicted_labels)}"
+        )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as handle:
+        for rid, gold, pred in zip(record_ids, gold_labels, predicted_labels):
+            handle.write(
+                json.dumps(
+                    {"record_id": rid, "mapped_label": gold, "predicted_label": pred}
+                )
+                + "\n"
+            )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -306,6 +338,16 @@ def run_one(args: argparse.Namespace, *, artifact_dir: Path | None = None) -> di
 
     (artifact_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print(f"[pilot] metrics written to {artifact_dir / 'metrics.json'}")
+
+    predictions_path = artifact_dir / "predictions.jsonl"
+    write_predictions_jsonl(
+        record_ids=[r.record_id for r in test_rows],
+        gold_labels=y_true,
+        predicted_labels=y_pred,
+        output_path=predictions_path,
+    )
+    print(f"[pilot] predictions written to {predictions_path}")
+
     return metrics
 
 
