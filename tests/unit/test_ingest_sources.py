@@ -7,6 +7,7 @@ import pytest
 
 from app.data import ingest_sources
 from app.data.source_type import (
+    SOURCE_TYPE_BEIGE_BOOK,
     SOURCE_TYPE_CHAIR_SPEECH,
     SOURCE_TYPE_CONGRESSIONAL_TESTIMONY,
     SOURCE_TYPE_FOMC_MINUTES,
@@ -165,3 +166,24 @@ def test_iter_scraped_records_assigns_press_conference_source_type(tmp_path: Pat
     assert len(pc_records) == 1
     assert pc_records[0]["source"] == "scraped_fed"
     assert pc_records[0]["title"] == "FOMC Press Conference"
+
+
+def test_iter_scraped_records_assigns_beige_book_source_type(tmp_path: Path) -> None:
+    rows = [
+        {
+            "date": "2024-03-01",
+            "title": "Beige Book - March 2024",
+            "text": "Full report body",
+            "document_type": "beige_book",
+            "url": "https://www.federalreserve.gov/monetarypolicy/beigebook202403-summary.htm",
+            "scraped_at_utc": "2024-03-01T12:00:00+00:00",
+        }
+    ]
+    (tmp_path / "beige_book.json").write_text(json.dumps(rows), encoding="utf-8")
+
+    records = ingest_sources._iter_scraped_records(tmp_path)
+
+    bb_records = [r for r in records if r["source_type"] == SOURCE_TYPE_BEIGE_BOOK]
+    assert len(bb_records) == 1
+    assert bb_records[0]["source"] == "scraped_fed"
+    assert bb_records[0]["title"] == "Beige Book - March 2024"
