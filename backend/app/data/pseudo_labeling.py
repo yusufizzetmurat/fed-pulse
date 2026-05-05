@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Iterable, Sequence
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
@@ -72,6 +72,52 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     raise NotImplementedError("Wire orchestrator in Task 4.")
+
+
+def load_teacher(checkpoint_path: str):
+    """Load a fine-tuned text-classification pipeline from disk.
+
+    Imports transformers lazily so the module can be imported in tests
+    that stub the pipeline directly.
+    """
+
+    from transformers import (  # type: ignore
+        AutoModelForSequenceClassification,
+        AutoTokenizer,
+        TextClassificationPipeline,
+    )
+
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint_path)
+    model = AutoModelForSequenceClassification.from_pretrained(checkpoint_path)
+    return TextClassificationPipeline(
+        model=model,
+        tokenizer=tokenizer,
+        return_all_scores=True,
+        truncation=True,
+        max_length=512,
+    )
+
+
+def score_passages(passages: Iterable[str], *, pipeline) -> list[dict[str, Any]]:
+    """Score a batch of passages and return one prediction dict per passage.
+
+    Each prediction carries: predicted_label (argmax label string),
+    max_score (float), scores (dict of label -> float).
+    """
+
+    raw = pipeline(list(passages), batch_size=8)
+    predictions: list[dict[str, Any]] = []
+    for entry in raw:
+        scores = {item["label"]: float(item["score"]) for item in entry}
+        top_label = max(scores, key=scores.get)
+        predictions.append(
+            {
+                "predicted_label": top_label,
+                "max_score": scores[top_label],
+                "scores": scores,
+            }
+        )
+    return predictions
 
 
 if __name__ == "__main__":
