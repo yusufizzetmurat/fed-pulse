@@ -21,10 +21,17 @@ import torch
 
 from app.data.phase3_finetune_pilot import DEFAULT_ARTIFACT_ROOT, run_one
 
+# Local-label keys identify the encoder slot in artefact paths and report
+# tables. The legacy "fomc_roberta" key maps to ZiweiChen/FinBERT-FOMC for
+# Phase-4 reproducibility; the new gtfintechlab/FOMC-RoBERTa lives under a
+# distinct "gtfintechlab_fomc_roberta" key so the two never collide.
 ENCODERS: dict[str, str] = {
     "bert_base_uncased": "bert-base-uncased",
+    "distilbert_base_uncased": "distilbert-base-uncased",
     "finbert": "ProsusAI/finbert",
     "fomc_roberta": "ZiweiChen/FinBERT-FOMC",
+    "gtfintechlab_fomc_roberta": "gtfintechlab/FOMC-RoBERTa",
+    "deberta_v3_base": "microsoft/deberta-v3-base",
 }
 OFFICIAL_SEEDS: tuple[int, ...] = (11, 29, 47, 71, 97)
 
