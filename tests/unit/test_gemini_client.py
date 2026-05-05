@@ -54,3 +54,31 @@ def test_score_passage_strips_markdown_code_fences() -> None:
     result = gemini_client.score_passage("text", model=stub)
     assert result["label"] == "neutral"
     assert result["confidence"] == pytest.approx(0.5)
+
+
+class _StubEmbeddingModel:
+    def __init__(self, embeddings):
+        self._embeddings = list(embeddings)
+
+    def embed_content(self, content, **kwargs):
+        v = self._embeddings.pop(0)
+        wrapper = type("R", (), {"embedding": type("E", (), {"values": v})()})
+        return wrapper()
+
+
+def test_embed_text_returns_list_of_floats() -> None:
+    stub = _StubEmbeddingModel([[0.1, 0.2, 0.3, 0.4]])
+    result = gemini_client.embed_text("hello world", model=stub)
+    assert isinstance(result, list)
+    assert len(result) == 4
+    assert result == [0.1, 0.2, 0.3, 0.4]
+
+
+def test_embed_text_handles_empty_string_returns_zero_vector() -> None:
+    """Empty input should not raise; return a zero vector of the configured
+    default embedding dim (768)."""
+
+    result = gemini_client.embed_text("", model=None)
+    assert isinstance(result, list)
+    assert len(result) == 768
+    assert all(v == 0.0 for v in result)

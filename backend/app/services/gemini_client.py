@@ -106,3 +106,59 @@ class _ModelAdapter:
             config=types.GenerateContentConfig(temperature=0.0),
         )
         return response  # response has .text already
+
+
+DEFAULT_EMBEDDING_DIM = 768
+
+
+@traced("gemini.embed_text")
+def embed_text(text: str, *, model: Any) -> list[float]:
+    """Return a fixed-dim embedding for `text` using the supplied embedding model.
+
+    `model` must expose `embed_content(content, **kwargs)` returning an
+    object with `.embedding.values` (a list of floats). Empty input
+    returns a zero vector of length DEFAULT_EMBEDDING_DIM rather than
+    raising — callers can decide whether to skip those rows.
+    """
+
+    if not text:
+        return [0.0] * DEFAULT_EMBEDDING_DIM
+    response = model.embed_content(text)
+    values = list(response.embedding.values)
+    return [float(v) for v in values]
+
+
+def load_embedding_model(model_name: str = "gemini-embedding-001"):
+    """Load a Gemini embedding model. Lazy import."""
+
+    import os
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY is not set. Add it to fed-pulse/.env before running embedding precompute."
+        )
+
+    from google import genai  # type: ignore
+
+    client = genai.Client(api_key=api_key)
+    return _EmbeddingAdapter(client, model_name)
+
+
+class _EmbeddingAdapter:
+    """Adapter so the real SDK matches the stub interface (embed_content + .embedding.values)."""
+
+    def __init__(self, client: Any, model_name: str):
+        self._client = client
+        self._model_name = model_name
+
+    def embed_content(self, content: str, **kwargs):
+        response = self._client.models.embed_content(
+            model=self._model_name,
+            contents=content,
+        )
+        # The new google-genai client returns `.embeddings` (a list); we
+        # adapt to the .embedding.values single shape used by the stub.
+        values = response.embeddings[0].values
+        wrapper = type("R", (), {"embedding": type("E", (), {"values": values})()})
+        return wrapper()
