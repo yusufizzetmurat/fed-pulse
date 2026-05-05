@@ -211,6 +211,119 @@ DEFAULT_CHUNK_EMBEDDING_SIZE = 768
 DEFAULT_CHUNK_PROJECTION_DIM = 8
 
 
+class TemporalConvNet(nn.Module):
+    """Tiny TCN: two dilated 1D conv blocks with residual connections.
+
+    Input shape: [batch, seq_len, input_size]. Output: [batch, seq_len, hidden_size].
+    Causal padding via cropping so seq_len is preserved without leaking future
+    information. Returns (output, None) so the forward pass's
+    `output, _ = self.lstm(x)` destructuring works as for LSTM/GRU.
+    """
+
+    def __init__(self, input_size: int, hidden_size: int, dropout: float = 0.0) -> None:
+        super().__init__()
+        # Causal padding: pad left by (kernel - 1) * dilation, then crop to seq_len.
+        self.conv1 = nn.Conv1d(
+            in_channels=input_size,
+            out_channels=hidden_size,
+            kernel_size=3,
+            padding=2,  # (3 - 1) * dilation=1
+            dilation=1,
+        )
+        self.conv2 = nn.Conv1d(
+            in_channels=hidden_size,
+            out_channels=hidden_size,
+            kernel_size=3,
+            padding=4,  # (3 - 1) * dilation=2
+            dilation=2,
+        )
+        if input_size != hidden_size:
+            self.residual = nn.Conv1d(input_size, hidden_size, kernel_size=1)
+        else:
+            self.residual = nn.Identity()
+        self.dropout = nn.Dropout(dropout)
+        self.activation = nn.ReLU()
+
+    def forward(self, x):
+        # x: [batch, seq, feat] -> [batch, feat, seq] for Conv1d
+        seq_len = x.shape[1]
+        x_t = x.transpose(1, 2)
+        h = self.conv1(x_t)[:, :, :seq_len]  # crop right (causal)
+        h = self.activation(h)
+        h = self.dropout(h)
+        h = self.conv2(h)[:, :, :seq_len]
+        h = self.activation(h)
+        h = self.dropout(h)
+        if isinstance(self.residual, nn.Identity):
+            residual = x_t
+        else:
+            residual = self.residual(x_t)[:, :, :seq_len]
+        out = h + residual
+        # Back to [batch, seq, feat]
+        return out.transpose(1, 2), None
+
+
+class _SinusoidalPositionalEncoding(nn.Module):
+    """Standard sinusoidal positional encoding for sequences up to max_len."""
+
+    def __init__(self, hidden_size: int, max_len: int = 32) -> None:
+        super().__init__()
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, hidden_size, 2) * (-math.log(10000.0) / hidden_size)
+        )
+        pe = torch.zeros(max_len, hidden_size)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer("pe", pe.unsqueeze(0))
+
+    def forward(self, x):
+        return x + self.pe[:, : x.size(1), :]
+
+
+class SmallTransformer(nn.Module):
+    """Small Transformer encoder with sinusoidal positional encoding.
+
+    Two layers, four heads, batch_first. Output shape matches LSTM/GRU/TCN:
+    [batch, seq_len, hidden_size]. Returns (output, None) so the forward
+    pass's `output, _ = self.lstm(x)` destructuring continues to work.
+    """
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        num_layers: int = 2,
+        num_heads: int = 4,
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__()
+        if hidden_size % num_heads != 0:
+            raise ValueError(
+                f"hidden_size={hidden_size} must be divisible by num_heads={num_heads}"
+            )
+        self.input_proj = (
+            nn.Linear(input_size, hidden_size)
+            if input_size != hidden_size
+            else nn.Identity()
+        )
+        self.pos = _SinusoidalPositionalEncoding(hidden_size)
+        layer = nn.TransformerEncoderLayer(
+            d_model=hidden_size,
+            nhead=num_heads,
+            dim_feedforward=hidden_size * 2,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(layer, num_layers=num_layers)
+
+    def forward(self, x):
+        h = self.input_proj(x)
+        h = self.pos(h)
+        out = self.encoder(h)
+        return out, None
+
+
 class ForecasterModel(nn.Module):
     def __init__(
         self,
@@ -221,6 +334,7 @@ class ForecasterModel(nn.Module):
         head_hidden_size: int = DEFAULT_HEAD_HIDDEN_SIZE,
         initial_decay_rate: float = DEFAULT_INITIAL_DECAY_RATE,
         *,
+        model_type: str = "lstm",
         use_time_decay: bool = True,
         use_chunk_attention: bool = False,
         use_llm_embeddings: bool = False,
@@ -251,11 +365,17 @@ class ForecasterModel(nn.Module):
         eight-way ablation sweeps them as separate cells.
         """
         super().__init__()
+        _allowed_model_types = {"lstm", "gru", "tcn", "transformer"}
+        if model_type not in _allowed_model_types:
+            raise ValueError(
+                f"Unknown model_type: {model_type!r}. Allowed: lstm, gru, tcn, transformer"
+            )
         if use_chunk_attention and use_llm_embeddings:
             raise ValueError(
                 "use_chunk_attention and use_llm_embeddings are mutually exclusive. "
                 "Set at most one to True."
             )
+        self.model_type = model_type
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -290,13 +410,14 @@ class ForecasterModel(nn.Module):
         lstm_input_size = input_size + self.chunk_projection_dim
         self.lstm_input_size = lstm_input_size
         lstm_dropout = dropout if num_layers > 1 else 0.0
-        self.lstm = nn.LSTM(
+        self.recurrent_core = self._build_recurrent_core(
+            model_type=self.model_type,
             input_size=lstm_input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=lstm_dropout,
-            batch_first=True,
         )
+        self.lstm = self.recurrent_core  # alias for backward compatibility
         self.head = nn.Sequential(
             nn.LayerNorm(hidden_size),
             nn.Linear(hidden_size, head_hidden_size),
@@ -359,6 +480,48 @@ class ForecasterModel(nn.Module):
             "weights": weights.detach(),
             "decay_coeffs": decay_coeffs.detach(),
         }
+
+    @staticmethod
+    def _build_recurrent_core(
+        *,
+        model_type: str,
+        input_size: int,
+        hidden_size: int,
+        num_layers: int,
+        dropout: float,
+    ) -> nn.Module:
+        if model_type == "lstm":
+            return nn.LSTM(
+                input_size=input_size,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+                dropout=dropout if num_layers > 1 else 0.0,
+            )
+        if model_type == "gru":
+            return nn.GRU(
+                input_size=input_size,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+                dropout=dropout if num_layers > 1 else 0.0,
+            )
+        if model_type == "tcn":
+            return TemporalConvNet(
+                input_size=input_size,
+                hidden_size=hidden_size,
+                dropout=dropout,
+            )
+        if model_type == "transformer":
+            return SmallTransformer(
+                input_size=input_size,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                dropout=dropout,
+            )
+        raise ValueError(
+            f"Unknown model_type: {model_type!r}. Allowed: lstm, gru, tcn, transformer"
+        )
 
 
 @dataclass
