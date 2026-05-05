@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """Allowed source_type values and a small inference helper.
 
 source_type is finer-grained than document_type and is what makes the broader
 Fed-adjacent corpus ingestible with provenance tracking. The mapping is
 deterministic: same (document_type, title) input yields the same value.
 """
+
+from __future__ import annotations
 
 SOURCE_TYPE_FOMC_MINUTES = "fomc_minutes"
 SOURCE_TYPE_FOMC_STATEMENT = "fomc_statement"

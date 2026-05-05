@@ -33,6 +33,14 @@ from app.data.source_type import (
         ("beige_book", "Beige Book April 2024", SOURCE_TYPE_BEIGE_BOOK),
         ("unknown", "??", SOURCE_TYPE_UNKNOWN),
         ("", "", SOURCE_TYPE_UNKNOWN),
+        # Precedence: document_type wins over title keywords
+        ("statement", "Beige Book release", SOURCE_TYPE_FOMC_STATEMENT),
+        # Precedence: testimony rule fires before speech rule when title contains "Congress"
+        ("speech", "Speech to Congress about inflation", SOURCE_TYPE_CONGRESSIONAL_TESTIMONY),
+        # Precedence: press_conference rule fires before speech rule
+        ("press_conference", "Chair Powell press conference remarks", SOURCE_TYPE_PRESS_CONFERENCE),
+        # Precedence: press_conference title keyword fires before research document_type
+        ("research", "FOMC press conference research note", SOURCE_TYPE_PRESS_CONFERENCE),
     ],
 )
 def test_infer_source_type_returns_expected_value(
