@@ -158,6 +158,7 @@ def _build_dataset(
     sentiment_cache: dict[str, float] | None = None,
     llm_store_path: str | None = None,
     llm_max_chunks: int | None = None,
+    llm_embedding_size: int = 768,
 ) -> list[TrainingTuple]:
     """Build training tuples with both chunk (B) and LLM (C) tensors.
 
@@ -197,6 +198,7 @@ def _build_dataset(
                 anchor_date=row.event_date,
                 lookback_days=lookback_days,
                 max_chunks=_llm_max,
+                embedding_size=llm_embedding_size,
                 llm_store_path=llm_store_path,
             )
             llm_emb = llm_retrieval.embeddings.numpy()
@@ -204,7 +206,7 @@ def _build_dataset(
             llm_msk = llm_retrieval.mask.numpy()
         except FileNotFoundError:
             # LLM store not yet precomputed — fill with zeros so B-cells are unaffected.
-            llm_emb = np.zeros((_llm_max, 1), dtype=np.float32)
+            llm_emb = np.zeros((_llm_max, llm_embedding_size), dtype=np.float32)
             llm_elp = np.zeros((_llm_max,), dtype=np.float32)
             llm_msk = np.zeros((_llm_max,), dtype=np.float32)
 
@@ -452,22 +454,36 @@ def _heatmap_samples(
     pooler_state: ForecasterModel,
     device: torch.device,
     sample_count: int = 3,
+    use_llm_embeddings: bool = False,
 ) -> list[dict[str, Any]]:
     if pooler_state.chunk_pooler is None:
         return []
     pooler_state.eval()
     samples: list[dict[str, Any]] = []
-    indices = sorted(
-        range(len(val_tuples)),
-        key=lambda i: int(val_tuples[i].chunk_mask.sum()),
-        reverse=True,
-    )[:sample_count]
+    # For Variant C, pick samples by LLM mask; for Variant B, by chunk mask.
+    if use_llm_embeddings:
+        indices = sorted(
+            range(len(val_tuples)),
+            key=lambda i: int(val_tuples[i].llm_mask.sum()),
+            reverse=True,
+        )[:sample_count]
+    else:
+        indices = sorted(
+            range(len(val_tuples)),
+            key=lambda i: int(val_tuples[i].chunk_mask.sum()),
+            reverse=True,
+        )[:sample_count]
     with torch.no_grad():
         for idx in indices:
             t = val_tuples[idx]
-            chunks = torch.tensor(t.chunk_embeddings, dtype=torch.float32, device=device)
-            elapsed = torch.tensor(t.chunk_elapsed, dtype=torch.float32, device=device)
-            mask = torch.tensor(t.chunk_mask, dtype=torch.float32, device=device)
+            if use_llm_embeddings:
+                chunks = torch.tensor(t.llm_embeddings, dtype=torch.float32, device=device)
+                elapsed = torch.tensor(t.llm_elapsed, dtype=torch.float32, device=device)
+                mask = torch.tensor(t.llm_mask, dtype=torch.float32, device=device)
+            else:
+                chunks = torch.tensor(t.chunk_embeddings, dtype=torch.float32, device=device)
+                elapsed = torch.tensor(t.chunk_elapsed, dtype=torch.float32, device=device)
+                mask = torch.tensor(t.chunk_mask, dtype=torch.float32, device=device)
             _, weights, decays = pooler_state.chunk_pooler(chunks, elapsed, mask=mask)
             samples.append(
                 {
@@ -565,6 +581,7 @@ def main() -> int:
         lookback_days=args.lookback_days,
         sentiment_cache=sentiment_cache,
         llm_store_path=llm_store_path,
+        llm_embedding_size=llm_embedding_size,
     )
     print(f"[ablation] building val tuples...")
     val_tuples = _build_dataset(
@@ -575,6 +592,7 @@ def main() -> int:
         lookback_days=args.lookback_days,
         sentiment_cache=sentiment_cache,
         llm_store_path=llm_store_path,
+        llm_embedding_size=llm_embedding_size,
     )
     print(f"[ablation] train_tuples={len(train_tuples)} val_tuples={len(val_tuples)}")
     if not train_tuples or not val_tuples:
@@ -630,7 +648,9 @@ def main() -> int:
         )
         results[name] = result
         if (use_b or use_c) and trained_model.chunk_pooler is not None:
-            heatmaps_by_variant[name] = _heatmap_samples(val_tuples, pooler_state=trained_model, device=device)
+            heatmaps_by_variant[name] = _heatmap_samples(
+                val_tuples, pooler_state=trained_model, device=device, use_llm_embeddings=use_c
+            )
         print(
             f"[ablation]  {name}: combined_rmse={result['combined_rmse']:.4f} "
             f"close_rmse={result['close_rmse']:.4f} vol_rmse={result['volatility_rmse']:.4f} "
