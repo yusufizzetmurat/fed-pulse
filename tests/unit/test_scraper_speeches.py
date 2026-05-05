@@ -60,3 +60,81 @@ def test_parse_speech_page_extracts_speaker_date_and_body() -> None:
     assert len(parsed.text) > 500
     assert parsed.title  # non-empty
     assert parsed.url == source_url
+
+
+import json
+
+from app.services.scraper_speeches import (
+    is_chair_speech,
+    write_chair_speeches_json,
+)
+
+
+@pytest.mark.parametrize(
+    "speaker,expected",
+    [
+        ("Chair Powell", True),
+        ("Chairman Bernanke", True),
+        ("Chair Jerome H. Powell", True),
+        ("Chair Yellen", True),
+        ("Chairwoman Yellen", True),
+        ("Vice Chair Brainard", False),
+        ("Vice Chairman Clarida", False),
+        ("Governor Waller", False),
+        ("Governor Bowman", False),
+        ("", False),
+    ],
+)
+def test_is_chair_speech_classifies_speaker_correctly(speaker: str, expected: bool) -> None:
+    assert is_chair_speech(speaker) == expected
+
+
+def test_write_chair_speeches_json_emits_one_row_per_chair_speech(tmp_path: Path) -> None:
+    parsed = [
+        ParsedSpeech(
+            date="2024-01-31",
+            speaker="Chair Powell",
+            title="Speech on inflation",
+            text="Full body of the speech " * 30,
+            url="https://www.federalreserve.gov/newsevents/speech/powell20240131a.htm",
+        ),
+        ParsedSpeech(
+            date="2024-02-15",
+            speaker="Governor Waller",
+            title="Speech on the labor market",
+            text="Full body " * 30,
+            url="https://www.federalreserve.gov/newsevents/speech/waller20240215a.htm",
+        ),
+    ]
+
+    output = tmp_path / "chair_speeches.json"
+    written = write_chair_speeches_json(parsed, output)
+
+    assert written == 1
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert isinstance(payload, list)
+    assert len(payload) == 1
+    row = payload[0]
+    assert row["title"] == "Speech on inflation"
+    assert row["date"] == "2024-01-31"
+    assert row["text"].startswith("Full body of the speech")
+    assert row["document_type"] == "chair_speech"
+    assert row["url"].endswith("powell20240131a.htm")
+    assert "scraped_at_utc" in row
+
+
+def test_write_chair_speeches_json_skips_rows_with_empty_body(tmp_path: Path) -> None:
+    parsed = [
+        ParsedSpeech(
+            date="2024-01-31",
+            speaker="Chair Powell",
+            title="Empty speech",
+            text="",
+            url="https://www.federalreserve.gov/newsevents/speech/powell20240131a.htm",
+        )
+    ]
+    output = tmp_path / "chair_speeches.json"
+    written = write_chair_speeches_json(parsed, output)
+    assert written == 0
+    assert output.read_text(encoding="utf-8") == "[]"

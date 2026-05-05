@@ -11,9 +11,12 @@ ingest_sources.SCRAPED_FILES.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterable
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -210,3 +213,51 @@ def extract_speech_listing(html: str) -> list[SpeechListingEntry]:
             )
         )
     return entries
+
+
+_CHAIR_PATTERN = re.compile(r"\b(chair|chairman|chairwoman)\b", flags=re.IGNORECASE)
+_VICE_CHAIR_PATTERN = re.compile(r"\bvice\s+(chair|chairman|chairwoman)\b", flags=re.IGNORECASE)
+
+
+def is_chair_speech(speaker: str) -> bool:
+    """Classify a speaker as the Chair/Chairman/Chairwoman (excluding Vice Chair).
+
+    Returns True if the speaker string contains chair/chairman/chairwoman and
+    does NOT contain "vice chair/chairman/chairwoman".
+    """
+    if not speaker:
+        return False
+    if _VICE_CHAIR_PATTERN.search(speaker):
+        return False
+    return bool(_CHAIR_PATTERN.search(speaker))
+
+
+def write_chair_speeches_json(parsed: Iterable[ParsedSpeech], output_path: Path) -> int:
+    """Write only chair speeches to output_path as a JSON list.
+
+    Returns the number of rows written. Each row matches the schema
+    consumed by ingest_sources._iter_scraped_records: date, title, text,
+    document_type ('chair_speech'), url, scraped_at_utc.
+    """
+
+    rows: list[dict[str, str]] = []
+    scraped_at = datetime.now(timezone.utc).isoformat()
+    for entry in parsed:
+        if not is_chair_speech(entry.speaker):
+            continue
+        if not entry.text or not entry.date:
+            continue
+        rows.append(
+            {
+                "date": entry.date,
+                "title": entry.title,
+                "text": entry.text,
+                "document_type": "chair_speech",
+                "url": entry.url,
+                "scraped_at_utc": scraped_at,
+            }
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+    return len(rows)
