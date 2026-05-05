@@ -15,3 +15,4 @@ pytest
 google-genai>=1.0.0
 langsmith>=0.1.0
 scikit-learn
+pypdf>=5.0.0

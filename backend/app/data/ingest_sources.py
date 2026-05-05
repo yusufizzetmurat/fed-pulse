@@ -25,6 +25,7 @@ SCRAPED_FILES = (
     "chair_speeches.json",
     "governor_speeches.json",
     "congressional_testimonies.json",
+    "press_conferences.json",
 )
 
 
@@ -282,6 +283,8 @@ def _iter_scraped_records(data_dir: Path) -> list[dict[str, Any]]:
             file_source_type = "governor_speech"
         elif filename == "congressional_testimonies.json":
             file_source_type = "congressional_testimony"
+        elif filename == "press_conferences.json":
+            file_source_type = "press_conference"
         else:
             file_source_type = None
         payload = _read_json_or_jsonl(path)
