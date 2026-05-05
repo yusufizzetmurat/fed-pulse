@@ -19,7 +19,13 @@ DEFAULT_OUTPUT_FILE = "source_registry.jsonl"
 
 HF_DATASET_ID = "gtfintechlab/fomc_communication"
 KAGGLE_DATASET_ID = "drlexus/fed-statements-and-minutes"
-SCRAPED_FILES = ("fomc_statements.json", "fomc_minutes.json", "chair_speeches.json", "governor_speeches.json")
+SCRAPED_FILES = (
+    "fomc_statements.json",
+    "fomc_minutes.json",
+    "chair_speeches.json",
+    "governor_speeches.json",
+    "congressional_testimonies.json",
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -274,6 +280,8 @@ def _iter_scraped_records(data_dir: Path) -> list[dict[str, Any]]:
             file_source_type = "chair_speech"
         elif filename == "governor_speeches.json":
             file_source_type = "governor_speech"
+        elif filename == "congressional_testimonies.json":
+            file_source_type = "congressional_testimony"
         else:
             file_source_type = None
         payload = _read_json_or_jsonl(path)
