@@ -37,7 +37,7 @@ Unmappable labels are excluded and logged.
 - Near-duplicate checks on normalized text
 - No train/test near-duplicate leakage inside the same fold
 - Chronological splits only
-- Pseudo-labeling excludes reporting holdout
+- Pseudo-labeling (`backend/app/data/pseudo_labeling.py`) excludes the reporting holdout. Pseudo rows carry `label_origin = "pseudo"`, `teacher_model_id`, `teacher_model_version`, `teacher_max_score`, and `teacher_scores`.
 - Scalers/statistics fit on train only
 
 ## Training Package Contract
