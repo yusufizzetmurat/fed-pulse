@@ -221,6 +221,7 @@ class ForecasterModel(nn.Module):
         head_hidden_size: int = DEFAULT_HEAD_HIDDEN_SIZE,
         initial_decay_rate: float = DEFAULT_INITIAL_DECAY_RATE,
         *,
+        model_type: str = "lstm",
         use_time_decay: bool = True,
         use_chunk_attention: bool = False,
         use_llm_embeddings: bool = False,
@@ -251,11 +252,17 @@ class ForecasterModel(nn.Module):
         eight-way ablation sweeps them as separate cells.
         """
         super().__init__()
+        _allowed_model_types = {"lstm", "gru", "tcn", "transformer"}
+        if model_type not in _allowed_model_types:
+            raise ValueError(
+                f"Unknown model_type: {model_type!r}. Allowed: lstm, gru, tcn, transformer"
+            )
         if use_chunk_attention and use_llm_embeddings:
             raise ValueError(
                 "use_chunk_attention and use_llm_embeddings are mutually exclusive. "
                 "Set at most one to True."
             )
+        self.model_type = model_type
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -290,13 +297,14 @@ class ForecasterModel(nn.Module):
         lstm_input_size = input_size + self.chunk_projection_dim
         self.lstm_input_size = lstm_input_size
         lstm_dropout = dropout if num_layers > 1 else 0.0
-        self.lstm = nn.LSTM(
+        self.recurrent_core = self._build_recurrent_core(
+            model_type=self.model_type,
             input_size=lstm_input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=lstm_dropout,
-            batch_first=True,
         )
+        self.lstm = self.recurrent_core  # alias for backward compatibility
         self.head = nn.Sequential(
             nn.LayerNorm(hidden_size),
             nn.Linear(hidden_size, head_hidden_size),
@@ -359,6 +367,39 @@ class ForecasterModel(nn.Module):
             "weights": weights.detach(),
             "decay_coeffs": decay_coeffs.detach(),
         }
+
+    @staticmethod
+    def _build_recurrent_core(
+        *,
+        model_type: str,
+        input_size: int,
+        hidden_size: int,
+        num_layers: int,
+        dropout: float,
+    ) -> nn.Module:
+        if model_type == "lstm":
+            return nn.LSTM(
+                input_size=input_size,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+                dropout=dropout if num_layers > 1 else 0.0,
+            )
+        if model_type == "gru":
+            return nn.GRU(
+                input_size=input_size,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+                dropout=dropout if num_layers > 1 else 0.0,
+            )
+        if model_type in {"tcn", "transformer"}:
+            raise NotImplementedError(
+                f"model_type={model_type!r} is registered but not yet implemented (Plan 7 Task 2/3)"
+            )
+        raise ValueError(
+            f"Unknown model_type: {model_type!r}. Allowed: lstm, gru, tcn, transformer"
+        )
 
 
 @dataclass

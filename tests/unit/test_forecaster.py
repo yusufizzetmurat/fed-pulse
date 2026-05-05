@@ -555,3 +555,34 @@ def test_forecaster_variant_b_still_works_as_regression():
     out = model(x, chunks=chunks, elapsed_days=elapsed, chunk_mask=mask)
     assert out.shape == (2, 2)
     assert out[:, 1].min().item() >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# model_type parameter tests (Plan 7 / Task 1)
+# ---------------------------------------------------------------------------
+
+
+def test_forecaster_model_default_model_type_is_lstm() -> None:
+    """Existing call sites must not break."""
+    model = ForecasterModel(input_size=6, hidden_size=32)
+    assert model.model_type == "lstm"
+
+
+def test_forecaster_model_gru_variant_forward_returns_expected_shape() -> None:
+    import torch
+
+    model = ForecasterModel(input_size=6, hidden_size=32, model_type="gru")
+    x = torch.zeros(2, 5, 6)
+    out = model(x)
+    lstm_model = ForecasterModel(input_size=6, hidden_size=32, model_type="lstm")
+    lstm_out = lstm_model(x)
+    if isinstance(out, tuple):
+        for a, b in zip(out, lstm_out):
+            assert a.shape == b.shape
+    else:
+        assert out.shape == lstm_out.shape
+
+
+def test_forecaster_model_unknown_model_type_raises() -> None:
+    with pytest.raises(ValueError):
+        ForecasterModel(input_size=6, hidden_size=32, model_type="bogus")
