@@ -224,3 +224,98 @@ def test_summarise_gating_policies_returns_yield_per_policy() -> None:
     assert summary["confidence_and_judge"]["kept"] == 1
     assert summary["judge_only"]["kept"] == 3
     assert "label_distribution" in summary["confidence_only"]
+
+
+def test_parse_args_default_request_interval_is_zero() -> None:
+    args = llm_judge._parse_args(["--input", "/some/path"])
+    assert args.request_interval_seconds == 0.0
+
+
+def test_parse_args_accepts_request_interval_flag() -> None:
+    args = llm_judge._parse_args(
+        ["--input", "/some/path", "--request-interval-seconds", "35"]
+    )
+    assert args.request_interval_seconds == 35.0
+
+
+def test_run_judge_sleeps_between_calls_when_interval_set(tmp_path: Path, monkeypatch) -> None:
+    """request_interval_seconds calls time.sleep between scoring rows.
+
+    Three input rows -> two between-call sleeps (one after row 1, one
+    after row 2; no sleep after the last row).
+    """
+
+    input_path = tmp_path / "registry_pseudo.jsonl"
+    output_path = tmp_path / "registry_pseudo_judged.jsonl"
+    rows = [
+        {
+            "record_id": f"r{i}",
+            "source": "scraped_fed",
+            "text": f"text {i}",
+            "label": "hawkish",
+            "label_origin": "pseudo",
+            "teacher_max_score": 0.8,
+            "teacher_scores": {"hawkish": 0.8, "dovish": 0.1, "neutral": 0.1},
+        }
+        for i in range(3)
+    ]
+    input_path.parent.mkdir(parents=True, exist_ok=True)
+    with input_path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+
+    sleep_calls: list[float] = []
+
+    def fake_sleep(secs: float) -> None:
+        sleep_calls.append(secs)
+
+    monkeypatch.setattr("app.data.llm_judge.time.sleep", fake_sleep)
+
+    model = _StubGeminiModel(
+        ['{"label": "hawkish", "confidence": 0.9}'] * 3
+    )
+
+    written = llm_judge.run_judge(
+        input_path=input_path,
+        output_path=output_path,
+        gemini_model=model,
+        judge_model_id="gemini-2.5-flash",
+        judge_model_version="v0",
+        request_interval_seconds=2.5,
+    )
+
+    assert written == 3
+    assert sleep_calls == [2.5, 2.5]  # n_rows - 1 sleeps
+
+
+def test_run_judge_does_not_sleep_when_interval_zero(tmp_path: Path, monkeypatch) -> None:
+    input_path = tmp_path / "registry_pseudo.jsonl"
+    output_path = tmp_path / "registry_pseudo_judged.jsonl"
+    rows = [
+        {
+            "record_id": "r0",
+            "source": "scraped_fed",
+            "text": "text",
+            "label": "hawkish",
+            "label_origin": "pseudo",
+        }
+    ]
+    input_path.parent.mkdir(parents=True, exist_ok=True)
+    with input_path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+
+    sleep_calls: list[float] = []
+    monkeypatch.setattr("app.data.llm_judge.time.sleep", lambda s: sleep_calls.append(s))
+
+    model = _StubGeminiModel(['{"label": "hawkish", "confidence": 0.9}'])
+    llm_judge.run_judge(
+        input_path=input_path,
+        output_path=output_path,
+        gemini_model=model,
+        judge_model_id="gemini-2.5-flash",
+        judge_model_version="v0",
+        request_interval_seconds=0.0,
+    )
+
+    assert sleep_calls == []
