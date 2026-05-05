@@ -74,3 +74,55 @@ def test_score_passages_returns_one_prediction_per_passage_with_label_and_confid
     assert predictions[0]["scores"] == {"hawkish": 0.92, "dovish": 0.05, "neutral": 0.03}
     assert predictions[1]["predicted_label"] == "dovish"
     assert predictions[1]["max_score"] == pytest.approx(0.40)
+
+
+def test_apply_threshold_partitions_predictions_into_kept_and_dropped() -> None:
+    predictions = [
+        {"predicted_label": "hawkish", "max_score": 0.92, "scores": {}},
+        {"predicted_label": "dovish", "max_score": 0.40, "scores": {}},
+        {"predicted_label": "neutral", "max_score": 0.85, "scores": {}},
+    ]
+    kept, dropped = pseudo_labeling.apply_threshold(predictions, threshold=0.85)
+    assert len(kept) == 2
+    assert len(dropped) == 1
+    assert kept[0]["predicted_label"] == "hawkish"
+    assert dropped[0]["predicted_label"] == "dovish"
+
+
+def test_build_pseudo_row_carries_provenance_and_label() -> None:
+    source_row = {
+        "record_id": "abc123",
+        "source": "scraped_fed",
+        "source_record_id": "fomc_minutes.json:12",
+        "document_type": "minutes",
+        "source_type": "fomc_minutes",
+        "event_date": "2024-01-31",
+        "title": "FOMC Meeting Minutes",
+        "text": "Some passage text",
+        "text_hash": "deadbeef",
+        "license_scope": "public_source_scrape_terms_required",
+        "citation_ref": "federalreserve_primary_source",
+        "ingested_at_utc": "2024-01-31T00:00:00+00:00",
+    }
+    prediction = {
+        "predicted_label": "hawkish",
+        "max_score": 0.92,
+        "scores": {"hawkish": 0.92, "dovish": 0.05, "neutral": 0.03},
+    }
+    row = pseudo_labeling.build_pseudo_row(
+        source_row,
+        prediction,
+        teacher_model_id="fomc_roberta_s71",
+        teacher_model_version="phase4_finetune_v1",
+    )
+
+    assert row["record_id"] == "abc123"
+    assert row["label"] == "hawkish"
+    assert row["label_origin"] == "pseudo"
+    assert row["teacher_model_id"] == "fomc_roberta_s71"
+    assert row["teacher_model_version"] == "phase4_finetune_v1"
+    assert row["teacher_max_score"] == pytest.approx(0.92)
+    assert row["teacher_scores"] == prediction["scores"]
+    assert row["source"] == "scraped_fed"
+    assert row["source_type"] == "fomc_minutes"
+    assert row["text"] == "Some passage text"

@@ -120,5 +120,43 @@ def score_passages(passages: Iterable[str], *, pipeline) -> list[dict[str, Any]]
     return predictions
 
 
+def apply_threshold(
+    predictions: list[dict[str, Any]], *, threshold: float
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split predictions into kept (max_score >= threshold) and dropped."""
+
+    kept: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    for prediction in predictions:
+        if prediction["max_score"] >= threshold:
+            kept.append(prediction)
+        else:
+            dropped.append(prediction)
+    return kept, dropped
+
+
+def build_pseudo_row(
+    source_row: dict[str, Any],
+    prediction: dict[str, Any],
+    *,
+    teacher_model_id: str,
+    teacher_model_version: str,
+) -> dict[str, Any]:
+    """Assemble a registry-shaped pseudo-labelled row.
+
+    Preserves every field of source_row, sets label / label_origin from
+    the prediction, and tacks on teacher provenance.
+    """
+
+    row = dict(source_row)
+    row["label"] = prediction["predicted_label"]
+    row["label_origin"] = "pseudo"
+    row["teacher_model_id"] = teacher_model_id
+    row["teacher_model_version"] = teacher_model_version
+    row["teacher_max_score"] = float(prediction["max_score"])
+    row["teacher_scores"] = dict(prediction["scores"])
+    return row
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
