@@ -11,10 +11,12 @@ Define a single contract from ingestion to training package export.
 ## Ingestion Contract
 Each row must contain:
 - `record_id`, `source`, `source_record_id`
-- `document_type`, `event_date`, `text`
+- `document_type`, `source_type`, `event_date`, `text`
 - `label` (optional), `label_origin`
 - `license_scope`, `citation_ref`
 - `ingested_at_utc`, `text_hash`
+
+`source_type` values are the closed set in `backend/app/data/source_type.py`. They are finer-grained than `source` (which scopes to a provider) and finer-grained than `document_type` (which scopes to a high-level kind). Stratified analyses filter on `source_type`.
 
 Rules:
 1. Normalize text before hashing

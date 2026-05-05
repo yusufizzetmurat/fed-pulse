@@ -47,4 +47,4 @@ Candidates run on the same folds/seeds. Winner order:
 3. Latency `p95` (tie-break)
 
 ## Report Requirements
-Official reports must include protocol ID, all version IDs, runtime mode, fold/seed info, metrics, and known deviations.
+Official reports must include protocol ID, all version IDs, runtime mode, fold/seed info, metrics, and known deviations. Reports that include source-type-stratified breakdowns must report per-`source_type` mean and standard deviation alongside the headline aggregates so cross-source generalisation is visible.
