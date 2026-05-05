@@ -14,6 +14,7 @@ from app.data.source_type import (
     SOURCE_TYPE_FOMC_STATEMENT,
     SOURCE_TYPE_GOVERNOR_SPEECH,
     SOURCE_TYPE_PRESS_CONFERENCE,
+    SOURCE_TYPE_REGIONAL_RESEARCH,
     SOURCE_TYPE_VALUES,
 )
 
@@ -187,3 +188,25 @@ def test_iter_scraped_records_assigns_beige_book_source_type(tmp_path: Path) -> 
     assert len(bb_records) == 1
     assert bb_records[0]["source"] == "scraped_fed"
     assert bb_records[0]["title"] == "Beige Book - March 2024"
+
+
+def test_iter_scraped_records_assigns_regional_research_source_type(tmp_path: Path) -> None:
+    rows = [
+        {
+            "date": "2024-03-01",
+            "title": "A Liberty Street Post",
+            "text": "Body of the post",
+            "document_type": "regional_research",
+            "url": "https://libertystreeteconomics.newyorkfed.org/2024/03/sample-post/",
+            "source_bank": "ny_fed",
+            "scraped_at_utc": "2024-03-01T12:00:00+00:00",
+        }
+    ]
+    (tmp_path / "regional_research.json").write_text(json.dumps(rows), encoding="utf-8")
+
+    records = ingest_sources._iter_scraped_records(tmp_path)
+
+    rr_records = [r for r in records if r["source_type"] == SOURCE_TYPE_REGIONAL_RESEARCH]
+    assert len(rr_records) == 1
+    assert rr_records[0]["source"] == "scraped_fed"
+    assert rr_records[0]["title"] == "A Liberty Street Post"
