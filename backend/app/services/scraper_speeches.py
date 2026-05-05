@@ -69,6 +69,94 @@ def _coerce_date(value: str) -> str:
     return datetime.strptime(matched.group(0), "%B %d, %Y").date().isoformat()
 
 
+@dataclass(frozen=True)
+class ParsedSpeech:
+    date: str  # ISO yyyy-mm-dd
+    speaker: str
+    title: str
+    text: str
+    url: str
+
+
+_TITLE_TAIL_PATTERN = re.compile(r"\s*-\s*Federal Reserve Board\s*$", flags=re.IGNORECASE)
+
+
+def _extract_title(soup: BeautifulSoup) -> str:
+    # Prefer the og:title meta when present (the rendered page title without
+    # the " - Federal Reserve Board" tail). Fall back to <title> with the
+    # tail stripped, then to any in-content h3/h2.
+    og = soup.find("meta", attrs={"property": "og:title"})
+    if og is not None and og.get("content"):
+        return _clean_text(og["content"])
+    title_tag = soup.find("title")
+    if title_tag is not None:
+        return _TITLE_TAIL_PATTERN.sub("", _clean_text(title_tag.get_text(" ", strip=True)))
+    h3 = soup.select_one("h3.title, h3, h2")
+    if h3 is not None:
+        return _clean_text(h3.get_text(" ", strip=True))
+    return ""
+
+
+_SPEAKER_TITLE_PATTERN = re.compile(
+    r"\b(Chair|Chairman|Chairwoman|Vice\s+Chair|Vice\s+Chairman|Governor)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)",
+)
+
+
+def _extract_speaker(soup: BeautifulSoup, title: str) -> str:
+    # Try the explicit speaker selectors first (newer pages use these).
+    for selector in ("p.speaker", ".speaker", ".news__speaker", "span.speaker"):
+        node = soup.select_one(selector)
+        if node is not None:
+            text = _clean_text(node.get_text(" ", strip=True))
+            if text:
+                return text
+    # Fall back to extracting "Chair Powell" / "Governor Waller" out of the title.
+    matched = _SPEAKER_TITLE_PATTERN.search(title)
+    if matched:
+        return _clean_text(matched.group(0))
+    return ""
+
+
+def _extract_body(soup: BeautifulSoup) -> str:
+    selectors = [
+        "div.col-xs-12.col-sm-8.col-md-8 p",
+        "div#article p",
+        "article p",
+        "main p",
+    ]
+    for selector in selectors:
+        nodes = soup.select(selector)
+        if nodes:
+            chunks = [_clean_text(node.get_text(" ", strip=True)) for node in nodes]
+            return "\n".join(chunk for chunk in chunks if chunk)
+    return ""
+
+
+def parse_speech_page(html: str, *, source_url: str) -> ParsedSpeech:
+    """Parse a single federalreserve.gov speech page into a ParsedSpeech.
+
+    Falls back gracefully when individual fields are missing on the page;
+    callers decide whether to keep or discard rows with empty fields.
+    """
+
+    soup = BeautifulSoup(html, "html.parser")
+    title = _extract_title(soup)
+    speaker = _extract_speaker(soup, title)
+    body = _extract_body(soup)
+
+    article_time = soup.select_one("p.article__time, .article__time, time")
+    date_text = _clean_text(article_time.get_text(" ", strip=True)) if article_time else ""
+    date_iso = _date_from_url(source_url) or _coerce_date(date_text)
+
+    return ParsedSpeech(
+        date=date_iso,
+        speaker=speaker,
+        title=title,
+        text=body,
+        url=source_url,
+    )
+
+
 def extract_speech_listing(html: str) -> list[SpeechListingEntry]:
     """Parse a federalreserve.gov annual speech archive page.
 

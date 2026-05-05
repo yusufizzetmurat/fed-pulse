@@ -43,3 +43,20 @@ def test_extract_speech_listing_deduplicates_repeated_urls() -> None:
     entries = extract_speech_listing(html)
     assert len(entries) == 1
     assert entries[0].url.endswith(repeated_url)
+
+
+from app.services.scraper_speeches import ParsedSpeech, parse_speech_page
+
+
+def test_parse_speech_page_extracts_speaker_date_and_body() -> None:
+    html = (FIXTURES / "fed_speech_powell_2024_sample.html").read_text(encoding="utf-8")
+    source_url = "https://www.federalreserve.gov/newsevents/speech/powell20241114a.htm"
+
+    parsed = parse_speech_page(html, source_url=source_url)
+
+    assert isinstance(parsed, ParsedSpeech)
+    assert "Powell" in parsed.speaker
+    assert parsed.date == "2024-11-14"  # date is derivable from the URL
+    assert len(parsed.text) > 500
+    assert parsed.title  # non-empty
+    assert parsed.url == source_url
