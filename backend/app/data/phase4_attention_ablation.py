@@ -1,15 +1,24 @@
 """Phase 4 attention + decay ablation (SRS FR-23 / FR-24 / FR-31).
 
-Trains four variants of the forecaster on labelled FOMC documents augmented
-with market history and (optionally) chunk-attention context, and records a
-combined RMSE / directional accuracy table plus learned-lambda values and
-attention heatmaps for sample documents.
+Trains eight variants of the forecaster on labelled FOMC documents augmented
+with market history and (optionally) chunk-attention / LLM-embedding context,
+and records a combined RMSE / directional accuracy table plus learned-lambda
+values and attention heatmaps for sample documents.
 
-Variants:
-- baseline: time decay off, chunk attention off
-- variant_a: time decay on, chunk attention off
-- variant_b: time decay off, chunk attention on
-- variant_a_b: time decay on, chunk attention on
+Variants sweep ``{A on/off} × {B on/off} × {C on/off}``:
+- baseline: time decay off, chunk attention off, LLM embeddings off
+- variant_a_only: time decay on, chunk attention off, LLM embeddings off
+- variant_b_only: time decay off, chunk attention on, LLM embeddings off
+- variant_c_only: time decay off, chunk attention off, LLM embeddings on
+- variant_a_plus_b: time decay on, chunk attention on, LLM embeddings off
+- variant_a_plus_c: time decay on, chunk attention off, LLM embeddings on
+- variant_b_plus_c: not possible (B and C mutually exclusive — skipped)
+- variant_a_plus_b_plus_c: not possible (B and C mutually exclusive — skipped)
+
+Note: Variant B (chunk attention) and Variant C (LLM embeddings) are mutually
+exclusive because they share the same LSTM input slot.  The ablation therefore
+produces 6 valid cells rather than 8 when all variants are requested.  The
+``--variants`` CLI flag can further restrict which cells run.
 """
 
 from __future__ import annotations
@@ -32,6 +41,8 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from app.data.chunk_embedding_retrieval import (
+    DEFAULT_LLM_EMBEDDINGS_PARQUET,
+    _build_lookback_tensors_llm,
     build_lookback_tensors,
     load_chunk_store,
     resolve_store_path,
@@ -54,6 +65,16 @@ from app.services.forecaster import (
     ForecasterModel,
     build_last5_sequence,
 )
+
+# All valid variant cells for the 8-way grid (B and C are mutually exclusive).
+ALL_VARIANT_NAMES: list[str] = [
+    "baseline",
+    "variant_a_only",
+    "variant_b_only",
+    "variant_c_only",
+    "variant_a_plus_b",
+    "variant_a_plus_c",
+]
 from app.services.sentiment import analyze_text
 
 
@@ -64,9 +85,12 @@ class TrainingTuple:
     feature_seq: list[list[float]]  # SEQUENCE_LENGTH × FEATURE_SIZE
     target_close_norm: float  # close at t+1, normalized by close_scale
     target_volatility: float  # volatility_5d at t+1
-    chunk_embeddings: np.ndarray  # max_chunks × embedding_size
-    chunk_elapsed: np.ndarray  # max_chunks
-    chunk_mask: np.ndarray  # max_chunks
+    chunk_embeddings: np.ndarray  # max_chunks × embedding_size (Variant B)
+    chunk_elapsed: np.ndarray  # max_chunks (Variant B)
+    chunk_mask: np.ndarray  # max_chunks (Variant B)
+    llm_embeddings: np.ndarray  # max_chunks × llm_embedding_size (Variant C)
+    llm_elapsed: np.ndarray  # max_chunks (Variant C)
+    llm_mask: np.ndarray  # max_chunks (Variant C)
 
 
 def _fetch_full_history(symbol: str = "^GSPC", start: str = "1995-01-01") -> pd.DataFrame:
@@ -132,8 +156,19 @@ def _build_dataset(
     max_chunks: int,
     lookback_days: int,
     sentiment_cache: dict[str, float] | None = None,
+    llm_store_path: str | None = None,
+    llm_max_chunks: int | None = None,
 ) -> list[TrainingTuple]:
+    """Build training tuples with both chunk (B) and LLM (C) tensors.
+
+    The LLM tensors are always populated (using zero-filled arrays when the
+    LLM store is unavailable) so that every tuple is compatible with both
+    Variant B and Variant C training without re-building the dataset.  If the
+    LLM store is missing, ``llm_mask`` is all-zero and Variant C training will
+    see no signal (equivalent to baseline).
+    """
     cache = sentiment_cache if sentiment_cache is not None else {}
+    _llm_max = llm_max_chunks if llm_max_chunks is not None else max_chunks
     out: list[TrainingTuple] = []
     skipped = Counter()
     for row in rows:
@@ -155,6 +190,24 @@ def _build_dataset(
             lookback_days=lookback_days,
             max_chunks=max_chunks,
         )
+
+        # Variant C: LLM embeddings (one-per-doc).
+        try:
+            llm_retrieval = _build_lookback_tensors_llm(
+                anchor_date=row.event_date,
+                lookback_days=lookback_days,
+                max_chunks=_llm_max,
+                llm_store_path=llm_store_path,
+            )
+            llm_emb = llm_retrieval.embeddings.numpy()
+            llm_elp = llm_retrieval.elapsed_days.numpy()
+            llm_msk = llm_retrieval.mask.numpy()
+        except FileNotFoundError:
+            # LLM store not yet precomputed — fill with zeros so B-cells are unaffected.
+            llm_emb = np.zeros((_llm_max, 1), dtype=np.float32)
+            llm_elp = np.zeros((_llm_max,), dtype=np.float32)
+            llm_msk = np.zeros((_llm_max,), dtype=np.float32)
+
         out.append(
             TrainingTuple(
                 doc_id=row.text[:40],
@@ -165,6 +218,9 @@ def _build_dataset(
                 chunk_embeddings=retrieval.embeddings.numpy(),
                 chunk_elapsed=retrieval.elapsed_days.numpy(),
                 chunk_mask=retrieval.mask.numpy(),
+                llm_embeddings=llm_emb,
+                llm_elapsed=llm_elp,
+                llm_mask=llm_msk,
             )
         )
     if skipped:
@@ -185,10 +241,38 @@ class _AblationDataset(Dataset):
             "x": torch.tensor(item.feature_seq, dtype=torch.float32),
             "y_close": torch.tensor(item.target_close_norm, dtype=torch.float32),
             "y_vol": torch.tensor(item.target_volatility, dtype=torch.float32),
+            # Variant B (chunk attention)
             "chunks": torch.tensor(item.chunk_embeddings, dtype=torch.float32),
             "elapsed": torch.tensor(item.chunk_elapsed, dtype=torch.float32),
             "mask": torch.tensor(item.chunk_mask, dtype=torch.float32),
+            # Variant C (LLM embeddings)
+            "llm_chunks": torch.tensor(item.llm_embeddings, dtype=torch.float32),
+            "llm_elapsed": torch.tensor(item.llm_elapsed, dtype=torch.float32),
+            "llm_mask": torch.tensor(item.llm_mask, dtype=torch.float32),
         }
+
+
+def _batch_kwargs(
+    batch: dict[str, torch.Tensor],
+    *,
+    use_chunk_attention: bool,
+    use_llm_embeddings: bool,
+    device: torch.device,
+) -> dict[str, torch.Tensor]:
+    """Build forward-pass kwargs for the active pooler variant."""
+    if use_chunk_attention:
+        return {
+            "chunks": batch["chunks"].to(device),
+            "elapsed_days": batch["elapsed"].to(device),
+            "chunk_mask": batch["mask"].to(device),
+        }
+    if use_llm_embeddings:
+        return {
+            "chunks": batch["llm_chunks"].to(device),
+            "elapsed_days": batch["llm_elapsed"].to(device),
+            "chunk_mask": batch["llm_mask"].to(device),
+        }
+    return {}
 
 
 def _train_variant(
@@ -197,7 +281,9 @@ def _train_variant(
     *,
     use_time_decay: bool,
     use_chunk_attention: bool,
+    use_llm_embeddings: bool = False,
     chunk_embedding_size: int,
+    llm_embedding_size: int = 768,
     chunk_projection_dim: int,
     epochs: int,
     learning_rate: float,
@@ -207,10 +293,13 @@ def _train_variant(
     device: torch.device,
 ) -> dict[str, Any]:
     _set_all_seeds(seed)
+    # Choose embedding size based on active variant.
+    active_embedding_size = llm_embedding_size if use_llm_embeddings else chunk_embedding_size
     model = ForecasterModel(
         use_time_decay=use_time_decay,
         use_chunk_attention=use_chunk_attention,
-        chunk_embedding_size=chunk_embedding_size,
+        use_llm_embeddings=use_llm_embeddings,
+        chunk_embedding_size=active_embedding_size,
         chunk_projection_dim=chunk_projection_dim,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
@@ -234,13 +323,12 @@ def _train_variant(
             y_close = batch["y_close"].to(device)
             y_vol = batch["y_vol"].to(device)
             optimizer.zero_grad()
-            kwargs = {}
-            if use_chunk_attention:
-                kwargs = {
-                    "chunks": batch["chunks"].to(device),
-                    "elapsed_days": batch["elapsed"].to(device),
-                    "chunk_mask": batch["mask"].to(device),
-                }
+            kwargs = _batch_kwargs(
+                batch,
+                use_chunk_attention=use_chunk_attention,
+                use_llm_embeddings=use_llm_embeddings,
+                device=device,
+            )
             pred = model(x, **kwargs)
             loss = loss_fn(pred[:, 0], y_close) + loss_fn(pred[:, 1], y_vol)
             loss.backward()
@@ -257,13 +345,12 @@ def _train_variant(
                 x = batch["x"].to(device)
                 y_close = batch["y_close"].to(device)
                 y_vol = batch["y_vol"].to(device)
-                kwargs = {}
-                if use_chunk_attention:
-                    kwargs = {
-                        "chunks": batch["chunks"].to(device),
-                        "elapsed_days": batch["elapsed"].to(device),
-                        "chunk_mask": batch["mask"].to(device),
-                    }
+                kwargs = _batch_kwargs(
+                    batch,
+                    use_chunk_attention=use_chunk_attention,
+                    use_llm_embeddings=use_llm_embeddings,
+                    device=device,
+                )
                 pred = model(x, **kwargs)
                 loss = loss_fn(pred[:, 0], y_close) + loss_fn(pred[:, 1], y_vol)
                 v_running += float(loss.item()) * x.shape[0]
@@ -271,7 +358,8 @@ def _train_variant(
         val_loss = v_running / max(v_n, 1)
         history.append(val_loss)
         decay_history.append(float(model.time_decay.decay_rate.detach().cpu().item()))
-        if use_chunk_attention and model.chunk_pooler is not None:
+        _uses_pooler = use_chunk_attention or use_llm_embeddings
+        if _uses_pooler and model.chunk_pooler is not None:
             chunk_lambda_history.append(float(model.chunk_pooler.decay_rate.detach().cpu().item()))
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -299,13 +387,12 @@ def _train_variant(
             x = batch["x"].to(device)
             y_close = batch["y_close"].cpu().numpy()
             y_vol = batch["y_vol"].cpu().numpy()
-            kwargs = {}
-            if use_chunk_attention:
-                kwargs = {
-                    "chunks": batch["chunks"].to(device),
-                    "elapsed_days": batch["elapsed"].to(device),
-                    "chunk_mask": batch["mask"].to(device),
-                }
+            kwargs = _batch_kwargs(
+                batch,
+                use_chunk_attention=use_chunk_attention,
+                use_llm_embeddings=use_llm_embeddings,
+                device=device,
+            )
             t0 = time.perf_counter()
             pred = model(x, **kwargs)
             elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -331,15 +418,17 @@ def _train_variant(
     p95 = sorted(latencies_ms)[int(0.95 * (len(latencies_ms) - 1))] if latencies_ms else 0.0
 
     final_decay = float(model.time_decay.decay_rate.detach().cpu().item())
+    _uses_pooler = use_chunk_attention or use_llm_embeddings
     final_chunk_lambda = (
         float(model.chunk_pooler.decay_rate.detach().cpu().item())
-        if (use_chunk_attention and model.chunk_pooler is not None)
+        if (_uses_pooler and model.chunk_pooler is not None)
         else None
     )
 
     metrics = {
         "use_time_decay": use_time_decay,
         "use_chunk_attention": use_chunk_attention,
+        "use_llm_embeddings": use_llm_embeddings,
         "epochs": epochs,
         "best_val_loss": float(best_val_loss),
         "close_rmse": close_rmse,
@@ -394,7 +483,7 @@ def _heatmap_samples(
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Phase 4 attention + decay ablation.")
+    parser = argparse.ArgumentParser(description="Phase 4 attention + decay ablation (8-way grid).")
     parser.add_argument("--training-package-id", required=True)
     parser.add_argument("--fold-id", default="wf_fold_2")
     parser.add_argument("--data-dir", default="/data")
@@ -409,6 +498,21 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--owner", default="unknown")
     parser.add_argument("--artifact-root", default="/data/artifacts/phase4_attention")
+    parser.add_argument(
+        "--variants",
+        nargs="+",
+        default=None,
+        metavar="VARIANT",
+        help=(
+            f"Subset of variants to run (default: all {len(ALL_VARIANT_NAMES)}). "
+            f"Choose from: {', '.join(ALL_VARIANT_NAMES)}"
+        ),
+    )
+    parser.add_argument(
+        "--llm-store-path",
+        default=str(DEFAULT_LLM_EMBEDDINGS_PARQUET),
+        help="Path to the LLM embeddings parquet (Variant C). Defaults to the standard interim path.",
+    )
     return parser.parse_args()
 
 
@@ -428,8 +532,24 @@ def main() -> int:
     if not chunk_store_path.exists():
         raise SystemExit(f"Chunk store not found: {chunk_store_path}. Run chunk_embedding_store first.")
     chunk_store = load_chunk_store(str(chunk_store_path))
-    embedding_size = int(len(chunk_store.iloc[0]["embedding"]))
-    print(f"[ablation] chunk_store rows={len(chunk_store)} embedding_size={embedding_size}")
+    chunk_embedding_size = int(len(chunk_store.iloc[0]["embedding"]))
+    print(f"[ablation] chunk_store rows={len(chunk_store)} embedding_size={chunk_embedding_size}")
+
+    # Probe the LLM embedding size (Variant C), if the store exists.
+    llm_store_path: str = args.llm_store_path
+    llm_embedding_size: int = 768  # sensible default; overwritten below if store present
+    try:
+        from app.data.chunk_embedding_retrieval import _load_llm_store
+
+        _llm_df = _load_llm_store(llm_store_path)
+        if not _llm_df.empty:
+            llm_embedding_size = int(len(_llm_df.iloc[0]["embedding"]))
+        print(f"[ablation] llm_store rows={len(_llm_df)} llm_embedding_size={llm_embedding_size}")
+    except FileNotFoundError:
+        print(
+            f"[ablation] LLM store not found at {llm_store_path} — "
+            "Variant C cells will see zero-filled embeddings (equivalent to baseline)."
+        )
 
     print(f"[ablation] fetching market history for {args.symbol}...")
     market_df = _fetch_full_history(args.symbol, start="1995-01-01")
@@ -444,6 +564,7 @@ def main() -> int:
         max_chunks=args.max_chunks,
         lookback_days=args.lookback_days,
         sentiment_cache=sentiment_cache,
+        llm_store_path=llm_store_path,
     )
     print(f"[ablation] building val tuples...")
     val_tuples = _build_dataset(
@@ -453,6 +574,7 @@ def main() -> int:
         max_chunks=args.max_chunks,
         lookback_days=args.lookback_days,
         sentiment_cache=sentiment_cache,
+        llm_store_path=llm_store_path,
     )
     print(f"[ablation] train_tuples={len(train_tuples)} val_tuples={len(val_tuples)}")
     if not train_tuples or not val_tuples:
@@ -461,23 +583,43 @@ def main() -> int:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[ablation] device={device}")
 
-    variants = [
-        ("baseline", False, False),
-        ("variant_a_only", True, False),
-        ("variant_b_only", False, True),
-        ("variant_a_plus_b", True, True),
+    # 6-cell grid: {A on/off} × {B on/off, C on/off} — B and C are mutually exclusive.
+    # name, use_a, use_b, use_c
+    all_variants: list[tuple[str, bool, bool, bool]] = [
+        ("baseline",       False, False, False),
+        ("variant_a_only", True,  False, False),
+        ("variant_b_only", False, True,  False),
+        ("variant_c_only", False, False, True),
+        ("variant_a_plus_b", True, True,  False),
+        ("variant_a_plus_c", True, False, True),
     ]
+
+    # Apply --variants filter if provided.
+    requested: set[str] | None = None
+    if args.variants:
+        unknown = set(args.variants) - {n for n, *_ in all_variants}
+        if unknown:
+            raise SystemExit(
+                f"Unknown --variants values: {sorted(unknown)}. "
+                f"Valid choices: {[n for n, *_ in all_variants]}"
+            )
+        requested = set(args.variants)
+
+    variants = [(n, a, b, c) for n, a, b, c in all_variants if requested is None or n in requested]
+    print(f"[ablation] running {len(variants)} variant(s): {[n for n, *_ in variants]}")
 
     results: dict[str, Any] = {}
     heatmaps_by_variant: dict[str, Any] = {}
-    for name, use_a, use_b in variants:
-        print(f"\n[ablation] === variant: {name} (A={use_a}, B={use_b}) ===")
+    for name, use_a, use_b, use_c in variants:
+        print(f"\n[ablation] === variant: {name} (A={use_a}, B={use_b}, C={use_c}) ===")
         result, trained_model = _train_variant(
             train_tuples,
             val_tuples,
             use_time_decay=use_a,
             use_chunk_attention=use_b,
-            chunk_embedding_size=embedding_size,
+            use_llm_embeddings=use_c,
+            chunk_embedding_size=chunk_embedding_size,
+            llm_embedding_size=llm_embedding_size,
             chunk_projection_dim=args.chunk_projection_dim,
             epochs=args.epochs,
             learning_rate=args.learning_rate,
@@ -487,7 +629,7 @@ def main() -> int:
             device=device,
         )
         results[name] = result
-        if use_b:
+        if (use_b or use_c) and trained_model.chunk_pooler is not None:
             heatmaps_by_variant[name] = _heatmap_samples(val_tuples, pooler_state=trained_model, device=device)
         print(
             f"[ablation]  {name}: combined_rmse={result['combined_rmse']:.4f} "
@@ -507,7 +649,8 @@ def main() -> int:
         "symbol": args.symbol,
         "max_chunks": args.max_chunks,
         "lookback_days": args.lookback_days,
-        "chunk_embedding_size": embedding_size,
+        "chunk_embedding_size": chunk_embedding_size,
+        "llm_embedding_size": llm_embedding_size,
         "chunk_projection_dim": args.chunk_projection_dim,
         "epochs": args.epochs,
         "learning_rate": args.learning_rate,
@@ -533,16 +676,17 @@ def main() -> int:
         f"- epochs: {args.epochs}",
         f"- seed: {args.seed}",
         "",
-        "| variant | A | B | combined_rmse | close_rmse | vol_rmse | directional_acc | final_decay | final_chunk_λ | p95_ms |",
-        "|---------|---|---|---------------|------------|----------|-----------------|-------------|---------------|--------|",
+        "| variant | A | B | C | combined_rmse | close_rmse | vol_rmse | directional_acc | final_decay | final_chunk_λ | p95_ms |",
+        "|---------|---|---|---|---------------|------------|----------|-----------------|-------------|---------------|--------|",
     ]
-    for name, _, _ in variants:
+    for name, _, _, _ in variants:
         r = results[name]
         chunk_l = r["final_chunk_lambda"]
         chunk_l_str = f"{chunk_l:.4f}" if chunk_l is not None else "-"
         md_lines.append(
             f"| {name} | {'on' if r['use_time_decay'] else 'off'} | "
             f"{'on' if r['use_chunk_attention'] else 'off'} | "
+            f"{'on' if r['use_llm_embeddings'] else 'off'} | "
             f"{r['combined_rmse']:.4f} | {r['close_rmse']:.4f} | {r['volatility_rmse']:.4f} | "
             f"{r['directional_accuracy']:.4f} | {r['final_decay_rate']:.4f} | {chunk_l_str} | "
             f"{r['p95_ms']:.2f} |"

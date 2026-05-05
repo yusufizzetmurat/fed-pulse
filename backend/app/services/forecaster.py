@@ -223,10 +223,39 @@ class ForecasterModel(nn.Module):
         *,
         use_time_decay: bool = True,
         use_chunk_attention: bool = False,
+        use_llm_embeddings: bool = False,
         chunk_embedding_size: int = DEFAULT_CHUNK_EMBEDDING_SIZE,
         chunk_projection_dim: int = DEFAULT_CHUNK_PROJECTION_DIM,
     ):
+        """Forecaster LSTM with optional text-feature variants.
+
+        Variant flags
+        -------------
+        use_time_decay : bool
+            Variant A — dampens the sentiment feature by learned exponential
+            time decay before the LSTM.
+        use_chunk_attention : bool
+            Variant B — attends over per-chunk embeddings from the chunk
+            parquet (``embedding_source="chunk"``).
+        use_llm_embeddings : bool
+            Variant C — attends over per-document LLM embeddings from the
+            llm_embeddings parquet (``embedding_source="llm"``).  Shares the
+            same ``ChunkAttentionPooler`` and projection head as Variant B.
+
+        Mutual exclusivity
+        ------------------
+        ``use_chunk_attention`` and ``use_llm_embeddings`` are mutually
+        exclusive.  Both cannot be ``True`` simultaneously because they occupy
+        the same LSTM input slot (the pooler output projection).  A
+        ``ValueError`` is raised at construction time if both are set.  The
+        eight-way ablation sweeps them as separate cells.
+        """
         super().__init__()
+        if use_chunk_attention and use_llm_embeddings:
+            raise ValueError(
+                "use_chunk_attention and use_llm_embeddings are mutually exclusive. "
+                "Set at most one to True."
+            )
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -235,10 +264,13 @@ class ForecasterModel(nn.Module):
         self.initial_decay_rate = float(initial_decay_rate)
         self.use_time_decay = bool(use_time_decay)
         self.use_chunk_attention = bool(use_chunk_attention)
+        self.use_llm_embeddings = bool(use_llm_embeddings)
         self.chunk_embedding_size = int(chunk_embedding_size)
-        self.chunk_projection_dim = int(chunk_projection_dim) if self.use_chunk_attention else 0
+        # Either Variant B or Variant C activates the pooler path.
+        _uses_pooler = self.use_chunk_attention or self.use_llm_embeddings
+        self.chunk_projection_dim = int(chunk_projection_dim) if _uses_pooler else 0
         self.time_decay = TimeDecayAttention(initial_decay_rate)
-        if self.use_chunk_attention:
+        if _uses_pooler:
             self.chunk_pooler: ChunkAttentionPooler | None = ChunkAttentionPooler(
                 embedding_size=self.chunk_embedding_size,
                 initial_decay_rate=DEFAULT_CHUNK_DECAY_RATE,
@@ -246,8 +278,8 @@ class ForecasterModel(nn.Module):
             self.chunk_projection: nn.Linear | None = nn.Linear(
                 self.chunk_embedding_size, self.chunk_projection_dim, bias=True
             )
-            # Zero-init so Variant B starts equivalent to baseline; the model
-            # only departs from the baseline subspace if the chunk signal
+            # Zero-init so Variant B/C starts equivalent to baseline; the model
+            # only departs from the baseline subspace if the text signal
             # actually reduces loss. Avoids drowning 6 base features under
             # 8 dims of random-init noise on a small training set.
             nn.init.zeros_(self.chunk_projection.weight)
@@ -282,11 +314,15 @@ class ForecasterModel(nn.Module):
     ) -> torch.Tensor:
         if self.use_time_decay:
             x = self.time_decay(x)
-        if self.use_chunk_attention:
+        _uses_pooler = self.use_chunk_attention or self.use_llm_embeddings
+        if _uses_pooler:
             if self.chunk_pooler is None or self.chunk_projection is None:
-                raise RuntimeError("chunk_pooler not initialised but use_chunk_attention=True")
+                raise RuntimeError("chunk_pooler not initialised but pooler variant is active")
             if chunks is None or elapsed_days is None:
-                raise ValueError("ForecasterModel requires chunks/elapsed_days when use_chunk_attention=True")
+                variant = "use_chunk_attention" if self.use_chunk_attention else "use_llm_embeddings"
+                raise ValueError(
+                    f"ForecasterModel requires chunks/elapsed_days when {variant}=True"
+                )
             pooled, _, _ = self.chunk_pooler(chunks, elapsed_days, mask=chunk_mask)
             projected = self.chunk_projection(pooled)
             if projected.dim() == 1:
@@ -308,7 +344,14 @@ class ForecasterModel(nn.Module):
         elapsed_days: torch.Tensor,
         chunk_mask: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor] | None:
-        if not self.use_chunk_attention or self.chunk_pooler is None:
+        """Return pooler diagnostics when either Variant B or C is active.
+
+        Returns ``None`` when neither pooler variant is enabled.  The returned
+        dict uses the key ``"pooled"`` / ``"weights"`` / ``"decay_coeffs"``
+        regardless of which source (chunk or LLM) is active.
+        """
+        _uses_pooler = self.use_chunk_attention or self.use_llm_embeddings
+        if not _uses_pooler or self.chunk_pooler is None:
             return None
         pooled, weights, decay_coeffs = self.chunk_pooler(chunks, elapsed_days, mask=chunk_mask)
         return {
