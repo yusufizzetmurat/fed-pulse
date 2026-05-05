@@ -99,3 +99,50 @@ def test_parse_args_requires_input() -> None:
 def test_parse_args_default_judge_model_is_gemini_2_5_pro() -> None:
     args = llm_judge._parse_args(["--input", "/some/path"])
     assert args.judge_model == "gemini-2.5-pro"
+
+
+def _judged_row(label, max_score, judge_label, judge_conf, **rest):
+    base = {
+        "label": label,
+        "teacher_max_score": max_score,
+        "judge_label": judge_label,
+        "judge_confidence": judge_conf,
+    }
+    base.update(rest)
+    return base
+
+
+def test_gating_policy_confidence_only_keeps_above_tau() -> None:
+    rows = [
+        _judged_row("hawkish", 0.92, "neutral", 0.50),
+        _judged_row("dovish", 0.40, "dovish", 0.95),
+    ]
+    kept = llm_judge.apply_gating_policy(rows, policy="confidence_only", tau=0.85)
+    assert len(kept) == 1
+    assert kept[0]["label"] == "hawkish"
+
+
+def test_gating_policy_confidence_and_judge_requires_agreement() -> None:
+    rows = [
+        _judged_row("hawkish", 0.92, "hawkish", 0.50),  # agree at tau=0.85 -> keep
+        _judged_row("hawkish", 0.92, "neutral", 0.99),  # disagree -> drop
+        _judged_row("dovish", 0.40, "dovish", 0.99),    # below tau -> drop
+    ]
+    kept = llm_judge.apply_gating_policy(rows, policy="confidence_and_judge", tau=0.85)
+    assert len(kept) == 1
+    assert kept[0]["judge_label"] == "hawkish"
+
+
+def test_gating_policy_judge_only_keeps_when_judge_label_present() -> None:
+    rows = [
+        _judged_row("hawkish", 0.40, "hawkish", 0.99),  # judge confident -> keep
+        _judged_row("hawkish", 0.92, "neutral", 0.99),  # judge says neutral but valid -> keep
+        _judged_row("hawkish", 0.92, "", 0.0),          # judge empty -> drop
+    ]
+    kept = llm_judge.apply_gating_policy(rows, policy="judge_only", tau=0.85)
+    assert len(kept) == 2
+
+
+def test_gating_policy_unknown_raises() -> None:
+    with pytest.raises(ValueError):
+        llm_judge.apply_gating_policy([], policy="bogus", tau=0.85)

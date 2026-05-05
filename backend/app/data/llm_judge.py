@@ -98,6 +98,42 @@ def run_judge(
     return len(judged)
 
 
+GATING_POLICIES = ("confidence_only", "confidence_and_judge", "judge_only")
+ALLOWED_LABELS = ("hawkish", "dovish", "neutral")
+
+
+def apply_gating_policy(
+    rows: list[dict[str, Any]], *, policy: str, tau: float
+) -> list[dict[str, Any]]:
+    """Filter judged pseudo rows under one of three gating policies.
+
+    - confidence_only: teacher_max_score >= tau.
+    - confidence_and_judge: teacher_max_score >= tau AND judge_label == teacher label.
+    - judge_only: judge_label is in {hawkish, dovish, neutral}.
+    """
+
+    if policy not in GATING_POLICIES:
+        raise ValueError(f"Unknown gating policy: {policy!r}. Allowed: {GATING_POLICIES}")
+
+    kept: list[dict[str, Any]] = []
+    for row in rows:
+        if policy == "confidence_only":
+            if float(row.get("teacher_max_score", 0.0)) >= tau:
+                kept.append(row)
+            continue
+        if policy == "confidence_and_judge":
+            if float(row.get("teacher_max_score", 0.0)) < tau:
+                continue
+            if str(row.get("judge_label", "")) != str(row.get("label", "")):
+                continue
+            kept.append(row)
+            continue
+        # judge_only
+        if str(row.get("judge_label", "")) in ALLOWED_LABELS:
+            kept.append(row)
+    return kept
+
+
 def main() -> int:
     args = _parse_args()
     raise NotImplementedError("Wire main() in Task 7 once gating and audit are in place.")
