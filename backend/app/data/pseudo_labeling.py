@@ -10,6 +10,7 @@ LLM-as-judge second annotator + audit on top.
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -71,7 +72,19 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main() -> int:
     args = _parse_args()
-    raise NotImplementedError("Wire orchestrator in Task 4.")
+    pipeline = load_teacher(args.teacher_checkpoint)
+    written = run_pseudo_labeling(
+        input_path=Path(args.input),
+        output_path=Path(args.output),
+        teacher_pipeline=pipeline,
+        threshold=args.threshold,
+        teacher_model_id=args.teacher_model_id,
+        teacher_model_version=args.teacher_model_version,
+        max_rows=args.max_rows,
+    )
+    print(f"Pseudo-labelled rows written: {written}")
+    print(f"Output: {args.output}")
+    return 0
 
 
 def load_teacher(checkpoint_path: str):
@@ -156,6 +169,71 @@ def build_pseudo_row(
     row["teacher_max_score"] = float(prediction["max_score"])
     row["teacher_scores"] = dict(prediction["scores"])
     return row
+
+
+def _read_registry_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.exists():
+        return rows
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if isinstance(payload, dict):
+            rows.append(payload)
+    return rows
+
+
+def _is_unlabelled(row: dict[str, Any]) -> bool:
+    """A row is eligible for pseudo-labelling iff it has no human label."""
+
+    return not str(row.get("label", "")).strip()
+
+
+def run_pseudo_labeling(
+    *,
+    input_path: Path,
+    output_path: Path,
+    teacher_pipeline,
+    threshold: float,
+    teacher_model_id: str,
+    teacher_model_version: str,
+    max_rows: int = 0,
+) -> int:
+    """Score unlabelled rows and write the kept pseudo set as JSONL.
+
+    Returns the number of rows written.
+    """
+
+    rows = _read_registry_jsonl(input_path)
+    candidates = [row for row in rows if _is_unlabelled(row)]
+    if max_rows > 0:
+        candidates = candidates[:max_rows]
+
+    if not candidates:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("", encoding="utf-8")
+        return 0
+
+    predictions = score_passages(
+        (row["text"] for row in candidates), pipeline=teacher_pipeline
+    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    with output_path.open("w", encoding="utf-8") as handle:
+        for row, prediction in zip(candidates, predictions):
+            if prediction["max_score"] < threshold:
+                continue
+            pseudo_row = build_pseudo_row(
+                row,
+                prediction,
+                teacher_model_id=teacher_model_id,
+                teacher_model_version=teacher_model_version,
+            )
+            handle.write(json.dumps(pseudo_row) + "\n")
+            written += 1
+    return written
 
 
 if __name__ == "__main__":
