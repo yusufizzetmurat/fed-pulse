@@ -153,17 +153,28 @@ def _leakage_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _distribution_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
     source_counts = Counter(str(r.get("source", "")) for r in rows)
+    source_type_counts = Counter(
+        str(r.get("source_type", "")) for r in rows if r.get("source_type")
+    )
     label_counts = Counter(str(r.get("mapped_label", "")) for r in rows if r.get("mapped_label"))
     source_label_counts: dict[str, dict[str, int]] = {}
+    source_type_label_counts: dict[str, dict[str, int]] = {}
     for row in rows:
         source = str(row.get("source", ""))
+        source_type = str(row.get("source_type", "")) or "unknown"
         label = str(row.get("mapped_label", "")) or "unlabeled"
         source_label_counts.setdefault(source, {})
         source_label_counts[source][label] = source_label_counts[source].get(label, 0) + 1
+        source_type_label_counts.setdefault(source_type, {})
+        source_type_label_counts[source_type][label] = (
+            source_type_label_counts[source_type].get(label, 0) + 1
+        )
     return {
         "source_counts": dict(source_counts),
+        "source_type_counts": dict(source_type_counts),
         "mapped_label_counts": dict(label_counts),
         "source_label_counts": source_label_counts,
+        "source_type_label_counts": source_type_label_counts,
     }
 
 

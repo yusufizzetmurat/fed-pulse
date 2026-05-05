@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from app.data.source_type import infer_source_type
+
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
 DEFAULT_OUTPUT_DIR = DEFAULT_DATA_DIR / "raw" / "phase2"
@@ -121,16 +123,21 @@ def _build_registry_record(
     label: str,
     license_scope: str,
     citation_ref: str,
+    source_type: str | None = None,
 ) -> dict[str, Any] | None:
     cleaned_text = _normalize_text(text)
     if not cleaned_text or not event_date:
         return None
     record_id = hashlib.sha256(f"{source}:{source_record_id}:{event_date}".encode("utf-8")).hexdigest()[:16]
+    resolved_source_type = source_type or infer_source_type(
+        document_type=document_type, title=title
+    )
     return {
         "record_id": record_id,
         "source": source,
         "source_record_id": source_record_id,
         "document_type": document_type or "unknown",
+        "source_type": resolved_source_type,
         "event_date": event_date,
         "title": title,
         "text": cleaned_text,
@@ -257,11 +264,19 @@ def _iter_scraped_records(data_dir: Path) -> list[dict[str, Any]]:
         path = data_dir / filename
         if not path.exists():
             continue
+        # Filename is the authoritative signal for legacy scraped files;
+        # the row-level document_type is sometimes missing.
+        if filename == "fomc_minutes.json":
+            file_source_type = "fomc_minutes"
+        elif filename == "fomc_statements.json":
+            file_source_type = "fomc_statement"
+        else:
+            file_source_type = None
         payload = _read_json_or_jsonl(path)
         for idx, row in enumerate(payload):
             event_date = _coerce_str(row, ("date", "event_date", "published_date"))
             text = _coerce_str(row, ("text", "content"))
-            label = _coerce_str(row, ("label_text", "label"))  # likely empty for scraped
+            label = _coerce_str(row, ("label_text", "label"))
             title = _coerce_str(row, ("title",))
             document_type = _coerce_str(row, ("document_type", "type")) or "unknown"
             source_record_id = _coerce_str(row, ("id", "uid", "record_id")) or f"{filename}:{idx}"
@@ -275,6 +290,7 @@ def _iter_scraped_records(data_dir: Path) -> list[dict[str, Any]]:
                 label=label,
                 license_scope="public_source_scrape_terms_required",
                 citation_ref="federalreserve_primary_source",
+                source_type=file_source_type,
             )
             if built:
                 records.append(built)
@@ -290,15 +306,20 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def _write_summary(path: Path, rows: list[dict[str, Any]]) -> None:
     by_source: dict[str, int] = {}
+    by_source_type: dict[str, int] = {}
     labeled = 0
     for row in rows:
         by_source[row["source"]] = by_source.get(row["source"], 0) + 1
+        st = str(row.get("source_type", ""))
+        if st:
+            by_source_type[st] = by_source_type.get(st, 0) + 1
         if row.get("label"):
             labeled += 1
     payload = {
         "record_count": len(rows),
         "labeled_count": labeled,
         "source_counts": by_source,
+        "source_type_counts": by_source_type,
     }
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
