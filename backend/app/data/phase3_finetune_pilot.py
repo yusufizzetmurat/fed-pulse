@@ -240,6 +240,13 @@ def run_one(args: argparse.Namespace, *, artifact_dir: Path | None = None) -> di
     train_loss = float(train_output.metrics.get("train_loss", 0.0))
     print(f"[pilot] train_runtime={train_runtime:.1f}s train_loss={train_loss:.4f}")
 
+    model.config.id2label = ID2LABEL
+    model.config.label2id = LABEL2ID
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(str(checkpoint_dir))
+    tokenizer.save_pretrained(str(checkpoint_dir))
+    print(f"[pilot] model and tokenizer saved to {checkpoint_dir}")
+
     # Inference mode (disables dropout, batchnorm-updates, etc.)
     model.train(False)
     device = next(model.parameters()).device
