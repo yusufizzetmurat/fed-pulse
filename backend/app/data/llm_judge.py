@@ -13,7 +13,9 @@ This module is the implementation of issue #37 and the audit half of
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -241,9 +243,99 @@ def audit_metrics(audit_rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def write_audit_csv(sample: list[dict[str, Any]], output_path: Path) -> None:
+    """Write the audit set as a CSV with a `human_label` column the
+    offline labelling pass fills in."""
+
+    fieldnames = [
+        "record_id",
+        "event_date",
+        "source_type",
+        "title",
+        "text",
+        "label",  # teacher label
+        "judge_label",
+        "human_label",  # empty
+    ]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in sample:
+            writer.writerow(
+                {
+                    "record_id": row.get("record_id", ""),
+                    "event_date": row.get("event_date", ""),
+                    "source_type": row.get("source_type", ""),
+                    "title": row.get("title", ""),
+                    "text": row.get("text", ""),
+                    "label": row.get("label", ""),
+                    "judge_label": row.get("judge_label", ""),
+                    "human_label": "",
+                }
+            )
+
+
+def summarise_gating_policies(
+    rows: list[dict[str, Any]], *, tau: float
+) -> dict[str, Any]:
+    """Summarize kept rows and label distribution for each gating policy."""
+    summary: dict[str, Any] = {}
+    for policy in GATING_POLICIES:
+        kept = apply_gating_policy(rows, policy=policy, tau=tau)
+        labels = Counter(r.get("label", "") for r in kept)
+        summary[policy] = {
+            "kept": len(kept),
+            "label_distribution": dict(labels),
+        }
+    return summary
+
+
 def main() -> int:
     args = _parse_args()
-    raise NotImplementedError("Wire main() in Task 7 once gating and audit are in place.")
+    from app.services.gemini_client import load_model
+
+    model = load_model(args.judge_model)
+
+    judged_path = Path(args.output)
+    written = run_judge(
+        input_path=Path(args.input),
+        output_path=judged_path,
+        gemini_model=model,
+        judge_model_id=args.judge_model,
+        judge_model_version=args.judge_model_version,
+        max_rows=args.max_rows,
+    )
+    print(f"Judged rows written: {written}")
+
+    judged_rows = _read_jsonl(judged_path)
+
+    audit_dir = Path(args.audit_dir)
+    audit_dir.mkdir(parents=True, exist_ok=True)
+
+    sweep: dict[str, Any] = {}
+    for tau in (0.75, 0.85, 0.95):
+        sweep[f"{tau}"] = summarise_gating_policies(judged_rows, tau=tau)
+    (audit_dir / "policy_sweep.json").write_text(
+        json.dumps(sweep, indent=2), encoding="utf-8"
+    )
+    print(f"Policy sweep written to {audit_dir / 'policy_sweep.json'}")
+
+    audit_sample = sample_audit_set(judged_rows, n=100, seed=11)
+    _write_jsonl(audit_dir / "audit_set.jsonl", audit_sample)
+    write_audit_csv(audit_sample, audit_dir / "audit_set.csv")
+    print(f"Audit set written ({len(audit_sample)} rows) to {audit_dir}")
+
+    filled_path = audit_dir / "audit_set_filled.jsonl"
+    if filled_path.exists():
+        filled_rows = _read_jsonl(filled_path)
+        metrics = audit_metrics(filled_rows)
+        (audit_dir / "audit_metrics.json").write_text(
+            json.dumps(metrics, indent=2), encoding="utf-8"
+        )
+        print(f"Audit metrics written to {audit_dir / 'audit_metrics.json'}")
+
+    return 0
 
 
 if __name__ == "__main__":

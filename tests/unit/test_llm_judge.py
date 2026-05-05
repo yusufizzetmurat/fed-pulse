@@ -200,3 +200,27 @@ def test_audit_metrics_handles_empty_human_labels(tmp_path: Path) -> None:
     metrics = llm_judge.audit_metrics(audit_rows)
     assert metrics["audit_size"] == 1
     assert metrics["teacher_accuracy"] == pytest.approx(1.0)
+
+
+def test_write_audit_csv_includes_empty_human_label_column(tmp_path: Path) -> None:
+    sample = [
+        {"record_id": "r1", "label": "hawkish", "judge_label": "hawkish", "text": "Some text"},
+    ]
+    out = tmp_path / "audit_set.csv"
+    llm_judge.write_audit_csv(sample, out)
+    content = out.read_text(encoding="utf-8")
+    assert "human_label" in content.splitlines()[0]
+    assert "Some text" in content
+
+
+def test_summarise_gating_policies_returns_yield_per_policy() -> None:
+    rows = [
+        _judged_row("hawkish", 0.92, "hawkish", 0.95),
+        _judged_row("hawkish", 0.92, "neutral", 0.95),
+        _judged_row("dovish", 0.40, "dovish", 0.95),
+    ]
+    summary = llm_judge.summarise_gating_policies(rows, tau=0.85)
+    assert summary["confidence_only"]["kept"] == 2
+    assert summary["confidence_and_judge"]["kept"] == 1
+    assert summary["judge_only"]["kept"] == 3
+    assert "label_distribution" in summary["confidence_only"]
