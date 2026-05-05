@@ -8,6 +8,7 @@ import pytest
 from app.data import ingest_sources
 from app.data.source_type import (
     SOURCE_TYPE_CHAIR_SPEECH,
+    SOURCE_TYPE_CONGRESSIONAL_TESTIMONY,
     SOURCE_TYPE_FOMC_MINUTES,
     SOURCE_TYPE_FOMC_STATEMENT,
     SOURCE_TYPE_GOVERNOR_SPEECH,
@@ -121,3 +122,24 @@ def test_iter_scraped_records_assigns_governor_speech_source_type(tmp_path: Path
     assert governor_records[0]["source"] == "scraped_fed"
     assert governor_records[0]["title"] == "Governor Waller on the labor market"
     assert governor_records[0]["event_date"] == "2024-02-15"
+
+
+def test_iter_scraped_records_assigns_congressional_testimony_source_type(tmp_path: Path) -> None:
+    rows = [
+        {
+            "date": "2024-03-06",
+            "title": "Semiannual Monetary Policy Report",
+            "text": "Full text",
+            "document_type": "congressional_testimony",
+            "url": "https://www.federalreserve.gov/newsevents/testimony/powell20240306a.htm",
+            "scraped_at_utc": "2024-03-06T12:00:00+00:00",
+        }
+    ]
+    (tmp_path / "congressional_testimonies.json").write_text(json.dumps(rows), encoding="utf-8")
+
+    records = ingest_sources._iter_scraped_records(tmp_path)
+
+    test_records = [r for r in records if r["source_type"] == SOURCE_TYPE_CONGRESSIONAL_TESTIMONY]
+    assert len(test_records) == 1
+    assert test_records[0]["source"] == "scraped_fed"
+    assert test_records[0]["title"] == "Semiannual Monetary Policy Report"
