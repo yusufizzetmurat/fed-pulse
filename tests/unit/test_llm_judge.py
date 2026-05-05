@@ -146,3 +146,57 @@ def test_gating_policy_judge_only_keeps_when_judge_label_present() -> None:
 def test_gating_policy_unknown_raises() -> None:
     with pytest.raises(ValueError):
         llm_judge.apply_gating_policy([], policy="bogus", tau=0.85)
+
+
+def test_sample_audit_set_is_stratified_by_teacher_label_and_size_n(tmp_path: Path) -> None:
+    rows = []
+    for label, count in [("hawkish", 100), ("dovish", 30), ("neutral", 30)]:
+        for idx in range(count):
+            rows.append(
+                _judged_row(
+                    label,
+                    0.9,
+                    label,
+                    0.9,
+                    record_id=f"{label}_{idx}",
+                    text=f"text {label} {idx}",
+                )
+            )
+
+    audit = llm_judge.sample_audit_set(rows, n=60, seed=11)
+
+    assert len(audit) == 60
+    counts = {label: sum(1 for r in audit if r["label"] == label) for label in ("hawkish", "dovish", "neutral")}
+    assert all(c > 0 for c in counts.values())
+    assert sum(counts.values()) == 60
+
+
+def test_audit_metrics_returns_teacher_and_judge_precision_against_human(tmp_path: Path) -> None:
+    audit_rows = [
+        # human, teacher, judge
+        {"human_label": "hawkish", "label": "hawkish", "judge_label": "hawkish"},
+        {"human_label": "hawkish", "label": "hawkish", "judge_label": "neutral"},
+        {"human_label": "dovish", "label": "neutral", "judge_label": "dovish"},
+        {"human_label": "neutral", "label": "neutral", "judge_label": "neutral"},
+    ]
+    metrics = llm_judge.audit_metrics(audit_rows)
+
+    assert metrics["teacher_accuracy"] == pytest.approx(0.75)
+    assert metrics["judge_accuracy"] == pytest.approx(0.75)
+    assert "cohen_kappa" in metrics
+    assert "teacher_per_class" in metrics
+    assert "judge_per_class" in metrics
+    assert "hawkish" in metrics["teacher_per_class"]
+
+
+def test_audit_metrics_handles_empty_human_labels(tmp_path: Path) -> None:
+    """Until the human pass is done, audit rows have empty human_label;
+    the metrics computer must skip those rows rather than raise."""
+
+    audit_rows = [
+        {"human_label": "", "label": "hawkish", "judge_label": "hawkish"},
+        {"human_label": "hawkish", "label": "hawkish", "judge_label": "hawkish"},
+    ]
+    metrics = llm_judge.audit_metrics(audit_rows)
+    assert metrics["audit_size"] == 1
+    assert metrics["teacher_accuracy"] == pytest.approx(1.0)

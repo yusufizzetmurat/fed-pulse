@@ -134,6 +134,113 @@ def apply_gating_policy(
     return kept
 
 
+import random
+from collections import defaultdict
+
+
+def sample_audit_set(
+    rows: list[dict[str, Any]], *, n: int, seed: int = 11
+) -> list[dict[str, Any]]:
+    """Stratified sample of size n from rows by teacher label.
+
+    The sample is proportional to each class's count, with at least one
+    row per non-empty class when n is large enough. The seed makes the
+    sample reproducible.
+    """
+
+    by_label: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        by_label[str(row.get("label", ""))].append(row)
+
+    rng = random.Random(seed)
+    total = sum(len(v) for v in by_label.values())
+    if total == 0:
+        return []
+
+    quotas: dict[str, int] = {}
+    for label, items in by_label.items():
+        share = round(n * len(items) / total)
+        quotas[label] = max(1, share) if items else 0
+
+    overflow = sum(quotas.values()) - n
+    if overflow > 0:
+        for label in sorted(quotas, key=lambda k: -quotas[k]):
+            while overflow > 0 and quotas[label] > 1:
+                quotas[label] -= 1
+                overflow -= 1
+            if overflow <= 0:
+                break
+    elif overflow < 0:
+        for label in sorted(quotas, key=lambda k: -len(by_label[k])):
+            while overflow < 0 and quotas[label] < len(by_label[label]):
+                quotas[label] += 1
+                overflow += 1
+            if overflow >= 0:
+                break
+
+    sample: list[dict[str, Any]] = []
+    for label, items in by_label.items():
+        k = min(quotas.get(label, 0), len(items))
+        sample.extend(rng.sample(items, k))
+    return sample
+
+
+def audit_metrics(audit_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute teacher / judge precision against the human gold label.
+
+    Rows where human_label is empty are skipped (the pass is in progress).
+    Returns aggregate accuracy, Cohen's κ between (teacher, human),
+    (judge, human), (teacher, judge), and per-class precision tables.
+    """
+
+    labelled = [r for r in audit_rows if str(r.get("human_label", "")).strip()]
+    if not labelled:
+        return {
+            "audit_size": 0,
+            "teacher_accuracy": 0.0,
+            "judge_accuracy": 0.0,
+            "cohen_kappa": {},
+            "teacher_per_class": {},
+            "judge_per_class": {},
+        }
+
+    humans = [str(r["human_label"]).strip().lower() for r in labelled]
+    teachers = [str(r.get("label", "")).strip().lower() for r in labelled]
+    judges = [str(r.get("judge_label", "")).strip().lower() for r in labelled]
+
+    teacher_acc = sum(t == h for t, h in zip(teachers, humans)) / len(labelled)
+    judge_acc = sum(j == h for j, h in zip(judges, humans)) / len(labelled)
+
+    try:
+        from sklearn.metrics import cohen_kappa_score  # type: ignore
+
+        kappa = {
+            "teacher_human": float(cohen_kappa_score(teachers, humans)),
+            "judge_human": float(cohen_kappa_score(judges, humans)),
+            "teacher_judge": float(cohen_kappa_score(teachers, judges)),
+        }
+    except Exception:  # pragma: no cover - import guard
+        kappa = {}
+
+    def _per_class(predictions: list[str], gold: list[str]) -> dict[str, float]:
+        per: dict[str, float] = {}
+        for label in ALLOWED_LABELS:
+            tp = sum(1 for p, g in zip(predictions, gold) if p == label and g == label)
+            fp = sum(1 for p, g in zip(predictions, gold) if p == label and g != label)
+            denom = tp + fp
+            per[label] = tp / denom if denom else 0.0
+        return per
+
+    return {
+        "audit_size": len(labelled),
+        "teacher_accuracy": teacher_acc,
+        "judge_accuracy": judge_acc,
+        "cohen_kappa": kappa,
+        "teacher_per_class": _per_class(teachers, humans),
+        "judge_per_class": _per_class(judges, humans),
+    }
+
+
 def main() -> int:
     args = _parse_args()
     raise NotImplementedError("Wire main() in Task 7 once gating and audit are in place.")
