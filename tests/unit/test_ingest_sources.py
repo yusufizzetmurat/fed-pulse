@@ -7,6 +7,7 @@ import pytest
 
 from app.data import ingest_sources
 from app.data.source_type import (
+    SOURCE_TYPE_CHAIR_SPEECH,
     SOURCE_TYPE_FOMC_MINUTES,
     SOURCE_TYPE_FOMC_STATEMENT,
     SOURCE_TYPE_VALUES,
@@ -75,3 +76,25 @@ def test_write_summary_includes_source_type_counts(tmp_path: Path) -> None:
         SOURCE_TYPE_FOMC_MINUTES: 2,
         SOURCE_TYPE_FOMC_STATEMENT: 1,
     }
+
+
+def test_iter_scraped_records_assigns_chair_speech_source_type(tmp_path: Path) -> None:
+    speeches = [
+        {
+            "date": "2024-01-31",
+            "title": "Chair Powell on inflation",
+            "text": "Full speech text",
+            "document_type": "chair_speech",
+            "url": "https://www.federalreserve.gov/newsevents/speech/powell20240131a.htm",
+            "scraped_at_utc": "2024-01-31T12:00:00+00:00",
+        }
+    ]
+    (tmp_path / "chair_speeches.json").write_text(json.dumps(speeches), encoding="utf-8")
+
+    records = ingest_sources._iter_scraped_records(tmp_path)
+
+    chair_records = [r for r in records if r["source_type"] == SOURCE_TYPE_CHAIR_SPEECH]
+    assert len(chair_records) == 1
+    assert chair_records[0]["source"] == "scraped_fed"
+    assert chair_records[0]["title"] == "Chair Powell on inflation"
+    assert chair_records[0]["event_date"] == "2024-01-31"
