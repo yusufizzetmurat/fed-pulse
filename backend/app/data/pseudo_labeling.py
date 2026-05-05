@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -19,6 +20,32 @@ DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.par
 DEFAULT_INPUT = DEFAULT_DATA_DIR / "raw" / "phase2" / "source_registry.jsonl"
 DEFAULT_OUTPUT = DEFAULT_DATA_DIR / "interim" / "phase2" / "registry_pseudo.jsonl"
 DEFAULT_AUDIT_DIR = DEFAULT_DATA_DIR / "artifacts" / "pseudo_label_audits"
+
+
+def threshold_sweep(
+    predictions: list[dict[str, Any]], *, thresholds: tuple[float, ...] = (0.75, 0.85, 0.95)
+) -> dict[str, Any]:
+    """Yield + per-class distribution for each threshold over the same predictions.
+
+    Returns a dict shaped for the project document precision/recall trade
+    paragraph: {thresholds, total, yield, label_distribution}.
+    """
+
+    yield_by_tau: dict[str, int] = {}
+    label_by_tau: dict[str, dict[str, int]] = {}
+    for tau in thresholds:
+        kept, _ = apply_threshold(predictions, threshold=tau)
+        key = f"{tau}"
+        yield_by_tau[key] = len(kept)
+        label_by_tau[key] = dict(
+            Counter(p["predicted_label"] for p in kept)
+        )
+    return {
+        "thresholds": list(thresholds),
+        "total": len(predictions),
+        "yield": yield_by_tau,
+        "label_distribution": label_by_tau,
+    }
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

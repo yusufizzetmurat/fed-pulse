@@ -228,3 +228,21 @@ def test_run_pseudo_labeling_scores_only_unlabelled_rows_and_writes_jsonl(tmp_pa
     assert pseudo["teacher_model_id"] == "fomc_roberta_s71"
     assert pseudo["teacher_max_score"] == pytest.approx(0.92)
     assert all(p["record_id"] != "r3" for p in pseudo_rows)
+
+
+def test_threshold_sweep_reports_yield_and_label_distribution_per_threshold() -> None:
+    predictions = [
+        {"predicted_label": "hawkish", "max_score": 0.92, "scores": {}},
+        {"predicted_label": "hawkish", "max_score": 0.80, "scores": {}},
+        {"predicted_label": "dovish", "max_score": 0.78, "scores": {}},
+        {"predicted_label": "dovish", "max_score": 0.40, "scores": {}},
+        {"predicted_label": "neutral", "max_score": 0.97, "scores": {}},
+    ]
+
+    sweep = pseudo_labeling.threshold_sweep(predictions, thresholds=(0.75, 0.85, 0.95))
+
+    assert sweep["thresholds"] == [0.75, 0.85, 0.95]
+    assert sweep["total"] == 5
+    assert sweep["yield"] == {"0.75": 4, "0.85": 2, "0.95": 1}
+    assert sweep["label_distribution"]["0.85"] == {"hawkish": 1, "neutral": 1}
+    assert sweep["label_distribution"]["0.95"] == {"neutral": 1}
