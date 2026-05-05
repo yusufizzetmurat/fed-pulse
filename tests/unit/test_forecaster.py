@@ -586,3 +586,19 @@ def test_forecaster_model_gru_variant_forward_returns_expected_shape() -> None:
 def test_forecaster_model_unknown_model_type_raises() -> None:
     with pytest.raises(ValueError):
         ForecasterModel(input_size=6, hidden_size=32, model_type="bogus")
+
+
+def test_forecaster_model_tcn_variant_forward_returns_expected_shape() -> None:
+    import torch
+    from app.services.forecaster import ForecasterModel
+
+    model = ForecasterModel(input_size=6, hidden_size=32, model_type="tcn")
+    x = torch.zeros(2, 5, 6)
+    out = model(x)
+    lstm_model = ForecasterModel(input_size=6, hidden_size=32, model_type="lstm")
+    lstm_out = lstm_model(x)
+    if isinstance(out, tuple):
+        for a, b in zip(out, lstm_out):
+            assert a.shape == b.shape
+    else:
+        assert out.shape == lstm_out.shape
