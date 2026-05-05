@@ -132,7 +132,7 @@ def load_teacher(checkpoint_path: str):
     return TextClassificationPipeline(
         model=model,
         tokenizer=tokenizer,
-        return_all_scores=True,
+        top_k=None,
         truncation=True,
         max_length=512,
     )
