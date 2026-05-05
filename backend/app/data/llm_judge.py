@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any, Sequence
@@ -43,6 +44,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--audit-dir", default=str(DEFAULT_AUDIT_DIR), help="Audit artefact directory.")
     parser.add_argument("--max-rows", type=int, default=0, help="Score at most N rows; 0 = no limit.")
+    parser.add_argument(
+        "--request-interval-seconds",
+        type=float,
+        default=0.0,
+        help="Sleep this many seconds between Gemini calls to respect rate limits. 0 = no sleep.",
+    )
     return parser.parse_args(argv)
 
 
@@ -74,12 +81,17 @@ def run_judge(
     judge_model_id: str,
     judge_model_version: str,
     max_rows: int = 0,
+    request_interval_seconds: float = 0.0,
 ) -> int:
     """Score every row in input_path, write judged rows to output_path.
 
     Each output row preserves all input fields and adds judge_label,
     judge_confidence, judge_model_id, judge_model_version. Returns the
     number of rows written.
+
+    request_interval_seconds: sleep between successive Gemini calls
+    (skipped after the final call). Use this to respect free-tier
+    rate limits — e.g. 35.0 keeps under the gemini-2.5-flash 2 req/min cap.
     """
 
     rows = _read_jsonl(input_path)
@@ -87,7 +99,7 @@ def run_judge(
         rows = rows[:max_rows]
 
     judged: list[dict[str, Any]] = []
-    for row in rows:
+    for index, row in enumerate(rows):
         prediction = score_passage(row.get("text", ""), model=gemini_model)
         out = dict(row)
         out["judge_label"] = prediction["label"]
@@ -95,6 +107,8 @@ def run_judge(
         out["judge_model_id"] = judge_model_id
         out["judge_model_version"] = judge_model_version
         judged.append(out)
+        if request_interval_seconds > 0 and index < len(rows) - 1:
+            time.sleep(request_interval_seconds)
 
     _write_jsonl(output_path, judged)
     return len(judged)
@@ -305,6 +319,7 @@ def main() -> int:
         judge_model_id=args.judge_model,
         judge_model_version=args.judge_model_version,
         max_rows=args.max_rows,
+        request_interval_seconds=args.request_interval_seconds,
     )
     print(f"Judged rows written: {written}")
 
