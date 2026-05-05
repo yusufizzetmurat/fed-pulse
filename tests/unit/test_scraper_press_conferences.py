@@ -42,19 +42,61 @@ def test_extract_press_conference_listing_deduplicates_repeated_urls() -> None:
     assert len(entries) == 1
 
 
-def test_parse_press_conference_page_extracts_date_and_body() -> None:
+def test_parse_press_conference_page_extracts_transcript_from_pdf(tmp_path: Path, monkeypatch) -> None:
+    """The press conference HTML page is a video-only landing; the
+    transcript lives in a sibling PDF. parse_press_conference_page
+    must download and extract the PDF text."""
+
     sample_html = (FIXTURES / "fed_press_conference_sample.html").read_text(encoding="utf-8")
+    pdf_bytes = (FIXTURES / "fed_press_conference_sample.pdf").read_bytes()
+
     calendar_html = (FIXTURES / "fed_fomc_calendar.html").read_text(encoding="utf-8")
     match = re.search(r'/monetarypolicy/fomcpresconf202[45][0-9]{4}\.htm', calendar_html)
     assert match
     source_url = "https://www.federalreserve.gov" + match.group(0)
 
+    # Stub the PDF download
+    class _StubResponse:
+        def __init__(self, content):
+            self.content = content
+            self.status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+    def fake_get(url, *args, **kwargs):
+        # Verify the PDF URL is constructed correctly
+        assert "FOMCpresconf" in url
+        assert url.endswith(".pdf")
+        return _StubResponse(pdf_bytes)
+
+    monkeypatch.setattr("app.services.scraper_press_conferences.requests.get", fake_get)
+
     parsed = parse_press_conference_page(sample_html, source_url=source_url)
 
     assert isinstance(parsed, ParsedPressConference)
     assert parsed.date.startswith("20")
-    assert len(parsed.text) > 200
+    # Real transcript should be substantial (thousands of chars), not 600 chars of boilerplate
+    assert len(parsed.text) > 5000
     assert parsed.url == source_url
+    # Powell's prepared remarks should mention the FOMC at minimum
+    assert "FOMC" in parsed.text or "Federal" in parsed.text
+
+
+def test_parse_press_conference_page_falls_back_when_pdf_unavailable(monkeypatch) -> None:
+    """If the PDF download fails (404, network), return empty text rather than raising."""
+
+    sample_html = (FIXTURES / "fed_press_conference_sample.html").read_text(encoding="utf-8")
+    source_url = "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20240131.htm"
+
+    def fake_get(url, *args, **kwargs):
+        raise Exception("simulated network failure")
+
+    monkeypatch.setattr("app.services.scraper_press_conferences.requests.get", fake_get)
+
+    parsed = parse_press_conference_page(sample_html, source_url=source_url)
+    assert parsed.text == ""
+    assert parsed.date.startswith("2024")
 
 
 def test_write_press_conferences_json_emits_one_row_per_parsed(tmp_path: Path) -> None:

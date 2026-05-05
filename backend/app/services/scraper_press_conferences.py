@@ -1,20 +1,12 @@
 """FOMC press-conference scraper.
 
-Same FRB site template as speech / testimony pages, so the same body
-selectors apply. URL pattern is /monetarypolicy/fomcpresconf{YYYYMMDD}.htm
-(no speaker letter; the Chair always leads). The press-conference
-archive lives on the FOMC calendar at /monetarypolicy/fomccalendars.htm
-alongside meeting-minutes URLs. There is no speaker filter — every
-entry is a Chair-led press conference.
-
-Structural note: as of 2024-2025, the individual press-conference pages are
-video-landing pages. The actual transcript text is published only as a PDF
-(linked from the page as "Press Conference Transcript (PDF)"). The
-div#article p selector therefore captures the video accessibility boilerplate
-and the Related Information links rather than the speech transcript body.
-PDF parsing is left as a future enhancement. Body text extracted here is
-sufficient to register the event in the source registry but should not be
-used for NLP training without the PDF transcript fallback.
+The /monetarypolicy/fomcpresconf{YYYYMMDD}.htm page is a video-only
+landing page with no substantive transcript text. The actual transcript
+is published as a PDF at /mediacenter/files/FOMCpresconf{date}.pdf.
+parse_press_conference_page constructs the PDF URL from the HTML URL,
+downloads it, extracts text via pypdf, and returns the transcript.
+On download or extraction failure the text is empty — the caller
+(write_press_conferences_json) skips empty-text rows.
 """
 
 from __future__ import annotations
@@ -23,10 +15,12 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import urljoin
 
+import requests
 from bs4 import BeautifulSoup
 
 ARCHIVE_BASE_URL = "https://www.federalreserve.gov"
@@ -87,17 +81,52 @@ def extract_press_conference_listing(html: str) -> list[PressConferenceListingEn
     return entries
 
 
-def parse_press_conference_page(html: str, *, source_url: str) -> ParsedPressConference:
-    """Parse a single press-conference page into a ParsedPressConference.
+def _pdf_url_from_html_url(source_url: str) -> str:
+    """Convert /monetarypolicy/fomcpresconf{date}.htm to /mediacenter/files/FOMCpresconf{date}.pdf."""
 
-    Reuses the same FRB body selectors that work for speeches / testimony.
-    The Chair is always the speaker; we don't extract a speaker field
-    separately because all rows share it.
+    match = DATE_FROM_URL_PATTERN.search(source_url)
+    if not match:
+        return ""
+    date_yyyymmdd = match.group(1)
+    return f"{ARCHIVE_BASE_URL}/mediacenter/files/FOMCpresconf{date_yyyymmdd}.pdf"
+
+
+def _extract_pdf_text(pdf_bytes: bytes) -> str:
+    """Extract concatenated text from a PDF byte stream via pypdf.
+
+    Returns empty string on any extraction failure — the caller decides
+    whether to keep the row.
+    """
+
+    try:
+        from pypdf import PdfReader  # type: ignore
+
+        reader = PdfReader(BytesIO(pdf_bytes))
+        chunks: list[str] = []
+        for page in reader.pages:
+            try:
+                chunks.append(page.extract_text() or "")
+            except Exception:
+                continue
+        return "\n".join(c for c in chunks if c).strip()
+    except Exception:
+        return ""
+
+
+def parse_press_conference_page(html: str, *, source_url: str) -> ParsedPressConference:
+    """Parse a press-conference page.
+
+    The HTML page is a video-only landing page; the substantive
+    transcript lives in a sibling PDF at /mediacenter/files/FOMCpresconf{date}.pdf.
+    This function constructs the PDF URL, downloads it, extracts text
+    via pypdf, and returns the extracted text as `parsed.text`. On any
+    download / extraction failure, returns empty text — the caller can
+    decide whether to keep the row.
     """
 
     soup = BeautifulSoup(html, "html.parser")
 
-    # Title (usually "FOMC Press Conference" or similar)
+    # Title (best-effort from HTML)
     title = ""
     og = soup.find("meta", attrs={"property": "og:title"})
     if og and og.get("content"):
@@ -108,33 +137,25 @@ def parse_press_conference_page(html: str, *, source_url: str) -> ParsedPressCon
             title = _clean_text(title_tag.get_text(" ", strip=True))
             title = re.sub(r"\s*-\s*Federal Reserve Board\s*$", "", title, flags=re.IGNORECASE)
     if not title:
-        h3 = soup.select_one("h3, h2")
-        if h3:
-            title = _clean_text(h3.get_text(" ", strip=True))
-
-    # Body — same selector chain as speeches/testimony.
-    # Note: as of 2024-2025, press-conference pages are video-only landing pages;
-    # the selectors capture video accessibility boilerplate + metadata links.
-    # The actual transcript text is in the linked PDF (future enhancement).
-    body_chunks: list[str] = []
-    for selector in [
-        "div.col-xs-12.col-sm-8.col-md-8 p",
-        "div#article p",
-        "article p",
-        "main p",
-    ]:
-        nodes = soup.select(selector)
-        if nodes:
-            body_chunks = [_clean_text(node.get_text(" ", strip=True)) for node in nodes]
-            break
-    body = "\n".join(c for c in body_chunks if c)
+        title = "FOMC Press Conference"
 
     date_iso = _date_from_url(source_url)
 
+    # Fetch and extract the PDF transcript
+    text = ""
+    pdf_url = _pdf_url_from_html_url(source_url)
+    if pdf_url:
+        try:
+            response = requests.get(pdf_url, timeout=30)
+            response.raise_for_status()
+            text = _extract_pdf_text(response.content)
+        except Exception:
+            text = ""
+
     return ParsedPressConference(
         date=date_iso,
-        title=title or "FOMC Press Conference",
-        text=body,
+        title=title,
+        text=text,
         url=source_url,
     )
 
