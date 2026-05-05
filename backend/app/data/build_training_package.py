@@ -227,6 +227,9 @@ def main() -> int:
         "supervised_rows": len(supervised_rows),
         "split_counts": {"train": len(train_rows), "val": len(val_rows), "test": len(test_rows)},
         "source_counts": dict(Counter(str(r.get("source", "")) for r in supervised_rows)),
+        "source_type_counts": dict(
+            Counter(str(r.get("source_type", "")) for r in supervised_rows if r.get("source_type"))
+        ),
         "label_counts": dict(Counter(str(r.get("mapped_label", "")) for r in supervised_rows)),
         "registry_parquet_written": parquet_written,
     }
