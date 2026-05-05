@@ -10,6 +10,7 @@ from app.data.source_type import (
     SOURCE_TYPE_CHAIR_SPEECH,
     SOURCE_TYPE_FOMC_MINUTES,
     SOURCE_TYPE_FOMC_STATEMENT,
+    SOURCE_TYPE_GOVERNOR_SPEECH,
     SOURCE_TYPE_VALUES,
 )
 
@@ -98,3 +99,25 @@ def test_iter_scraped_records_assigns_chair_speech_source_type(tmp_path: Path) -
     assert chair_records[0]["source"] == "scraped_fed"
     assert chair_records[0]["title"] == "Chair Powell on inflation"
     assert chair_records[0]["event_date"] == "2024-01-31"
+
+
+def test_iter_scraped_records_assigns_governor_speech_source_type(tmp_path: Path) -> None:
+    speeches = [
+        {
+            "date": "2024-02-15",
+            "title": "Governor Waller on the labor market",
+            "text": "Full speech text",
+            "document_type": "governor_speech",
+            "url": "https://www.federalreserve.gov/newsevents/speech/waller20240215a.htm",
+            "scraped_at_utc": "2024-02-15T12:00:00+00:00",
+        }
+    ]
+    (tmp_path / "governor_speeches.json").write_text(json.dumps(speeches), encoding="utf-8")
+
+    records = ingest_sources._iter_scraped_records(tmp_path)
+
+    governor_records = [r for r in records if r["source_type"] == SOURCE_TYPE_GOVERNOR_SPEECH]
+    assert len(governor_records) == 1
+    assert governor_records[0]["source"] == "scraped_fed"
+    assert governor_records[0]["title"] == "Governor Waller on the labor market"
+    assert governor_records[0]["event_date"] == "2024-02-15"

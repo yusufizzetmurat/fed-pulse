@@ -138,3 +138,82 @@ def test_write_chair_speeches_json_skips_rows_with_empty_body(tmp_path: Path) ->
     written = write_chair_speeches_json(parsed, output)
     assert written == 0
     assert output.read_text(encoding="utf-8") == "[]"
+
+
+from app.services.scraper_speeches import is_governor_speech, write_governor_speeches_json
+
+
+@pytest.mark.parametrize(
+    "speaker,expected",
+    [
+        ("Governor Waller", True),
+        ("Governor Bowman", True),
+        ("Governor Lael Brainard", True),
+        ("Governor Christopher J. Waller", True),
+        ("Vice Chair Brainard", False),
+        ("Vice Chairman Clarida", False),
+        ("Chair Powell", False),
+        ("Chairman Bernanke", False),
+        ("Chair Yellen", False),
+        ("", False),
+        ("Some Random Speaker", False),
+    ],
+)
+def test_is_governor_speech_classifies_speaker_correctly(speaker: str, expected: bool) -> None:
+    assert is_governor_speech(speaker) == expected
+
+
+def test_write_governor_speeches_json_emits_one_row_per_governor_speech(tmp_path: Path) -> None:
+    parsed = [
+        ParsedSpeech(
+            date="2024-02-15",
+            speaker="Governor Waller",
+            title="Speech on the labor market",
+            text="Full body of the speech " * 30,
+            url="https://www.federalreserve.gov/newsevents/speech/waller20240215a.htm",
+        ),
+        ParsedSpeech(
+            date="2024-01-31",
+            speaker="Chair Powell",
+            title="Speech on inflation",
+            text="Full body " * 30,
+            url="https://www.federalreserve.gov/newsevents/speech/powell20240131a.htm",
+        ),
+        ParsedSpeech(
+            date="2024-03-10",
+            speaker="Vice Chair Brainard",
+            title="Speech on financial stability",
+            text="Full body " * 30,
+            url="https://www.federalreserve.gov/newsevents/speech/brainard20240310a.htm",
+        ),
+    ]
+
+    output = tmp_path / "governor_speeches.json"
+    written = write_governor_speeches_json(parsed, output)
+
+    assert written == 1  # only Waller is a non-Chair governor
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert isinstance(payload, list)
+    assert len(payload) == 1
+    row = payload[0]
+    assert row["title"] == "Speech on the labor market"
+    assert row["date"] == "2024-02-15"
+    assert row["document_type"] == "governor_speech"
+    assert row["url"].endswith("waller20240215a.htm")
+
+
+def test_write_governor_speeches_json_skips_rows_with_empty_body(tmp_path: Path) -> None:
+    parsed = [
+        ParsedSpeech(
+            date="2024-02-15",
+            speaker="Governor Waller",
+            title="Empty",
+            text="",
+            url="https://www.federalreserve.gov/newsevents/speech/waller20240215a.htm",
+        )
+    ]
+    output = tmp_path / "governor_speeches.json"
+    written = write_governor_speeches_json(parsed, output)
+    assert written == 0
+    assert output.read_text(encoding="utf-8") == "[]"

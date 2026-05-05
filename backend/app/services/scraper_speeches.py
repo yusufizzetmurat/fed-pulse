@@ -217,6 +217,7 @@ def extract_speech_listing(html: str) -> list[SpeechListingEntry]:
 
 _CHAIR_PATTERN = re.compile(r"\b(chair|chairman|chairwoman)\b", flags=re.IGNORECASE)
 _VICE_CHAIR_PATTERN = re.compile(r"\bvice\s+(chair|chairman|chairwoman)\b", flags=re.IGNORECASE)
+_GOVERNOR_PATTERN = re.compile(r"\bgovernor\b", flags=re.IGNORECASE)
 
 
 def is_chair_speech(speaker: str) -> bool:
@@ -253,6 +254,53 @@ def write_chair_speeches_json(parsed: Iterable[ParsedSpeech], output_path: Path)
                 "title": entry.title,
                 "text": entry.text,
                 "document_type": "chair_speech",
+                "url": entry.url,
+                "scraped_at_utc": scraped_at,
+            }
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+    return len(rows)
+
+
+def is_governor_speech(speaker: str) -> bool:
+    """True iff the speaker is a Fed Governor and NOT a Chair or Vice Chair.
+
+    This filters the speech archive by speaker type. Vice-Chair-rank governors
+    (e.g. Vice Chair Brainard) are excluded — they belong to neither the
+    chair nor the governor slot for a clean three-way split (chair / governor /
+    vice-chair). The vice-chair set is small and lands as a follow-up source
+    if the project document needs to distinguish it.
+    """
+
+    if not speaker:
+        return False
+    if _CHAIR_PATTERN.search(speaker):
+        return False  # excludes Chair / Chairman / Chairwoman / Vice Chair / Vice Chairman / Vice Chairwoman
+    return bool(_GOVERNOR_PATTERN.search(speaker))
+
+
+def write_governor_speeches_json(parsed: Iterable[ParsedSpeech], output_path: Path) -> int:
+    """Write only governor speeches to output_path as a JSON list.
+
+    Mirrors write_chair_speeches_json but filters via is_governor_speech and
+    tags rows with document_type='governor_speech'.
+    """
+
+    rows: list[dict[str, str]] = []
+    scraped_at = datetime.now(timezone.utc).isoformat()
+    for entry in parsed:
+        if not is_governor_speech(entry.speaker):
+            continue
+        if not entry.text or not entry.date:
+            continue
+        rows.append(
+            {
+                "date": entry.date,
+                "title": entry.title,
+                "text": entry.text,
+                "document_type": "governor_speech",
                 "url": entry.url,
                 "scraped_at_utc": scraped_at,
             }
