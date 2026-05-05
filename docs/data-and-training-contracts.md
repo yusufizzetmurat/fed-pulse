@@ -6,7 +6,7 @@ Define a single contract from ingestion to training package export.
 ## Approved Sources
 - `hf_fomc_communication` (research-only, citation required)
 - `kaggle_fed_statements_minutes` (license/terms apply)
-- `scraped_fed` (internal scraper output)
+- `scraped_fed` (internal scraper output; covers FOMC minutes/statements and Chair speeches as of Plan 2 of the 2026-05-05 scope extension)
 
 ## Ingestion Contract
 Each row must contain:
