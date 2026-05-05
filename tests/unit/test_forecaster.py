@@ -463,3 +463,95 @@ def test_forecaster_variant_b_pooler_gradient_resumes_after_projection_departs_f
     assert model.chunk_pooler.raw_lambda.grad is not None
     assert model.chunk_pooler.raw_lambda.grad.abs().item() > 0.0
     assert model.chunk_projection.weight.grad.abs().sum().item() > 0.0
+
+
+# ---------------------------------------------------------------------------
+# Variant C (use_llm_embeddings) tests
+# ---------------------------------------------------------------------------
+
+
+def test_forecaster_variant_c_builds_without_error():
+    """ForecasterModel with use_llm_embeddings=True constructs successfully."""
+    model = ForecasterModel(
+        use_llm_embeddings=True,
+        chunk_embedding_size=10,
+        chunk_projection_dim=4,
+    )
+    assert model.use_llm_embeddings is True
+    assert model.use_chunk_attention is False
+    assert model.chunk_pooler is not None
+    assert model.chunk_projection is not None
+    assert model.lstm.input_size == FEATURE_SIZE + 4
+
+
+def test_forecaster_variant_c_forward_returns_correct_shape():
+    """Variant C forward pass returns (batch, 2) and volatility >= 0."""
+    model = ForecasterModel(
+        use_llm_embeddings=True,
+        chunk_embedding_size=12,
+        chunk_projection_dim=4,
+    )
+    x = torch.randn(2, 5, FEATURE_SIZE)
+    # LLM path: one doc per slot, same interface as chunk path.
+    chunks = torch.randn(2, 6, 12)
+    elapsed = torch.zeros(2, 6)
+    mask = torch.ones(2, 6)
+    out = model(x, chunks=chunks, elapsed_days=elapsed, chunk_mask=mask)
+    assert out.shape == (2, 2)
+    assert out[:, 1].min().item() >= 0.0
+
+
+def test_forecaster_variant_c_requires_chunks():
+    """Variant C raises ValueError when chunks/elapsed_days are not supplied."""
+    model = ForecasterModel(use_llm_embeddings=True, chunk_embedding_size=8, chunk_projection_dim=2)
+    x = torch.randn(1, 5, FEATURE_SIZE)
+    with pytest.raises(ValueError):
+        model(x)
+
+
+def test_forecaster_variant_b_and_c_mutually_exclusive():
+    """Setting both use_chunk_attention and use_llm_embeddings raises ValueError."""
+    with pytest.raises(ValueError):
+        ForecasterModel(use_chunk_attention=True, use_llm_embeddings=True)
+
+
+def test_forecaster_variant_c_attention_diagnostics():
+    """attention_diagnostics returns weights when Variant C is active."""
+    model = ForecasterModel(use_llm_embeddings=True, chunk_embedding_size=8, chunk_projection_dim=2)
+    chunks = torch.randn(3, 8)
+    elapsed = torch.tensor([0.0, 5.0, 30.0])
+    diag = model.attention_diagnostics(chunks, elapsed)
+    assert diag is not None
+    assert diag["weights"].shape == (3,)
+    assert diag["decay_coeffs"].shape == (3,)
+
+
+def test_forecaster_variant_c_gradient_reaches_projection():
+    """Projection weight receives gradient after one backward pass (Variant C)."""
+    model = ForecasterModel(use_llm_embeddings=True, chunk_embedding_size=6, chunk_projection_dim=3)
+    with torch.no_grad():
+        model.chunk_projection.weight.fill_(0.01)
+    x = torch.randn(1, 5, FEATURE_SIZE)
+    chunks = torch.randn(1, 4, 6)
+    elapsed = torch.tensor([[0.0, 1.0, 2.0, 3.0]])
+    mask = torch.ones(1, 4)
+    out = model(x, chunks=chunks, elapsed_days=elapsed, chunk_mask=mask)
+    out.sum().backward()
+    assert model.chunk_projection.weight.grad is not None
+    assert model.chunk_projection.weight.grad.abs().sum().item() > 0.0
+
+
+def test_forecaster_variant_b_still_works_as_regression():
+    """Existing Variant B path remains unbroken after Variant C additions."""
+    model = ForecasterModel(
+        use_chunk_attention=True,
+        chunk_embedding_size=8,
+        chunk_projection_dim=4,
+    )
+    x = torch.randn(2, 5, FEATURE_SIZE)
+    chunks = torch.randn(2, 5, 8)
+    elapsed = torch.zeros(2, 5)
+    mask = torch.ones(2, 5)
+    out = model(x, chunks=chunks, elapsed_days=elapsed, chunk_mask=mask)
+    assert out.shape == (2, 2)
+    assert out[:, 1].min().item() >= 0.0
