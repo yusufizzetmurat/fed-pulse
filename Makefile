@@ -6,7 +6,7 @@ TRAINING_PACKAGE_ID ?=
 OWNER ?= unknown
 SEED ?= 11
 
-.PHONY: help dev dev-cpu dev-gpu down logs data-prep train-smoke train-batch
+.PHONY: help dev dev-cpu dev-gpu down logs lock data-prep train-smoke train-batch
 
 help:
 	@echo "Targets:"
@@ -15,6 +15,7 @@ help:
 	@echo "  make dev-gpu         - Start GPU backend + frontend (requires NVIDIA runtime)"
 	@echo "  make down            - Stop all containers"
 	@echo "  make logs            - Tail compose logs"
+	@echo "  make lock            - Regenerate backend/requirements.lock from pyproject.toml"
 	@echo "  make data-prep       - Run capability-first data preparation pipeline"
 	@echo "  make train-smoke     - Run Phase 3 single-seed smoke execution"
 	@echo "  make train-batch     - Run Phase 3 full official batch execution"
@@ -32,6 +33,9 @@ down:
 
 logs:
 	docker compose logs -f --tail=200
+
+lock:
+	docker compose run --rm backend bash -c "pip install --quiet uv && uv pip compile --generate-hashes --output-file requirements.lock pyproject.toml"
 
 data-prep:
 	@test -n "$(DATASET_VERSION)" || (echo "DATASET_VERSION is required"; exit 1)

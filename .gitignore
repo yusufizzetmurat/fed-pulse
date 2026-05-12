@@ -24,7 +24,7 @@ npm-debug.log*
 # Docker/runtime artifacts
 *.log
 
-# Generated data and model weights
+# Generated data and model weights (checkpoint store, not source code)
 data/*
 !data/.gitkeep
 !data/raw/

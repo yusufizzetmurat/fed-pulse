@@ -17,8 +17,10 @@ import numpy as np
 import torch
 from transformers import pipeline
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
+from app.config import DATA_DIR as DEFAULT_DATA_DIR
+from app.models.registry import revision_for
+from app.training.manifest import write_run_manifest
+
 DEFAULT_ARTIFACT_ROOT = DEFAULT_DATA_DIR / "artifacts" / "phase3"
 DEFAULT_SEEDS = [11, 29, 47, 71, 97]
 LABELS = ("hawkish", "dovish", "neutral")
@@ -311,6 +313,8 @@ def _run_single(
     artifact_dir: Path,
     max_eval_rows_per_fold: int,
     batch_size: int,
+    training_package_id: str = "",
+    fold_id: str = "",
 ) -> dict[str, Any]:
     _set_all_seeds(seed)
 
@@ -329,12 +333,16 @@ def _run_single(
         hf_token = _hf_token()
         for checkpoint in model_spec["checkpoints"]:
             try:
-                classifier = pipeline(
-                    "text-classification",
-                    model=checkpoint,
-                    return_all_scores=True,
-                    token=hf_token,
-                )
+                pipeline_kwargs: dict[str, Any] = {
+                    "task": "text-classification",
+                    "model": checkpoint,
+                    "return_all_scores": True,
+                    "token": hf_token,
+                }
+                revision = revision_for(checkpoint)
+                if revision is not None:
+                    pipeline_kwargs["revision"] = revision
+                classifier = pipeline(**pipeline_kwargs)
                 checkpoint_used = checkpoint
                 break
             except Exception as exc:  # pragma: no cover - network/model availability variability
@@ -407,6 +415,21 @@ def _run_single(
     run_dir = artifact_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    write_run_manifest(
+        run_dir,
+        run_id=run_id,
+        version_ids={
+            "model_version": model_spec["model_version"],
+            "training_package_id": training_package_id,
+        },
+        seeds=[seed],
+        hyperparameters={
+            "checkpoint": checkpoint_used,
+            "model_key": model_key,
+            "fold_id": fold_id,
+        },
+        extra={"checkpoint_fallback_used": fallback_used},
+    )
     return {"run_id": run_id, **metrics}
 
 
@@ -450,6 +473,8 @@ def main() -> int:
                 artifact_dir=artifact_dir,
                 max_eval_rows_per_fold=args.max_eval_rows_per_fold,
                 batch_size=args.batch_size,
+                training_package_id=args.training_package_id,
+                fold_id=getattr(args, "fold_id", "") or "",
             )
             all_results.append(result)
             print(

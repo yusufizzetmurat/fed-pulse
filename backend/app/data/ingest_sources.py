@@ -12,8 +12,7 @@ from typing import Any, Iterable
 
 from app.data.source_type import infer_source_type
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
+from app.config import DATA_DIR as DEFAULT_DATA_DIR
 DEFAULT_OUTPUT_DIR = DEFAULT_DATA_DIR / "raw" / "phase2"
 DEFAULT_OUTPUT_FILE = "source_registry.jsonl"
 

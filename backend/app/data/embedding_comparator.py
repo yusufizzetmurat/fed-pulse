@@ -20,6 +20,8 @@ import torch
 from torch import nn
 from transformers import AutoModel, AutoTokenizer
 
+from app.config import DATA_DIR
+from app.models.registry import revision_for
 from app.data.phase3_finetune_pilot import (
     EvalRow,
     ID2LABEL,
@@ -35,7 +37,7 @@ from app.data.phase3_finetune_pilot import (
 )
 
 DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-DEFAULT_ARTIFACT_ROOT = Path("/data") / "artifacts" / "phase4_embedding_comparator"
+DEFAULT_ARTIFACT_ROOT = DATA_DIR / "artifacts" / "phase4_embedding_comparator"
 
 
 def _mean_pool(last_hidden: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
@@ -161,7 +163,7 @@ def main() -> int:
     args = _parse_args()
     _set_all_seeds(args.seed)
 
-    package_dir = Path("/data") / "processed" / args.training_package_id
+    package_dir = DATA_DIR / "processed" / args.training_package_id
     if not package_dir.exists():
         raise SystemExit(f"Training package not found: {package_dir}")
     rows = _load_registry_rows(package_dir)
@@ -179,8 +181,16 @@ def main() -> int:
     hf_token = _hf_token()
     if hf_token:
         print(f"[emb_cmp] using HF token (len={len(hf_token)})")
-    tokenizer = AutoTokenizer.from_pretrained(args.embedding_checkpoint, token=hf_token)
-    backbone = AutoModel.from_pretrained(args.embedding_checkpoint, token=hf_token)
+    revision = revision_for(args.embedding_checkpoint)
+    if revision:
+        print(f"[emb_cmp] pinning {args.embedding_checkpoint} to revision {revision[:12]}")
+    tokenizer_kwargs: dict[str, Any] = {"token": hf_token}
+    model_kwargs: dict[str, Any] = {"token": hf_token}
+    if revision:
+        tokenizer_kwargs["revision"] = revision
+        model_kwargs["revision"] = revision
+    tokenizer = AutoTokenizer.from_pretrained(args.embedding_checkpoint, **tokenizer_kwargs)
+    backbone = AutoModel.from_pretrained(args.embedding_checkpoint, **model_kwargs)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     backbone.to(device)
     backbone.eval()

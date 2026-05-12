@@ -2,12 +2,12 @@ import json
 import threading
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import DATA_DIR
 from app.schemas import AnalyzeRequest, AnalyzeResponse, TrainJobAcceptedResponse, TrainJobStatusResponse
 from app.services.forecaster import (
     bootstrap_checkpoint,
@@ -25,7 +25,6 @@ from app.services.market_data import (
 from app.services.sentiment import analyze_text
 
 app = FastAPI(title="FOMC Sentiment API", version="0.1.0")
-DATA_DIR = Path("/data")
 REAL_TRAIN_HISTORY_LENGTH = 252
 
 _train_jobs: dict[str, dict[str, Any]] = {}

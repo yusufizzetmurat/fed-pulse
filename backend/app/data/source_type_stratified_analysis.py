@@ -16,9 +16,7 @@ import json
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
+from app.config import DATA_DIR as DEFAULT_DATA_DIR
 
 
 def join_predictions_to_source_type(

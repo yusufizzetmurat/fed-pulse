@@ -19,6 +19,8 @@ from typing import Any
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from app.config import DATA_DIR
+from app.models.registry import revision_for
 from app.data.phase3_finetune_pilot import (
     LABELS,
     _compute_classification_metrics,
@@ -31,7 +33,7 @@ from app.data.phase3_finetune_pilot import (
 )
 
 DEFAULT_LLM = "Qwen/Qwen2.5-3B-Instruct"
-DEFAULT_ARTIFACT_ROOT = Path("/data") / "artifacts" / "phase4_llm_zero_shot"
+DEFAULT_ARTIFACT_ROOT = DATA_DIR / "artifacts" / "phase4_llm_zero_shot"
 SYSTEM_PROMPT = (
     "You are a financial sentiment classifier for FOMC communications. "
     "Read the snippet and respond with exactly one word, lowercased, "
@@ -78,7 +80,7 @@ def main() -> int:
     args = _parse_args()
     _set_all_seeds(args.seed)
 
-    package_dir = Path("/data") / "processed" / args.training_package_id
+    package_dir = DATA_DIR / "processed" / args.training_package_id
     if not package_dir.exists():
         raise SystemExit(f"Training package not found: {package_dir}")
     rows = _load_registry_rows(package_dir)
@@ -91,15 +93,23 @@ def main() -> int:
     hf_token = _hf_token()
     if hf_token:
         print(f"[llm_zs] using HF token (len={len(hf_token)})")
-    tokenizer = AutoTokenizer.from_pretrained(args.llm_checkpoint, token=hf_token)
+    revision = revision_for(args.llm_checkpoint)
+    if revision:
+        print(f"[llm_zs] pinning {args.llm_checkpoint} to revision {revision[:12]}")
+    tokenizer_kwargs: dict[str, Any] = {"token": hf_token}
+    if revision:
+        tokenizer_kwargs["revision"] = revision
+    tokenizer = AutoTokenizer.from_pretrained(args.llm_checkpoint, **tokenizer_kwargs)
     if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
-    model = AutoModelForCausalLM.from_pretrained(
-        args.llm_checkpoint,
-        token=hf_token,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-        device_map="auto",
-    )
+    model_kwargs: dict[str, Any] = {
+        "token": hf_token,
+        "torch_dtype": torch.float16 if torch.cuda.is_available() else torch.float32,
+        "device_map": "auto",
+    }
+    if revision:
+        model_kwargs["revision"] = revision
+    model = AutoModelForCausalLM.from_pretrained(args.llm_checkpoint, **model_kwargs)
     model.eval()
 
     y_true: list[str] = []
