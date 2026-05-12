@@ -1,9 +1,74 @@
 from __future__ import annotations
 
+import json
+import os
 from datetime import date, datetime, timedelta
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import yfinance as yf
+
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = BACKEND_ROOT.parent
+DEFAULT_SNAPSHOT_DIR = REPO_ROOT / "data" / "raw" / "market"
+
+
+def _market_source() -> str:
+    return (os.environ.get("FED_PULSE_MARKET_SOURCE") or "live").strip().lower()
+
+
+def _safe_symbol(symbol: str) -> str:
+    return symbol.replace("^", "").replace("=", "_").replace("/", "_").replace(":", "_")
+
+
+def _snapshot_lock_path() -> Path:
+    override = os.environ.get("FED_PULSE_MARKET_SNAPSHOT_DIR")
+    base = Path(override) if override else DEFAULT_SNAPSHOT_DIR
+    return base / "SOURCES.lock"
+
+
+def _snapshot_dir() -> Path:
+    override = os.environ.get("FED_PULSE_MARKET_SNAPSHOT_DIR")
+    return Path(override) if override else DEFAULT_SNAPSHOT_DIR
+
+
+@lru_cache(maxsize=64)
+def _load_snapshot_series(symbol: str):
+    import pandas as pd
+
+    snapshot_dir = _snapshot_dir()
+    lock_path = _snapshot_lock_path()
+    if lock_path.exists():
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        entry = (lock.get("entries") or {}).get(symbol)
+        if entry and entry.get("parquet_path"):
+            candidate = REPO_ROOT / entry["parquet_path"]
+            if candidate.exists():
+                frame = pd.read_parquet(candidate)
+                return _snapshot_frame_to_series(frame)
+    fallback = snapshot_dir / f"{_safe_symbol(symbol)}.parquet"
+    if not fallback.exists():
+        raise FileNotFoundError(
+            f"Market snapshot for symbol={symbol!r} is missing at {fallback}. "
+            f"Run `python scripts/snapshot_market_data.py --symbols {symbol} ...` "
+            f"or set FED_PULSE_MARKET_SOURCE=live."
+        )
+    frame = pd.read_parquet(fallback)
+    return _snapshot_frame_to_series(frame)
+
+
+def _snapshot_frame_to_series(frame):
+    import pandas as pd
+
+    if "date" not in frame.columns or "close" not in frame.columns:
+        raise RuntimeError(
+            "Snapshot parquet must contain 'date' and 'close' columns; got "
+            f"{list(frame.columns)}"
+        )
+    index = pd.to_datetime(frame["date"]).dt.tz_localize(None)
+    series = pd.Series(frame["close"].astype(float).to_numpy(), index=index, name="Close")
+    return series.sort_index().dropna()
 
 
 def _close_series_from_frame(frame):
@@ -24,6 +89,18 @@ def _parse_iso_date(value: str) -> date:
 
 
 def _download_close_series_in_window(symbol: str, start: date, end: date):
+    if _market_source() == "snapshot":
+        series = _load_snapshot_series(symbol)
+        window = series.loc[
+            (series.index.date >= start) & (series.index.date < end)
+        ]
+        if window.empty:
+            raise RuntimeError(
+                f"Snapshot has no rows for {symbol} in [{start}, {end}). "
+                "Re-run scripts/snapshot_market_data.py to widen the window."
+            )
+        return window
+
     ticker = yf.Ticker(symbol)
     frame = ticker.history(
         start=start.isoformat(),
