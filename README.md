@@ -17,6 +17,7 @@ Backend API docs: `http://localhost:8000/docs`
 - Data prep: `make data-prep DATASET_VERSION=<dataset_version> FEATURE_VERSION=<feature_version> OWNER=<owner>`
 - Smoke run: `make train-smoke TRAINING_PACKAGE_ID=<training_package_id> SEED=11 OWNER=<owner>`
 - Full batch: `make train-batch TRAINING_PACKAGE_ID=<training_package_id> OWNER=<owner>`
+- End-to-end smoke (toy snapshot + unit/property/contract/regression tests + import sanity): `make verify`
 
 ## Main Directories
 

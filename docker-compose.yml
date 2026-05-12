@@ -9,6 +9,7 @@ services:
     volumes:
       - ./backend:/app
       - ./tests:/app/tests:ro
+      - ./scripts:/app/scripts:ro
       - ./data:/data
     env_file:
       - path: .env
@@ -29,6 +30,7 @@ services:
     volumes:
       - ./backend:/app
       - ./tests:/app/tests:ro
+      - ./scripts:/app/scripts:ro
       - ./data:/data
     env_file:
       - path: .env

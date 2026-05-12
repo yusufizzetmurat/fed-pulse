@@ -6,19 +6,21 @@ TRAINING_PACKAGE_ID ?=
 OWNER ?= unknown
 SEED ?= 11
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock data-prep train-smoke train-batch
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch
 
 help:
 	@echo "Targets:"
-	@echo "  make dev             - Start CPU backend + frontend"
-	@echo "  make dev-cpu         - Start CPU backend + frontend"
-	@echo "  make dev-gpu         - Start GPU backend + frontend (requires NVIDIA runtime)"
-	@echo "  make down            - Stop all containers"
-	@echo "  make logs            - Tail compose logs"
-	@echo "  make lock            - Regenerate backend/requirements.lock from pyproject.toml"
-	@echo "  make data-prep       - Run capability-first data preparation pipeline"
-	@echo "  make train-smoke     - Run Phase 3 single-seed smoke execution"
-	@echo "  make train-batch     - Run Phase 3 full official batch execution"
+	@echo "  make dev              - Start CPU backend + frontend"
+	@echo "  make dev-cpu          - Start CPU backend + frontend"
+	@echo "  make dev-gpu          - Start GPU backend + frontend (requires NVIDIA runtime)"
+	@echo "  make down             - Stop all containers"
+	@echo "  make logs             - Tail compose logs"
+	@echo "  make lock             - Regenerate backend/requirements.lock from pyproject.toml"
+	@echo "  make verify           - Build toy snapshot, run full pytest suite, check imports"
+	@echo "  make openapi-snapshot - Regenerate tests/snapshots/openapi.json"
+	@echo "  make data-prep        - Run capability-first data preparation pipeline"
+	@echo "  make train-smoke      - Run Phase 3 single-seed smoke execution"
+	@echo "  make train-batch      - Run Phase 3 full official batch execution"
 
 dev: dev-cpu
 
@@ -36,6 +38,14 @@ logs:
 
 lock:
 	docker compose run --rm backend bash -c "pip install --quiet uv && uv pip compile --generate-hashes --output-file requirements.lock pyproject.toml"
+
+verify:
+	docker compose run --rm backend bash /app/scripts/verify_smoke.sh
+
+openapi-snapshot:
+	@mkdir -p tests/snapshots
+	docker compose run --rm -T backend python /app/scripts/regen_openapi_snapshot.py --stdout > tests/snapshots/openapi.json
+	@echo "wrote tests/snapshots/openapi.json"
 
 data-prep:
 	@test -n "$(DATASET_VERSION)" || (echo "DATASET_VERSION is required"; exit 1)
