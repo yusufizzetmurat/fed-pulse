@@ -1,4 +1,5 @@
 fastapi
+pyyaml>=6.0
 uvicorn[standard]
 transformers
 accelerate>=1.1.0

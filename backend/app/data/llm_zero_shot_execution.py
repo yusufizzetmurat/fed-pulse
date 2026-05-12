@@ -19,6 +19,7 @@ from typing import Any
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from app.models.registry import revision_for
 from app.data.phase3_finetune_pilot import (
     LABELS,
     _compute_classification_metrics,
@@ -91,15 +92,23 @@ def main() -> int:
     hf_token = _hf_token()
     if hf_token:
         print(f"[llm_zs] using HF token (len={len(hf_token)})")
-    tokenizer = AutoTokenizer.from_pretrained(args.llm_checkpoint, token=hf_token)
+    revision = revision_for(args.llm_checkpoint)
+    if revision:
+        print(f"[llm_zs] pinning {args.llm_checkpoint} to revision {revision[:12]}")
+    tokenizer_kwargs: dict[str, Any] = {"token": hf_token}
+    if revision:
+        tokenizer_kwargs["revision"] = revision
+    tokenizer = AutoTokenizer.from_pretrained(args.llm_checkpoint, **tokenizer_kwargs)
     if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
-    model = AutoModelForCausalLM.from_pretrained(
-        args.llm_checkpoint,
-        token=hf_token,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-        device_map="auto",
-    )
+    model_kwargs: dict[str, Any] = {
+        "token": hf_token,
+        "torch_dtype": torch.float16 if torch.cuda.is_available() else torch.float32,
+        "device_map": "auto",
+    }
+    if revision:
+        model_kwargs["revision"] = revision
+    model = AutoModelForCausalLM.from_pretrained(args.llm_checkpoint, **model_kwargs)
     model.eval()
 
     y_true: list[str] = []

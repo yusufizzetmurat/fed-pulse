@@ -20,6 +20,7 @@ import torch
 from torch import nn
 from transformers import AutoModel, AutoTokenizer
 
+from app.models.registry import revision_for
 from app.data.phase3_finetune_pilot import (
     EvalRow,
     ID2LABEL,
@@ -179,8 +180,16 @@ def main() -> int:
     hf_token = _hf_token()
     if hf_token:
         print(f"[emb_cmp] using HF token (len={len(hf_token)})")
-    tokenizer = AutoTokenizer.from_pretrained(args.embedding_checkpoint, token=hf_token)
-    backbone = AutoModel.from_pretrained(args.embedding_checkpoint, token=hf_token)
+    revision = revision_for(args.embedding_checkpoint)
+    if revision:
+        print(f"[emb_cmp] pinning {args.embedding_checkpoint} to revision {revision[:12]}")
+    tokenizer_kwargs: dict[str, Any] = {"token": hf_token}
+    model_kwargs: dict[str, Any] = {"token": hf_token}
+    if revision:
+        tokenizer_kwargs["revision"] = revision
+        model_kwargs["revision"] = revision
+    tokenizer = AutoTokenizer.from_pretrained(args.embedding_checkpoint, **tokenizer_kwargs)
+    backbone = AutoModel.from_pretrained(args.embedding_checkpoint, **model_kwargs)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     backbone.to(device)
     backbone.eval()

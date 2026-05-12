@@ -8,8 +8,10 @@ from typing import Any
 import torch
 from transformers import pipeline
 
+from app.models.registry import revision_for
+
 MODEL_ID = "gtfintechlab/fomc-roberta-any-exp"
-FALLBACK_MODEL_ID = "distilbert-base-uncased-finetuned-sst-2-english"
+FALLBACK_MODEL_ID = "distilbert/distilbert-base-uncased-finetuned-sst-2-english"
 DEFAULT_MAX_TOKENS = 480
 DEFAULT_STRIDE = 400
 DEFAULT_CLASSIFIER_MAX_LENGTH = 512
@@ -30,12 +32,15 @@ def _resolve_pipeline_device() -> int:
 
 
 def _build_pipeline(model_id: str, device: int):
-    return pipeline(
-        "text-classification",
-        model=model_id,
-        return_all_scores=True,
-        device=device,
-    )
+    kwargs: dict[str, Any] = {
+        "model": model_id,
+        "return_all_scores": True,
+        "device": device,
+    }
+    revision = revision_for(model_id)
+    if revision is not None:
+        kwargs["revision"] = revision
+    return pipeline("text-classification", **kwargs)
 
 
 def get_classifier():
