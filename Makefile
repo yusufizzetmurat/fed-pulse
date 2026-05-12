@@ -43,7 +43,9 @@ verify:
 	docker compose run --rm backend bash /app/scripts/verify_smoke.sh
 
 openapi-snapshot:
-	docker compose run --rm backend python /app/scripts/regen_openapi_snapshot.py
+	@mkdir -p tests/snapshots
+	docker compose run --rm -T backend python /app/scripts/regen_openapi_snapshot.py --stdout > tests/snapshots/openapi.json
+	@echo "wrote tests/snapshots/openapi.json"
 
 data-prep:
 	@test -n "$(DATASET_VERSION)" || (echo "DATASET_VERSION is required"; exit 1)
