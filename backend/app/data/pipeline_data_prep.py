@@ -7,9 +7,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
-DEFAULT_OUTPUT_ROOT = BACKEND_ROOT.parent / "artifacts" / "data_prep"
+from app.config import REPO_ROOT, DATA_DIR as DEFAULT_DATA_DIR
+
+DEFAULT_OUTPUT_ROOT = REPO_ROOT / "artifacts" / "data_prep"
 
 
 def _parse_args() -> argparse.Namespace:

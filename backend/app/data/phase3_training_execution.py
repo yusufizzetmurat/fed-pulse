@@ -17,8 +17,7 @@ import numpy as np
 import torch
 from transformers import pipeline
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
+from app.config import DATA_DIR as DEFAULT_DATA_DIR
 DEFAULT_ARTIFACT_ROOT = DEFAULT_DATA_DIR / "artifacts" / "phase3"
 DEFAULT_SEEDS = [11, 29, 47, 71, 97]
 LABELS = ("hawkish", "dovish", "neutral")

@@ -1,4 +1,5 @@
 fastapi
+pydantic-settings>=2.0
 uvicorn[standard]
 transformers
 accelerate>=1.1.0

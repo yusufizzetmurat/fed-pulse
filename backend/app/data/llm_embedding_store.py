@@ -18,8 +18,7 @@ from typing import Any, Sequence
 from app.services.gemini_client import embed_text
 
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
+from app.config import DATA_DIR as DEFAULT_DATA_DIR
 DEFAULT_REGISTRY = DEFAULT_DATA_DIR / "raw" / "phase2" / "source_registry.jsonl"
 DEFAULT_OUTPUT = DEFAULT_DATA_DIR / "interim" / "phase2" / "llm_embeddings.parquet"
 

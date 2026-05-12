@@ -20,6 +20,7 @@ import torch
 from torch import nn
 from transformers import AutoModel, AutoTokenizer
 
+from app.config import DATA_DIR
 from app.data.phase3_finetune_pilot import (
     EvalRow,
     ID2LABEL,
@@ -35,7 +36,7 @@ from app.data.phase3_finetune_pilot import (
 )
 
 DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-DEFAULT_ARTIFACT_ROOT = Path("/data") / "artifacts" / "phase4_embedding_comparator"
+DEFAULT_ARTIFACT_ROOT = DATA_DIR / "artifacts" / "phase4_embedding_comparator"
 
 
 def _mean_pool(last_hidden: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
@@ -161,7 +162,7 @@ def main() -> int:
     args = _parse_args()
     _set_all_seeds(args.seed)
 
-    package_dir = Path("/data") / "processed" / args.training_package_id
+    package_dir = DATA_DIR / "processed" / args.training_package_id
     if not package_dir.exists():
         raise SystemExit(f"Training package not found: {package_dir}")
     rows = _load_registry_rows(package_dir)

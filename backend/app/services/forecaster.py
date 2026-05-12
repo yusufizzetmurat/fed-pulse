@@ -16,6 +16,9 @@ from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
+from app.config import BACKEND_ROOT, DATA_DIR, MODEL_CHECKPOINT_DIR
+from app.determinism import enable_deterministic_mode, make_generator, seed_worker
+
 SEQUENCE_LENGTH = 5
 FEATURE_SIZE = 6  # [sentiment_score, market_close, market_volatility, close_change_pct, volatility_change, elapsed_time]
 SENTIMENT_FEATURE_INDEX = 0
@@ -35,13 +38,12 @@ DEFAULT_HEAD_HIDDEN_SIZE = 32
 DEFAULT_INITIAL_DECAY_RATE = 1.5
 DEFAULT_CHUNK_DECAY_RATE = 1.0 / 30.0
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
-MODELS_DIR = BACKEND_ROOT / "models"
+DEFAULT_DATA_DIR = DATA_DIR
+MODELS_DIR = MODEL_CHECKPOINT_DIR
 BEST_MODEL_PATH = MODELS_DIR / "forecaster_best.pt"
 
-if torch.cuda.is_available():
-    torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True
 
 
 @dataclass(frozen=True)
@@ -1115,7 +1117,10 @@ def train_model(
     checkpoint_path: str | Path | None = None,
     save_checkpoint: bool = True,
     device: str | torch.device | None = None,
+    seed: int | None = None,
 ) -> TrainingResult:
+    if seed is not None:
+        enable_deterministic_mode(seed)
     device_obj = _resolve_device(device)
     active_model_config = ModelConfig.from_model(base_model) if base_model is not None else _coerce_model_config(model_config)
     sequence_groups = load_training_sequences_from_data(data_dir)
@@ -1152,17 +1157,21 @@ def train_model(
     # The current Torch build emits deprecation warnings from DataLoader pinning internals.
     # For this dataset size, disabling pinning keeps training clean without a meaningful throughput hit.
     pin_memory = False
+    loader_generator = make_generator(seed) if seed is not None else None
     train_loader = DataLoader(
         TensorDataset(train_x, train_y),
         batch_size=min(batch_size, len(train_x)),
         shuffle=True,
         pin_memory=pin_memory,
+        generator=loader_generator,
+        worker_init_fn=seed_worker if seed is not None else None,
     )
     val_loader = DataLoader(
         TensorDataset(val_x, val_y),
         batch_size=min(batch_size, len(val_x)),
         shuffle=False,
         pin_memory=pin_memory,
+        worker_init_fn=seed_worker if seed is not None else None,
     )
 
     work_model = (

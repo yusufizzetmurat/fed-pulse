@@ -3,6 +3,7 @@
 
 torch
 fastapi
+pydantic-settings>=2.0
 uvicorn[standard]
 transformers
 python-multipart
