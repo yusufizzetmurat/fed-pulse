@@ -7,8 +7,7 @@ import warnings
 from pathlib import Path
 from typing import Any
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
+from app.config import DATA_DIR as DEFAULT_DATA_DIR
 DEFAULT_INPUT = DEFAULT_DATA_DIR / "raw" / "phase2" / "source_registry.jsonl"
 DEFAULT_OUTPUT = DEFAULT_DATA_DIR / "interim" / "phase2" / "registry_labeled.jsonl"
 DEFAULT_EXCEPTIONS = DEFAULT_DATA_DIR / "interim" / "phase2" / "label_mapping_exceptions.json"

@@ -7,10 +7,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from app.config import DATA_DIR as DEFAULT_DATA_DIR
 from app.services.market_data import fetch_market_snapshot
 from app.services.sentiment import analyze_text
 
-DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else Path(__file__).resolve().parents[2] / "data"
 RAW_DOCUMENT_FILES = ("fomc_statements.json", "fomc_minutes.json")
 DEFAULT_SYMBOLS = ("^GSPC", "^VIX", "DX-Y.NYB", "^TNX", "BTC-USD")
 DEFAULT_OUTPUT_FILE = "train_dataset.json"
