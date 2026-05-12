@@ -33,6 +33,11 @@ Backend API docs: `http://localhost:8000/docs`
 - `docs/architecture-overview.md`
 - `docs/run-templates.md`
 
+## Local setup
+
+- Copy `.env.example` to `.env` and fill in the credentials you need.
+- Install [`pre-commit`](https://pre-commit.com/) (`pip install --user pre-commit`) and run `pre-commit install` once in this clone so every commit runs `ruff`, `ruff-format`, `gitleaks`, and the whitespace/file-shape hooks.
+
 ## Notes
 
 - Forecast modes: `fast`, `quick_train`, `real_train`
