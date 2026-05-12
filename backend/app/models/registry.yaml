@@ -1,0 +1,55 @@
+updated_at: 2026-05-13
+
+encoders:
+  bert_base:
+    repo: google-bert/bert-base-uncased
+    revision: 86b5e0934494bd15c9632b12f734a8a67f723594
+    gated: false
+    task: masked_lm
+    description: Base BERT, used for the NLP-row comparison and continued pretraining.
+    repo_aliases:
+      - bert-base-uncased
+
+  finbert:
+    repo: ProsusAI/finbert
+    revision: 4556d13015211d73dccd3fdd39d39232506f3e43
+    gated: false
+    task: classification
+    description: Araci's FinBERT.
+
+  finbert_tone:
+    repo: yiyanghkust/finbert-tone
+    revision: 4921590d3c0c3832c0efea24c8381ce0bda7844b
+    gated: false
+    task: classification
+    description: FinBERT-tone.
+
+  finbert_fomc:
+    repo: ZiweiChen/FinBERT-FOMC
+    revision: 7754dd1d88da18e8b1d51cc1656496858ce19aae
+    gated: false
+    task: classification
+    description: FinBERT fine-tuned on FOMC minutes (Chen et al. 2023).
+
+  fomc_roberta:
+    repo: gtfintechlab/FOMC-RoBERTa
+    revision: aa3bc4281fb1fe73c8872e09ad5c64b898f90d83
+    gated: false
+    task: classification
+    description: gtfintechlab FOMC-RoBERTa. Flagged data-contaminated against TDW; kept for audit only.
+
+  fomc_roberta_any_exp:
+    repo: gtfintechlab/fomc-roberta-any-exp
+    revision: main
+    gated: true
+    task: classification
+    description: Gated checkpoint used by the dashboard sentiment service. Pin to a SHA after the next authenticated load.
+
+  distilbert_sst2:
+    repo: distilbert/distilbert-base-uncased-finetuned-sst-2-english
+    revision: 714eb0fa89d2f80546fda750413ed43d93601a13
+    gated: false
+    task: classification
+    description: Fallback when FOMC-RoBERTa fails to load.
+    repo_aliases:
+      - distilbert-base-uncased-finetuned-sst-2-english

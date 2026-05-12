@@ -31,6 +31,9 @@ from transformers import (
 )
 
 from app.config import DATA_DIR as DEFAULT_DATA_DIR
+from app.models.registry import revision_for
+from app.training.manifest import write_run_manifest
+
 DEFAULT_ARTIFACT_ROOT = DEFAULT_DATA_DIR / "artifacts" / "phase3"
 
 LABELS = ("dovish", "neutral", "hawkish")
@@ -231,7 +234,13 @@ def run_one(args: argparse.Namespace, *, artifact_dir: Path | None = None) -> di
     hf_token = _hf_token()
     if hf_token:
         print(f"[pilot] using HF token (len={len(hf_token)})")
-    tokenizer = AutoTokenizer.from_pretrained(args.checkpoint, token=hf_token)
+    revision = revision_for(args.checkpoint)
+    if revision:
+        print(f"[pilot] pinning {args.checkpoint} to revision {revision[:12]}")
+    tokenizer_kwargs: dict[str, Any] = {"token": hf_token}
+    if revision:
+        tokenizer_kwargs["revision"] = revision
+    tokenizer = AutoTokenizer.from_pretrained(args.checkpoint, **tokenizer_kwargs)
     model = AutoModelForSequenceClassification.from_pretrained(
         args.checkpoint,
         num_labels=len(LABELS),
@@ -239,6 +248,7 @@ def run_one(args: argparse.Namespace, *, artifact_dir: Path | None = None) -> di
         label2id=LABEL2ID,
         ignore_mismatched_sizes=True,
         token=hf_token,
+        revision=revision,
     )
 
     train_ds = TextClassificationDataset(train_rows, tokenizer, max_length=args.max_length)
@@ -336,6 +346,23 @@ def run_one(args: argparse.Namespace, *, artifact_dir: Path | None = None) -> di
     }
 
     (artifact_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    write_run_manifest(
+        artifact_dir,
+        run_id=run_token,
+        version_ids={
+            "training_package_id": str(args.training_package_id),
+            "model_version": str(args.checkpoint),
+        },
+        seeds=[args.seed],
+        hyperparameters={
+            "checkpoint": args.checkpoint,
+            "epochs": args.epochs,
+            "batch_size": args.batch_size,
+            "learning_rate": args.learning_rate,
+            "weight_decay": args.weight_decay,
+            "fold_id": args.fold_id,
+        },
+    )
     print(f"[pilot] metrics written to {artifact_dir / 'metrics.json'}")
 
     predictions_path = artifact_dir / "predictions.jsonl"
