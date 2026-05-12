@@ -19,6 +19,7 @@ from typing import Any
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from app.config import DATA_DIR
 from app.models.registry import revision_for
 from app.data.phase3_finetune_pilot import (
     LABELS,
@@ -32,7 +33,7 @@ from app.data.phase3_finetune_pilot import (
 )
 
 DEFAULT_LLM = "Qwen/Qwen2.5-3B-Instruct"
-DEFAULT_ARTIFACT_ROOT = Path("/data") / "artifacts" / "phase4_llm_zero_shot"
+DEFAULT_ARTIFACT_ROOT = DATA_DIR / "artifacts" / "phase4_llm_zero_shot"
 SYSTEM_PROMPT = (
     "You are a financial sentiment classifier for FOMC communications. "
     "Read the snippet and respond with exactly one word, lowercased, "
@@ -79,7 +80,7 @@ def main() -> int:
     args = _parse_args()
     _set_all_seeds(args.seed)
 
-    package_dir = Path("/data") / "processed" / args.training_package_id
+    package_dir = DATA_DIR / "processed" / args.training_package_id
     if not package_dir.exists():
         raise SystemExit(f"Training package not found: {package_dir}")
     rows = _load_registry_rows(package_dir)

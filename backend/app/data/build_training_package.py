@@ -11,8 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
+from app.config import DATA_DIR as DEFAULT_DATA_DIR
 DEFAULT_INPUT = DEFAULT_DATA_DIR / "interim" / "phase2" / "registry_quality_passed.jsonl"
 DEFAULT_REPORT_DIR = DEFAULT_DATA_DIR / "interim" / "phase2" / "quality_reports"
 DEFAULT_PROCESSED_ROOT = DEFAULT_DATA_DIR / "processed"

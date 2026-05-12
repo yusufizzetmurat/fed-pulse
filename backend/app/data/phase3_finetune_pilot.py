@@ -30,11 +30,10 @@ from transformers import (
     TrainingArguments,
 )
 
+from app.config import DATA_DIR as DEFAULT_DATA_DIR
 from app.models.registry import revision_for
 from app.training.manifest import write_run_manifest
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
 DEFAULT_ARTIFACT_ROOT = DEFAULT_DATA_DIR / "artifacts" / "phase3"
 
 LABELS = ("dovish", "neutral", "hawkish")

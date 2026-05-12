@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fed-pulse-backend"
+version = "0.1.0"
+description = "FOMC-text short-horizon market forecaster, backend (FastAPI + PyTorch + Transformers)."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Yusuf İzzet Murat" }]
+license = { text = "Proprietary - Bogazici University SWE 599 thesis project" }
+
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "pydantic-settings>=2.0",
+  "pyyaml>=6.0",
+  "transformers",
+  "accelerate>=1.1.0",
+  "torch",
+  "python-multipart",
+  "requests",
+  "beautifulsoup4",
+  "yfinance",
+  "pandas",
+  "pyarrow",
+  "datasets",
+  "kagglehub",
+  "google-genai>=1.0.0",
+  "langsmith>=0.1.0",
+  "scikit-learn",
+  "pypdf>=5.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "pytest-cov",
+  "hypothesis",
+  "ruff",
+  "mypy",
+]
+gpu = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+exclude = ["tests*", "models", "*.pyc"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "C4", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
