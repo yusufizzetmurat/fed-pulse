@@ -27,7 +27,10 @@ npm-debug.log*
 # Generated data and model weights
 data/*
 !data/.gitkeep
-models/
+!data/raw/
+data/raw/*
+!data/raw/market/
+/backend/models/
 *.pt
 *.pth
 *.bin
