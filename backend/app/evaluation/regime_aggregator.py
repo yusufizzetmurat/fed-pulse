@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Iterable, Mapping
 
+# 2021 is intentionally outside the named windows. It is the post-COVID
+# recovery year — neither the zero-rate emergency stance nor the hike cycle
+# — and treating it as its own regime adds noise without thesis value.
+# Override by passing a custom `regime_windows` tuple to `aggregate_by_regime`.
 REGIME_WINDOWS: tuple[tuple[str, str, str], ...] = (
     ("pre_2020_calm", "2010-01-01", "2019-12-31"),
     ("covid_shock", "2020-01-01", "2020-12-31"),
@@ -24,18 +28,6 @@ class RegimeRow:
 
 def _to_date(value: str) -> date:
     return date.fromisoformat(value)
-
-
-def _row_in_regime(row_date: date, regime_start: date, regime_end: date) -> bool:
-    return regime_start <= row_date <= regime_end
-
-
-def _collect_per_fold(holdouts: Iterable[Mapping]) -> dict[str, list[Mapping]]:
-    buckets: dict[str, list[Mapping]] = {}
-    for hold in holdouts:
-        fold_id = str(hold.get("fold_id", ""))
-        buckets.setdefault(fold_id, []).append(hold)
-    return buckets
 
 
 def aggregate_by_regime(

@@ -173,6 +173,13 @@ def main() -> int:
     args = _parse_args()
     _set_all_seeds(args.seed)
 
+    if args.llm_backend == "gemini" and not args.llm_checkpoint.lower().startswith("gemini"):
+        raise SystemExit(
+            f"--llm-backend gemini requires a Gemini model name (e.g. 'gemini-2.5-pro'); "
+            f"got --llm-checkpoint={args.llm_checkpoint!r}. Pass a Gemini model or switch "
+            f"--llm-backend back to hf."
+        )
+
     package_dir = DATA_DIR / "processed" / args.training_package_id
     if not package_dir.exists():
         raise SystemExit(f"Training package not found: {package_dir}")
