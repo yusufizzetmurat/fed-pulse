@@ -32,6 +32,7 @@ dependencies = [
   "scikit-learn",
   "pypdf>=5.0.0",
   "SQLAlchemy>=2.0",
+  "structlog>=24.1",
 ]
 
 [project.optional-dependencies]
