@@ -6,7 +6,7 @@ from contextvars import ContextVar
 from typing import Any
 
 import structlog
-from structlog.contextvars import bind_contextvars, clear_contextvars
+from structlog.contextvars import bind_contextvars, unbind_contextvars
 
 from app.config import settings
 
@@ -69,5 +69,7 @@ def current_run_id() -> str | None:
 
 
 def clear_run_id() -> None:
+    # Unbind just `run_id`; other structlog context vars (model_version,
+    # dataset_version, …) must survive the request teardown.
     _RUN_ID.set(None)
-    clear_contextvars()
+    unbind_contextvars("run_id")

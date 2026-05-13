@@ -829,9 +829,11 @@ def _save_model_checkpoint(model: ForecasterModel, checkpoint_path: Path, summar
     torch.save(_checkpoint_payload(model, summary), checkpoint_path)
     try:
         from app.audit import append_audit_entry, hash_file
+        from app.logging import current_run_id
 
         append_audit_entry(
             "checkpoint_saved",
+            run_id=current_run_id(),
             metadata={
                 "path": str(checkpoint_path),
                 "sha256": hash_file(checkpoint_path),

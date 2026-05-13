@@ -34,8 +34,6 @@ from app.schemas import (
     TrainJobStatusResponse,
 )
 from app.services.fomc_calendar import get_calendar
-
-logger = logging.getLogger(__name__)
 from app.services.forecaster import (
     bootstrap_checkpoint,
     build_feature_vectors,
@@ -50,6 +48,8 @@ from app.services.market_data import (
     fetch_realized_forward,
 )
 from app.services.sentiment import analyze_text
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -182,7 +182,17 @@ def _build_analyze_response(
 
 
 def _run_real_train_job(job_id: str, payload: AnalyzeRequest) -> None:
-    _set_job_state(job_id, status="running", started_at=_utc_now_iso())
+    # Bind run_id on the daemon thread so checkpoint/audit hooks downstream
+    # tag every log line and audit row with the same id as the API caller.
+    bind_run_id(job_id)
+    try:
+        _set_job_state(job_id, status="running", started_at=_utc_now_iso())
+        _run_real_train_job_body(job_id, payload)
+    finally:
+        clear_run_id()
+
+
+def _run_real_train_job_body(job_id: str, payload: AnalyzeRequest) -> None:
     try:
         sentiment = analyze_text(payload.text)
         market_history = fetch_market_history(
