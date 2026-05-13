@@ -3,13 +3,17 @@ import Head from "next/head";
 import { toast } from "sonner";
 
 import { AnalyzeForm } from "@/components/analyze/AnalyzeForm";
+import { CredibilityPanel } from "@/components/analyze/CredibilityPanel";
 import { ErrorBadges } from "@/components/analyze/ErrorBadges";
 import { ForecastChart } from "@/components/analyze/ForecastChart";
 import { MarketContext } from "@/components/analyze/MarketContext";
+import { MultiAxisCards } from "@/components/analyze/MultiAxisCards";
 import { PredictionCards } from "@/components/analyze/PredictionCards";
 import { RealTrainStatus } from "@/components/analyze/RealTrainStatus";
 import { SentimentCard } from "@/components/analyze/SentimentCard";
+import { XaiPanel } from "@/components/analyze/XaiPanel";
 import { Header } from "@/components/shell/header";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchTrainJob, postAnalyze, resolveApiBaseUrl } from "@/lib/analyze/api";
 import {
@@ -22,6 +26,11 @@ import {
   buildVolatilitySeries,
   computeErrorMetrics,
 } from "@/lib/analyze/derive";
+import {
+  SAMPLE_CREDIBILITY,
+  SAMPLE_MULTI_AXIS,
+  SAMPLE_XAI,
+} from "@/lib/analyze/fixtures";
 import type { AnalyzeRequest, AnalyzeResult, TrainJobState } from "@/lib/analyze/types";
 
 function defaultRequest(): AnalyzeRequest {
@@ -54,6 +63,7 @@ export default function AnalyzePage() {
   const [result, setResult] = React.useState<AnalyzeResult | null>(null);
   const [trainJob, setTrainJob] = React.useState<TrainJobState | null>(null);
   const [loading, setLoading] = React.useState(false);
+  const [previewV2, setPreviewV2] = React.useState(false);
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
 
   const handleSubmit = async () => {
@@ -117,11 +127,20 @@ export default function AnalyzePage() {
       <div className="min-h-screen bg-background text-foreground">
         <Header />
         <main className="container space-y-6 py-8">
-          <div className="space-y-2">
-            <h1 className="text-3xl font-semibold tracking-tight">Analyze</h1>
-            <p className="max-w-2xl text-muted-foreground">
-              Score an FOMC excerpt and project asset close + volatility with confidence bands.
-            </p>
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="space-y-2">
+              <h1 className="text-3xl font-semibold tracking-tight">Analyze</h1>
+              <p className="max-w-2xl text-muted-foreground">
+                Score an FOMC excerpt and project asset close + volatility with confidence bands.
+              </p>
+            </div>
+            <Button
+              variant={previewV2 ? "default" : "outline"}
+              size="sm"
+              onClick={() => setPreviewV2((value) => !value)}
+            >
+              {previewV2 ? "Hide v2 preview" : "Preview v2 panels"}
+            </Button>
           </div>
 
           <AnalyzeForm
@@ -149,6 +168,10 @@ export default function AnalyzePage() {
                   <PredictionCards result={result} />
                 </div>
               </div>
+
+              {result.multi_axis || previewV2 ? (
+                <MultiAxisCards multiAxis={result.multi_axis ?? SAMPLE_MULTI_AXIS} />
+              ) : null}
 
               <ErrorBadges result={result} metrics={errorMetrics} />
 
@@ -178,6 +201,11 @@ export default function AnalyzePage() {
                   ]}
                 />
               </div>
+
+              {result.xai || previewV2 ? <XaiPanel xai={result.xai ?? SAMPLE_XAI} /> : null}
+              {result.credibility || previewV2 ? (
+                <CredibilityPanel credibility={result.credibility ?? SAMPLE_CREDIBILITY} />
+              ) : null}
 
               <MarketContext result={result} />
             </>

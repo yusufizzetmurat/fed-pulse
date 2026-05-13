@@ -66,12 +66,72 @@ export interface SeriesResponse {
   volatility_scale?: { suggested_ymin?: number; suggested_ymax?: number };
 }
 
+export type StanceAxis = "hawkish" | "dovish" | "neutral";
+export type CertaintyAxis = "tentative" | "measured" | "decisive";
+
+export interface MultiAxisStance {
+  label: StanceAxis;
+  confidence: number;
+  distribution?: Partial<Record<StanceAxis, number>>;
+}
+
+export interface MultiAxisFactor {
+  value: number;
+  confidence: number;
+  range?: [number, number];
+}
+
+export interface MultiAxisCertainty {
+  label: CertaintyAxis;
+  confidence: number;
+}
+
+export interface MultiAxisTopic {
+  primary: string;
+  confidence: number;
+  secondary?: string[];
+}
+
+export interface MultiAxisResponse {
+  stance?: MultiAxisStance;
+  factor?: MultiAxisFactor;
+  certainty?: MultiAxisCertainty;
+  topic?: MultiAxisTopic;
+}
+
+export interface XaiTokenAttribution {
+  token: string;
+  weight: number;
+}
+
+export interface XaiSentence {
+  text: string;
+  score: number;
+  topTokens: XaiTokenAttribution[];
+}
+
+export interface XaiResponse {
+  sentences: XaiSentence[];
+  method?: string;
+}
+
+export interface CredibilityResponse {
+  driftScore: number;
+  driftTrend?: number[];
+  realizedVsStatedGap?: number;
+  marketImpliedGap?: number;
+  monthsSinceReversal?: number;
+}
+
 export interface AnalyzeResult {
   sentiment?: SentimentResponse;
   prediction?: PredictionResponse;
   market?: MarketResponse;
   model?: ModelDiagnosticsResponse;
   series?: SeriesResponse;
+  multi_axis?: MultiAxisResponse;
+  xai?: XaiResponse;
+  credibility?: CredibilityResponse;
 }
 
 export interface TrainJobState {

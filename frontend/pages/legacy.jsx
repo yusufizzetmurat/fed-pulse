@@ -706,7 +706,7 @@ export default function Home() {
   };
 
   return (
-    <main className="container">
+    <main className="legacy-shell container">
       <header className="pageHeader">
         <h1>FOMC Quant Forecast Terminal</h1>
         <p className="subtitle">
