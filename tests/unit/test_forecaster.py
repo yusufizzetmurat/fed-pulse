@@ -190,7 +190,7 @@ def test_train_model_checkpoint_contains_training_metadata(tmp_path):
         device="cpu",
     )
 
-    payload = torch.load(checkpoint_path, map_location="cpu")
+    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
     assert checkpoint_path.exists()
     assert payload["model_config"]["hidden_size"] == 20
