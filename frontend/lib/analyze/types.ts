@@ -143,3 +143,51 @@ export interface TrainJobState {
 }
 
 export type Stance = "hawkish" | "dovish" | "neutral" | "unknown";
+
+export interface HistoryEntry {
+  id: string;
+  created_at: string;
+  symbol: string;
+  document_date: string;
+  horizon: string;
+  forecast_mode: string;
+  stance: string;
+  sentiment_score?: number | null;
+  predicted_close?: number | null;
+  current_close?: number | null;
+  predicted_volatility?: number | null;
+  text_excerpt?: string | null;
+}
+
+export interface HistoryDetail extends HistoryEntry {
+  payload: Record<string, unknown>;
+}
+
+export interface HistoryList {
+  items: HistoryEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface HistoryQuery {
+  symbol?: string;
+  horizon?: string;
+  stance?: string;
+  document_date?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface FomcMeeting {
+  meeting_date: string;
+  meeting_type: string;
+  statement_release_date?: string | null;
+  minutes_release_date?: string | null;
+  notes?: string | null;
+}
+
+export interface FomcCalendarResponse {
+  past: FomcMeeting[];
+  upcoming: FomcMeeting[];
+}

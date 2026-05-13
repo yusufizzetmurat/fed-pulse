@@ -31,6 +31,7 @@ dependencies = [
   "langsmith>=0.1.0",
   "scikit-learn",
   "pypdf>=5.0.0",
+  "SQLAlchemy>=2.0",
 ]
 
 [project.optional-dependencies]
