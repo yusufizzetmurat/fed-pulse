@@ -67,7 +67,17 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Phase 4 LLM zero-shot baseline.")
     parser.add_argument("--training-package-id", required=True)
     parser.add_argument("--fold-id", default="wf_fold_2")
-    parser.add_argument("--llm-checkpoint", default=DEFAULT_LLM)
+    parser.add_argument(
+        "--llm-backend",
+        choices=("hf", "gemini"),
+        default="hf",
+        help="hf loads a local Transformers checkpoint; gemini calls the Google Gemini API.",
+    )
+    parser.add_argument(
+        "--llm-checkpoint",
+        default=DEFAULT_LLM,
+        help="HF checkpoint name (used with --llm-backend hf) or Gemini model name (used with --llm-backend gemini).",
+    )
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--owner", default="unknown")
     parser.add_argument("--max-new-tokens", type=int, default=8)
@@ -76,20 +86,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = _parse_args()
-    _set_all_seeds(args.seed)
-
-    package_dir = DATA_DIR / "processed" / args.training_package_id
-    if not package_dir.exists():
-        raise SystemExit(f"Training package not found: {package_dir}")
-    rows = _load_registry_rows(package_dir)
-    fold = _load_fold(package_dir, args.fold_id)
-    _, test_rows = _split_by_fold(rows, fold)
-    if not test_rows:
-        raise SystemExit(f"No test rows for fold {args.fold_id}")
-    print(f"[llm_zs] checkpoint={args.llm_checkpoint} test_rows={len(test_rows)}")
-
+def _score_with_hf(test_rows, args) -> tuple[list[str], list[str], list[float], str]:
     hf_token = _hf_token()
     if hf_token:
         print(f"[llm_zs] using HF token (len={len(hf_token)})")
@@ -115,7 +112,6 @@ def main() -> int:
     y_true: list[str] = []
     y_pred: list[str] = []
     latencies_ms: list[float] = []
-
     for idx, row in enumerate(test_rows):
         prompt = _build_prompt(row.text, tokenizer)
         inputs = tokenizer(
@@ -135,7 +131,7 @@ def main() -> int:
         elapsed_ms = (time.perf_counter() - t0) * 1000
         latencies_ms.append(elapsed_ms)
         generated = tokenizer.decode(
-            output[0, inputs["input_ids"].shape[-1] :],
+            output[0, inputs["input_ids"].shape[-1]:],
             skip_special_tokens=True,
         )
         pred_label = _parse_label(generated)
@@ -146,6 +142,51 @@ def main() -> int:
                 f"[llm_zs] {idx + 1}/{len(test_rows)} pred={pred_label} truth={row.label} "
                 f"gen={generated.strip()!r}"
             )
+    return y_true, y_pred, latencies_ms, str(model.device)
+
+
+def _score_with_gemini(test_rows, args) -> tuple[list[str], list[str], list[float], str]:
+    from app.services.gemini_client import load_model, score_passage
+
+    model = load_model(args.llm_checkpoint)
+    y_true: list[str] = []
+    y_pred: list[str] = []
+    latencies_ms: list[float] = []
+    for idx, row in enumerate(test_rows):
+        t0 = time.perf_counter()
+        result = score_passage(row.text, model=model)
+        latencies_ms.append((time.perf_counter() - t0) * 1000)
+        pred_label = str(result.get("label", "neutral")).strip().lower()
+        if pred_label not in ("hawkish", "dovish", "neutral"):
+            pred_label = "neutral"
+        y_true.append(row.label)
+        y_pred.append(pred_label)
+        if idx < 3 or idx % 50 == 0:
+            print(
+                f"[llm_zs] {idx + 1}/{len(test_rows)} pred={pred_label} truth={row.label} "
+                f"confidence={float(result.get('confidence', 0.0)):.3f}"
+            )
+    return y_true, y_pred, latencies_ms, "gemini-api"
+
+
+def main() -> int:
+    args = _parse_args()
+    _set_all_seeds(args.seed)
+
+    package_dir = DATA_DIR / "processed" / args.training_package_id
+    if not package_dir.exists():
+        raise SystemExit(f"Training package not found: {package_dir}")
+    rows = _load_registry_rows(package_dir)
+    fold = _load_fold(package_dir, args.fold_id)
+    _, test_rows = _split_by_fold(rows, fold)
+    if not test_rows:
+        raise SystemExit(f"No test rows for fold {args.fold_id}")
+    print(f"[llm_zs] backend={args.llm_backend} checkpoint={args.llm_checkpoint} test_rows={len(test_rows)}")
+
+    if args.llm_backend == "gemini":
+        y_true, y_pred, latencies_ms, device_label = _score_with_gemini(test_rows, args)
+    else:
+        y_true, y_pred, latencies_ms, device_label = _score_with_hf(test_rows, args)
 
     cls_metrics = _compute_classification_metrics(y_true, y_pred)
     latency = _latency_summary(latencies_ms)
@@ -168,7 +209,8 @@ def main() -> int:
         "latency": latency,
         "training_package_id": args.training_package_id,
         "started_at_utc": run_token,
-        "device": str(model.device),
+        "backend": args.llm_backend,
+        "device": device_label,
         "max_new_tokens": args.max_new_tokens,
         "max_input_tokens": args.max_input_tokens,
         "system_prompt": SYSTEM_PROMPT,
