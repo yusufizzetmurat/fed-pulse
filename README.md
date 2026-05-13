@@ -28,11 +28,13 @@ Backend API docs: `http://localhost:8000/docs`
 
 ## Documentation
 
-- `docs/project-guide.md`
+Executable contracts (code and CI gate on these):
+
 - `docs/benchmark-policy.md`
 - `docs/data-and-training-contracts.md`
-- `docs/architecture-overview.md`
 - `docs/run-templates.md`
+
+Narrative, design, and research docs live in the [wiki](https://github.com/yusufizzetmurat/fed-pulse/wiki) — project guide, system architecture, requirements, design document, deep learning roadmap, risk register, ADRs, and the external corpora inventory.
 
 ## Local setup
 

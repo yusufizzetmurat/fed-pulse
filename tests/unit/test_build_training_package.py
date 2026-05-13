@@ -56,7 +56,10 @@ def test_training_package_metadata_includes_source_type_counts(tmp_path: Path) -
         "--training-package-id",
         "tp_test_v0",
     ]
-    result = subprocess.run(cmd, check=False, capture_output=True, text=True, cwd="/app")
+    repo_root = Path(__file__).resolve().parents[2]
+    backend_root = repo_root / "backend"
+    cwd = "/app" if Path("/app").exists() else str(backend_root)
+    result = subprocess.run(cmd, check=False, capture_output=True, text=True, cwd=cwd)
     assert result.returncode == 0, result.stderr
 
     metadata_path = tmp_path / "processed" / "tp_test_v0" / "dataset_metadata.json"

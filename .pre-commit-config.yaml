@@ -1,3 +1,10 @@
+exclude: |
+  (?x)^(
+    tests/fixtures/.*\.(html|pdf|json)|
+    tests/snapshots/.*\.json|
+    data/.*
+  )$
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0

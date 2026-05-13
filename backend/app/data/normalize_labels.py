@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from app.config import DATA_DIR as DEFAULT_DATA_DIR
+from app.data.label_schemas import sample_weight_for
+
 DEFAULT_INPUT = DEFAULT_DATA_DIR / "raw" / "phase2" / "source_registry.jsonl"
 DEFAULT_OUTPUT = DEFAULT_DATA_DIR / "interim" / "phase2" / "registry_labeled.jsonl"
 DEFAULT_EXCEPTIONS = DEFAULT_DATA_DIR / "interim" / "phase2" / "label_mapping_exceptions.json"
@@ -101,6 +103,50 @@ def _map_label(raw_label: str) -> str | None:
     return None
 
 
+_PEER_REVIEWED_SOURCES = {
+    "hf_fomc_communication",
+    "fomc_communication",
+    "trillion_dollar_words",
+    "gsswanson_factor",
+    "aruoba_drechsel_shocks",
+    "cieslak_schrimpf_news",
+    "hansen_mcmahon_topics",
+    "lucca_trebbi_index",
+}
+_KAGGLE_SOURCES = {"kaggle_fed_statements_minutes"}
+
+
+def _provenance_for_row(row: dict[str, Any]) -> str:
+    explicit = str(row.get("provenance") or "").strip().lower()
+    if explicit in {"peer_reviewed", "kaggle", "scraped"}:
+        return explicit
+    source = str(row.get("source") or "").strip().lower()
+    if source in _PEER_REVIEWED_SOURCES:
+        return "peer_reviewed"
+    if source in _KAGGLE_SOURCES:
+        return "kaggle"
+    return "scraped"
+
+
+def _coerce_optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if result != result:  # NaN
+        return None
+    return result
+
+
+def _coerce_optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -134,6 +180,16 @@ def main() -> int:
         row["mapped_label"] = mapped
         row["label_map_version"] = MAPPING_VERSION
         row["label_taxonomy"] = "hawkish_dovish_neutral"
+
+        provenance = _provenance_for_row(row)
+        row["provenance"] = provenance
+        row["sample_weight"] = sample_weight_for(provenance) if mapped else 0.0
+        row["axes"] = {
+            "stance": mapped,
+            "factor": _coerce_optional_float(row.get("axis_factor")),
+            "certainty": _coerce_optional_float(row.get("axis_certainty")),
+            "topic": _coerce_optional_str(row.get("axis_topic")),
+        }
 
         if not raw_label:
             counts["unlabeled"] += 1

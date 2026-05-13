@@ -30,6 +30,7 @@ data/*
 !data/raw/
 data/raw/*
 !data/raw/market/
+!data/schema/
 /backend/models/
 *.pt
 *.pth

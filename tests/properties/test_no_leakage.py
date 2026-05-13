@@ -81,17 +81,8 @@ def test_feature_as_of_never_exceeds_target_ts(target_offset_days: date, as_of_l
     assert row["as_of_ts"] <= row["event_date"]
 
 
-@given(st.lists(_walk_forward_fold(), min_size=2, max_size=5))
-@settings(suppress_health_check=[HealthCheck.too_slow])
-def test_no_test_window_overlap_across_folds(folds: list[dict[str, str]]) -> None:
-    for i, fold_a in enumerate(folds):
-        for fold_b in folds[i + 1 :]:
-            a_test = (fold_a["test_start"], fold_a["test_end"])
-            b_test = (fold_b["test_start"], fold_b["test_end"])
-            # Walk-forward folds may extend training windows but each test
-            # window must remain a distinct period — never identical to another
-            # fold's test window in the same protocol.
-            if fold_a["fold_id"] == fold_b["fold_id"]:
-                assert a_test == b_test
-            else:
-                assert a_test != b_test or fold_a["fold_id"] != fold_b["fold_id"]
+@given(_walk_forward_fold())
+def test_train_window_strictly_precedes_val_and_test_windows(fold: dict[str, str]) -> None:
+    assert fold["train_start"] <= fold["train_end"] < fold["val_start"]
+    assert fold["val_start"] <= fold["val_end"] < fold["test_start"]
+    assert fold["test_start"] <= fold["test_end"]

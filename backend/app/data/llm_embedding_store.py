@@ -67,7 +67,7 @@ def precompute_embeddings(
 
     records: list[dict[str, Any]] = []
     eligible = [(i, r) for i, r in enumerate(rows) if str(r.get("text", "") or "")]
-    for index, (orig_index, row) in enumerate(eligible):
+    for index, (_orig_index, row) in enumerate(eligible):
         text = str(row.get("text", "") or "")
         embedding = embed_text(text, model=embedding_client)
         records.append(

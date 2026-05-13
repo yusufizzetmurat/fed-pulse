@@ -150,8 +150,12 @@ def snapshot(
         out_path = snapshot_dir / f"{_safe_symbol(symbol)}.parquet"
         rows = _write_parquet(series, out_path, symbol)
         sha = _hash_file(out_path)
+        try:
+            stored_path = str(out_path.relative_to(REPO_ROOT))
+        except ValueError:
+            stored_path = str(out_path)
         lock["entries"][symbol] = {
-            "parquet_path": str(out_path.relative_to(REPO_ROOT)),
+            "parquet_path": stored_path,
             "sha256": sha,
             "rows": rows,
             "start": start,
