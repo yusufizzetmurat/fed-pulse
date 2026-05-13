@@ -1304,12 +1304,37 @@ def _sample_std(values: Iterable[float]) -> float:
     return math.sqrt(max(variance, 0.0))
 
 
+def _conformal_manifest_for(checkpoint_path: Path | None):
+    if checkpoint_path is None:
+        return None
+    manifest_path = checkpoint_path.with_suffix(".conformal.json")
+    if not manifest_path.exists():
+        return None
+    try:
+        from app.evaluation.conformal import load_manifest
+
+        return load_manifest(manifest_path)
+    except Exception:
+        return None
+
+
 def _build_confidence_bands(
     history_close: list[float],
     history_vol: list[float],
     forecast_close: list[float],
     forecast_vol: list[float],
+    *,
+    conformal_manifest: Any = None,
 ) -> tuple[list[float], list[float], list[float], list[float]]:
+    if conformal_manifest is not None:
+        from app.evaluation.conformal import apply_conformal_bands
+
+        return apply_conformal_bands(
+            close_predictions=forecast_close,
+            volatility_predictions=forecast_vol,
+            manifest=conformal_manifest,
+        )
+
     close_returns = [
         (curr - prev) / prev
         for prev, curr in zip(history_close, history_close[1:])
@@ -1445,12 +1470,19 @@ def forecast_quantitative_series(
         forecast_close.append(next_close)
         forecast_vol.append(next_vol)
 
+    conformal_manifest = _conformal_manifest_for(BEST_MODEL_PATH)
     (
         forecast_close_lower,
         forecast_close_upper,
         forecast_vol_lower,
         forecast_vol_upper,
-    ) = _build_confidence_bands(history_close, history_vol, forecast_close, forecast_vol)
+    ) = _build_confidence_bands(
+        history_close,
+        history_vol,
+        forecast_close,
+        forecast_vol,
+        conformal_manifest=conformal_manifest,
+    )
 
     vol_values = [*history_vol, *forecast_vol, *forecast_vol_lower, *forecast_vol_upper]
     if vol_values:
@@ -1486,7 +1518,19 @@ def forecast_quantitative_series(
             "forecast_volatility": forecast_vol,
             "forecast_volatility_lower": forecast_vol_lower,
             "forecast_volatility_upper": forecast_vol_upper,
-            "forecast_confidence_level": FORECAST_CONFIDENCE_LEVEL,
+            "forecast_confidence_level": (
+                float(conformal_manifest.nominal_coverage)
+                if conformal_manifest is not None
+                else FORECAST_CONFIDENCE_LEVEL
+            ),
             "volatility_scale": vol_scale,
+            "forecast_band_source": (
+                "conformal" if conformal_manifest is not None else "gaussian_z"
+            ),
+            "conformal_coverage": (
+                float(conformal_manifest.nominal_coverage)
+                if conformal_manifest is not None
+                else None
+            ),
         },
     }
