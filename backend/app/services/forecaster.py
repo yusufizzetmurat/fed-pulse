@@ -1307,7 +1307,10 @@ def _sample_std(values: Iterable[float]) -> float:
 def _conformal_manifest_for(checkpoint_path: Path | None):
     if checkpoint_path is None:
         return None
-    manifest_path = checkpoint_path.with_suffix(".conformal.json")
+    # `with_suffix(".conformal.json")` rejects multi-dot suffixes on Python < 3.12.
+    # `with_name` constructs the sibling path explicitly so behaviour is identical
+    # on 3.11 and 3.12+.
+    manifest_path = checkpoint_path.with_name(checkpoint_path.stem + ".conformal.json")
     if not manifest_path.exists():
         return None
     try:

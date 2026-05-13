@@ -93,7 +93,14 @@ def apply_conformal_bands(
 ) -> tuple[list[float], list[float], list[float], list[float]]:
     """Return (close_lower, close_upper, vol_lower, vol_upper) using the
     manifest's residual quantiles. `horizon_scale=True` widens the band by
-    sqrt(step) so multi-step forecasts inherit the usual variance scaling."""
+    sqrt(step) so multi-step forecasts inherit the usual variance scaling.
+
+    Note: the marginal (1 - alpha) coverage guarantee from split-conformal
+    holds only for step 1. With ``horizon_scale=True`` the multi-step bands
+    are a random-walk heuristic, not a calibrated conformal interval — treat
+    `manifest.nominal_coverage` as a single-step quantity. Pass
+    ``horizon_scale=False`` if you need uniform width across the horizon.
+    """
 
     close_lower: list[float] = []
     close_upper: list[float] = []

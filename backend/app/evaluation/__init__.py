@@ -13,6 +13,7 @@ from app.evaluation.conformal import (
     save_manifest,
     split_conformal_quantile,
 )
+from app.evaluation.conformal import empirical_coverage as empirical_coverage_from_bands
 from app.evaluation.regime_aggregator import REGIME_WINDOWS, aggregate_by_regime
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "calibrate_split_conformal",
     "coverage_curve",
     "empirical_coverage",
+    "empirical_coverage_from_bands",
     "load_manifest",
     "save_manifest",
     "split_conformal_quantile",
