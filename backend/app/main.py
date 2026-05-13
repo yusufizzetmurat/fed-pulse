@@ -1,4 +1,5 @@
 import json
+import logging
 import threading
 import uuid
 from datetime import date, datetime, timezone
@@ -16,7 +17,10 @@ from app.db import (
     get_session,
     list_runs,
     persist_analysis_run,
+    session_scope,
 )
+
+logger = logging.getLogger(__name__)
 from app.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
@@ -273,23 +277,23 @@ def get_train_job(job_id: str):
 
 
 def _record_history(request: AnalyzeRequest, response: dict[str, Any]) -> None:
+    # Persistence must not break /analyze; log so silent failures (disk full,
+    # missing table, etc.) still show up in uvicorn output.
     try:
-        session_iter = get_session()
-        session = next(session_iter)
-        try:
+        with session_scope() as session:
             persist_analysis_run(
                 session,
                 payload=response,
                 request=request.model_dump(),
                 response=response,
             )
-        finally:
-            try:
-                next(session_iter)
-            except StopIteration:
-                pass
-    except Exception:  # pragma: no cover — never let history persistence break /analyze
-        pass
+    except Exception:
+        logger.warning(
+            "history persistence failed for symbol=%s date=%s",
+            request.symbol,
+            request.date,
+            exc_info=True,
+        )
 
 
 @app.get("/history", response_model=HistoryList)

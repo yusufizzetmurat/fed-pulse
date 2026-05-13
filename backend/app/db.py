@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -106,6 +107,25 @@ def get_engine(database_url: str | None = None) -> Engine:
 
 
 def get_session() -> Iterator[Session]:
+    if _SessionLocal is None:
+        get_engine()
+    assert _SessionLocal is not None
+    session = _SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+@contextmanager
+def session_scope() -> Iterator[Session]:
+    """Manual session helper for code paths outside FastAPI's ``Depends``.
+
+    Use this when persisting from a background thread or a hook (e.g.
+    ``_record_history``) so the ``finally`` cleanup always runs even when the
+    body raises before the second ``next()`` of the generator.
+    """
+
     if _SessionLocal is None:
         get_engine()
     assert _SessionLocal is not None
