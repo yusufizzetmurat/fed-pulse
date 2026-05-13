@@ -7,6 +7,7 @@ import type { CredibilityResponse } from "@/lib/analyze/types";
 
 interface CredibilityPanelProps {
   credibility: CredibilityResponse;
+  previewMode?: boolean;
 }
 
 function driftTone(value: number): "hawkish" | "dovish" | "neutral" {
@@ -53,14 +54,20 @@ function formatGap(value?: number): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
 }
 
-export function CredibilityPanel({ credibility }: CredibilityPanelProps) {
-  const tone = driftTone(credibility.driftScore);
+export function CredibilityPanel({ credibility, previewMode }: CredibilityPanelProps) {
+  const driftScore = Number.isFinite(credibility.driftScore) ? credibility.driftScore : 0;
+  const tone = driftTone(driftScore);
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Activity className="h-4 w-4 text-primary" />
           Central-bank credibility
+          {previewMode ? (
+            <Badge variant="outline" className="ml-2 text-[10px] uppercase tracking-wide">
+              Preview · fixture
+            </Badge>
+          ) : null}
         </CardTitle>
         <CardDescription>
           Four-axis credibility check on the issuing institution at this statement date.
@@ -72,9 +79,9 @@ export function CredibilityPanel({ credibility }: CredibilityPanelProps) {
             <span className="flex items-center gap-1.5 text-muted-foreground">
               <GitBranch className="h-3.5 w-3.5" /> Drift vs. prior 4 statements
             </span>
-            <Badge variant={tone}>{driftLabel(credibility.driftScore)} · {credibility.driftScore.toFixed(2)}</Badge>
+            <Badge variant={tone}>{driftLabel(driftScore)} · {driftScore.toFixed(2)}</Badge>
           </div>
-          <Progress value={credibility.driftScore} />
+          <Progress value={driftScore} />
           {credibility.driftTrend?.length ? (
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>Trend</span>

@@ -1,16 +1,17 @@
 import { Highlighter } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { XaiResponse, XaiSentence, XaiTokenAttribution } from "@/lib/analyze/types";
 
 interface XaiPanelProps {
   xai: XaiResponse;
+  previewMode?: boolean;
 }
 
 function sentenceBackground(score: number): string {
@@ -78,7 +79,7 @@ function SentenceChip({ sentence }: { sentence: XaiSentence }) {
   );
 }
 
-export function XaiPanel({ xai }: XaiPanelProps) {
+export function XaiPanel({ xai, previewMode }: XaiPanelProps) {
   if (!xai.sentences.length) return null;
   return (
     <Card>
@@ -86,6 +87,11 @@ export function XaiPanel({ xai }: XaiPanelProps) {
         <CardTitle className="flex items-center gap-2">
           <Highlighter className="h-4 w-4 text-primary" />
           Sentence attribution
+          {previewMode ? (
+            <Badge variant="outline" className="ml-2 text-[10px] uppercase tracking-wide">
+              Preview · fixture
+            </Badge>
+          ) : null}
         </CardTitle>
         <CardDescription>
           Hover any sentence to see the five tokens with the largest attribution.
@@ -93,13 +99,11 @@ export function XaiPanel({ xai }: XaiPanelProps) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <TooltipProvider>
-          <p className="space-x-1.5 text-sm leading-7">
-            {xai.sentences.map((sentence, idx) => (
-              <SentenceChip key={`${idx}-${sentence.text.slice(0, 16)}`} sentence={sentence} />
-            ))}
-          </p>
-        </TooltipProvider>
+        <p className="space-x-1.5 text-sm leading-7">
+          {xai.sentences.map((sentence, idx) => (
+            <SentenceChip key={`${idx}-${sentence.text.slice(0, 16)}`} sentence={sentence} />
+          ))}
+        </p>
       </CardContent>
     </Card>
   );

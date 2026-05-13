@@ -1,17 +1,15 @@
 import * as React from "react";
 import Head from "next/head";
+import dynamic from "next/dynamic";
 import { toast } from "sonner";
 
 import { AnalyzeForm } from "@/components/analyze/AnalyzeForm";
-import { CredibilityPanel } from "@/components/analyze/CredibilityPanel";
 import { ErrorBadges } from "@/components/analyze/ErrorBadges";
 import { ForecastChart } from "@/components/analyze/ForecastChart";
 import { MarketContext } from "@/components/analyze/MarketContext";
-import { MultiAxisCards } from "@/components/analyze/MultiAxisCards";
 import { PredictionCards } from "@/components/analyze/PredictionCards";
 import { RealTrainStatus } from "@/components/analyze/RealTrainStatus";
 import { SentimentCard } from "@/components/analyze/SentimentCard";
-import { XaiPanel } from "@/components/analyze/XaiPanel";
 import { Header } from "@/components/shell/header";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,12 +24,15 @@ import {
   buildVolatilitySeries,
   computeErrorMetrics,
 } from "@/lib/analyze/derive";
-import {
-  SAMPLE_CREDIBILITY,
-  SAMPLE_MULTI_AXIS,
-  SAMPLE_XAI,
-} from "@/lib/analyze/fixtures";
 import type { AnalyzeRequest, AnalyzeResult, TrainJobState } from "@/lib/analyze/types";
+
+// Lazy-load fixture-driven panels so the fixture module never ships to the
+// default analyze bundle. Only loaded when the toggle is on or when the API
+// returns the v2 fields.
+const PreviewPanels = dynamic(() => import("@/components/analyze/PreviewPanels"), {
+  ssr: false,
+  loading: () => null,
+});
 
 function defaultRequest(): AnalyzeRequest {
   return {
@@ -170,7 +171,7 @@ export default function AnalyzePage() {
               </div>
 
               {result.multi_axis || previewV2 ? (
-                <MultiAxisCards multiAxis={result.multi_axis ?? SAMPLE_MULTI_AXIS} />
+                <PreviewPanels slot="cards" multiAxis={result.multi_axis} />
               ) : null}
 
               <ErrorBadges result={result} metrics={errorMetrics} />
@@ -202,9 +203,11 @@ export default function AnalyzePage() {
                 />
               </div>
 
-              {result.xai || previewV2 ? <XaiPanel xai={result.xai ?? SAMPLE_XAI} /> : null}
+              {result.xai || previewV2 ? (
+                <PreviewPanels slot="xai" xai={result.xai} />
+              ) : null}
               {result.credibility || previewV2 ? (
-                <CredibilityPanel credibility={result.credibility ?? SAMPLE_CREDIBILITY} />
+                <PreviewPanels slot="credibility" credibility={result.credibility} />
               ) : null}
 
               <MarketContext result={result} />

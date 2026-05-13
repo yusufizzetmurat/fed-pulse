@@ -12,6 +12,7 @@ import type {
 
 interface MultiAxisCardsProps {
   multiAxis: MultiAxisResponse;
+  previewMode?: boolean;
 }
 
 function stanceVariant(stance: StanceAxis): "hawkish" | "dovish" | "neutral" {
@@ -148,16 +149,23 @@ function TopicCard({ topic }: { topic: NonNullable<MultiAxisResponse["topic"]> }
   );
 }
 
-export function MultiAxisCards({ multiAxis }: MultiAxisCardsProps) {
+export function MultiAxisCards({ multiAxis, previewMode }: MultiAxisCardsProps) {
   if (!multiAxis.stance && !multiAxis.factor && !multiAxis.certainty && !multiAxis.topic) {
     return null;
   }
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-      {multiAxis.stance ? <StanceCard stance={multiAxis.stance} /> : null}
-      {multiAxis.factor ? <FactorCard factor={multiAxis.factor} /> : null}
-      {multiAxis.certainty ? <CertaintyCard certainty={multiAxis.certainty} /> : null}
-      {multiAxis.topic ? <TopicCard topic={multiAxis.topic} /> : null}
+    <div className="space-y-2">
+      {previewMode ? (
+        <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+          Multi-axis preview · fixture data
+        </Badge>
+      ) : null}
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {multiAxis.stance ? <StanceCard stance={multiAxis.stance} /> : null}
+        {multiAxis.factor ? <FactorCard factor={multiAxis.factor} /> : null}
+        {multiAxis.certainty ? <CertaintyCard certainty={multiAxis.certainty} /> : null}
+        {multiAxis.topic ? <TopicCard topic={multiAxis.topic} /> : null}
+      </div>
     </div>
   );
 }
