@@ -6,6 +6,7 @@ pytest.importorskip("torch")
 
 import torch  # noqa: E402
 
+from app.models.embedding_adapter import EmbeddingAdapter
 from app.services.forecaster import ForecasterModel
 
 
@@ -29,13 +30,36 @@ def test_embeddings_channel_uses_adapter():
         embedding_adapter_dim=128,
     )
     assert model.chunk_projection_dim == 128
-    # Adapter is the EmbeddingAdapter module, not a plain Linear.
-    assert type(model.chunk_projection).__name__ == "EmbeddingAdapter"
+    assert isinstance(model.chunk_projection, EmbeddingAdapter)
+    assert model.chunk_projection.out_features == 128
 
 
 def test_invalid_text_channel_raises():
     with pytest.raises(ValueError, match="Unknown text_channel"):
         ForecasterModel(text_channel="hybrid")
+
+
+def test_coerce_model_config_preserves_text_channel_from_dict():
+    from app.services.forecaster import ModelConfig, _coerce_model_config
+
+    config_dict = {
+        "hidden_size": 32,
+        "text_channel": "embeddings",
+        "embedding_adapter_dim": 64,
+    }
+    coerced = _coerce_model_config(config_dict)
+    assert isinstance(coerced, ModelConfig)
+    assert coerced.text_channel == "embeddings"
+    assert coerced.embedding_adapter_dim == 64
+
+
+def test_coerce_model_config_defaults_legacy_dicts_to_scalar():
+    from app.services.forecaster import _coerce_model_config
+
+    legacy_dict = {"hidden_size": 32, "num_layers": 2}
+    coerced = _coerce_model_config(legacy_dict)
+    assert coerced.text_channel == "scalar"
+    assert coerced.embedding_adapter_dim == 128
 
 
 def test_forward_shape_with_adapter_active():

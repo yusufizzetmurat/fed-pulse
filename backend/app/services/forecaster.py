@@ -636,6 +636,8 @@ def _coerce_model_config(model_config: ModelConfig | dict[str, Any] | None = Non
             dropout=float(model_config.get("dropout", DEFAULT_DROPOUT)),
             head_hidden_size=int(model_config.get("head_hidden_size", DEFAULT_HEAD_HIDDEN_SIZE)),
             initial_decay_rate=float(model_config.get("initial_decay_rate", DEFAULT_INITIAL_DECAY_RATE)),
+            text_channel=str(model_config.get("text_channel", "scalar")),
+            embedding_adapter_dim=int(model_config.get("embedding_adapter_dim", 128)),
         )
     return ModelConfig()
 
