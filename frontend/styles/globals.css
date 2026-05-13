@@ -26,6 +26,11 @@
     --hawkish: 0 76% 52%;
     --dovish: 156 70% 38%;
     --neutral: 215 16% 47%;
+    --chart-1: 199 89% 48%;
+    --chart-2: 38 92% 50%;
+    --chart-3: 188 78% 41%;
+    --chart-4: 156 60% 40%;
+    --chart-5: 346 84% 56%;
     --radius: 0.625rem;
     --font-sans: "Inter", "system-ui";
     --font-mono: "JetBrains Mono", "ui-monospace";
@@ -54,6 +59,11 @@
     --hawkish: 0 70% 60%;
     --dovish: 156 60% 50%;
     --neutral: 215 20% 65%;
+    --chart-1: 199 89% 64%;
+    --chart-2: 38 92% 60%;
+    --chart-3: 188 78% 55%;
+    --chart-4: 156 60% 55%;
+    --chart-5: 346 84% 65%;
   }
 
   * {
