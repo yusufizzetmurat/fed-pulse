@@ -2,7 +2,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 _STRICT_REQUEST_CONFIG = ConfigDict(extra="forbid", strict=True, frozen=True)
-_FORBID_FROZEN_CONFIG = ConfigDict(extra="forbid", frozen=True)
+# Response models stay open to extras so the OpenAPI snapshot does not churn;
+# `frozen` still blocks mutation after construction.
+_FORBID_FROZEN_CONFIG = ConfigDict(frozen=True)
 
 
 class AnalyzeRequest(BaseModel):

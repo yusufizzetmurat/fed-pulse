@@ -661,7 +661,11 @@ def _read_checkpoint_payload(checkpoint_path: Path, device: torch.device) -> dic
     if not checkpoint_path.exists():
         return None
 
-    payload = torch.load(checkpoint_path, map_location=device)
+    # `weights_only=False` is intentional: our checkpoints are written by this
+    # process and carry trusted python objects (TrainingRunSummary,
+    # ModelConfig, RNG state). PyTorch 2.6+ defaults `weights_only=True` which
+    # rejects those payloads.
+    payload = torch.load(checkpoint_path, map_location=device, weights_only=False)
     if not (isinstance(payload, dict) and "model_state_dict" in payload):
         payload = {"model_state_dict": payload}
 
