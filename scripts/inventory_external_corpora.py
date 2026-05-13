@@ -21,8 +21,16 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUT = REPO_ROOT / "docs" / "corpora-inventory.md"
+WIKI_ROOT = REPO_ROOT.parent / "fed-pulse.wiki"
+WIKI_OUT = WIKI_ROOT / "13_External_Corpora_Inventory.md"
+FALLBACK_OUT = REPO_ROOT / "data" / "artifacts" / "corpora-inventory.md"
 HTTP_TIMEOUT = 15
+
+
+def _default_output_path() -> Path:
+    if WIKI_ROOT.is_dir():
+        return WIKI_OUT
+    return FALLBACK_OUT
 
 
 @dataclass
@@ -210,10 +218,19 @@ def write_inventory(out_path: Path, candidates: list[CorpusCandidate]) -> Path:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Probe candidate external corpora and write docs/corpora-inventory.md.")
-    parser.add_argument("--out", default=str(DEFAULT_OUT))
-    parser.add_argument("--skip-network", action="store_true",
-                        help="Render the inventory without probing remote URLs (uses candidate metadata only).")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Probe candidate external corpora and write the inventory markdown. "
+            "Default output is the wiki page 13_External_Corpora_Inventory.md when "
+            "the wiki clone exists, else data/artifacts/corpora-inventory.md."
+        )
+    )
+    parser.add_argument("--out", default=str(_default_output_path()))
+    parser.add_argument(
+        "--skip-network",
+        action="store_true",
+        help="Render the inventory without probing remote URLs (uses candidate metadata only).",
+    )
     return parser.parse_args(argv)
 
 
