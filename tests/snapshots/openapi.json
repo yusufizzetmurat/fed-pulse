@@ -240,6 +240,25 @@
             },
             "title": "Volatility Scale",
             "type": "object"
+          },
+          "forecast_band_source": {
+            "default": "gaussian_z",
+            "description": "Source of the forecast bands: 'gaussian_z' (z-score) or 'conformal'.",
+            "title": "Forecast Band Source",
+            "type": "string"
+          },
+          "conformal_coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Nominal coverage of conformal bands when forecast_band_source='conformal'.",
+            "title": "Conformal Coverage"
           }
         },
         "required": [

@@ -27,7 +27,8 @@ def test_split_conformal_quantile_handles_symmetric_residuals():
 def test_calibrate_and_apply_recovers_nominal_coverage():
     rng = random.Random(11)
     n = 400
-    truth = [rng.gauss(0.0, 1.0) for _ in range(n)]
+    # Shift data away from zero so the lower-bound price clamp does not fire.
+    truth = [100.0 + rng.gauss(0.0, 1.0) for _ in range(n)]
     preds = [t + rng.gauss(0.0, 0.5) for t in truth]
     manifest = calibrate_split_conformal(
         close_predictions=preds[:n // 2],
