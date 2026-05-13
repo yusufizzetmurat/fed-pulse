@@ -293,17 +293,20 @@ def _train_variant(
     weight_decay: float,
     seed: int,
     device: torch.device,
+    initial_decay_rate: float | None = None,
 ) -> dict[str, Any]:
     _set_all_seeds(seed)
-    # Choose embedding size based on active variant.
     active_embedding_size = llm_embedding_size if use_llm_embeddings else chunk_embedding_size
-    model = ForecasterModel(
-        use_time_decay=use_time_decay,
-        use_chunk_attention=use_chunk_attention,
-        use_llm_embeddings=use_llm_embeddings,
-        chunk_embedding_size=active_embedding_size,
-        chunk_projection_dim=chunk_projection_dim,
-    ).to(device)
+    model_kwargs: dict[str, Any] = {
+        "use_time_decay": use_time_decay,
+        "use_chunk_attention": use_chunk_attention,
+        "use_llm_embeddings": use_llm_embeddings,
+        "chunk_embedding_size": active_embedding_size,
+        "chunk_projection_dim": chunk_projection_dim,
+    }
+    if initial_decay_rate is not None:
+        model_kwargs["initial_decay_rate"] = float(initial_decay_rate)
+    model = ForecasterModel(**model_kwargs).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     loss_fn = nn.MSELoss()
 
@@ -384,6 +387,7 @@ def _train_variant(
     direction_total = 0
     last_history_close: list[float] = []
     latencies_ms: list[float] = []
+    per_row_predictions: list[dict[str, float]] = []
     with torch.no_grad():
         for batch in val_loader:
             x = batch["x"].to(device)
@@ -412,6 +416,13 @@ def _train_variant(
                     direction_hits += 1
                 direction_total += 1
                 last_history_close.append(float(c_last))
+                per_row_predictions.append({
+                    "predicted_close": float(c_pred),
+                    "actual_close": float(c_true),
+                    "predicted_volatility": float(v_pred),
+                    "actual_volatility": float(v_true),
+                    "last_history_close": float(c_last),
+                })
     close_rmse = math.sqrt(statistics.mean(close_se)) if close_se else 0.0
     vol_rmse = math.sqrt(statistics.mean(vol_se)) if vol_se else 0.0
     combined_rmse = math.sqrt((close_rmse**2 + vol_rmse**2) / 2)
@@ -444,8 +455,9 @@ def _train_variant(
         "chunk_lambda_history": chunk_lambda_history,
         "final_decay_rate": final_decay,
         "final_chunk_lambda": final_chunk_lambda,
+        "initial_decay_rate": float(initial_decay_rate) if initial_decay_rate is not None else None,
     }
-    return metrics, model
+    return metrics, model, per_row_predictions
 
 
 def _heatmap_samples(
@@ -528,6 +540,12 @@ def _parse_args() -> argparse.Namespace:
         "--llm-store-path",
         default=str(DEFAULT_LLM_EMBEDDINGS_PARQUET),
         help="Path to the LLM embeddings parquet (Variant C). Defaults to the standard interim path.",
+    )
+    parser.add_argument(
+        "--lambda-init",
+        type=float,
+        default=None,
+        help="Initial decay rate for the time-decay attention layer. Default leaves the forecaster's compiled-in default in place; pass an explicit value when running a lambda sweep.",
     )
     return parser.parse_args()
 
@@ -628,9 +646,10 @@ def main() -> int:
 
     results: dict[str, Any] = {}
     heatmaps_by_variant: dict[str, Any] = {}
+    predictions_by_variant: dict[str, list[dict[str, float]]] = {}
     for name, use_a, use_b, use_c in variants:
         print(f"\n[ablation] === variant: {name} (A={use_a}, B={use_b}, C={use_c}) ===")
-        result, trained_model = _train_variant(
+        result, trained_model, per_row_predictions = _train_variant(
             train_tuples,
             val_tuples,
             use_time_decay=use_a,
@@ -645,8 +664,10 @@ def main() -> int:
             weight_decay=args.weight_decay,
             seed=args.seed,
             device=device,
+            initial_decay_rate=args.lambda_init,
         )
         results[name] = result
+        predictions_by_variant[name] = per_row_predictions
         if (use_b or use_c) and trained_model.chunk_pooler is not None:
             heatmaps_by_variant[name] = _heatmap_samples(
                 val_tuples, pooler_state=trained_model, device=device, use_llm_embeddings=use_c
@@ -684,6 +705,11 @@ def main() -> int:
         "heatmaps": heatmaps_by_variant,
     }
     (artifact_dir / "ablation_table.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    predictions_path = artifact_dir / "predictions.jsonl"
+    with predictions_path.open("w", encoding="utf-8") as handle:
+        for variant_name, rows in predictions_by_variant.items():
+            for row in rows:
+                handle.write(json.dumps({"variant": variant_name, **row}) + "\n")
 
     md_lines: list[str] = [
         "# Phase 4 Attention + Decay Ablation",
