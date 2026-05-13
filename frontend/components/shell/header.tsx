@@ -18,13 +18,13 @@ export function Header() {
         </Link>
         <div className="flex items-center gap-1">
           <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
-            <Link href="https://github.com/yusufizzetmurat/fed-pulse/wiki" target="_blank">
+            <Link href="https://github.com/yusufizzetmurat/fed-pulse/wiki" target="_blank" rel="noopener noreferrer">
               <BookOpen className="h-4 w-4" />
               Wiki
             </Link>
           </Button>
           <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
-            <Link href="https://github.com/yusufizzetmurat/fed-pulse" target="_blank">
+            <Link href="https://github.com/yusufizzetmurat/fed-pulse" target="_blank" rel="noopener noreferrer">
               <Github className="h-4 w-4" />
               Repo
             </Link>
