@@ -62,6 +62,7 @@ ignore = [
   "F841",   # unused local variable
   "I001",   # import sorting — bulk reformat in follow-up
   "B905",   # zip without strict=
+  "UP012",  # explicit encoding="utf-8" — intentional clarity, kept
   "UP017",  # datetime.timezone.utc → datetime.UTC (Python 3.11 idiom; adopt in cleanup)
   "UP035",  # typing.* → collections.abc.* (Python 3.10 idiom; adopt in cleanup)
   "UP037",  # quoted annotations → built-in generics (Python 3.9 idiom; adopt in cleanup)

@@ -38,7 +38,7 @@ DEFAULT_ARTIFACT_ROOT = DEFAULT_DATA_DIR / "artifacts" / "phase3"
 
 LABELS = ("dovish", "neutral", "hawkish")
 LABEL2ID = {label: idx for idx, label in enumerate(LABELS)}
-ID2LABEL = {idx: label for idx, label in enumerate(LABELS)}
+ID2LABEL = dict(enumerate(LABELS))
 
 DEFAULT_CHECKPOINT = "ZiweiChen/FinBERT-FOMC"
 
