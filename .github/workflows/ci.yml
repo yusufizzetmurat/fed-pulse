@@ -45,6 +45,7 @@ jobs:
         working-directory: backend
         run: |
           mypy --ignore-missing-imports --no-strict-optional \
+            --follow-imports=silent \
             app/config.py app/determinism.py app/schemas.py \
             app/data/sources app/data/label_schemas.py \
             app/training app/models

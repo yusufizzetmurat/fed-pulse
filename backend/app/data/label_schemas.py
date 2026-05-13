@@ -34,12 +34,12 @@ class MultiAxisLabel(BaseModel):
     certainty: float | None = Field(default=None, ge=0.0, le=1.0)
     topic: Topic | None = None
 
-    @field_validator("factor", "certainty")
+    @field_validator("factor", "certainty", mode="before")
     @classmethod
-    def _coerce_nan(cls, value: float | None) -> float | None:
+    def _coerce_nan(cls, value: object) -> object:
         if value is None:
             return None
-        if value != value:  # NaN check
+        if isinstance(value, float) and value != value:  # NaN
             return None
         return value
 
