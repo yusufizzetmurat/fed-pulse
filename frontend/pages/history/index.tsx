@@ -1,6 +1,7 @@
 import * as React from "react";
 import Head from "next/head";
-import { Trash2 } from "lucide-react";
+import Link from "next/link";
+import { ChevronRight, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Header } from "@/components/shell/header";
@@ -205,9 +206,11 @@ export default function HistoryPage() {
                           ? "neutral"
                           : "outline";
                       return (
-                        <tr key={row.id} className="border-b border-border last:border-0">
+                        <tr key={row.id} className="border-b border-border last:border-0 hover:bg-muted/40">
                           <td className="px-4 py-2 font-mono text-xs">
-                            {row.document_date}
+                            <Link href={`/history/${row.id}`} className="hover:underline">
+                              {row.document_date}
+                            </Link>
                           </td>
                           <td className="px-4 py-2 font-medium">{row.symbol}</td>
                           <td className="px-4 py-2 text-muted-foreground">{row.horizon}</td>
@@ -221,14 +224,21 @@ export default function HistoryPage() {
                             {formatPrice(row.current_close ?? null)}
                           </td>
                           <td className="px-4 py-2 text-right">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label="Delete run"
-                              onClick={() => handleDelete(row.id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            <div className="flex items-center justify-end gap-1">
+                              <Button asChild variant="ghost" size="icon" aria-label="Open run">
+                                <Link href={`/history/${row.id}`}>
+                                  <ChevronRight className="h-4 w-4" />
+                                </Link>
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label="Delete run"
+                                onClick={() => handleDelete(row.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       );
