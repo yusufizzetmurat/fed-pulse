@@ -17,6 +17,7 @@ DEFAULT_OUTPUT_DIR = DEFAULT_DATA_DIR / "raw" / "phase2"
 DEFAULT_OUTPUT_FILE = "source_registry.jsonl"
 
 HF_DATASET_ID = "gtfintechlab/fomc_communication"
+GTFINTECHLAB_FED_DATASET_ID = "gtfintechlab/federal_reserve_system"
 KAGGLE_DATASET_ID = "drlexus/fed-statements-and-minutes"
 OP_FED_DEFAULT_RELATIVE = Path("external") / "op_fed" / "opfed_v1.csv"
 GSS_FACTORS_DEFAULT_RELATIVE = Path("external") / "gss" / "gss_factors.csv"
@@ -76,6 +77,11 @@ def _parse_args() -> argparse.Namespace:
         "--include-gss-factors",
         action="store_true",
         help="Ingest GSS (Gürkaynak-Sack-Swanson 2005 IJCB) per-FOMC target/path factor decomposition and 30min/1hr/1day surprise windows.",
+    )
+    parser.add_argument(
+        "--include-gtfintechlab-fed",
+        action="store_true",
+        help=f"Ingest {GTFINTECHLAB_FED_DATASET_ID}: 3,000 multi-axis FOMC sentence labels (stance + time + certainty).",
     )
     parser.add_argument(
         "--all-sources",
@@ -212,6 +218,85 @@ _OP_FED_STANCE_MAP = {
     "contradiction": "dovish",
     "neutral": "neutral",
 }
+
+_GTFINTECHLAB_STANCE_MAP = {
+    "hawkish": "hawkish",
+    "dovish": "dovish",
+    "neutral": "neutral",
+}
+
+
+def _iter_gtfintechlab_federal_reserve_records() -> list[dict[str, Any]]:
+    """Load gtfintechlab/federal_reserve_system: 3,000 multi-axis FOMC sentence labels.
+
+    Schema per row: ``sentences, stance_label, time_label, certain_label, year``.
+    Stance maps to canonical hawkish/dovish/neutral. The time + certain axes
+    populate ``multi_axis_extras`` for downstream multi-task heads. Iterates
+    every config / split combination on the Hub repo and dedupes by text_hash.
+    """
+    try:
+        from datasets import (  # type: ignore
+            get_dataset_config_names,
+            get_dataset_split_names,
+            load_dataset,
+        )
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError(
+            "datasets package is required for --include-gtfintechlab-fed. "
+            "Install dependencies first."
+        ) from exc
+
+    records: list[dict[str, Any]] = []
+    seen_hashes: set[str] = set()
+
+    configs = list(get_dataset_config_names(GTFINTECHLAB_FED_DATASET_ID))
+    for config in configs:
+        splits = list(get_dataset_split_names(GTFINTECHLAB_FED_DATASET_ID, config))
+        for split in splits:
+            ds = load_dataset(GTFINTECHLAB_FED_DATASET_ID, config, split=split)
+            for idx, row in enumerate(ds):
+                item = dict(row)
+                sentence = (item.get("sentences") or "").strip()
+                if not sentence:
+                    continue
+                stance_raw = (item.get("stance_label") or "").strip().lower()
+                label = _GTFINTECHLAB_STANCE_MAP.get(stance_raw, "")
+                year_value = item.get("year")
+                try:
+                    event_date = (
+                        f"{int(year_value):04d}-01-01" if year_value not in (None, "") else ""
+                    )
+                except (TypeError, ValueError):
+                    event_date = ""
+                if not event_date:
+                    continue
+
+                built = _build_registry_record(
+                    source="gtfintechlab_federal_reserve_system",
+                    source_record_id=f"{config}:{split}:{idx}",
+                    event_date=event_date,
+                    document_type="statement",
+                    title=f"Federal Reserve System sentence {config}/{split}#{idx}",
+                    text=sentence,
+                    label=label,
+                    license_scope="research_only",
+                    citation_ref="shah_etal_2024_gtfintechlab_central_banks",
+                )
+                if built is None:
+                    continue
+                if built["text_hash"] in seen_hashes:
+                    continue
+                seen_hashes.add(built["text_hash"])
+                built["provenance"] = "peer_reviewed"
+                extras = {
+                    "gtfintechlab_time_label": (item.get("time_label") or "").strip(),
+                    "gtfintechlab_certain_label": (item.get("certain_label") or "").strip(),
+                    "gtfintechlab_config": str(config),
+                    "gtfintechlab_split": str(split),
+                }
+                built["multi_axis_extras"] = {k: v for k, v in extras.items() if v}
+                records.append(built)
+    return records
 
 
 def _iter_op_fed_records(csv_path: Path) -> list[dict[str, Any]]:
@@ -535,10 +620,19 @@ def main() -> int:
     include_scraped = args.all_sources or args.include_scraped
     include_op_fed = args.all_sources or args.include_op_fed
     include_gss_factors = args.all_sources or args.include_gss_factors
-    if not (include_hf or include_kaggle or include_scraped or include_op_fed or include_gss_factors):
+    include_gtfintechlab_fed = args.all_sources or args.include_gtfintechlab_fed
+    if not (
+        include_hf
+        or include_kaggle
+        or include_scraped
+        or include_op_fed
+        or include_gss_factors
+        or include_gtfintechlab_fed
+    ):
         print(
             "No source selected. Use --all-sources or one of "
-            "--include-hf/--include-kaggle/--include-scraped/--include-op-fed/--include-gss-factors."
+            "--include-hf/--include-kaggle/--include-scraped/--include-op-fed/"
+            "--include-gss-factors/--include-gtfintechlab-fed."
         )
         return 1
 
@@ -567,6 +661,14 @@ def main() -> int:
         )
         print(f"Ingested GSS factor records: {len(gss_records)} (per-FOMC target/path factors; factor axis only)")
         unified.extend(gss_records)
+    if include_gtfintechlab_fed:
+        gtfintechlab_records = _iter_gtfintechlab_federal_reserve_records()
+        labelled = sum(1 for r in gtfintechlab_records if r.get("label"))
+        print(
+            f"Ingested gtfintechlab/federal_reserve_system records: {len(gtfintechlab_records)} "
+            f"(stance-labelled: {labelled}; multi-axis time+certainty in multi_axis_extras)"
+        )
+        unified.extend(gtfintechlab_records)
 
     unified.sort(key=lambda row: (row.get("event_date", ""), row.get("source", ""), row.get("source_record_id", "")))
     _write_jsonl(output_path, unified)

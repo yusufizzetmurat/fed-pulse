@@ -134,6 +134,7 @@ _PEER_REVIEWED_SOURCES = {
     "aruoba_drechsel_shocks",
     "cieslak_schrimpf_news",
     "hansen_mcmahon_topics",
+    "gtfintechlab_federal_reserve_system",
 }
 _KAGGLE_SOURCES = {"kaggle_fed_statements_minutes"}
 
