@@ -1,0 +1,39 @@
+Metadata-Version: 2.4
+Name: fed-pulse-backend
+Version: 0.1.0
+Summary: FOMC-text short-horizon market forecaster, backend (FastAPI + PyTorch + Transformers).
+Author: Yusuf İzzet Murat
+License: Proprietary - Bogazici University SWE 599 thesis project
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi
+Requires-Dist: uvicorn[standard]
+Requires-Dist: pydantic-settings>=2.0
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: transformers
+Requires-Dist: accelerate>=1.1.0
+Requires-Dist: torch
+Requires-Dist: python-multipart
+Requires-Dist: requests
+Requires-Dist: beautifulsoup4
+Requires-Dist: yfinance
+Requires-Dist: pandas
+Requires-Dist: pyarrow
+Requires-Dist: datasets
+Requires-Dist: kagglehub
+Requires-Dist: google-genai>=1.0.0
+Requires-Dist: langsmith>=0.1.0
+Requires-Dist: scikit-learn
+Requires-Dist: pypdf>=5.0.0
+Requires-Dist: pdfplumber>=0.11.0
+Requires-Dist: python-docx>=1.1.0
+Requires-Dist: httpx>=0.27.0
+Requires-Dist: SQLAlchemy>=2.0
+Requires-Dist: structlog>=24.1
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+Requires-Dist: hypothesis; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Provides-Extra: gpu
