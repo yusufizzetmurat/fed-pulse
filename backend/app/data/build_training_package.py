@@ -31,6 +31,10 @@ class FoldRange:
     val_rows: int
     test_rows: int
     class_distribution: dict[str, int]
+    train_source_distribution: dict[str, int]
+    val_source_distribution: dict[str, int]
+    test_source_distribution: dict[str, int]
+    source_drift_max: float
 
 
 def _parse_args() -> argparse.Namespace:
@@ -50,6 +54,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--processed-root", default=str(DEFAULT_PROCESSED_ROOT), help="Processed package root.")
     parser.add_argument("--min-train-ratio", type=float, default=0.6, help="Min train date ratio for fold seed.")
     parser.add_argument("--fold-count", type=int, default=5, help="Target walk-forward fold count.")
+    parser.add_argument(
+        "--source-drift-tolerance",
+        type=float,
+        default=0.0,
+        help=(
+            "Maximum allowed source-share drift between train and either val or test, per fold, "
+            "in absolute share points (0.15 = 15 percentage points). 0.0 disables the check; "
+            "drift numbers are still reported in fold_manifest.json. The check exists because mixing "
+            "labelled sources with different stance priors (TDW hawkish-skewed, Op-Fed dovish-skewed) "
+            "can let a model learn the source instead of the stance."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -91,6 +107,32 @@ def _rows_between(rows: list[dict[str, Any]], start_date: str, end_date: str) ->
     return [r for r in rows if start_date <= str(r.get("event_date", "")) <= end_date]
 
 
+def _source_distribution(rows: list[dict[str, Any]]) -> dict[str, int]:
+    return dict(Counter(str(r.get("source", "")) for r in rows if r.get("source")))
+
+
+def _source_shares(distribution: dict[str, int]) -> dict[str, float]:
+    total = sum(distribution.values())
+    if total == 0:
+        return {}
+    return {src: count / total for src, count in distribution.items()}
+
+
+def _source_drift_max(train: dict[str, int], split: dict[str, int]) -> float:
+    """Absolute share-point gap between train and a val or test split, taken over the
+    union of source keys. 0.0 when either side is empty (drift is undefined).
+    """
+
+    if not train or not split:
+        return 0.0
+    train_shares = _source_shares(train)
+    split_shares = _source_shares(split)
+    keys = set(train_shares) | set(split_shares)
+    if not keys:
+        return 0.0
+    return max(abs(train_shares.get(k, 0.0) - split_shares.get(k, 0.0)) for k in keys)
+
+
 def _build_folds(rows: list[dict[str, Any]], min_train_ratio: float, fold_count: int) -> list[FoldRange]:
     unique_dates = sorted({str(r.get("event_date", "")) for r in rows if r.get("event_date")})
     if len(unique_dates) < 8:
@@ -119,6 +161,14 @@ def _build_folds(rows: list[dict[str, Any]], min_train_ratio: float, fold_count:
         test_rows = _rows_between(rows, *test_dates)
         cls_count = Counter(str(r.get("mapped_label", "")) for r in test_rows if r.get("mapped_label"))
 
+        train_sources = _source_distribution(train_rows)
+        val_sources = _source_distribution(val_rows)
+        test_sources = _source_distribution(test_rows)
+        drift = max(
+            _source_drift_max(train_sources, val_sources),
+            _source_drift_max(train_sources, test_sources),
+        )
+
         folds.append(
             FoldRange(
                 fold_id=f"wf_fold_{i}",
@@ -132,6 +182,10 @@ def _build_folds(rows: list[dict[str, Any]], min_train_ratio: float, fold_count:
                 val_rows=len(val_rows),
                 test_rows=len(test_rows),
                 class_distribution=dict(cls_count),
+                train_source_distribution=train_sources,
+                val_source_distribution=val_sources,
+                test_source_distribution=test_sources,
+                source_drift_max=round(drift, 4),
             )
         )
     return folds
@@ -199,12 +253,33 @@ def main() -> int:
     _maybe_write_parquet(package_dir / "splits_train_val_test.parquet", split_rows)
 
     folds = _build_folds(supervised_rows, min_train_ratio=args.min_train_ratio, fold_count=args.fold_count)
+
+    drift_violations: list[tuple[str, float]] = []
+    if args.source_drift_tolerance > 0:
+        drift_violations = [
+            (fold.fold_id, fold.source_drift_max)
+            for fold in folds
+            if fold.source_drift_max > args.source_drift_tolerance
+        ]
+        if drift_violations:
+            for fold_id, drift in drift_violations:
+                print(
+                    f"[source-drift] {fold_id}: drift={drift:.3f} exceeds tolerance "
+                    f"{args.source_drift_tolerance:.3f}"
+                )
+            print(
+                f"[source-drift] {len(drift_violations)}/{len(folds)} fold(s) exceeded the tolerance. "
+                f"Aborting build_training_package."
+            )
+            return 1
+
     fold_manifest = {
         "evaluation_protocol": args.protocol,
         "dataset_version": args.dataset_version,
         "feature_version": args.feature_version,
         "training_package_id": training_package_id,
         "fold_count": len(folds),
+        "source_drift_tolerance": args.source_drift_tolerance,
         "folds": [asdict(fold) for fold in folds],
     }
     (package_dir / "fold_manifest_expanding_walk_forward.json").write_text(
@@ -231,6 +306,13 @@ def main() -> int:
         ),
         "label_counts": dict(Counter(str(r.get("mapped_label", "")) for r in supervised_rows)),
         "registry_parquet_written": parquet_written,
+        "source_drift_tolerance": args.source_drift_tolerance,
+        "source_drift_per_fold": {
+            fold.fold_id: fold.source_drift_max for fold in folds
+        },
+        "source_drift_max_across_folds": max(
+            (fold.source_drift_max for fold in folds), default=0.0
+        ),
     }
     (package_dir / "dataset_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
