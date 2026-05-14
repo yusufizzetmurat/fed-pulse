@@ -66,7 +66,14 @@ export default function CalendarPage() {
   }, [apiBaseUrl]);
 
   const goAnalyze = (meetingDate: string) => {
-    router.push({ pathname: "/analyze", query: { date: meetingDate } });
+    // ?kind=statement asks the analyze page to fetch the matching FOMC
+    // statement text from /documents/by-date and prefill the textarea.
+    // Without it, only the date prefills and the user has to paste the
+    // text themselves.
+    router.push({
+      pathname: "/analyze",
+      query: { date: meetingDate, kind: "statement" },
+    });
   };
 
   return (

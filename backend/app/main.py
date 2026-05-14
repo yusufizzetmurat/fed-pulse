@@ -141,6 +141,65 @@ def list_documents():
     return {"count": len(documents), "documents": documents}
 
 
+@app.get("/documents/by-date")
+def get_document_by_date(date: str, kind: str = "auto"):
+    """Look up an FOMC statement or minutes by event date so the calendar
+    page can prefill the analyze textarea on click. ``kind`` is one of
+    ``auto`` (try statement first, then minutes), ``statement``, or
+    ``minutes``.
+    """
+
+    allowed_kinds = {"auto", "statement", "minutes"}
+    if kind not in allowed_kinds:
+        raise HTTPException(
+            status_code=422,
+            detail=f"kind must be one of {sorted(allowed_kinds)}; got {kind!r}",
+        )
+
+    sources_in_order: list[tuple[str, str]]
+    if kind == "statement":
+        sources_in_order = [("fomc_statements.json", "Statement")]
+    elif kind == "minutes":
+        sources_in_order = [("fomc_minutes.json", "Minutes")]
+    else:
+        sources_in_order = [
+            ("fomc_statements.json", "Statement"),
+            ("fomc_minutes.json", "Minutes"),
+        ]
+
+    for filename, document_type in sources_in_order:
+        path = DATA_DIR / filename
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Failed to read {filename}: {exc}"
+            ) from exc
+        if not isinstance(payload, list):
+            continue
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("date", "")) != date:
+                continue
+            text = str(item.get("text") or item.get("content") or "")
+            if not text:
+                continue
+            return {
+                "date": date,
+                "kind": document_type.lower(),
+                "title": str(item.get("title", "")),
+                "text": text,
+                "source_file": filename,
+            }
+    raise HTTPException(
+        status_code=404,
+        detail=f"No FOMC document found for date {date!r} (kind={kind}).",
+    )
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 

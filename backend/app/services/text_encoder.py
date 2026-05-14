@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
+import os
 import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -10,8 +13,25 @@ from transformers import pipeline
 
 from app.models.registry import revision_for
 
-MODEL_ID = "gtfintechlab/fomc-roberta-any-exp"
+# Local fine-tuned FinBERT-FOMC seed-71 checkpoint with hawkish/dovish/neutral
+# labels (see config.json id2label). Used as the default sentiment classifier
+# so the live /analyze flow does not silently fall back to a generic news
+# sentiment model. Override via the FED_PULSE_SENTIMENT_MODEL env var on any
+# deployment where the local checkpoint is not present.
+DEFAULT_LOCAL_CHECKPOINT = "/data/artifacts/phase3/pilot_finetune_20260505T142652Z/hf_checkpoints"
+PRIMARY_HF_MODEL_ID = "gtfintechlab/fomc-roberta-any-exp"
+# Last-resort fallback ONLY. Returns POSITIVE / NEGATIVE labels, NOT
+# hawkish/dovish/neutral, so the frontend should refuse to map the output
+# (see frontend/lib/analyze/format.ts::toStance).
 FALLBACK_MODEL_ID = "distilbert/distilbert-base-uncased-finetuned-sst-2-english"
+
+# Resolved at import time. The override path is read once; restart the
+# backend to pick up a new value.
+_OVERRIDE = (os.environ.get("FED_PULSE_SENTIMENT_MODEL") or "").strip()
+MODEL_ID = _OVERRIDE or (
+    DEFAULT_LOCAL_CHECKPOINT if Path(DEFAULT_LOCAL_CHECKPOINT).exists() else PRIMARY_HF_MODEL_ID
+)
+
 DEFAULT_MAX_TOKENS = 480
 DEFAULT_STRIDE = 400
 DEFAULT_CLASSIFIER_MAX_LENGTH = 512
@@ -19,6 +39,7 @@ DEFAULT_CLASSIFIER_MAX_LENGTH = 512
 _classifier = None
 _classifier_lock = threading.Lock()
 _classifier_load_count = 0
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -67,16 +88,45 @@ def get_classifier():
             )
 
         last_error: Exception | None = None
+        loaded_model_id: str | None = None
         for model_id, target_device in attempts:
             try:
                 _classifier = _build_pipeline(model_id, target_device)
                 global _classifier_load_count
                 _classifier_load_count += 1
+                loaded_model_id = model_id
                 break
             except Exception as exc:
                 last_error = exc
+                _logger.warning(
+                    "sentiment.classifier_load_failed",
+                    extra={
+                        "model_id": model_id,
+                        "device": target_device,
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                    },
+                )
         if _classifier is None and last_error is not None:
             raise last_error
+        if loaded_model_id != MODEL_ID:
+            # We picked a fallback. The fallback's label space (e.g.
+            # POSITIVE / NEGATIVE for distilbert-sst-2) is NOT
+            # hawkish/dovish/neutral; the frontend's toStance() refuses to
+            # silently relabel POSITIVE -> hawkish, so the dashboard will
+            # surface "Sentiment unavailable" until the primary model loads.
+            _logger.error(
+                "sentiment.classifier_using_fallback",
+                extra={
+                    "primary_model_id": MODEL_ID,
+                    "loaded_model_id": loaded_model_id,
+                    "note": (
+                        "Primary sentiment model failed to load. The active model's labels "
+                        "are NOT hawkish/dovish/neutral; the dashboard will report stance "
+                        "as unknown. Inspect the preceding classifier_load_failed warnings."
+                    ),
+                },
+            )
     return _classifier
 
 
