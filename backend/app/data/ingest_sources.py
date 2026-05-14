@@ -18,6 +18,7 @@ DEFAULT_OUTPUT_FILE = "source_registry.jsonl"
 
 HF_DATASET_ID = "gtfintechlab/fomc_communication"
 GTFINTECHLAB_FED_DATASET_ID = "gtfintechlab/federal_reserve_system"
+VTASCA_FOMC_ARCHIVE_DATASET_ID = "vtasca/fomc-statements-minutes"
 KAGGLE_DATASET_ID = "drlexus/fed-statements-and-minutes"
 OP_FED_DEFAULT_RELATIVE = Path("external") / "op_fed" / "opfed_v1.csv"
 GSS_FACTORS_DEFAULT_RELATIVE = Path("external") / "gss" / "gss_factors.csv"
@@ -82,6 +83,11 @@ def _parse_args() -> argparse.Namespace:
         "--include-gtfintechlab-fed",
         action="store_true",
         help=f"Ingest {GTFINTECHLAB_FED_DATASET_ID}: 3,000 multi-axis FOMC sentence labels (stance + time + certainty).",
+    )
+    parser.add_argument(
+        "--include-fomc-archive",
+        action="store_true",
+        help=f"Ingest {VTASCA_FOMC_ARCHIVE_DATASET_ID}: full FOMC statement + minutes archive (unlabelled, for credibility drift).",
     )
     parser.add_argument(
         "--all-sources",
@@ -296,6 +302,70 @@ def _iter_gtfintechlab_federal_reserve_records() -> list[dict[str, Any]]:
                 }
                 built["multi_axis_extras"] = {k: v for k, v in extras.items() if v}
                 records.append(built)
+    return records
+
+
+_FOMC_ARCHIVE_TYPE_MAP = {
+    "statement": "statement",
+    "minutes": "minutes",
+    "minute": "minutes",
+}
+
+
+def _iter_fomc_archive_records() -> list[dict[str, Any]]:
+    """Load vtasca/fomc-statements-minutes: 463 whole-document FOMC texts.
+
+    Schema per row: ``Date, Release Date, Type, Text``. Rows are *unlabelled*
+    — they feed the credibility module (drift of one statement vs the prior
+    four meetings) and supplement the continued-pretraining substrate. Routed
+    through ``provenance="scraped"`` so they receive ``sample_weight=0`` and
+    do not enter the supervised training pool.
+    """
+    try:
+        from datasets import load_dataset  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError(
+            "datasets package is required for --include-fomc-archive. Install dependencies first."
+        ) from exc
+
+    ds = load_dataset(VTASCA_FOMC_ARCHIVE_DATASET_ID, split="train")
+    records: list[dict[str, Any]] = []
+    seen_hashes: set[str] = set()
+
+    for idx, row in enumerate(ds):
+        item = dict(row)
+        raw_type = (item.get("Type") or "").strip().lower()
+        document_type = _FOMC_ARCHIVE_TYPE_MAP.get(raw_type, "")
+        if not document_type:
+            continue
+        event_date = _coerce_event_date(item, ("Date", "Release Date"))
+        if not event_date:
+            continue
+        text = (item.get("Text") or "").strip()
+        if not text:
+            continue
+        release_date = _coerce_event_date(item, ("Release Date",))
+
+        built = _build_registry_record(
+            source="vtasca_fomc_archive",
+            source_record_id=f"{event_date}:{document_type}",
+            event_date=event_date,
+            document_type=document_type,
+            title=f"FOMC {document_type} {event_date}",
+            text=text,
+            label="",
+            license_scope="public_source_scrape_terms_required",
+            citation_ref="vtasca_2024_fomc_statements_minutes",
+        )
+        if built is None:
+            continue
+        if built["text_hash"] in seen_hashes:
+            continue
+        seen_hashes.add(built["text_hash"])
+        built["provenance"] = "scraped"
+        if release_date and release_date != event_date:
+            built["multi_axis_extras"] = {"release_date": release_date}
+        records.append(built)
     return records
 
 
@@ -621,6 +691,7 @@ def main() -> int:
     include_op_fed = args.all_sources or args.include_op_fed
     include_gss_factors = args.all_sources or args.include_gss_factors
     include_gtfintechlab_fed = args.all_sources or args.include_gtfintechlab_fed
+    include_fomc_archive = args.all_sources or args.include_fomc_archive
     if not (
         include_hf
         or include_kaggle
@@ -628,11 +699,12 @@ def main() -> int:
         or include_op_fed
         or include_gss_factors
         or include_gtfintechlab_fed
+        or include_fomc_archive
     ):
         print(
             "No source selected. Use --all-sources or one of "
             "--include-hf/--include-kaggle/--include-scraped/--include-op-fed/"
-            "--include-gss-factors/--include-gtfintechlab-fed."
+            "--include-gss-factors/--include-gtfintechlab-fed/--include-fomc-archive."
         )
         return 1
 
@@ -669,6 +741,15 @@ def main() -> int:
             f"(stance-labelled: {labelled}; multi-axis time+certainty in multi_axis_extras)"
         )
         unified.extend(gtfintechlab_records)
+    if include_fomc_archive:
+        archive_records = _iter_fomc_archive_records()
+        statement_count = sum(1 for r in archive_records if r.get("document_type") == "statement")
+        minutes_count = sum(1 for r in archive_records if r.get("document_type") == "minutes")
+        print(
+            f"Ingested vtasca/fomc-statements-minutes records: {len(archive_records)} "
+            f"(statements: {statement_count}, minutes: {minutes_count}; unlabelled, credibility-only)"
+        )
+        unified.extend(archive_records)
 
     unified.sort(key=lambda row: (row.get("event_date", ""), row.get("source", ""), row.get("source_record_id", "")))
     _write_jsonl(output_path, unified)
