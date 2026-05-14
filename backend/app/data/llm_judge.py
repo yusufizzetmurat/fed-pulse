@@ -49,6 +49,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=0.0,
         help="Sleep this many seconds between Gemini calls to respect rate limits. 0 = no sleep.",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Skip rows whose record_id already appears in the output JSONL. "
+            "Combined with append-mode incremental writes, re-running this "
+            "command after a crash picks up where the previous run died."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -81,36 +90,101 @@ def run_judge(
     judge_model_version: str,
     max_rows: int = 0,
     request_interval_seconds: float = 0.0,
+    resume: bool = False,
+    progress_writer=None,
 ) -> int:
-    """Score every row in input_path, write judged rows to output_path.
+    """Score every row in ``input_path`` and write judged rows incrementally
+    to ``output_path``. Returns the number of rows written *by this
+    invocation* (resumed rows are not counted).
 
-    Each output row preserves all input fields and adds judge_label,
-    judge_confidence, judge_model_id, judge_model_version. Returns the
-    number of rows written.
+    Per-row behaviour:
 
-    request_interval_seconds: sleep between successive Gemini calls
-    (skipped after the final call). Use this to respect free-tier
-    rate limits — e.g. 35.0 keeps under the gemini-2.5-flash 2 req/min cap.
+    - Prints one line per row to stdout so the operator can see progress
+      ("[judge] 17/91  hawkish  ...").
+    - Catches any exception from the Gemini SDK (transient 429/503 are
+      common at scale) and persists the row with ``judge_label=""``
+      rather than crashing the run. The audit step counts blank rows as
+      parse / API failures.
+    - Writes one row at a time in append mode and flushes after each
+      write, so an interrupted run keeps every completed row on disk.
+
+    ``resume`` rereads ``output_path`` and skips rows whose
+    ``record_id`` already appears there. Combined with the per-row
+    write semantics this means re-running the same Make target after a
+    crash picks up where the previous run died.
+
+    ``progress_writer`` is an optional callable that receives each
+    progress line (defaults to the built-in ``print``). Tests inject a
+    list-appender to avoid noisy stdout.
+
+    ``request_interval_seconds`` spaces successive Gemini calls; use
+    ``35.0`` for the free-tier flash 2-req/min cap, ``0.0`` for paid.
     """
+
+    if progress_writer is None:
+        def progress_writer(line: str) -> None:
+            print(line, flush=True)
 
     rows = _read_jsonl(input_path)
     if max_rows > 0:
         rows = rows[:max_rows]
+    total = len(rows)
 
-    judged: list[dict[str, Any]] = []
-    for index, row in enumerate(rows):
-        prediction = score_passage(row.get("text", ""), model=gemini_model)
-        out = dict(row)
-        out["judge_label"] = prediction["label"]
-        out["judge_confidence"] = float(prediction["confidence"])
-        out["judge_model_id"] = judge_model_id
-        out["judge_model_version"] = judge_model_version
-        judged.append(out)
-        if request_interval_seconds > 0 and index < len(rows) - 1:
-            time.sleep(request_interval_seconds)
+    completed_record_ids: set[str] = set()
+    if resume and output_path.exists():
+        for existing in _read_jsonl(output_path):
+            rid = str(existing.get("record_id", "")).strip()
+            if rid:
+                completed_record_ids.add(rid)
 
-    _write_jsonl(output_path, judged)
-    return len(judged)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    open_mode = "a" if (resume and completed_record_ids) else "w"
+
+    written = 0
+    with output_path.open(open_mode, encoding="utf-8") as handle:
+        for index, row in enumerate(rows):
+            record_id = str(row.get("record_id", "")).strip()
+            short_id = record_id[:16] if record_id else "(no-id)"
+
+            if record_id and record_id in completed_record_ids:
+                progress_writer(f"[judge] {index + 1}/{total}  skip      {short_id}  (resumed)")
+                continue
+
+            try:
+                prediction = score_passage(row.get("text", ""), model=gemini_model)
+                label = str(prediction.get("label", "") or "")
+                confidence = float(prediction.get("confidence", 0.0) or 0.0)
+                error_kind = ""
+            except Exception as exc:  # noqa: BLE001 — we want every API failure to land in the output
+                label = ""
+                confidence = 0.0
+                error_kind = type(exc).__name__
+                progress_writer(
+                    f"[judge] {index + 1}/{total}  ERROR     {short_id}  "
+                    f"({error_kind}): {str(exc)[:160]}"
+                )
+
+            out = dict(row)
+            out["judge_label"] = label
+            out["judge_confidence"] = confidence
+            out["judge_model_id"] = judge_model_id
+            out["judge_model_version"] = judge_model_version
+            if error_kind:
+                out["judge_error"] = error_kind
+
+            handle.write(json.dumps(out) + "\n")
+            handle.flush()
+            written += 1
+
+            if not error_kind:
+                progress_writer(
+                    f"[judge] {index + 1}/{total}  {label or 'blank':<8}  {short_id}"
+                )
+
+            if request_interval_seconds > 0 and index < total - 1:
+                time.sleep(request_interval_seconds)
+
+    return written
 
 
 GATING_POLICIES = ("confidence_only", "confidence_and_judge", "judge_only")
@@ -420,6 +494,7 @@ def main() -> int:
         judge_model_version=args.judge_model_version,
         max_rows=args.max_rows,
         request_interval_seconds=args.request_interval_seconds,
+        resume=args.resume,
     )
     print(f"Judged rows written: {written}")
 
