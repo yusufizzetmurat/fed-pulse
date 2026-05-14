@@ -18,6 +18,7 @@ DEFAULT_CLASSIFIER_MAX_LENGTH = 512
 
 _classifier = None
 _classifier_lock = threading.Lock()
+_classifier_load_count = 0
 
 
 @dataclass(frozen=True)
@@ -69,12 +70,31 @@ def get_classifier():
         for model_id, target_device in attempts:
             try:
                 _classifier = _build_pipeline(model_id, target_device)
+                global _classifier_load_count
+                _classifier_load_count += 1
                 break
             except Exception as exc:
                 last_error = exc
         if _classifier is None and last_error is not None:
             raise last_error
     return _classifier
+
+
+def classifier_load_count() -> int:
+    """How many times the underlying HF pipeline has been instantiated.
+
+    Used by the lifespan-cache test to assert the model only loads once across
+    repeated `/analyze` calls.
+    """
+
+    return _classifier_load_count
+
+
+def warmup_classifier() -> None:
+    """Force-load the classifier so the first `/analyze` request doesn't pay
+    the cold-start cost. Called from the FastAPI lifespan."""
+
+    get_classifier()
 
 
 def split_into_chunks(
