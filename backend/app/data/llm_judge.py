@@ -259,12 +259,10 @@ def audit_metrics(audit_rows: list[dict[str, Any]]) -> dict[str, Any]:
 def audit_metrics_judge_only(judged_rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Compute teacher precision against the LLM judge as gold annotator.
 
-    Used by the judge-only audit path (`benchmark-policy.md §Audit gate`).
-    No human pass required: the Gemini judge is architecturally distinct
-    from the teacher (FinBERT-FOMC) and is treated as the gold reference.
     Per-class teacher precision must clear 0.90 for the pseudo set to
     enter `source_registry.jsonl`. Rows where either label is empty are
-    skipped (judge parse failure or teacher abstain).
+    skipped (judge parse failure or teacher abstain). Classes the judge
+    never assigns are excluded from the gate (no support, no signal).
     """
 
     usable = [
