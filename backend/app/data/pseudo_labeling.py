@@ -359,7 +359,8 @@ def score_passages_chunked(
     """
 
     if splitter is None:
-        splitter = lambda text: split_text_for_teacher(text, max_chunks=max_chunks_per_doc)
+        def splitter(text: str) -> list[str]:
+            return split_text_for_teacher(text, max_chunks=max_chunks_per_doc)
 
     predictions: list[dict[str, Any]] = []
     for passage in passages:
