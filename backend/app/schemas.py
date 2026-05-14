@@ -1,7 +1,15 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+_STRICT_REQUEST_CONFIG = ConfigDict(extra="forbid", strict=True, frozen=True)
+# Response models stay open to extras so the OpenAPI snapshot does not churn;
+# `frozen` still blocks mutation after construction.
+_FORBID_FROZEN_CONFIG = ConfigDict(frozen=True)
 
 
 class AnalyzeRequest(BaseModel):
+    model_config = _STRICT_REQUEST_CONFIG
+
     text: str = Field(..., min_length=1, description="FOMC statement text")
     date: str = Field(..., description="Document date in ISO format: YYYY-MM-DD")
     symbol: str = Field("^GSPC", description="Market ticker, e.g. ^GSPC or DX-Y.NYB")
@@ -14,12 +22,16 @@ class AnalyzeRequest(BaseModel):
 
 
 class SentimentResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
     label: str
     score: float
     raw: list[dict[str, float | str]]
 
 
 class MarketDataResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
     symbol: str
     requested_date: str
     date_used: str
@@ -29,12 +41,16 @@ class MarketDataResponse(BaseModel):
 
 
 class PredictionResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
     close: float
     volatility: float
     horizon: str
 
 
 class ChunkAttentionDiagnostics(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
     chunk_count: int
     weights: list[float]
     decay_coeffs: list[float]
@@ -43,6 +59,8 @@ class ChunkAttentionDiagnostics(BaseModel):
 
 
 class ModelDiagnosticsResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
     checkpoint_path: str
     checkpoint_exists: bool
     checkpoint_loaded: bool
@@ -64,6 +82,8 @@ class ModelDiagnosticsResponse(BaseModel):
 
 
 class ForecastSeriesResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
     timestamps: list[str]
     history_close: list[float]
     history_volatility: list[float]
@@ -90,6 +110,8 @@ class ForecastSeriesResponse(BaseModel):
 
 
 class AnalyzeResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
     sentiment: SentimentResponse
     prediction: PredictionResponse
     market: MarketDataResponse
@@ -98,12 +120,16 @@ class AnalyzeResponse(BaseModel):
 
 
 class TrainJobAcceptedResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
     status: str = "queued"
     job_id: str
     message: str
 
 
 class TrainJobStatusResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
     job_id: str
     status: str
     error: str | None = None

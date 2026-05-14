@@ -2,6 +2,7 @@ import json
 import logging
 import threading
 import uuid
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -9,6 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
+from app.audit import append_audit_entry
 from app.config import DATA_DIR
 from app.db import (
     delete_run,
@@ -19,8 +21,8 @@ from app.db import (
     persist_analysis_run,
     session_scope,
 )
-
-logger = logging.getLogger(__name__)
+from app.logging import bind_run_id, clear_run_id, configure_logging, get_logger
+from app.middleware.errors import RunIdMiddleware, register_error_handlers
 from app.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
@@ -47,12 +49,27 @@ from app.services.market_data import (
 )
 from app.services.sentiment import analyze_text
 
-app = FastAPI(title="FOMC Sentiment API", version="0.1.0")
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):  # noqa: ARG001
+    configure_logging()
+    get_engine()
+    get_logger("fed_pulse").info("startup", service="fomc-api")
+    try:
+        yield
+    finally:
+        get_logger("fed_pulse").info("shutdown", service="fomc-api")
+
+
+app = FastAPI(title="FOMC Sentiment API", version="0.1.0", lifespan=_lifespan)
 REAL_TRAIN_HISTORY_LENGTH = 252
 
 _train_jobs: dict[str, dict[str, Any]] = {}
 _train_jobs_lock = threading.Lock()
 
+app.add_middleware(RunIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -60,11 +77,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def _initialise_db() -> None:
-    get_engine()
+register_error_handlers(app)
 
 
 @app.get("/health")
@@ -169,7 +182,17 @@ def _build_analyze_response(
 
 
 def _run_real_train_job(job_id: str, payload: AnalyzeRequest) -> None:
-    _set_job_state(job_id, status="running", started_at=_utc_now_iso())
+    # Bind run_id on the daemon thread so checkpoint/audit hooks downstream
+    # tag every log line and audit row with the same id as the API caller.
+    bind_run_id(job_id)
+    try:
+        _set_job_state(job_id, status="running", started_at=_utc_now_iso())
+        _run_real_train_job_body(job_id, payload)
+    finally:
+        clear_run_id()
+
+
+def _run_real_train_job_body(job_id: str, payload: AnalyzeRequest) -> None:
     try:
         sentiment = analyze_text(payload.text)
         market_history = fetch_market_history(
@@ -196,6 +219,14 @@ def _run_real_train_job(job_id: str, payload: AnalyzeRequest) -> None:
             result=result,
             finished_at=_utc_now_iso(),
         )
+        try:
+            append_audit_entry(
+                "real_train_completed",
+                run_id=job_id,
+                metadata={"symbol": payload.symbol, "date": payload.date},
+            )
+        except Exception:  # pragma: no cover
+            get_logger("fed_pulse").warning("audit_write_failed", run_id=job_id)
     except Exception as exc:  # pragma: no cover
         _set_job_state(
             job_id,
@@ -203,6 +234,14 @@ def _run_real_train_job(job_id: str, payload: AnalyzeRequest) -> None:
             error=f"Real train job failed: {exc}",
             finished_at=_utc_now_iso(),
         )
+        try:
+            append_audit_entry(
+                "real_train_failed",
+                run_id=job_id,
+                metadata={"symbol": payload.symbol, "date": payload.date, "error": str(exc)},
+            )
+        except Exception:
+            get_logger("fed_pulse").warning("audit_write_failed", run_id=job_id)
 
 
 @app.post("/analyze", response_model=AnalyzeResponse | TrainJobAcceptedResponse)

@@ -661,7 +661,11 @@ def _read_checkpoint_payload(checkpoint_path: Path, device: torch.device) -> dic
     if not checkpoint_path.exists():
         return None
 
-    payload = torch.load(checkpoint_path, map_location=device)
+    # `weights_only=False` is intentional: our checkpoints are written by this
+    # process and carry trusted python objects (TrainingRunSummary,
+    # ModelConfig, RNG state). PyTorch 2.6+ defaults `weights_only=True` which
+    # rejects those payloads.
+    payload = torch.load(checkpoint_path, map_location=device, weights_only=False)
     if not (isinstance(payload, dict) and "model_state_dict" in payload):
         payload = {"model_state_dict": payload}
 
@@ -754,6 +758,58 @@ def _build_model(
     return model
 
 
+def _capture_rng_state() -> dict[str, Any]:
+    import random as _stdrandom
+
+    rng: dict[str, Any] = {
+        "torch_cpu": torch.get_rng_state().tolist(),
+        "python": _stdrandom.getstate(),
+    }
+    try:
+        import numpy as _np
+
+        state = _np.random.get_state()
+        # `state` is a tuple; first element is the name, second the state array.
+        rng["numpy"] = list(state) if isinstance(state, tuple) else state
+    except Exception:
+        rng["numpy"] = None
+    if torch.cuda.is_available():
+        try:
+            rng["torch_cuda"] = [s.tolist() for s in torch.cuda.get_rng_state_all()]
+        except Exception:
+            rng["torch_cuda"] = None
+    return rng
+
+
+def _restore_rng_state(state: dict[str, Any] | None) -> None:
+    if not state:
+        return
+    import random as _stdrandom
+
+    cpu_state = state.get("torch_cpu")
+    if cpu_state is not None:
+        try:
+            torch.set_rng_state(torch.tensor(cpu_state, dtype=torch.uint8))
+        except Exception:
+            pass
+    py_state = state.get("python")
+    if py_state is not None:
+        try:
+            _stdrandom.setstate(tuple(py_state) if isinstance(py_state, list) else py_state)
+        except Exception:
+            pass
+    np_state = state.get("numpy")
+    if np_state is not None:
+        try:
+            import numpy as _np
+
+            if isinstance(np_state, list):
+                np_state = tuple(np_state)
+            _np.random.set_state(np_state)
+        except Exception:
+            pass
+
+
 def _checkpoint_payload(model: ForecasterModel, summary: TrainingRunSummary) -> dict[str, Any]:
     return {
         "model_state_dict": model.state_dict(),
@@ -764,12 +820,28 @@ def _checkpoint_payload(model: ForecasterModel, summary: TrainingRunSummary) -> 
         "input_size": FEATURE_SIZE,
         "sequence_length": SEQUENCE_LENGTH,
         "close_scale": DEFAULT_CLOSE_SCALE,
+        "rng_state": _capture_rng_state(),
     }
 
 
 def _save_model_checkpoint(model: ForecasterModel, checkpoint_path: Path, summary: TrainingRunSummary) -> None:
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(_checkpoint_payload(model, summary), checkpoint_path)
+    try:
+        from app.audit import append_audit_entry, hash_file
+        from app.logging import current_run_id
+
+        append_audit_entry(
+            "checkpoint_saved",
+            run_id=current_run_id(),
+            metadata={
+                "path": str(checkpoint_path),
+                "sha256": hash_file(checkpoint_path),
+                "best_loss": float(summary.metrics.loss) if summary.metrics else None,
+            },
+        )
+    except Exception:  # pragma: no cover — never let audit break training
+        pass
 
 
 def _load_state_dict_loose(model: ForecasterModel, state_dict: dict[str, Any], source: str) -> None:
