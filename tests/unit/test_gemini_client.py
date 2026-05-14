@@ -128,7 +128,7 @@ def test_model_adapter_calls_genai_client_with_deterministic_config(monkeypatch)
     fake_genai = types.ModuleType("google.genai")
     fake_genai.Client = _client_factory
     fake_genai.types = types.SimpleNamespace(
-        GenerateContentConfig=lambda temperature: {"temperature": temperature}
+        GenerateContentConfig=lambda **kwargs: {"temperature": kwargs.get("temperature")}
     )
     fake_google = types.ModuleType("google")
     fake_google.genai = fake_genai
