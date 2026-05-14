@@ -103,7 +103,7 @@ _RETRY_MAX_DELAY_DEFAULT = 64.0
 
 
 def _is_transient_error(exc: BaseException) -> bool:
-    if isinstance(exc, (ConnectionError, TimeoutError)):
+    if isinstance(exc, ConnectionError | TimeoutError):
         return True
     haystack = f"{type(exc).__name__}: {exc!s}"
     return any(token in haystack for token in _TRANSIENT_ERROR_TOKENS)
@@ -239,10 +239,18 @@ def run_judge(
                 progress_writer(f"[judge] {index + 1}/{total}  skip      {short_id}  (resumed)")
                 continue
 
-            def _log_retry(attempt: int, exc: BaseException, delay: float) -> None:
+            def _log_retry(
+                attempt: int,
+                exc: BaseException,
+                delay: float,
+                *,
+                _index: int = index,
+                _total: int = total,
+                _short_id: str = short_id,
+            ) -> None:
                 progress_writer(
-                    f"[judge] {index + 1}/{total}  retry {attempt}/{_RETRY_ATTEMPTS_DEFAULT - 1}  "
-                    f"{short_id}  ({type(exc).__name__} — backoff {delay:.1f}s)"
+                    f"[judge] {_index + 1}/{_total}  retry {attempt}/{_RETRY_ATTEMPTS_DEFAULT - 1}  "
+                    f"{_short_id}  ({type(exc).__name__} — backoff {delay:.1f}s)"
                 )
 
             prediction, exc = _score_with_retry(
