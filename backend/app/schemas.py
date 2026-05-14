@@ -79,6 +79,14 @@ class ForecastSeriesResponse(BaseModel):
     realized_close: list[float] | None = None
     realized_volatility: list[float] | None = None
     volatility_scale: dict[str, float]
+    forecast_band_source: str = Field(
+        default="gaussian_z",
+        description="Source of the forecast bands: 'gaussian_z' (z-score) or 'conformal'.",
+    )
+    conformal_coverage: float | None = Field(
+        default=None,
+        description="Nominal coverage of conformal bands when forecast_band_source='conformal'.",
+    )
 
 
 class AnalyzeResponse(BaseModel):
