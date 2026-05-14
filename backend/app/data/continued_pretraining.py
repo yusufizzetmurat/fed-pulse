@@ -183,7 +183,28 @@ def run_mlm(
 
     use_nsp = objective == "mlm_nsp"
     dataset = _PairDataset(pair_records, tokenizer, block_size=block_size, use_nsp=use_nsp)
-    collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=True, mlm_probability=0.15)
+    mlm_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer, mlm=True, mlm_probability=0.15
+    )
+    if use_nsp:
+        # DataCollatorForLanguageModeling routes batches through tokenizer.pad(),
+        # which keeps only tokenizer-output keys — next_sentence_label would be
+        # silently dropped before reaching BertForPreTraining. Wrap to pop NSP
+        # labels first, then re-attach as a torch tensor after MLM masking.
+        def collator(features: list[dict[str, Any]]):  # type: ignore[no-redef]
+            import torch as _torch
+
+            nsp_labels: list[int] = []
+            for feat in features:
+                if isinstance(feat, dict):
+                    nsp_labels.append(int(feat.pop("next_sentence_label", 0)))
+                else:
+                    nsp_labels.append(0)
+            batch = mlm_collator(features)
+            batch["next_sentence_label"] = _torch.tensor(nsp_labels, dtype=_torch.long)
+            return batch
+    else:
+        collator = mlm_collator
     output_dir.mkdir(parents=True, exist_ok=True)
     training_args = TrainingArguments(
         output_dir=str(output_dir / "trainer"),
@@ -281,22 +302,66 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _collect_pairs(args: argparse.Namespace) -> list[dict[str, Any]]:
+    """Build the training-pair list under the requested substrate(s).
+
+    --substrate both: local pairs (small, finite) load first to guarantee
+    representation, then BIS fills the remainder of --max-rows. Earlier
+    behaviour (BIS first) silently emptied the local slice whenever BIS
+    filled the cap, making --substrate both --max-rows N indistinguishable
+    from --substrate bis.
+    """
     pairs: list[dict[str, Any]] = []
-    if args.substrate in {"bis", "both"}:
-        bis_iter = _bis_pair_stream(
-            args.bis_dataset_id,
-            args.bis_dataset_revision,
-            streaming=args.streaming,
-            max_rows=args.max_rows,
-        )
-        pairs.extend(list(bis_iter))
+
     if args.substrate in {"local", "both"}:
         local_dir = Path(args.auxiliary_local_dir) if args.auxiliary_local_dir else Path(args.data_dir)
         local_pairs = _iter_local_pairs(local_dir, args.corpus_files)
-        if args.max_rows and (len(pairs) + len(local_pairs)) > args.max_rows:
-            local_pairs = local_pairs[: max(0, args.max_rows - len(pairs))]
+        if args.substrate == "local" and args.max_rows and len(local_pairs) > args.max_rows:
+            local_pairs = local_pairs[: args.max_rows]
         pairs.extend(local_pairs)
+
+    if args.substrate in {"bis", "both"}:
+        if args.substrate == "both" and args.max_rows:
+            remaining = max(0, args.max_rows - len(pairs))
+            bis_cap = remaining
+            if remaining == 0:
+                import warnings as _warnings
+
+                _warnings.warn(
+                    f"--substrate both --max-rows {args.max_rows} was reached by local "
+                    f"({len(pairs)} pairs); BIS substrate dropped. Raise --max-rows or "
+                    "use --substrate bis to override.",
+                    stacklevel=2,
+                )
+        else:
+            bis_cap = args.max_rows
+        if bis_cap != 0:
+            bis_iter = _bis_pair_stream(
+                args.bis_dataset_id,
+                args.bis_dataset_revision,
+                streaming=args.streaming,
+                max_rows=bis_cap,
+            )
+            pairs.extend(list(bis_iter))
+
     return pairs
+
+
+def _resolve_dataset_sha(dataset_id: str, revision: str | None) -> str | None:
+    """Resolve the actual commit SHA the HF Hub serves for (dataset_id, revision).
+
+    When the user passes --bis-dataset-revision explicitly, that's what we
+    persist. When they don't, we query the Hub for the dataset's latest commit
+    so the manifest still carries a concrete sha rather than null.
+    """
+    if revision:
+        return revision
+    try:
+        from huggingface_hub import HfApi  # type: ignore
+
+        info = HfApi().dataset_info(dataset_id)
+        return getattr(info, "sha", None)
+    except Exception:  # pragma: no cover — manifest still records None on failure
+        return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -311,11 +376,17 @@ def main(argv: list[str] | None = None) -> int:
             "Check --bis-dataset-id, --data-dir, or --corpus-files."
         )
 
+    resolved_revision = (
+        _resolve_dataset_sha(args.bis_dataset_id, args.bis_dataset_revision)
+        if args.substrate in {"bis", "both"}
+        else None
+    )
+
     run_token = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_dir = Path(args.artifact_root) / f"{args.checkpoint_name}_{run_token}_s{args.seed}"
     print(
         f"[mlm] base={args.base_checkpoint} substrate={args.substrate} pairs={len(pairs)} "
-        f"objective={args.objective} out={run_dir}"
+        f"objective={args.objective} bis_revision={resolved_revision} out={run_dir}"
     )
 
     result = run_mlm(
@@ -345,7 +416,8 @@ def main(argv: list[str] | None = None) -> int:
             "objective": args.objective,
             "substrate": args.substrate,
             "bis_dataset_id": args.bis_dataset_id,
-            "bis_dataset_revision": args.bis_dataset_revision,
+            "bis_dataset_revision_requested": args.bis_dataset_revision,
+            "bis_dataset_revision_resolved": resolved_revision,
         },
         inputs=[args.bis_dataset_id] if args.substrate in {"bis", "both"} else [],
         extra={"num_examples": result["num_examples"]},

@@ -8,10 +8,16 @@ from pathlib import Path
 
 import pytest
 
+from typing import Any
+
 from app.data.ingest_sources import (
     GTFINTECHLAB_CROSS_BANK_DATASETS,
+    GTFINTECHLAB_FED_DATASET_ID,
+    VTASCA_FOMC_ARCHIVE_DATASET_ID,
+    _DATASET_REVISIONS,
     _GTFINTECHLAB_STANCE_MAP,
     _OP_FED_STANCE_MAP,
+    _dataset_revision,
     _iter_fomc_archive_records,
     _iter_gss_factors_records,
     _iter_gtfintechlab_cross_bank_records,
@@ -300,12 +306,20 @@ def _install_fake_datasets(monkeypatch, payload: dict[tuple[str, str], list[dict
     import types
 
     fake = types.SimpleNamespace()
-    fake.get_dataset_config_names = lambda dataset: sorted({k[0] for k in payload})
-    fake.get_dataset_split_names = lambda dataset, config: sorted(
+    captured: dict[str, Any] = {"revisions": []}
+    fake.get_dataset_config_names = lambda dataset, revision=None: sorted({k[0] for k in payload})
+    fake.get_dataset_split_names = lambda dataset, config, revision=None: sorted(
         k[1] for k in payload if k[0] == config
     )
-    fake.load_dataset = lambda dataset, config, split=None: payload[(config, split)]
+
+    def _load(dataset, config, split=None, revision=None):
+        captured["revisions"].append(revision)
+        return payload[(config, split)]
+
+    fake.load_dataset = _load
+    fake._captured = captured
     monkeypatch.setitem(sys.modules, "datasets", fake)
+    return captured
 
 
 def _install_fake_datasets_module(monkeypatch, rows: list[dict]) -> None:
@@ -314,8 +328,16 @@ def _install_fake_datasets_module(monkeypatch, rows: list[dict]) -> None:
     import types
 
     fake = types.SimpleNamespace()
-    fake.load_dataset = lambda dataset_id, **kw: iter(rows)
+    captured: dict[str, Any] = {"revisions": []}
+
+    def _load(dataset_id, **kw):
+        captured["revisions"].append(kw.get("revision"))
+        return iter(rows)
+
+    fake.load_dataset = _load
+    fake._captured = captured
     monkeypatch.setitem(sys.modules, "datasets", fake)
+    return captured
 
 
 def test_gtfintechlab_stance_map_covers_canonical_classes() -> None:
@@ -407,6 +429,45 @@ def test_iter_gtfintechlab_federal_reserve_records_maps_multi_axis(monkeypatch) 
     assert balanced["event_date"] == "2016-01-01"
 
 
+def test_iter_gtfintechlab_federal_reserve_pins_revision_and_derives_source_record_id(
+    monkeypatch,
+) -> None:
+    """Regression: source_record_id must be content-derived (not positional idx),
+    and load_dataset must receive the pinned revision from _DATASET_REVISIONS."""
+    payload = {
+        ("5768", "train"): [
+            {
+                "sentences": "First sentence about inflation.",
+                "stance_label": "hawkish",
+                "time_label": "forward looking",
+                "certain_label": "certain",
+                "year": 2022,
+            },
+        ],
+        ("5768", "test"): [
+            {
+                "sentences": "Second sentence about employment.",
+                "stance_label": "dovish",
+                "time_label": "not forward looking",
+                "certain_label": "certain",
+                "year": 2021,
+            },
+        ],
+    }
+    captured = _install_fake_datasets(monkeypatch, payload)
+
+    records = _iter_gtfintechlab_federal_reserve_records()
+
+    pinned = _DATASET_REVISIONS[GTFINTECHLAB_FED_DATASET_ID]
+    assert captured["revisions"] == [pinned, pinned]  # called once per config/split combo
+    assert all(r["multi_axis_extras"]["gtfintechlab_dataset_revision"] == pinned for r in records)
+    # source_record_id is the 16-char prefix of sha256(normalized_text); not a positional ":<idx>".
+    for record in records:
+        assert ":" not in record["source_record_id"]
+        assert len(record["source_record_id"]) == 16
+        assert all(c in "0123456789abcdef" for c in record["source_record_id"])
+
+
 def test_gtfintechlab_cross_bank_dataset_list_covers_five_banks() -> None:
     bank_keys = [item[0] for item in GTFINTECHLAB_CROSS_BANK_DATASETS]
     assert bank_keys == [
@@ -429,10 +490,10 @@ def test_iter_gtfintechlab_cross_bank_records_tags_provenance(monkeypatch) -> No
     import types
 
     fake = types.SimpleNamespace()
-    fake.get_dataset_config_names = lambda dataset: ["default"]
-    fake.get_dataset_split_names = lambda dataset, config: ["train"]
+    fake.get_dataset_config_names = lambda dataset, revision=None: ["default"]
+    fake.get_dataset_split_names = lambda dataset, config, revision=None: ["train"]
 
-    def _fake_load(dataset_id, config, split=None):
+    def _fake_load(dataset_id, config, split=None, revision=None):
         # Encode the dataset_id into the sentence so the dedupe doesn't collapse
         # rows across banks.
         return [
@@ -518,8 +579,70 @@ def test_iter_fomc_archive_records_routes_statements_and_minutes(monkeypatch) ->
     # Minutes release on 2024-10-09 differs from event_date 2024-09-18 — flagged in extras.
     assert minutes_row["multi_axis_extras"]["release_date"] == "2024-10-09"
     statement_row = by_type["statement"]
-    # Statement release equals event date — no extras populated.
-    assert "multi_axis_extras" not in statement_row or not statement_row.get("multi_axis_extras")
+    # Statement release equals event date so release_date is omitted from extras.
+    # vtasca_dataset_revision is set unconditionally for reproducibility.
+    assert "release_date" not in statement_row.get("multi_axis_extras", {})
+    assert statement_row["multi_axis_extras"]["vtasca_dataset_revision"] == _DATASET_REVISIONS[
+        VTASCA_FOMC_ARCHIVE_DATASET_ID
+    ]
+
+
+def test_iter_fomc_archive_records_source_record_id_discriminates_distinct_text(
+    monkeypatch,
+) -> None:
+    """Two corrected releases on the same date+document_type with distinct text
+    must produce distinct source_record_ids (text_hash discriminator)."""
+    _install_fake_datasets_module(
+        monkeypatch,
+        [
+            {
+                "Date": "2024-09-18",
+                "Release Date": "2024-09-18",
+                "Type": "Statement",
+                "Text": "Original September statement language.",
+            },
+            {
+                "Date": "2024-09-18",
+                "Release Date": "2024-09-19",
+                "Type": "Statement",
+                "Text": "Corrected September statement language.",
+            },
+        ],
+    )
+
+    records = _iter_fomc_archive_records()
+
+    assert len(records) == 2
+    ids = [r["source_record_id"] for r in records]
+    assert len(set(ids)) == 2
+    for record in records:
+        assert record["source_record_id"].startswith("2024-09-18:statement:")
+
+
+def test_iter_fomc_archive_records_pins_revision(monkeypatch) -> None:
+    captured = _install_fake_datasets_module(
+        monkeypatch,
+        [
+            {
+                "Date": "2024-09-18",
+                "Release Date": "2024-09-18",
+                "Type": "Statement",
+                "Text": "Sample statement.",
+            },
+        ],
+    )
+
+    records = _iter_fomc_archive_records()
+
+    expected_revision = _DATASET_REVISIONS[VTASCA_FOMC_ARCHIVE_DATASET_ID]
+    assert captured["revisions"] == [expected_revision]
+    assert records[0]["multi_axis_extras"]["vtasca_dataset_revision"] == expected_revision
+
+
+def test_dataset_revision_returns_pinned_or_none() -> None:
+    assert _dataset_revision(GTFINTECHLAB_FED_DATASET_ID) == _DATASET_REVISIONS[GTFINTECHLAB_FED_DATASET_ID]
+    assert _dataset_revision(VTASCA_FOMC_ARCHIVE_DATASET_ID) == _DATASET_REVISIONS[VTASCA_FOMC_ARCHIVE_DATASET_ID]
+    assert _dataset_revision("unknown/dataset") is None
 
 
 def test_iter_fomc_archive_records_dedupes_by_text_hash(monkeypatch) -> None:

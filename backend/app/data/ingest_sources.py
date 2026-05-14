@@ -20,6 +20,24 @@ HF_DATASET_ID = "gtfintechlab/fomc_communication"
 GTFINTECHLAB_FED_DATASET_ID = "gtfintechlab/federal_reserve_system"
 VTASCA_FOMC_ARCHIVE_DATASET_ID = "vtasca/fomc-statements-minutes"
 KAGGLE_DATASET_ID = "drlexus/fed-statements-and-minutes"
+
+# Pinned HF dataset revisions. record_id derives from
+# sha256(source:source_record_id:event_date); upstream revision drift would
+# otherwise rotate the entire hash chain. SHAs captured 2026-05-15.
+_DATASET_REVISIONS: dict[str, str] = {
+    "gtfintechlab/federal_reserve_system": "de0b1e8cb3a0fcfa601eec97d49d5c6f883804a1",
+    "gtfintechlab/european_central_bank": "867cee85784ce569826e0104797b6e017205867b",
+    "gtfintechlab/bank_of_japan": "1885e21cf1c33c4aea19a824ba40eac886c7a122",
+    "gtfintechlab/bank_of_england": "de1123cf9d747dbb3e0c2224467f501692d5a310",
+    "gtfintechlab/bank_of_canada": "ab15ea2271bfa3208874a5517afc439640fd9200",
+    "gtfintechlab/reserve_bank_of_australia": "7a91206b56f2841b2586e409feade2518284894b",
+    "vtasca/fomc-statements-minutes": "1d6c65eb96786ea921a29f4008c447f1cff5f7ff",
+}
+
+
+def _dataset_revision(dataset_id: str) -> str | None:
+    """Return the pinned revision SHA for a dataset id, or None if unpinned."""
+    return _DATASET_REVISIONS.get(dataset_id)
 OP_FED_DEFAULT_RELATIVE = Path("external") / "op_fed" / "opfed_v1.csv"
 GSS_FACTORS_DEFAULT_RELATIVE = Path("external") / "gss" / "gss_factors.csv"
 GSS_SURPRISES_DEFAULT_RELATIVE = Path("external") / "gss" / "gss_surprises.csv"
@@ -273,6 +291,11 @@ def _iter_gtfintechlab_records(
     time_label, certain_label, year``. This function walks every config /
     split combination, normalises stance, populates ``multi_axis_extras``
     with the time + certainty axes, and dedupes by ``text_hash``.
+
+    Reproducibility: pins the dataset revision from ``_DATASET_REVISIONS`` so
+    upstream HF pushes can't rotate row indices, and derives
+    ``source_record_id`` from the text hash (not the iterator's positional
+    index) so insertions/deletions in the dataset do not change ``record_id``.
     """
     try:
         from datasets import (  # type: ignore
@@ -286,15 +309,16 @@ def _iter_gtfintechlab_records(
             "Install dependencies first."
         ) from exc
 
+    revision = _dataset_revision(dataset_id)
     records: list[dict[str, Any]] = []
     seen_hashes: set[str] = set()
 
-    configs = list(get_dataset_config_names(dataset_id))
+    configs = list(get_dataset_config_names(dataset_id, revision=revision))
     for config in configs:
-        splits = list(get_dataset_split_names(dataset_id, config))
+        splits = list(get_dataset_split_names(dataset_id, config, revision=revision))
         for split in splits:
-            ds = load_dataset(dataset_id, config, split=split)
-            for idx, row in enumerate(ds):
+            ds = load_dataset(dataset_id, config, split=split, revision=revision)
+            for row in ds:
                 item = dict(row)
                 sentence = (item.get("sentences") or "").strip()
                 if not sentence:
@@ -311,12 +335,17 @@ def _iter_gtfintechlab_records(
                 if not event_date:
                     continue
 
+                normalized_text = _normalize_text(sentence)
+                content_hash = _text_hash(normalized_text)
+                if content_hash in seen_hashes:
+                    continue
+
                 built = _build_registry_record(
                     source=source_name,
-                    source_record_id=f"{config}:{split}:{idx}",
+                    source_record_id=content_hash[:16],
                     event_date=event_date,
                     document_type=document_type,
-                    title=f"{title_prefix} sentence {config}/{split}#{idx}",
+                    title=f"{title_prefix} sentence {content_hash[:8]}",
                     text=sentence,
                     label=label,
                     license_scope=license_scope,
@@ -324,15 +353,14 @@ def _iter_gtfintechlab_records(
                 )
                 if built is None:
                     continue
-                if built["text_hash"] in seen_hashes:
-                    continue
-                seen_hashes.add(built["text_hash"])
+                seen_hashes.add(content_hash)
                 built["provenance"] = provenance
                 extras = {
                     "gtfintechlab_time_label": (item.get("time_label") or "").strip(),
                     "gtfintechlab_certain_label": (item.get("certain_label") or "").strip(),
                     "gtfintechlab_config": str(config),
                     "gtfintechlab_split": str(split),
+                    "gtfintechlab_dataset_revision": revision or "",
                 }
                 built["multi_axis_extras"] = {k: v for k, v in extras.items() if v}
                 records.append(built)
@@ -385,6 +413,10 @@ def _iter_fomc_archive_records() -> list[dict[str, Any]]:
     four meetings) and supplement the continued-pretraining substrate. Routed
     through ``provenance="scraped"`` so they receive ``sample_weight=0`` and
     do not enter the supervised training pool.
+
+    Reproducibility: pins the dataset revision and discriminates the
+    ``source_record_id`` with the text hash so corrected-release variants
+    (same date + document_type but different text) do not collide.
     """
     try:
         from datasets import load_dataset  # type: ignore
@@ -393,11 +425,12 @@ def _iter_fomc_archive_records() -> list[dict[str, Any]]:
             "datasets package is required for --include-fomc-archive. Install dependencies first."
         ) from exc
 
-    ds = load_dataset(VTASCA_FOMC_ARCHIVE_DATASET_ID, split="train")
+    revision = _dataset_revision(VTASCA_FOMC_ARCHIVE_DATASET_ID)
+    ds = load_dataset(VTASCA_FOMC_ARCHIVE_DATASET_ID, split="train", revision=revision)
     records: list[dict[str, Any]] = []
     seen_hashes: set[str] = set()
 
-    for idx, row in enumerate(ds):
+    for row in ds:
         item = dict(row)
         raw_type = (item.get("Type") or "").strip().lower()
         document_type = _FOMC_ARCHIVE_TYPE_MAP.get(raw_type, "")
@@ -411,9 +444,14 @@ def _iter_fomc_archive_records() -> list[dict[str, Any]]:
             continue
         release_date = _coerce_event_date(item, ("Release Date",))
 
+        normalized_text = _normalize_text(text)
+        content_hash = _text_hash(normalized_text)
+        if content_hash in seen_hashes:
+            continue
+
         built = _build_registry_record(
             source="vtasca_fomc_archive",
-            source_record_id=f"{event_date}:{document_type}",
+            source_record_id=f"{event_date}:{document_type}:{content_hash[:8]}",
             event_date=event_date,
             document_type=document_type,
             title=f"FOMC {document_type} {event_date}",
@@ -424,12 +462,15 @@ def _iter_fomc_archive_records() -> list[dict[str, Any]]:
         )
         if built is None:
             continue
-        if built["text_hash"] in seen_hashes:
-            continue
-        seen_hashes.add(built["text_hash"])
+        seen_hashes.add(content_hash)
         built["provenance"] = "scraped"
+        extras: dict[str, str] = {}
         if release_date and release_date != event_date:
-            built["multi_axis_extras"] = {"release_date": release_date}
+            extras["release_date"] = release_date
+        if revision:
+            extras["vtasca_dataset_revision"] = revision
+        if extras:
+            built["multi_axis_extras"] = extras
         records.append(built)
     return records
 

@@ -119,7 +119,16 @@ def test_collect_pairs_substrate_bis_uses_streaming(monkeypatch) -> None:
     assert pairs[0]["sequenceA"] == "BIS A1"
 
 
-def test_collect_pairs_substrate_both_respects_max_rows(monkeypatch, tmp_path: Path) -> None:
+def test_collect_pairs_substrate_both_loads_local_first_then_bis_remainder(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Regression: --substrate both must give local representation under --max-rows.
+
+    Previous behaviour ran BIS first (which always fills the cap given its size),
+    silently emptying the local slice — making --substrate both --max-rows N
+    indistinguishable from --substrate bis. Local now loads first; BIS fills the
+    remaining capacity.
+    """
     _install_fake_datasets(
         monkeypatch,
         [
@@ -145,8 +154,56 @@ def test_collect_pairs_substrate_both_respects_max_rows(monkeypatch, tmp_path: P
     )
     pairs = cpt._collect_pairs(args)
     assert len(pairs) == 3
-    assert pairs[0]["sequenceA"].startswith("BIS")
-    assert pairs[2]["sequenceA"].startswith("Local")
+    # Local (2 pairs) loads first; BIS contributes the remaining 1.
+    assert pairs[0]["sequenceA"] == "Local 1."
+    assert pairs[1]["sequenceA"] == "Local 2."
+    assert pairs[2]["sequenceA"] == "BIS A1"
+
+
+def test_collect_pairs_substrate_both_warns_when_local_exhausts_cap(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Regression: when --max-rows is small enough that local fills it, BIS gets
+    dropped — surface this with a warning so the user knows BIS substrate is absent."""
+    import warnings as _warnings
+
+    _install_fake_datasets(
+        monkeypatch,
+        [
+            {"sequenceA": "BIS A1", "sequenceB": "BIS B1", "next_sentence_label": 0},
+        ],
+    )
+    (tmp_path / "chair_speeches.json").write_text(
+        json.dumps([{"text": "Local 1."}, {"text": "Local 2."}, {"text": "Local 3."}]),
+        encoding="utf-8",
+    )
+    args = cpt._parse_args(
+        [
+            "--substrate",
+            "both",
+            "--data-dir",
+            str(tmp_path),
+            "--corpus-files",
+            "chair_speeches.json",
+            "--max-rows",
+            "2",
+        ]
+    )
+    with _warnings.catch_warnings(record=True) as captured:
+        _warnings.simplefilter("always")
+        pairs = cpt._collect_pairs(args)
+
+    # Local got 3 pairs (no cap on local under --substrate both unless local-only),
+    # exceeding --max-rows; BIS substrate dropped + warning surfaced.
+    assert len(pairs) == 3
+    assert all(p["sequenceA"].startswith("Local") for p in pairs)
+    bis_drop_warnings = [w for w in captured if "BIS substrate" in str(w.message)]
+    assert bis_drop_warnings, "expected a warning when BIS substrate dropped"
+
+
+def test_resolve_dataset_sha_returns_requested_when_supplied() -> None:
+    """When the user pins --bis-dataset-revision, that value passes through verbatim."""
+    assert cpt._resolve_dataset_sha("samchain/BIS_speeches_97_23_MLM", "deadbeef") == "deadbeef"
 
 
 def test_parse_args_objective_validates_choices() -> None:
