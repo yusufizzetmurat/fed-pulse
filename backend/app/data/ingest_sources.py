@@ -19,7 +19,8 @@ DEFAULT_OUTPUT_FILE = "source_registry.jsonl"
 HF_DATASET_ID = "gtfintechlab/fomc_communication"
 KAGGLE_DATASET_ID = "drlexus/fed-statements-and-minutes"
 OP_FED_DEFAULT_RELATIVE = Path("external") / "op_fed" / "opfed_v1.csv"
-LUCCA_TREBBI_DEFAULT_RELATIVE = Path("external") / "lucca_trebbi" / "lt_index.csv"
+GSS_FACTORS_DEFAULT_RELATIVE = Path("external") / "gss" / "gss_factors.csv"
+GSS_SURPRISES_DEFAULT_RELATIVE = Path("external") / "gss" / "gss_surprises.csv"
 SCRAPED_FILES = (
     "fomc_statements.json",
     "fomc_minutes.json",
@@ -72,9 +73,9 @@ def _parse_args() -> argparse.Namespace:
         help="Ingest Op-Fed sentence-level stance + multi-axis annotations (Keith et al. 2025, MIT).",
     )
     parser.add_argument(
-        "--include-lucca-trebbi",
+        "--include-gss-factors",
         action="store_true",
-        help="Ingest Lucca-Trebbi continuous hawkish-dovish index per FOMC meeting (sr357).",
+        help="Ingest GSS (Gürkaynak-Sack-Swanson 2005 IJCB) per-FOMC target/path factor decomposition and 30min/1hr/1day surprise windows.",
     )
     parser.add_argument(
         "--all-sources",
@@ -267,51 +268,103 @@ def _iter_op_fed_records(csv_path: Path) -> list[dict[str, Any]]:
     return records
 
 
-def _iter_lucca_trebbi_records(csv_path: Path) -> list[dict[str, Any]]:
-    if not csv_path.exists():
-        warnings.warn(f"Lucca-Trebbi CSV not found at {csv_path}; skipping.", stacklevel=2)
+def _iter_gss_factors_records(
+    factors_csv: Path,
+    surprises_csv: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Load the GSS 2005 (Gürkaynak-Sack-Swanson) per-FOMC factor decomposition.
+
+    Each FOMC meeting becomes one registry row with the target / path factors
+    and (when ``surprises_csv`` is also present) the 30-min / 1-hour / 1-day
+    monetary-policy-surprise windows on ``multi_axis_extras``. Rows are
+    stance-unlabelled — the factor decomposition is continuous, not
+    categorical — so they populate the factor axis of the multi-axis schema
+    without polluting the hawkish/dovish/neutral training pool.
+    """
+
+    if not factors_csv.exists():
+        warnings.warn(f"GSS factors CSV not found at {factors_csv}; skipping.", stacklevel=2)
         return []
 
+    surprises_by_date: dict[str, dict[str, Any]] = {}
+    if surprises_csv is not None and surprises_csv.exists():
+        with surprises_csv.open("r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                event_date = _coerce_event_date(row, ("meeting_date", "date", "event_date"))
+                if not event_date:
+                    continue
+                extras: dict[str, Any] = {}
+                for key in (
+                    "surprise_30min_bp",
+                    "surprise_1hour_bp",
+                    "surprise_1day_bp",
+                    "diff_wide_minus_tight",
+                    "diff_daily_minus_tight",
+                ):
+                    raw = (row.get(key) or "").strip()
+                    if not raw:
+                        continue
+                    try:
+                        extras[key] = float(raw)
+                    except ValueError:
+                        continue
+                if extras:
+                    surprises_by_date[event_date] = extras
+
     records: list[dict[str, Any]] = []
-    with csv_path.open("r", encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle)
-        for idx, row in enumerate(reader):
+    with factors_csv.open("r", encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
             event_date = _coerce_event_date(row, ("meeting_date", "date", "event_date"))
             if not event_date:
                 continue
-            score_raw = (row.get("hawkish_dovish_index") or row.get("score") or "").strip()
-            if not score_raw:
+            target_raw = (row.get("target_factor") or "").strip()
+            path_raw = (row.get("path_factor") or "").strip()
+            if not target_raw and not path_raw:
                 continue
+            extras: dict[str, Any] = {}
             try:
-                score = float(score_raw)
+                extras["gss_target_factor"] = float(target_raw) if target_raw else None
             except ValueError:
-                continue
+                extras["gss_target_factor"] = None
+            try:
+                extras["gss_path_factor"] = float(path_raw) if path_raw else None
+            except ValueError:
+                extras["gss_path_factor"] = None
+            statement_flag = (row.get("fomc_statement") or "").strip().upper() == "T"
+            extras["gss_fomc_statement"] = statement_flag
+            extras.update(surprises_by_date.get(event_date, {}))
 
-            # Lucca-Trebbi is a continuous index; bin into the categorical schema only
-            # when the magnitude clears a documented threshold. Below the threshold the
-            # row carries the numeric anchor but no categorical label.
-            label = ""
-            if score >= 0.5:
-                label = "hawkish"
-            elif score <= -0.5:
-                label = "dovish"
+            target_repr = (
+                f"{extras['gss_target_factor']:+.2f}"
+                if extras.get("gss_target_factor") is not None
+                else "n/a"
+            )
+            path_repr = (
+                f"{extras['gss_path_factor']:+.2f}"
+                if extras.get("gss_path_factor") is not None
+                else "n/a"
+            )
+            text = (
+                f"GSS factor decomposition for {event_date}: "
+                f"target={target_repr} bp, path={path_repr} bp"
+            )
 
             built = _build_registry_record(
-                source="lucca_trebbi_index",
-                source_record_id=f"lt_{event_date}",
+                source="gss_factor",
+                source_record_id=f"gss_{event_date}",
                 event_date=event_date,
                 document_type="statement",
-                title=f"Lucca-Trebbi communication index {event_date}",
-                text=f"Lucca-Trebbi hawkish-dovish index for {event_date}: {score:.4f}",
-                label=label,
+                title=f"GSS target/path factors {event_date}",
+                text=text,
+                label="",  # factor axis is continuous; no categorical stance label
                 license_scope="research_only",
-                citation_ref="lucca_trebbi_2009_ny_fed_sr357",
+                citation_ref="gurkaynak_sack_swanson_2005_ijcb",
                 source_type="fomc_statement",
             )
             if built is None:
                 continue
             built["provenance"] = "peer_reviewed"
-            built["multi_axis_extras"] = {"lucca_trebbi_index": score}
+            built["multi_axis_extras"] = extras
             records.append(built)
     return records
 
@@ -481,11 +534,11 @@ def main() -> int:
     include_kaggle = args.all_sources or args.include_kaggle
     include_scraped = args.all_sources or args.include_scraped
     include_op_fed = args.all_sources or args.include_op_fed
-    include_lucca_trebbi = args.all_sources or args.include_lucca_trebbi
-    if not (include_hf or include_kaggle or include_scraped or include_op_fed or include_lucca_trebbi):
+    include_gss_factors = args.all_sources or args.include_gss_factors
+    if not (include_hf or include_kaggle or include_scraped or include_op_fed or include_gss_factors):
         print(
             "No source selected. Use --all-sources or one of "
-            "--include-hf/--include-kaggle/--include-scraped/--include-op-fed/--include-lucca-trebbi."
+            "--include-hf/--include-kaggle/--include-scraped/--include-op-fed/--include-gss-factors."
         )
         return 1
 
@@ -507,11 +560,13 @@ def main() -> int:
         labelled = sum(1 for r in op_fed_records if r.get("label"))
         print(f"Ingested Op-Fed records: {len(op_fed_records)} (stance-labelled: {labelled})")
         unified.extend(op_fed_records)
-    if include_lucca_trebbi:
-        lt_records = _iter_lucca_trebbi_records(data_dir / LUCCA_TREBBI_DEFAULT_RELATIVE)
-        labelled = sum(1 for r in lt_records if r.get("label"))
-        print(f"Ingested Lucca-Trebbi records: {len(lt_records)} (categorically-labelled: {labelled})")
-        unified.extend(lt_records)
+    if include_gss_factors:
+        gss_records = _iter_gss_factors_records(
+            data_dir / GSS_FACTORS_DEFAULT_RELATIVE,
+            data_dir / GSS_SURPRISES_DEFAULT_RELATIVE,
+        )
+        print(f"Ingested GSS factor records: {len(gss_records)} (per-FOMC target/path factors; factor axis only)")
+        unified.extend(gss_records)
 
     unified.sort(key=lambda row: (row.get("event_date", ""), row.get("source", ""), row.get("source_record_id", "")))
     _write_jsonl(output_path, unified)

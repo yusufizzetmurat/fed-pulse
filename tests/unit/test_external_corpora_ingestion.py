@@ -10,7 +10,7 @@ import pytest
 
 from app.data.ingest_sources import (
     _OP_FED_STANCE_MAP,
-    _iter_lucca_trebbi_records,
+    _iter_gss_factors_records,
     _iter_op_fed_records,
 )
 
@@ -142,31 +142,135 @@ def test_op_fed_loader_returns_empty_on_missing_file(tmp_path: Path) -> None:
     assert records == []
 
 
-def test_lucca_trebbi_loader_thresholds_categorical_label(tmp_path: Path) -> None:
-    csv_path = tmp_path / "lt_index.csv"
-    with csv_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["meeting_date", "hawkish_dovish_index"])
+def _write_gss_factors_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    columns = ["meeting_date", "target_factor", "path_factor", "fomc_statement"]
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
-        writer.writerow({"meeting_date": "2004-12-14", "hawkish_dovish_index": "0.8"})
-        writer.writerow({"meeting_date": "2008-12-16", "hawkish_dovish_index": "-0.7"})
-        writer.writerow({"meeting_date": "2018-06-13", "hawkish_dovish_index": "0.1"})
-        writer.writerow({"meeting_date": "2020-04-29", "hawkish_dovish_index": "not-a-number"})  # dropped
+        for row in rows:
+            writer.writerow({col: row.get(col, "") for col in columns})
 
-    records = _iter_lucca_trebbi_records(csv_path)
+
+def _write_gss_surprises_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    columns = [
+        "meeting_date",
+        "surprise_30min_bp",
+        "surprise_1hour_bp",
+        "surprise_1day_bp",
+        "diff_wide_minus_tight",
+        "diff_daily_minus_tight",
+        "flags_raw",
+    ]
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({col: row.get(col, "") for col in columns})
+
+
+def test_gss_factors_loader_emits_one_row_per_meeting_with_factor_extras(tmp_path: Path) -> None:
+    factors_path = tmp_path / "gss_factors.csv"
+    surprises_path = tmp_path / "gss_surprises.csv"
+    _write_gss_factors_csv(
+        factors_path,
+        [
+            {"meeting_date": "1994-08-16", "target_factor": "10.7", "path_factor": "-8.3", "fomc_statement": "T"},
+            {"meeting_date": "2001-01-03", "target_factor": "-32.3", "path_factor": "22.8", "fomc_statement": "T"},
+            {"meeting_date": "1990-02-08", "target_factor": "0.3", "path_factor": "5.8", "fomc_statement": ""},
+        ],
+    )
+    _write_gss_surprises_csv(
+        surprises_path,
+        [
+            {
+                "meeting_date": "2001-01-03",
+                "surprise_30min_bp": "-39.3",
+                "surprise_1hour_bp": "-36.5",
+                "surprise_1day_bp": "-38.2",
+                "diff_wide_minus_tight": "1.1",
+                "diff_daily_minus_tight": "2.8",
+                "flags_raw": "T",
+            }
+        ],
+    )
+
+    records = _iter_gss_factors_records(factors_path, surprises_path)
     assert len(records) == 3
     by_date = {r["event_date"]: r for r in records}
 
-    assert by_date["2004-12-14"]["label"] == "hawkish"
-    assert by_date["2008-12-16"]["label"] == "dovish"
-    assert by_date["2018-06-13"]["label"] == ""  # below the threshold
-
-    assert all(r["source"] == "lucca_trebbi_index" for r in records)
+    assert all(r["source"] == "gss_factor" for r in records)
+    assert all(r["source_type"] == "fomc_statement" for r in records)
     assert all(r["provenance"] == "peer_reviewed" for r in records)
-    assert by_date["2018-06-13"]["multi_axis_extras"] == {"lucca_trebbi_index": 0.1}
+    assert all(r["license_scope"] == "research_only" for r in records)
+    assert all(r["citation_ref"] == "gurkaynak_sack_swanson_2005_ijcb" for r in records)
+    assert all(r["label"] == "" for r in records)  # factor axis is continuous
+
+    factors_row = by_date["2001-01-03"]
+    extras = factors_row["multi_axis_extras"]
+    assert extras["gss_target_factor"] == pytest.approx(-32.3)
+    assert extras["gss_path_factor"] == pytest.approx(22.8)
+    assert extras["gss_fomc_statement"] is True
+    # The surprise row merges onto the same date
+    assert extras["surprise_30min_bp"] == pytest.approx(-39.3)
+    assert extras["diff_daily_minus_tight"] == pytest.approx(2.8)
+
+    no_surprise_row = by_date["1990-02-08"]
+    assert no_surprise_row["multi_axis_extras"]["gss_fomc_statement"] is False
+    assert "surprise_30min_bp" not in no_surprise_row["multi_axis_extras"]
+    assert "GSS factor decomposition for 1990-02-08" in no_surprise_row["text"]
 
 
-def test_lucca_trebbi_loader_warns_on_missing_file(tmp_path: Path) -> None:
+def test_gss_factors_loader_warns_on_missing_factors_file(tmp_path: Path) -> None:
     missing = tmp_path / "absent.csv"
-    with pytest.warns(UserWarning, match="Lucca-Trebbi CSV not found"):
-        records = _iter_lucca_trebbi_records(missing)
+    with pytest.warns(UserWarning, match="GSS factors CSV not found"):
+        records = _iter_gss_factors_records(missing, surprises_csv=None)
     assert records == []
+
+
+def test_gss_factors_loader_handles_missing_surprises_file(tmp_path: Path) -> None:
+    factors_path = tmp_path / "gss_factors.csv"
+    _write_gss_factors_csv(
+        factors_path,
+        [{"meeting_date": "1990-02-08", "target_factor": "0.3", "path_factor": "5.8", "fomc_statement": ""}],
+    )
+    records = _iter_gss_factors_records(factors_path, surprises_csv=tmp_path / "absent.csv")
+    assert len(records) == 1
+    extras = records[0]["multi_axis_extras"]
+    assert extras["gss_target_factor"] == pytest.approx(0.3)
+    assert extras["gss_path_factor"] == pytest.approx(5.8)
+    assert "surprise_30min_bp" not in extras  # gracefully degrades when surprises CSV is absent
+
+
+def test_extract_gss_factors_parses_appendix_text() -> None:
+    from scripts.extract_gss_factors import extract_factors, extract_surprises
+
+    factor_text = (
+        "Date Factor Factor Statement? Date Factor Factor Statement? Date Factor Factor Statement?\n"
+        "8-Feb-90 0.3 5.8 16-Aug-94 10.7 -8.3 T 15-Nov-00 2.7 2.2 T\n"
+        "28-Mar-90 1.5 -3.3 27-Sep-94 -4.3 7.9 19-Dec-00 7.5 -3.9 T\n"
+    )
+    factor_rows = extract_factors(factor_text)
+    assert {r["meeting_date"] for r in factor_rows} == {
+        "1990-02-08",
+        "1990-03-28",
+        "1994-08-16",
+        "1994-09-27",
+        "2000-11-15",
+        "2000-12-19",
+    }
+    aug_94 = next(r for r in factor_rows if r["meeting_date"] == "1994-08-16")
+    assert aug_94["target_factor"] == 10.7
+    assert aug_94["path_factor"] == -8.3
+    assert aug_94["fomc_statement"] == "T"
+
+    surprise_text = (
+        "4-Feb-94 16.3 15.2 11.7 -4.7 -1.2 T\n"
+        "17-Sep-01 omitted omitted omitted omitted omitted T\n"
+    )
+    surprise_rows = extract_surprises(surprise_text)
+    assert len(surprise_rows) == 2
+    feb_94 = next(r for r in surprise_rows if r["meeting_date"] == "1994-02-04")
+    assert feb_94["surprise_30min_bp"] == 16.3
+    sep_01 = next(r for r in surprise_rows if r["meeting_date"] == "2001-09-17")
+    assert sep_01["surprise_30min_bp"] is None
+    assert sep_01["surprise_1day_bp"] is None
