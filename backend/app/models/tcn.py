@@ -29,10 +29,11 @@ class TemporalConvNet(nn.Module):
             padding=4,  # (3 - 1) * dilation=2
             dilation=2,
         )
-        if input_size != hidden_size:
-            self.residual = nn.Conv1d(input_size, hidden_size, kernel_size=1)
-        else:
-            self.residual = nn.Identity()
+        self.residual: nn.Module = (
+            nn.Conv1d(input_size, hidden_size, kernel_size=1)
+            if input_size != hidden_size
+            else nn.Identity()
+        )
         self.dropout = nn.Dropout(dropout)
         self.activation = nn.ReLU()
 
