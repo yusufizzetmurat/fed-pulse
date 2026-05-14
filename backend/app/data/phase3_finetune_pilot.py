@@ -36,7 +36,14 @@ from app.training.manifest import write_run_manifest
 
 DEFAULT_ARTIFACT_ROOT = DEFAULT_DATA_DIR / "artifacts" / "phase3"
 
-LABELS = ("dovish", "neutral", "hawkish")
+# Class order matches the canonical Trillion Dollar Words integer mapping
+# verified 2026-05-14 (dovish=0, hawkish=1, neutral=2). Earlier this tuple
+# was ("dovish", "neutral", "hawkish") which inverted classes 1 and 2 vs
+# TDW, producing the silent label-swap bug documented in
+# backend/app/data/normalize_labels.py. Future fine-tunes pick up the
+# correct ordering from this tuple; existing on-disk checkpoints were
+# patched in place by scripts/patch_checkpoint_id2label.py.
+LABELS = ("dovish", "hawkish", "neutral")
 LABEL2ID = {label: idx for idx, label in enumerate(LABELS)}
 ID2LABEL = dict(enumerate(LABELS))
 

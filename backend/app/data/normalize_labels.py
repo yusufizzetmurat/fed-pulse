@@ -16,14 +16,36 @@ DEFAULT_EXCEPTIONS = DEFAULT_DATA_DIR / "interim" / "phase2" / "label_mapping_ex
 DEFAULT_META = DEFAULT_DATA_DIR / "interim" / "phase2" / "label_mapping_metadata.json"
 MAPPING_VERSION = "label_map_v1.0"
 
+#
+# CRITICAL — Trillion Dollar Words (gtfintechlab/fomc_communication) canonical
+# integer mapping verified 2026-05-14 by sampling rows per integer class and
+# reading the sentences:
+#
+#     class 0 (515 train rows) -> dovish ("Low inflation readings...",
+#                                  "raising inflation to 2 percent")
+#     class 1 (492 train rows) -> hawkish ("rising wage pressures",
+#                                  "recession ended", "inflation higher this year")
+#     class 2 (977 train rows) -> neutral ("Broad equity price indexes fell",
+#                                  "no need for tightening", academic citations)
+#
+# Earlier versions of this file mapped "2" -> hawkish and "1" -> neutral,
+# which is the INVERSE of the canonical TDW mapping for classes 1 and 2.
+# Every fine-tune trained on the ingested registry learned the right
+# class distinctions but with the wrong name attached to the output index.
+# Live `/analyze` would say "hawkish 0.997" on textbook-neutral input and
+# "neutral 0.998" on textbook-hawkish input. Macro-F1 is unchanged (the
+# metric does not depend on label names); per-class precision/recall tables
+# in earlier Phase 3/4 results have hawkish <-> neutral swapped throughout.
+# See `09_Risk_Register.md` R-16 for the impact assessment.
+#
 HAWKISH_TOKENS = {
     "hawkish",
     "hawk",
     "tightening",
     "restrictive",
     "positive",
-    "label_2",
-    "2",
+    "label_1",
+    "1",
 }
 DOVISH_TOKENS = {
     "dovish",
@@ -38,8 +60,8 @@ NEUTRAL_TOKENS = {
     "neutral",
     "mixed",
     "balanced",
-    "label_1",
-    "1",
+    "label_2",
+    "2",
 }
 
 
