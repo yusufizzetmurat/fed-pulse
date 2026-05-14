@@ -10,6 +10,7 @@ import pytest
 
 from app.data.ingest_sources import (
     _OP_FED_STANCE_MAP,
+    _iter_fomc_archive_records,
     _iter_gss_factors_records,
     _iter_op_fed_records,
 )
@@ -287,3 +288,94 @@ def test_extract_gss_factors_parses_appendix_text() -> None:
     sep_01 = next(r for r in surprise_rows if r["meeting_date"] == "2001-09-17")
     assert sep_01["surprise_30min_bp"] is None
     assert sep_01["surprise_1day_bp"] is None
+
+
+def _install_fake_datasets_module(monkeypatch, rows: list[dict]) -> None:
+    import sys
+    import types
+
+    fake = types.SimpleNamespace()
+    fake.load_dataset = lambda dataset_id, **kw: iter(rows)
+    monkeypatch.setitem(sys.modules, "datasets", fake)
+
+
+def test_iter_fomc_archive_records_routes_statements_and_minutes(monkeypatch) -> None:
+    _install_fake_datasets_module(
+        monkeypatch,
+        [
+            {
+                "Date": "2024-09-18",
+                "Release Date": "2024-09-18",
+                "Type": "Statement",
+                "Text": "Recent indicators suggest economic activity has been expanding.",
+            },
+            {
+                "Date": "2024-09-18",
+                "Release Date": "2024-10-09",
+                "Type": "Minutes",
+                "Text": "The Committee discussed the staff outlook for inflation.",
+            },
+            {
+                "Date": "2024-11-07",
+                "Release Date": "2024-11-07",
+                "Type": "Statement",
+                "Text": "",  # empty text → dropped
+            },
+            {
+                "Date": "",  # missing Date falls back to Release Date.
+                "Release Date": "",
+                "Type": "Statement",
+                "Text": "No date at all — should drop.",
+            },
+            {
+                "Date": "2024-12-18",
+                "Release Date": "2024-12-18",
+                "Type": "Speech",  # unrecognised type → dropped
+                "Text": "Speech text.",
+            },
+        ],
+    )
+
+    records = _iter_fomc_archive_records()
+
+    assert len(records) == 2
+    assert all(r["source"] == "vtasca_fomc_archive" for r in records)
+    assert all(r["provenance"] == "scraped" for r in records)
+    assert all(r["license_scope"] == "public_source_scrape_terms_required" for r in records)
+    assert all(r["label"] == "" for r in records)
+    assert all(r["label_origin"] == "pseudo" for r in records)
+
+    by_type = {r["document_type"]: r for r in records}
+    assert by_type["statement"]["source_type"] == "fomc_statement"
+    assert by_type["minutes"]["source_type"] == "fomc_minutes"
+
+    minutes_row = by_type["minutes"]
+    # Minutes release on 2024-10-09 differs from event_date 2024-09-18 — flagged in extras.
+    assert minutes_row["multi_axis_extras"]["release_date"] == "2024-10-09"
+    statement_row = by_type["statement"]
+    # Statement release equals event date — no extras populated.
+    assert "multi_axis_extras" not in statement_row or not statement_row.get("multi_axis_extras")
+
+
+def test_iter_fomc_archive_records_dedupes_by_text_hash(monkeypatch) -> None:
+    _install_fake_datasets_module(
+        monkeypatch,
+        [
+            {
+                "Date": "2024-09-18",
+                "Release Date": "2024-09-18",
+                "Type": "Statement",
+                "Text": "Duplicate statement text.",
+            },
+            {
+                "Date": "2024-09-18",
+                "Release Date": "2024-09-18",
+                "Type": "Statement",
+                "Text": "Duplicate statement text.",
+            },
+        ],
+    )
+
+    records = _iter_fomc_archive_records()
+
+    assert len(records) == 1
