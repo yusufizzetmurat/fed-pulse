@@ -107,6 +107,7 @@ _PEER_REVIEWED_SOURCES = {
     "hf_fomc_communication",
     "fomc_communication",
     "trillion_dollar_words",
+    "op_fed",
     "gsswanson_factor",
     "aruoba_drechsel_shocks",
     "cieslak_schrimpf_news",

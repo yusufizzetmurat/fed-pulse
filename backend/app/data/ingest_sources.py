@@ -18,6 +18,8 @@ DEFAULT_OUTPUT_FILE = "source_registry.jsonl"
 
 HF_DATASET_ID = "gtfintechlab/fomc_communication"
 KAGGLE_DATASET_ID = "drlexus/fed-statements-and-minutes"
+OP_FED_DEFAULT_RELATIVE = Path("external") / "op_fed" / "opfed_v1.csv"
+LUCCA_TREBBI_DEFAULT_RELATIVE = Path("external") / "lucca_trebbi" / "lt_index.csv"
 SCRAPED_FILES = (
     "fomc_statements.json",
     "fomc_minutes.json",
@@ -63,6 +65,16 @@ def _parse_args() -> argparse.Namespace:
         "--include-scraped",
         action="store_true",
         help="Ingest local scraped files (fomc_statements.json, fomc_minutes.json).",
+    )
+    parser.add_argument(
+        "--include-op-fed",
+        action="store_true",
+        help="Ingest Op-Fed sentence-level stance + multi-axis annotations (Keith et al. 2025, MIT).",
+    )
+    parser.add_argument(
+        "--include-lucca-trebbi",
+        action="store_true",
+        help="Ingest Lucca-Trebbi continuous hawkish-dovish index per FOMC meeting (sr357).",
     )
     parser.add_argument(
         "--all-sources",
@@ -191,6 +203,116 @@ def _iter_hf_records() -> list[dict[str, Any]]:
             )
             if built:
                 records.append(built)
+    return records
+
+
+_OP_FED_STANCE_MAP = {
+    "entailment": "hawkish",
+    "contradiction": "dovish",
+    "neutral": "neutral",
+}
+
+
+def _iter_op_fed_records(csv_path: Path) -> list[dict[str, Any]]:
+    if not csv_path.exists():
+        warnings.warn(f"Op-Fed CSV not found at {csv_path}; skipping.", stacklevel=2)
+        return []
+
+    records: list[dict[str, Any]] = []
+    with csv_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            unique_id = (row.get("unique_id") or "").strip()
+            if not unique_id:
+                continue
+            date_part = unique_id.split("_", 1)[0]
+            event_date = _coerce_event_date({"date": date_part}, ("date",))
+            if not event_date:
+                continue
+
+            sentence = (row.get("sentence") or "").strip().strip('"')
+            if not sentence:
+                continue
+
+            stance_raw = (row.get("4_stance_nli") or "").strip().lower()
+            label = _OP_FED_STANCE_MAP.get(stance_raw, "")
+
+            title_speaker = (row.get("speaker") or "").strip()
+            title = f"FOMC meeting transcript {date_part} — {title_speaker}".strip(" —")
+
+            built = _build_registry_record(
+                source="op_fed",
+                source_record_id=unique_id,
+                event_date=event_date,
+                document_type="meeting_transcript",
+                title=title,
+                text=sentence,
+                label=label,
+                license_scope="mit",
+                citation_ref="keith_etal_2025_op_fed",
+                source_type="fomc_meeting_transcript",
+            )
+            if built is None:
+                continue
+            built["provenance"] = "peer_reviewed"
+            extra = {
+                "op_fed_opinion": (row.get("1_opinion") or "").strip(),
+                "op_fed_mp": (row.get("2_mp") or "").strip(),
+                "op_fed_mp_context": (row.get("3_mp_context") or "").strip(),
+                "op_fed_stance_nli": stance_raw,
+                "op_fed_stance_nli_context": (row.get("5_stance_nli_context") or "").strip(),
+            }
+            built["multi_axis_extras"] = {k: v for k, v in extra.items() if v}
+            records.append(built)
+    return records
+
+
+def _iter_lucca_trebbi_records(csv_path: Path) -> list[dict[str, Any]]:
+    if not csv_path.exists():
+        warnings.warn(f"Lucca-Trebbi CSV not found at {csv_path}; skipping.", stacklevel=2)
+        return []
+
+    records: list[dict[str, Any]] = []
+    with csv_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for idx, row in enumerate(reader):
+            event_date = _coerce_event_date(row, ("meeting_date", "date", "event_date"))
+            if not event_date:
+                continue
+            score_raw = (row.get("hawkish_dovish_index") or row.get("score") or "").strip()
+            if not score_raw:
+                continue
+            try:
+                score = float(score_raw)
+            except ValueError:
+                continue
+
+            # Lucca-Trebbi is a continuous index; bin into the categorical schema only
+            # when the magnitude clears a documented threshold. Below the threshold the
+            # row carries the numeric anchor but no categorical label.
+            label = ""
+            if score >= 0.5:
+                label = "hawkish"
+            elif score <= -0.5:
+                label = "dovish"
+
+            built = _build_registry_record(
+                source="lucca_trebbi_index",
+                source_record_id=f"lt_{event_date}",
+                event_date=event_date,
+                document_type="statement",
+                title=f"Lucca-Trebbi communication index {event_date}",
+                text=f"Lucca-Trebbi hawkish-dovish index for {event_date}: {score:.4f}",
+                label=label,
+                license_scope="research_only",
+                citation_ref="lucca_trebbi_2009_ny_fed_sr357",
+                source_type="fomc_statement",
+            )
+            if built is None:
+                continue
+            built["provenance"] = "peer_reviewed"
+            built["multi_axis_extras"] = {"lucca_trebbi_index": score}
+            records.append(built)
     return records
 
 
@@ -358,8 +480,13 @@ def main() -> int:
     include_hf = args.all_sources or args.include_hf
     include_kaggle = args.all_sources or args.include_kaggle
     include_scraped = args.all_sources or args.include_scraped
-    if not (include_hf or include_kaggle or include_scraped):
-        print("No source selected. Use --all-sources or one of --include-hf/--include-kaggle/--include-scraped.")
+    include_op_fed = args.all_sources or args.include_op_fed
+    include_lucca_trebbi = args.all_sources or args.include_lucca_trebbi
+    if not (include_hf or include_kaggle or include_scraped or include_op_fed or include_lucca_trebbi):
+        print(
+            "No source selected. Use --all-sources or one of "
+            "--include-hf/--include-kaggle/--include-scraped/--include-op-fed/--include-lucca-trebbi."
+        )
         return 1
 
     unified: list[dict[str, Any]] = []
@@ -375,6 +502,16 @@ def main() -> int:
         scraped_records = _iter_scraped_records(data_dir)
         print(f"Ingested scraped records: {len(scraped_records)}")
         unified.extend(scraped_records)
+    if include_op_fed:
+        op_fed_records = _iter_op_fed_records(data_dir / OP_FED_DEFAULT_RELATIVE)
+        labelled = sum(1 for r in op_fed_records if r.get("label"))
+        print(f"Ingested Op-Fed records: {len(op_fed_records)} (stance-labelled: {labelled})")
+        unified.extend(op_fed_records)
+    if include_lucca_trebbi:
+        lt_records = _iter_lucca_trebbi_records(data_dir / LUCCA_TREBBI_DEFAULT_RELATIVE)
+        labelled = sum(1 for r in lt_records if r.get("label"))
+        print(f"Ingested Lucca-Trebbi records: {len(lt_records)} (categorically-labelled: {labelled})")
+        unified.extend(lt_records)
 
     unified.sort(key=lambda row: (row.get("event_date", ""), row.get("source", ""), row.get("source_record_id", "")))
     _write_jsonl(output_path, unified)
