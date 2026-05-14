@@ -8,22 +8,28 @@ interface SentimentCardProps {
 }
 
 export function SentimentCard({ sentiment }: SentimentCardProps) {
-  const stance = toStance(sentiment?.label);
+  const rawLabel = sentiment?.label;
+  const stance = toStance(rawLabel);
   const score = Number(sentiment?.score ?? 0);
-  const badgeVariant =
+  const isUnknown = stance === "unknown";
+  const badgeVariant: "hawkish" | "dovish" | "neutral" | "outline" =
     stance === "hawkish" ? "hawkish" : stance === "dovish" ? "dovish" : stance === "neutral" ? "neutral" : "outline";
 
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardDescription>Stance</CardDescription>
-        <CardTitle className="text-2xl">{stanceLabel(stance)}</CardTitle>
+        <CardTitle className="text-2xl">
+          {isUnknown ? "Sentiment unavailable" : stanceLabel(stance)}
+        </CardTitle>
       </CardHeader>
       <CardContent className="flex items-center justify-between">
         <Badge variant={badgeVariant}>
-          {stanceLabel(stance)} · {score.toFixed(3)}
+          {isUnknown ? `raw: ${String(rawLabel ?? "n/a")}` : `${stanceLabel(stance)} · ${score.toFixed(3)}`}
         </Badge>
-        <span className="text-xs text-muted-foreground">model confidence</span>
+        <span className="text-xs text-muted-foreground">
+          {isUnknown ? "Backend returned a non-stance label; check sentiment-model load." : "model confidence"}
+        </span>
       </CardContent>
     </Card>
   );

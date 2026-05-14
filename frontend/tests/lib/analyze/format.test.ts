@@ -29,11 +29,28 @@ describe("format helpers", () => {
     expect(normalizeTimestamp(null)).toBe("");
   });
 
-  it("toStance maps known labels", () => {
+  it("toStance maps known stance labels", () => {
     expect(toStance("HAWKISH")).toBe("hawkish");
-    expect(toStance("LABEL_0")).toBe("dovish");
+    expect(toStance("hawkish")).toBe("hawkish");
+    expect(toStance("Dovish")).toBe("dovish");
     expect(toStance("Neutral")).toBe("neutral");
+    expect(toStance("LABEL_0")).toBe("dovish");
+    expect(toStance("LABEL_1")).toBe("neutral");
+    expect(toStance("LABEL_2")).toBe("hawkish");
     expect(toStance("???")).toBe("unknown");
+  });
+
+  it("toStance does NOT silently relabel sst-2 news-sentiment labels as monetary stance", () => {
+    // Regression guard for the 'banana banana banana' bug. When the FOMC
+    // sentiment model fails to load and the backend falls back to
+    // distilbert-sst-2, the labels are POSITIVE / NEGATIVE — news-sentiment,
+    // not monetary-policy stance. The UI must surface this as "unknown" so
+    // the dashboard renders "Sentiment unavailable" instead of pretending
+    // POSITIVE means hawkish.
+    expect(toStance("POSITIVE")).toBe("unknown");
+    expect(toStance("NEGATIVE")).toBe("unknown");
+    expect(toStance("positive")).toBe("unknown");
+    expect(toStance("negative")).toBe("unknown");
   });
 
   it("stanceLabel renders human-readable form", () => {

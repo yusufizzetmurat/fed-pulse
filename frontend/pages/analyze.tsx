@@ -74,10 +74,38 @@ export default function AnalyzePage() {
   React.useEffect(() => {
     if (!router.isReady) return;
     const queryDate = router.query.date;
-    if (typeof queryDate === "string" && queryDate) {
-      setRequest((current) => ({ ...current, date: queryDate }));
-    }
-  }, [router.isReady, router.query.date]);
+    const queryKind = router.query.kind;
+    if (typeof queryDate !== "string" || !queryDate) return;
+    setRequest((current) => ({ ...current, date: queryDate }));
+    if (typeof queryKind !== "string" || !queryKind) return;
+    // Calendar -> Analyze deep link. Pull the FOMC statement / minutes
+    // text for this date so the textarea is prefilled when the page
+    // mounts; the user clicks 'Submit' instead of pasting.
+    let cancelled = false;
+    (async () => {
+      try {
+        const url = `${apiBaseUrl}/documents/by-date?date=${encodeURIComponent(queryDate)}&kind=${encodeURIComponent(queryKind)}`;
+        const response = await fetch(url);
+        if (!response.ok) {
+          if (response.status === 404) {
+            toast.info(`No FOMC ${queryKind} on disk for ${queryDate}; paste the text manually.`);
+          }
+          return;
+        }
+        const payload = await response.json();
+        if (cancelled || typeof payload?.text !== "string" || !payload.text) return;
+        setRequest((current) => ({ ...current, text: payload.text }));
+        toast.success(`Prefilled FOMC ${payload.kind} from ${queryDate}.`);
+      } catch (err) {
+        const message =
+          (err as { message?: string })?.message || "Could not load document for this date.";
+        toast.error(message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [router.isReady, router.query.date, router.query.kind, apiBaseUrl]);
 
   const handleSubmit = async () => {
     setLoading(true);

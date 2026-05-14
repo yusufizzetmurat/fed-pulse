@@ -11,17 +11,31 @@ export function normalizeTimestamp(value: unknown): string {
   return String(value).split("+")[0];
 }
 
+// Strict mapping. The dashboard refuses to silently relabel a non-stance
+// label (e.g. POSITIVE / NEGATIVE from distilbert-sst-2, which is what
+// loads when the FOMC sentiment model fails) into a monetary-policy
+// stance.
+//
+// Earlier versions mapped POSITIVE -> hawkish / NEGATIVE -> dovish /
+// LABEL_1 -> hawkish blindly, which caused "interest rates are bad
+// inflation is good" to display as "Hawkish 0.99" — the sst-2 fallback
+// was reading "good" as positive news sentiment and the UI laundered
+// that into a monetary-policy stance.
+//
+// LABEL_0 / LABEL_1 / LABEL_2 are still mapped because a checkpoint
+// without an id2label config legitimately exposes those generic strings;
+// the order matches our taxonomy (0=dovish, 1=neutral, 2=hawkish).
 export function toStance(label: unknown): Stance {
-  const value = String(label || "").toUpperCase();
-  if (value.includes("HAWK") || value.includes("POSITIVE") || value.includes("LABEL_1")) {
-    return "hawkish";
-  }
-  if (value.includes("DOVE") || value.includes("NEGATIVE") || value.includes("LABEL_0")) {
-    return "dovish";
-  }
-  if (value.includes("NEUTRAL") || value.includes("LABEL_2")) {
-    return "neutral";
-  }
+  const value = String(label || "").trim();
+  const lower = value.toLowerCase();
+  if (lower === "hawkish") return "hawkish";
+  if (lower === "dovish") return "dovish";
+  if (lower === "neutral") return "neutral";
+  if (lower.startsWith("hawk")) return "hawkish";
+  if (lower.startsWith("dove")) return "dovish";
+  if (value === "LABEL_0") return "dovish";
+  if (value === "LABEL_1") return "neutral";
+  if (value === "LABEL_2") return "hawkish";
   return "unknown";
 }
 
