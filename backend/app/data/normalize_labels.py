@@ -107,11 +107,11 @@ _PEER_REVIEWED_SOURCES = {
     "hf_fomc_communication",
     "fomc_communication",
     "trillion_dollar_words",
-    "gsswanson_factor",
+    "op_fed",
+    "gss_factor",
     "aruoba_drechsel_shocks",
     "cieslak_schrimpf_news",
     "hansen_mcmahon_topics",
-    "lucca_trebbi_index",
 }
 _KAGGLE_SOURCES = {"kaggle_fed_statements_minutes"}
 

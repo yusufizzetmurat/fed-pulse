@@ -230,6 +230,208 @@ def test_run_pseudo_labeling_scores_only_unlabelled_rows_and_writes_jsonl(tmp_pa
     assert all(p["record_id"] != "r3" for p in pseudo_rows)
 
 
+def _chunk_pred(label: str, max_score: float, scores: dict[str, float] | None = None) -> dict[str, float]:
+    """Shorthand for an aggregator chunk-prediction dict."""
+
+    base = {"hawkish": 0.0, "dovish": 0.0, "neutral": 0.0}
+    if scores is not None:
+        base.update(scores)
+    base[label] = max_score
+    return {"predicted_label": label, "max_score": max_score, "scores": base}
+
+
+def test_aggregate_chunk_predictions_max_pool_picks_highest_confidence_chunk_above_floor() -> None:
+    chunks = [
+        _chunk_pred("neutral", 0.55),
+        _chunk_pred("hawkish", 0.92),  # winner
+        _chunk_pred("dovish", 0.40),  # below floor 0.5 — dropped
+    ]
+    aggregate = pseudo_labeling.aggregate_chunk_predictions(
+        chunks, strategy="chunk_max_pool", tau_chunk=0.5
+    )
+    assert aggregate["predicted_label"] == "hawkish"
+    assert aggregate["max_score"] == pytest.approx(0.92)
+    assert aggregate["chunk_count"] == 3
+    assert aggregate["chunks_above_floor"] == 2
+    assert aggregate["strategy"] == "chunk_max_pool"
+
+
+def test_aggregate_chunk_predictions_mean_pool_averages_per_class_probabilities_across_chunks() -> None:
+    chunks = [
+        {"predicted_label": "hawkish", "max_score": 0.7,
+         "scores": {"hawkish": 0.7, "dovish": 0.2, "neutral": 0.1}},
+        {"predicted_label": "hawkish", "max_score": 0.6,
+         "scores": {"hawkish": 0.6, "dovish": 0.3, "neutral": 0.1}},
+        {"predicted_label": "dovish", "max_score": 0.55,
+         "scores": {"hawkish": 0.2, "dovish": 0.55, "neutral": 0.25}},
+    ]
+    aggregate = pseudo_labeling.aggregate_chunk_predictions(
+        chunks, strategy="chunk_mean_pool", tau_chunk=0.5
+    )
+    assert aggregate["predicted_label"] == "hawkish"
+    assert aggregate["scores"]["hawkish"] == pytest.approx((0.7 + 0.6 + 0.2) / 3)
+    assert aggregate["scores"]["dovish"] == pytest.approx((0.2 + 0.3 + 0.55) / 3)
+    assert aggregate["chunks_above_floor"] == 3
+
+
+def test_aggregate_chunk_predictions_vote_returns_modal_label_with_tiebreak_on_mean_confidence() -> None:
+    chunks = [
+        _chunk_pred("hawkish", 0.6),
+        _chunk_pred("hawkish", 0.55),
+        _chunk_pred("dovish", 0.95),  # higher confidence but minority
+        _chunk_pred("dovish", 0.90),
+    ]
+    aggregate = pseudo_labeling.aggregate_chunk_predictions(
+        chunks, strategy="chunk_vote", tau_chunk=0.5
+    )
+    # Both labels have 2 votes; tiebreak picks the label with higher mean confidence.
+    assert aggregate["predicted_label"] == "dovish"
+    assert aggregate["max_score"] == pytest.approx(0.95)
+    assert aggregate["vote_counts"] == {"hawkish": 2, "dovish": 2}
+
+
+def test_aggregate_chunk_predictions_falls_back_when_no_chunk_clears_the_floor() -> None:
+    chunks = [
+        _chunk_pred("neutral", 0.45),
+        _chunk_pred("hawkish", 0.40),
+    ]
+    aggregate = pseudo_labeling.aggregate_chunk_predictions(
+        chunks, strategy="chunk_max_pool", tau_chunk=0.5
+    )
+    # max_score is 0.0 so the doc-level threshold (tau_doc) will discard
+    # the row, but we still report the fallback label for diagnostics.
+    assert aggregate["max_score"] == 0.0
+    assert aggregate["predicted_label"] == "neutral"
+    assert aggregate["chunks_above_floor"] == 0
+    assert aggregate["fallback_max_score"] == pytest.approx(0.45)
+
+
+def test_aggregate_chunk_predictions_handles_empty_input() -> None:
+    aggregate = pseudo_labeling.aggregate_chunk_predictions(
+        [], strategy="chunk_max_pool", tau_chunk=0.5
+    )
+    assert aggregate["predicted_label"] == ""
+    assert aggregate["chunk_count"] == 0
+    assert aggregate["max_score"] == 0.0
+
+
+def test_aggregate_chunk_predictions_rejects_unknown_strategy() -> None:
+    chunks = [_chunk_pred("hawkish", 0.9)]
+    with pytest.raises(ValueError, match="unknown aggregation strategy"):
+        pseudo_labeling.aggregate_chunk_predictions(
+            chunks, strategy="not_a_strategy", tau_chunk=0.5  # type: ignore[arg-type]
+        )
+
+
+def test_score_passages_chunked_routes_each_doc_through_its_chunks_and_aggregates() -> None:
+    # One doc with three chunks: middle chunk dominates with max confidence.
+    chunk_batches = [
+        [
+            {"label": "neutral", "score": 0.55},
+            {"label": "hawkish", "score": 0.30},
+            {"label": "dovish", "score": 0.15},
+        ],
+        [
+            {"label": "hawkish", "score": 0.95},
+            {"label": "neutral", "score": 0.03},
+            {"label": "dovish", "score": 0.02},
+        ],
+        [
+            {"label": "neutral", "score": 0.40},
+            {"label": "dovish", "score": 0.35},
+            {"label": "hawkish", "score": 0.25},
+        ],
+    ]
+    pipeline = _StubPipeline(chunk_batches)
+    splitter = lambda text: ["chunk1", "chunk2", "chunk3"]
+
+    predictions = pseudo_labeling.score_passages_chunked(
+        ["long document text"],
+        pipeline=pipeline,
+        strategy="chunk_max_pool",
+        tau_chunk=0.5,
+        splitter=splitter,
+    )
+    assert len(predictions) == 1
+    aggregate = predictions[0]
+    assert aggregate["predicted_label"] == "hawkish"
+    assert aggregate["max_score"] == pytest.approx(0.95)
+    assert aggregate["chunk_count"] == 3
+    assert aggregate["chunks_above_floor"] == 2  # 0.55 + 0.95 above floor
+
+
+def test_run_pseudo_labeling_dispatches_chunk_strategy_and_persists_diagnostics(tmp_path: Path) -> None:
+    input_path = tmp_path / "source_registry.jsonl"
+    output_path = tmp_path / "registry_pseudo.jsonl"
+    input_path.write_text(
+        json.dumps(
+            {
+                "record_id": "doc-1",
+                "source": "scraped_fed",
+                "source_record_id": "fomc_minutes_2023-09-20",
+                "event_date": "2023-09-20",
+                "text": "doc-1 long text",
+                "label": "",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    chunk_batches = [
+        [
+            {"label": "neutral", "score": 0.40},
+            {"label": "dovish", "score": 0.30},
+            {"label": "hawkish", "score": 0.30},
+        ],
+        [
+            {"label": "hawkish", "score": 0.91},
+            {"label": "neutral", "score": 0.07},
+            {"label": "dovish", "score": 0.02},
+        ],
+    ]
+    pipeline = _StubPipeline(chunk_batches)
+    splitter = lambda text: ["chunk-a", "chunk-b"]
+
+    written = pseudo_labeling.run_pseudo_labeling(
+        input_path=input_path,
+        output_path=output_path,
+        teacher_pipeline=pipeline,
+        threshold=0.85,
+        teacher_model_id="fomc_roberta_s71",
+        teacher_model_version="phase4_finetune_v1",
+        strategy="chunk_max_pool",
+        tau_chunk=0.5,
+        splitter=splitter,
+    )
+
+    assert written == 1
+    rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["label"] == "hawkish"
+    assert rows[0]["teacher_aggregation"]["strategy"] == "chunk_max_pool"
+    assert rows[0]["teacher_aggregation"]["chunk_count"] == 2
+    assert rows[0]["teacher_aggregation"]["chunks_above_floor"] == 1
+    assert rows[0]["teacher_aggregation"]["tau_chunk"] == 0.5
+
+
+def test_run_pseudo_labeling_rejects_unknown_strategy(tmp_path: Path) -> None:
+    input_path = tmp_path / "registry.jsonl"
+    output_path = tmp_path / "pseudo.jsonl"
+    input_path.write_text(
+        json.dumps({"record_id": "x", "text": "t", "event_date": "2024-01-01", "label": ""}) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="unknown strategy"):
+        pseudo_labeling.run_pseudo_labeling(
+            input_path=input_path,
+            output_path=output_path,
+            teacher_pipeline=_StubPipeline([]),
+            threshold=0.5,
+            teacher_model_id="t",
+            teacher_model_version="v",
+            strategy="garbage",  # type: ignore[arg-type]
+        )
+
+
 def test_threshold_sweep_reports_yield_and_label_distribution_per_threshold() -> None:
     predictions = [
         {"predicted_label": "hawkish", "max_score": 0.92, "scores": {}},

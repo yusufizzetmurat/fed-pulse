@@ -15,6 +15,7 @@ class Provenance(str, Enum):
 _VALID_SOURCE_TYPES = frozenset({
     "fomc_statement",
     "fomc_minutes",
+    "fomc_meeting_transcript",
     "fomc_press_conference",
     "chair_speech",
     "governor_speech",
