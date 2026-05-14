@@ -7,6 +7,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -56,6 +57,14 @@ logger = logging.getLogger(__name__)
 async def _lifespan(app: FastAPI):  # noqa: ARG001
     configure_logging()
     get_engine()
+    # Pre-load the HF classifier so the first /analyze request doesn't pay
+    # the cold-start cost. The lazy module-level cache keeps this idempotent.
+    try:
+        from app.services.text_encoder import warmup_classifier
+
+        warmup_classifier()
+    except Exception:  # pragma: no cover — never let model warmup block startup
+        get_logger("fed_pulse").warning("classifier_warmup_failed", exc_info=True)
     get_logger("fed_pulse").info("startup", service="fomc-api")
     try:
         yield
@@ -245,7 +254,10 @@ def _run_real_train_job_body(job_id: str, payload: AnalyzeRequest) -> None:
 
 
 @app.post("/analyze", response_model=AnalyzeResponse | TrainJobAcceptedResponse)
-def analyze(payload: AnalyzeRequest):
+async def analyze(payload: AnalyzeRequest):
+    """Async handler — heavy sync work (transformers, yfinance, torch) runs in
+    the thread pool so the event loop stays responsive under load."""
+
     try:
         mode = payload.forecast_mode.strip().lower()
         if mode not in {"fast", "quick_train", "real_train"}:
@@ -278,32 +290,44 @@ def analyze(payload: AnalyzeRequest):
         history_length = 30
         if mode == "fast" and not checkpoint_exists():
             # Bootstrap a first checkpoint so fast-mode inference is not random on cold start.
-            warmup_sentiment = analyze_text(payload.text)
-            warmup_history = fetch_market_history(
-                target_date=payload.date,
-                symbol=payload.symbol,
-                history_length=REAL_TRAIN_HISTORY_LENGTH,
-            )
-            warmup_vectors = build_feature_vectors(
-                warmup_history,
-                sentiment_score=float(warmup_sentiment["score"]),
-                document_date=payload.date,
-            )
-            bootstrap_checkpoint(
-                vectors=warmup_vectors,
-                epochs=60,
-                batch_size=64,
-                learning_rate=4e-4,
-                early_stopping_patience=8,
-            )
+            await run_in_threadpool(_bootstrap_cold_start, payload)
 
-        response = _build_analyze_response(payload, mode=mode, history_length=history_length)
-        _record_history(payload, response)
+        response = await run_in_threadpool(
+            _build_analyze_response, payload, mode=mode, history_length=history_length
+        )
+        await run_in_threadpool(_record_history, payload, response)
         return response
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=500, detail=f"Analyze pipeline failed: {exc}") from exc
+
+
+def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
+    """Run the one-shot bootstrap training when the checkpoint is missing.
+
+    Synchronous — invoked via `run_in_threadpool` from the async handler so the
+    long-running fit doesn't block the event loop.
+    """
+
+    warmup_sentiment = analyze_text(payload.text)
+    warmup_history = fetch_market_history(
+        target_date=payload.date,
+        symbol=payload.symbol,
+        history_length=REAL_TRAIN_HISTORY_LENGTH,
+    )
+    warmup_vectors = build_feature_vectors(
+        warmup_history,
+        sentiment_score=float(warmup_sentiment["score"]),
+        document_date=payload.date,
+    )
+    bootstrap_checkpoint(
+        vectors=warmup_vectors,
+        epochs=60,
+        batch_size=64,
+        learning_rate=4e-4,
+        early_stopping_patience=8,
+    )
 
 
 @app.get("/train-jobs/{job_id}", response_model=TrainJobStatusResponse)
