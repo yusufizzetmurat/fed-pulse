@@ -30,7 +30,7 @@ jobs:
         env:
           PYTHONPATH: backend
         run: |
-          python -m app.data.phase3_training_execution \
+          python -m app.data.nlp_baseline_batch \
             --training-package-id "${{ inputs.training_package_id }}" \
             --mode smoke \
             --seed "${{ inputs.seed }}" \

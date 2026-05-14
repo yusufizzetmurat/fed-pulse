@@ -62,5 +62,5 @@ Encoders that may have seen the project's training rows during their own pretrai
 Policy:
 1. Exclude `gtfintechlab/FOMC-RoBERTa` from the headline comparison row.
 2. Cite the contaminated number as a **ceiling reference** in the discussion chapter only — labelled as "upper-bound for what's achievable on this corpus given likely contamination".
-3. The encoder may stay in `phase3_finetune_batch.ENCODERS` for completeness, but the published table must use only independent encoders (BERT-base, FinBERT, FinBERT-FOMC, DistilBERT, DeBERTa-v3).
-4. Any future encoder whose pretraining mixture overlaps with this project's training rows falls under the same exclusion rule. Add a one-line entry to the deny-list in `phase3_finetune_batch.py` and document the rationale in `06_Deep_Learning_Roadmap.md`.
+3. The encoder may stay in `finetune_batch.ENCODERS` for completeness, but the published table must use only independent encoders (BERT-base, FinBERT, FinBERT-FOMC, DistilBERT, DeBERTa-v3).
+4. Any future encoder whose pretraining mixture overlaps with this project's training rows falls under the same exclusion rule. Add a one-line entry to the deny-list in `finetune_batch.py` and document the rationale in `06_Deep_Learning_Roadmap.md`.

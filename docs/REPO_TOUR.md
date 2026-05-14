@@ -171,14 +171,14 @@ Capability-first entry points (use these in new code):
 | `baseline_spec_generator.py` | `generate_baseline_run_specs.py` | Pre-run-configuration markdown per planned run. |
 | `pipeline_data_prep.py` | — | Orchestrator for all of the above. `make data-prep` calls this. |
 
-Training / evaluation harnesses (phase-named because Make targets still call them):
+Training / evaluation harnesses:
 
 | File | Purpose |
 | --- | --- |
-| `phase3_training_execution.py` | Official NLP baseline batch (BERT / FinBERT / FOMC-RoBERTa × 5 seeds). Zero-shot harness. |
-| `phase3_finetune_batch.py` | Fine-tune full batch (6 encoders × 5 seeds). |
-| `phase3_finetune_pilot.py` | Single-seed fine-tune. Writes `predictions.jsonl` for the cross-source analyzer. |
-| `phase4_attention_ablation.py` | Variant A / B / C ablation sweep (6 cells × N seeds). |
+| `nlp_baseline_batch.py` | Official NLP baseline batch (BERT / FinBERT / FOMC-RoBERTa × 5 seeds). Zero-shot harness. |
+| `finetune_batch.py` | Fine-tune full batch (6 encoders × 5 seeds). |
+| `finetune_pilot.py` | Single-seed fine-tune. Writes `predictions.jsonl` for the cross-source analyzer. |
+| `attention_ablation.py` | Variant A / B / C ablation sweep (6 cells × N seeds). |
 | `pseudo_labeling.py` | Chunk-aggregated teacher for the unlabelled scraped pool. Strategies: `chunk_max_pool` (default), `chunk_mean_pool`, `chunk_vote`, `doc_truncated` (legacy). |
 | `llm_judge.py` | Gemini judge + three gating policies + 100-row audit sampler + Cohen's κ. |
 | `continued_pretraining.py` | MLM continued pretraining of FinBERT-FedAdjacent on the 9.7k unlabelled scraped rows. Checkpoint not yet trained. |
@@ -426,11 +426,8 @@ The audit ran on `dev` HEAD before PR #120. After the merge, the status of the m
 | `embedding_comparator.py` | historical | MiniLM frozen-head baseline (Phase 4 #35). One run already published. |
 | `llm_zero_shot_execution.py` | historical | Qwen-3B zero-shot baseline (Phase 4 #26). One run already published; stronger model rerun is a Phase-5 workflow operation. |
 | `source_type_stratified_analysis.py` | historical | Joiner utility for per-source-type tables. Run after each fine-tune batch. |
-| `run_phase2_pipeline.py` | superseded | v1 data prep. `pipeline_data_prep.py` is the v2 entry point. |
-| `phase3_training_execution.py` / `phase3_finetune_batch.py` / `phase3_finetune_pilot.py` / `phase4_attention_ablation.py` | **alive (phase-named)** | Make targets call these. Phase 7.2 will retire the phase-named names in favour of the capability-first ones. |
+| `nlp_baseline_batch.py` / `finetune_batch.py` / `finetune_pilot.py` / `attention_ablation.py` | **alive** | Make targets call these. Renamed from `phase3_*` / `phase4_attention_ablation` in Phase 7.2. |
 | `continued_pretraining.py` | alive but unused | MLM pipeline ready; checkpoint not yet trained. |
-
-The Phase 7.2 cleanup (delete genuinely-dead modules) is a separate bundle that needs careful import-grep verification before it lands. Today's tour reflects the current state, not the target state.
 
 ---
 
@@ -441,7 +438,7 @@ The Phase 7.2 cleanup (delete genuinely-dead modules) is a separate bundle that 
 | `02_SRS.md` (FR-01 … FR-43) | `main.py` endpoints, `services/`, `models/`, `evaluation/` |
 | `03_System_Architecture.md` (C4 diagrams) | `main.py` + `services/` directory + `db.py` + `audit.py` |
 | `04_SDD.md` (service-level design) | Per-service docstrings in `services/` |
-| `06_Deep_Learning_Roadmap.md` (Variants A/B/C, pseudo-labelling) | `services/forecaster.py`, `data/phase4_attention_ablation.py`, `data/pseudo_labeling.py` |
+| `06_Deep_Learning_Roadmap.md` (Variants A/B/C, pseudo-labelling) | `services/forecaster.py`, `data/attention_ablation.py`, `data/pseudo_labeling.py` |
 | `07_Data_Schema.md` (ER + table layouts) | `data/schema/labels.yaml`, `db.py` models, the parquet outputs under `data/processed/<package_id>/` |
 | `08_Test_and_Verification_Plan.md` | `tests/properties/test_no_leakage.py`, `tests/regression/test_plan13_variant_a.py`, `tests/contract/test_openapi_snapshot.py` |
 | `09_Risk_Register.md` | The known threats in `01_Progress_Snapshot.md §Risks` — see `docs/security-acceptance.md` for the security slice |

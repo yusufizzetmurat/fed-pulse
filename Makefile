@@ -90,7 +90,7 @@ data-prep:
 train-smoke:
 	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
 	docker compose run --rm backend \
-		python -m app.data.phase3_training_execution \
+		python -m app.data.nlp_baseline_batch \
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--mode smoke \
 		--seed "$(SEED)" \
@@ -99,7 +99,7 @@ train-smoke:
 train-batch:
 	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
 	docker compose run --rm backend \
-		python -m app.data.phase3_training_execution \
+		python -m app.data.nlp_baseline_batch \
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--mode full \
 		--owner "$(OWNER)"

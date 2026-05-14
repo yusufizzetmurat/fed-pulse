@@ -22,26 +22,25 @@ The Makefile is the only authoritative entry point — `make data-prep`, `make t
 | `baseline_spec_generator.py` | Pre-run-configuration markdown per planned run. | `generate_baseline_run_specs.py` |
 | `pipeline_data_prep.py` | Orchestrator. `make data-prep` calls this. | — (top-level) |
 
-### Phase-named (implementation + active harnesses)
+### Implementation modules (wrapped by the capability-first entries above)
 
-| File | What it does | Status |
-| --- | --- | --- |
-| `ingest_sources.py` | The actual ingestion logic. CLI flags `--include-hf/--include-kaggle/--include-scraped/--include-op-fed/--include-gss-factors`. | **alive — phase-named layer** |
-| `normalize_labels.py` | Label-mapping logic. `_PEER_REVIEWED_SOURCES` whitelist is here. | **alive — phase-named layer** |
-| `quality_checks.py` | Quality-validation logic. | **alive — phase-named layer** |
-| `build_training_package.py` | Training-package assembly logic. | **alive — phase-named layer** |
-| `generate_baseline_run_specs.py` | Pre-run-config markdown. | **alive — phase-named layer** |
-| `run_phase2_pipeline.py` | v1 data prep entry. | superseded by `pipeline_data_prep.py` |
+| File | What it does |
+| --- | --- |
+| `ingest_sources.py` | The actual ingestion logic. CLI flags `--include-hf/--include-kaggle/--include-scraped/--include-op-fed/--include-gss-factors`. |
+| `normalize_labels.py` | Label-mapping logic. `_PEER_REVIEWED_SOURCES` whitelist is here. |
+| `quality_checks.py` | Quality-validation logic. |
+| `build_training_package.py` | Training-package assembly logic. |
+| `generate_baseline_run_specs.py` | Pre-run-config markdown. |
 
 ### Training / evaluation harnesses
 
 | File | What it does | Status |
 | --- | --- | --- |
-| `phase3_training_execution.py` | Official NLP zero-shot batch (BERT / FinBERT / FOMC-RoBERTa × 5 seeds). | **alive** — `make train-batch` calls this |
-| `phase3_finetune_batch.py` | Fine-tune full batch (6 encoders × 5 seeds). | **alive** |
-| `phase3_finetune_pilot.py` | Single-seed fine-tune. Writes `predictions.jsonl` for the cross-source analyzer. | **alive** |
-| `phase4_attention_ablation.py` | Variant A / B / C ablation sweep (6-cell grid × seeds). | **alive** |
-| `pseudo_labeling.py` | Chunk-aggregated teacher for the 9,696-row unlabelled scraped pool. Strategies: `chunk_max_pool` (default), `chunk_mean_pool`, `chunk_vote`, `doc_truncated` (legacy). | **alive — primary path** |
+| `nlp_baseline_batch.py` | Official NLP zero-shot batch (BERT / FinBERT / FOMC-RoBERTa × 5 seeds). | **alive** — `make train-batch` calls this |
+| `finetune_batch.py` | Fine-tune full batch (6 encoders × 5 seeds). | **alive** |
+| `finetune_pilot.py` | Single-seed fine-tune. Writes `predictions.jsonl` for the cross-source analyzer. | **alive** |
+| `attention_ablation.py` | Variant A / B / C ablation sweep (6-cell grid × seeds). | **alive** |
+| `pseudo_labeling.py` | Chunk-aggregated teacher for the 9,696-row unlabelled scraped pool. Strategies: `chunk_max_pool` (default), `chunk_mean_pool`, `chunk_vote`, `doc_truncated` (legacy). | **kept for ADR-0006 audit trail; not used as training labels** |
 | `llm_judge.py` | Gemini judge + three gating policies (`confidence_only`, `confidence_and_judge`, `judge_only`) + 100-row stratified audit sampler + Cohen's κ. | **alive** |
 | `continued_pretraining.py` | MLM continued pretraining of FinBERT-FedAdjacent on the unlabelled scraped rows. Pipeline ready; the checkpoint has not yet been trained on a GPU. | code ready, not run |
 

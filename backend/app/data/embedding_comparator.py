@@ -22,7 +22,7 @@ from transformers import AutoModel, AutoTokenizer
 
 from app.config import DATA_DIR
 from app.models.registry import revision_for
-from app.data.phase3_finetune_pilot import (
+from app.data.finetune_pilot import (
     EvalRow,
     ID2LABEL,
     LABEL2ID,

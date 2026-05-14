@@ -100,7 +100,7 @@ def load_predictions_jsonl(
 ) -> tuple[list[float], list[float]]:
     """Load (residuals, sigmas) from a JSONL of per-row predictions.
 
-    Defaults match what `phase4_attention_ablation.py` persists for the close
+    Defaults match what `attention_ablation.py` persists for the close
     target. Override `predicted_field` / `actual_field` for volatility or any
     other target. Rows missing the predicted or actual field are skipped.
     When `sigma_field` is absent on a row, the row contributes a NaN sigma;
