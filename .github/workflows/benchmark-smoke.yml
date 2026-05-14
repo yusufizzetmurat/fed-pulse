@@ -36,7 +36,7 @@ jobs:
             --seed "${{ inputs.seed }}" \
             --owner ci
       - name: upload run manifest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: run-manifest-${{ inputs.training_package_id }}-s${{ inputs.seed }}
           path: data/artifacts/phase3/**/run_manifest.json
