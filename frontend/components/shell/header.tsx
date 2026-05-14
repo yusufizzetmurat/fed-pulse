@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Activity, BookOpen, Calendar, Github, History as HistoryIcon } from "lucide-react";
+import { Activity, BookOpen, Calendar, GitCompare, Github, History as HistoryIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 const NAV_ITEMS: Array<{ href: string; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { href: "/analyze", label: "Analyze", icon: Activity },
   { href: "/history", label: "History", icon: HistoryIcon },
+  { href: "/compare", label: "Compare", icon: GitCompare },
   { href: "/calendar", label: "Calendar", icon: Calendar },
 ];
 
