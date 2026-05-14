@@ -202,3 +202,14 @@ class FomcMeetingResponse(BaseModel):
 class FomcCalendarResponse(BaseModel):
     past: list[FomcMeetingResponse]
     upcoming: list[FomcMeetingResponse]
+
+
+class DocumentParseUrlRequest(BaseModel):
+    url: str
+
+
+class DocumentParseResponse(BaseModel):
+    text: str
+    char_count: int
+    source_kind: str
+    source_metadata: dict[str, str]

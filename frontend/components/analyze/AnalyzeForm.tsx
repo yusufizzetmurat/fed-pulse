@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { DocumentIngestionTabs } from "@/components/analyze/DocumentIngestionTabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -11,7 +12,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { HORIZON_OPTIONS, SYMBOL_OPTIONS } from "@/lib/analyze/constants";
 import type { AnalyzeRequest, ForecastMode, Horizon } from "@/lib/analyze/types";
 
@@ -52,17 +52,10 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-2">
-            <Label htmlFor="text">FOMC text</Label>
-            <Textarea
-              id="text"
-              rows={8}
-              required
-              value={value.text}
-              onChange={(event) => patch({ text: event.target.value })}
-              placeholder="Paste an FOMC statement excerpt…"
-            />
-          </div>
+          <DocumentIngestionTabs
+            text={value.text}
+            onChange={(text) => patch({ text })}
+          />
 
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <div className="space-y-2">
