@@ -68,6 +68,18 @@ export interface SeriesResponse {
   realized_volatility?: number[];
   forecast_confidence_level?: number;
   volatility_scale?: { suggested_ymin?: number; suggested_ymax?: number };
+  forecast_band_source?: "gaussian_z" | "conformal" | null;
+  conformal_coverage?: number | null;
+}
+
+export interface HistoryRealizedResponse {
+  run_id: string;
+  symbol: string;
+  document_date: string;
+  horizon: string;
+  timestamps: string[];
+  close: number[];
+  volatility: number[];
 }
 
 export type StanceAxis = "hawkish" | "dovish" | "neutral";

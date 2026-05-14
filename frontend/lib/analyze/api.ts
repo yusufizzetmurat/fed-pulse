@@ -6,6 +6,7 @@ import type {
   HistoryDetail,
   HistoryList,
   HistoryQuery,
+  HistoryRealizedResponse,
   TrainJobState,
 } from "./types";
 
@@ -67,6 +68,14 @@ export async function fetchHistoryRun(
 
 export async function deleteHistoryRun(baseUrl: string, runId: string): Promise<void> {
   await axios.delete(`${baseUrl}/history/${runId}`);
+}
+
+export async function fetchHistoryRealized(
+  baseUrl: string,
+  runId: string
+): Promise<HistoryRealizedResponse> {
+  const response = await axios.get(`${baseUrl}/history/${runId}/realized`);
+  return response.data as HistoryRealizedResponse;
 }
 
 export async function fetchFomcCalendar(
