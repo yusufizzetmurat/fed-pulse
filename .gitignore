@@ -37,6 +37,7 @@ data/raw/*
 *.bin
 *.safetensors
 
-# Ignore all root markdown files except README
+# Ignore all root markdown files except README + CHANGELOG
 /*.md
 !README.md
+!CHANGELOG.md
