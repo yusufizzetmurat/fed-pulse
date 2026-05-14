@@ -81,6 +81,68 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             handle.write(json.dumps(row) + "\n")
 
 
+# Gemini error signatures that warrant an in-row retry. The SDK raises
+# concrete ServerError / ClientError subclasses whose names include the
+# status — easiest classifier is to grep the string for known transient
+# tokens. Conservative on what counts as transient; everything else
+# fails fast and gets recorded as an error.
+_TRANSIENT_ERROR_TOKENS = (
+    "429",
+    "503",
+    "UNAVAILABLE",
+    "RESOURCE_EXHAUSTED",
+    "DEADLINE_EXCEEDED",
+    "INTERNAL",
+    "ConnectionError",
+    "Timeout",
+    "RemoteDisconnect",
+)
+_RETRY_ATTEMPTS_DEFAULT = 4
+_RETRY_BASE_DELAY_DEFAULT = 1.0
+_RETRY_MAX_DELAY_DEFAULT = 64.0
+
+
+def _is_transient_error(exc: BaseException) -> bool:
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    haystack = f"{type(exc).__name__}: {exc!s}"
+    return any(token in haystack for token in _TRANSIENT_ERROR_TOKENS)
+
+
+def _score_with_retry(
+    text: str,
+    model: Any,
+    *,
+    max_attempts: int = _RETRY_ATTEMPTS_DEFAULT,
+    base_delay: float = _RETRY_BASE_DELAY_DEFAULT,
+    max_delay: float = _RETRY_MAX_DELAY_DEFAULT,
+    on_retry=None,
+    sleep_fn=time.sleep,
+) -> tuple[dict[str, Any] | None, BaseException | None]:
+    """Call score_passage with exponential backoff on transient Gemini errors.
+
+    Returns (prediction, None) on success. Returns (None, exception) when
+    the call fails after ``max_attempts`` or hits a non-transient error
+    (which is not retried — fails fast). ``on_retry`` receives
+    ``(attempt_index, exc, delay)`` so the caller can log each backoff.
+    """
+
+    last_exc: BaseException | None = None
+    for attempt in range(max_attempts):
+        try:
+            prediction = score_passage(text, model=model)
+            return prediction, None
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if not _is_transient_error(exc) or attempt == max_attempts - 1:
+                return None, exc
+            delay = min(base_delay * (4 ** attempt), max_delay)
+            if on_retry is not None:
+                on_retry(attempt + 1, exc, delay)
+            sleep_fn(delay)
+    return None, last_exc
+
+
 def run_judge(
     *,
     input_path: Path,
@@ -109,9 +171,10 @@ def run_judge(
       write, so an interrupted run keeps every completed row on disk.
 
     ``resume`` rereads ``output_path`` and skips rows whose
-    ``record_id`` already appears there. Combined with the per-row
-    write semantics this means re-running the same Make target after a
-    crash picks up where the previous run died.
+    ``record_id`` is present AND has a non-empty ``judge_label``.
+    Rows previously recorded with a ``judge_error`` (transient API
+    failure) get retried on the next invocation — the only rows
+    treated as durably done are the ones with a real judge label.
 
     ``progress_writer`` is an optional callable that receives each
     progress line (defaults to the built-in ``print``). Tests inject a
@@ -130,15 +193,41 @@ def run_judge(
         rows = rows[:max_rows]
     total = len(rows)
 
-    completed_record_ids: set[str] = set()
+    successful_record_ids: set[str] = set()
+    error_record_ids: set[str] = set()
     if resume and output_path.exists():
         for existing in _read_jsonl(output_path):
             rid = str(existing.get("record_id", "")).strip()
-            if rid:
-                completed_record_ids.add(rid)
+            if not rid:
+                continue
+            label_present = str(existing.get("judge_label", "")).strip()
+            if label_present:
+                successful_record_ids.add(rid)
+            else:
+                error_record_ids.add(rid)
 
+    # When resuming we keep the existing successful rows by appending the
+    # new content. If we are NOT resuming (or the output is empty) the
+    # old content gets overwritten. Errored rows always get re-tried;
+    # they will be re-written into the file as new rows, so on resume we
+    # also need to drop the previous errored rows from the file. The
+    # simplest implementation: when resuming, rewrite the file from
+    # scratch with only the successful rows, then append.
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    open_mode = "a" if (resume and completed_record_ids) else "w"
+    if resume and error_record_ids:
+        kept = [
+            existing
+            for existing in _read_jsonl(output_path)
+            if str(existing.get("judge_label", "")).strip()
+        ]
+        with output_path.open("w", encoding="utf-8") as handle:
+            for kept_row in kept:
+                handle.write(json.dumps(kept_row) + "\n")
+        open_mode = "a"
+    else:
+        open_mode = "a" if (resume and successful_record_ids) else "w"
+
+    completed_record_ids = successful_record_ids  # alias to keep the loop readable
 
     written = 0
     with output_path.open(open_mode, encoding="utf-8") as handle:
@@ -150,18 +239,29 @@ def run_judge(
                 progress_writer(f"[judge] {index + 1}/{total}  skip      {short_id}  (resumed)")
                 continue
 
-            try:
-                prediction = score_passage(row.get("text", ""), model=gemini_model)
+            def _log_retry(attempt: int, exc: BaseException, delay: float) -> None:
+                progress_writer(
+                    f"[judge] {index + 1}/{total}  retry {attempt}/{_RETRY_ATTEMPTS_DEFAULT - 1}  "
+                    f"{short_id}  ({type(exc).__name__} — backoff {delay:.1f}s)"
+                )
+
+            prediction, exc = _score_with_retry(
+                row.get("text", ""),
+                gemini_model,
+                on_retry=_log_retry,
+            )
+            if prediction is not None:
                 label = str(prediction.get("label", "") or "")
                 confidence = float(prediction.get("confidence", 0.0) or 0.0)
                 error_kind = ""
-            except Exception as exc:  # noqa: BLE001 — we want every API failure to land in the output
+            else:
                 label = ""
                 confidence = 0.0
-                error_kind = type(exc).__name__
+                error_kind = type(exc).__name__ if exc is not None else "Unknown"
+                msg = str(exc)[:160] if exc is not None else ""
                 progress_writer(
                     f"[judge] {index + 1}/{total}  ERROR     {short_id}  "
-                    f"({error_kind}): {str(exc)[:160]}"
+                    f"({error_kind}): {msg}"
                 )
 
             out = dict(row)
