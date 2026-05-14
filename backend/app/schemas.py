@@ -19,6 +19,10 @@ class AnalyzeRequest(BaseModel):
         False,
         description="When true and date is in the past, include realized forward series overlay.",
     )
+    include_xai: bool = Field(
+        False,
+        description="When true, return per-sentence + per-token XAI attribution alongside the forecast.",
+    )
 
 
 class SentimentResponse(BaseModel):
@@ -109,6 +113,28 @@ class ForecastSeriesResponse(BaseModel):
     )
 
 
+class XaiTokenAttribution(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    token: str
+    weight: float
+
+
+class XaiSentenceAttribution(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    text: str
+    score: float
+    topTokens: list[XaiTokenAttribution] = Field(default_factory=list)
+
+
+class XaiResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    method: str = "keyword_salience_v1"
+    sentences: list[XaiSentenceAttribution] = Field(default_factory=list)
+
+
 class AnalyzeResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
@@ -117,6 +143,7 @@ class AnalyzeResponse(BaseModel):
     market: MarketDataResponse
     model: ModelDiagnosticsResponse
     series: ForecastSeriesResponse
+    xai: XaiResponse | None = None
 
 
 class TrainJobAcceptedResponse(BaseModel):

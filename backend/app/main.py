@@ -33,6 +33,7 @@ from app.schemas import (
     TrainJobAcceptedResponse,
     TrainJobStatusResponse,
 )
+from app.evaluation.xai import attribute_text, to_response as xai_to_response
 from app.services.fomc_calendar import get_calendar
 from app.services.forecaster import (
     bootstrap_checkpoint,
@@ -172,13 +173,17 @@ def _build_analyze_response(
             forecast["series"]["realized_close"] = [float(point["close"]) for point in realized]
             forecast["series"]["realized_volatility"] = [float(point["volatility_5d"]) for point in realized]
 
-    return {
+    response: dict[str, Any] = {
         "sentiment": sentiment,
         "prediction": forecast["prediction"],
         "market": market,
         "model": forecast["model"],
         "series": forecast["series"],
     }
+    if getattr(payload, "include_xai", False):
+        attributions = attribute_text(payload.text)
+        response["xai"] = xai_to_response(attributions)
+    return response
 
 
 def _run_real_train_job(job_id: str, payload: AnalyzeRequest) -> None:

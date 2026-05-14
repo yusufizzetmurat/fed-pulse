@@ -9,6 +9,7 @@ export interface AnalyzeRequest {
   forecast_mode: ForecastMode;
   horizon: Horizon;
   include_realized: boolean;
+  include_xai?: boolean;
 }
 
 export interface SentimentResponse {

@@ -44,6 +44,7 @@ function defaultRequest(): AnalyzeRequest {
     forecast_mode: "fast",
     horizon: "3d",
     include_realized: false,
+    include_xai: true,
   };
 }
 
