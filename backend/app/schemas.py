@@ -31,6 +31,14 @@ class SentimentResponse(BaseModel):
     label: str
     score: float
     raw: list[dict[str, float | str]]
+    # Energy-based out-of-distribution detection (Liu et al. 2020). Populated
+    # only when a calibration manifest exists alongside the checkpoint at
+    # forecaster_best.ood.json. ood_energy = -T * logsumexp(logits / T)
+    # averaged across chunks per the manifest's aggregation rule.
+    # is_in_distribution is True when ood_energy <= ood_threshold.
+    ood_energy: float | None = None
+    ood_threshold: float | None = None
+    is_in_distribution: bool | None = None
 
 
 class MarketDataResponse(BaseModel):

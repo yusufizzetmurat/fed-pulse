@@ -147,6 +147,25 @@ def warmup_classifier() -> None:
     get_classifier()
 
 
+def resolve_ood_manifest_path() -> Path | None:
+    """Locate the OOD calibration manifest beside the active checkpoint.
+
+    Returns None when MODEL_ID is an HF hub id (no local manifest) or
+    when no manifest has been written yet. Callers should treat the
+    absence of a manifest as 'no OOD signal' and not surface ood_*
+    fields on the response.
+    """
+
+    from app.evaluation.ood import OOD_MANIFEST_NAME  # lazy import: avoids cycle
+
+    candidate = Path(MODEL_ID)
+    if candidate.exists() and candidate.is_dir():
+        manifest_path = candidate / OOD_MANIFEST_NAME
+        if manifest_path.exists():
+            return manifest_path
+    return None
+
+
 def split_into_chunks(
     text: str,
     classifier=None,
