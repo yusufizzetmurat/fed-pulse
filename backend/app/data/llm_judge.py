@@ -256,6 +256,107 @@ def audit_metrics(audit_rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def audit_metrics_judge_only(judged_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute teacher precision against the LLM judge as gold annotator.
+
+    Per-class teacher precision must clear 0.90 for the pseudo set to
+    enter `source_registry.jsonl`. Rows where either label is empty are
+    skipped (judge parse failure or teacher abstain). Classes the judge
+    never assigns are excluded from the gate (no support, no signal).
+    """
+
+    usable = [
+        r
+        for r in judged_rows
+        if str(r.get("label", "")).strip() and str(r.get("judge_label", "")).strip()
+    ]
+    if not usable:
+        return {
+            "audit_size": 0,
+            "gold_source": "judge_only",
+            "judge_model_id_distribution": {},
+            "teacher_judge_accuracy": 0.0,
+            "cohen_kappa_teacher_judge": None,
+            "teacher_per_class": {},
+            "teacher_label_distribution": {},
+            "judge_label_distribution": {},
+            "audit_gate_per_class": {},
+            "audit_gate_passed": False,
+        }
+
+    teachers = [str(r["label"]).strip().lower() for r in usable]
+    judges = [str(r["judge_label"]).strip().lower() for r in usable]
+
+    teacher_judge_acc = sum(t == j for t, j in zip(teachers, judges)) / len(usable)
+
+    kappa: float | None
+    try:
+        from sklearn.metrics import cohen_kappa_score  # type: ignore
+
+        kappa = float(cohen_kappa_score(teachers, judges))
+    except Exception:  # pragma: no cover
+        kappa = None
+
+    def _per_class(predictions: list[str], gold: list[str]) -> dict[str, dict[str, float | int]]:
+        per: dict[str, dict[str, float | int]] = {}
+        for label in ALLOWED_LABELS:
+            tp = sum(1 for p, g in zip(predictions, gold) if p == label and g == label)
+            fp = sum(1 for p, g in zip(predictions, gold) if p == label and g != label)
+            fn = sum(1 for p, g in zip(predictions, gold) if p != label and g == label)
+            denom = tp + fp
+            precision = tp / denom if denom else 0.0
+            recall = tp / (tp + fn) if (tp + fn) else 0.0
+            per[label] = {
+                "precision": precision,
+                "recall": recall,
+                "tp": tp,
+                "fp": fp,
+                "fn": fn,
+                "support_in_gold": tp + fn,
+            }
+        return per
+
+    judge_label_distribution = {
+        label: sum(1 for j in judges if j == label) for label in ALLOWED_LABELS
+    }
+    teacher_label_distribution = {
+        label: sum(1 for t in teachers if t == label) for label in ALLOWED_LABELS
+    }
+
+    teacher_per_class = _per_class(teachers, judges)
+    gate_per_class = {
+        label: teacher_per_class[label]["precision"] >= 0.90
+        for label in ALLOWED_LABELS
+        if teacher_per_class[label]["support_in_gold"] > 0
+    }
+    gate_overall = bool(gate_per_class) and all(gate_per_class.values())
+
+    return {
+        "audit_size": len(usable),
+        "gold_source": "judge_only",
+        "judge_model_id_distribution": _judge_model_distribution(usable),
+        "teacher_judge_accuracy": teacher_judge_acc,
+        "cohen_kappa_teacher_judge": kappa,
+        "teacher_per_class": teacher_per_class,
+        "teacher_label_distribution": teacher_label_distribution,
+        "judge_label_distribution": judge_label_distribution,
+        "audit_gate_per_class": gate_per_class,
+        "audit_gate_passed": gate_overall,
+    }
+
+
+def _judge_model_distribution(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Track which judge model produced each row so we can audit
+    consistency when the run is split across multiple Gemini variants
+    (e.g. 2.5-pro vs 2.5-flash fallback)."""
+
+    counts: dict[str, int] = {}
+    for row in rows:
+        model = str(row.get("judge_model_id") or "unknown")
+        counts[model] = counts.get(model, 0) + 1
+    return counts
+
+
 def write_audit_csv(sample: list[dict[str, Any]], output_path: Path) -> None:
     """Write the audit set as a CSV with a `human_label` column the
     offline labelling pass fills in."""
