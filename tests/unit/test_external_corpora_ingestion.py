@@ -242,14 +242,27 @@ def test_gss_factors_loader_handles_missing_surprises_file(tmp_path: Path) -> No
 
 
 def test_extract_gss_factors_parses_appendix_text() -> None:
-    from scripts.extract_gss_factors import extract_factors, extract_surprises
+    """Locate the parser at repo root and exercise its two regexes against synthetic
+    appendix text. The script lives outside the backend package so pytest CI (which
+    runs with ``PYTHONPATH=backend``) does not see it on the import path by default."""
+
+    import importlib.util
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "extract_gss_factors.py"
+    if not script.exists():
+        pytest.skip(f"extraction script not present at {script}")
+    spec = importlib.util.spec_from_file_location("extract_gss_factors", script)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
 
     factor_text = (
         "Date Factor Factor Statement? Date Factor Factor Statement? Date Factor Factor Statement?\n"
         "8-Feb-90 0.3 5.8 16-Aug-94 10.7 -8.3 T 15-Nov-00 2.7 2.2 T\n"
         "28-Mar-90 1.5 -3.3 27-Sep-94 -4.3 7.9 19-Dec-00 7.5 -3.9 T\n"
     )
-    factor_rows = extract_factors(factor_text)
+    factor_rows = module.extract_factors(factor_text)
     assert {r["meeting_date"] for r in factor_rows} == {
         "1990-02-08",
         "1990-03-28",
@@ -267,7 +280,7 @@ def test_extract_gss_factors_parses_appendix_text() -> None:
         "4-Feb-94 16.3 15.2 11.7 -4.7 -1.2 T\n"
         "17-Sep-01 omitted omitted omitted omitted omitted T\n"
     )
-    surprise_rows = extract_surprises(surprise_text)
+    surprise_rows = module.extract_surprises(surprise_text)
     assert len(surprise_rows) == 2
     feb_94 = next(r for r in surprise_rows if r["meeting_date"] == "1994-02-04")
     assert feb_94["surprise_30min_bp"] == 16.3
