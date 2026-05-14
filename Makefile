@@ -119,7 +119,7 @@ audit-npm:
 # Pseudo-label production run (chunk-aggregated teacher; default strategy chunk_vote).
 # Reads /data/raw/phase2/source_registry.jsonl, writes a pseudo set + threshold
 # sweep under /data/interim/phase2/. Override defaults via PSEUDO_STRATEGY,
-# PSEUDO_TAU_CHUNK, PSEUDO_TAU_DOC, TEACHER_CHECKPOINT. See docs/pseudo-label-runbook.md.
+# PSEUDO_TAU_CHUNK, PSEUDO_TAU_DOC, TEACHER_CHECKPOINT.
 pseudo-labels:
 	docker compose $(PSEUDO_PROFILE_FLAG) run --rm $(PSEUDO_SERVICE) \
 		python -m app.data.pseudo_labeling \
