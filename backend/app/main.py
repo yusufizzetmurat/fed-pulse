@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import threading
@@ -6,7 +7,8 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+import httpx
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -27,6 +29,8 @@ from app.middleware.errors import RunIdMiddleware, register_error_handlers
 from app.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
+    DocumentParseResponse,
+    DocumentParseUrlRequest,
     FomcCalendarResponse,
     HistoryDetail,
     HistoryEntry,
@@ -35,6 +39,12 @@ from app.schemas import (
     TrainJobStatusResponse,
 )
 from app.evaluation.xai import attribute_text, to_response as xai_to_response
+from app.services.document_parser import (
+    parse_docx_stream,
+    parse_paste,
+    parse_pdf_stream,
+    parse_url,
+)
 from app.services.fomc_calendar import get_calendar
 from app.services.forecaster import (
     bootstrap_checkpoint,
@@ -420,3 +430,54 @@ def fomc_calendar(
         past=[meeting.to_dict() for meeting in calendar["past"]],  # type: ignore[arg-type]
         upcoming=[meeting.to_dict() for meeting in calendar["upcoming"]],  # type: ignore[arg-type]
     )
+
+
+@app.post("/documents/parse", response_model=DocumentParseResponse)
+async def parse_document(
+    text: str | None = Form(default=None),
+    url: str | None = Form(default=None),
+    file: UploadFile | None = File(default=None),
+) -> DocumentParseResponse:
+    """Normalise a document from one of three modes into the same plain-text
+    shape the analyze form consumes. Exactly one of `text`, `url`, or `file`
+    must be supplied."""
+
+    provided = [name for name, value in (("text", text), ("url", url), ("file", file)) if value]
+    if not provided:
+        raise HTTPException(status_code=422, detail="Provide one of text, url, or file.")
+    if len(provided) > 1:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Provide exactly one of text/url/file; got {provided}.",
+        )
+
+    if text is not None:
+        parsed = parse_paste(text)
+        return DocumentParseResponse(**parsed.to_dict())
+
+    if url is not None:
+        try:
+            parsed = await parse_url(url)
+        except httpx.HTTPError as exc:  # pragma: no cover
+            raise HTTPException(status_code=502, detail=f"URL fetch failed: {exc}") from exc
+        return DocumentParseResponse(**parsed.to_dict())
+
+    assert file is not None
+    content_type = (file.content_type or "").lower()
+    payload = await file.read()
+    if not payload:
+        raise HTTPException(status_code=422, detail="Empty upload")
+    stream = io.BytesIO(payload)
+    if content_type == "application/pdf" or (file.filename or "").lower().endswith(".pdf"):
+        parsed = parse_pdf_stream(stream, filename=file.filename)
+    elif content_type in {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
+    } or (file.filename or "").lower().endswith(".docx"):
+        parsed = parse_docx_stream(stream, filename=file.filename)
+    else:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported content type {content_type or 'unknown'} (expected PDF or DOCX)",
+        )
+    return DocumentParseResponse(**parsed.to_dict())
