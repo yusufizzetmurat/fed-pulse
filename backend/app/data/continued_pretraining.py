@@ -1,3 +1,20 @@
+"""Continued pretraining for FinBERT-FedAdjacent.
+
+Primary substrate is ``samchain/BIS_speeches_97_23_MLM`` — 909,877 NSP-formatted
+sentence pairs from BIS central bank speeches (1997-2023). The dataset is
+pre-chunked and pre-labelled for the MLM + Next-Sentence-Prediction joint
+objective, which is the recipe Devlin et al. and Araci used for FinBERT.
+
+Why the switch from the local JSON corpus: the 44-doc local corpus produced
+~5.8M effective tokens after chunking. BIS speeches at this scale produce
+~365M tokens of in-domain monetary-policy language — two orders of magnitude
+larger and within range of FinBERT's original pretraining substrate.
+
+The legacy local JSON corpus is preserved as an optional auxiliary substrate
+via ``--auxiliary-local-dir`` for ablation studies; pass ``--substrate local``
+to use it as the sole substrate (reproduces the pre-Sprint-1B behaviour).
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -14,7 +31,9 @@ from app.training.manifest import write_run_manifest
 DEFAULT_BASE_CHECKPOINT = "ProsusAI/finbert"
 DEFAULT_OUT_NAME = "finbert_fed_adjacent"
 DEFAULT_ARTIFACT_ROOT = DATA_DIR / "artifacts" / "continued_pretraining"
-DEFAULT_CORPUS_FILES = (
+DEFAULT_BIS_DATASET_ID = "samchain/BIS_speeches_97_23_MLM"
+DEFAULT_BIS_DATASET_REVISION: str | None = None  # pin once first run reports the resolved sha
+DEFAULT_LOCAL_CORPUS_FILES: tuple[str, ...] = (
     "chair_speeches.json",
     "governor_speeches.json",
     "congressional_testimonies.json",
@@ -22,10 +41,12 @@ DEFAULT_CORPUS_FILES = (
     "beige_book.json",
     "regional_research.json",
 )
+_VALID_SUBSTRATES = ("bis", "local", "both")
 
 
-def _iter_corpus_texts(data_dir: Path, files: Iterable[str]) -> list[str]:
-    texts: list[str] = []
+def _iter_local_pairs(data_dir: Path, files: Iterable[str]) -> list[dict[str, Any]]:
+    """Adapt the local JSON corpus into the same {sequenceA, sequenceB, next_sentence_label} shape."""
+    pairs: list[dict[str, Any]] = []
     for filename in files:
         path = data_dir / filename
         if not path.exists():
@@ -41,14 +62,43 @@ def _iter_corpus_texts(data_dir: Path, files: Iterable[str]) -> list[str]:
                 continue
             text = str(item.get("text") or item.get("body") or "").strip()
             if text:
-                texts.append(text)
-    return texts
+                # Each doc becomes a degenerate pair where B is unused but the
+                # NSP label is fixed at 0 so the model treats it as non-paired.
+                pairs.append({"sequenceA": text, "sequenceB": "", "next_sentence_label": 0})
+    return pairs
+
+
+def _bis_pair_stream(
+    dataset_id: str,
+    revision: str | None,
+    *,
+    streaming: bool,
+    max_rows: int,
+):
+    """Yield {sequenceA, sequenceB, next_sentence_label} rows from the BIS dataset."""
+    from datasets import load_dataset  # type: ignore
+
+    kwargs: dict[str, Any] = {"split": "train", "streaming": streaming}
+    if revision:
+        kwargs["revision"] = revision
+    ds = load_dataset(dataset_id, **kwargs)
+
+    seen = 0
+    for row in ds:
+        if max_rows and seen >= max_rows:
+            break
+        a = (row.get("sequenceA") or "").strip()
+        b = (row.get("sequenceB") or "").strip()
+        if not a:
+            continue
+        yield {"sequenceA": a, "sequenceB": b, "next_sentence_label": int(row.get("next_sentence_label") or 0)}
+        seen += 1
 
 
 def run_mlm(
     *,
     base_checkpoint: str,
-    texts: list[str],
+    pair_records: list[dict[str, Any]],
     output_dir: Path,
     epochs: int,
     learning_rate: float,
@@ -56,17 +106,28 @@ def run_mlm(
     block_size: int,
     seed: int,
     hf_token: str | None,
+    objective: str,
 ) -> dict[str, Any]:
+    """Run the joint MLM + NSP continued pretrain over pre-built sentence pairs.
+
+    ``objective`` selects the head: ``"mlm_nsp"`` uses ``BertForPreTraining``
+    (Devlin/Araci recipe); ``"mlm"`` uses ``AutoModelForMaskedLM`` and drops
+    the NSP label. MLM-only is provided for ablation against the joint loss.
+    """
     import numpy as np
     import torch
     from transformers import (
         AutoModelForMaskedLM,
         AutoTokenizer,
+        BertForPreTraining,
         DataCollatorForLanguageModeling,
         Trainer,
         TrainingArguments,
     )
     from torch.utils.data import Dataset
+
+    if objective not in {"mlm", "mlm_nsp"}:
+        raise ValueError(f"Unknown objective: {objective!r}; expected one of 'mlm', 'mlm_nsp'.")
 
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -79,25 +140,49 @@ def run_mlm(
         model_kwargs["revision"] = revision
 
     tokenizer = AutoTokenizer.from_pretrained(base_checkpoint, **tokenizer_kwargs)
-    model = AutoModelForMaskedLM.from_pretrained(base_checkpoint, **model_kwargs)
+    if objective == "mlm_nsp":
+        model = BertForPreTraining.from_pretrained(base_checkpoint, **model_kwargs)
+    else:
+        model = AutoModelForMaskedLM.from_pretrained(base_checkpoint, **model_kwargs)
 
-    class _SimpleTextDataset(Dataset):
-        def __init__(self, texts: list[str], tokenizer, block_size: int) -> None:
-            self._encodings = tokenizer(
-                texts,
-                truncation=True,
-                padding="max_length",
-                max_length=block_size,
-                return_special_tokens_mask=True,
+    class _PairDataset(Dataset):
+        def __init__(self, pairs: list[dict[str, Any]], tokenizer, block_size: int, use_nsp: bool) -> None:
+            seq_a = [p["sequenceA"] for p in pairs]
+            seq_b = [p.get("sequenceB") or "" for p in pairs] if use_nsp else None
+            if use_nsp:
+                # text_pair tokenisation: [CLS] A [SEP] B [SEP] with token_type_ids.
+                self._enc = tokenizer(
+                    seq_a,
+                    text_pair=seq_b,
+                    truncation=True,
+                    padding="max_length",
+                    max_length=block_size,
+                    return_special_tokens_mask=True,
+                    return_token_type_ids=True,
+                )
+            else:
+                self._enc = tokenizer(
+                    seq_a,
+                    truncation=True,
+                    padding="max_length",
+                    max_length=block_size,
+                    return_special_tokens_mask=True,
+                )
+            self._nsp_labels = (
+                [int(p.get("next_sentence_label") or 0) for p in pairs] if use_nsp else None
             )
 
         def __len__(self) -> int:
-            return len(self._encodings["input_ids"])
+            return len(self._enc["input_ids"])
 
         def __getitem__(self, idx: int) -> dict[str, Any]:
-            return {key: value[idx] for key, value in self._encodings.items()}
+            item = {key: value[idx] for key, value in self._enc.items()}
+            if self._nsp_labels is not None:
+                item["next_sentence_label"] = self._nsp_labels[idx]
+            return item
 
-    dataset = _SimpleTextDataset(texts, tokenizer, block_size=block_size)
+    use_nsp = objective == "mlm_nsp"
+    dataset = _PairDataset(pair_records, tokenizer, block_size=block_size, use_nsp=use_nsp)
     collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=True, mlm_probability=0.15)
     output_dir.mkdir(parents=True, exist_ok=True)
     training_args = TrainingArguments(
@@ -106,7 +191,7 @@ def run_mlm(
         per_device_train_batch_size=batch_size,
         learning_rate=learning_rate,
         save_strategy="no",
-        logging_steps=50,
+        logging_steps=200,
         seed=seed,
         report_to=[],
     )
@@ -121,6 +206,7 @@ def run_mlm(
         "learning_rate": learning_rate,
         "batch_size": batch_size,
         "block_size": block_size,
+        "objective": objective,
         "train_runtime_s": float(getattr(train_result, "metrics", {}).get("train_runtime", 0.0)),
         "train_loss": float(getattr(train_result, "training_loss", 0.0) or 0.0),
         "num_examples": len(dataset),
@@ -136,7 +222,7 @@ def _hf_token() -> str | None:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Continue-pretrain a FinBERT checkpoint on the unlabelled Fed-adjacent corpus."
+        description="Continue-pretrain a FinBERT checkpoint on the BIS central bank speeches MLM+NSP corpus."
     )
     parser.add_argument("--base-checkpoint", default=DEFAULT_BASE_CHECKPOINT)
     parser.add_argument("--data-dir", default=str(DATA_DIR))
@@ -148,36 +234,93 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--block-size", type=int, default=256)
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument(
+        "--substrate",
+        choices=_VALID_SUBSTRATES,
+        default="bis",
+        help="bis (default; samchain/BIS_speeches_97_23_MLM), local (legacy JSON corpus), or both.",
+    )
+    parser.add_argument(
+        "--bis-dataset-id",
+        default=DEFAULT_BIS_DATASET_ID,
+        help="HF dataset id for the BIS substrate.",
+    )
+    parser.add_argument(
+        "--bis-dataset-revision",
+        default=DEFAULT_BIS_DATASET_REVISION,
+        help="HF dataset revision (commit SHA) for reproducibility; first run resolves and reports.",
+    )
+    parser.add_argument(
+        "--streaming",
+        action="store_true",
+        help="Stream the BIS dataset rather than caching to disk (slower per-step but no local 365MB cache).",
+    )
+    parser.add_argument(
+        "--auxiliary-local-dir",
+        default=None,
+        help="Override directory for the legacy local JSON corpus (used when --substrate is local or both).",
+    )
+    parser.add_argument(
         "--corpus-files",
         nargs="+",
-        default=list(DEFAULT_CORPUS_FILES),
-        help="JSON files under --data-dir to read text from.",
+        default=list(DEFAULT_LOCAL_CORPUS_FILES),
+        help="JSON files under --data-dir (or --auxiliary-local-dir) for the local substrate.",
     )
     parser.add_argument(
         "--max-rows",
         type=int,
         default=0,
-        help="Cap the number of training rows (0 = use all).",
+        help="Cap the number of training pairs (0 = use all). Useful for smoke tests.",
+    )
+    parser.add_argument(
+        "--objective",
+        choices=("mlm", "mlm_nsp"),
+        default="mlm_nsp",
+        help="Joint MLM+NSP (default, Devlin/Araci recipe) or MLM-only ablation.",
     )
     return parser.parse_args(argv)
 
 
+def _collect_pairs(args: argparse.Namespace) -> list[dict[str, Any]]:
+    pairs: list[dict[str, Any]] = []
+    if args.substrate in {"bis", "both"}:
+        bis_iter = _bis_pair_stream(
+            args.bis_dataset_id,
+            args.bis_dataset_revision,
+            streaming=args.streaming,
+            max_rows=args.max_rows,
+        )
+        pairs.extend(list(bis_iter))
+    if args.substrate in {"local", "both"}:
+        local_dir = Path(args.auxiliary_local_dir) if args.auxiliary_local_dir else Path(args.data_dir)
+        local_pairs = _iter_local_pairs(local_dir, args.corpus_files)
+        if args.max_rows and (len(pairs) + len(local_pairs)) > args.max_rows:
+            local_pairs = local_pairs[: max(0, args.max_rows - len(pairs))]
+        pairs.extend(local_pairs)
+    return pairs
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    data_dir = Path(args.data_dir)
-    texts = _iter_corpus_texts(data_dir, args.corpus_files)
-    if args.max_rows and len(texts) > args.max_rows:
-        texts = texts[: args.max_rows]
-    if not texts:
-        raise SystemExit(f"No texts loaded from {data_dir}; check --corpus-files arguments.")
+    try:
+        pairs = _collect_pairs(args)
+    except Exception as exc:  # pragma: no cover — surfaced as a CLI error
+        raise SystemExit(f"Failed to collect training pairs: {exc}") from exc
+    if not pairs:
+        raise SystemExit(
+            f"No training pairs loaded for substrate={args.substrate!r}. "
+            "Check --bis-dataset-id, --data-dir, or --corpus-files."
+        )
 
     run_token = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_dir = Path(args.artifact_root) / f"{args.checkpoint_name}_{run_token}"
-    print(f"[mlm] base={args.base_checkpoint} texts={len(texts)} out={run_dir}")
+    run_dir = Path(args.artifact_root) / f"{args.checkpoint_name}_{run_token}_s{args.seed}"
+    print(
+        f"[mlm] base={args.base_checkpoint} substrate={args.substrate} pairs={len(pairs)} "
+        f"objective={args.objective} out={run_dir}"
+    )
 
     result = run_mlm(
         base_checkpoint=args.base_checkpoint,
-        texts=texts,
+        pair_records=pairs,
         output_dir=run_dir,
         epochs=args.epochs,
         learning_rate=args.learning_rate,
@@ -185,11 +328,12 @@ def main(argv: list[str] | None = None) -> int:
         block_size=args.block_size,
         seed=args.seed,
         hf_token=_hf_token(),
+        objective=args.objective,
     )
     (run_dir / "metrics.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     write_run_manifest(
         run_dir,
-        run_id=f"finbert_fed_adjacent_{run_token}_s{args.seed}",
+        run_id=f"{args.checkpoint_name}_{run_token}_s{args.seed}",
         version_ids={"model_version": args.checkpoint_name},
         seeds=[args.seed],
         hyperparameters={
@@ -198,14 +342,18 @@ def main(argv: list[str] | None = None) -> int:
             "learning_rate": args.learning_rate,
             "batch_size": args.batch_size,
             "block_size": args.block_size,
+            "objective": args.objective,
+            "substrate": args.substrate,
+            "bis_dataset_id": args.bis_dataset_id,
+            "bis_dataset_revision": args.bis_dataset_revision,
         },
-        inputs=[data_dir / name for name in args.corpus_files],
+        inputs=[args.bis_dataset_id] if args.substrate in {"bis", "both"} else [],
         extra={"num_examples": result["num_examples"]},
     )
     print(f"[mlm] checkpoint at {result['checkpoint_path']}")
     print(
-        "[mlm] register the new SHA in backend/app/models/registry.yaml under "
-        f"alias 'finbert_fed_adjacent' before using it in fine-tunes."
+        f"[mlm] register the new SHA in backend/app/models/registry.yaml under "
+        f"alias '{args.checkpoint_name}' before using it in fine-tunes."
     )
     return 0
 
