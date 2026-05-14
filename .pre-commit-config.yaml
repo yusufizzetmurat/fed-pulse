@@ -32,3 +32,10 @@ repos:
     rev: v8.18.4
     hooks:
       - id: gitleaks
+
+  - repo: https://github.com/jorisroovers/gitlint
+    rev: v0.19.1
+    hooks:
+      - id: gitlint
+        stages: [commit-msg]
+        args: ["--config", ".gitlint"]

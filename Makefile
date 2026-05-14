@@ -6,7 +6,7 @@ TRAINING_PACKAGE_ID ?=
 OWNER ?= unknown
 SEED ?= 11
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm
 
 help:
 	@echo "Targets:"
@@ -21,6 +21,9 @@ help:
 	@echo "  make data-prep        - Run capability-first data preparation pipeline"
 	@echo "  make train-smoke      - Run Phase 3 single-seed smoke execution"
 	@echo "  make train-batch      - Run Phase 3 full official batch execution"
+	@echo "  make changelog        - Regenerate CHANGELOG.md from Conventional Commits via git-cliff"
+	@echo "  make audit-python     - Run pip-audit on the backend deps (mirrors CI)"
+	@echo "  make audit-npm        - Run npm audit on the frontend deps (mirrors CI)"
 
 dev: dev-cpu
 
@@ -74,3 +77,15 @@ train-batch:
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--mode full \
 		--owner "$(OWNER)"
+
+changelog:
+	@command -v git-cliff >/dev/null 2>&1 || { \
+		echo "git-cliff not installed. Install via: cargo install git-cliff  OR  pipx install git-cliff"; exit 1; \
+	}
+	git-cliff --config cliff.toml --output CHANGELOG.md
+
+audit-python:
+	docker compose run --rm backend bash -c "pip install --quiet pip-audit==2.7.3 && pip-audit --strict"
+
+audit-npm:
+	docker compose run --rm frontend npm audit --audit-level=high --production
