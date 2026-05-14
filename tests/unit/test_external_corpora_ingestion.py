@@ -9,8 +9,10 @@ from pathlib import Path
 import pytest
 
 from app.data.ingest_sources import (
+    _GTFINTECHLAB_STANCE_MAP,
     _OP_FED_STANCE_MAP,
     _iter_gss_factors_records,
+    _iter_gtfintechlab_federal_reserve_records,
     _iter_op_fed_records,
 )
 
@@ -287,3 +289,106 @@ def test_extract_gss_factors_parses_appendix_text() -> None:
     sep_01 = next(r for r in surprise_rows if r["meeting_date"] == "2001-09-17")
     assert sep_01["surprise_30min_bp"] is None
     assert sep_01["surprise_1day_bp"] is None
+
+
+def _install_fake_datasets(monkeypatch, payload: dict[tuple[str, str], list[dict]]) -> None:
+    """Inject a fake `datasets` module so the loader can run without hitting HF."""
+    import sys
+    import types
+
+    fake = types.SimpleNamespace()
+    fake.get_dataset_config_names = lambda dataset: sorted({k[0] for k in payload})
+    fake.get_dataset_split_names = lambda dataset, config: sorted(
+        k[1] for k in payload if k[0] == config
+    )
+    fake.load_dataset = lambda dataset, config, split=None: payload[(config, split)]
+    monkeypatch.setitem(sys.modules, "datasets", fake)
+
+
+def test_gtfintechlab_stance_map_covers_canonical_classes() -> None:
+    assert set(_GTFINTECHLAB_STANCE_MAP) == {"hawkish", "dovish", "neutral"}
+    assert _GTFINTECHLAB_STANCE_MAP["hawkish"] == "hawkish"
+    assert _GTFINTECHLAB_STANCE_MAP["dovish"] == "dovish"
+    assert _GTFINTECHLAB_STANCE_MAP["neutral"] == "neutral"
+
+
+def test_iter_gtfintechlab_federal_reserve_records_maps_multi_axis(monkeypatch) -> None:
+    payload = {
+        ("5768", "train"): [
+            {
+                "sentences": "Inflation pressures remain elevated.",
+                "stance_label": "hawkish",
+                "time_label": "forward looking",
+                "certain_label": "certain",
+                "year": 2022,
+            },
+            {
+                "sentences": "The Committee maintained accommodative policy.",
+                "stance_label": "dovish",
+                "time_label": "not forward looking",
+                "certain_label": "uncertain",
+                "year": 2021,
+            },
+            {
+                "sentences": "Activity has expanded at a moderate pace.",
+                "stance_label": "neutral",
+                "time_label": "not forward looking",
+                "certain_label": "certain",
+                "year": 2014,
+            },
+        ],
+        ("5768", "test"): [
+            {
+                "sentences": "",  # empty text — should be dropped
+                "stance_label": "hawkish",
+                "time_label": "forward looking",
+                "certain_label": "certain",
+                "year": 2020,
+            },
+            {
+                "sentences": "Inflation pressures remain elevated.",  # duplicate of train row
+                "stance_label": "hawkish",
+                "time_label": "forward looking",
+                "certain_label": "certain",
+                "year": 2022,
+            },
+        ],
+        ("78516", "train"): [
+            {
+                "sentences": "Risks to the outlook are roughly balanced.",
+                "stance_label": "NEUTRAL",  # case-insensitive
+                "time_label": "forward looking",
+                "certain_label": "certain",
+                "year": 2016,
+            },
+            {
+                "sentences": "Empty year row should drop.",
+                "stance_label": "hawkish",
+                "time_label": "forward looking",
+                "certain_label": "certain",
+                "year": None,
+            },
+        ],
+    }
+    _install_fake_datasets(monkeypatch, payload)
+
+    records = _iter_gtfintechlab_federal_reserve_records()
+
+    assert len(records) == 4  # empty-text, empty-year, and duplicate dropped
+    assert all(r["source"] == "gtfintechlab_federal_reserve_system" for r in records)
+    assert all(r["provenance"] == "peer_reviewed" for r in records)
+    assert all(r["license_scope"] == "research_only" for r in records)
+    assert {r["label"] for r in records} == {"hawkish", "dovish", "neutral"}
+
+    by_text = {r["text"]: r for r in records}
+    elevated = by_text["Inflation pressures remain elevated."]
+    assert elevated["event_date"] == "2022-01-01"
+    assert elevated["multi_axis_extras"]["gtfintechlab_time_label"] == "forward looking"
+    assert elevated["multi_axis_extras"]["gtfintechlab_certain_label"] == "certain"
+    assert elevated["multi_axis_extras"]["gtfintechlab_config"] == "5768"
+    # First-seen-wins dedup keeps the test-split copy (splits iterate alphabetically).
+    assert elevated["multi_axis_extras"]["gtfintechlab_split"] == "test"
+
+    balanced = by_text["Risks to the outlook are roughly balanced."]
+    assert balanced["label"] == "neutral"  # case-insensitive stance match
+    assert balanced["event_date"] == "2016-01-01"
