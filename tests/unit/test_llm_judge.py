@@ -95,20 +95,29 @@ class _FlakyGeminiModel:
     """Stub model that raises on a configurable subset of calls.
 
     `fail_on_indices` is a set of call-indexes that raise; everything
-    else returns the next canned response. Used to test the run_judge
-    per-row try/except behaviour when the Gemini API returns 503/429
-    mid-batch.
+    else returns the next canned response. ``error_message`` controls
+    the raised string — use it to choose between transient ('503
+    UNAVAILABLE') and non-transient ('ValueError on row N') signatures
+    so callers can pick which retry codepath gets exercised.
     """
 
-    def __init__(self, responses: list[str], fail_on_indices: set[int]):
+    def __init__(
+        self,
+        responses: list[str],
+        fail_on_indices: set[int],
+        error_message: str = "ValueError on call",
+    ):
         self._responses = list(responses)
         self._fail_on = set(fail_on_indices)
+        self._error_message = error_message
         self._index = -1
+        self.calls = 0
 
     def generate_content(self, _prompt):  # pragma: no cover - matches SDK shape
         self._index += 1
+        self.calls += 1
         if self._index in self._fail_on:
-            raise RuntimeError(f"503 UNAVAILABLE on call {self._index}")
+            raise RuntimeError(f"{self._error_message} {self._index}")
         text = self._responses.pop(0)
 
         class _Response:
@@ -176,10 +185,14 @@ def test_run_judge_writes_incrementally_one_row_per_line(tmp_path: Path) -> None
     assert rows[1]["judge_label"] == "dovish"
 
 
-def test_run_judge_continues_after_api_error_marks_row_with_blank_judge_label(tmp_path: Path) -> None:
-    """A transient API failure on row 1 must NOT crash the run; the
-    failing row lands with judge_label='' + judge_error=type-name, and
-    row 2 still runs."""
+def test_run_judge_continues_after_non_transient_error_marks_row_with_blank_judge_label(
+    tmp_path: Path,
+) -> None:
+    """A non-transient API failure (e.g. malformed-prompt / invalid auth)
+    on row 1 must NOT crash the run; the failing row lands with
+    judge_label='' + judge_error=type-name, and row 2 still runs.
+    Retry is not attempted because the error is not in the transient
+    signature set."""
 
     input_path = tmp_path / "registry_pseudo.jsonl"
     output_path = tmp_path / "judged.jsonl"
@@ -187,7 +200,8 @@ def test_run_judge_continues_after_api_error_marks_row_with_blank_judge_label(tm
 
     model = _FlakyGeminiModel(
         responses=['{"label": "dovish", "confidence": 0.77}'],
-        fail_on_indices={0},  # first call raises
+        fail_on_indices={0},  # first call raises a non-transient error
+        error_message="ValueError on call",
     )
     lines: list[str] = []
     written = llm_judge.run_judge(
@@ -198,14 +212,240 @@ def test_run_judge_continues_after_api_error_marks_row_with_blank_judge_label(tm
         judge_model_version="v1",
         progress_writer=lines.append,
     )
-    assert written == 2  # both rows persisted (the first as a blank)
+    assert written == 2
     rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
     assert rows[0]["judge_label"] == ""
     assert rows[0]["judge_confidence"] == 0.0
     assert rows[0]["judge_error"] == "RuntimeError"
     assert rows[1]["judge_label"] == "dovish"
-    # Progress writer reported the error
+    # Only the first generate_content call was attempted (no retry)
+    assert model.calls == 2
     assert any("ERROR" in line for line in lines)
+    assert not any("retry" in line for line in lines)
+
+
+def test_run_judge_retries_transient_error_then_succeeds(tmp_path: Path) -> None:
+    """A 503 UNAVAILABLE on the first attempt should trigger the retry
+    helper, succeed on attempt 2, and persist the row as a real label."""
+
+    input_path = tmp_path / "registry_pseudo.jsonl"
+    output_path = tmp_path / "judged.jsonl"
+    _write_pseudo_fixture(input_path)
+
+    # 4 responses queued; 1 transient failure on call 0 -> attempt 2 succeeds
+    # for row 1; row 2 succeeds first try.
+    model = _FlakyGeminiModel(
+        responses=[
+            '{"label": "hawkish", "confidence": 0.92}',  # row 1, attempt 2
+            '{"label": "dovish", "confidence": 0.77}',   # row 2, attempt 1
+        ],
+        fail_on_indices={0},
+        error_message="503 UNAVAILABLE high demand on call",
+    )
+    lines: list[str] = []
+    # Stub the sleep so the test doesn't actually wait 1s.
+    import app.data.llm_judge as judge_module
+
+    real_sleep = judge_module.time.sleep
+    judge_module.time.sleep = lambda _seconds: None  # type: ignore[assignment]
+    try:
+        written = llm_judge.run_judge(
+            input_path=input_path,
+            output_path=output_path,
+            gemini_model=model,
+            judge_model_id="gemini-2.5-pro",
+            judge_model_version="v1",
+            progress_writer=lines.append,
+        )
+    finally:
+        judge_module.time.sleep = real_sleep
+
+    assert written == 2
+    rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["judge_label"] == "hawkish"
+    assert "judge_error" not in rows[0]  # retry succeeded
+    assert rows[1]["judge_label"] == "dovish"
+    # 3 total calls: row 1 attempt 1 (fails) + attempt 2 (succeeds) + row 2 attempt 1
+    assert model.calls == 3
+    # Retry was logged
+    assert any("retry" in line for line in lines)
+
+
+def test_run_judge_exhausts_retries_then_records_error(tmp_path: Path) -> None:
+    """When every retry attempt for a row hits a transient error, the
+    row is persisted with judge_label='' and judge_error, and the loop
+    moves on."""
+
+    input_path = tmp_path / "registry_pseudo.jsonl"
+    output_path = tmp_path / "judged.jsonl"
+    _write_pseudo_fixture(input_path)
+
+    # All 4 attempts of row 1 fail. Row 2 succeeds first try.
+    model = _FlakyGeminiModel(
+        responses=['{"label": "neutral", "confidence": 0.50}'],
+        fail_on_indices={0, 1, 2, 3},
+        error_message="503 UNAVAILABLE on call",
+    )
+    import app.data.llm_judge as judge_module
+
+    real_sleep = judge_module.time.sleep
+    judge_module.time.sleep = lambda _seconds: None  # type: ignore[assignment]
+    try:
+        written = llm_judge.run_judge(
+            input_path=input_path,
+            output_path=output_path,
+            gemini_model=model,
+            judge_model_id="gemini-2.5-pro",
+            judge_model_version="v1",
+            progress_writer=lambda _line: None,
+        )
+    finally:
+        judge_module.time.sleep = real_sleep
+
+    rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
+    assert written == 2
+    assert rows[0]["judge_label"] == ""
+    assert rows[0]["judge_error"] == "RuntimeError"
+    assert rows[1]["judge_label"] == "neutral"
+    # Row 1 burned all 4 attempts; row 2 succeeded on first call
+    assert model.calls == 5
+
+
+def test_run_judge_resume_re_runs_previously_errored_rows(tmp_path: Path) -> None:
+    """On resume, rows recorded with judge_label='' (transient API
+    failure last run) should be re-attempted, not skipped. Only rows
+    with a real judge_label count as durably done."""
+
+    input_path = tmp_path / "registry_pseudo.jsonl"
+    output_path = tmp_path / "judged.jsonl"
+    _write_pseudo_fixture(input_path)
+    # Pre-seed: r1 successfully judged last run; r2 errored.
+    output_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "record_id": "r1",
+                        "label": "hawkish",
+                        "text": "first",
+                        "judge_label": "hawkish",
+                        "judge_confidence": 0.99,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "record_id": "r2",
+                        "label": "neutral",
+                        "text": "second",
+                        "judge_label": "",
+                        "judge_confidence": 0.0,
+                        "judge_error": "RuntimeError",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    model = _StubGeminiModel(['{"label": "neutral", "confidence": 0.66}'])
+    lines: list[str] = []
+    written = llm_judge.run_judge(
+        input_path=input_path,
+        output_path=output_path,
+        gemini_model=model,
+        judge_model_id="gemini-2.5-pro",
+        judge_model_version="v1",
+        resume=True,
+        progress_writer=lines.append,
+    )
+    # Only r2 ran in this invocation (r1 skipped as successful)
+    assert written == 1
+    raw = output_path.read_text(encoding="utf-8").splitlines()
+    rows = [json.loads(ln) for ln in raw]
+    # File should contain both rows; r2 now has a real judge_label and
+    # no judge_error.
+    by_id = {r["record_id"]: r for r in rows}
+    assert by_id["r1"]["judge_label"] == "hawkish"
+    assert by_id["r2"]["judge_label"] == "neutral"
+    assert "judge_error" not in by_id["r2"]
+    # The progress writer should NOT include 'skip' for r2 (we re-ran it)
+    assert not any("skip" in ln and "r2" in ln for ln in lines)
+
+
+def test_is_transient_error_classifies_known_signatures() -> None:
+    """Spot-check the classifier on the signatures we care about."""
+
+    transient = [
+        RuntimeError("503 UNAVAILABLE — high demand"),
+        RuntimeError("429 RESOURCE_EXHAUSTED"),
+        RuntimeError("DEADLINE_EXCEEDED"),
+        ConnectionError("Connection reset by peer"),
+        TimeoutError("Request timed out"),
+    ]
+    for exc in transient:
+        assert llm_judge._is_transient_error(exc), f"expected transient: {exc!r}"
+
+    non_transient = [
+        ValueError("malformed prompt"),
+        KeyError("missing field"),
+        RuntimeError("400 Bad Request — invalid auth"),
+    ]
+    for exc in non_transient:
+        assert not llm_judge._is_transient_error(exc), f"expected non-transient: {exc!r}"
+
+
+def test_score_with_retry_uses_exponential_backoff_delays() -> None:
+    """Verify the backoff schedule: delays are 1s, 4s, 16s (capped at
+    max_delay=64) — matches the helper's intent."""
+
+    delays: list[float] = []
+
+    def _on_retry(_attempt, _exc, delay):
+        delays.append(delay)
+
+    class _AlwaysFail:
+        def generate_content(self, _prompt):
+            raise RuntimeError("503 UNAVAILABLE on attempt")
+
+    sleep_calls: list[float] = []
+    prediction, exc = llm_judge._score_with_retry(
+        "text",
+        _AlwaysFail(),
+        max_attempts=4,
+        base_delay=1.0,
+        max_delay=64.0,
+        on_retry=_on_retry,
+        sleep_fn=sleep_calls.append,
+    )
+    assert prediction is None
+    assert exc is not None
+    # 4 attempts → 3 retries (the last attempt doesn't sleep)
+    assert delays == [1.0, 4.0, 16.0]
+    assert sleep_calls == [1.0, 4.0, 16.0]
+
+
+def test_score_with_retry_returns_immediately_on_non_transient_error() -> None:
+    """A ValueError doesn't trigger retry — fast-fail path."""
+
+    class _AlwaysFail:
+        def __init__(self):
+            self.calls = 0
+
+        def generate_content(self, _prompt):
+            self.calls += 1
+            raise ValueError("malformed prompt")
+
+    model = _AlwaysFail()
+    prediction, exc = llm_judge._score_with_retry(
+        "text",
+        model,
+        max_attempts=4,
+        base_delay=1.0,
+        sleep_fn=lambda _: None,
+    )
+    assert prediction is None
+    assert isinstance(exc, ValueError)
+    assert model.calls == 1
 
 
 def test_run_judge_resume_skips_record_ids_already_in_output(tmp_path: Path) -> None:
