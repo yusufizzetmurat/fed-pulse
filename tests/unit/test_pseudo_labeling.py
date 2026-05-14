@@ -35,6 +35,18 @@ def test_parse_args_default_threshold_is_0_85() -> None:
     assert args.teacher_model_version == "phase4_finetune_v1"
 
 
+def test_default_strategy_is_chunk_vote() -> None:
+    """The CPU smoke on 2026-05-14 showed chunk_max_pool collapses to all-hawkish
+    (same failure mode as doc_truncated). chunk_vote surfaces class diversity by
+    taking the modal label across chunks above tau_chunk. The module-level
+    default and the CLI default must agree on chunk_vote so a call without
+    --strategy reproduces the data-supported behaviour."""
+
+    assert pseudo_labeling.DEFAULT_STRATEGY == "chunk_vote"
+    args = pseudo_labeling._parse_args(["--teacher-checkpoint", "/some/path"])
+    assert args.strategy == "chunk_vote"
+
+
 class _StubPipeline:
     """Stand-in for transformers.pipeline that the teacher loader returns."""
 

@@ -6,7 +6,13 @@ TRAINING_PACKAGE_ID ?=
 OWNER ?= unknown
 SEED ?= 11
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm
+TEACHER_CHECKPOINT ?= /data/artifacts/phase3/pilot_finetune_20260505T142652Z/hf_checkpoints
+PSEUDO_STRATEGY ?= chunk_vote
+PSEUDO_TAU_CHUNK ?= 0.50
+PSEUDO_TAU_DOC ?= 0.85
+PSEUDO_AUDIT_SIZE ?= 100
+
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics
 
 help:
 	@echo "Targets:"
@@ -24,6 +30,9 @@ help:
 	@echo "  make changelog        - Regenerate CHANGELOG.md from Conventional Commits via git-cliff"
 	@echo "  make audit-python     - Run pip-audit on the backend deps (mirrors CI)"
 	@echo "  make audit-npm        - Run npm audit on the frontend deps (mirrors CI)"
+	@echo "  make pseudo-labels    - Run chunk-aggregated teacher on the unlabelled pool (chunk_vote default)"
+	@echo "  make pseudo-labels-audit-sample - Sample a stratified PSEUDO_AUDIT_SIZE-row CSV for human labelling"
+	@echo "  make pseudo-labels-audit-metrics - Compute teacher precision against the human-labelled audit set"
 
 dev: dev-cpu
 
@@ -89,3 +98,40 @@ audit-python:
 
 audit-npm:
 	docker compose run --rm frontend npm audit --audit-level=high --production
+
+# Pseudo-label production run (chunk-aggregated teacher; default strategy chunk_vote).
+# Reads /data/raw/phase2/source_registry.jsonl, writes a pseudo set + threshold
+# sweep under /data/interim/phase2/. Override defaults via PSEUDO_STRATEGY,
+# PSEUDO_TAU_CHUNK, PSEUDO_TAU_DOC, TEACHER_CHECKPOINT. See docs/pseudo-label-runbook.md.
+pseudo-labels:
+	docker compose run --rm backend \
+		python -m app.data.pseudo_labeling \
+		--teacher-checkpoint "$(TEACHER_CHECKPOINT)" \
+		--teacher-model-id finbert_fomc_s71 \
+		--teacher-model-version chunk_aggregated_v1 \
+		--input /data/raw/phase2/source_registry.jsonl \
+		--output /data/interim/phase2/registry_pseudo_$(PSEUDO_STRATEGY).jsonl \
+		--strategy "$(PSEUDO_STRATEGY)" \
+		--tau-chunk "$(PSEUDO_TAU_CHUNK)" \
+		--threshold "$(PSEUDO_TAU_DOC)"
+
+# Stratified PSEUDO_AUDIT_SIZE-row sample for human labelling. Reads the pseudo set
+# at /data/interim/phase2/registry_pseudo_$(PSEUDO_STRATEGY).jsonl, writes the
+# audit CSV + accompanying JSONL under /data/artifacts/pseudo_label_audits/.
+pseudo-labels-audit-sample:
+	docker compose run --rm backend \
+		python -c "import json; from pathlib import Path; from app.data.llm_judge import sample_audit_set, write_audit_csv; \
+		rows = [json.loads(l) for l in open('/data/interim/phase2/registry_pseudo_$(PSEUDO_STRATEGY).jsonl')]; \
+		sample = sample_audit_set(rows, n=$(PSEUDO_AUDIT_SIZE), seed=$(SEED)); \
+		Path('/data/artifacts/pseudo_label_audits').mkdir(parents=True, exist_ok=True); \
+		write_audit_csv(sample, Path('/data/artifacts/pseudo_label_audits/audit_set_$(PSEUDO_STRATEGY)_n$(PSEUDO_AUDIT_SIZE).csv')); \
+		print(f'wrote audit_set_$(PSEUDO_STRATEGY)_n$(PSEUDO_AUDIT_SIZE).csv with {len(sample)} rows')"
+
+# Compute teacher precision against the human-labelled audit. Expects a
+# human_label column added to the CSV (open in Excel/Sheets, fill, save as
+# audit_set_<strategy>_filled.jsonl). Prints Cohen's kappa + per-class precision.
+pseudo-labels-audit-metrics:
+	docker compose run --rm backend \
+		python -c "import json; from app.data.llm_judge import audit_metrics; \
+		rows = [json.loads(l) for l in open('/data/artifacts/pseudo_label_audits/audit_set_$(PSEUDO_STRATEGY)_filled.jsonl')]; \
+		print(json.dumps(audit_metrics(rows), indent=2))"
