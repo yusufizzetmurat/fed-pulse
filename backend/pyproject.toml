@@ -31,6 +31,7 @@ dependencies = [
   "langsmith>=0.1.0",
   "scikit-learn",
   "pypdf>=5.0.0",
+  "SQLAlchemy>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -61,6 +62,7 @@ ignore = [
   "F541",   # f-string without placeholders
   "F841",   # unused local variable
   "I001",   # import sorting — bulk reformat in follow-up
+  "B008",   # function-call default in argument — FastAPI's Depends() pattern
   "B905",   # zip without strict=
   "UP012",  # explicit encoding="utf-8" — intentional clarity, kept
   "UP017",  # datetime.timezone.utc → datetime.UTC (Python 3.11 idiom; adopt in cleanup)

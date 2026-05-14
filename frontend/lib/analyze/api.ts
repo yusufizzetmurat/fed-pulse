@@ -1,5 +1,13 @@
 import axios from "axios";
-import type { AnalyzeRequest, AnalyzeResult, TrainJobState } from "./types";
+import type {
+  AnalyzeRequest,
+  AnalyzeResult,
+  FomcCalendarResponse,
+  HistoryDetail,
+  HistoryList,
+  HistoryQuery,
+  TrainJobState,
+} from "./types";
 
 export function resolveApiBaseUrl(): string {
   const raw = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -39,4 +47,32 @@ export async function fetchTrainJob(baseUrl: string, jobId: string): Promise<Tra
   const response = await axios.get(`${baseUrl}/train-jobs/${jobId}`);
   const state = (response.data || {}) as TrainJobState;
   return { ...state, job_id: jobId };
+}
+
+export async function fetchHistory(
+  baseUrl: string,
+  query: HistoryQuery = {}
+): Promise<HistoryList> {
+  const response = await axios.get(`${baseUrl}/history`, { params: query });
+  return response.data as HistoryList;
+}
+
+export async function fetchHistoryRun(
+  baseUrl: string,
+  runId: string
+): Promise<HistoryDetail> {
+  const response = await axios.get(`${baseUrl}/history/${runId}`);
+  return response.data as HistoryDetail;
+}
+
+export async function deleteHistoryRun(baseUrl: string, runId: string): Promise<void> {
+  await axios.delete(`${baseUrl}/history/${runId}`);
+}
+
+export async function fetchFomcCalendar(
+  baseUrl: string,
+  params?: { upcoming_limit?: number; past_limit?: number; as_of?: string }
+): Promise<FomcCalendarResponse> {
+  const response = await axios.get(`${baseUrl}/fomc/calendar`, { params });
+  return response.data as FomcCalendarResponse;
 }

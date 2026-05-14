@@ -110,3 +110,42 @@ class TrainJobStatusResponse(BaseModel):
     started_at: str | None = None
     finished_at: str | None = None
     result: AnalyzeResponse | None = None
+
+
+class HistoryEntry(BaseModel):
+    id: str
+    created_at: str
+    symbol: str
+    document_date: str
+    horizon: str
+    forecast_mode: str
+    stance: str
+    sentiment_score: float | None = None
+    predicted_close: float | None = None
+    current_close: float | None = None
+    predicted_volatility: float | None = None
+    text_excerpt: str | None = None
+
+
+class HistoryDetail(HistoryEntry):
+    payload: dict
+
+
+class HistoryList(BaseModel):
+    items: list[HistoryEntry]
+    total: int
+    limit: int
+    offset: int
+
+
+class FomcMeetingResponse(BaseModel):
+    meeting_date: str
+    meeting_type: str
+    statement_release_date: str | None = None
+    minutes_release_date: str | None = None
+    notes: str | None = None
+
+
+class FomcCalendarResponse(BaseModel):
+    past: list[FomcMeetingResponse]
+    upcoming: list[FomcMeetingResponse]

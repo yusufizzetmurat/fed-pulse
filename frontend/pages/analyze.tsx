@@ -1,6 +1,7 @@
 import * as React from "react";
 import Head from "next/head";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/router";
 import { toast } from "sonner";
 
 import { AnalyzeForm } from "@/components/analyze/AnalyzeForm";
@@ -10,6 +11,7 @@ import { MarketContext } from "@/components/analyze/MarketContext";
 import { PredictionCards } from "@/components/analyze/PredictionCards";
 import { RealTrainStatus } from "@/components/analyze/RealTrainStatus";
 import { SentimentCard } from "@/components/analyze/SentimentCard";
+import { WatchlistChips } from "@/components/analyze/WatchlistChips";
 import { Header } from "@/components/shell/header";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -60,12 +62,21 @@ function trainJobMessage(state: TrainJobState): string {
 }
 
 export default function AnalyzePage() {
+  const router = useRouter();
   const [request, setRequest] = React.useState<AnalyzeRequest>(defaultRequest);
   const [result, setResult] = React.useState<AnalyzeResult | null>(null);
   const [trainJob, setTrainJob] = React.useState<TrainJobState | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [previewV2, setPreviewV2] = React.useState(false);
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
+
+  React.useEffect(() => {
+    if (!router.isReady) return;
+    const queryDate = router.query.date;
+    if (typeof queryDate === "string" && queryDate) {
+      setRequest((current) => ({ ...current, date: queryDate }));
+    }
+  }, [router.isReady, router.query.date]);
 
   const handleSubmit = async () => {
     setLoading(true);
@@ -149,6 +160,11 @@ export default function AnalyzePage() {
             onChange={setRequest}
             onSubmit={handleSubmit}
             loading={loading}
+          />
+
+          <WatchlistChips
+            currentSymbol={request.symbol}
+            onSelect={(symbol) => setRequest((value) => ({ ...value, symbol }))}
           />
 
           {trainJob ? <RealTrainStatus job={trainJob} /> : null}

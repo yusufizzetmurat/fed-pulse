@@ -1,14 +1,37 @@
 import json
+import logging
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 
 from app.config import DATA_DIR
-from app.schemas import AnalyzeRequest, AnalyzeResponse, TrainJobAcceptedResponse, TrainJobStatusResponse
+from app.db import (
+    delete_run,
+    get_engine,
+    get_run,
+    get_session,
+    list_runs,
+    persist_analysis_run,
+    session_scope,
+)
+
+logger = logging.getLogger(__name__)
+from app.schemas import (
+    AnalyzeRequest,
+    AnalyzeResponse,
+    FomcCalendarResponse,
+    HistoryDetail,
+    HistoryEntry,
+    HistoryList,
+    TrainJobAcceptedResponse,
+    TrainJobStatusResponse,
+)
+from app.services.fomc_calendar import get_calendar
 from app.services.forecaster import (
     bootstrap_checkpoint,
     build_feature_vectors,
@@ -37,6 +60,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def _initialise_db() -> None:
+    get_engine()
 
 
 @app.get("/health")
@@ -161,6 +189,7 @@ def _run_real_train_job(job_id: str, payload: AnalyzeRequest) -> None:
             early_stopping_patience=12,
         )
         result = _build_analyze_response(payload, mode="real_train", history_length=REAL_TRAIN_HISTORY_LENGTH)
+        _record_history(payload, result)
         _set_job_state(
             job_id,
             status="succeeded",
@@ -229,7 +258,9 @@ def analyze(payload: AnalyzeRequest):
                 early_stopping_patience=8,
             )
 
-        return _build_analyze_response(payload, mode=mode, history_length=history_length)
+        response = _build_analyze_response(payload, mode=mode, history_length=history_length)
+        _record_history(payload, response)
+        return response
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:  # pragma: no cover
@@ -243,3 +274,81 @@ def get_train_job(job_id: str):
         if state is None:
             raise HTTPException(status_code=404, detail=f"Train job not found: {job_id}")
         return dict(state)
+
+
+def _record_history(request: AnalyzeRequest, response: dict[str, Any]) -> None:
+    # Persistence must not break /analyze; log so silent failures (disk full,
+    # missing table, etc.) still show up in uvicorn output.
+    try:
+        with session_scope() as session:
+            persist_analysis_run(
+                session,
+                payload=response,
+                request=request.model_dump(),
+                response=response,
+            )
+    except Exception:
+        logger.warning(
+            "history persistence failed for symbol=%s date=%s",
+            request.symbol,
+            request.date,
+            exc_info=True,
+        )
+
+
+@app.get("/history", response_model=HistoryList)
+def get_history(
+    symbol: str | None = Query(default=None),
+    horizon: str | None = Query(default=None),
+    stance: str | None = Query(default=None),
+    document_date: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> HistoryList:
+    rows, total = list_runs(
+        session,
+        limit=limit,
+        offset=offset,
+        symbol=symbol,
+        horizon=horizon,
+        stance=stance,
+        document_date=document_date,
+    )
+    items = [HistoryEntry(**row.to_summary()) for row in rows]
+    return HistoryList(items=items, total=total, limit=limit, offset=offset)
+
+
+@app.get("/history/{run_id}", response_model=HistoryDetail)
+def get_history_run(run_id: str, session: Session = Depends(get_session)) -> HistoryDetail:
+    row = get_run(session, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    return HistoryDetail(**row.to_detail())
+
+
+@app.delete("/history/{run_id}", status_code=204)
+def delete_history_run(run_id: str, session: Session = Depends(get_session)) -> None:
+    if not delete_run(session, run_id):
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+
+
+@app.get("/fomc/calendar", response_model=FomcCalendarResponse)
+def fomc_calendar(
+    upcoming_limit: int = Query(default=12, ge=1, le=60),
+    past_limit: int = Query(default=12, ge=0, le=60),
+    as_of: str | None = Query(default=None, description="YYYY-MM-DD; defaults to today"),
+) -> FomcCalendarResponse:
+    reference: date | None = None
+    if as_of:
+        try:
+            reference = date.fromisoformat(as_of)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="as_of must be YYYY-MM-DD") from exc
+    calendar = get_calendar(
+        as_of=reference, upcoming_limit=upcoming_limit, past_limit=past_limit
+    )
+    return FomcCalendarResponse(
+        past=[meeting.to_dict() for meeting in calendar["past"]],  # type: ignore[arg-type]
+        upcoming=[meeting.to_dict() for meeting in calendar["upcoming"]],  # type: ignore[arg-type]
+    )
