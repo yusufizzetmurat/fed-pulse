@@ -18,9 +18,10 @@ describe("XaiPanel", () => {
     }
   });
 
-  it("returns null when there are no sentences", () => {
-    const { container } = renderWithTooltip(<XaiPanel xai={{ sentences: [] }} />);
-    expect(container.firstChild?.firstChild ?? null).toBeNull();
+  it("renders the empty-state placeholder when there are no sentences", () => {
+    renderWithTooltip(<XaiPanel xai={{ sentences: [] }} />);
+    expect(screen.getByText(/sentence attribution/i)).toBeInTheDocument();
+    expect(screen.getByText(/no salient sentences detected/i)).toBeInTheDocument();
   });
 
   it("shows the integrated-gradients method label", () => {

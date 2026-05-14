@@ -80,7 +80,7 @@ function SentenceChip({ sentence }: { sentence: XaiSentence }) {
 }
 
 export function XaiPanel({ xai, previewMode }: XaiPanelProps) {
-  if (!xai.sentences.length) return null;
+  const isEmpty = !xai.sentences.length;
   return (
     <Card>
       <CardHeader>
@@ -99,11 +99,18 @@ export function XaiPanel({ xai, previewMode }: XaiPanelProps) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <p className="space-x-1.5 text-sm leading-7">
-          {xai.sentences.map((sentence, idx) => (
-            <SentenceChip key={`${idx}-${sentence.text.slice(0, 16)}`} sentence={sentence} />
-          ))}
-        </p>
+        {isEmpty ? (
+          <p className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-4 text-sm text-muted-foreground">
+            No salient sentences detected. The attribution method found no tokens above the salience floor — common for very short
+            inputs or text that lies outside the FOMC vocabulary the model was trained on.
+          </p>
+        ) : (
+          <p className="space-x-1.5 text-sm leading-7">
+            {xai.sentences.map((sentence, idx) => (
+              <SentenceChip key={`${idx}-${sentence.text.slice(0, 16)}`} sentence={sentence} />
+            ))}
+          </p>
+        )}
       </CardContent>
     </Card>
   );

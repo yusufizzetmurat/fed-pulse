@@ -15,6 +15,9 @@ export interface AnalyzeRequest {
 export interface SentimentResponse {
   label?: string | null;
   score?: number | null;
+  ood_energy?: number | null;
+  ood_threshold?: number | null;
+  is_in_distribution?: boolean | null;
 }
 
 export interface PredictionResponse {
