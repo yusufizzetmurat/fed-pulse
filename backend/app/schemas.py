@@ -199,6 +199,16 @@ class HistoryList(BaseModel):
     offset: int
 
 
+class HistoryRealizedResponse(BaseModel):
+    run_id: str
+    symbol: str
+    document_date: str
+    horizon: str
+    timestamps: list[str]
+    close: list[float]
+    volatility: list[float]
+
+
 class FomcMeetingResponse(BaseModel):
     meeting_date: str
     meeting_type: str

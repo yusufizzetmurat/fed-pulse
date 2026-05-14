@@ -156,7 +156,8 @@ export default function AnalyzePage() {
   const splitTimestamp = result?.series?.timestamps?.[result.series.timestamps.length - 1];
   const volScale = result?.series?.volatility_scale || { suggested_ymin: 0.0, suggested_ymax: 1.0 };
   const confidenceLevel = Math.round(Number(result?.series?.forecast_confidence_level || 0.8) * 100);
-  const confidenceLabel = `${confidenceLevel}% confidence band`;
+  const bandKind = result?.series?.forecast_band_source === "conformal" ? "conformal" : "Gaussian";
+  const confidenceLabel = `${confidenceLevel}% ${bandKind} band`;
   const hasCloseConfidence = Boolean(result?.series?.forecast_close_lower?.length);
   const hasVolConfidence = Boolean(result?.series?.forecast_volatility_lower?.length);
 

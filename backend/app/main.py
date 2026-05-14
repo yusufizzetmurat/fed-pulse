@@ -35,6 +35,7 @@ from app.schemas import (
     HistoryDetail,
     HistoryEntry,
     HistoryList,
+    HistoryRealizedResponse,
     TrainJobAcceptedResponse,
     TrainJobStatusResponse,
 )
@@ -468,6 +469,33 @@ def get_history_run(run_id: str, session: Session = Depends(get_session)) -> His
 def delete_history_run(run_id: str, session: Session = Depends(get_session)) -> None:
     if not delete_run(session, run_id):
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+
+
+@app.get("/history/{run_id}/realized", response_model=HistoryRealizedResponse)
+def get_history_run_realized(
+    run_id: str, session: Session = Depends(get_session)
+) -> HistoryRealizedResponse:
+    row = get_run(session, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    steps = parse_horizon_steps(row.horizon)
+    try:
+        realized = fetch_realized_forward(
+            target_date=row.document_date,
+            symbol=row.symbol,
+            steps=steps,
+        )
+    except Exception as exc:  # pragma: no cover — yfinance failures bubble as 502
+        raise HTTPException(status_code=502, detail=f"Market lookup failed: {exc}") from exc
+    return HistoryRealizedResponse(
+        run_id=row.id,
+        symbol=row.symbol,
+        document_date=row.document_date,
+        horizon=row.horizon,
+        timestamps=[str(point["date"]) for point in realized],
+        close=[float(point["close"]) for point in realized],
+        volatility=[float(point["volatility_5d"]) for point in realized],
+    )
 
 
 @app.get("/fomc/calendar", response_model=FomcCalendarResponse)

@@ -100,6 +100,38 @@ def test_history_filter_by_stance_and_date(client):
     assert by_date.json()["total"] == 1
 
 
+def test_history_realized_endpoint(client, monkeypatch):
+    session_iter = db_module.get_session()
+    sess = next(session_iter)
+    try:
+        run = _seed(sess, document_date="2024-09-18")
+    finally:
+        sess.close()
+
+    monkeypatch.setattr(
+        main_mod,
+        "fetch_realized_forward",
+        lambda **_: [
+            {"date": "2024-09-19", "close": 5602.0, "volatility_5d": 0.0110},
+            {"date": "2024-09-20", "close": 5615.0, "volatility_5d": 0.0112},
+            {"date": "2024-09-23", "close": 5628.0, "volatility_5d": 0.0115},
+        ],
+    )
+
+    response = client.get(f"/history/{run.id}/realized")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run_id"] == run.id
+    assert body["timestamps"] == ["2024-09-19", "2024-09-20", "2024-09-23"]
+    assert body["close"] == [5602.0, 5615.0, 5628.0]
+    assert body["volatility"] == [0.0110, 0.0112, 0.0115]
+
+
+def test_history_realized_endpoint_404_for_missing_run(client):
+    response = client.get("/history/does-not-exist/realized")
+    assert response.status_code == 404
+
+
 def test_fomc_calendar_endpoint_returns_past_and_upcoming(client):
     response = client.get("/fomc/calendar", params={"as_of": "2024-09-18"})
     assert response.status_code == 200
