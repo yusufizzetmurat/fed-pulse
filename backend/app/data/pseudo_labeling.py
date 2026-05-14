@@ -40,7 +40,15 @@ CHUNK_STRATEGIES: tuple[ChunkStrategy, ...] = (
     "chunk_mean_pool",
     "chunk_vote",
 )
-DEFAULT_STRATEGY: ChunkStrategy = "chunk_max_pool"
+# chunk_vote is the default because the 10-row CPU smoke (2026-05-14) showed
+# chunk_max_pool reproduces the same collapse failure as doc_truncated (all 10
+# rows labelled hawkish at 0.99 mean confidence — the single highest-confidence
+# chunk is reliably an inflation-keyword sentence that the teacher reads as
+# hawkish), while chunk_vote surfaces class diversity (4 hawkish / 5 dovish /
+# 1 neutral) by taking the modal label across all chunks above tau_chunk with
+# a mean-confidence tiebreak. See 06_Deep_Learning_Roadmap.md §2.5.8 for the
+# audit history and selection rationale.
+DEFAULT_STRATEGY: ChunkStrategy = "chunk_vote"
 DEFAULT_TAU_CHUNK = 0.50
 DEFAULT_MAX_CHUNKS_PER_DOC = 64
 
