@@ -12,6 +12,13 @@ PSEUDO_TAU_CHUNK ?= 0.50
 PSEUDO_TAU_DOC ?= 0.85
 PSEUDO_AUDIT_SIZE ?= 100
 
+# Judge-only audit knobs. JUDGE_REQUEST_INTERVAL spaces calls to respect
+# Gemini free-tier rate limits (2 req/min on gemini-2.5-flash, so 30s
+# interval is the safe floor; paid tiers can leave it at 0.0).
+JUDGE_MODEL ?= gemini-2.5-pro
+JUDGE_MODEL_VERSION ?= 20260514_v1
+JUDGE_REQUEST_INTERVAL ?= 0.0
+
 # Pseudo-label workflow runs through the GPU backend by default — a 9,696-row pass
 # on CPU takes days. Override on a CPU-only box with:
 #   make pseudo-labels PSEUDO_SERVICE=backend PSEUDO_PROFILE_FLAG=
@@ -20,7 +27,7 @@ PSEUDO_AUDIT_SIZE ?= 100
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge
 
 help:
 	@echo "Targets:"
@@ -41,6 +48,8 @@ help:
 	@echo "  make pseudo-labels    - Run chunk-aggregated teacher on the unlabelled pool (chunk_vote default)"
 	@echo "  make pseudo-labels-audit-sample - Sample a stratified PSEUDO_AUDIT_SIZE-row CSV for human labelling"
 	@echo "  make pseudo-labels-audit-metrics - Compute teacher precision against the human-labelled audit set"
+	@echo "  make pseudo-labels-judge-pass - Score the pseudo set with Gemini (judge-only audit gold)"
+	@echo "  make pseudo-labels-audit-metrics-judge - Compute teacher precision against the LLM judge gold"
 
 dev: dev-cpu
 
@@ -143,3 +152,25 @@ pseudo-labels-audit-metrics:
 		python -c "import json; from app.data.llm_judge import audit_metrics; \
 		rows = [json.loads(l) for l in open('/data/artifacts/pseudo_label_audits/audit_set_$(PSEUDO_STRATEGY)_filled.jsonl')]; \
 		print(json.dumps(audit_metrics(rows), indent=2))"
+
+# Score the pseudo set with the Gemini judge — the judge-only audit path
+# uses these labels as gold without requiring a human pass. Requires
+# GEMINI_API_KEY in .env. Free-tier rate limit is 2 req/min for flash;
+# default --request-interval-seconds 0.0 assumes a paid quota.
+pseudo-labels-judge-pass:
+	docker compose $(PSEUDO_PROFILE_FLAG) run --rm $(PSEUDO_SERVICE) \
+		python -m app.data.llm_judge \
+		--input /data/interim/phase2/registry_pseudo_$(PSEUDO_STRATEGY).jsonl \
+		--output /data/interim/phase2/registry_pseudo_$(PSEUDO_STRATEGY)_judged.jsonl \
+		--judge-model "$(JUDGE_MODEL)" \
+		--judge-model-version "$(JUDGE_MODEL_VERSION)" \
+		--request-interval-seconds "$(JUDGE_REQUEST_INTERVAL)"
+
+# Judge-only audit: use the Gemini judge labels as gold and compute
+# teacher per-class precision + Cohen's kappa(teacher, judge). Pass
+# criterion: every supported class >= 0.90 precision.
+pseudo-labels-audit-metrics-judge:
+	docker compose $(PSEUDO_PROFILE_FLAG) run --rm $(PSEUDO_SERVICE) \
+		python -c "import json; from app.data.llm_judge import audit_metrics_judge_only; \
+		rows = [json.loads(l) for l in open('/data/interim/phase2/registry_pseudo_$(PSEUDO_STRATEGY)_judged.jsonl')]; \
+		print(json.dumps(audit_metrics_judge_only(rows), indent=2))"

@@ -136,6 +136,61 @@ Whatever the outcome:
 - `06_Deep_Learning_Roadmap.md §2.5.8` — extend the "Audit outcome" with the new precision tables and the v2 ablation result if the gate passed.
 - `09_Risk_Register.md` R-14 (time-coverage gap) — if you ran the audit on post-2022 FOMC text and it passed, mark Path A as the chosen route and update the status.
 
+## Judge-only audit (no human pass)
+
+The user-vs-teacher audit above is the strictest gate but expensive (one focused afternoon of hand-labelling). The judge-only path drops the human pass entirely: the Gemini judge becomes the gold reference per `docs/benchmark-policy.md §Contamination handling`. The judge is architecturally distinct from the FinBERT-FOMC teacher (different family, different pretraining, different vocabulary), so its labels are a legitimate independent annotator.
+
+**When to use this path:**
+
+- Time pressure makes human labelling infeasible.
+- You want a fast first signal on whether the chunk-aggregated teacher's pseudo-labels are even close to plausible.
+- You want a methodology contribution ("we audited at N=K with an LLM judge as gold; teacher precision was X") without committing to a 4-6 hour human pass.
+
+**When NOT to use this path:**
+
+- The judge has its own bias (in the 2026-05-05 audit, Gemini was anti-hawkish at temperature 0). Don't treat judge-only precision as ground truth.
+- For the published thesis result you still want a small human-pass on disagreements (judge-vs-teacher mismatched rows) so the conclusion isn't "two models agreed with each other".
+
+### Workflow
+
+```bash
+# 1. Score the pseudo set with the Gemini judge. Writes
+#    /data/interim/phase2/registry_pseudo_<strategy>_judged.jsonl
+#    with judge_label / judge_confidence / judge_model_id per row.
+make pseudo-labels-judge-pass
+# Override knobs:
+#   JUDGE_MODEL=gemini-2.5-flash JUDGE_REQUEST_INTERVAL=35 make pseudo-labels-judge-pass
+#   (free-tier flash is 2 req/min so 35s spacing keeps under the cap)
+
+# 2. Compute teacher-vs-judge precision + Cohen's kappa.
+make pseudo-labels-audit-metrics-judge
+```
+
+Output is a JSON dict with the new fields:
+
+```json
+{
+  "audit_size": 91,
+  "gold_source": "judge_only",
+  "teacher_judge_accuracy": 0.78,
+  "cohen_kappa_teacher_judge": 0.55,
+  "teacher_per_class": {
+    "hawkish": {"precision": 0.94, "recall": 0.82, "tp": 31, "fp": 2, "fn": 7, "support_in_gold": 38},
+    "dovish":  {"precision": 1.00, "recall": 0.75, "tp": 9,  "fp": 0, "fn": 3, "support_in_gold": 12},
+    "neutral": {"precision": 0.83, "recall": 0.93, "tp": 38, "fp": 8, "fn": 3, "support_in_gold": 41}
+  },
+  "teacher_label_distribution": {"hawkish": 33, "dovish": 9, "neutral": 46},
+  "judge_label_distribution":   {"hawkish": 38, "dovish": 12, "neutral": 41},
+  "audit_gate_per_class":       {"hawkish": true, "dovish": true, "neutral": false},
+  "audit_gate_passed": false,
+  "judge_model_id_distribution": {"gemini-2.5-pro": 91}
+}
+```
+
+(Numbers above are illustrative.)
+
+The gate passes only if **every supported class** clears 0.90 teacher precision. Partial-pass interpretations live in `§5` above.
+
 ## Recommended path through the runbook
 
 For your specific situation as of 2026-05-14 (chunk_vote is the default; the 9,696-row Kaggle pool is the main target):

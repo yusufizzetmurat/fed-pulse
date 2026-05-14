@@ -202,6 +202,94 @@ def test_audit_metrics_handles_empty_human_labels(tmp_path: Path) -> None:
     assert metrics["teacher_accuracy"] == pytest.approx(1.0)
 
 
+def test_audit_metrics_judge_only_uses_judge_as_gold_and_computes_per_class_precision() -> None:
+    """Judge-only audit shape: gold is the LLM judge's label per row;
+    teacher precision per class is computed against that gold."""
+
+    rows = [
+        # teacher hawkish, judge hawkish → TP for hawkish
+        {"label": "hawkish", "judge_label": "hawkish"},
+        {"label": "hawkish", "judge_label": "hawkish"},
+        # teacher hawkish, judge neutral → FP for hawkish; FN for neutral
+        {"label": "hawkish", "judge_label": "neutral"},
+        # teacher neutral, judge neutral → TP for neutral
+        {"label": "neutral", "judge_label": "neutral"},
+        {"label": "neutral", "judge_label": "neutral"},
+        # teacher dovish, judge dovish → TP for dovish
+        {"label": "dovish", "judge_label": "dovish"},
+    ]
+    metrics = llm_judge.audit_metrics_judge_only(rows)
+    assert metrics["audit_size"] == 6
+    assert metrics["gold_source"] == "judge_only"
+    # Teacher predicted hawkish 3 times; 2 agreed with judge → precision 2/3
+    assert metrics["teacher_per_class"]["hawkish"]["precision"] == pytest.approx(2 / 3)
+    assert metrics["teacher_per_class"]["neutral"]["precision"] == pytest.approx(1.0)
+    assert metrics["teacher_per_class"]["dovish"]["precision"] == pytest.approx(1.0)
+    # Per-class support (in gold) — what judge marked as each class
+    assert metrics["teacher_per_class"]["hawkish"]["support_in_gold"] == 2
+    assert metrics["teacher_per_class"]["neutral"]["support_in_gold"] == 3
+    assert metrics["teacher_per_class"]["dovish"]["support_in_gold"] == 1
+
+
+def test_audit_metrics_judge_only_marks_gate_passed_when_all_classes_above_threshold() -> None:
+    rows = [
+        {"label": "hawkish", "judge_label": "hawkish"},
+        {"label": "dovish", "judge_label": "dovish"},
+        {"label": "neutral", "judge_label": "neutral"},
+    ]
+    metrics = llm_judge.audit_metrics_judge_only(rows)
+    assert metrics["audit_gate_passed"] is True
+    for label in ("hawkish", "dovish", "neutral"):
+        assert metrics["audit_gate_per_class"][label] is True
+
+
+def test_audit_metrics_judge_only_fails_gate_when_one_class_below_threshold() -> None:
+    # Teacher labels 5 rows hawkish; judge agrees on 4 of them → precision 0.80
+    rows = [
+        {"label": "hawkish", "judge_label": "hawkish"},
+        {"label": "hawkish", "judge_label": "hawkish"},
+        {"label": "hawkish", "judge_label": "hawkish"},
+        {"label": "hawkish", "judge_label": "hawkish"},
+        {"label": "hawkish", "judge_label": "neutral"},
+        {"label": "dovish", "judge_label": "dovish"},
+        {"label": "neutral", "judge_label": "neutral"},
+    ]
+    metrics = llm_judge.audit_metrics_judge_only(rows)
+    assert metrics["audit_gate_passed"] is False
+    assert metrics["audit_gate_per_class"]["hawkish"] is False
+    assert metrics["audit_gate_per_class"]["dovish"] is True
+
+
+def test_audit_metrics_judge_only_drops_rows_with_missing_labels() -> None:
+    rows = [
+        {"label": "hawkish", "judge_label": "hawkish"},
+        {"label": "", "judge_label": "neutral"},  # teacher abstain → drop
+        {"label": "dovish", "judge_label": ""},  # judge parse failure → drop
+    ]
+    metrics = llm_judge.audit_metrics_judge_only(rows)
+    assert metrics["audit_size"] == 1
+
+
+def test_audit_metrics_judge_only_returns_zero_on_empty_input() -> None:
+    metrics = llm_judge.audit_metrics_judge_only([])
+    assert metrics["audit_size"] == 0
+    assert metrics["gold_source"] == "judge_only"
+    assert metrics["audit_gate_per_class"] == {}
+
+
+def test_audit_metrics_judge_only_tracks_judge_model_id_distribution() -> None:
+    rows = [
+        {"label": "hawkish", "judge_label": "hawkish", "judge_model_id": "gemini-2.5-pro"},
+        {"label": "dovish", "judge_label": "dovish", "judge_model_id": "gemini-2.5-pro"},
+        {"label": "neutral", "judge_label": "neutral", "judge_model_id": "gemini-2.5-flash"},
+    ]
+    metrics = llm_judge.audit_metrics_judge_only(rows)
+    assert metrics["judge_model_id_distribution"] == {
+        "gemini-2.5-pro": 2,
+        "gemini-2.5-flash": 1,
+    }
+
+
 def test_write_audit_csv_includes_empty_human_label_column(tmp_path: Path) -> None:
     sample = [
         {"record_id": "r1", "label": "hawkish", "judge_label": "hawkish", "text": "Some text"},
