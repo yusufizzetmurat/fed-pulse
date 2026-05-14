@@ -9,10 +9,12 @@ from pathlib import Path
 import pytest
 
 from app.data.ingest_sources import (
+    GTFINTECHLAB_CROSS_BANK_DATASETS,
     _GTFINTECHLAB_STANCE_MAP,
     _OP_FED_STANCE_MAP,
     _iter_fomc_archive_records,
     _iter_gss_factors_records,
+    _iter_gtfintechlab_cross_bank_records,
     _iter_gtfintechlab_federal_reserve_records,
     _iter_op_fed_records,
 )
@@ -403,6 +405,63 @@ def test_iter_gtfintechlab_federal_reserve_records_maps_multi_axis(monkeypatch) 
     balanced = by_text["Risks to the outlook are roughly balanced."]
     assert balanced["label"] == "neutral"  # case-insensitive stance match
     assert balanced["event_date"] == "2016-01-01"
+
+
+def test_gtfintechlab_cross_bank_dataset_list_covers_five_banks() -> None:
+    bank_keys = [item[0] for item in GTFINTECHLAB_CROSS_BANK_DATASETS]
+    assert bank_keys == [
+        "european_central_bank",
+        "bank_of_japan",
+        "bank_of_england",
+        "bank_of_canada",
+        "reserve_bank_of_australia",
+    ]
+    for bank_key, hf_id, _document_type in GTFINTECHLAB_CROSS_BANK_DATASETS:
+        assert hf_id.startswith("gtfintechlab/")
+        assert bank_key in hf_id.split("/", 1)[1]
+
+
+def test_iter_gtfintechlab_cross_bank_records_tags_provenance(monkeypatch) -> None:
+    # Same row schema as federal_reserve_system; the cross-bank loader
+    # iterates a fixed list of (bank, dataset_id) tuples so we mock all five
+    # by returning the same single-row payload regardless of dataset_id.
+    import sys
+    import types
+
+    fake = types.SimpleNamespace()
+    fake.get_dataset_config_names = lambda dataset: ["default"]
+    fake.get_dataset_split_names = lambda dataset, config: ["train"]
+
+    def _fake_load(dataset_id, config, split=None):
+        # Encode the dataset_id into the sentence so the dedupe doesn't collapse
+        # rows across banks.
+        return [
+            {
+                "sentences": f"{dataset_id} — Inflation pressures are easing.",
+                "stance_label": "dovish",
+                "time_label": "not forward looking",
+                "certain_label": "certain",
+                "year": 2024,
+            }
+        ]
+
+    fake.load_dataset = _fake_load
+    monkeypatch.setitem(sys.modules, "datasets", fake)
+
+    records = _iter_gtfintechlab_cross_bank_records()
+
+    assert len(records) == len(GTFINTECHLAB_CROSS_BANK_DATASETS) == 5
+    assert all(r["provenance"] == "peer_reviewed_cross_bank" for r in records)
+    sources = {r["source"] for r in records}
+    assert sources == {
+        "gtfintechlab_european_central_bank",
+        "gtfintechlab_bank_of_japan",
+        "gtfintechlab_bank_of_england",
+        "gtfintechlab_bank_of_canada",
+        "gtfintechlab_reserve_bank_of_australia",
+    }
+    assert all(r["label"] == "dovish" for r in records)
+    assert all(r["event_date"] == "2024-01-01" for r in records)
 
 
 def test_iter_fomc_archive_records_routes_statements_and_minutes(monkeypatch) -> None:

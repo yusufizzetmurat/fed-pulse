@@ -85,6 +85,15 @@ def _parse_args() -> argparse.Namespace:
         help=f"Ingest {GTFINTECHLAB_FED_DATASET_ID}: 3,000 multi-axis FOMC sentence labels (stance + time + certainty).",
     )
     parser.add_argument(
+        "--include-gtfintechlab-cross-bank",
+        action="store_true",
+        help=(
+            "Ingest gtfintechlab cross-bank datasets (ECB / BoJ / BoE / BoC / RBA): "
+            "~15,000 multi-axis sentences held out from FOMC training (sample_weight=0) "
+            "for the cross-CB generalization study."
+        ),
+    )
+    parser.add_argument(
         "--include-fomc-archive",
         action="store_true",
         help=f"Ingest {VTASCA_FOMC_ARCHIVE_DATASET_ID}: full FOMC statement + minutes archive (unlabelled, for credibility drift).",
@@ -232,13 +241,38 @@ _GTFINTECHLAB_STANCE_MAP = {
 }
 
 
-def _iter_gtfintechlab_federal_reserve_records() -> list[dict[str, Any]]:
-    """Load gtfintechlab/federal_reserve_system: 3,000 multi-axis FOMC sentence labels.
+# Cross-bank gtfintechlab datasets — same 3,000-row {sentences, stance_label,
+# time_label, certain_label, year} schema as federal_reserve_system. Held out
+# from the FOMC headline training pool via provenance="peer_reviewed_cross_bank"
+# (sample_weight 0.0) so they only contribute to the cross-bank generalization
+# evaluation.
+GTFINTECHLAB_CROSS_BANK_DATASETS: tuple[tuple[str, str, str], ...] = (
+    # (bank_key, hf_dataset_id, document_type_hint)
+    ("european_central_bank", "gtfintechlab/european_central_bank", "ecb_communication"),
+    ("bank_of_japan", "gtfintechlab/bank_of_japan", "boj_communication"),
+    ("bank_of_england", "gtfintechlab/bank_of_england", "boe_communication"),
+    ("bank_of_canada", "gtfintechlab/bank_of_canada", "boc_communication"),
+    ("reserve_bank_of_australia", "gtfintechlab/reserve_bank_of_australia", "rba_communication"),
+)
 
-    Schema per row: ``sentences, stance_label, time_label, certain_label, year``.
-    Stance maps to canonical hawkish/dovish/neutral. The time + certain axes
-    populate ``multi_axis_extras`` for downstream multi-task heads. Iterates
-    every config / split combination on the Hub repo and dedupes by text_hash.
+
+def _iter_gtfintechlab_records(
+    *,
+    dataset_id: str,
+    source_name: str,
+    provenance: str,
+    document_type: str,
+    title_prefix: str,
+    citation_ref: str = "shah_etal_2024_gtfintechlab_central_banks",
+    license_scope: str = "research_only",
+) -> list[dict[str, Any]]:
+    """Generic loader for the gtfintechlab multi-axis schema.
+
+    Every dataset under the gtfintechlab umbrella that hosts central-bank
+    sentence annotations shares the row shape ``sentences, stance_label,
+    time_label, certain_label, year``. This function walks every config /
+    split combination, normalises stance, populates ``multi_axis_extras``
+    with the time + certainty axes, and dedupes by ``text_hash``.
     """
     try:
         from datasets import (  # type: ignore
@@ -248,18 +282,18 @@ def _iter_gtfintechlab_federal_reserve_records() -> list[dict[str, Any]]:
         )
     except Exception as exc:  # pragma: no cover
         raise RuntimeError(
-            "datasets package is required for --include-gtfintechlab-fed. "
+            "datasets package is required for the gtfintechlab loader. "
             "Install dependencies first."
         ) from exc
 
     records: list[dict[str, Any]] = []
     seen_hashes: set[str] = set()
 
-    configs = list(get_dataset_config_names(GTFINTECHLAB_FED_DATASET_ID))
+    configs = list(get_dataset_config_names(dataset_id))
     for config in configs:
-        splits = list(get_dataset_split_names(GTFINTECHLAB_FED_DATASET_ID, config))
+        splits = list(get_dataset_split_names(dataset_id, config))
         for split in splits:
-            ds = load_dataset(GTFINTECHLAB_FED_DATASET_ID, config, split=split)
+            ds = load_dataset(dataset_id, config, split=split)
             for idx, row in enumerate(ds):
                 item = dict(row)
                 sentence = (item.get("sentences") or "").strip()
@@ -278,22 +312,22 @@ def _iter_gtfintechlab_federal_reserve_records() -> list[dict[str, Any]]:
                     continue
 
                 built = _build_registry_record(
-                    source="gtfintechlab_federal_reserve_system",
+                    source=source_name,
                     source_record_id=f"{config}:{split}:{idx}",
                     event_date=event_date,
-                    document_type="statement",
-                    title=f"Federal Reserve System sentence {config}/{split}#{idx}",
+                    document_type=document_type,
+                    title=f"{title_prefix} sentence {config}/{split}#{idx}",
                     text=sentence,
                     label=label,
-                    license_scope="research_only",
-                    citation_ref="shah_etal_2024_gtfintechlab_central_banks",
+                    license_scope=license_scope,
+                    citation_ref=citation_ref,
                 )
                 if built is None:
                     continue
                 if built["text_hash"] in seen_hashes:
                     continue
                 seen_hashes.add(built["text_hash"])
-                built["provenance"] = "peer_reviewed"
+                built["provenance"] = provenance
                 extras = {
                     "gtfintechlab_time_label": (item.get("time_label") or "").strip(),
                     "gtfintechlab_certain_label": (item.get("certain_label") or "").strip(),
@@ -302,6 +336,37 @@ def _iter_gtfintechlab_federal_reserve_records() -> list[dict[str, Any]]:
                 }
                 built["multi_axis_extras"] = {k: v for k, v in extras.items() if v}
                 records.append(built)
+    return records
+
+
+def _iter_gtfintechlab_federal_reserve_records() -> list[dict[str, Any]]:
+    """Load gtfintechlab/federal_reserve_system into the FOMC training pool."""
+    return _iter_gtfintechlab_records(
+        dataset_id=GTFINTECHLAB_FED_DATASET_ID,
+        source_name="gtfintechlab_federal_reserve_system",
+        provenance="peer_reviewed",
+        document_type="statement",
+        title_prefix="Federal Reserve System",
+    )
+
+
+def _iter_gtfintechlab_cross_bank_records() -> list[dict[str, Any]]:
+    """Load every cross-bank gtfintechlab dataset into the cross-bank generalization pool.
+
+    Rows carry ``provenance="peer_reviewed_cross_bank"`` (weight 0.0) so they
+    are visible in the source registry but excluded from the supervised
+    training loss. The cross-bank evaluation harness opts them in explicitly.
+    """
+    records: list[dict[str, Any]] = []
+    for bank_key, dataset_id, document_type in GTFINTECHLAB_CROSS_BANK_DATASETS:
+        bank_records = _iter_gtfintechlab_records(
+            dataset_id=dataset_id,
+            source_name=f"gtfintechlab_{bank_key}",
+            provenance="peer_reviewed_cross_bank",
+            document_type=document_type,
+            title_prefix=bank_key.replace("_", " ").title(),
+        )
+        records.extend(bank_records)
     return records
 
 
@@ -691,6 +756,7 @@ def main() -> int:
     include_op_fed = args.all_sources or args.include_op_fed
     include_gss_factors = args.all_sources or args.include_gss_factors
     include_gtfintechlab_fed = args.all_sources or args.include_gtfintechlab_fed
+    include_gtfintechlab_cross_bank = args.all_sources or args.include_gtfintechlab_cross_bank
     include_fomc_archive = args.all_sources or args.include_fomc_archive
     if not (
         include_hf
@@ -699,12 +765,14 @@ def main() -> int:
         or include_op_fed
         or include_gss_factors
         or include_gtfintechlab_fed
+        or include_gtfintechlab_cross_bank
         or include_fomc_archive
     ):
         print(
             "No source selected. Use --all-sources or one of "
             "--include-hf/--include-kaggle/--include-scraped/--include-op-fed/"
-            "--include-gss-factors/--include-gtfintechlab-fed/--include-fomc-archive."
+            "--include-gss-factors/--include-gtfintechlab-fed/"
+            "--include-gtfintechlab-cross-bank/--include-fomc-archive."
         )
         return 1
 
@@ -741,6 +809,17 @@ def main() -> int:
             f"(stance-labelled: {labelled}; multi-axis time+certainty in multi_axis_extras)"
         )
         unified.extend(gtfintechlab_records)
+    if include_gtfintechlab_cross_bank:
+        cross_bank_records = _iter_gtfintechlab_cross_bank_records()
+        labelled = sum(1 for r in cross_bank_records if r.get("label"))
+        per_bank: dict[str, int] = {}
+        for record in cross_bank_records:
+            per_bank[record.get("source", "")] = per_bank.get(record.get("source", ""), 0) + 1
+        print(
+            f"Ingested gtfintechlab cross-bank records: {len(cross_bank_records)} "
+            f"(stance-labelled: {labelled}; sample_weight=0; banks={per_bank})"
+        )
+        unified.extend(cross_bank_records)
     if include_fomc_archive:
         archive_records = _iter_fomc_archive_records()
         statement_count = sum(1 for r in archive_records if r.get("document_type") == "statement")

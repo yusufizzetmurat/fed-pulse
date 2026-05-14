@@ -46,4 +46,5 @@ provenance:
   sample_weights:
     peer_reviewed: 1.0
     kaggle: 0.7
+    peer_reviewed_cross_bank: 0.0  # ECB/BoJ/BoE/BoC/RBA labels held out from FOMC training; used for cross-CB generalization eval only.
     scraped: 0.0
