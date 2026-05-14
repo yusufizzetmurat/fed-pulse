@@ -54,6 +54,8 @@ class ModelConfig:
     dropout: float = DEFAULT_DROPOUT
     head_hidden_size: int = DEFAULT_HEAD_HIDDEN_SIZE
     initial_decay_rate: float = DEFAULT_INITIAL_DECAY_RATE
+    text_channel: str = "scalar"
+    embedding_adapter_dim: int = 128
 
     @classmethod
     def from_model(cls, model: "ForecasterModel") -> "ModelConfig":
@@ -64,6 +66,8 @@ class ModelConfig:
             dropout=model.dropout,
             head_hidden_size=model.head_hidden_size,
             initial_decay_rate=model.initial_decay_rate,
+            text_channel=getattr(model, "text_channel", "scalar"),
+            embedding_adapter_dim=getattr(model, "chunk_projection_dim", 128) or 128,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -342,6 +346,8 @@ class ForecasterModel(nn.Module):
         use_llm_embeddings: bool = False,
         chunk_embedding_size: int = DEFAULT_CHUNK_EMBEDDING_SIZE,
         chunk_projection_dim: int = DEFAULT_CHUNK_PROJECTION_DIM,
+        text_channel: str = "scalar",
+        embedding_adapter_dim: int = 128,
     ):
         """Forecaster LSTM with optional text-feature variants.
 
@@ -377,6 +383,10 @@ class ForecasterModel(nn.Module):
                 "use_chunk_attention and use_llm_embeddings are mutually exclusive. "
                 "Set at most one to True."
             )
+        if text_channel not in {"scalar", "embeddings"}:
+            raise ValueError(
+                f"Unknown text_channel: {text_channel!r}. Allowed: scalar, embeddings"
+            )
         self.model_type = model_type
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -387,25 +397,37 @@ class ForecasterModel(nn.Module):
         self.use_time_decay = bool(use_time_decay)
         self.use_chunk_attention = bool(use_chunk_attention)
         self.use_llm_embeddings = bool(use_llm_embeddings)
+        self.text_channel = text_channel
         self.chunk_embedding_size = int(chunk_embedding_size)
         # Either Variant B or Variant C activates the pooler path.
         _uses_pooler = self.use_chunk_attention or self.use_llm_embeddings
-        self.chunk_projection_dim = int(chunk_projection_dim) if _uses_pooler else 0
+        _adapter_active = _uses_pooler and text_channel == "embeddings"
+        effective_dim = int(embedding_adapter_dim) if _adapter_active else int(chunk_projection_dim)
+        self.chunk_projection_dim = effective_dim if _uses_pooler else 0
         self.time_decay = TimeDecayAttention(initial_decay_rate)
         if _uses_pooler:
             self.chunk_pooler: ChunkAttentionPooler | None = ChunkAttentionPooler(
                 embedding_size=self.chunk_embedding_size,
                 initial_decay_rate=DEFAULT_CHUNK_DECAY_RATE,
             )
-            self.chunk_projection: nn.Linear | None = nn.Linear(
-                self.chunk_embedding_size, self.chunk_projection_dim, bias=True
-            )
-            # Zero-init so Variant B/C starts equivalent to baseline; the model
-            # only departs from the baseline subspace if the text signal
-            # actually reduces loss. Avoids drowning 6 base features under
-            # 8 dims of random-init noise on a small training set.
-            nn.init.zeros_(self.chunk_projection.weight)
-            nn.init.zeros_(self.chunk_projection.bias)
+            if _adapter_active:
+                from app.models.embedding_adapter import EmbeddingAdapter
+
+                self.chunk_projection: nn.Module | None = EmbeddingAdapter(
+                    input_dim=self.chunk_embedding_size,
+                    output_dim=self.chunk_projection_dim,
+                    zero_init=True,
+                )
+            else:
+                self.chunk_projection = nn.Linear(
+                    self.chunk_embedding_size, self.chunk_projection_dim, bias=True
+                )
+                # Zero-init so Variant B/C starts equivalent to baseline; the model
+                # only departs from the baseline subspace if the text signal
+                # actually reduces loss. Avoids drowning 6 base features under
+                # 8 dims of random-init noise on a small training set.
+                nn.init.zeros_(self.chunk_projection.weight)
+                nn.init.zeros_(self.chunk_projection.bias)
         else:
             self.chunk_pooler = None
             self.chunk_projection = None
@@ -614,6 +636,8 @@ def _coerce_model_config(model_config: ModelConfig | dict[str, Any] | None = Non
             dropout=float(model_config.get("dropout", DEFAULT_DROPOUT)),
             head_hidden_size=int(model_config.get("head_hidden_size", DEFAULT_HEAD_HIDDEN_SIZE)),
             initial_decay_rate=float(model_config.get("initial_decay_rate", DEFAULT_INITIAL_DECAY_RATE)),
+            text_channel=str(model_config.get("text_channel", "scalar")),
+            embedding_adapter_dim=int(model_config.get("embedding_adapter_dim", 128)),
         )
     return ModelConfig()
 

@@ -1,0 +1,13 @@
+name: calendar_only
+description: >
+  Forecaster restricted to calendar features (elapsed-time decay, FOMC-day
+  indicator) plus market history. All text-derived inputs are zeroed; chunk
+  embeddings are not loaded. Establishes the floor for "FOMC-day effect only,
+  no central-bank language" in the headline table.
+text_channel: scalar
+zero_text: true
+calendar_only: true
+feature_overrides:
+  sentiment_score: 0.0
+  close_change_pct: 0.0
+  volatility_change: 0.0
