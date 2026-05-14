@@ -191,7 +191,7 @@ def test_embedding_adapter_wraps_new_genai_embedding_shape(monkeypatch) -> None:
 
         def embed_content(self, **kwargs):
             self.calls.append(kwargs)
-            embedding = type("Embedding", (), {"values": [0.5, 1, "2.5"]})()
+            embedding = type("Embedding", (), {"values": [0.5, 1.0, 2.5]})()
             return type("Resp", (), {"embeddings": [embedding]})()
 
     class _FakeClient:
@@ -217,7 +217,7 @@ def test_embedding_adapter_wraps_new_genai_embedding_shape(monkeypatch) -> None:
 
     adapter = gemini_client.load_embedding_model("embedding-model-x")
     wrapped = adapter.embed_content("fomc")
-    assert wrapped.embedding.values == [0.5, 1, "2.5"]
+    assert wrapped.embedding.values == [0.5, 1.0, 2.5]
     assert created_clients[0].api_key == "embedding-test-key"
     assert created_clients[0].models.calls == [
         {
