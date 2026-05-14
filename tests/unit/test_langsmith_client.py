@@ -9,6 +9,9 @@ The traced() decorator must:
 
 from __future__ import annotations
 
+import sys
+import types
+
 from app.services import langsmith_client
 
 
@@ -40,3 +43,42 @@ def test_traced_is_noop_when_key_unset(monkeypatch) -> None:
         return x * 10
 
     assert fn(7) == 70
+
+
+def test_traced_uses_langsmith_traceable_when_key_is_set(monkeypatch) -> None:
+    monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
+    calls = []
+
+    def _traceable(*, run_type, name):
+        calls.append((run_type, name))
+
+        def _decorator(fn):
+            def _wrapped(*args, **kwargs):
+                return fn(*args, **kwargs) + 5
+
+            return _wrapped
+
+        return _decorator
+
+    fake_langsmith = types.ModuleType("langsmith")
+    fake_langsmith.traceable = _traceable
+    monkeypatch.setitem(sys.modules, "langsmith", fake_langsmith)
+
+    @langsmith_client.traced("my_call")
+    def fn(x: int) -> int:
+        return x + 1
+
+    assert fn(2) == 8
+    assert calls == [("llm", "my_call")]
+
+
+def test_traced_falls_back_to_original_when_traceable_import_fails(monkeypatch) -> None:
+    monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
+    monkeypatch.setitem(sys.modules, "langsmith", types.ModuleType("langsmith"))
+
+    def fn(x: int) -> int:
+        return x * 2
+
+    decorated = langsmith_client.traced("my_call")(fn)
+    assert decorated is fn
+    assert decorated(3) == 6
