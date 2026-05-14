@@ -6,10 +6,11 @@ The whole flow runs through `make` targets; this runbook is the prose explanatio
 
 ## 0. Prerequisites
 
-- Backend container can start (`make dev-cpu` works).
+- **Rebuild the backend image once** against the current `pyproject.toml`. If you haven't rebuilt since PR #71 (which added `pydantic-settings`), you'll hit `ModuleNotFoundError: No module named 'pydantic_settings'`. Fix: `docker compose --profile gpu build backend-gpu` (or `docker compose build backend` for the CPU service). Both images install from the same `pyproject.toml`, so the content is identical; pick the one you'll actually use.
+- **The `make pseudo-labels*` targets default to the GPU service** (`backend-gpu` with `--profile gpu`) — a 9,696-row pass on CPU takes days. To run on CPU instead, override the variables: `make pseudo-labels PSEUDO_SERVICE=backend PSEUDO_PROFILE_FLAG=`.
 - A FinBERT-FOMC seed-71 checkpoint exists under `data/artifacts/phase3/pilot_finetune_*/hf_checkpoints/`. The Makefile defaults `TEACHER_CHECKPOINT` to `/data/artifacts/phase3/pilot_finetune_20260505T142652Z/hf_checkpoints`.
 - `data/raw/phase2/source_registry.jsonl` has unlabelled rows ready to score. As of 2026-05-14 there are 92 scraped Fed rows in the registry; bringing the 9,696 Kaggle rows in requires re-running `make data-prep --all-sources` (which is gated on a Kaggle API key — see `app.data.ingest_sources --include-kaggle`).
-- GPU strongly recommended. The 92-row pool takes ~2-4 minutes on RTX 4080; the full 9,696-row pool is ~4-6 hours.
+- Wall-clock estimates on an RTX 4080: 92-row pool ~2-4 minutes, full 9,696-row pool ~4-6 hours.
 
 ## 1. Run the chunk-aggregated teacher
 

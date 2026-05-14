@@ -12,6 +12,14 @@ PSEUDO_TAU_CHUNK ?= 0.50
 PSEUDO_TAU_DOC ?= 0.85
 PSEUDO_AUDIT_SIZE ?= 100
 
+# Pseudo-label workflow runs through the GPU backend by default — a 9,696-row pass
+# on CPU takes days. Override on a CPU-only box with:
+#   make pseudo-labels PSEUDO_SERVICE=backend PSEUDO_PROFILE_FLAG=
+# Both services share Dockerfile + pyproject.toml, so the image content is
+# identical; the GPU service simply reserves an NVIDIA device.
+PSEUDO_SERVICE ?= backend-gpu
+PSEUDO_PROFILE_FLAG ?= --profile gpu
+
 .PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics
 
 help:
@@ -104,7 +112,7 @@ audit-npm:
 # sweep under /data/interim/phase2/. Override defaults via PSEUDO_STRATEGY,
 # PSEUDO_TAU_CHUNK, PSEUDO_TAU_DOC, TEACHER_CHECKPOINT. See docs/pseudo-label-runbook.md.
 pseudo-labels:
-	docker compose run --rm backend \
+	docker compose $(PSEUDO_PROFILE_FLAG) run --rm $(PSEUDO_SERVICE) \
 		python -m app.data.pseudo_labeling \
 		--teacher-checkpoint "$(TEACHER_CHECKPOINT)" \
 		--teacher-model-id finbert_fomc_s71 \
@@ -119,7 +127,7 @@ pseudo-labels:
 # at /data/interim/phase2/registry_pseudo_$(PSEUDO_STRATEGY).jsonl, writes the
 # audit CSV + accompanying JSONL under /data/artifacts/pseudo_label_audits/.
 pseudo-labels-audit-sample:
-	docker compose run --rm backend \
+	docker compose $(PSEUDO_PROFILE_FLAG) run --rm $(PSEUDO_SERVICE) \
 		python -c "import json; from pathlib import Path; from app.data.llm_judge import sample_audit_set, write_audit_csv; \
 		rows = [json.loads(l) for l in open('/data/interim/phase2/registry_pseudo_$(PSEUDO_STRATEGY).jsonl')]; \
 		sample = sample_audit_set(rows, n=$(PSEUDO_AUDIT_SIZE), seed=$(SEED)); \
@@ -131,7 +139,7 @@ pseudo-labels-audit-sample:
 # human_label column added to the CSV (open in Excel/Sheets, fill, save as
 # audit_set_<strategy>_filled.jsonl). Prints Cohen's kappa + per-class precision.
 pseudo-labels-audit-metrics:
-	docker compose run --rm backend \
+	docker compose $(PSEUDO_PROFILE_FLAG) run --rm $(PSEUDO_SERVICE) \
 		python -c "import json; from app.data.llm_judge import audit_metrics; \
 		rows = [json.loads(l) for l in open('/data/artifacts/pseudo_label_audits/audit_set_$(PSEUDO_STRATEGY)_filled.jsonl')]; \
 		print(json.dumps(audit_metrics(rows), indent=2))"
