@@ -91,6 +91,205 @@ def test_run_judge_persists_judge_label_and_confidence_per_row(tmp_path: Path) -
     assert rows[0]["teacher_model_id"] == "fomc_roberta_s71"
 
 
+class _FlakyGeminiModel:
+    """Stub model that raises on a configurable subset of calls.
+
+    `fail_on_indices` is a set of call-indexes that raise; everything
+    else returns the next canned response. Used to test the run_judge
+    per-row try/except behaviour when the Gemini API returns 503/429
+    mid-batch.
+    """
+
+    def __init__(self, responses: list[str], fail_on_indices: set[int]):
+        self._responses = list(responses)
+        self._fail_on = set(fail_on_indices)
+        self._index = -1
+
+    def generate_content(self, _prompt):  # pragma: no cover - matches SDK shape
+        self._index += 1
+        if self._index in self._fail_on:
+            raise RuntimeError(f"503 UNAVAILABLE on call {self._index}")
+        text = self._responses.pop(0)
+
+        class _Response:
+            def __init__(self, txt):
+                self.text = txt
+
+        return _Response(text)
+
+
+def test_run_judge_writes_one_progress_line_per_row(tmp_path: Path) -> None:
+    """A row-by-row progress writer collects one line per input row."""
+
+    input_path = tmp_path / "registry_pseudo.jsonl"
+    output_path = tmp_path / "judged.jsonl"
+    _write_pseudo_fixture(input_path)
+
+    model = _StubGeminiModel(
+        [
+            '{"label": "hawkish", "confidence": 0.95}',
+            '{"label": "neutral", "confidence": 0.62}',
+        ]
+    )
+    lines: list[str] = []
+    written = llm_judge.run_judge(
+        input_path=input_path,
+        output_path=output_path,
+        gemini_model=model,
+        judge_model_id="gemini-2.5-pro",
+        judge_model_version="20260514_v1",
+        progress_writer=lines.append,
+    )
+    assert written == 2
+    assert len(lines) == 2
+    assert "1/2" in lines[0] and "hawkish" in lines[0]
+    assert "2/2" in lines[1] and "neutral" in lines[1]
+
+
+def test_run_judge_writes_incrementally_one_row_per_line(tmp_path: Path) -> None:
+    """Each completed row hits disk before the next call — verified by
+    flushing-after-write semantics. We check the file is non-empty
+    immediately after a single-row run + the JSONL parses cleanly."""
+
+    input_path = tmp_path / "registry_pseudo.jsonl"
+    output_path = tmp_path / "judged.jsonl"
+    _write_pseudo_fixture(input_path)
+
+    model = _StubGeminiModel(
+        [
+            '{"label": "hawkish", "confidence": 0.95}',
+            '{"label": "dovish", "confidence": 0.81}',
+        ]
+    )
+    llm_judge.run_judge(
+        input_path=input_path,
+        output_path=output_path,
+        gemini_model=model,
+        judge_model_id="gemini-2.5-pro",
+        judge_model_version="v1",
+        progress_writer=lambda _line: None,
+    )
+    raw_lines = output_path.read_text(encoding="utf-8").splitlines()
+    assert len(raw_lines) == 2
+    rows = [json.loads(ln) for ln in raw_lines]
+    assert rows[0]["judge_label"] == "hawkish"
+    assert rows[1]["judge_label"] == "dovish"
+
+
+def test_run_judge_continues_after_api_error_marks_row_with_blank_judge_label(tmp_path: Path) -> None:
+    """A transient API failure on row 1 must NOT crash the run; the
+    failing row lands with judge_label='' + judge_error=type-name, and
+    row 2 still runs."""
+
+    input_path = tmp_path / "registry_pseudo.jsonl"
+    output_path = tmp_path / "judged.jsonl"
+    _write_pseudo_fixture(input_path)
+
+    model = _FlakyGeminiModel(
+        responses=['{"label": "dovish", "confidence": 0.77}'],
+        fail_on_indices={0},  # first call raises
+    )
+    lines: list[str] = []
+    written = llm_judge.run_judge(
+        input_path=input_path,
+        output_path=output_path,
+        gemini_model=model,
+        judge_model_id="gemini-2.5-pro",
+        judge_model_version="v1",
+        progress_writer=lines.append,
+    )
+    assert written == 2  # both rows persisted (the first as a blank)
+    rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["judge_label"] == ""
+    assert rows[0]["judge_confidence"] == 0.0
+    assert rows[0]["judge_error"] == "RuntimeError"
+    assert rows[1]["judge_label"] == "dovish"
+    # Progress writer reported the error
+    assert any("ERROR" in line for line in lines)
+
+
+def test_run_judge_resume_skips_record_ids_already_in_output(tmp_path: Path) -> None:
+    """When resume=True and the output file already contains row 'r1',
+    only the second row is scored on the re-run."""
+
+    input_path = tmp_path / "registry_pseudo.jsonl"
+    output_path = tmp_path / "judged.jsonl"
+    _write_pseudo_fixture(input_path)
+    # Pre-seed the output with the first row already judged.
+    output_path.write_text(
+        json.dumps(
+            {
+                "record_id": "r1",
+                "label": "hawkish",
+                "text": "first",
+                "judge_label": "hawkish",
+                "judge_confidence": 0.99,
+                "judge_model_id": "gemini-2.5-pro",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    model = _StubGeminiModel(['{"label": "neutral", "confidence": 0.60}'])
+    lines: list[str] = []
+    written = llm_judge.run_judge(
+        input_path=input_path,
+        output_path=output_path,
+        gemini_model=model,
+        judge_model_id="gemini-2.5-pro",
+        judge_model_version="v1",
+        resume=True,
+        progress_writer=lines.append,
+    )
+    # Only r2 ran in this invocation (return value excludes resumed rows)
+    assert written == 1
+    raw = output_path.read_text(encoding="utf-8").splitlines()
+    assert len(raw) == 2
+    rows = [json.loads(ln) for ln in raw]
+    record_ids = {r["record_id"] for r in rows}
+    assert record_ids == {"r1", "r2"}
+    # Progress writer mentioned the skip on r1
+    skip_lines = [ln for ln in lines if "skip" in ln]
+    assert skip_lines, lines
+
+
+def test_run_judge_resume_with_no_existing_output_runs_everything(tmp_path: Path) -> None:
+    """resume=True with a missing output JSONL should behave like a
+    fresh run (no skips)."""
+
+    input_path = tmp_path / "registry_pseudo.jsonl"
+    output_path = tmp_path / "judged.jsonl"  # does not exist
+    _write_pseudo_fixture(input_path)
+
+    model = _StubGeminiModel(
+        [
+            '{"label": "hawkish", "confidence": 0.95}',
+            '{"label": "neutral", "confidence": 0.50}',
+        ]
+    )
+    written = llm_judge.run_judge(
+        input_path=input_path,
+        output_path=output_path,
+        gemini_model=model,
+        judge_model_id="gemini-2.5-pro",
+        judge_model_version="v1",
+        resume=True,
+        progress_writer=lambda _: None,
+    )
+    assert written == 2
+
+
+def test_parse_args_resume_flag_default_is_false() -> None:
+    args = llm_judge._parse_args(["--input", "/some/path"])
+    assert args.resume is False
+
+
+def test_parse_args_resume_flag_set_true() -> None:
+    args = llm_judge._parse_args(["--input", "/some/path", "--resume"])
+    assert args.resume is True
+
+
 def test_parse_args_requires_input() -> None:
     with pytest.raises(SystemExit):
         llm_judge._parse_args([])

@@ -164,7 +164,8 @@ pseudo-labels-judge-pass:
 		--output /data/interim/phase2/registry_pseudo_$(PSEUDO_STRATEGY)_judged.jsonl \
 		--judge-model "$(JUDGE_MODEL)" \
 		--judge-model-version "$(JUDGE_MODEL_VERSION)" \
-		--request-interval-seconds "$(JUDGE_REQUEST_INTERVAL)"
+		--request-interval-seconds "$(JUDGE_REQUEST_INTERVAL)" \
+		--resume
 
 # Judge-only audit: use the Gemini judge labels as gold and compute
 # teacher per-class precision + Cohen's kappa(teacher, judge). Pass
