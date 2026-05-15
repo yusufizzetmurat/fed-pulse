@@ -31,6 +31,10 @@ data/*
 data/raw/*
 !data/raw/market/
 !data/schema/
+!data/external/
+data/external/*
+!data/external/macro_releases.csv
+!data/external/macro_releases.csv.lock.json
 /backend/models/
 *.pt
 *.pth
