@@ -56,6 +56,9 @@ class EvalRow:
     label: str
     event_date: str
     record_id: str = ""
+    source: str = ""
+    provenance: str = ""
+    sample_weight: float = 1.0
 
 
 def _set_all_seeds(seed: int) -> None:
@@ -71,7 +74,17 @@ def _hf_token() -> str | None:
     return os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN") or None
 
 
-def _load_registry_rows(package_dir: Path) -> list[EvalRow]:
+def _load_registry_rows(
+    package_dir: Path, *, include_zero_weight: bool = False
+) -> list[EvalRow]:
+    """Load mapped-label rows from a training package.
+
+    ``include_zero_weight=False`` (the default) drops any row with
+    ``sample_weight == 0`` so cross-bank corpora (provenance
+    ``peer_reviewed_cross_bank``) never enter the training loss. The
+    cross-bank eval harness flips this flag to read them back in.
+    """
+
     path = package_dir / "registry_normalized.jsonl"
     rows: list[EvalRow] = []
     if not path.exists():
@@ -85,8 +98,26 @@ def _load_registry_rows(package_dir: Path) -> list[EvalRow]:
         text = str(payload.get("text", "")).strip()
         event_date = str(payload.get("event_date", "")).strip()
         record_id = str(payload.get("record_id", "")).strip()
+        source = str(payload.get("source", "")).strip()
+        provenance = str(payload.get("provenance", "")).strip()
+        try:
+            sample_weight = float(payload.get("sample_weight", 1.0))
+        except (TypeError, ValueError):
+            sample_weight = 1.0
+        if not include_zero_weight and sample_weight == 0.0:
+            continue
         if label in LABELS and text and event_date:
-            rows.append(EvalRow(text=text, label=label, event_date=event_date, record_id=record_id))
+            rows.append(
+                EvalRow(
+                    text=text,
+                    label=label,
+                    event_date=event_date,
+                    record_id=record_id,
+                    source=source,
+                    provenance=provenance,
+                    sample_weight=sample_weight,
+                )
+            )
     return rows
 
 
@@ -364,7 +395,7 @@ def run_one(args: argparse.Namespace, *, artifact_dir: Path | None = None) -> di
         hyperparameters={
             "checkpoint": args.checkpoint,
             "epochs": args.epochs,
-            "batch_size": args.batch_size,
+            "batch_size": args.train_batch_size,
             "learning_rate": args.learning_rate,
             "weight_decay": args.weight_decay,
             "fold_id": args.fold_id,

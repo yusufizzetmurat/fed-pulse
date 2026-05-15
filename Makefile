@@ -230,3 +230,17 @@ bakeoff-aggregate:
 	docker compose run --rm backend \
 		python -m app.evaluation.bakeoff_aggregator \
 		--artifact-dir "$(or $(ARTIFACT_DIR),data/artifacts/phase3)"
+
+# Zero-shot cross-CB transfer matrix for an NLP checkpoint. Repeat the same
+# alias in MODEL_CHECKPOINTS to feed per-seed checkpoints for that alias —
+# CI bands appear when >=2 distinct checkpoints land in the same cell.
+# Required: TRAINING_PACKAGE_ID, MODEL_CHECKPOINTS (alias=path[,alias=path]).
+# Optional: EVAL_BANKS (ecb,boj,boe,boc,rba; default = all 5).
+eval-cross-bank:
+	@if [ -z "$(TRAINING_PACKAGE_ID)" ]; then echo "Set TRAINING_PACKAGE_ID=<id>"; exit 2; fi
+	@if [ -z "$(MODEL_CHECKPOINTS)" ]; then echo "Set MODEL_CHECKPOINTS=alias=path[,alias=path]"; exit 2; fi
+	docker compose run --rm backend \
+		python -m app.evaluation.transfer_matrix \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		--model-checkpoints "$(MODEL_CHECKPOINTS)" \
+		$(if $(EVAL_BANKS),--eval-banks "$(EVAL_BANKS)",)
