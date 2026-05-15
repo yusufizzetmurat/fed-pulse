@@ -64,12 +64,19 @@ class _ProbSparseAttention(nn.Module):
     fallback from the paper.
     """
 
-    def __init__(self, factor: int = 5, dropout: float = 0.1) -> None:
+    def __init__(self, factor: int = 5, dropout: float = 0.1, sample_seed: int = 11) -> None:
         super().__init__()
         if factor < 1:
             raise ValueError(f"factor must be >= 1, got {factor}")
         self.factor = int(factor)
         self.dropout = nn.Dropout(dropout)
+        # Per-instance sampling generator so the ProbSparse sampling
+        # inside forward() does not advance the global RNG. The module
+        # claims to own no global RNG state; the generator is what makes
+        # that claim true and keeps callers' torch.manual_seed unpolluted
+        # across forward passes.
+        self._sample_generator = torch.Generator(device="cpu")
+        self._sample_generator.manual_seed(int(sample_seed))
 
     def _prob_qk(
         self, queries: torch.Tensor, keys: torch.Tensor, sample_k: int, n_top: int
@@ -78,8 +85,12 @@ class _ProbSparseAttention(nn.Module):
         b, h, l_k, d = keys.shape
         _, _, l_q, _ = queries.shape
 
-        # Sample sample_k key positions per (B, H, L_Q) triple.
-        index_sample = torch.randint(l_k, (l_q, sample_k), device=keys.device)
+        # Sample sample_k key positions per (B, H, L_Q) triple. The
+        # generator is per-instance so the global RNG state of the
+        # caller is preserved across forward passes.
+        index_sample = torch.randint(
+            l_k, (l_q, sample_k), generator=self._sample_generator
+        ).to(keys.device)
         # Index into K: (B, H, L_Q, sample_k, D)
         k_expand = keys.unsqueeze(-3).expand(b, h, l_q, l_k, d)
         k_sample = k_expand[:, :, torch.arange(l_q).unsqueeze(1), index_sample, :]

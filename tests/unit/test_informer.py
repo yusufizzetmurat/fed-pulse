@@ -81,6 +81,29 @@ def test_informer_is_deterministic_at_fixed_seed() -> None:
     assert torch.equal(first, second), "InformerEncoder is not deterministic at fixed seed"
 
 
+def test_informer_forward_does_not_advance_global_rng() -> None:
+    """ProbSparse sampling must use a per-instance generator, not the global RNG.
+
+    If forward() calls torch.randint without an explicit generator, the
+    global RNG state advances and breaks reproducibility for callers
+    that rely on torch.manual_seed for upstream determinism.
+    """
+
+    torch.manual_seed(11)
+    encoder = InformerEncoder(input_size=FEATURE_SIZE, hidden_size=32)
+    encoder.eval()
+    x = torch.randn(2, SEQUENCE_LENGTH, FEATURE_SIZE)
+
+    rng_before = torch.random.get_rng_state().clone()
+    with torch.no_grad():
+        _ = encoder(x)
+    rng_after = torch.random.get_rng_state().clone()
+    assert torch.equal(rng_before, rng_after), (
+        "InformerEncoder advanced the global RNG state during forward(); "
+        "ProbSparse sampling must use a per-instance generator."
+    )
+
+
 def test_informer_rejects_indivisible_head_count() -> None:
     with pytest.raises(ValueError):
         InformerEncoder(input_size=FEATURE_SIZE, hidden_size=30, n_heads=4)

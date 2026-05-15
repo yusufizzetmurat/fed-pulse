@@ -72,11 +72,16 @@ class _GatedResidualNetwork(nn.Module):
         self.norm = nn.LayerNorm(self.output_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Order follows Lim et al. (2021), Section 3.3, Eq. 3:
+        # ELU(fc1) -> fc2 -> GLU -> dropout -> residual add -> LayerNorm.
+        # Dropout is applied AFTER the gating, not before — the GLU
+        # weights the signal first, then dropout zeroes a fraction of
+        # the gated activations.
         residual = self.skip(x)
         h = F.elu(self.fc1(x))
         h = self.fc2(h)
-        h = self.dropout(h)
         h = self.glu(h)
+        h = self.dropout(h)
         return self.norm(residual + h)
 
 
