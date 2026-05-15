@@ -230,6 +230,15 @@ def evaluate_cross_bank(
         raise ValueError(
             f"No labeled rows for {bank_source!r} in registry. Re-run ingest_sources to fetch."
         )
+    record_ids = [r.record_id for r in rows]
+    if len(record_ids) != len(set(record_ids)):
+        # Per-axis slicing builds a set of record_ids and back-projects to
+        # y_true / y_pred; duplicates would silently double-count support.
+        # The contract in docs/data-and-training-contracts.md requires unique
+        # record_ids per row — fail loud if the writer ever drifts.
+        raise ValueError(
+            f"Duplicate record_ids in {bank_source!r} — re-run ingest_sources to regenerate the registry."
+        )
 
     if predict_fn is None:
         y_true, y_pred, latencies = _predict_with_model(

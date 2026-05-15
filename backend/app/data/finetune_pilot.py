@@ -395,7 +395,7 @@ def run_one(args: argparse.Namespace, *, artifact_dir: Path | None = None) -> di
         hyperparameters={
             "checkpoint": args.checkpoint,
             "epochs": args.epochs,
-            "batch_size": args.batch_size,
+            "batch_size": args.train_batch_size,
             "learning_rate": args.learning_rate,
             "weight_decay": args.weight_decay,
             "fold_id": args.fold_id,

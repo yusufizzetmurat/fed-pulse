@@ -4,6 +4,12 @@ The cross-bank ingestors tag rows with ``sample_weight=0`` (in
 ``data/schema/labels.yaml``). The fine-tune pilot's ``_load_registry_rows``
 honours that flag and drops zero-weight rows by default; the cross-CB eval
 harness opts back in via ``include_zero_weight=True``.
+
+Scope: NLP fine-tune path only. The LSTM forecaster's data path
+(``backend/app/training/loaders.py``) consumes market time-series rows, not
+the stance-labelled text registry, so cross-bank corpora never reach it
+regardless of any sample-weight setting — there is no equivalent filter
+needed on that side.
 """
 
 from __future__ import annotations
