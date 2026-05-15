@@ -27,7 +27,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state next-fomc
 
 help:
 	@echo "Targets:"
@@ -50,6 +50,8 @@ help:
 	@echo "  make pseudo-labels-audit-metrics - Compute teacher precision against the human-labelled audit set"
 	@echo "  make pseudo-labels-judge-pass - Score the pseudo set with Gemini (judge-only audit gold)"
 	@echo "  make pseudo-labels-audit-metrics-judge - Compute teacher precision against the LLM judge gold"
+	@echo "  make macro-state      - Build the FRED macro-state parquet (Phase 8 #147)"
+	@echo "  make next-fomc        - Predict next-FOMC decision (Phase 8 headline, #147)"
 
 dev: dev-cpu
 
@@ -257,3 +259,26 @@ eval-cross-bank:
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--model-checkpoints "$(MODEL_CHECKPOINTS)" \
 		$(if $(EVAL_BANKS),--eval-banks "$(EVAL_BANKS)",)
+
+# Build the FRED macro-state snapshot at data/external/fred/macro_state.parquet.
+# Reads UNRATE, CPIAUCSL, PCEPILFE, MANEMP, PAYEMS, RSAFS. Requires FRED_API_KEY
+# in .env on first run (cached JSON afterwards).
+MACRO_STATE_START ?= 2010-01-01
+MACRO_STATE_END ?= today
+macro-state:
+	docker compose run --rm backend \
+		python -m app.data.macro_state \
+		--start "$(MACRO_STATE_START)" \
+		--end "$(MACRO_STATE_END)"
+
+# Predict the FOMC's next decision using text + macro + OIS + credibility +
+# linguistic features (Phase 8 headline, #147). Required: TRAINING_PACKAGE_ID
+# pointing at a package under data/processed/<id>/ containing events.parquet
+# and linguistic_features.parquet. Reads mp_surprises.parquet and
+# macro_state.parquet from data/external/fred/.
+next-fomc:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.forecasting.next_fomc_decision \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		--seed "$(SEED)"
