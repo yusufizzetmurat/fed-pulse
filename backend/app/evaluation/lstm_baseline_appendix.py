@@ -243,7 +243,7 @@ def _per_row_squared_errors(
     return out
 
 
-def compute_rmse_cell(
+def compute_rmse_cell(  # noqa: PLR0913 — keyword-only metric/bootstrap surface, by design
     *,
     asset: str,
     horizon: str,
@@ -299,7 +299,7 @@ def _per_row_absolute_percent_errors(
     return out
 
 
-def compute_mape_cell(
+def compute_mape_cell(  # noqa: PLR0913 — keyword-only metric/bootstrap surface, by design
     *,
     asset: str,
     horizon: str,
@@ -336,7 +336,7 @@ def compute_mape_cell(
     )
 
 
-def compute_directional_cell(
+def compute_directional_cell(  # noqa: PLR0913 — keyword-only metric/bootstrap surface, by design
     *,
     asset: str,
     horizon: str,
