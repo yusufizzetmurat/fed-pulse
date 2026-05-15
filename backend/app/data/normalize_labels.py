@@ -134,13 +134,14 @@ _PEER_REVIEWED_SOURCES = {
     "aruoba_drechsel_shocks",
     "cieslak_schrimpf_news",
     "hansen_mcmahon_topics",
+    "gtfintechlab_federal_reserve_system",
 }
 _KAGGLE_SOURCES = {"kaggle_fed_statements_minutes"}
 
 
 def _provenance_for_row(row: dict[str, Any]) -> str:
     explicit = str(row.get("provenance") or "").strip().lower()
-    if explicit in {"peer_reviewed", "kaggle", "scraped"}:
+    if explicit in {"peer_reviewed", "kaggle", "peer_reviewed_cross_bank", "scraped"}:
         return explicit
     source = str(row.get("source") or "").strip().lower()
     if source in _PEER_REVIEWED_SOURCES:

@@ -4,9 +4,28 @@
 Define a single contract from ingestion to training package export.
 
 ## Approved Sources
-- `hf_fomc_communication` (research-only, citation required)
-- `kaggle_fed_statements_minutes` (license/terms apply)
-- `scraped_fed` (internal scraper output; covers FOMC minutes/statements and Chair speeches as of Plan 2 of the 2026-05-05 scope extension)
+
+### Supervised training pool (provenance ∈ {peer_reviewed, kaggle, scraped})
+- `hf_fomc_communication` (research-only, citation required) — Trillion Dollar Words sentence-level stance labels.
+- `kaggle_fed_statements_minutes` (license/terms apply) — Kaggle FOMC statement/minutes mirror.
+- `scraped_fed` (internal scraper output; FOMC minutes/statements/Chair speeches/governor speeches/testimonies/press conferences/Beige Book/regional research).
+- `op_fed` (MIT, Keith et al. 2025) — FOMC meeting-transcript sentence-level stance + opinion + monetary-policy annotations.
+- `gss_factor` (research-only, Gürkaynak-Sack-Swanson 2005 IJCB) — per-FOMC target/path factor decomposition; populates the factor axis, no stance label.
+- `gtfintechlab_federal_reserve_system` (research-only, Shah et al. 2024 gtfintechlab) — FOMC sentence-level multi-axis labels (stance + time + certainty), 3,000 rows, complements TDW.
+
+### Cross-bank generalization pool (provenance = peer_reviewed_cross_bank, sample_weight = 0.0)
+These sources enter the unified registry but are excluded from the supervised training loss. They drive the cross-CB generalization evaluation harness.
+- `gtfintechlab_european_central_bank`
+- `gtfintechlab_bank_of_japan`
+- `gtfintechlab_bank_of_england`
+- `gtfintechlab_bank_of_canada`
+- `gtfintechlab_reserve_bank_of_australia`
+
+### Credibility-only pool (provenance = scraped, sample_weight = 0.0)
+Unlabelled corpora that feed the credibility module (drift, realized-vs-stated gap) and serve as auxiliary continued-pretraining substrate. Not in the supervised training pool.
+- `vtasca_fomc_archive` (vtasca/fomc-statements-minutes) — 463 whole-document FOMC statements + minutes.
+
+When adding a new source, append it here AND to `_PEER_REVIEWED_SOURCES` / `_KAGGLE_SOURCES` in `backend/app/data/normalize_labels.py`. HF-hosted datasets must additionally appear in `_DATASET_REVISIONS` in `backend/app/data/ingest_sources.py` with a pinned commit SHA so `record_id` does not rotate on upstream pushes.
 
 ## Ingestion Contract
 Each row must contain:

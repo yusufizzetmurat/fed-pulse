@@ -175,3 +175,38 @@ pseudo-labels-audit-metrics-judge:
 		python -c "import json; from app.data.llm_judge import audit_metrics_judge_only; \
 		rows = [json.loads(l) for l in open('/data/interim/phase2/registry_pseudo_$(PSEUDO_STRATEGY)_judged.jsonl')]; \
 		print(json.dumps(audit_metrics_judge_only(rows), indent=2))"
+
+# Continued pretraining (FinBERT-FedAdjacent).
+# Defaults to samchain/BIS_speeches_97_23_MLM as the substrate (909,877 NSP pairs).
+# Override with SUBSTRATE=local for the legacy 44-doc JSON corpus.
+# Override with SUBSTRATE=both to mix BIS + local in a single run.
+SUBSTRATE ?= bis
+PRETRAIN_SEED ?= 11
+PRETRAIN_EPOCHS ?= 2
+PRETRAIN_BATCH_SIZE ?= 8
+PRETRAIN_BLOCK_SIZE ?= 256
+PRETRAIN_LR ?= 2e-5
+PRETRAIN_MAX_ROWS ?= 0
+PRETRAIN_OBJECTIVE ?= mlm_nsp
+finbert-fed-adjacent-pretrain:
+	docker compose run --rm backend \
+		python -m app.data.continued_pretraining \
+		--substrate "$(SUBSTRATE)" \
+		--seed "$(PRETRAIN_SEED)" \
+		--epochs "$(PRETRAIN_EPOCHS)" \
+		--batch-size "$(PRETRAIN_BATCH_SIZE)" \
+		--block-size "$(PRETRAIN_BLOCK_SIZE)" \
+		--learning-rate "$(PRETRAIN_LR)" \
+		--max-rows "$(PRETRAIN_MAX_ROWS)" \
+		--objective "$(PRETRAIN_OBJECTIVE)"
+
+finbert-fed-adjacent-pretrain-smoke:
+	docker compose run --rm backend \
+		python -m app.data.continued_pretraining \
+		--substrate bis \
+		--streaming \
+		--max-rows 200 \
+		--epochs 1 \
+		--batch-size 4 \
+		--block-size 128 \
+		--objective mlm
