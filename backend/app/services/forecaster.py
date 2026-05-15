@@ -50,7 +50,7 @@ from app.models.config import (
     SEQUENCE_LENGTH,
     FeatureVector,
     ModelConfig,
-    build_last5_sequence,
+    build_lookback_sequence,
 )
 from app.models.lstm import ForecasterModel
 from app.models.tcn import TemporalConvNet
@@ -326,7 +326,7 @@ def forecast_quantitative_series(
 
     last_date = history_timestamps[-1] if history_timestamps else ""
     for step in range(steps):
-        fixed_sequence = build_last5_sequence(rolling)
+        fixed_sequence = build_lookback_sequence(rolling)
         next_close, next_vol = _predict_next_point(model, fixed_sequence)
         last_vector = fixed_sequence[-1]
         if forecast_dates and step < len(forecast_dates):

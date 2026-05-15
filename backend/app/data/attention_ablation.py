@@ -63,7 +63,7 @@ from app.services.forecaster import (
     SEQUENCE_LENGTH,
     FeatureVector,
     ForecasterModel,
-    build_last5_sequence,
+    build_lookback_sequence,
 )
 
 # All valid variant cells for the 8-way grid (B and C are mutually exclusive).
@@ -141,7 +141,7 @@ def _build_feature_seq(
                 elapsed_time=elapsed,
             )
         )
-    feature_vectors = build_last5_sequence(feature_vectors)
+    feature_vectors = build_lookback_sequence(feature_vectors)
     seq = [v.as_list() for v in feature_vectors]
     target_close_norm = float(target_row["close"]) / DEFAULT_CLOSE_SCALE
     target_volatility = float(target_row["volatility_5d"])

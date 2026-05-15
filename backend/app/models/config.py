@@ -6,7 +6,11 @@ from typing import Any, Iterable
 
 from app.config import DATA_DIR, MODEL_CHECKPOINT_DIR
 
-SEQUENCE_LENGTH = 5
+# v2 reference: 20-day lookback over daily bars. v1 used 5 (sub-week)
+# which was too short for the recurrent core to learn temporal structure.
+# Tests/regression callers reference this constant; on-disk checkpoints
+# persist their training-time value via training/checkpoint.py.
+SEQUENCE_LENGTH = 20
 FEATURE_SIZE = 6  # [sentiment_score, market_close, market_volatility, close_change_pct, volatility_change, elapsed_time]
 SENTIMENT_FEATURE_INDEX = 0
 ELAPSED_TIME_FEATURE_INDEX = 5
@@ -117,7 +121,9 @@ class FeatureVector:
         ]
 
 
-def build_last5_sequence(vectors: Iterable[FeatureVector], length: int = SEQUENCE_LENGTH) -> list[FeatureVector]:
+def build_lookback_sequence(vectors: Iterable[FeatureVector], length: int = SEQUENCE_LENGTH) -> list[FeatureVector]:
+    """Pad-front (with the oldest vector) or truncate to a fixed lookback window."""
+
     items = list(vectors)
     if not items:
         items = [FeatureVector(date="", sentiment_score=0.0, market_close=0.0, market_volatility=0.0)]

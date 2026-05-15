@@ -42,6 +42,46 @@ class TimeDecayAttention(nn.Module):
         return x * scale
 
 
+class RecurrentSequenceAttention(nn.Module):
+    """Learned additive attention over a recurrent layer's output sequence.
+
+    Replaces the ``output[:, -1, :]`` "take only the last step" pool used in
+    the v1 LSTM with a content-aware weighted sum across all timesteps. For
+    sequences of length 20+ this lets the head focus on the relevant slice
+    of history (e.g. an FOMC-day cluster) rather than the last business day.
+
+    Additive (Bahdanau-style) scoring: ``score = v · tanh(W · h_t)``, softmax
+    over time. Optional ``mask`` zeros out padded timesteps if the caller
+    pads variable-length sequences.
+    """
+
+    def __init__(self, hidden_size: int, attn_dim: int | None = None):
+        super().__init__()
+        self.hidden_size = int(hidden_size)
+        attn_dim = int(attn_dim) if attn_dim is not None else self.hidden_size
+        self.proj = nn.Linear(self.hidden_size, attn_dim, bias=True)
+        self.v = nn.Linear(attn_dim, 1, bias=False)
+
+    def forward(
+        self,
+        sequence: torch.Tensor,
+        mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """sequence: (B, T, H) → pooled: (B, H), weights: (B, T)."""
+
+        if sequence.dim() != 3:
+            raise ValueError(
+                f"RecurrentSequenceAttention expects (B, T, H); got shape {tuple(sequence.shape)}"
+            )
+        scores = self.v(torch.tanh(self.proj(sequence))).squeeze(-1)  # (B, T)
+        if mask is not None:
+            scores = scores.masked_fill(mask == 0, float("-inf"))
+        weights = F.softmax(scores, dim=-1)
+        weights = torch.nan_to_num(weights, nan=0.0)
+        pooled = torch.einsum("bt,bth->bh", weights, sequence)
+        return pooled, weights
+
+
 class ChunkAttentionPooler(nn.Module):
     """Variant B from the Phase 4 attention plan: attention over chunk embeddings
     with values multiplicatively damped by exp(-lambda * |elapsed_days|).

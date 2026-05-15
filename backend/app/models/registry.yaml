@@ -95,3 +95,15 @@ encoders:
       ``revision`` is filled in with the local checkpoint directory or its sha256
       after the GPU run completes. Empty revision means "not yet trained" — the
       bake-off CLI skips this encoder until a revision is pinned.
+
+  bert_base_fed_adjacent:
+    repo: local/bert-base-fed-adjacent
+    revision: ""
+    gated: false
+    task: masked_lm
+    description: |
+      Control ablation for finbert_fed_adjacent — same BIS+local continued-
+      pretrain recipe applied on top of bert-base-uncased instead of ProsusAI/
+      finbert. Run via ``make finbert-fed-adjacent-pretrain-bert-control``; the
+      bake-off pairs the two checkpoints so we can isolate the contribution of
+      the FinBERT prior versus the BIS substrate alone.

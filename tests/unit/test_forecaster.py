@@ -16,7 +16,7 @@ from app.services.forecaster import (  # noqa: E402
     SENTIMENT_FEATURE_INDEX,
     TimeDecayAttention,
     build_feature_vectors,
-    build_last5_sequence,
+    build_lookback_sequence,
     forecast_quantitative_series,
     get_model_artifact_metadata,
     inspect_training_data_sources,
@@ -43,8 +43,8 @@ def test_parse_horizon_steps():
     assert parse_horizon_steps("invalid") == 3
 
 
-def test_build_last5_sequence_padding():
-    seq = build_last5_sequence(_sample_vectors(2), length=5)
+def test_build_lookback_sequence_padding():
+    seq = build_lookback_sequence(_sample_vectors(2), length=5)
     assert len(seq) == 5
     assert seq[0].date == "2026-01-01"
 
@@ -98,10 +98,16 @@ def test_build_feature_vectors_threads_text_embedding_to_each_row():
 
 
 def test_inspect_training_data_sources_reports_usable_and_insufficient_files(tmp_path):
+    # SEQUENCE_LENGTH=20 → usable series needs ≥ 21 records (one full window).
+    # Pick day-of-month safely (max 28) so the synthetic dates remain valid.
     usable = {
         "records": [
-            {"date": f"2026-01-{idx + 1:02d}", "close": 5000 + idx * 10, "volatility_5d": 0.01 + idx * 0.0001}
-            for idx in range(7)
+            {
+                "date": f"2026-{1 + idx // 28:02d}-{(idx % 28) + 1:02d}",
+                "close": 5000 + idx * 10,
+                "volatility_5d": 0.01 + idx * 0.0001,
+            }
+            for idx in range(24)
         ]
     }
     insufficient = {
@@ -123,7 +129,7 @@ def test_inspect_training_data_sources_reports_usable_and_insufficient_files(tmp
 
 
 def test_forecast_quantitative_series_fast_shape():
-    out = forecast_quantitative_series(_sample_vectors(10), forecast_mode="fast", horizon="3d")
+    out = forecast_quantitative_series(_sample_vectors(32), forecast_mode="fast", horizon="3d")
     assert "prediction" in out and "series" in out and "model" in out
     assert out["prediction"]["horizon"] == "3d"
     assert out["model"]["runtime_mode"] == "fast"
@@ -134,7 +140,9 @@ def test_forecast_quantitative_series_fast_shape():
     assert len(out["series"]["forecast_volatility"]) == 3
     assert len(out["series"]["forecast_volatility_lower"]) == 3
     assert len(out["series"]["forecast_volatility_upper"]) == 3
-    assert len(out["series"]["timestamps"]) == 10
+    # forecast_quantitative_series clips history to the last 30 entries
+    # regardless of input length — see services/forecaster.py history_vectors slice.
+    assert len(out["series"]["timestamps"]) == 30
     assert out["series"]["forecast_confidence_level"] == 0.8
     assert all(
         lower <= point <= upper
@@ -148,7 +156,7 @@ def test_forecast_quantitative_series_fast_shape():
 
 
 def test_forecast_quantitative_series_quick_train_shape():
-    out = forecast_quantitative_series(_sample_vectors(12), forecast_mode="quick_train", horizon="5d")
+    out = forecast_quantitative_series(_sample_vectors(32), forecast_mode="quick_train", horizon="5d")
     assert out["prediction"]["horizon"] == "5d"
     assert out["model"]["runtime_mode"] == "quick_train"
     assert out["model"]["adaptation_epochs_completed"] is not None
@@ -162,7 +170,7 @@ def test_forecast_quantitative_series_quick_train_shape():
 
 def test_train_model_reports_model_config_and_metrics():
     result = train_model(
-        vectors=_sample_vectors(10),
+        vectors=_sample_vectors(32),
         model_config=ModelConfig(hidden_size=24, num_layers=1, dropout=0.05, head_hidden_size=12),
         epochs=3,
         batch_size=4,
@@ -181,7 +189,7 @@ def test_train_model_reports_model_config_and_metrics():
 def test_train_model_checkpoint_contains_training_metadata(tmp_path):
     checkpoint_path = tmp_path / "forecaster.pt"
     result = train_model(
-        vectors=_sample_vectors(10),
+        vectors=_sample_vectors(32),
         model_config=ModelConfig(hidden_size=20, num_layers=2, dropout=0.10, head_hidden_size=10),
         epochs=2,
         batch_size=4,

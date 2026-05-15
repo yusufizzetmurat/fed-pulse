@@ -4,7 +4,11 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from app.models.attention import ChunkAttentionPooler, TimeDecayAttention
+from app.models.attention import (
+    ChunkAttentionPooler,
+    RecurrentSequenceAttention,
+    TimeDecayAttention,
+)
 from app.models.config import (
     CREDIBILITY_FEATURE_DIM,
     DEFAULT_CHUNK_DECAY_RATE,
@@ -16,9 +20,14 @@ from app.models.config import (
     DEFAULT_INITIAL_DECAY_RATE,
     DEFAULT_NUM_LAYERS,
     FEATURE_SIZE,
+    SEQUENCE_LENGTH,
 )
+from app.models.dlinear import DLinear
 from app.models.tcn import TemporalConvNet
 from app.models.transformer import SmallTransformer
+
+_ATTENTION_POOL_MODELS = frozenset({"lstm_attn"})
+_DLINEAR_MODELS = frozenset({"dlinear"})
 
 
 class ForecasterModel(nn.Module):
@@ -65,10 +74,10 @@ class ForecasterModel(nn.Module):
         eight-way ablation sweeps them as separate cells.
         """
         super().__init__()
-        _allowed_model_types = {"lstm", "gru", "tcn", "transformer"}
+        _allowed_model_types = {"lstm", "lstm_attn", "gru", "tcn", "transformer", "dlinear"}
         if model_type not in _allowed_model_types:
             raise ValueError(
-                f"Unknown model_type: {model_type!r}. Allowed: lstm, gru, tcn, transformer"
+                f"Unknown model_type: {model_type!r}. Allowed: {sorted(_allowed_model_types)}"
             )
         if use_chunk_attention and use_llm_embeddings:
             raise ValueError(
@@ -136,6 +145,13 @@ class ForecasterModel(nn.Module):
             dropout=lstm_dropout,
         )
         self.lstm = self.recurrent_core  # alias for backward compatibility
+        self.uses_attention_pool = self.model_type in _ATTENTION_POOL_MODELS
+        if self.uses_attention_pool:
+            self.recurrent_attention: RecurrentSequenceAttention | None = (
+                RecurrentSequenceAttention(hidden_size=hidden_size)
+            )
+        else:
+            self.recurrent_attention = None
         self.head = nn.Sequential(
             nn.LayerNorm(hidden_size),
             nn.Linear(hidden_size, head_hidden_size),
@@ -185,8 +201,15 @@ class ForecasterModel(nn.Module):
             broadcast = credibility.unsqueeze(1).expand(-1, seq_len, -1)
             x = torch.cat([x, broadcast], dim=-1)
         output, _ = self.lstm(x)
-        last_step = output[:, -1, :]
-        raw = self.head(last_step)
+        if self.uses_attention_pool:
+            if self.recurrent_attention is None:
+                raise RuntimeError(
+                    "recurrent_attention not initialised but lstm_attn variant is active"
+                )
+            pooled_step, _attn_weights = self.recurrent_attention(output)
+        else:
+            pooled_step = output[:, -1, :]
+        raw = self.head(pooled_step)
         close = raw[:, 0:1]
         # Volatility must stay non-negative, while close remains unconstrained.
         volatility = F.softplus(raw[:, 1:2])
@@ -223,7 +246,7 @@ class ForecasterModel(nn.Module):
         num_layers: int,
         dropout: float,
     ) -> nn.Module:
-        if model_type == "lstm":
+        if model_type in {"lstm", "lstm_attn"}:
             return nn.LSTM(
                 input_size=input_size,
                 hidden_size=hidden_size,
@@ -252,6 +275,12 @@ class ForecasterModel(nn.Module):
                 num_layers=num_layers,
                 dropout=dropout,
             )
+        if model_type == "dlinear":
+            return DLinear(
+                input_size=input_size,
+                hidden_size=hidden_size,
+                sequence_length=SEQUENCE_LENGTH,
+            )
         raise ValueError(
-            f"Unknown model_type: {model_type!r}. Allowed: lstm, gru, tcn, transformer"
+            f"Unknown model_type: {model_type!r}. Allowed: lstm, lstm_attn, gru, tcn, transformer, dlinear"
         )
