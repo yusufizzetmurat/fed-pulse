@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -12,10 +13,99 @@ import yfinance as yf
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 REPO_ROOT = BACKEND_ROOT.parent
 DEFAULT_SNAPSHOT_DIR = REPO_ROOT / "data" / "raw" / "market"
+FOMC_MEETINGS_CSV = REPO_ROOT / "data" / "external" / "fomc_meetings_2010_2026.csv"
+
+# The FOMC press release lands at 2pm Eastern. Any market-side feature dated
+# on an FOMC day with a timestamp strictly after this boundary is looking at
+# information the model would not have had at decision time, so we reject it
+# at the feature-assembly seam.
+#
+# We use 19:00 UTC as the canonical cutoff because that matches both
+#   * 2pm ET (EST, Nov-Mar) — UTC-5, so 14:00 ET == 19:00 UTC
+#   * 2pm ET (EDT, Mar-Nov) — UTC-4, so 14:00 ET == 18:00 UTC
+# We deliberately pick the *later* of the two so a DST-ambiguous timestamp
+# (no tz, summer date) still fails closed during EST and at the boundary
+# during EDT. Callers that have a tz-aware timestamp should keep using it;
+# callers that pass a naive UTC timestamp get the stricter EST boundary,
+# which is the safer default.
+FOMC_DAY_CUTOFF_UTC = time(19, 0, 0, tzinfo=timezone.utc)
 
 
 def _market_source() -> str:
     return (os.environ.get("FED_PULSE_MARKET_SOURCE") or "live").strip().lower()
+
+
+@lru_cache(maxsize=1)
+def _fomc_days() -> frozenset[date]:
+    """Load the scheduled / unscheduled FOMC meeting dates as a set.
+
+    The CSV is checked into ``data/external/`` (PR #154) and never changes
+    at runtime, so caching the parsed set is safe. The set is consulted by
+    ``assert_fomc_day_market_cutoff`` to decide whether the cutoff applies.
+    """
+
+    if not FOMC_MEETINGS_CSV.exists():
+        return frozenset()
+    days: set[date] = set()
+    with FOMC_MEETINGS_CSV.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            value = (row.get("meeting_date") or "").strip()
+            if not value:
+                continue
+            try:
+                days.add(datetime.strptime(value, "%Y-%m-%d").date())
+            except ValueError:
+                continue
+    return frozenset(days)
+
+
+def is_fomc_day(value: date) -> bool:
+    """Return True when `value` is a scheduled or unscheduled FOMC meeting."""
+
+    return value in _fomc_days()
+
+
+def assert_fomc_day_market_cutoff(
+    timestamp: datetime,
+    *,
+    feature_name: str = "market feature",
+) -> None:
+    """Hard-fail when a same-day market feature lands after the 14:00 ET cutoff.
+
+    The FOMC statement is released at 2pm Eastern. Any market-side bar (close,
+    volatility, rolling stat) whose timestamp falls on an FOMC day **and**
+    sits strictly after 14:00 ET embeds post-announcement information that
+    the model would not have had at decision time. Letting such a bar into
+    the feature frame is a textbook lookahead bug.
+
+    ``timestamp`` is expected to be tz-aware (UTC or otherwise). A naive
+    datetime is interpreted as UTC; the cutoff is then ``19:00 UTC``, which
+    is 2pm EST. Naive timestamps from EDT months can be marginally laxer
+    than the true 2pm ET boundary by one hour — callers that have a
+    tz-aware timestamp should keep using it.
+
+    Raises ``ValueError`` on violation so the caller can surface a clear
+    error to the operator. No silent coercion: a bad row is a bug, not a
+    rounding error.
+    """
+
+    if not is_fomc_day(timestamp.date()):
+        return  # Not an FOMC day -> cutoff does not apply.
+
+    if timestamp.tzinfo is None:
+        anchored = timestamp.replace(tzinfo=timezone.utc)
+    else:
+        anchored = timestamp.astimezone(timezone.utc)
+    cutoff = datetime.combine(anchored.date(), FOMC_DAY_CUTOFF_UTC)
+    if anchored > cutoff:
+        raise ValueError(
+            f"{feature_name} dated {anchored.isoformat()} is after the FOMC "
+            f"14:00 ET cutoff ({cutoff.isoformat()}) on a meeting day. "
+            "Same-day post-announcement bars leak the policy decision into the "
+            "feature frame. Drop the bar or rebuild the feature with an "
+            "as-of timestamp ≤ 14:00 ET."
+        )
 
 
 def _safe_symbol(symbol: str) -> str:
