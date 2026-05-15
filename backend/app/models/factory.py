@@ -20,13 +20,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from torch import nn
-
 from app.models.config import FORECASTER_ARCHITECTURES, ModelConfig
 from app.models.lstm import ForecasterModel
 
 
-def build_forecaster(config: ModelConfig | dict[str, Any]) -> nn.Module:
+def build_forecaster(config: ModelConfig | dict[str, Any]) -> ForecasterModel:
     """Build a forecaster module for ``config.architecture``.
 
     All architectures share the same input contract ``(batch, seq_len, 6)``
