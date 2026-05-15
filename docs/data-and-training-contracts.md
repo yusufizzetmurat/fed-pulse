@@ -92,11 +92,21 @@ Required artifacts:
 
 ## Event-row dataset (Phase 8)
 
-`backend/app/data/event_dataset_builder.py` produces a Phase-8 artifact at
-`data/processed/<training_package_id>/events.parquet`. One row per
-`(event_date, event_kind, asset_symbol, horizon)`. The same training
-package may be re-built repeatedly — the parquet bytes are byte-identical
-on identical inputs (deterministic + idempotent).
+`backend/app/data/event_dataset_builder.py` produces two Phase-8 artifacts
+in a single CLI run, both under `data/processed/<training_package_id>/`:
+
+- `events.parquet` — **collapsed view**. One row per
+  `(event_date, event_kind, asset_symbol, horizon)`. Multi-source
+  duplicates are pinned to one preferred source via
+  `_SOURCE_PREFERENCE`. Use this for "one event one row" stats.
+- `events_full.parquet` — **full view**. One row per
+  `(event_date, event_kind, source, asset_symbol, horizon)`. Every
+  source survives so sentence-level / source-stratified analyses can
+  read the raw shards directly. Same column schema as the collapsed
+  view; the extra column `source_record_id` is populated in both.
+
+Both parquets are byte-identical on identical inputs (deterministic +
+idempotent). The same training package can be rebuilt repeatedly.
 
 Event kinds: `{statement, minutes, speech, testimony, press_conference}`.
 `document_type` values from the registry are normalized via a fixed map
@@ -168,8 +178,19 @@ Hard guarantees:
 CLI:
 ```
 python -m app.data.event_dataset_builder \
-    --training-package-id <id> --asset ^GSPC --output events.parquet
+    --training-package-id <id> --asset ^GSPC \
+    --output events.parquet --full-output events_full.parquet
 ```
-The yfinance fetch is cached at `<package_dir>/_market_cache/<symbol>.parquet`
-with a `SOURCES.lock` entry. Re-runs use the cache; pass
-`--market-cache-dir` to relocate it.
+Both parquets are always written; pass `--full-output ''` to skip the
+full view. The yfinance fetch is cached at
+`<package_dir>/_market_cache/<symbol>.parquet` with a `SOURCES.lock`
+entry. Re-runs use the cache; pass `--market-cache-dir` to relocate it.
+
+Sprint 1 reference counts (training package
+`tp_v2_sprint1_2026_05_15_sentiment_market_core_v1.0_epv1_v1.0`,
+`^GSPC` asset):
+
+| Output                | Rows  | Unique events                          |
+| --------------------- | ----- | -------------------------------------- |
+| `events.parquet`      | 4 103 | 1 026 (date × kind × preferred source) |
+| `events_full.parquet` | 5 339 | 1 335 (date × kind × source)           |

@@ -338,3 +338,88 @@ def test_concurrent_macro_release_flag_is_boolean(tmp_path: Path) -> None:
     assert df["concurrent_macro_release"].dtype == bool
     # The flag must exist for every row; we never drop on this.
     assert df["concurrent_macro_release"].notna().all()
+
+
+# ---------------------------------------------------------------------------
+# events_full.parquet -- keep_all_sources keeps every source's rows
+# ---------------------------------------------------------------------------
+
+
+def test_events_full_has_more_rows_than_collapsed_on_multi_source_fixture(
+    tmp_path: Path,
+) -> None:
+    """When the same event_date+kind is covered by three sources, the
+    full view emits 3 rows-per-horizon while the collapsed view emits 1.
+    Both share the same schema; the full view never drops a source."""
+
+    package = tmp_path / "package"
+    package.mkdir()
+    event_date = "2023-06-14"
+    _write_registry(
+        package / "registry_normalized.jsonl",
+        [
+            {
+                **_registry_entry_for_statement(event_date, text="hf sentence."),
+                "source": "hf_fomc_communication",
+                "source_record_id": "train:1",
+                "document_type": "statement",
+                "mapped_label": "hawkish",
+            },
+            {
+                **_registry_entry_for_statement(event_date, text="kaggle row."),
+                "source": "kaggle_fed_statements_minutes",
+                "source_record_id": "kaggle:1",
+                "document_type": "statement",
+                "mapped_label": "dovish",
+            },
+            {
+                **_registry_entry_for_statement(event_date, text="Full doc text."),
+                "source": "scraped_fed",
+                "source_record_id": "fomc_statements.json:5",
+                "document_type": "Statement",
+                "mapped_label": "neutral",
+            },
+        ],
+    )
+    dates = _make_trading_dates(_dt.date(2021, 1, 4), 800)
+    series = _series_from_closes(dates, [100.0] * 800)
+    df_collapsed = edb.build_event_rows(
+        package_dir=package,
+        asset_series=series,
+        bench_series=series,
+        keep_all_sources=False,
+    )
+    df_full = edb.build_event_rows(
+        package_dir=package,
+        asset_series=series,
+        bench_series=series,
+        keep_all_sources=True,
+    )
+    # collapsed should be exactly one chosen source x 4 horizons
+    assert len(df_collapsed) == 4
+    assert set(df_collapsed["source"]) == {"scraped_fed"}
+    # full should preserve all three sources -- 3 x 4 = 12 rows
+    assert len(df_full) == 12
+    assert set(df_full["source"]) == {
+        "hf_fomc_communication",
+        "kaggle_fed_statements_minutes",
+        "scraped_fed",
+    }
+    # Schema parity: same columns
+    assert list(df_collapsed.columns) == list(df_full.columns)
+    # source_record_id is populated in both views
+    assert (df_full["source_record_id"].str.len() > 0).all()
+    assert (df_collapsed["source_record_id"].str.len() > 0).all()
+    # Determinism: building the full view twice yields identical bytes
+    p1 = tmp_path / "full1.parquet"
+    p2 = tmp_path / "full2.parquet"
+    edb.write_events_parquet(df_full, p1)
+    df_full2 = edb.build_event_rows(
+        package_dir=package,
+        asset_series=series,
+        bench_series=series,
+        keep_all_sources=True,
+    )
+    edb.write_events_parquet(df_full2, p2)
+    assert hashlib.sha256(p1.read_bytes()).hexdigest() == hashlib.sha256(p2.read_bytes()).hexdigest()
+

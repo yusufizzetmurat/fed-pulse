@@ -6,7 +6,18 @@ multi-axis labels (where available), a 4-vector credibility check, a 20
 trading-day prior market window, and abnormal-return targets at horizons
 ``h in {1d, 5d, 10d, 30d}``.
 
-Output: ``data/processed/<training_package_id>/events.parquet``.
+Two outputs are emitted side-by-side in the same CLI run:
+
+- ``data/processed/<pkg>/events.parquet``        -- collapsed view, one row
+  per ``(event_date, event_kind, asset_symbol, horizon)``. Multi-source
+  duplicates are pinned to one preferred source via ``_SOURCE_PREFERENCE``.
+- ``data/processed/<pkg>/events_full.parquet``    -- full view, one row per
+  ``(event_date, event_kind, source, source_record_id, asset_symbol, horizon)``.
+  Keeps sentence-level data from every source for source-stratified and
+  sentence-level analyses.
+
+Both parquets share the same column schema; downstream consumers pick the
+view that fits their question.
 
 Schema (one row per event x kind x horizon x asset):
 
@@ -179,6 +190,17 @@ class _EventDoc:
     text: str
     record_ids: list[str]
     multi_axis: dict[str, str | None]
+
+    @property
+    def source_record_id(self) -> str:
+        """Stable identifier for one (source, event_date, event_kind) shard.
+
+        Uses the concatenation of all aggregated ``source_record_id`` values
+        joined by ``|``. Sorted at aggregation time so the value is
+        deterministic.
+        """
+
+        return "|".join(self.record_ids)
 
 
 @dataclass
@@ -874,6 +896,7 @@ def _build_event_rows(
                 "document_id": document_id,
                 "text_hash": text_hash,
                 "source": doc.source,
+                "source_record_id": doc.source_record_id,
                 "as_of_ts": as_of_ts,
                 "text": doc.text,
                 "token_count": token_count,
@@ -929,6 +952,7 @@ COLUMN_ORDER = (
     "document_id",
     "text_hash",
     "source",
+    "source_record_id",
     "as_of_ts",
     "text",
     "token_count",
@@ -970,11 +994,18 @@ def build_event_rows(
     fred_series_id: str = "DFF",
     stance_by_date: Sequence[tuple[str, float]] = (),
     summary: _BuildSummary | None = None,
+    keep_all_sources: bool = False,
 ) -> pd.DataFrame:
     """Build the events DataFrame for one training package.
 
     Tests inject ``asset_series`` and ``bench_series`` directly. The smoke
     run leaves them ``None`` and we fetch (and cache) live yfinance bars.
+
+    When ``keep_all_sources=False`` (default) the frame collapses to one
+    row per ``(event_date, event_kind, asset_symbol, horizon)`` via the
+    ``_SOURCE_PREFERENCE`` order. When ``keep_all_sources=True`` every
+    source survives, producing one row per
+    ``(event_date, event_kind, source, asset_symbol, horizon)``.
     """
 
     if summary is None:
@@ -982,7 +1013,7 @@ def build_event_rows(
 
     registry_rows = _load_registry_rows(package_dir)
     docs_all = _aggregate_events(registry_rows)
-    docs = _choose_preferred(docs_all)
+    docs = list(docs_all) if keep_all_sources else _choose_preferred(docs_all)
     if not docs:
         return _empty_frame()
 
@@ -1037,10 +1068,10 @@ def build_event_rows(
         return _empty_frame()
 
     df = pd.DataFrame(out_rows)
-    # Deterministic ordering
-    df = df.sort_values(
-        ["event_date", "event_kind", "asset_symbol", "horizon"], kind="mergesort"
-    ).reset_index(drop=True)
+    # Deterministic ordering. The full view sorts on source + source_record_id
+    # so the parquet bytes don't shift when sources interleave.
+    sort_cols = ["event_date", "event_kind", "source", "source_record_id", "asset_symbol", "horizon"]
+    df = df.sort_values(sort_cols, kind="mergesort").reset_index(drop=True)
     df = df[list(COLUMN_ORDER)]
     return df
 
@@ -1081,7 +1112,23 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=",".join(str(h) for h in DEFAULT_HORIZONS),
         help="Comma-separated trading-day horizons (default: 1,5,10,30).",
     )
-    parser.add_argument("--output", default="events.parquet")
+    parser.add_argument(
+        "--output",
+        default="events.parquet",
+        help=(
+            "Name of the collapsed parquet (one row per event_date x "
+            "event_kind x asset_symbol x horizon). The full-source view is "
+            "always written alongside as 'events_full.parquet'."
+        ),
+    )
+    parser.add_argument(
+        "--full-output",
+        default="events_full.parquet",
+        help=(
+            "Name of the full parquet (keeps every source/source_record_id). "
+            "Set to '' to skip the full view."
+        ),
+    )
     parser.add_argument(
         "--market-cache-dir",
         default=None,
@@ -1113,6 +1160,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else (package_dir / "_market_cache")
     )
 
+    # Collapsed view
     summary = _BuildSummary()
     df = build_event_rows(
         package_dir=package_dir,
@@ -1124,29 +1172,66 @@ def main(argv: Sequence[str] | None = None) -> int:
         fred_cache_dir=Path(args.fred_cache_dir) if args.fred_cache_dir else None,
         summary=summary,
     )
-
     output_path = Path(args.output)
     if not output_path.is_absolute():
         output_path = package_dir / output_path
     write_events_parquet(df, output_path)
 
-    print(f"[event-rows] wrote {summary.rows_written} rows to {output_path}")
+    print(f"[event-rows] collapsed view: {summary.rows_written} rows -> {output_path}")
     print(f"[event-rows] unique events: {summary.events_emitted}")
     print(f"[event-rows] dropped (no prior window or no targets): {summary.dropped_no_prior_window}")
     print(
-        f"[event-rows] concurrent_macro_release rows: {summary.concurrent_macro_release_rows}"
+        f"[event-rows] concurrent_macro_release rows: {summary.concurrent_macro_release_rows} "
+        f"({_pct(summary.concurrent_macro_release_rows, summary.rows_written)})"
     )
-    print("[event-rows] per-source breakdown:")
+    print("[event-rows] per-source breakdown (collapsed):")
     for src, count in sorted(summary.per_source_rows.items(), key=lambda x: -x[1]):
         print(f"  {src}: {count}")
-    print("[event-rows] per-kind breakdown:")
+    print("[event-rows] per-kind breakdown (collapsed):")
     for kind, count in sorted(summary.per_kind_rows.items(), key=lambda x: -x[1]):
         print(f"  {kind}: {count}")
+
+    # Full view -- emit only when --full-output is set to a non-empty value.
+    full_output_arg = (args.full_output or "").strip()
+    if full_output_arg:
+        full_summary = _BuildSummary()
+        df_full = build_event_rows(
+            package_dir=package_dir,
+            asset=args.asset,
+            benchmark=args.benchmark,
+            horizons=horizons,
+            market_cache_dir=market_cache_dir,
+            embedding_path=Path(args.embedding_path) if args.embedding_path else None,
+            fred_cache_dir=Path(args.fred_cache_dir) if args.fred_cache_dir else None,
+            summary=full_summary,
+            keep_all_sources=True,
+        )
+        full_output_path = Path(full_output_arg)
+        if not full_output_path.is_absolute():
+            full_output_path = package_dir / full_output_path
+        write_events_parquet(df_full, full_output_path)
+        print(
+            f"[event-rows] full view: {full_summary.rows_written} rows -> {full_output_path}"
+        )
+        print(
+            f"[event-rows] full unique (date x kind x source) docs: "
+            f"{full_summary.events_emitted}"
+        )
+        print("[event-rows] per-source breakdown (full):")
+        for src, count in sorted(full_summary.per_source_rows.items(), key=lambda x: -x[1]):
+            print(f"  {src}: {count}")
+
     # Column / dtype summary so the smoke run is self-describing
-    print("[event-rows] column dtypes:")
+    print("[event-rows] column dtypes (collapsed):")
     for col, dtype in df.dtypes.items():
         print(f"  {col}: {dtype}")
     return 0
+
+
+def _pct(num: int, denom: int) -> str:
+    if denom <= 0:
+        return "0.00%"
+    return f"{(num / denom) * 100:.2f}%"
 
 
 if __name__ == "__main__":
