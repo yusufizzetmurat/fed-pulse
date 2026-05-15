@@ -7,7 +7,11 @@ import type {
   HistoryList,
   HistoryQuery,
   HistoryRealizedResponse,
+  NextFomcForecastResponse,
+  ResearchArtifactsResponse,
   TrainJobState,
+  TrainJobSummary,
+  TrainJobsListResponse,
 } from "./types";
 
 export function resolveApiBaseUrl(): string {
@@ -84,4 +88,34 @@ export async function fetchFomcCalendar(
 ): Promise<FomcCalendarResponse> {
   const response = await axios.get(`${baseUrl}/fomc/calendar`, { params });
   return response.data as FomcCalendarResponse;
+}
+
+export async function fetchResearchArtifacts(
+  baseUrl: string
+): Promise<ResearchArtifactsResponse> {
+  const response = await axios.get(`${baseUrl}/research/artifacts`);
+  return response.data as ResearchArtifactsResponse;
+}
+
+export async function fetchTrainJobs(
+  baseUrl: string,
+  params?: { status?: string; limit?: number; offset?: number }
+): Promise<TrainJobsListResponse> {
+  const response = await axios.get(`${baseUrl}/train-jobs`, { params });
+  return response.data as TrainJobsListResponse;
+}
+
+export async function fetchTrainJobDetail(
+  baseUrl: string,
+  jobId: string
+): Promise<TrainJobState & TrainJobSummary> {
+  const response = await axios.get(`${baseUrl}/train-jobs/${jobId}`);
+  return response.data as TrainJobState & TrainJobSummary;
+}
+
+export async function fetchNextFomcForecast(
+  baseUrl: string
+): Promise<NextFomcForecastResponse> {
+  const response = await axios.get(`${baseUrl}/forecasts/next-fomc`);
+  return response.data as NextFomcForecastResponse;
 }

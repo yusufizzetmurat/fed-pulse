@@ -1,5 +1,16 @@
 import Link from "next/link";
-import { Activity, BookOpen, Calendar, GitCompare, Github, History as HistoryIcon, LineChart } from "lucide-react";
+import {
+  Activity,
+  BookOpen,
+  Calendar,
+  Cpu,
+  FlaskConical,
+  GitCompare,
+  Github,
+  Gavel,
+  History as HistoryIcon,
+  LineChart,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,6 +18,9 @@ import { ThemeToggle } from "@/components/theme-toggle";
 
 const NAV_ITEMS: Array<{ href: string; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { href: "/analyze", label: "Analyze", icon: Activity },
+  { href: "/research", label: "Research", icon: FlaskConical },
+  { href: "/training", label: "Training", icon: Cpu },
+  { href: "/decisions", label: "Decisions", icon: Gavel },
   { href: "/history", label: "History", icon: HistoryIcon },
   { href: "/compare", label: "Compare", icon: GitCompare },
   { href: "/performance", label: "Performance", icon: LineChart },

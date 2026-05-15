@@ -29,6 +29,7 @@ from app.middleware.errors import RunIdMiddleware, register_error_handlers
 from app.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
+    ArtifactFile,
     DocumentParseResponse,
     DocumentParseUrlRequest,
     FomcCalendarResponse,
@@ -36,8 +37,12 @@ from app.schemas import (
     HistoryEntry,
     HistoryList,
     HistoryRealizedResponse,
+    NextFomcForecastResponse,
+    ResearchArtifactsResponse,
     TrainJobAcceptedResponse,
     TrainJobStatusResponse,
+    TrainJobSummary,
+    TrainJobsListResponse,
 )
 from app.evaluation.xai import attribute_text, to_response as xai_to_response
 from app.services.document_parser import (
@@ -46,7 +51,14 @@ from app.services.document_parser import (
     parse_pdf_stream,
     parse_url,
 )
+from app.services.decision_forecast import load_next_fomc_artifacts
 from app.services.fomc_calendar import get_calendar
+from app.services.research_artifacts import (
+    SECTIONS as RESEARCH_SECTIONS,
+    list_section_files,
+    load_cross_bank_transfer,
+    load_encoder_bakeoff,
+)
 from app.services.forecaster import (
     bootstrap_checkpoint,
     build_feature_vectors,
@@ -568,3 +580,124 @@ async def parse_document(
             detail=f"Unsupported content type {content_type or 'unknown'} (expected PDF or DOCX)",
         )
     return DocumentParseResponse(**parsed.to_dict())
+
+
+# ---------------------------------------------------------------------------
+# Train-jobs listing (multi-page expansion #150)
+# ---------------------------------------------------------------------------
+
+_TRAIN_JOB_SORT_RANK: dict[str, int] = {
+    "running": 0,
+    "queued": 1,
+    "failed": 2,
+    "succeeded": 3,
+}
+
+
+def _train_job_sort_key(state: dict[str, Any]) -> tuple[int, str]:
+    status = str(state.get("status") or "queued").lower()
+    rank = _TRAIN_JOB_SORT_RANK.get(status, 99)
+    # Within a status bucket sort newest-first by created_at; the
+    # fallback empty string keeps the ordering deterministic.
+    created = str(state.get("created_at") or "")
+    return (rank, _invert_iso(created))
+
+
+def _invert_iso(value: str) -> str:
+    """Cheap descending-sort key for ISO timestamps."""
+
+    return "".join(chr(255 - ord(c)) if ord(c) < 255 else c for c in value)
+
+
+@app.get("/train-jobs", response_model=TrainJobsListResponse)
+def list_train_jobs(
+    status: str | None = Query(default=None, description="Filter by status: queued/running/succeeded/failed."),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> TrainJobsListResponse:
+    """List in-process real_train jobs.
+
+    State is in-memory only -- restarting the backend resets the list.
+    This is intentional: the dashboard is observational; durable runs
+    flow through the make targets, not the API.
+    """
+
+    with _train_jobs_lock:
+        snapshot = [dict(state) for state in _train_jobs.values()]
+    if status:
+        wanted = status.strip().lower()
+        snapshot = [s for s in snapshot if str(s.get("status") or "").lower() == wanted]
+    snapshot.sort(key=_train_job_sort_key)
+    total = len(snapshot)
+    sliced = snapshot[offset : offset + limit]
+    items = [
+        TrainJobSummary(
+            job_id=str(state.get("job_id")),
+            status=str(state.get("status") or "queued"),
+            symbol=state.get("symbol"),
+            date=state.get("date"),
+            created_at=state.get("created_at"),
+            started_at=state.get("started_at"),
+            finished_at=state.get("finished_at"),
+            history_length=state.get("history_length"),
+            error=state.get("error"),
+        )
+        for state in sliced
+    ]
+    return TrainJobsListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+# ---------------------------------------------------------------------------
+# Research artifacts (#150 — /research tab)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/research/artifacts", response_model=ResearchArtifactsResponse)
+def research_artifacts() -> ResearchArtifactsResponse:
+    """Aggregate artefact metadata + parsed shapes for the research tab.
+
+    Missing sections are not an error; the response marks each one
+    unavailable so the dashboard can render an empty state without
+    issuing a second request.
+    """
+
+    artifacts_root = DATA_DIR / "artifacts"
+    sections: dict[str, list[ArtifactFile]] = {}
+    for name in RESEARCH_SECTIONS:
+        infos = list_section_files(artifacts_root, name)
+        sections[name] = [
+            ArtifactFile(
+                relative_path=info.relative_path,
+                size_bytes=info.size_bytes,
+                modified_at=info.modified_at,
+                suffix=info.suffix,
+            )
+            for info in infos
+        ]
+    bakeoff = load_encoder_bakeoff(artifacts_root)
+    transfer = load_cross_bank_transfer(artifacts_root)
+    return ResearchArtifactsResponse(
+        artifacts_root=str(artifacts_root),
+        sections=sections,
+        encoder_bakeoff=bakeoff,  # type: ignore[arg-type]
+        cross_bank_transfer=transfer,  # type: ignore[arg-type]
+    )
+
+
+# ---------------------------------------------------------------------------
+# Next-FOMC decision forecast (#150 — /decisions tab)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/forecasts/next-fomc", response_model=NextFomcForecastResponse)
+def next_fomc_forecast() -> NextFomcForecastResponse:
+    """Read ``data/artifacts/next_fomc/`` for the decisions dashboard.
+
+    Returns ``available: False`` when the forecaster has not been run
+    against this checkout. The dashboard surfaces the empty-state with
+    the documented ``make next-fomc`` instruction in that case.
+    """
+
+    artifacts_dir = DATA_DIR / "artifacts" / "next_fomc"
+    payload = load_next_fomc_artifacts(artifacts_dir)
+    return NextFomcForecastResponse(**payload)
