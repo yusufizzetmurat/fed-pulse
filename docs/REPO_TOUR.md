@@ -18,7 +18,7 @@ Fed Pulse is a research project (SWE 599 thesis at Boğaziçi University) that t
 4. A credibility panel showing how the document compares to the prior four FOMC communications.
 5. A persisted history so each analysis is searchable / comparable across runs.
 
-The thesis question is whether fusing FOMC text with market history through a small sequence model produces better short-horizon forecasts than a market-only baseline, and when runtime adaptation is worth its compute cost. Done criteria live in `../../fed-pulse.wiki/05_Project_Plan.md §1`.
+The question this codebase tries to answer is whether fusing FOMC text with market history through a small sequence model produces better short-horizon forecasts than a market-only baseline, and when runtime adaptation is worth its compute cost. Done criteria live in `../../fed-pulse.wiki/05_Project_Plan.md §1`.
 
 ---
 

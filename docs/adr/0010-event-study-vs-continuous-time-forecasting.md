@@ -30,9 +30,10 @@ forecasting?":
    classifier (`forecasting/next_fomc_decision.py`) are the event-study
    framing. Denominator: ~150 FOMC events in the same window.
 
-The thesis question is whether fusing FOMC text with market history
-improves short-horizon forecasts. The two framings have wildly
-different signal-to-noise ratios for that question.
+The question the project is actually trying to answer is whether
+fusing FOMC text with market history improves short-horizon
+forecasts. The two framings have wildly different signal-to-noise
+ratios for that question.
 
 ## Decision
 
