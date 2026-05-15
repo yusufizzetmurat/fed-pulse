@@ -814,3 +814,138 @@ def test_build_linguistic_feature_frame_pivot_column_present(tmp_path):
     assert "pivot_distance" in frame.columns
     # Non-NaN count = #statements with a strict prior = N - 1 here.
     assert frame["pivot_distance"].notna().sum() == 1
+
+
+# ---------------------------------------------------------------------------
+# prefer_source tie-break: the canonical prior representative inside a
+# same-date bucket can be the lexicographically smallest text_hash
+# (default) or the preferred-source document (when prefer_source=True).
+# Defaults must keep behaviour byte-identical with pre-2026-05-16 frames.
+# ---------------------------------------------------------------------------
+
+
+def _statement_entry_with_source(
+    text_hash: str, event_date: str, text: str, source: str
+) -> dict:
+    entry = _statement_entry(text_hash, event_date, text)
+    entry["source"] = source
+    return entry
+
+
+def test_pivot_distance_prefer_source_off_uses_text_hash_tiebreak(tmp_path):
+    """Default behaviour: tied event_date -> lexicographically smallest
+    text_hash wins the prior-representative role.
+    """
+
+    package = tmp_path / "tp_prefer_off"
+    # Two statements share 2023-01-31; later statement on 2023-03-22.
+    # text_hash "aaa" < "zzz", so the default ordering picks "aaa" as
+    # the prior representative. With prefer_source=False we expect
+    # c_later's pivot_distance to be diffed against the INFLATION doc.
+    entries = [
+        _statement_entry_with_source(
+            "aaa_first_by_hash",
+            "2023-01-31",
+            _INFLATION_DOC,
+            source="hf_fomc_communication",  # sentence-level shard.
+        ),
+        _statement_entry_with_source(
+            "zzz_second_by_hash",
+            "2023-01-31",
+            _EMPLOYMENT_DOC,
+            source="scraped_fed",  # preferred source, but tied date.
+        ),
+        _statement_entry_with_source(
+            "c_later",
+            "2023-03-22",
+            _INFLATION_DOC,
+            source="scraped_fed",
+        ),
+    ]
+    _write_typed_registry(package, entries)
+    artifact = fit_lda(_toy_corpus())
+    frame, _ = build_linguistic_feature_frame(
+        package_dir=package, artifact=artifact, prefer_source=False
+    )
+    by_hash = {row["text_hash"]: row for row in frame.to_dict(orient="records")}
+    # Prior = "aaa_first_by_hash" with INFLATION text -> distance 0 to
+    # current INFLATION text.
+    assert by_hash["c_later"]["pivot_distance"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_pivot_distance_prefer_source_on_picks_preferred_source(tmp_path):
+    """``prefer_source=True``: the bucket is reordered by
+    ``_SOURCE_PREFERENCE`` rank, so the preferred-source document
+    becomes the prior representative even when its text_hash sorts
+    later.
+    """
+
+    package = tmp_path / "tp_prefer_on"
+    entries = [
+        _statement_entry_with_source(
+            "aaa_first_by_hash",
+            "2023-01-31",
+            _INFLATION_DOC,
+            source="hf_fomc_communication",  # sentence-level shard.
+        ),
+        _statement_entry_with_source(
+            "zzz_second_by_hash",
+            "2023-01-31",
+            _EMPLOYMENT_DOC,
+            source="scraped_fed",  # higher rank than hf_fomc_communication.
+        ),
+        _statement_entry_with_source(
+            "c_later",
+            "2023-03-22",
+            _EMPLOYMENT_DOC,
+            source="scraped_fed",
+        ),
+    ]
+    _write_typed_registry(package, entries)
+    artifact = fit_lda(_toy_corpus())
+    frame, _ = build_linguistic_feature_frame(
+        package_dir=package, artifact=artifact, prefer_source=True
+    )
+    by_hash = {row["text_hash"]: row for row in frame.to_dict(orient="records")}
+    # prefer_source picks scraped_fed (zzz_second_by_hash) with
+    # EMPLOYMENT text -> distance 0 to current EMPLOYMENT text.
+    assert by_hash["c_later"]["pivot_distance"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_pivot_distance_prefer_source_default_is_off(tmp_path):
+    """Calling ``build_linguistic_feature_frame`` without the flag must
+    produce a frame byte-identical to ``prefer_source=False``. This is the
+    contract that keeps existing artefacts reproducible.
+    """
+
+    package = tmp_path / "tp_default_matches_off"
+    entries = [
+        _statement_entry_with_source(
+            "aaa", "2023-01-31", _INFLATION_DOC, source="hf_fomc_communication"
+        ),
+        _statement_entry_with_source(
+            "zzz", "2023-01-31", _EMPLOYMENT_DOC, source="scraped_fed"
+        ),
+        _statement_entry_with_source(
+            "c", "2023-03-22", _FINANCIAL_DOC, source="scraped_fed"
+        ),
+    ]
+    _write_typed_registry(package, entries)
+    artifact = fit_lda(_toy_corpus())
+    default_frame, _ = build_linguistic_feature_frame(
+        package_dir=package, artifact=artifact
+    )
+    explicit_off_frame, _ = build_linguistic_feature_frame(
+        package_dir=package, artifact=artifact, prefer_source=False
+    )
+    # Frames must compare equal column-by-column. Drop the index because
+    # `sort_values` resets it.
+    assert list(default_frame.columns) == list(explicit_off_frame.columns)
+    for col in default_frame.columns:
+        a = default_frame[col].tolist()
+        b = explicit_off_frame[col].tolist()
+        for va, vb in zip(a, b):
+            if isinstance(va, float) and math.isnan(va):
+                assert isinstance(vb, float) and math.isnan(vb)
+            else:
+                assert va == vb

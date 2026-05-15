@@ -829,6 +829,12 @@ class _CorpusDoc:
     text: str
     event_date: str = ""
     event_kind: str = ""
+    # First-seen registry source for this text_hash. Used by the optional
+    # ``prefer_source`` tiebreak in ``build_linguistic_feature_frame`` so
+    # the pivot-distance walker can prefer a known-good source (e.g.
+    # ``scraped_fed``) over a sentence-level shard. Empty string when the
+    # registry row does not carry a recognisable source.
+    source: str = ""
 
 
 def _aggregate_corpus(package_dir: Path) -> list[_CorpusDoc]:
@@ -854,6 +860,7 @@ def _aggregate_corpus(package_dir: Path) -> list[_CorpusDoc]:
     seen_order: list[str] = []
     event_date_by_hash: dict[str, str] = {}
     event_kind_by_hash: dict[str, str] = {}
+    source_by_hash: dict[str, str] = {}
     for line in registry.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
@@ -871,6 +878,7 @@ def _aggregate_corpus(package_dir: Path) -> list[_CorpusDoc]:
             event_date_by_hash[thash] = str(payload.get("event_date", "") or "").strip()
             doc_type = str(payload.get("document_type", "") or "").strip()
             event_kind_by_hash[thash] = _DOCUMENT_TYPE_TO_KIND.get(doc_type, "")
+            source_by_hash[thash] = str(payload.get("source", "") or "").strip()
         by_hash[thash].append(text)
     docs = [
         _CorpusDoc(
@@ -878,6 +886,7 @@ def _aggregate_corpus(package_dir: Path) -> list[_CorpusDoc]:
             text="\n".join(by_hash[h]),
             event_date=event_date_by_hash.get(h, ""),
             event_kind=event_kind_by_hash.get(h, ""),
+            source=source_by_hash.get(h, ""),
         )
         for h in seen_order
     ]
@@ -889,6 +898,7 @@ def build_linguistic_feature_frame(
     *,
     package_dir: Path,
     artifact: LdaArtifact | None = None,
+    prefer_source: bool = False,
 ) -> tuple[pd.DataFrame, LdaArtifact]:
     """Fit LDA on the package corpus (if not already fit) and emit the
     per-document feature frame.
@@ -902,9 +912,24 @@ def build_linguistic_feature_frame(
     whose ``event_date`` is strictly less than the current one and
     diffs its token set against the current document. The first
     statement in the corpus (no strictly-prior peer) gets ``NaN``;
-    non-statement documents always get ``NaN``. Ties on ``event_date``
-    are broken by ``text_hash`` ascending, but a tied prior is treated
-    as concurrent and not used -- the prior must be strictly earlier.
+    non-statement documents always get ``NaN``.
+
+    When several statements share the same ``event_date``, one of them
+    becomes the canonical prior representative for any later date.
+    Two tie-break orders are supported:
+
+    - ``prefer_source=False`` (default): tie-broken by ``text_hash``
+      ascending. This is the original Phase-7 ordering and keeps the
+      pre-2026-05-16 frames bit-identical.
+    - ``prefer_source=True``: tie-broken by ``_SOURCE_PREFERENCE`` rank
+      from ``event_dataset_builder`` (``scraped_fed`` > ``vtasca`` >
+      ``op_fed`` > …), with ``text_hash`` as a secondary tiebreak. Use
+      this when a known-good source is present alongside sentence-
+      level shards on the same date and you want the prior to be the
+      complete document rather than the first shard.
+
+    The same-date contract is unchanged: tied priors are concurrent and
+    not used; the prior must be strictly earlier on the calendar.
     """
 
     docs = _aggregate_corpus(package_dir)
@@ -929,6 +954,28 @@ def build_linguistic_feature_frame(
             by_date[doc.event_date] = []
             date_order.append(doc.event_date)
         by_date[doc.event_date].append(doc)
+
+    # Local helper that picks the canonical prior representative inside
+    # a same-date bucket. Default behaviour preserves the byte-identical
+    # 2026-05 contract; ``prefer_source`` reorders the bucket so the
+    # first entry is the preferred-source document.
+    def _canonical_prior(bucket: list[_CorpusDoc]) -> _CorpusDoc:
+        if not prefer_source:
+            # bucket is already sorted by (event_date, text_hash); first
+            # entry is the canonical representative.
+            return bucket[0]
+        from app.data.event_dataset_builder import _SOURCE_PREFERENCE
+
+        rank = {src: i for i, src in enumerate(_SOURCE_PREFERENCE)}
+        # Stable sort by (source-preference rank, text_hash). Unknown
+        # sources land at the tail; same-rank ties fall back to the
+        # existing text_hash tiebreak so determinism is preserved.
+        ordered = sorted(
+            bucket,
+            key=lambda d: (rank.get(d.source, len(_SOURCE_PREFERENCE)), d.text_hash),
+        )
+        return ordered[0]
+
     prev_tokens: set[str] | None = None
     for date in date_order:
         bucket = by_date[date]
@@ -937,12 +984,10 @@ def build_linguistic_feature_frame(
             prior_tokens_by_hash[doc.text_hash] = (
                 set(prev_tokens) if prev_tokens is not None else None
             )
-        # Promote this bucket to "prior" for any later date. When multiple
-        # statements share the same date, the first one in (event_date,
-        # text_hash) order is the canonical prior representative -- a
-        # deterministic, documented tie-break that matches the rest of
-        # the module's ordering convention.
-        prev_tokens = pivot_distance_tokens(bucket[0].text)
+        # Promote this bucket to "prior" for any later date. The
+        # canonical representative is the first entry under the active
+        # tie-break order (see ``_canonical_prior``).
+        prev_tokens = pivot_distance_tokens(_canonical_prior(bucket).text)
 
     rows: list[dict[str, Any]] = []
     for doc in docs:
