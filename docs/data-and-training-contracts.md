@@ -275,3 +275,74 @@ python -m app.data.mp_surprise \
 The output parquet lands under `data/external/fred/`. Pass
 `--methodology ff_futures` only when a real CME settlement source has
 been wired (out of scope for #146).
+
+## Structured linguistic features (Phase 8)
+
+`backend/app/features/linguistic.py` emits a 14-dim interpretable
+linguistic feature vector per document, keyed by `text_hash` so it joins
+directly onto event rows or any other registry-derived table.
+
+Output artifacts under `data/processed/<training_package_id>/`:
+
+- `linguistic_features.parquet` — one row per unique `text_hash`. 14
+  numeric columns: 5 named LDA topic shares (`inflation`, `employment`,
+  `financial_stability`, `growth`, `balance_sheet`), 3 misc topic shares
+  (`misc_1..3`), `hedge_density`, `comparison_density`,
+  `forward_density`, `concrete_ratio`, `hawk_dove_asymmetry`,
+  `log_token_count`.
+- `linguistic_lda_model.pkl` — pickled `(CountVectorizer, LatentDirichletAllocation)`
+  bundle plus the slot→topic-index assignment map. Sufficient to score
+  any new document without re-fitting.
+- `linguistic_lda_topics.json` — top-15 vocabulary words per topic plus
+  the human label, coherence notes, and configuration constants
+  (`random_state=11`, `num_topics=8`, `max_iter=50`). The wiki entry
+  reads this file directly.
+
+LDA fit is deterministic: `random_state=11`, batch learning,
+`max_iter=50`, fixed `CountVectorizer` cutoffs. The hand-crafted
+densities are pure functions of the document text — scrambling the
+order of other documents in the corpus does not change any single
+document's feature row beyond the LDA fit dependency, which is itself
+permutation-invariant under sklearn's batch LDA with a fixed seed.
+
+CLI:
+```
+python -m app.features.linguistic \
+    --training-package-id <id> \
+    --output linguistic_features.parquet
+```
+
+Sprint 1 reference counts (training package
+`tp_v2_sprint1_2026_05_15_sentiment_market_core_v1.0_epv1_v1.0`):
+
+| Output                          | Rows   | Notes                                  |
+| ------------------------------- | ------ | -------------------------------------- |
+| `linguistic_features.parquet`   | 16 721 | one row per unique `text_hash`         |
+| `linguistic_lda_model.pkl`      | n/a    | `CountVectorizer` + LDA, seed=11       |
+| `linguistic_lda_topics.json`    | n/a    | 8 topics × 15 words + coherence audit  |
+
+Coherence on the Sprint 1 fit (see `linguistic_lda_topics.json`):
+
+- `inflation` (topic 0) — **clean**. Top words: inflation, economic, rate,
+  percent, labor.
+- `growth` (topic 6) — **clean**. Top words: growth, quarter, prices,
+  economic, spending.
+- `financial_stability` (topic 3) — **clean**. Top words: period, market,
+  remained, credit, financial.
+- `balance_sheet` (topic 1) — **weak**. Top words lean on open-market /
+  FX operations (foreign, bank, committee, market, open). Downstream
+  models should treat this share as a residual rather than a clean
+  balance-sheet signal.
+- `employment` (topic 5) — **weak**. Top words read as the policy
+  framing of an FOMC statement (committee, federal, policy, securities,
+  rate) rather than labor-market vocabulary. Treat as a residual.
+
+Misc topics: governance/admin (topic 2), minutes voice (topic 4),
+pandemic-era policy (topic 7) — kept under `misc_1..3` so a downstream
+model can still pick them up without re-fitting.
+
+These misses are honest: 8 latent topics across 16,721 mostly-FOMC
+documents does not cleanly separate "balance sheet" or "employment"
+because both vocabularies overlap heavily with general FOMC framing.
+Increasing `num_topics` would split out cleaner balance-sheet / labor
+topics at the cost of inflating misc count.
