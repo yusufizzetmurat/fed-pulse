@@ -495,7 +495,7 @@ If you change architecture, schema, API surface, or evaluation protocol, name th
 
 - **Branches:** `feat/<short-desc>`, never push to `main`, always PR into `dev`.
 - **Commits:** present-tense imperative ("add the X", not "added the X"). No AI co-author trailers.
-- **PRs:** terse, in the user's voice. ≤8 summary bullets, ≤15 words each, ≤3 test-plan commands. The PR description is the durable accounting; don't repeat it in commit bodies.
+- **PRs:** terse and descriptive. ≤8 summary bullets, ≤15 words each, ≤3 test-plan commands. Describe what the change does. The PR description is the durable accounting; don't repeat it in commit bodies.
 - **Tests:** lint + typecheck + pytest + frontend + vuln-python + vuln-npm jobs must all be green before merge.
 - **Data conventions:** `BACKEND_ROOT` resolves via `Path(__file__).resolve().parents[2]`; `DEFAULT_DATA_DIR` falls back to `BACKEND_ROOT.parent / "data"` when `/data` is absent. `make` targets fail fast on missing `DATASET_VERSION` / `FEATURE_VERSION` / `TRAINING_PACKAGE_ID` — don't paper over with defaults.
 
