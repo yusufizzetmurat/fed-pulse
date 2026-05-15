@@ -200,9 +200,11 @@ _STANCE_ENCODING: dict[str, float] = {
     "neutral": 0.0,
 }
 _CERTAINTY_ENCODING: dict[str, float] = {
-    "certain": 1.0,
-    "neutral": 0.0,
-    "uncertain": -1.0,
+    # ``axis_certainty`` is regression-typed in ``data/schema/labels.yaml``
+    # (range [0.0, 1.0]), so there is no canonical categorical label
+    # vocabulary to encode. The dict is kept for symmetry with
+    # ``_STANCE_ENCODING`` and ``_FACTOR_ENCODING``; numeric passthrough
+    # via ``_axis_to_numeric`` is the only supported path.
 }
 _FACTOR_ENCODING: dict[str, float] = {
     # ``axis_factor`` is regression-only in the schema, so the fallback
@@ -844,7 +846,7 @@ def _axis_to_numeric(value: Any, encoding: dict[str, float]) -> float:
     if isinstance(value, bool):
         # bool is a subclass of int; treat as NaN to avoid surprising True->1.0
         return math.nan
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         if isinstance(value, float) and math.isnan(value):
             return math.nan
         return float(value)
