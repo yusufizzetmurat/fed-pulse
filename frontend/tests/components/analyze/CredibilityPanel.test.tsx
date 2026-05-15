@@ -15,7 +15,7 @@ describe("CredibilityPanel", () => {
   });
 
   it("handles a sparse credibility payload without crashing", () => {
-    render(<CredibilityPanel credibility={{ driftScore: 0.5 }} />);
+    render(<CredibilityPanel credibility={{ drift_score: 0.5 }} />);
     expect(screen.getAllByText(/—/).length).toBeGreaterThanOrEqual(3);
   });
 });

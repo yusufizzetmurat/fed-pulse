@@ -88,6 +88,7 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             initial_decay_rate=float(raw.get("initial_decay_rate", ModelConfig().initial_decay_rate)),
             text_channel=str(raw.get("text_channel", "scalar")),
             embedding_adapter_dim=int(raw.get("embedding_adapter_dim", 128)),
+            credibility_features=bool(raw.get("credibility_features", False)),
         )
     return ModelConfig()
 

@@ -210,3 +210,23 @@ finbert-fed-adjacent-pretrain-smoke:
 		--batch-size 4 \
 		--block-size 128 \
 		--objective mlm
+
+# Build (or reuse) the per-encoder embedding cache for a training package.
+# Required: ENCODER (alias from models/registry.yaml), TRAINING_PACKAGE_ID.
+# Set ALLOW_NETWORK=1 the first time you cache a new encoder.
+cache-embeddings:
+	@if [ -z "$(ENCODER)" ]; then echo "Set ENCODER=<alias>"; exit 2; fi
+	@if [ -z "$(TRAINING_PACKAGE_ID)" ]; then echo "Set TRAINING_PACKAGE_ID=<id>"; exit 2; fi
+	docker compose run --rm backend \
+		python -m app.data.embedding_cache \
+		--encoder "$(ENCODER)" \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		$(if $(ALLOW_NETWORK),--allow-network,) \
+		$(if $(FORCE),--force,)
+
+# Aggregate one or more finetune_batch aggregate.json files into a headline
+# table with block-bootstrap CIs. ARTIFACT_DIR defaults to data/artifacts/phase3.
+bakeoff-aggregate:
+	docker compose run --rm backend \
+		python -m app.evaluation.bakeoff_aggregator \
+		--artifact-dir "$(or $(ARTIFACT_DIR),data/artifacts/phase3)"

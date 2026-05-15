@@ -81,9 +81,9 @@ export const SAMPLE_XAI: XaiResponse = {
 };
 
 export const SAMPLE_CREDIBILITY: CredibilityResponse = {
-  driftScore: 0.34,
-  driftTrend: [0.21, 0.28, 0.31, 0.34],
-  realizedVsStatedGap: -0.08,
-  marketImpliedGap: 0.12,
-  monthsSinceReversal: 14,
+  drift_score: 0.34,
+  drift_trend: [0.21, 0.28, 0.31, 0.34],
+  realized_vs_stated_gap: -0.08,
+  market_implied_gap: 0.12,
+  months_since_reversal: 14,
 };

@@ -1,4 +1,4 @@
-updated_at: 2026-05-13
+updated_at: 2026-05-15
 
 encoders:
   bert_base:
@@ -53,3 +53,45 @@ encoders:
     description: Fallback when FOMC-RoBERTa fails to load.
     repo_aliases:
       - distilbert-base-uncased-finetuned-sst-2-english
+
+  distilbert_base_uncased:
+    repo: distilbert/distilbert-base-uncased
+    revision: 12040accade4e8a0f71eabdb258fecc2e7e948be
+    gated: false
+    task: masked_lm
+    description: Lightweight BERT used in the bake-off as a cheap baseline.
+    repo_aliases:
+      - distilbert-base-uncased
+
+  deberta_v3_base:
+    repo: microsoft/deberta-v3-base
+    revision: 7d4a04c4f6f4bd3a9dd55fb55c25aa7e22f7c79b
+    gated: false
+    task: masked_lm
+    description: DeBERTa v3 base — bake-off entry to test a non-BERT-family encoder.
+
+  bge_large_en_v15:
+    repo: BAAI/bge-large-en-v1.5
+    revision: d4aa6901d3a41ba39fb536a557fa166f842b0e09
+    gated: false
+    task: sentence_embedding
+    description: BGE large English v1.5. Sentence-embedding encoder for the embedding-cache bake-off lane.
+
+  nomic_embed_text_v15:
+    repo: nomic-ai/nomic-embed-text-v1.5
+    revision: b0753ae76394dd36bcfb912a46018088bca48be0
+    gated: false
+    task: sentence_embedding
+    description: Nomic embed text v1.5. Sentence-embedding encoder; second bake-off entry alongside BGE.
+
+  finbert_fed_adjacent:
+    repo: local/finbert-fed-adjacent
+    revision: ""
+    gated: false
+    task: masked_lm
+    description: |
+      FinBERT continued-pretrained on BIS speeches (+ optional local Fed-adjacent
+      auxiliary). Produced by ``make finbert-fed-adjacent-pretrain``; the
+      ``revision`` is filled in with the local checkpoint directory or its sha256
+      after the GPU run completes. Empty revision means "not yet trained" — the
+      bake-off CLI skips this encoder until a revision is pinned.

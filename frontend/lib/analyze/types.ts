@@ -132,11 +132,11 @@ export interface XaiResponse {
 }
 
 export interface CredibilityResponse {
-  driftScore: number;
-  driftTrend?: number[];
-  realizedVsStatedGap?: number;
-  marketImpliedGap?: number;
-  monthsSinceReversal?: number;
+  drift_score: number;
+  drift_trend?: number[];
+  realized_vs_stated_gap?: number;
+  market_implied_gap?: number;
+  months_since_reversal?: number;
 }
 
 export interface AnalyzeResult {

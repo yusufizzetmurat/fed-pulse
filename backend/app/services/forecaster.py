@@ -139,8 +139,20 @@ def _set_singleton_after_train(
 def _predict_next_point(model: ForecasterModel, sequence: list[FeatureVector]) -> tuple[float, float]:
     device = next(model.parameters()).device
     x = torch.tensor([[item.as_list() for item in sequence]], dtype=torch.float32, device=device)
+    kwargs: dict[str, torch.Tensor] = {}
+    if getattr(model, "credibility_features", False):
+        # Inference-side credibility uses a zero vector by default; the live
+        # vtasca + FRED loader (services.credibility_loader) populates real
+        # numbers in the training loop and at /analyze when the caller wires it
+        # in. Zero is the neutral "all axes unknown" reading from
+        # CredibilityVector — safe for forecast inference.
+        kwargs["credibility"] = torch.zeros(
+            (1, int(getattr(model, "credibility_dim", 4))),
+            dtype=torch.float32,
+            device=device,
+        )
     with torch.no_grad():
-        out = model(x).squeeze(0)
+        out = model(x, **kwargs).squeeze(0)
     close_scale = float((_model_artifact_metadata or {}).get("close_scale", DEFAULT_CLOSE_SCALE))
     pred_close = float(out[0].item()) * close_scale
     pred_vol = float(out[1].item())
