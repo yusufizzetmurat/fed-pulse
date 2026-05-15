@@ -69,6 +69,11 @@ def test_build_sweep_candidates_creates_cartesian_product():
         dropouts=[0.10],
         learning_rates=[1e-3, 5e-4],
         epochs_grid=[20],
+        architecture="lstm",
+        architectures=None,
+        seed=None,
+        seeds=None,
+        credibility_features=False,
     )
 
     candidates = build_sweep_candidates(args)
@@ -77,3 +82,7 @@ def test_build_sweep_candidates_creates_cartesian_product():
     assert {candidate["model_config"].hidden_size for candidate in candidates} == {32, 64}
     assert {candidate["model_config"].num_layers for candidate in candidates} == {1, 2}
     assert {candidate["learning_rate"] for candidate in candidates} == {1e-3, 5e-4}
+    # When the caller doesn't pass `--architectures`, the sweep stays on the
+    # single architecture so default behaviour (LSTM-only) is preserved.
+    assert {candidate["model_config"].architecture for candidate in candidates} == {"lstm"}
+    assert {candidate["seed"] for candidate in candidates} == {None}

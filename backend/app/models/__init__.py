@@ -1,3 +1,4 @@
+from app.models.config import FORECASTER_ARCHITECTURES
 from app.models.registry import (
     MODEL_REGISTRY_PATH,
     EncoderRef,
@@ -7,6 +8,7 @@ from app.models.registry import (
 
 __all__ = [
     "EncoderRef",
+    "FORECASTER_ARCHITECTURES",
     "MODEL_REGISTRY_PATH",
     "load_registry",
     "revision_for",

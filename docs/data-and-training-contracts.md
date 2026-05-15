@@ -534,3 +534,102 @@ Outputs land under `data/artifacts/cross_asset/`:
   `^GSPC|h1` and `^GSPC|h5`. Same subset list as the next-FOMC
   attribution table, plus the model-free `zero_baseline` and
   `ois_bp_baseline` reference rows.
+
+## Forecaster architecture sweep (Phase 8)
+
+The quantitative-forecaster CLI under `backend/app/train_forecaster.py`
+ships a six-architecture sweep harness with an optional credibility
+features flag. All six architectures share the same input contract
+(`(batch, 20, 6)`) and the same output contract (`(batch, 2)` for
+close/volatility) so the sweep harness, evaluation loop, and downstream
+inference path treat them interchangeably.
+
+### Architecture roster
+
+| Arch         | Core                                             | Notes |
+|--------------|--------------------------------------------------|-------|
+| `lstm`       | `nn.LSTM` (default)                              | The v2 default; byte-identical to pre-#70 behaviour when `credibility_features=False`. |
+| `lstm_attn`  | `nn.LSTM` + `RecurrentSequenceAttention` pool    | Additive-attention pool over LSTM outputs replaces `output[:, -1, :]`. |
+| `gru`        | `nn.GRU`                                         | Same hyperparameter shape as the LSTM core. |
+| `tcn`        | Two dilated-conv `TemporalConvNet` blocks        | Causal padding; residual identity. |
+| `transformer`| `SmallTransformer` (2 layers, 4 heads)           | `hidden_size` must be divisible by 4 (default 64 satisfies). |
+| `dlinear`    | DLinear (trend + seasonal decomposition)         | Pinned to `SEQUENCE_LENGTH=20`. |
+
+The official registry constant lives at `app.models.FORECASTER_ARCHITECTURES`.
+
+### Credibility-features flag
+
+`--credibility-features` activates the four-axis credibility vector
+(`drift_score`, `realized_vs_stated_gap`, `market_implied_gap`,
+`months_since_reversal`) on the forecaster input. Default off preserves
+the byte-identical training contract — the determinism regression at
+`tests/regression/test_forecaster_determinism.py` plus the lock test at
+`tests/unit/test_forecaster_credibility_flag.py` enforce that
+`architecture="lstm"` + `credibility_features=False` is bit-identical
+across runs at the same seed (within `1e-7` for the in-test contract;
+the published `1e-4` contract covers cross-platform drift).
+
+### Sweep output schema
+
+`forecaster_sweep_results.json` (JSON, sorted keys) carries:
+
+```
+{
+  "mode": "sweep",
+  "selection_metric": "combined_rmse",
+  "architectures": ["dlinear", "gru", "lstm", "lstm_attn", "tcn", "transformer"],
+  "seeds": [11, 29, 47, 71, 97],
+  "credibility_features": false,
+  "trial_count": 30,
+  "best_trial_index": <int>,
+  "best_trial": {...},
+  "selected_checkpoint": {...},
+  "trials": [
+    {
+      "trial_index": <int>,
+      "architecture": "<arch>",
+      "seed": <int>,
+      "selected": <bool>,
+      "summary": <TrainingRunSummary.to_dict()>
+    },
+    ...
+  ]
+}
+```
+
+A sibling `.csv` with one row per trial is written next to the JSON.
+The companion aggregator `app.evaluation.forecaster_sweep_aggregator`
+reads one or more sweep result files and emits a markdown headline
+table plus per-architecture block-bootstrap CIs (95% by default,
+`block_size=1`, `n_resamples=1000`, deterministic at `seed=11`). The
+aggregator output schema is:
+
+```
+{
+  "generated_at_utc": "<ISO 8601>",
+  "block_size": 1,
+  "n_resamples": 1000,
+  "coverage": 0.95,
+  "bootstrap_seed": 11,
+  "architectures": [
+    {
+      "architecture": "<arch>",
+      "seeds": [...],
+      "credibility_features": <bool>,
+      "combined_rmse": {"values": [...], "ci": {...}},
+      "close_rmse":    {"values": [...], "ci": {...}},
+      "volatility_rmse": {"values": [...], "ci": {...}}
+    },
+    ...
+  ]
+}
+```
+
+### Make targets
+
+- `make forecaster-sweep TRAINING_PACKAGE_ID=<id>` — the full
+  6-arch x 5-seed sweep.
+- `make forecaster-sweep-aggregate TRAINING_PACKAGE_ID=<id>` —
+  per-architecture headline (block-bootstrap CIs).
+- `make forecaster-credibility-train TRAINING_PACKAGE_ID=<id> ARCHITECTURE=lstm SEED=11`
+  — single-architecture run with `--credibility-features` on.

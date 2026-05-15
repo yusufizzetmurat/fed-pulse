@@ -9,6 +9,7 @@ from typing import Any, Sequence
 
 import torch
 
+from app.models import FORECASTER_ARCHITECTURES
 from app.services.forecaster import (
     BEST_MODEL_PATH,
     DEFAULT_BATCH_SIZE,
@@ -28,6 +29,9 @@ from app.services.forecaster import (
     train_model,
 )
 
+# Official seed set for the multi-architecture sweep (mirrors the NLP bake-off
+# protocol in ``docs/benchmark-policy.md``).
+DEFAULT_SWEEP_SEEDS: tuple[int, ...] = (11, 29, 47, 71, 97)
 
 DEFAULT_REPORT_PATH = BEST_MODEL_PATH.parent / "forecaster_sweep_results.json"
 
@@ -101,6 +105,37 @@ def _parse_args() -> argparse.Namespace:
         help="Explicit device override, e.g. 'cuda', 'cuda:0', or 'cpu'.",
     )
     parser.add_argument(
+        "--architecture",
+        choices=list(FORECASTER_ARCHITECTURES),
+        default="lstm",
+        help="Forecaster architecture for a single training run.",
+    )
+    parser.add_argument(
+        "--architectures",
+        nargs="+",
+        choices=list(FORECASTER_ARCHITECTURES),
+        help="Sweep over the listed architectures (combine with --sweep).",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Deterministic seed for a single training run.",
+    )
+    parser.add_argument(
+        "--seeds",
+        nargs="+",
+        type=int,
+        help="Sweep over the listed seeds. Defaults to the official seed set when "
+        "combined with --architectures.",
+    )
+    parser.add_argument(
+        "--credibility-features",
+        action="store_true",
+        help="Enable the 4-axis credibility feature path on the forecaster. Default off "
+        "preserves the byte-identical regression-test contract for architecture=lstm.",
+    )
+    parser.add_argument(
         "--sweep",
         action="store_true",
         help="Run a grid search and select the best checkpoint by validation RMSE.",
@@ -154,6 +189,8 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         num_layers=args.num_layers,
         dropout=args.dropout,
         head_hidden_size=args.head_hidden_size,
+        architecture=args.architecture,
+        credibility_features=bool(args.credibility_features),
     )
 
 
@@ -206,14 +243,26 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
     dropouts = args.dropouts or [args.dropout]
     learning_rates = args.learning_rates or [args.learning_rate]
     epochs_options = args.epochs_grid or [args.epochs]
+    architectures = args.architectures or [args.architecture]
+    # When the caller asks for an architecture sweep but doesn't list seeds we
+    # fall back to the official five-seed set; this matches the bake-off
+    # aggregator and avoids accidentally publishing a single-seed table.
+    if args.seeds:
+        seeds: list[int | None] = [int(s) for s in args.seeds]
+    elif args.architectures:
+        seeds = list(DEFAULT_SWEEP_SEEDS)
+    else:
+        seeds = [args.seed]
 
     candidates: list[dict[str, Any]] = []
-    for hidden_size, num_layers, dropout, learning_rate, epochs in itertools.product(
+    for architecture, hidden_size, num_layers, dropout, learning_rate, epochs, seed in itertools.product(
+        architectures,
         hidden_sizes,
         num_layers_options,
         dropouts,
         learning_rates,
         epochs_options,
+        seeds,
     ):
         candidates.append(
             {
@@ -222,9 +271,12 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                     num_layers=num_layers,
                     dropout=dropout,
                     head_hidden_size=args.head_hidden_size,
+                    architecture=str(architecture),
+                    credibility_features=bool(args.credibility_features),
                 ),
                 "learning_rate": float(learning_rate),
                 "epochs": int(epochs),
+                "seed": int(seed) if seed is not None else None,
             }
         )
     return candidates
@@ -237,6 +289,9 @@ def _flatten_trial_record(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "trial_index": record["trial_index"],
         "selected": record.get("selected", False),
+        "architecture": model_config.get("architecture") or record.get("architecture"),
+        "seed": record.get("seed"),
+        "credibility_features": model_config.get("credibility_features"),
         "hidden_size": model_config.get("hidden_size"),
         "num_layers": model_config.get("num_layers"),
         "dropout": model_config.get("dropout"),
@@ -258,7 +313,7 @@ def _flatten_trial_record(record: dict[str, Any]) -> dict[str, Any]:
 
 def _write_sweep_report(report_path: Path, payload: dict[str, Any]) -> None:
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    report_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
     csv_path = report_path.with_suffix(".csv")
     trial_rows = [_flatten_trial_record(trial) for trial in payload.get("trials", [])]
@@ -282,6 +337,7 @@ def _run_single_training(
     early_stopping_patience: int,
     model_config: ModelConfig,
     save_checkpoint: bool,
+    seed: int | None = None,
 ) -> TrainingRunSummary:
     result = train_model(
         data_dir=data_dir,
@@ -294,6 +350,7 @@ def _run_single_training(
         save_checkpoint=save_checkpoint,
         device=device,
         model_config=model_config,
+        seed=seed,
     )
     return result.summary
 
@@ -318,6 +375,7 @@ def _run_sweep(
         model_config = candidate["model_config"]
         learning_rate = candidate["learning_rate"]
         epochs = candidate["epochs"]
+        seed = candidate.get("seed")
         summary = _run_single_training(
             data_dir=data_dir,
             checkpoint_path=checkpoint_path,
@@ -329,9 +387,17 @@ def _run_sweep(
             early_stopping_patience=args.early_stopping_patience,
             model_config=model_config,
             save_checkpoint=False,
+            seed=seed,
         )
         summaries.append(summary)
-        trial_records.append({"trial_index": index, "summary": summary.to_dict()})
+        trial_records.append(
+            {
+                "trial_index": index,
+                "architecture": model_config.architecture,
+                "seed": seed,
+                "summary": summary.to_dict(),
+            }
+        )
         metrics = summary.metrics
         metrics_label = (
             f"combined_rmse={metrics.combined_rmse:.6f}, loss={metrics.loss:.6f}"
@@ -340,6 +406,7 @@ def _run_sweep(
         )
         print(
             f"[trial {index}/{len(candidates)}] "
+            f"arch={model_config.architecture}, seed={seed}, "
             f"hidden={model_config.hidden_size}, layers={model_config.num_layers}, "
             f"dropout={model_config.dropout:.3f}, lr={learning_rate:.6g}, epochs={epochs} -> {metrics_label}"
         )
@@ -355,8 +422,10 @@ def _run_sweep(
         if summary == best_summary
     )
     best_model_config = best_summary.model_config
+    best_seed = candidates[best_trial_index - 1].get("seed")
     print(
         "Re-training best configuration for final checkpoint: "
+        f"arch={best_model_config.architecture}, seed={best_seed}, "
         f"hidden={best_model_config.hidden_size}, layers={best_model_config.num_layers}, "
         f"dropout={best_model_config.dropout:.3f}, lr={best_summary.learning_rate:.6g}, "
         f"epochs={best_summary.epochs_requested}"
@@ -372,6 +441,7 @@ def _run_sweep(
         early_stopping_patience=best_summary.early_stopping_patience,
         model_config=best_model_config,
         save_checkpoint=True,
+        seed=best_seed,
     )
     for trial in trial_records:
         trial["selected"] = trial["trial_index"] == best_trial_index
@@ -382,6 +452,9 @@ def _run_sweep(
         "device": str(device),
         "data_dir": str(data_dir),
         "checkpoint_path": str(checkpoint_path),
+        "credibility_features": bool(args.credibility_features),
+        "architectures": sorted({trial["architecture"] for trial in trial_records}),
+        "seeds": sorted({trial["seed"] for trial in trial_records if trial["seed"] is not None}),
         "trial_count": len(trial_records),
         "best_trial_index": best_trial_index,
         "best_trial": trial_records[best_trial_index - 1],
@@ -430,10 +503,19 @@ def main() -> int:
         )
         return 1
 
-    if args.sweep or any(
+    sweep_mode = args.sweep or any(
         option is not None
-        for option in (args.hidden_sizes, args.num_layers_grid, args.dropouts, args.learning_rates, args.epochs_grid)
-    ):
+        for option in (
+            args.hidden_sizes,
+            args.num_layers_grid,
+            args.dropouts,
+            args.learning_rates,
+            args.epochs_grid,
+            args.architectures,
+            args.seeds,
+        )
+    )
+    if sweep_mode:
         return _run_sweep(
             args=args,
             data_dir=data_dir,
@@ -442,7 +524,10 @@ def main() -> int:
             device=device,
         )
 
-    print("Starting professional forecaster training...")
+    print(
+        "Starting professional forecaster training "
+        f"(architecture={args.architecture}, credibility_features={bool(args.credibility_features)})..."
+    )
     summary = _run_single_training(
         data_dir=data_dir,
         checkpoint_path=checkpoint_path,
@@ -454,6 +539,7 @@ def main() -> int:
         early_stopping_patience=args.early_stopping_patience,
         model_config=_build_model_config(args),
         save_checkpoint=True,
+        seed=args.seed,
     )
     metrics = summary.metrics
     if metrics is not None:

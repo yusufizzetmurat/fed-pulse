@@ -11,6 +11,7 @@ from __future__ import annotations
 import torch
 
 from app.models.config import CREDIBILITY_FEATURE_DIM, ModelConfig
+from app.models.factory import build_forecaster
 from app.models.lstm import ForecasterModel
 
 
@@ -21,7 +22,8 @@ def _seed(seed: int = 11) -> None:
 def test_credibility_off_is_default() -> None:
     config = ModelConfig()
     assert config.credibility_features is False
-    model = ForecasterModel(**config.to_dict())
+    model = build_forecaster(config)
+    assert isinstance(model, ForecasterModel)
     assert model.credibility_features is False
     assert model.credibility_dim == 0
 

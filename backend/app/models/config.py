@@ -37,6 +37,16 @@ MODELS_DIR = MODEL_CHECKPOINT_DIR
 BEST_MODEL_PATH = MODELS_DIR / "forecaster_best.pt"
 
 
+FORECASTER_ARCHITECTURES: tuple[str, ...] = (
+    "lstm",
+    "lstm_attn",
+    "gru",
+    "tcn",
+    "transformer",
+    "dlinear",
+)
+
+
 @dataclass(frozen=True)
 class ModelConfig:
     input_size: int = FEATURE_SIZE
@@ -48,9 +58,13 @@ class ModelConfig:
     text_channel: str = "scalar"
     embedding_adapter_dim: int = 128
     credibility_features: bool = False
+    architecture: str = "lstm"
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
+        architecture = getattr(model, "model_type", None) or "lstm"
+        if architecture not in FORECASTER_ARCHITECTURES:
+            architecture = "lstm"
         return cls(
             input_size=model.input_size,
             hidden_size=model.hidden_size,
@@ -61,6 +75,7 @@ class ModelConfig:
             text_channel=getattr(model, "text_channel", "scalar"),
             embedding_adapter_dim=getattr(model, "chunk_projection_dim", 128) or 128,
             credibility_features=bool(getattr(model, "credibility_features", False)),
+            architecture=str(architecture),
         )
 
     def to_dict(self) -> dict[str, Any]:
