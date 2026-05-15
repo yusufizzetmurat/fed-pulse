@@ -210,3 +210,16 @@ finbert-fed-adjacent-pretrain-smoke:
 		--batch-size 4 \
 		--block-size 128 \
 		--objective mlm
+
+# Zero-shot cross-CB transfer matrix for an NLP checkpoint.
+# Required: TRAINING_PACKAGE_ID, MODEL_CHECKPOINTS (alias=path[,alias=path]).
+# Optional: EVAL_BANKS (ecb,boj,boe,boc,rba; default = all 5), SEEDS.
+eval-cross-bank:
+	@if [ -z "$(TRAINING_PACKAGE_ID)" ]; then echo "Set TRAINING_PACKAGE_ID=<id>"; exit 2; fi
+	@if [ -z "$(MODEL_CHECKPOINTS)" ]; then echo "Set MODEL_CHECKPOINTS=alias=path[,alias=path]"; exit 2; fi
+	docker compose run --rm backend \
+		python -m app.evaluation.transfer_matrix \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		--model-checkpoints "$(MODEL_CHECKPOINTS)" \
+		$(if $(EVAL_BANKS),--eval-banks "$(EVAL_BANKS)",) \
+		$(if $(SEEDS),--seeds "$(SEEDS)",)
