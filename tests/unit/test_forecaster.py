@@ -626,3 +626,65 @@ def test_forecaster_model_transformer_variant_forward_returns_expected_shape() -
             assert a.shape == b.shape
     else:
         assert out.shape == lstm_out.shape
+
+
+def test_forecaster_model_informer_variant_forward_returns_expected_shape() -> None:
+    import torch
+    from app.services.forecaster import ForecasterModel
+
+    model = ForecasterModel(input_size=6, hidden_size=32, model_type="informer")
+    x = torch.zeros(2, 5, 6)
+    out = model(x)
+    lstm_model = ForecasterModel(input_size=6, hidden_size=32, model_type="lstm")
+    lstm_out = lstm_model(x)
+    assert out.shape == lstm_out.shape
+
+
+def test_forecaster_model_informer_variant_backward_runs() -> None:
+    """One backward step must produce gradients on the Informer-backed wrapper."""
+
+    import torch
+    from app.services.forecaster import ForecasterModel
+
+    torch.manual_seed(11)
+    model = ForecasterModel(input_size=6, hidden_size=32, model_type="informer")
+    x = torch.randn(2, 5, 6)
+    out = model(x)
+    out.sum().backward()
+    grad_total = sum(
+        p.grad.abs().sum().item()
+        for p in model.parameters()
+        if p.requires_grad and p.grad is not None
+    )
+    assert grad_total > 0.0
+
+
+def test_forecaster_model_tft_variant_forward_returns_expected_shape() -> None:
+    import torch
+    from app.services.forecaster import ForecasterModel
+
+    model = ForecasterModel(input_size=6, hidden_size=32, model_type="tft")
+    x = torch.zeros(2, 5, 6)
+    out = model(x)
+    lstm_model = ForecasterModel(input_size=6, hidden_size=32, model_type="lstm")
+    lstm_out = lstm_model(x)
+    assert out.shape == lstm_out.shape
+
+
+def test_forecaster_model_tft_variant_backward_runs() -> None:
+    """One backward step must produce gradients on the TFT-backed wrapper."""
+
+    import torch
+    from app.services.forecaster import ForecasterModel
+
+    torch.manual_seed(11)
+    model = ForecasterModel(input_size=6, hidden_size=32, model_type="tft")
+    x = torch.randn(2, 5, 6)
+    out = model(x)
+    out.sum().backward()
+    grad_total = sum(
+        p.grad.abs().sum().item()
+        for p in model.parameters()
+        if p.requires_grad and p.grad is not None
+    )
+    assert grad_total > 0.0

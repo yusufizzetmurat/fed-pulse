@@ -23,7 +23,7 @@ def _fresh(seed: int = 11) -> None:
     torch.manual_seed(seed)
 
 
-def test_registry_lists_six_architectures() -> None:
+def test_registry_lists_eight_architectures() -> None:
     assert set(FORECASTER_ARCHITECTURES) == {
         "lstm",
         "lstm_attn",
@@ -31,6 +31,8 @@ def test_registry_lists_six_architectures() -> None:
         "tcn",
         "transformer",
         "dlinear",
+        "informer",
+        "tft",
     }
 
 
@@ -96,3 +98,39 @@ def test_factory_accepts_plain_dict_config() -> None:
     model = build_forecaster(ModelConfig(architecture="gru").to_dict())
     assert isinstance(model, ForecasterModel)
     assert model.model_type == "gru"
+
+
+def test_factory_dispatches_informer() -> None:
+    """architecture=\"informer\" returns a ForecasterModel whose core is the Informer encoder."""
+
+    from app.models.informer import InformerEncoder
+
+    _fresh()
+    model = build_forecaster(ModelConfig(architecture="informer"))
+    model.eval()
+    assert isinstance(model, ForecasterModel)
+    assert model.model_type == "informer"
+    assert isinstance(model.recurrent_core, InformerEncoder)
+    x = torch.randn(4, SEQUENCE_LENGTH, FEATURE_SIZE)
+    with torch.no_grad():
+        out = model(x)
+    assert out.shape == (4, 2)
+    assert torch.all(out[:, 1] >= 0.0)
+
+
+def test_factory_dispatches_tft() -> None:
+    """architecture=\"tft\" returns a ForecasterModel whose core is the TFT encoder."""
+
+    from app.models.tft import TFTEncoder
+
+    _fresh()
+    model = build_forecaster(ModelConfig(architecture="tft"))
+    model.eval()
+    assert isinstance(model, ForecasterModel)
+    assert model.model_type == "tft"
+    assert isinstance(model.recurrent_core, TFTEncoder)
+    x = torch.randn(4, SEQUENCE_LENGTH, FEATURE_SIZE)
+    with torch.no_grad():
+        out = model(x)
+    assert out.shape == (4, 2)
+    assert torch.all(out[:, 1] >= 0.0)

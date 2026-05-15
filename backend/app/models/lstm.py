@@ -74,7 +74,16 @@ class ForecasterModel(nn.Module):
         eight-way ablation sweeps them as separate cells.
         """
         super().__init__()
-        _allowed_model_types = {"lstm", "lstm_attn", "gru", "tcn", "transformer", "dlinear"}
+        _allowed_model_types = {
+            "lstm",
+            "lstm_attn",
+            "gru",
+            "tcn",
+            "transformer",
+            "dlinear",
+            "informer",
+            "tft",
+        }
         if model_type not in _allowed_model_types:
             raise ValueError(
                 f"Unknown model_type: {model_type!r}. Allowed: {sorted(_allowed_model_types)}"
@@ -281,6 +290,23 @@ class ForecasterModel(nn.Module):
                 hidden_size=hidden_size,
                 sequence_length=SEQUENCE_LENGTH,
             )
+        if model_type == "informer":
+            from app.models.informer import InformerEncoder
+
+            return InformerEncoder(
+                input_size=input_size,
+                hidden_size=hidden_size,
+                dropout=dropout,
+            )
+        if model_type == "tft":
+            from app.models.tft import TFTEncoder
+
+            return TFTEncoder(
+                input_size=input_size,
+                hidden_size=hidden_size,
+                dropout=dropout,
+            )
         raise ValueError(
-            f"Unknown model_type: {model_type!r}. Allowed: lstm, lstm_attn, gru, tcn, transformer, dlinear"
+            f"Unknown model_type: {model_type!r}. "
+            "Allowed: lstm, lstm_attn, gru, tcn, transformer, dlinear, informer, tft"
         )
