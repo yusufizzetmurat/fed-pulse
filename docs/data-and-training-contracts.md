@@ -438,3 +438,99 @@ Outputs land under `data/artifacts/next_fomc/`:
   `ois_only`, `ois_text`, `ois_text_linguistic`, `ois_text_credibility`,
   `ois_text_macro`, `full`, plus the model-free `ois_baseline_only`
   and `naive_carry_only` rows for reference.
+
+## Cross-asset response (Phase 8)
+
+The cross-asset response head
+(`backend/app/forecasting/cross_asset_response.py`, closes #148) reuses
+the same per-meeting feature joins as the next-FOMC head and predicts
+the cross-section of asset abnormal returns rather than a single Fed
+decision class. Where the next-FOMC head asks "what will the Fed
+do next?", this head asks "how does the basket move when the Fed
+speaks?".
+
+### Target
+
+Per-row regression target is the `abnormal_return` column on
+`events.parquet`. The event-row dataset builder (#145) already
+produces one row per `(event_date, event_kind, asset_symbol, horizon)`
+with the market-model residual at horizon `h` computed against a
+trailing 252-day window strictly before `as_of_ts`. The cross-asset
+head reshapes that to one supervised row per
+`(meeting, asset, horizon)`.
+
+### Asset universe
+
+Read from `events.parquet`'s `asset_symbol` column. The canonical
+issue-#148 universe is:
+
+    ^GSPC ^IXIC ^DJI ^TNX DX-Y.NYB GC=F CL=F XLF XLK XLE
+
+Whatever subset is actually present in the parquet is what we model;
+the realised list is recorded under `metrics.json[asset_universe]`.
+`--asset` flags on the CLI can restrict the universe further.
+
+### Horizons
+
+`1, 5, 10, 30` trading days (the canonical set the event-row builder
+emits). `--horizon` flags restrict the modelled subset.
+
+### Feature families
+
+Same five families as the next-FOMC head (`ois`, `text`,
+`linguistic`, `credibility`, `macro`); the helpers are imported
+directly from `next_fomc_decision` so the feature-name contracts stay
+in lock-step.
+
+### Models
+
+Per-cell (one regression per `(asset, horizon)`):
+
+- **ridge** -- `sklearn.linear_model.Ridge(alpha=1.0)`. Headline
+  model; L2-regularised linear fit on the joint feature matrix.
+- **hist_gbt** -- `sklearn.ensemble.HistGradientBoostingRegressor`
+  seeded with `random_state=11`. Non-linear comparator.
+
+Optional pooled-panel exploration:
+
+- **pooled_ridge** -- single `Ridge` on the stacked frame with
+  per-asset and per-horizon one-hot dummies. Marked exploratory;
+  documented in the module docstring.
+
+### Baselines
+
+- **zero_baseline** -- predicts `0` abnormal return. The strict
+  null for a mean-zero residual.
+- **ois_bp_baseline** -- OIS-implied basis-point signal from
+  meeting `N`'s `post_event_curve` at the 1-month tenor minus
+  `ff_target_after`, divided by 100 so the units roughly align with
+  percentage abnormal returns. Same information cutoff as the
+  model. Rate-sensitive cells (e.g. ^TNX) make this baseline
+  competitive; sector-equity cells make it inflated. Documented in
+  the module docstring caveat -- read it before drawing inference.
+
+### Walk-forward CV
+
+Leave-one-meeting-out *per cell*. For held-out meeting `M` in cell
+`(asset, horizon)`, the train set is every supervised row in that
+cell whose `feature_event_date < M`. The fitter asserts the strict
+inequality on every fold. Train folds with fewer rows than the
+feature dimension fall back to the baselines.
+
+The pooled-panel variant walks the time boundary over the whole
+panel: equal-date rows in other cells are excluded so same-event
+information cannot leak across assets.
+
+### Artifact layout
+
+Outputs land under `data/artifacts/cross_asset/`:
+
+- `predictions.json` -- per `(meeting, asset, horizon, model)`
+  prediction with the realised target and train-row count.
+- `metrics.json` -- per-cell RMSE, MAE, R^2, directional hit rate
+  for every model. Reports both the full window and the
+  pandemic-excluded window (`2020-04-01..2021-06-30`).
+- `feature_attribution.md` -- ablation table for the headline cells
+  `^GSPC|h1` and `^GSPC|h5`. Same subset list as the next-FOMC
+  attribution table, plus the model-free `zero_baseline` and
+  `ois_bp_baseline` reference rows.
