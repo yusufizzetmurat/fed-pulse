@@ -340,6 +340,75 @@ def test_concurrent_macro_release_flag_is_boolean(tmp_path: Path) -> None:
     assert df["concurrent_macro_release"].notna().all()
 
 
+def test_concurrent_macro_window_days_zero_only_flags_same_day(tmp_path: Path) -> None:
+    """Window radius=0 must only flag events that land EXACTLY on a release date.
+
+    Radius=2 is the default and over-flags (~49%); radius=0 is the sharpest
+    attribution and should drop the flag rate by orders of magnitude on a
+    fixture where no release lands on the event date itself.
+    """
+
+    package = tmp_path / "package"
+    package.mkdir()
+    # 2023-06-14 = FOMC date that is NOT itself a CPI/NFP/ISM release
+    # (CPI 2023-06-13, NFP 2023-06-02). With radius=0 only same-day matches
+    # count; the FOMC date itself isn't a release date so flag must be False.
+    _write_registry(
+        package / "registry_normalized.jsonl",
+        [_registry_entry_for_statement("2023-06-14")],
+    )
+    dates = _make_trading_dates(_dt.date(2021, 1, 4), 800)
+    series = _series_from_closes(dates, [100.0] * 800)
+
+    df_wide = edb.build_event_rows(
+        package_dir=package,
+        asset_series=series,
+        bench_series=series,
+        concurrent_macro_window_days=2,
+    )
+    df_tight = edb.build_event_rows(
+        package_dir=package,
+        asset_series=series,
+        bench_series=series,
+        concurrent_macro_window_days=0,
+    )
+    # Wide (±2) flags this event because CPI 2023-06-13 sits 1 day before.
+    assert df_wide["concurrent_macro_release"].any()
+    # Tight (±0) requires same-day overlap, which doesn't happen here.
+    assert not df_tight["concurrent_macro_release"].any()
+
+
+def test_concurrent_macro_window_days_one_is_between_zero_and_two(tmp_path: Path) -> None:
+    """Tightening radius from 2 to 1 must monotonically reduce the flag rate."""
+
+    package = tmp_path / "package"
+    package.mkdir()
+    # Three FOMC events spanning years; each picks up macro releases at
+    # different proximities.
+    _write_registry(
+        package / "registry_normalized.jsonl",
+        [
+            _registry_entry_for_statement("2023-06-14"),
+            _registry_entry_for_statement("2022-12-14"),
+            _registry_entry_for_statement("2024-03-20"),
+        ],
+    )
+    dates = _make_trading_dates(_dt.date(2020, 1, 6), 1300)
+    series = _series_from_closes(dates, [100.0] * 1300)
+
+    rates: list[float] = []
+    for radius in (0, 1, 2):
+        df = edb.build_event_rows(
+            package_dir=package,
+            asset_series=series,
+            bench_series=series,
+            concurrent_macro_window_days=radius,
+        )
+        rates.append(float(df["concurrent_macro_release"].mean()))
+    # Monotone non-decreasing in radius: rate(0) <= rate(1) <= rate(2).
+    assert rates[0] <= rates[1] <= rates[2]
+
+
 # ---------------------------------------------------------------------------
 # events_full.parquet -- keep_all_sources keeps every source's rows
 # ---------------------------------------------------------------------------

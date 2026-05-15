@@ -829,6 +829,7 @@ def _build_event_rows(
     horizons: Sequence[int],
     credibility_kwargs: dict[str, Any],
     macro_release_calendar: MacroReleaseCalendar,
+    concurrent_macro_window_days: int = CONCURRENT_MACRO_TRADING_DAY_RADIUS,
 ) -> list[dict[str, Any]]:
     event_date = _date(doc.event_date)
     as_of_ts = _as_of_for_event(doc.event_date, doc.event_kind)
@@ -867,7 +868,10 @@ def _build_event_rows(
 
     vol_shift = _volatility_shift(asset_series, as_of_date)
     concurrent_macro = _has_concurrent_macro_release(
-        event_date, asset_series, calendar=macro_release_calendar
+        event_date,
+        asset_series,
+        radius=concurrent_macro_window_days,
+        calendar=macro_release_calendar,
     )
 
     # Credibility vector (degrades to zeros when inputs are absent)
@@ -1001,6 +1005,7 @@ def build_event_rows(
     keep_all_sources: bool = False,
     macro_release_calendar: MacroReleaseCalendar | None = None,
     macro_release_csv_path: Path | str | None = None,
+    concurrent_macro_window_days: int = CONCURRENT_MACRO_TRADING_DAY_RADIUS,
 ) -> pd.DataFrame:
     """Build the events DataFrame for one training package.
 
@@ -1066,6 +1071,7 @@ def build_event_rows(
             horizons=horizons,
             credibility_kwargs=credibility_kwargs,
             macro_release_calendar=macro_release_calendar,
+            concurrent_macro_window_days=concurrent_macro_window_days,
         )
         if not rows:
             summary.dropped_no_prior_window += 1
@@ -1168,6 +1174,17 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "else the legacy rule-based heuristic."
         ),
     )
+    parser.add_argument(
+        "--concurrent-macro-window-days",
+        type=int,
+        default=CONCURRENT_MACRO_TRADING_DAY_RADIUS,
+        help=(
+            "Trading-day radius around each FOMC event to flag as "
+            "concurrent_macro_release. Default 2 (matches the original heuristic "
+            "and the real-calendar flag rate of ~49%). Set 1 for sharper "
+            "attribution (~25%); set 0 to require exact same-day overlap."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1195,6 +1212,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         benchmark=args.benchmark,
         horizons=horizons,
         market_cache_dir=market_cache_dir,
+        concurrent_macro_window_days=int(args.concurrent_macro_window_days),
         embedding_path=Path(args.embedding_path) if args.embedding_path else None,
         fred_cache_dir=Path(args.fred_cache_dir) if args.fred_cache_dir else None,
         summary=summary,
@@ -1230,6 +1248,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             benchmark=args.benchmark,
             horizons=horizons,
             market_cache_dir=market_cache_dir,
+            concurrent_macro_window_days=int(args.concurrent_macro_window_days),
             embedding_path=Path(args.embedding_path) if args.embedding_path else None,
             fred_cache_dir=Path(args.fred_cache_dir) if args.fred_cache_dir else None,
             summary=full_summary,
