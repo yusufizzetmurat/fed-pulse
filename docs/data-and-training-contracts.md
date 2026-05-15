@@ -275,3 +275,87 @@ python -m app.data.mp_surprise \
 The output parquet lands under `data/external/fred/`. Pass
 `--methodology ff_futures` only when a real CME settlement source has
 been wired (out of scope for #146).
+
+## Structured linguistic features (Phase 8)
+
+`backend/app/features/linguistic.py` emits a 14-dim interpretable
+linguistic feature vector per document, keyed by `text_hash` so it joins
+directly onto event rows or any other registry-derived table.
+
+Output artifacts under `data/processed/<training_package_id>/`:
+
+- `linguistic_features.parquet` — one row per unique `text_hash`. 14
+  numeric columns: 5 named LDA topic shares (`inflation`, `employment`,
+  `financial_stability`, `growth`, `balance_sheet`), 3 misc topic shares
+  (`misc_1..3`), `hedge_density`, `comparison_density`,
+  `forward_density`, `concrete_ratio`, `hawk_dove_asymmetry`,
+  `log_token_count`.
+- `linguistic_lda_model.pkl` — pickled `(CountVectorizer, LatentDirichletAllocation)`
+  bundle plus the slot→topic-index assignment map. Sufficient to score
+  any new document without re-fitting.
+- `linguistic_lda_topics.json` — top-15 vocabulary words per topic plus
+  the human label, coherence notes, and configuration constants
+  (`random_state=11`, `num_topics=8`, `max_iter=50`). The wiki entry
+  reads this file directly.
+
+LDA fit is deterministic: `random_state=11`, batch learning,
+`max_iter=50`, fixed `CountVectorizer` cutoffs. The hand-crafted
+densities are pure functions of the document text — scrambling the
+order of other documents in the corpus does not change any single
+document's feature row beyond the LDA fit dependency, which is itself
+permutation-invariant under sklearn's batch LDA with a fixed seed.
+
+CLI:
+```
+python -m app.features.linguistic \
+    --training-package-id <id> \
+    --output linguistic_features.parquet
+```
+
+Sprint 1 reference counts (training package
+`tp_v2_sprint1_2026_05_15_sentiment_market_core_v1.0_epv1_v1.0`):
+
+| Output                          | Rows   | Notes                                  |
+| ------------------------------- | ------ | -------------------------------------- |
+| `linguistic_features.parquet`   | 16 721 | one row per unique `text_hash`         |
+| `linguistic_lda_model.pkl`      | n/a    | `CountVectorizer` + LDA, seed=11       |
+| `linguistic_lda_topics.json`    | n/a    | 8 topics × 15 words + coherence audit  |
+
+Coherence on the Sprint 1 fit (see `linguistic_lda_topics.json`):
+
+Seed-overlap floor (`MIN_SEED_OVERLAP=2`, top-10): every named slot
+emitted in `linguistic_features.parquet` is guaranteed to have at
+least two of its seed words inside the winning topic's top-10
+vocabulary. Slots that fail the floor are emitted as `0.0` and their
+candidate topics fall to `misc_*`. This blocks the prior failure mode
+where `topic_share_employment` was silently measuring QE language
+(topic 5: `committee, federal, policy, securities, rate, ..., agency,
+..., purchases`).
+
+Three named slots clear the floor on the Sprint 1 fit:
+
+- `financial_stability` (topic 3) — overlap: `{credit, financial}`.
+- `balance_sheet` (topic 5) — overlap: `{agency, securities}`. This
+  is the QE / asset-purchases topic; pre-fix the seed-assignment
+  race had this topic mislabeled as `employment`.
+- `growth` (topic 6) — overlap: `{growth, spending}`.
+
+Two named slots fall to misc (emitted as `0.0`):
+
+- `inflation` — top-10 of topic 0 contains only `{inflation}` from
+  the inflation seed list (count = 1, below floor). The topic is
+  inflation-heavy in posterior mass, but the seed list as currently
+  written does not have a second high-frequency seed in the corpus
+  top-10. Honest miss; reviewable in `linguistic_lda_topics.json`.
+- `employment` — best candidate topic has zero labor seeds in its
+  top-10. The floor blocks the assignment; pre-fix this was the
+  silent-mislabel bug flagged by reviewer audit of PR #155.
+
+Misc slots: five LDA topics fall to misc after the floor; only the
+first three populate `topic_share_misc_1..3`. The 14-column schema
+is preserved.
+
+Open follow-up: raising `num_topics` to 10-12 and widening the
+inflation seed list are out of scope for this correctness fix and
+will be separate PRs after the bake-off / forecaster sweep produce
+results.
