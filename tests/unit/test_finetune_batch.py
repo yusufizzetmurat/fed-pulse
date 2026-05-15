@@ -33,3 +33,28 @@ def test_encoders_keys_are_unique_local_labels() -> None:
         finetune_batch.ENCODERS["fomc_roberta"]
         != finetune_batch.ENCODERS["gtfintechlab_fomc_roberta"]
     )
+
+
+def test_encoders_registry_adds_sentence_embedding_and_fed_adjacent_encoders() -> None:
+    """Sprint 2 extends the bake-off with FinBERT-FedAdjacent + 2 sentence-embedding entries."""
+
+    assert finetune_batch.ENCODERS["finbert_fed_adjacent"] == "local/finbert-fed-adjacent"
+    assert finetune_batch.ENCODERS["bge_large_en_v15"] == "BAAI/bge-large-en-v1.5"
+    assert finetune_batch.ENCODERS["nomic_embed_text_v15"] == "nomic-ai/nomic-embed-text-v1.5"
+
+
+def test_unpinned_local_encoder_is_skipped() -> None:
+    """finbert_fed_adjacent has no revision until the user runs the pretrain.
+    The bake-off must skip it rather than fail mid-run."""
+
+    ok, reason = finetune_batch._is_encoder_runnable(
+        "finbert_fed_adjacent", "local/finbert-fed-adjacent"
+    )
+    assert ok is False
+    assert "finbert-fed-adjacent-pretrain" in reason
+
+
+def test_pinned_hf_encoder_is_runnable() -> None:
+    ok, reason = finetune_batch._is_encoder_runnable("finbert", "ProsusAI/finbert")
+    assert ok is True
+    assert reason == ""

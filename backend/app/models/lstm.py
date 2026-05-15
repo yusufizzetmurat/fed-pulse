@@ -6,6 +6,7 @@ from torch.nn import functional as F
 
 from app.models.attention import ChunkAttentionPooler, TimeDecayAttention
 from app.models.config import (
+    CREDIBILITY_FEATURE_DIM,
     DEFAULT_CHUNK_DECAY_RATE,
     DEFAULT_CHUNK_EMBEDDING_SIZE,
     DEFAULT_CHUNK_PROJECTION_DIM,
@@ -38,6 +39,7 @@ class ForecasterModel(nn.Module):
         chunk_projection_dim: int = DEFAULT_CHUNK_PROJECTION_DIM,
         text_channel: str = "scalar",
         embedding_adapter_dim: int = 128,
+        credibility_features: bool = False,
     ):
         """Forecaster LSTM with optional text-feature variants.
 
@@ -88,6 +90,8 @@ class ForecasterModel(nn.Module):
         self.use_chunk_attention = bool(use_chunk_attention)
         self.use_llm_embeddings = bool(use_llm_embeddings)
         self.text_channel = text_channel
+        self.credibility_features = bool(credibility_features)
+        self.credibility_dim = CREDIBILITY_FEATURE_DIM if self.credibility_features else 0
         self.chunk_embedding_size = int(chunk_embedding_size)
         # Either Variant B or Variant C activates the pooler path.
         _uses_pooler = self.use_chunk_attention or self.use_llm_embeddings
@@ -121,7 +125,7 @@ class ForecasterModel(nn.Module):
         else:
             self.chunk_pooler = None
             self.chunk_projection = None
-        lstm_input_size = input_size + self.chunk_projection_dim
+        lstm_input_size = input_size + self.chunk_projection_dim + self.credibility_dim
         self.lstm_input_size = lstm_input_size
         lstm_dropout = dropout if num_layers > 1 else 0.0
         self.recurrent_core = self._build_recurrent_core(
@@ -146,6 +150,7 @@ class ForecasterModel(nn.Module):
         chunks: torch.Tensor | None = None,
         elapsed_days: torch.Tensor | None = None,
         chunk_mask: torch.Tensor | None = None,
+        credibility: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if self.use_time_decay:
             x = self.time_decay(x)
@@ -164,6 +169,20 @@ class ForecasterModel(nn.Module):
                 projected = projected.unsqueeze(0)
             seq_len = x.shape[1]
             broadcast = projected.unsqueeze(1).expand(-1, seq_len, -1)
+            x = torch.cat([x, broadcast], dim=-1)
+        if self.credibility_features:
+            if credibility is None:
+                raise ValueError(
+                    "ForecasterModel requires `credibility` tensor when credibility_features=True"
+                )
+            if credibility.dim() == 1:
+                credibility = credibility.unsqueeze(0)
+            if credibility.shape[-1] != self.credibility_dim:
+                raise ValueError(
+                    f"credibility tensor must have shape (..., {self.credibility_dim}); got {tuple(credibility.shape)}"
+                )
+            seq_len = x.shape[1]
+            broadcast = credibility.unsqueeze(1).expand(-1, seq_len, -1)
             x = torch.cat([x, broadcast], dim=-1)
         output, _ = self.lstm(x)
         last_step = output[:, -1, :]

@@ -26,6 +26,7 @@ DEFAULT_INITIAL_DECAY_RATE = 1.5
 DEFAULT_CHUNK_DECAY_RATE = 1.0 / 30.0
 DEFAULT_CHUNK_EMBEDDING_SIZE = 768
 DEFAULT_CHUNK_PROJECTION_DIM = 8
+CREDIBILITY_FEATURE_DIM = 4
 
 DEFAULT_DATA_DIR = DATA_DIR
 MODELS_DIR = MODEL_CHECKPOINT_DIR
@@ -42,6 +43,7 @@ class ModelConfig:
     initial_decay_rate: float = DEFAULT_INITIAL_DECAY_RATE
     text_channel: str = "scalar"
     embedding_adapter_dim: int = 128
+    credibility_features: bool = False
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -54,6 +56,7 @@ class ModelConfig:
             initial_decay_rate=model.initial_decay_rate,
             text_channel=getattr(model, "text_channel", "scalar"),
             embedding_adapter_dim=getattr(model, "chunk_projection_dim", 128) or 128,
+            credibility_features=bool(getattr(model, "credibility_features", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:

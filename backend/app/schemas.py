@@ -143,6 +143,15 @@ class XaiResponse(BaseModel):
     sentences: list[XaiSentenceAttribution] = Field(default_factory=list)
 
 
+class CredibilityResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    drift_score: float
+    realized_vs_stated_gap: float
+    market_implied_gap: float
+    months_since_reversal: int
+
+
 class AnalyzeResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
@@ -152,6 +161,7 @@ class AnalyzeResponse(BaseModel):
     model: ModelDiagnosticsResponse
     series: ForecastSeriesResponse
     xai: XaiResponse | None = None
+    credibility: CredibilityResponse | None = None
 
 
 class TrainJobAcceptedResponse(BaseModel):

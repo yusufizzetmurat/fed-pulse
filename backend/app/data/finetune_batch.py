@@ -20,11 +20,14 @@ from typing import Any
 import torch
 
 from app.data.finetune_pilot import DEFAULT_ARTIFACT_ROOT, run_one
+from app.models.registry import encoder_ref
 
 # Local-label keys identify the encoder slot in artefact paths and report
 # tables. The legacy "fomc_roberta" key maps to ZiweiChen/FinBERT-FOMC for
 # Phase-4 reproducibility; the new gtfintechlab/FOMC-RoBERTa lives under a
-# distinct "gtfintechlab_fomc_roberta" key so the two never collide.
+# distinct "gtfintechlab_fomc_roberta" key so the two never collide. The
+# HF-repo string is the single source of truth threaded to
+# AutoTokenizer/AutoModel; the registry supplies the pinned revision.
 ENCODERS: dict[str, str] = {
     "bert_base_uncased": "bert-base-uncased",
     "distilbert_base_uncased": "distilbert-base-uncased",
@@ -32,8 +35,28 @@ ENCODERS: dict[str, str] = {
     "fomc_roberta": "ZiweiChen/FinBERT-FOMC",
     "gtfintechlab_fomc_roberta": "gtfintechlab/FOMC-RoBERTa",
     "deberta_v3_base": "microsoft/deberta-v3-base",
+    "finbert_fed_adjacent": "local/finbert-fed-adjacent",
+    "bge_large_en_v15": "BAAI/bge-large-en-v1.5",
+    "nomic_embed_text_v15": "nomic-ai/nomic-embed-text-v1.5",
 }
 OFFICIAL_SEEDS: tuple[int, ...] = (11, 29, 47, 71, 97)
+
+
+def _is_encoder_runnable(encoder_key: str, checkpoint: str) -> tuple[bool, str]:
+    """Return ``(ok, reason)``: skip unpinned encoders whose local artefact is
+    absent so the bake-off never silently downloads or fails mid-run."""
+
+    ref = encoder_ref(checkpoint) or encoder_ref(encoder_key)
+    if ref is None:
+        return True, ""
+    if ref.revision:
+        return True, ""
+    if checkpoint.startswith("local/"):
+        return False, (
+            f"unpinned local encoder — run `make finbert-fed-adjacent-pretrain` and paste "
+            f"the resulting checkpoint path + revision into models/registry.yaml::{ref.alias}"
+        )
+    return False, f"no revision pinned in registry.yaml::{ref.alias}"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -136,7 +159,13 @@ def main() -> int:
     print(f"[batch] artifact root: {batch_dir}")
 
     run_index = 0
+    skipped: list[dict[str, Any]] = []
     for encoder_key, checkpoint in selected_encoders.items():
+        ok, reason = _is_encoder_runnable(encoder_key, checkpoint)
+        if not ok:
+            print(f"[batch] SKIP encoder={encoder_key} — {reason}")
+            skipped.append({"encoder_key": encoder_key, "checkpoint": checkpoint, "reason": reason})
+            continue
         for seed in seeds:
             run_index += 1
             run_args = _build_run_args(args, checkpoint=checkpoint, seed=seed)
@@ -199,6 +228,7 @@ def main() -> int:
         "failed": len(failures),
         "by_encoder": by_encoder,
         "failures": failures,
+        "skipped": skipped,
     }
     (batch_dir / "aggregate.json").write_text(json.dumps(aggregate, indent=2), encoding="utf-8")
     print(f"\n[batch] aggregate written to {batch_dir / 'aggregate.json'}")

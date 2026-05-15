@@ -55,7 +55,7 @@ function formatGap(value?: number): string {
 }
 
 export function CredibilityPanel({ credibility, previewMode }: CredibilityPanelProps) {
-  const driftScore = Number.isFinite(credibility.driftScore) ? credibility.driftScore : 0;
+  const driftScore = Number.isFinite(credibility.drift_score) ? credibility.drift_score : 0;
   const tone = driftTone(driftScore);
   return (
     <Card>
@@ -82,10 +82,10 @@ export function CredibilityPanel({ credibility, previewMode }: CredibilityPanelP
             <Badge variant={tone}>{driftLabel(driftScore)} · {driftScore.toFixed(2)}</Badge>
           </div>
           <Progress value={driftScore} />
-          {credibility.driftTrend?.length ? (
+          {credibility.drift_trend?.length ? (
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>Trend</span>
-              <MiniTrend trend={credibility.driftTrend} />
+              <MiniTrend trend={credibility.drift_trend} />
             </div>
           ) : null}
         </div>
@@ -97,9 +97,9 @@ export function CredibilityPanel({ credibility, previewMode }: CredibilityPanelP
               <Scale className="h-3.5 w-3.5" />
             </div>
             <div className="mt-1 flex items-center justify-between">
-              <strong>{formatGap(credibility.realizedVsStatedGap)}</strong>
-              <Badge variant={gapTone(credibility.realizedVsStatedGap)} className="text-[10px]">
-                {credibility.realizedVsStatedGap == null ? "—" : "90d corr"}
+              <strong>{formatGap(credibility.realized_vs_stated_gap)}</strong>
+              <Badge variant={gapTone(credibility.realized_vs_stated_gap)} className="text-[10px]">
+                {credibility.realized_vs_stated_gap == null ? "—" : "90d corr"}
               </Badge>
             </div>
           </div>
@@ -109,9 +109,9 @@ export function CredibilityPanel({ credibility, previewMode }: CredibilityPanelP
               <Scale className="h-3.5 w-3.5" />
             </div>
             <div className="mt-1 flex items-center justify-between">
-              <strong>{formatGap(credibility.marketImpliedGap)}</strong>
-              <Badge variant={gapTone(credibility.marketImpliedGap)} className="text-[10px]">
-                {credibility.marketImpliedGap == null ? "—" : "vs OIS"}
+              <strong>{formatGap(credibility.market_implied_gap)}</strong>
+              <Badge variant={gapTone(credibility.market_implied_gap)} className="text-[10px]">
+                {credibility.market_implied_gap == null ? "—" : "vs OIS"}
               </Badge>
             </div>
           </div>
@@ -122,9 +122,9 @@ export function CredibilityPanel({ credibility, previewMode }: CredibilityPanelP
             </div>
             <div className="mt-1 flex items-center justify-between">
               <strong>
-                {credibility.monthsSinceReversal == null
+                {credibility.months_since_reversal == null
                   ? "—"
-                  : `${credibility.monthsSinceReversal} mo`}
+                  : `${credibility.months_since_reversal} mo`}
               </strong>
               <Badge variant="outline" className="text-[10px]">stance</Badge>
             </div>

@@ -54,6 +54,7 @@ def _coerce_model_config(model_config: ModelConfig | dict[str, Any] | None = Non
             initial_decay_rate=float(model_config.get("initial_decay_rate", DEFAULT_INITIAL_DECAY_RATE)),
             text_channel=str(model_config.get("text_channel", "scalar")),
             embedding_adapter_dim=int(model_config.get("embedding_adapter_dim", 128)),
+            credibility_features=bool(model_config.get("credibility_features", False)),
         )
     return ModelConfig()
 
@@ -68,6 +69,21 @@ def _build_model(
     if device is not None:
         model = model.to(device)
     return model
+
+
+def _zero_credibility(model: ForecasterModel, batch_size: int, device: torch.device) -> torch.Tensor | None:
+    """Return a zero credibility tensor for the batch when the model expects one.
+
+    Models trained with ``credibility_features=True`` must always receive a
+    ``credibility`` tensor on the forward path. Until the per-row vtasca + FRED
+    loader is wired into the data pipeline, this hook supplies the neutral
+    "all axes unknown" reading so training stays runnable.
+    """
+
+    if not getattr(model, "credibility_features", False):
+        return None
+    dim = int(getattr(model, "credibility_dim", 4))
+    return torch.zeros((batch_size, dim), dtype=torch.float32, device=device)
 
 
 def _evaluate_model(
@@ -85,7 +101,9 @@ def _evaluate_model(
         for batch_x, batch_y in loader:
             batch_x = batch_x.to(device, non_blocking=device.type == "cuda")
             batch_y = batch_y.to(device, non_blocking=device.type == "cuda")
-            predictions = model(batch_x)
+            credibility = _zero_credibility(model, batch_x.size(0), device)
+            kwargs = {"credibility": credibility} if credibility is not None else {}
+            predictions = model(batch_x, **kwargs)
             loss = loss_fn(predictions, batch_y)
             batch_size = batch_x.size(0)
             total_loss += float(loss.item()) * batch_size
@@ -204,7 +222,9 @@ def train_model(
             batch_x = batch_x.to(device_obj, non_blocking=device_obj.type == "cuda")
             batch_y = batch_y.to(device_obj, non_blocking=device_obj.type == "cuda")
             optimizer.zero_grad(set_to_none=True)
-            predictions = work_model(batch_x)
+            credibility = _zero_credibility(work_model, batch_x.size(0), device_obj)
+            kwargs = {"credibility": credibility} if credibility is not None else {}
+            predictions = work_model(batch_x, **kwargs)
             loss = loss_fn(predictions, batch_y)
             loss.backward()
             nn.utils.clip_grad_norm_(work_model.parameters(), max_norm=1.0)
