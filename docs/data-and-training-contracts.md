@@ -89,3 +89,87 @@ Required artifacts:
 - Targets built strictly from future timestamps
 - Every run references valid model/data versions
 - Every online prediction stores `model_id` and `runtime_mode`
+
+## Event-row dataset (Phase 8)
+
+`backend/app/data/event_dataset_builder.py` produces a Phase-8 artifact at
+`data/processed/<training_package_id>/events.parquet`. One row per
+`(event_date, event_kind, asset_symbol, horizon)`. The same training
+package may be re-built repeatedly — the parquet bytes are byte-identical
+on identical inputs (deterministic + idempotent).
+
+Event kinds: `{statement, minutes, speech, testimony, press_conference}`.
+`document_type` values from the registry are normalized via a fixed map
+in the builder; speeches (chair + governor), congressional testimonies,
+press conferences and FOMC meeting transcripts are accepted alongside
+statements/minutes.
+
+Required columns (full schema in module docstring):
+
+- `event_date`, `event_kind`, `document_id`, `text_hash`, `source`
+- `as_of_ts` — placeholder announcement time. FOMC kinds use
+  `<event_date>T19:00:00Z` (2pm ET), speeches use `T14:00:00Z`. A future
+  PR (OIS surprise, #146) can replace these with real timestamps without
+  changing column semantics.
+- `text`, `token_count`
+- Multi-axis labels: `axis_stance`, `axis_time`, `axis_certainty`,
+  `axis_factor`, `axis_topic`. Pulled from `mapped_label` plus the
+  per-source `axes` payload in the registry; None where unavailable.
+- Credibility 4-vector: `credibility_drift_score`,
+  `credibility_realized_vs_stated_gap`, `credibility_market_implied_gap`,
+  `credibility_months_since_reversal`. Reuses
+  `app.services.credibility_loader.load_credibility_for_run`; missing
+  inputs degrade to zeros (semantics: "credibility unknown").
+- 20 trading-day prior market window: `prior_window_sha256` plus
+  `prior_bars_json` (JSON-encoded list of bars with `date`, `close`,
+  `volume`, `vol_5d`, `cum_return_20d`). Window ends strictly before
+  `as_of_ts.date()` — the no-look-ahead contract is enforced by an
+  assertion in `_build_prior_window` and `_assert_no_lookahead`.
+- Per-horizon targets: `horizon ∈ {1, 5, 10, 30}` (trading days).
+  Base close = last trading day strictly before `as_of_ts`. Target close
+  = h-th trading day on-or-after `event_date`. Returns are simple
+  close-to-close.
+  - `realized_return` — raw target return
+  - `abnormal_return` — `realized_return - (alpha + beta * benchmark_return)`.
+    When `asset_symbol == benchmark` (default `^GSPC` vs `^GSPC`) this is
+    just the raw return (alpha=0, beta=1 by contract).
+  - `alpha`, `beta` — OLS on the trailing 252 trading-day window ending
+    strictly before `as_of_ts`.
+  - `direction_t1d` — sign of the t+1d realized return (-1, 0, +1).
+- `volatility_shift` — post-event 10d realized vol minus pre-event 10d
+  realized vol (log returns; sample std).
+- `concurrent_macro_release` — boolean. True when a heuristic major
+  macro release (CPI, NFP, ISM) falls within ±2 trading days. Flagged
+  only; no event is dropped on this basis. The heuristic uses fixed
+  calendar rules (first Friday for NFP, second Wednesday for CPI, first
+  business day for ISM); a subsequent PR may swap in BLS/ISM release
+  calendars without changing the column.
+- `asset_symbol` — default `^GSPC`. Per-asset rows are supported: a
+  future sweep can rebuild with `--asset NDX` etc. without touching the
+  schema.
+
+Multi-source dedup: when several registry sources carry the same
+`(event_date, event_kind)` (common for FOMC statements: scraped_fed,
+vtasca, hf, kaggle, gtfintechlab), the builder selects exactly one
+source per event via the preference order
+`scraped_fed > vtasca > op_fed > gtfintechlab > hf > kaggle > gss_factor`.
+Sentence-level shards inside the chosen source are concatenated in
+`source_record_id` order.
+
+Hard guarantees:
+
+1. No look-ahead. Last prior bar's date is strictly < `as_of_ts.date()`.
+   The market-model regression window ends strictly before that bar.
+2. No survivorship filter. Every FOMC event with text + event_date + a
+   usable prior window emits a row, regardless of post-event move.
+3. Deterministic. Same training package → same parquet bytes.
+4. Idempotent. Re-running overwrites with identical content.
+
+CLI:
+```
+python -m app.data.event_dataset_builder \
+    --training-package-id <id> --asset ^GSPC --output events.parquet
+```
+The yfinance fetch is cached at `<package_dir>/_market_cache/<symbol>.parquet`
+with a `SOURCES.lock` entry. Re-runs use the cache; pass
+`--market-cache-dir` to relocate it.
