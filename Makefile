@@ -188,6 +188,8 @@ PRETRAIN_BLOCK_SIZE ?= 256
 PRETRAIN_LR ?= 2e-5
 PRETRAIN_MAX_ROWS ?= 0
 PRETRAIN_OBJECTIVE ?= mlm_nsp
+PRETRAIN_BASE_CHECKPOINT ?= ProsusAI/finbert
+PRETRAIN_OUT_NAME ?= finbert_fed_adjacent
 finbert-fed-adjacent-pretrain:
 	docker compose run --rm backend \
 		python -m app.data.continued_pretraining \
@@ -198,7 +200,18 @@ finbert-fed-adjacent-pretrain:
 		--block-size "$(PRETRAIN_BLOCK_SIZE)" \
 		--learning-rate "$(PRETRAIN_LR)" \
 		--max-rows "$(PRETRAIN_MAX_ROWS)" \
-		--objective "$(PRETRAIN_OBJECTIVE)"
+		--objective "$(PRETRAIN_OBJECTIVE)" \
+		--base-checkpoint "$(PRETRAIN_BASE_CHECKPOINT)" \
+		--checkpoint-name "$(PRETRAIN_OUT_NAME)"
+
+# Control ablation: same substrate + recipe, but starting from bert-base-uncased
+# instead of ProsusAI/finbert. Pair the resulting checkpoint with the FinBERT-
+# based one in the bake-off to isolate the contribution of the finance prior.
+finbert-fed-adjacent-pretrain-bert-control:
+	$(MAKE) finbert-fed-adjacent-pretrain \
+		PRETRAIN_BASE_CHECKPOINT=bert-base-uncased \
+		PRETRAIN_OUT_NAME=bert_base_fed_adjacent \
+		$(if $(SUBSTRATE),SUBSTRATE=$(SUBSTRATE),)
 
 finbert-fed-adjacent-pretrain-smoke:
 	docker compose run --rm backend \

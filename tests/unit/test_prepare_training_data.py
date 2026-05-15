@@ -49,14 +49,16 @@ def test_prepare_training_dataset_creates_grouped_records(tmp_path, monkeypatch)
 
 
 def test_prepare_training_dataset_output_is_trainer_compatible(tmp_path, monkeypatch):
+    # SEQUENCE_LENGTH=20 → a "usable" sequence needs ≥ 21 records.
+    # Generate 22 documents across Feb–Mar so day-of-month stays valid.
     documents = [
         {
-            "date": f"2026-02-{idx + 1:02d}",
+            "date": f"2026-{2 + idx // 22:02d}-{(idx % 22) + 1:02d}",
             "text": f"Statement text {idx}",
             "title": f"Statement {idx}",
             "document_type": "Statement",
         }
-        for idx in range(7)
+        for idx in range(22)
     ]
     (tmp_path / "fomc_statements.json").write_text(json.dumps(documents), encoding="utf-8")
     (tmp_path / "fomc_minutes.json").write_text(json.dumps([]), encoding="utf-8")
@@ -81,5 +83,5 @@ def test_prepare_training_dataset_output_is_trainer_compatible(tmp_path, monkeyp
     sequences, summaries = inspect_training_data_sources(tmp_path)
 
     assert len(sequences) == 1
-    assert len(sequences[0]) == 7
+    assert len(sequences[0]) == 22
     assert any(summary.path.name == "train_dataset.json" and summary.status == "usable" for summary in summaries)
