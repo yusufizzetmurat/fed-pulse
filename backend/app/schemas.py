@@ -241,3 +241,164 @@ class DocumentParseResponse(BaseModel):
     char_count: int
     source_kind: str
     source_metadata: dict[str, str]
+
+
+# ---------------------------------------------------------------------------
+# Research / training / decisions endpoints (Phase 8 multi-page expansion)
+# ---------------------------------------------------------------------------
+
+
+class ArtifactFile(BaseModel):
+    """One file under ``data/artifacts/<section>/``."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    relative_path: str = Field(..., description="Path relative to data/artifacts/")
+    size_bytes: int
+    modified_at: str = Field(..., description="ISO-8601 mtime, UTC.")
+    suffix: str = Field(..., description="File extension including the dot, e.g. .json")
+
+
+class EncoderBakeoffRow(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    encoder_key: str
+    checkpoint: str
+    seeds: list[int]
+    macro_f1_values: list[float]
+    macro_f1_mean: float
+    macro_f1_ci_low: float | None = None
+    macro_f1_ci_high: float | None = None
+    weighted_f1_mean: float | None = None
+    accuracy_mean: float | None = None
+    cohen_kappa: float | None = None
+
+
+class EncoderBakeoffSection(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    available: bool
+    coverage: float | None = None
+    rows: list[EncoderBakeoffRow] = Field(default_factory=list)
+    source_files: list[str] = Field(default_factory=list)
+
+
+class TransferMatrixCell(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    source: str
+    target: str
+    metric: float
+
+
+class CrossBankTransferSection(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    available: bool
+    metric_name: str = "macro_f1"
+    sources: list[str] = Field(default_factory=list)
+    targets: list[str] = Field(default_factory=list)
+    cells: list[TransferMatrixCell] = Field(default_factory=list)
+    source_files: list[str] = Field(default_factory=list)
+
+
+class ResearchArtifactsResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    artifacts_root: str
+    sections: dict[str, list[ArtifactFile]]
+    encoder_bakeoff: EncoderBakeoffSection
+    cross_bank_transfer: CrossBankTransferSection
+
+
+class TrainJobSummary(BaseModel):
+    """Subset of train-job state safe for listing.
+
+    Same fields :data:`_train_jobs` exposes through ``/train-jobs/{id}``
+    but stripped of the full ``result`` payload so the list response
+    stays cheap. The detail endpoint still returns the full state.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    job_id: str
+    status: str
+    symbol: str | None = None
+    date: str | None = None
+    created_at: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    history_length: int | None = None
+    error: str | None = None
+
+
+class TrainJobsListResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    items: list[TrainJobSummary]
+    total: int
+    limit: int
+    offset: int
+
+
+class NextFomcMeetingPrediction(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    target_event_date: str
+    target_as_of_ts: str
+    target_class: str | None = Field(
+        default=None,
+        description="Realised class, when known. None for the next-scheduled meeting.",
+    )
+    n_train_rows: int
+    probabilities: dict[str, dict[str, float]]
+    predicted_class: dict[str, str]
+
+
+class NextFomcModelMetrics(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    n: int
+    brier: float | None = None
+    log_loss: float | None = None
+    top1_accuracy: float | None = None
+    macro_f1: float | None = None
+    confusion_matrix: dict[str, dict[str, int]] = Field(default_factory=dict)
+
+
+class NextFomcAttributionRow(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    subset: str
+    families: list[str]
+    n_features: int | None = None
+    n: int | None = None
+    brier: float | None = None
+    log_loss: float | None = None
+    top1_accuracy: float | None = None
+    macro_f1: float | None = None
+
+
+class NextFomcUpcomingMeeting(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    meeting_date: str
+    meeting_type: str
+    statement_release_date: str | None = None
+    days_until: int | None = None
+
+
+class NextFomcForecastResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    available: bool
+    artifacts_dir: str
+    ordinal_classes: list[str]
+    model_names: list[str] = Field(default_factory=list)
+    upcoming_meeting: NextFomcUpcomingMeeting | None = None
+    headline: NextFomcMeetingPrediction | None = None
+    history: list[NextFomcMeetingPrediction] = Field(default_factory=list)
+    metrics_full_window: dict[str, NextFomcModelMetrics] = Field(default_factory=dict)
+    metrics_ex_pandemic: dict[str, NextFomcModelMetrics] = Field(default_factory=dict)
+    feature_attribution: list[NextFomcAttributionRow] = Field(default_factory=list)
+    summary: dict[str, int] = Field(default_factory=dict)

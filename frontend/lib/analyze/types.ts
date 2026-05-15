@@ -207,3 +207,143 @@ export interface FomcCalendarResponse {
   past: FomcMeeting[];
   upcoming: FomcMeeting[];
 }
+
+// ---------------------------------------------------------------------------
+// Research dashboard (Phase 8 multi-page expansion)
+// ---------------------------------------------------------------------------
+
+export interface ArtifactFile {
+  relative_path: string;
+  size_bytes: number;
+  modified_at: string;
+  suffix: string;
+}
+
+export interface EncoderBakeoffRow {
+  encoder_key: string;
+  checkpoint: string;
+  seeds: number[];
+  macro_f1_values: number[];
+  macro_f1_mean: number;
+  macro_f1_ci_low: number | null;
+  macro_f1_ci_high: number | null;
+  weighted_f1_mean: number | null;
+  accuracy_mean: number | null;
+  cohen_kappa: number | null;
+}
+
+export interface EncoderBakeoffSection {
+  available: boolean;
+  coverage: number | null;
+  rows: EncoderBakeoffRow[];
+  source_files: string[];
+}
+
+export interface TransferMatrixCell {
+  source: string;
+  target: string;
+  metric: number;
+}
+
+export interface CrossBankTransferSection {
+  available: boolean;
+  metric_name: string;
+  sources: string[];
+  targets: string[];
+  cells: TransferMatrixCell[];
+  source_files: string[];
+}
+
+export interface ResearchArtifactsResponse {
+  artifacts_root: string;
+  sections: Record<string, ArtifactFile[]>;
+  encoder_bakeoff: EncoderBakeoffSection;
+  cross_bank_transfer: CrossBankTransferSection;
+}
+
+// ---------------------------------------------------------------------------
+// Training dashboard
+// ---------------------------------------------------------------------------
+
+export type TrainJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+export interface TrainJobSummary {
+  job_id: string;
+  status: TrainJobStatus | string;
+  symbol: string | null;
+  date: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  history_length: number | null;
+  error: string | null;
+}
+
+export interface TrainJobsListResponse {
+  items: TrainJobSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// ---------------------------------------------------------------------------
+// Decisions dashboard
+// ---------------------------------------------------------------------------
+
+export type OrdinalDecisionClass =
+  | "cut_50"
+  | "cut_25"
+  | "hold"
+  | "hike_25"
+  | "hike_50"
+  | "hike_75";
+
+export interface NextFomcMeetingPrediction {
+  target_event_date: string;
+  target_as_of_ts: string;
+  target_class: string | null;
+  n_train_rows: number;
+  probabilities: Record<string, Record<string, number>>;
+  predicted_class: Record<string, string>;
+}
+
+export interface NextFomcModelMetrics {
+  n: number;
+  brier: number | null;
+  log_loss: number | null;
+  top1_accuracy: number | null;
+  macro_f1: number | null;
+  confusion_matrix: Record<string, Record<string, number>>;
+}
+
+export interface NextFomcAttributionRow {
+  subset: string;
+  families: string[];
+  n_features: number | null;
+  n: number | null;
+  brier: number | null;
+  log_loss: number | null;
+  top1_accuracy: number | null;
+  macro_f1: number | null;
+}
+
+export interface NextFomcUpcomingMeeting {
+  meeting_date: string;
+  meeting_type: string;
+  statement_release_date: string | null;
+  days_until: number | null;
+}
+
+export interface NextFomcForecastResponse {
+  available: boolean;
+  artifacts_dir: string;
+  ordinal_classes: string[];
+  model_names: string[];
+  upcoming_meeting: NextFomcUpcomingMeeting | null;
+  headline: NextFomcMeetingPrediction | null;
+  history: NextFomcMeetingPrediction[];
+  metrics_full_window: Record<string, NextFomcModelMetrics>;
+  metrics_ex_pandemic: Record<string, NextFomcModelMetrics>;
+  feature_attribution: NextFomcAttributionRow[];
+  summary: Record<string, number>;
+}
