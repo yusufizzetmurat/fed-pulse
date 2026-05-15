@@ -29,6 +29,7 @@ current default generator.
 from __future__ import annotations
 
 import math
+from typing import cast
 
 import torch
 from torch import nn
@@ -50,7 +51,10 @@ class _SinusoidalPositionalEmbedding(nn.Module):
         self.register_buffer("pe", pe.unsqueeze(0))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x + self.pe[:, : x.size(1), :]
+        # `register_buffer` returns None; mypy needs the explicit cast
+        # because `nn.Module.__getattr__` is typed as `Tensor | Module`.
+        pe = cast(torch.Tensor, self.pe)
+        return x + pe[:, : x.size(1), :]
 
 
 class _ProbSparseAttention(nn.Module):
