@@ -212,3 +212,66 @@ Heuristic baseline on the same package was 43.46 %; the swap lifts the
 rate because real CPI releases tend to land closer to FOMC days than
 the second-Wednesday rule places them. The list of flagged dates is
 deterministic — same input ⇒ bit-identical parquet bytes.
+## Phase 8 feature sources
+
+Approved external feature parquets that downstream Phase-8 models
+(#147 next-FOMC prediction, #148 cross-asset response) read directly.
+Each parquet ships with a SOURCES.lock entry recording its sha256,
+methodology label, and row count so reproductions are auditable.
+
+### `mp_surprises.parquet` — monetary-policy surprise time-series
+
+Path: `data/external/fred/mp_surprises.parquet`. Built by
+`backend/app/data/mp_surprise.py`; closes #146.
+
+One row per FOMC meeting from 2010-01-01 to today, with:
+
+- `event_date`, `meeting_id` (sequential)
+- `ff_target_prior`, `ff_target_after` — fed-funds target rate
+  reconstructed from `DFEDTAR` (1982-2008-12-15) joined to the
+  `DFEDTARU` / `DFEDTARL` band midpoint (2008-12-16 onward)
+- `mp_surprise_level` — change in the 1-month-ahead policy-rate proxy
+  from t-1 EOD to t+1 EOD, in basis points
+- `mp_surprise_path_factor` — first principal component of the
+  level-residualised changes at {3, 6, 12}-month tenors. PCA is fit
+  once on the full historical sample and the eigenvector is persisted
+  in `SOURCES.lock[mp_surprises].path_factor_model` so re-builds are
+  byte-identical.
+- `pre_event_curve`, `post_event_curve` — JSON lists of
+  `(months_ahead, implied_rate)` at {1, 3, 6, 12, 24}-month points
+- `fed_info_factor` — residual of `mp_surprise_level` regressed on the
+  same-day SPX return (Cieslak-Vissing-Jorgensen 2021-style
+  decomposition; documented `daily_window_proxy` flag because intraday
+  ±30 min SPX data is out of scope)
+- `is_intermeeting` — true for unscheduled / emergency actions
+  (2020-03-03 and 2020-03-15 in the bundled calendar)
+- `methodology` — `ois_proxy` (Treasury-yield proxy via DGS1MO /
+  DGS3MO / DGS6MO / DGS1 / DGS2; the **honest default**) or
+  `ff_futures` (reserved for a future CME-settlement source)
+- `data_version` — short sha capturing FRED series IDs + observation
+  ends + calendar signature
+
+Hard guarantees:
+
+1. **No look-ahead.** `pre_event_curve` reads the last published yield
+   strictly before `event_date`; `post_event_curve` reads the first
+   strictly after. Enforced by an assertion in `_pre_post_yields`.
+2. **Deterministic.** Same FRED inputs imply byte-identical parquet
+   (sign-normalised eigenvector, snappy compression, sorted rows).
+3. **Honest methodology label.** The freely-available FRED data does
+   not include CME fed-funds-futures settlements; we proxy the
+   surprise curve from Treasury constant-maturity yields. The
+   `methodology` column records this on every row so downstream
+   models can stratify by source quality.
+
+CLI:
+
+```
+python -m app.data.mp_surprise \
+    --start 2010-01-01 --end today \
+    --output mp_surprises.parquet
+```
+
+The output parquet lands under `data/external/fred/`. Pass
+`--methodology ff_futures` only when a real CME settlement source has
+been wired (out of scope for #146).
