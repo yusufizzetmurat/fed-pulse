@@ -1099,7 +1099,7 @@ def write_artifacts(
 def _stringify_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for k, v in summary.items():
-        if isinstance(v, (list, tuple)):
+        if isinstance(v, list | tuple):
             out[k] = list(v)
         else:
             out[k] = v
