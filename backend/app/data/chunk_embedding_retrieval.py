@@ -24,7 +24,27 @@ import pandas as pd
 import torch
 
 from app.config import DATA_DIR as DEFAULT_DATA_DIR
+from app.data.embedding_cache import require_cache_exists, resolve_cache_paths
+from app.models.registry import revision_for
+
 DEFAULT_LLM_EMBEDDINGS_PARQUET = DEFAULT_DATA_DIR / "interim" / "phase2" / "llm_embeddings.parquet"
+
+
+def load_encoder_cache(
+    encoder_alias: str,
+    *,
+    cache_dir: Path | str | None = None,
+) -> pd.DataFrame:
+    """Load a per-encoder parquet built by :mod:`app.data.embedding_cache`.
+
+    Hard-fails with a fixable error if the cache parquet is missing so a
+    training run never silently downloads weights at training time.
+    """
+
+    revision = revision_for(encoder_alias)
+    paths = resolve_cache_paths(encoder_alias, revision=revision, cache_dir=cache_dir)
+    require_cache_exists(encoder_alias, revision=revision, cache_dir=cache_dir)
+    return load_chunk_store(str(paths.parquet))
 
 
 @dataclass(frozen=True)

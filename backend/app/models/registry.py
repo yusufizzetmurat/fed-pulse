@@ -47,9 +47,14 @@ def load_registry(path: Path | None = None) -> dict[str, EncoderRef]:
 def revision_for(repo_or_alias: str) -> str | None:
     registry = load_registry()
     ref = registry.get(repo_or_alias)
-    if ref is None:
+    if ref is None or not ref.revision:
         return None
     return ref.revision
+
+
+def is_pinned(repo_or_alias: str) -> bool:
+    ref = encoder_ref(repo_or_alias)
+    return ref is not None and bool(ref.revision)
 
 
 def encoder_ref(repo_or_alias: str) -> EncoderRef | None:

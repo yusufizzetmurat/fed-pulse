@@ -211,9 +211,31 @@ finbert-fed-adjacent-pretrain-smoke:
 		--block-size 128 \
 		--objective mlm
 
-# Zero-shot cross-CB transfer matrix for an NLP checkpoint.
+# Build (or reuse) the per-encoder embedding cache for a training package.
+# Required: ENCODER (alias from models/registry.yaml), TRAINING_PACKAGE_ID.
+# Set ALLOW_NETWORK=1 the first time you cache a new encoder.
+cache-embeddings:
+	@if [ -z "$(ENCODER)" ]; then echo "Set ENCODER=<alias>"; exit 2; fi
+	@if [ -z "$(TRAINING_PACKAGE_ID)" ]; then echo "Set TRAINING_PACKAGE_ID=<id>"; exit 2; fi
+	docker compose run --rm backend \
+		python -m app.data.embedding_cache \
+		--encoder "$(ENCODER)" \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		$(if $(ALLOW_NETWORK),--allow-network,) \
+		$(if $(FORCE),--force,)
+
+# Aggregate one or more finetune_batch aggregate.json files into a headline
+# table with block-bootstrap CIs. ARTIFACT_DIR defaults to data/artifacts/phase3.
+bakeoff-aggregate:
+	docker compose run --rm backend \
+		python -m app.evaluation.bakeoff_aggregator \
+		--artifact-dir "$(or $(ARTIFACT_DIR),data/artifacts/phase3)"
+
+# Zero-shot cross-CB transfer matrix for an NLP checkpoint. Repeat the same
+# alias in MODEL_CHECKPOINTS to feed per-seed checkpoints for that alias —
+# CI bands appear when >=2 distinct checkpoints land in the same cell.
 # Required: TRAINING_PACKAGE_ID, MODEL_CHECKPOINTS (alias=path[,alias=path]).
-# Optional: EVAL_BANKS (ecb,boj,boe,boc,rba; default = all 5), SEEDS.
+# Optional: EVAL_BANKS (ecb,boj,boe,boc,rba; default = all 5).
 eval-cross-bank:
 	@if [ -z "$(TRAINING_PACKAGE_ID)" ]; then echo "Set TRAINING_PACKAGE_ID=<id>"; exit 2; fi
 	@if [ -z "$(MODEL_CHECKPOINTS)" ]; then echo "Set MODEL_CHECKPOINTS=alias=path[,alias=path]"; exit 2; fi
@@ -221,5 +243,4 @@ eval-cross-bank:
 		python -m app.evaluation.transfer_matrix \
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--model-checkpoints "$(MODEL_CHECKPOINTS)" \
-		$(if $(EVAL_BANKS),--eval-banks "$(EVAL_BANKS)",) \
-		$(if $(SEEDS),--seeds "$(SEEDS)",)
+		$(if $(EVAL_BANKS),--eval-banks "$(EVAL_BANKS)",)
