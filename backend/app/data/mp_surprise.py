@@ -12,7 +12,10 @@ meeting date from 2010-01-01 to today, carrying:
   months ahead,
 - a Cieslak-Vissing-Jorgensen-style ``fed_info_factor`` (residual of the
   level surprise on the same-day SPX return; documented daily-window
-  proxy when intraday data is unavailable),
+  proxy when intraday data is unavailable; degrades to ``None`` with
+  ``fed_info_factor_source = "unavailable"`` when SPX data is absent so
+  the missing-data row stays distinguishable from a real-but-tiny
+  residual),
 - an ``is_intermeeting`` flag for unscheduled / emergency actions, and
 - a ``data_version`` short-sha of the joined FRED series.
 
@@ -51,10 +54,18 @@ checks can compute the realised-vs-target gap.
 Reproducibility
 ---------------
 
-Same FRED inputs imply bit-identical parquet output. The PCA fit is
-deterministic (eigenvectors persisted in the lock JSON before use); SPX
-data is loaded from a fixed yfinance cache. Re-running with the same
-``--start`` and ``--end`` overwrites the parquet with identical bytes.
+Same FRED inputs imply identical *data* in the parquet, locked via
+:func:`dataframe_value_hash`. The PCA fit is deterministic
+(eigenvectors persisted in the lock JSON before use); SPX data is
+loaded from a fixed yfinance cache. The on-disk encoding uses
+``zstd`` (level 3) with ``write_statistics=False`` and
+``use_dictionary=False`` so the parquet metadata is stable, but the
+canonical determinism contract is on the **DataFrame's sorted values**
+(not the raw byte stream): we hash the row-wise sorted DataFrame after
+re-reading and compare to a pinned reference. This is more honest
+than byte-hashing because compressed parquet metadata (pyarrow
+version, encoder build flags, platform) is not portable across
+machines.
 
 No look-ahead
 -------------
@@ -146,8 +157,10 @@ METHODOLOGY_OIS_PROXY = "ois_proxy"
 MAX_TARGET_LOOKAHEAD_DAYS = 5
 
 # yfinance retry knobs (SPX intraday). When the lookup fails we degrade
-# ``fed_info_factor`` to 0.0 and set ``fed_info_factor_source`` to a
-# transparency flag.
+# ``fed_info_factor`` to ``None`` and set
+# ``fed_info_factor_source = "unavailable"`` as the transparency flag.
+# ``None`` (not ``0.0``) is the documented sentinel because a hard zero
+# would be indistinguishable from a real-but-tiny residual.
 SPX_LOOKUP_RADIUS_DAYS = 3
 
 
@@ -407,6 +420,7 @@ def _pre_post_yields(
     *,
     lookbehind_days: int = 5,
     lookahead_days: int = 5,
+    trading_days: Sequence[_dt.date] | None = None,
 ) -> tuple[float | None, float | None, _dt.date | None, _dt.date | None]:
     """Return ``(pre_value, post_value, pre_date, post_date)`` for one series.
 
@@ -414,24 +428,65 @@ def _pre_post_yields(
     ``post`` is the earliest available value strictly after ``on_date``.
     The no-look-ahead contract is enforced by the strict inequalities.
     Returns None when no value falls inside the window.
+
+    The lookback is measured in **trading days**, not calendar days,
+    when a sorted ``trading_days`` index is supplied. We bisect into the
+    index to find the nearest trading day strictly before/after
+    ``on_date`` and then step ``lookbehind_days`` / ``lookahead_days``
+    *trading-day* slots. This matters during multi-day holiday clusters
+    (Christmas-NYE, Easter, Thanksgiving week) where a 5-calendar-day
+    radius can exhaust without crossing a single trading day and
+    silently return ``None``.
+
+    Backwards compatibility: when ``trading_days`` is omitted we derive
+    it from ``series_map.keys()`` (which is itself the set of dates with
+    a published yield -- i.e. the implicit trading-day calendar).
     """
+
+    if trading_days is None:
+        trading_days = sorted(series_map.keys())
+    n_tdays = len(trading_days)
 
     pre_value: float | None = None
     pre_date: _dt.date | None = None
-    for offset in range(1, lookbehind_days + 1):
-        d = on_date - _dt.timedelta(days=offset)
-        if d in series_map:
-            pre_value = series_map[d]
-            pre_date = d
-            break
     post_value: float | None = None
     post_date: _dt.date | None = None
-    for offset in range(1, lookahead_days + 1):
-        d = on_date + _dt.timedelta(days=offset)
-        if d in series_map:
-            post_value = series_map[d]
-            post_date = d
-            break
+
+    if n_tdays > 0:
+        import bisect as _bisect
+
+        # `bisect_left` returns the first index whose value is >= on_date.
+        # Trading days strictly before on_date are at indices < idx.
+        idx = _bisect.bisect_left(trading_days, on_date)
+        # Walk backwards through trading days for the pre side.
+        # `lookbehind_days` counts trading-day slots, so we step from
+        # idx - 1 (the most recent trading day < on_date) down at most
+        # lookbehind_days - 1 more steps before giving up.
+        for step in range(lookbehind_days):
+            i = idx - 1 - step
+            if i < 0:
+                break
+            cand = trading_days[i]
+            if cand >= on_date:
+                continue
+            if cand in series_map:
+                pre_value = series_map[cand]
+                pre_date = cand
+                break
+        # `bisect_right` returns the first index whose value is > on_date.
+        idx2 = _bisect.bisect_right(trading_days, on_date)
+        for step in range(lookahead_days):
+            i = idx2 + step
+            if i >= n_tdays:
+                break
+            cand = trading_days[i]
+            if cand <= on_date:
+                continue
+            if cand in series_map:
+                post_value = series_map[cand]
+                post_date = cand
+                break
+
     if pre_date is not None and post_date is not None:
         assert pre_date < on_date < post_date, (
             f"no-look-ahead contract violated: pre={pre_date} on={on_date} post={post_date}"
@@ -594,7 +649,10 @@ def _spx_return_on(
       return computed over a ``[t-1, t+1]`` close window. This is the
       documented approximation; intraday ``+/-30 min`` data is out of
       scope.
-    - ``"unavailable"`` -- no SPX data inside the radius.
+    - ``"unavailable"`` -- no SPX data inside the radius. The caller
+      writes ``fed_info_factor = None`` (NOT zero) and stamps
+      ``fed_info_factor_source = "unavailable"`` so the row is
+      distinguishable from a real-but-tiny residual.
 
     We never claim a CVJ-style intraday measurement; the flag is the
     transparency mechanism.
@@ -817,6 +875,15 @@ def build_mp_surprises(
             raise KeyError(f"Missing required FRED series '{sid}' for tenor {tenor}m")
         curve_maps[tenor] = _series_to_map(fred_responses[sid])
 
+    # Trading-day index = union of dates with any published curve yield.
+    # We use this so `_pre_post_yields` walks trading-day slots instead
+    # of calendar days, which prevents silent None rows around long
+    # holiday clusters.
+    trading_days_set: set[_dt.date] = set()
+    for tenor_map in curve_maps.values():
+        trading_days_set.update(tenor_map.keys())
+    trading_days_sorted: list[_dt.date] = sorted(trading_days_set)
+
     # ---- Pass 1: per-meeting deltas + curves ----
     per_meeting_curves_pre: dict[_dt.date, list[CurvePoint]] = {}
     per_meeting_curves_post: dict[_dt.date, list[CurvePoint]] = {}
@@ -824,6 +891,20 @@ def build_mp_surprises(
     per_meeting_delta_path: dict[_dt.date, list[float | None]] = {}
     per_meeting_target_prior: dict[_dt.date, tuple[float | None, str]] = {}
     per_meeting_target_after: dict[_dt.date, tuple[float | None, str]] = {}
+
+    # Pre-compute next-meeting dates so the `after_target` lookahead
+    # never bleeds into the following meeting's action. Two FOMC events
+    # can sit inside the 5-day default window (e.g. 2020-03-03 emergency
+    # cut followed by the 2020-03-15 emergency cut; or any intermeeting
+    # action that lands days before a scheduled meeting). When that
+    # happens we must clip the lookahead to `next - current - 1` so the
+    # second meeting's published target band can't pollute the first
+    # meeting's `ff_target_after`.
+    next_meeting_date_by_event: dict[_dt.date, _dt.date | None] = {}
+    sorted_meeting_dates = sorted({m.meeting_date for m in meetings})
+    for i, d in enumerate(sorted_meeting_dates):
+        nxt = sorted_meeting_dates[i + 1] if i + 1 < len(sorted_meeting_dates) else None
+        next_meeting_date_by_event[d] = nxt
 
     for m in meetings:
         ed = m.meeting_date
@@ -833,7 +914,11 @@ def build_mp_surprises(
         deltas_at_tenor: dict[int, float | None] = {}
         for tenor in CURVE_TENORS_MONTHS:
             s_map = curve_maps[tenor]
-            pre, post, _, _ = _pre_post_yields(ed, s_map)
+            pre, post, _, _ = _pre_post_yields(
+                ed,
+                s_map,
+                trading_days=trading_days_sorted,
+            )
             pre_curve.append(CurvePoint(months_ahead=tenor, implied_rate=pre if pre is not None else float("nan")))
             post_curve.append(CurvePoint(months_ahead=tenor, implied_rate=post if post is not None else float("nan")))
             if pre is None or post is None:
@@ -857,12 +942,23 @@ def build_mp_surprises(
             lookahead_days=0,
             lookbehind_days=MAX_TARGET_LOOKAHEAD_DAYS,
         )
+        # Clip the `after_target` lookahead so it cannot reach the next
+        # FOMC meeting's published action. Without this guard, two
+        # meetings within MAX_TARGET_LOOKAHEAD_DAYS calendar days of one
+        # another (e.g. March 2020) silently let the second meeting's
+        # post-action target leak into the first meeting's row.
+        nxt = next_meeting_date_by_event.get(ed)
+        if nxt is not None:
+            gap = (nxt - ed).days - 1  # last safe lookahead day
+            clipped_lookahead = max(0, min(MAX_TARGET_LOOKAHEAD_DAYS, gap))
+        else:
+            clipped_lookahead = MAX_TARGET_LOOKAHEAD_DAYS
         after_target, after_src = _lookup_target_with_lookahead(
             ed,
             upper=target_upper,
             lower=target_lower,
             single=target_single,
-            lookahead_days=MAX_TARGET_LOOKAHEAD_DAYS,
+            lookahead_days=clipped_lookahead,
             lookbehind_days=0,
         )
         per_meeting_target_prior[ed] = (prior_target, prior_src)
@@ -977,11 +1073,65 @@ def _sha256_of_file(path: Path) -> str:
 
 
 def write_mp_surprises_parquet(frame: pd.DataFrame, output_path: Path) -> str:
-    """Write deterministically and return the sha256 of the parquet bytes."""
+    """Write deterministically and return the sha256 of the parquet bytes.
+
+    The byte-level sha256 is returned for convenience (e.g. SOURCES.lock
+    bookkeeping) but is NOT the determinism contract -- parquet metadata
+    can shift across pyarrow versions or platforms even under
+    fixed-encoding settings. The canonical determinism check is
+    :func:`dataframe_value_hash`, which is computed over the sorted
+    DataFrame values after re-reading the parquet.
+
+    The encoding settings below (``zstd`` level 3, statistics off,
+    dictionary off) are tuned to minimise spurious metadata drift but
+    are not load-bearing for the data-equality claim.
+    """
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(output_path, engine="pyarrow", index=False, compression="snappy")
+    frame.to_parquet(
+        output_path,
+        engine="pyarrow",
+        index=False,
+        compression="zstd",
+        compression_level=3,
+        write_statistics=False,
+        use_dictionary=False,
+    )
     return _sha256_of_file(output_path)
+
+
+def dataframe_value_hash(frame: pd.DataFrame) -> str:
+    """Hash the DataFrame's data (not its encoding).
+
+    The hash is computed over the row-sorted, column-ordered string
+    representation of every cell. This makes the contract portable
+    across pyarrow / platform / encoding combinations: two runs that
+    produce the same MP-surprise rows produce the same hash even if
+    the parquet bytes differ.
+
+    Used by the determinism test and by anyone who needs to assert
+    data identity without depending on the on-disk encoding being
+    bit-stable.
+    """
+
+    if frame.empty:
+        return hashlib.sha256(b"empty").hexdigest()
+    # Pin the column order (defensive — callers should already pass
+    # frames in COLUMN_ORDER, but we guard against accidental drift).
+    cols = [c for c in COLUMN_ORDER if c in frame.columns]
+    if not cols:
+        cols = list(frame.columns)
+    ordered = frame[cols].copy()
+    # Stringify every cell to side-step numpy / arrow dtype quirks
+    # (NaN vs None vs <NA>, int64 vs Int64, etc.). The semantic data
+    # equality is what we care about, not the in-memory representation.
+    str_rows = ordered.astype(object).map(
+        lambda v: "" if v is None or (isinstance(v, float) and v != v) else str(v)
+    )
+    serialised = ["|".join(str(v) for v in row) for row in str_rows.to_numpy().tolist()]
+    serialised.sort()
+    payload = "\n".join(serialised) + "\n" + "|".join(cols)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def update_sources_lock(

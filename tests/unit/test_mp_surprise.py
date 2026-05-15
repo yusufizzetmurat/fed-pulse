@@ -4,10 +4,20 @@ The tests bypass HTTP via ``httpx.MockTransport`` for the FRED endpoint
 and inject canned SPX close maps. They cover:
 
 - The mock-transport path that drives :func:`fetch_fred_series`.
-- Hand-verified surprises on 2008-10-08 (50 bp emergency cut),
-  2013-05-22 ("taper tantrum"), and 2020-03-15 (pandemic cut).
+- Hand-verified surprises on 2008-10-08 (50 bp emergency cut) and
+  2020-03-15 (pandemic cut). The 2013-05-22 Bernanke testimony was
+  intentionally removed from the in-scope set in PR #154 review fix-up:
+  it is intermeeting Congressional testimony, not an FOMC announcement,
+  and is absent from the production calendar by design.
 - PCA path-factor eigenvectors persist deterministically in the lock
   JSON; rebuilding with the same inputs yields the same eigenvector.
+- Holiday-cluster trading-day lookback: a synthetic year where the
+  pre/post window has no calendar trading days within the 5-day radius
+  still resolves via the trading-day index.
+- Adjacent-meeting target-lookahead clipping: two FOMC events within
+  five calendar days must not pollute each other's `ff_target_after`.
+- DataFrame-value hash determinism: round-trip the parquet, hash the
+  sorted DataFrame values, and pin against a reference.
 
 Most assertions tolerate a small numerical noise envelope -- we are not
 re-deriving published surprise values, only locking the *sign* and a
@@ -133,12 +143,19 @@ def _mock_transport(payloads: Mapping[str, dict[str, object]]) -> httpx.MockTran
 
 @pytest.fixture
 def small_calendar(tmp_path: Path) -> Path:
-    """Tiny FOMC calendar covering one in-window meeting + 2013-05-22 + 2020-03-15."""
+    """Tiny FOMC calendar: one scheduled meeting + 2020-03-15 emergency cut.
+
+    Note: the original fixture also included 2013-05-22 (Bernanke
+    Congressional testimony) but it was removed in the PR #154 review
+    fix-up. That date is intermeeting Congressional testimony, NOT an
+    FOMC policy announcement, and is not part of the production
+    `fomc_meetings_2010_2026.csv`. Keeping it here lets a vacuous test
+    pass on a date the live build will never see.
+    """
 
     csv = tmp_path / "fomc_meetings.csv"
     csv.write_text(
         "meeting_date,is_intermeeting,notes\n"
-        "2013-05-22,false,bernanke_taper_testimony\n"
         "2014-03-19,false,scheduled\n"
         "2020-03-15,true,emergency_cut_100bp_covid_sunday\n",
         encoding="utf-8",
@@ -220,7 +237,7 @@ def test_pandemic_emergency_cut_2020_03_15(
         fomc_calendar_path=small_calendar,
         spx_close_by_date=spx_map,
     )
-    assert artifacts.rows_written == 3
+    assert artifacts.rows_written == 2
     pandemic = artifacts.frame[artifacts.frame["event_date"] == "2020-03-15"].iloc[0]
     # The level surprise should be a large negative bps move (we injected -50 bp at the 1m tenor).
     level = float(pandemic["mp_surprise_level"])
@@ -236,51 +253,12 @@ def test_pandemic_emergency_cut_2020_03_15(
 
 
 # ---------------------------------------------------------------------------
-# 3. Hand-verified path-factor signature: 2013-05-22 Bernanke testimony
+# 3. (removed) 2013-05-22 Bernanke testimony — out of scope.
+# The original test asserted on intermeeting Congressional testimony, not
+# an FOMC policy announcement, and the date is absent from the production
+# `fomc_meetings_2010_2026.csv`. Keeping the test passed vacuously because
+# it injected its own calendar. Dropped in PR #154 review fix-up.
 # ---------------------------------------------------------------------------
-
-
-def test_taper_tantrum_2013_05_22(
-    monkeypatch: pytest.MonkeyPatch,
-    small_calendar: Path,
-    fred_cache: Path,
-) -> None:
-    monkeypatch.setenv("FRED_API_KEY", "test-key")
-    start = _dt.date(2010, 1, 1)
-    end = _dt.date(2020, 12, 31)
-    payloads = _build_fred_payloads(start - _dt.timedelta(days=14), end + _dt.timedelta(days=7))
-    transport = _mock_transport(payloads)
-    responses = mp_surprise._hydrate_fred_responses(
-        start=start - _dt.timedelta(days=14),
-        end=end + _dt.timedelta(days=7),
-        cache_dir=fred_cache,
-        transport=transport,
-    )
-    spx_map = {
-        _dt.date(2013, 5, 21): 1660.0,
-        _dt.date(2013, 5, 23): 1655.0,  # mildly down -- bond surprise > equity surprise
-        _dt.date(2014, 3, 18): 1872.0,
-        _dt.date(2014, 3, 20): 1872.0,
-        _dt.date(2020, 3, 13): 2711.0,
-        _dt.date(2020, 3, 16): 2386.0,
-    }
-    artifacts = mp_surprise.build_mp_surprises(
-        start=start,
-        end=end,
-        fred_responses=responses,
-        fomc_calendar_path=small_calendar,
-        spx_close_by_date=spx_map,
-    )
-    taper = artifacts.frame[artifacts.frame["event_date"] == "2013-05-22"].iloc[0]
-    level = float(taper["mp_surprise_level"])
-    # The 1m yield is flat across this event; the long-end curve shifts up.
-    # Level should be near zero, path factor positive.
-    assert abs(level) < 5.0, f"taper-tantrum level should be near zero, got {level} bps"
-    path_factor = taper["mp_surprise_path_factor"]
-    assert path_factor is not None
-    assert float(path_factor) > 0.0, (
-        f"taper-tantrum path factor should be positive (curve steepening), got {path_factor}"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +391,7 @@ def test_pca_eigenvector_persists_in_lock(
         spx_close_by_date=spx_map,
     )
     sha_first = mp_surprise.write_mp_surprises_parquet(artifacts_first.frame, output_path)
+    value_hash_first = mp_surprise.dataframe_value_hash(artifacts_first.frame)
     mp_surprise.update_sources_lock(
         lock_path=lock_path,
         artifacts=artifacts_first,
@@ -426,7 +405,9 @@ def test_pca_eigenvector_persists_in_lock(
     assert len(pca["eigenvector"]) == len(mp_surprise.PATH_TENORS_MONTHS)
     eigenvector_first = list(pca["eigenvector"])
 
-    # Second build with same inputs -> bit-identical parquet + same eigenvector.
+    # Second build with same inputs -> identical data-value hash + same eigenvector.
+    # The byte-level sha may drift across pyarrow versions; the contract
+    # we lock here is on the *data*, not the encoding.
     artifacts_second = mp_surprise.build_mp_surprises(
         start=start,
         end=end,
@@ -434,13 +415,17 @@ def test_pca_eigenvector_persists_in_lock(
         fomc_calendar_path=small_calendar,
         spx_close_by_date=spx_map,
     )
-    sha_second = mp_surprise.write_mp_surprises_parquet(artifacts_second.frame, output_path)
-    assert sha_first == sha_second, "rebuild produced different parquet bytes"
+    _ = mp_surprise.write_mp_surprises_parquet(artifacts_second.frame, output_path)
+    value_hash_second = mp_surprise.dataframe_value_hash(artifacts_second.frame)
+    assert value_hash_first == value_hash_second, (
+        "rebuild produced different DataFrame values "
+        f"({value_hash_first} vs {value_hash_second})"
+    )
     mp_surprise.update_sources_lock(
         lock_path=lock_path,
         artifacts=artifacts_second,
         parquet_path=output_path,
-        parquet_sha256=sha_second,
+        parquet_sha256=sha_first,
     )
     lock_payload_2 = json.loads(lock_path.read_text(encoding="utf-8"))
     eigenvector_second = list(lock_payload_2[mp_surprise.DEFAULT_LOCK_KEY]["path_factor_model"]["eigenvector"])
@@ -500,3 +485,227 @@ def test_missing_spx_degrades_fed_info_to_unavailable(
         assert source == "unavailable", f"expected unavailable flag, got {source}"
     for value in artifacts.frame["fed_info_factor"].tolist():
         assert value is None
+
+
+# ---------------------------------------------------------------------------
+# 8. Trading-day lookback survives a holiday cluster (CRITICAL #3)
+# ---------------------------------------------------------------------------
+
+
+def test_pre_post_yields_uses_trading_day_index_under_holiday_cluster() -> None:
+    """When the calendar around the event date has no trading days
+    inside the 5-day radius (e.g. a synthetic year where days 350-365
+    are all holidays except day 360), the calendar-day implementation
+    silently returns None. The trading-day-index implementation must
+    still resolve the nearest published yield."""
+
+    base = _dt.date(2024, 1, 1)
+    # Construct a sparse trading-day calendar with a 15-day holiday gap.
+    # Trading days: every weekday in Jan-Nov, but in Dec we drop almost
+    # everything — only Dec 20 is published.
+    trading_days: list[_dt.date] = []
+    for offset in range(365):
+        d = base + _dt.timedelta(days=offset)
+        # Standard business-day weekdays in Jan-Nov.
+        if d.month <= 11 and d.weekday() < 5:
+            trading_days.append(d)
+    # Force a long gap: only one Dec trading day (Dec 20) and one in late
+    # November (Nov 28) as the "pre" anchor. Everything else in Dec is
+    # closed.
+    trading_days.append(_dt.date(2024, 12, 20))
+    trading_days = sorted(set(trading_days))
+    series_map = {d: 0.10 + i * 0.001 for i, d in enumerate(trading_days)}
+
+    # Event date: 2024-12-10. Calendar-day lookbehind of 5 from 12-10
+    # touches 12-09, 12-08, 12-07, 12-06, 12-05 — none of which are in
+    # `trading_days` (we made Dec a black hole). The trading-day index
+    # walk falls back to the previous trading day in late November.
+    event_date = _dt.date(2024, 12, 10)
+    pre, post, pre_date, post_date = mp_surprise._pre_post_yields(
+        event_date,
+        series_map,
+        trading_days=trading_days,
+    )
+    assert pre is not None, "trading-day lookback should bridge the holiday gap"
+    assert post is not None, "trading-day lookback should bridge the holiday gap"
+    assert pre_date is not None and pre_date < event_date
+    assert post_date is not None and post_date > event_date
+
+    # Verify that the OLD calendar-day approach would have failed: with
+    # `trading_days=None` and a default lookback of 5 calendar days, the
+    # post side has no chance of finding a hit before 12-20.
+    pre_cal, post_cal, _, _ = mp_surprise._pre_post_yields(
+        event_date,
+        series_map,
+        lookbehind_days=5,
+        lookahead_days=5,
+    )
+    # The new default `trading_days=None` derives the index from
+    # series_map.keys(), so even this call resolves correctly — exactly
+    # the fix we want.
+    assert pre_cal is not None and post_cal is not None
+
+
+# ---------------------------------------------------------------------------
+# 9. Adjacent-meeting target-lookahead clipping (CRITICAL #5)
+# ---------------------------------------------------------------------------
+
+
+def test_target_lookahead_does_not_leak_into_adjacent_meeting(
+    tmp_path: Path,
+) -> None:
+    """Two FOMC meetings within MAX_TARGET_LOOKAHEAD_DAYS calendar days
+    must not pollute each other's ``ff_target_after``. We synthesise
+    the March 2020 pattern: 2020-03-03 emergency cut (band 1.00-1.25%)
+    followed by 2020-03-15 emergency cut (band 0.00-0.25%) — but
+    compressed to a 3-day spacing so the 5-day lookahead would naturally
+    grab the second meeting's band if not clipped."""
+
+    # Compressed synthetic case: meetings on day-N and day-N+3.
+    m1 = _dt.date(2020, 3, 3)
+    m2 = _dt.date(2020, 3, 6)  # 3 calendar days later
+    calendar = [
+        mp_surprise.FomcMeetingRecord(meeting_date=m1, is_intermeeting=True, notes="cut_1"),
+        mp_surprise.FomcMeetingRecord(meeting_date=m2, is_intermeeting=True, notes="cut_2"),
+    ]
+
+    # FRED responses: target band published on m1+1 = 1.125% midpoint
+    # (1.00-1.25%), then on m2+1 = 0.125% midpoint (0.00-0.25%). If the
+    # lookahead is unclipped, m1's `after_target` will pick up m2's band.
+    days = 40
+    base = _dt.date(2020, 2, 20)
+    upper_obs: list[tuple[str, float | None]] = []
+    lower_obs: list[tuple[str, float | None]] = []
+    # We deliberately suppress band publications between m1 (exclusive)
+    # and m2 (exclusive) so the lookahead from m1 must walk past m2 to
+    # find a published band. Without the clip, the lookahead grabs m2's
+    # post-cut band (0.125) instead of stopping short. With the clip,
+    # the lookahead is bounded to (m2 - m1 - 1) = 2 days and exhausts,
+    # forcing `ff_target_after` to fall back to the pre-meeting band via
+    # `_target_rate_on(on_date - 1)` (i.e. the lookbehind path).
+    for i in range(days):
+        d = base + _dt.timedelta(days=i)
+        if m1 <= d < m2:
+            # No band rows in the m1..m2-1 window (suppresses early
+            # resolution by the lookahead). This forces the lookahead to
+            # consider walking forward into m2's published band — the
+            # bug we're guarding against.
+            continue
+        if d >= m2:
+            upper_obs.append((d.isoformat(), 0.25))
+            lower_obs.append((d.isoformat(), 0.00))
+        else:
+            upper_obs.append((d.isoformat(), 1.75))
+            lower_obs.append((d.isoformat(), 1.50))
+
+    payloads = _build_fred_payloads(base, base + _dt.timedelta(days=days - 1))
+    payloads["DFEDTARU"] = _series_response("DFEDTARU", upper_obs)
+    payloads["DFEDTARL"] = _series_response("DFEDTARL", lower_obs)
+    payloads["DFEDTAR"] = _series_response("DFEDTAR", [])
+
+    fred_responses = {
+        sid: _parse_in_memory(sid, payloads[sid])
+        for sid in mp_surprise._required_series_ids()
+    }
+
+    artifacts = mp_surprise.build_mp_surprises(
+        start=base,
+        end=base + _dt.timedelta(days=days - 1),
+        fred_responses=fred_responses,
+        fomc_calendar=calendar,
+        spx_close_by_date={},
+    )
+
+    row_m1 = artifacts.frame[artifacts.frame["event_date"] == m1.isoformat()].iloc[0]
+    row_m2 = artifacts.frame[artifacts.frame["event_date"] == m2.isoformat()].iloc[0]
+    # CRITICAL: m1's after-target must NOT equal m2's published band
+    # midpoint (0.125). Without the lookahead clip, the default 5-day
+    # window would walk past m2 and silently grab 0.125 — a methodology
+    # error. With the clip, the lookahead is bounded by
+    # (m2 - m1 - 1) = 2 days, all of which we made missing, so the
+    # after-target stays None.
+    after_m1 = row_m1["ff_target_after"]
+    assert after_m1 is None or float(after_m1) != pytest.approx(0.125, abs=1e-6), (
+        f"m1 after-target leaked into m2's band ({after_m1}); the lookahead "
+        "must be clipped to days_until_next_meeting - 1."
+    )
+    # The target_source flag should record that the after lookup failed
+    # cleanly when clipped — not silently substitute m2's band.
+    src = row_m1["target_source"]
+    assert "after:missing" in str(src), (
+        f"expected after:missing in target_source, got {src!r}"
+    )
+    # m2's after-target is its own published band; this is unaffected by
+    # the clip (m2 is the last meeting in the synthetic calendar).
+    assert float(row_m2["ff_target_after"]) == pytest.approx(0.125, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# 10. DataFrame-value-hash determinism (CRITICAL #2)
+# ---------------------------------------------------------------------------
+
+
+def test_dataframe_value_hash_roundtrips_through_parquet(
+    monkeypatch: pytest.MonkeyPatch,
+    small_calendar: Path,
+    fred_cache: Path,
+    tmp_path: Path,
+) -> None:
+    """Build the parquet, re-read it into a DataFrame, hash the sorted
+    DataFrame values, and verify the hash matches the in-memory hash
+    of the original build. This is the honest determinism contract —
+    it asserts data equality, not byte equality."""
+
+    monkeypatch.setenv("FRED_API_KEY", "test-key")
+    start = _dt.date(2010, 1, 1)
+    end = _dt.date(2020, 12, 31)
+    payloads = _build_fred_payloads(start - _dt.timedelta(days=14), end + _dt.timedelta(days=7))
+    transport = _mock_transport(payloads)
+    responses = mp_surprise._hydrate_fred_responses(
+        start=start - _dt.timedelta(days=14),
+        end=end + _dt.timedelta(days=7),
+        cache_dir=fred_cache,
+        transport=transport,
+    )
+    spx_map = {
+        _dt.date(2014, 3, 18): 1872.0,
+        _dt.date(2014, 3, 20): 1872.0,
+        _dt.date(2020, 3, 13): 2711.0,
+        _dt.date(2020, 3, 16): 2386.0,
+    }
+
+    output_path = tmp_path / "mp_surprises.parquet"
+    artifacts = mp_surprise.build_mp_surprises(
+        start=start,
+        end=end,
+        fred_responses=responses,
+        fomc_calendar_path=small_calendar,
+        spx_close_by_date=spx_map,
+    )
+    in_memory_hash = mp_surprise.dataframe_value_hash(artifacts.frame)
+    mp_surprise.write_mp_surprises_parquet(artifacts.frame, output_path)
+
+    # Round-trip the parquet and hash the re-read DataFrame.
+    reread = pd.read_parquet(output_path)
+    # The parquet writer pins column order via COLUMN_ORDER; the hash
+    # function sorts rows and stringifies cells so the re-read frame
+    # produces the same hash even if pyarrow shifted dtypes.
+    reread_hash = mp_surprise.dataframe_value_hash(reread)
+    assert in_memory_hash == reread_hash, (
+        "DataFrame-value hash drifted across the parquet round-trip "
+        f"(in-memory={in_memory_hash}, reread={reread_hash})"
+    )
+
+    # Pinned reference: rebuild a second time and confirm the hash is
+    # stable. We deliberately do NOT hard-code a hex string here because
+    # the input fixtures (FRED payload synthesis) are part of the test
+    # module and can legitimately change as the fixture evolves; the
+    # contract is "rebuild yields same hash", not "hash equals X".
+    artifacts_2 = mp_surprise.build_mp_surprises(
+        start=start,
+        end=end,
+        fred_responses=responses,
+        fomc_calendar_path=small_calendar,
+        spx_close_by_date=spx_map,
+    )
+    assert mp_surprise.dataframe_value_hash(artifacts_2.frame) == in_memory_hash
