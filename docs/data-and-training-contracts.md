@@ -323,26 +323,39 @@ Sprint 1 reference counts (training package
 
 Coherence on the Sprint 1 fit (see `linguistic_lda_topics.json`):
 
-- `inflation` (topic 0) — **clean**. Top words: inflation, economic, rate,
-  percent, labor.
-- `growth` (topic 6) — **clean**. Top words: growth, quarter, prices,
-  economic, spending.
-- `financial_stability` (topic 3) — **clean**. Top words: period, market,
-  remained, credit, financial.
-- `balance_sheet` (topic 1) — **weak**. Top words lean on open-market /
-  FX operations (foreign, bank, committee, market, open). Downstream
-  models should treat this share as a residual rather than a clean
-  balance-sheet signal.
-- `employment` (topic 5) — **weak**. Top words read as the policy
-  framing of an FOMC statement (committee, federal, policy, securities,
-  rate) rather than labor-market vocabulary. Treat as a residual.
+Seed-overlap floor (`MIN_SEED_OVERLAP=2`, top-10): every named slot
+emitted in `linguistic_features.parquet` is guaranteed to have at
+least two of its seed words inside the winning topic's top-10
+vocabulary. Slots that fail the floor are emitted as `0.0` and their
+candidate topics fall to `misc_*`. This blocks the prior failure mode
+where `topic_share_employment` was silently measuring QE language
+(topic 5: `committee, federal, policy, securities, rate, ..., agency,
+..., purchases`).
 
-Misc topics: governance/admin (topic 2), minutes voice (topic 4),
-pandemic-era policy (topic 7) — kept under `misc_1..3` so a downstream
-model can still pick them up without re-fitting.
+Three named slots clear the floor on the Sprint 1 fit:
 
-These misses are honest: 8 latent topics across 16,721 mostly-FOMC
-documents does not cleanly separate "balance sheet" or "employment"
-because both vocabularies overlap heavily with general FOMC framing.
-Increasing `num_topics` would split out cleaner balance-sheet / labor
-topics at the cost of inflating misc count.
+- `financial_stability` (topic 3) — overlap: `{credit, financial}`.
+- `balance_sheet` (topic 5) — overlap: `{agency, securities}`. This
+  is the QE / asset-purchases topic; pre-fix the seed-assignment
+  race had this topic mislabeled as `employment`.
+- `growth` (topic 6) — overlap: `{growth, spending}`.
+
+Two named slots fall to misc (emitted as `0.0`):
+
+- `inflation` — top-10 of topic 0 contains only `{inflation}` from
+  the inflation seed list (count = 1, below floor). The topic is
+  inflation-heavy in posterior mass, but the seed list as currently
+  written does not have a second high-frequency seed in the corpus
+  top-10. Honest miss; reviewable in `linguistic_lda_topics.json`.
+- `employment` — best candidate topic has zero labor seeds in its
+  top-10. The floor blocks the assignment; pre-fix this was the
+  silent-mislabel bug flagged by reviewer audit of PR #155.
+
+Misc slots: five LDA topics fall to misc after the floor; only the
+first three populate `topic_share_misc_1..3`. The 14-column schema
+is preserved.
+
+Open follow-up: raising `num_topics` to 10-12 and widening the
+inflation seed list are out of scope for this correctness fix and
+will be separate PRs after the bake-off / forecaster sweep produce
+results.

@@ -14,23 +14,31 @@ The design follows three strands of Fed-NLP literature:
   communication." (forward-looking phrasing and comparison-to-prior
   signal the policy vs. growth-news split.)
 
-The output is a 10-dim numeric vector keyed by ``text_hash``:
+The output is a 14-dim numeric vector keyed by ``text_hash`` (see
+:class:`LinguisticVector` for the exact field order):
 
-1-5  ``topic_share_inflation``, ``topic_share_employment``,
-     ``topic_share_financial_stability``, ``topic_share_growth``,
-     ``topic_share_balance_sheet`` -- LDA shares for human-named topics.
-6-8  ``topic_share_misc_1`` .. ``topic_share_misc_3`` -- the remaining
-     three latent topics from the ``num_topics=8`` fit. Kept so the
-     downstream model can pick up coherent topics the human labeller
-     missed without re-running LDA.
-9    ``hedge_density``     -- hedge tokens per 1000 whitespace tokens.
-10   ``comparison_density`` -- comparison-to-prior phrases per 1000 tokens.
-11   ``forward_density``    -- forward-looking phrases per 1000 tokens.
-12   ``concrete_ratio``     -- (numbers + dates + currency) / total words.
-13   ``hawk_dove_asymmetry`` -- (#hawk - #dove) / (#hawk + #dove + 1).
-14   ``log_token_count``    -- log1p(whitespace token count).
+1   ``topic_share_inflation``            -- LDA share for the inflation-aligned topic.
+2   ``topic_share_employment``           -- LDA share for the labor-market slot.
+3   ``topic_share_financial_stability``  -- LDA share for the financial-conditions slot.
+4   ``topic_share_growth``               -- LDA share for the activity / spending slot.
+5   ``topic_share_balance_sheet``        -- LDA share for the balance-sheet slot.
+6   ``topic_share_misc_1``               -- residual LDA topic #1 (next misc index).
+7   ``topic_share_misc_2``               -- residual LDA topic #2.
+8   ``topic_share_misc_3``               -- residual LDA topic #3.
+9   ``hedge_density``                    -- hedge tokens per 1000 whitespace tokens.
+10  ``comparison_density``               -- comparison-to-prior phrases per 1000 tokens.
+11  ``forward_density``                  -- forward-looking phrases per 1000 tokens.
+12  ``concrete_ratio``                   -- unique (numbers ∪ dates ∪ currency) spans / total words.
+13  ``hawk_dove_asymmetry``              -- (#hawk - #dove) / (#hawk + #dove + 1).
+14  ``log_token_count``                  -- log1p(whitespace token count).
 
-The 8 LDA shares always sum to 1; the densities are independent.
+When a named slot fails the seed-overlap floor (see
+:func:`_assign_named_topics`) the slot is emitted with value ``0.0``
+and the topic that would otherwise have been pinned to it falls into
+the next ``misc_*`` slot instead. This keeps the 14 output columns
+fixed while avoiding silent mislabelling.
+
+The 8 LDA topic shares always sum to 1; the densities are independent.
 ``compute_linguistic_features`` is a pure function of the text plus a
 fitted ``LdaModel`` -- per-doc idempotent; scrambling other docs in the
 training corpus does not move a given doc's feature vector beyond the
@@ -269,7 +277,30 @@ _TOKEN_RE = re.compile(r"[a-zA-Z0-9]+")
 
 @dataclass(frozen=True)
 class LinguisticVector:
-    """The 10-dim structured linguistic feature row for a single document."""
+    """The 14-dim structured linguistic feature row for a single document.
+
+    Fields, in emission order:
+
+    1.  ``topic_share_inflation``
+    2.  ``topic_share_employment``
+    3.  ``topic_share_financial_stability``
+    4.  ``topic_share_growth``
+    5.  ``topic_share_balance_sheet``
+    6.  ``topic_share_misc_1``
+    7.  ``topic_share_misc_2``
+    8.  ``topic_share_misc_3``
+    9.  ``hedge_density``
+    10. ``comparison_density``
+    11. ``forward_density``
+    12. ``concrete_ratio``
+    13. ``hawk_dove_asymmetry``
+    14. ``log_token_count``
+
+    A named slot that fails the seed-overlap floor in
+    :func:`_assign_named_topics` is emitted with ``0.0`` and its
+    would-be topic falls through into the next ``misc_*`` slot, so the
+    14 fields are always present regardless of LDA fit quality.
+    """
 
     topic_share_inflation: float
     topic_share_employment: float
@@ -383,19 +414,43 @@ def forward_density(text: str) -> float:
 
 
 def concrete_ratio(text: str) -> float:
-    """(#numbers + #dates + #currency_markers) / #words.
+    """(unique number / date / currency spans) / #words.
 
-    Words are alphabetic tokens (case-folded). Returns 0.0 when there
-    are no words, so callers don't need to special-case empty strings.
+    Words are alphabetic tokens (case-folded). The three regex families
+    overlap on tokens like ``5.25%`` (number + currency marker) and
+    ``$2.5 billion`` (currency + number), so naive summation
+    double-counts and can push the ratio above 1.0 on rate-heavy FOMC
+    text. We instead union the ``(start, end)`` match spans across the
+    three regexes and count unique spans -- two regexes that fire on
+    overlapping byte ranges count once. Returns 0.0 when there are no
+    words, so callers don't need to special-case empty strings.
     """
 
     words = _WORD_RE.findall(text)
     if not words:
         return 0.0
-    numbers = len(_NUMBER_RE.findall(text))
-    dates = len(_DATE_RE.findall(text))
-    currency = len(_CURRENCY_RE.findall(text))
-    return (numbers + dates + currency) / len(words)
+    spans: set[tuple[int, int]] = set()
+    for pattern in (_NUMBER_RE, _DATE_RE, _CURRENCY_RE):
+        for match in pattern.finditer(text):
+            start, end = match.span()
+            if end > start:
+                spans.add((start, end))
+    # Collapse any spans whose byte ranges overlap (e.g. ``5.25`` and
+    # ``%`` in ``5.25%`` produce adjacent but not strictly overlapping
+    # spans; ``$`` and ``2.5`` in ``$2.5`` likewise). We treat
+    # adjacency (end_i == start_j) as overlap so multi-piece concrete
+    # tokens collapse to a single concrete count.
+    if not spans:
+        return 0.0
+    ordered = sorted(spans)
+    merged: list[tuple[int, int]] = [ordered[0]]
+    for start, end in ordered[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end:
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+    return len(merged) / len(words)
 
 
 def hawk_dove_asymmetry(text: str) -> float:
@@ -438,6 +493,19 @@ def _build_vectorizer(
     )
 
 
+#: Minimum number of slot seed words that must appear in the winning
+#: topic's top-N vocabulary for the slot to be assigned. If a slot's
+#: best topic clears posterior mass but only via incidental seed hits
+#: (i.e. the topic's *top words* do not contain at least
+#: ``MIN_SEED_OVERLAP`` seed tokens), the slot is left unassigned and
+#: that topic falls through into the misc pool. Prevents the
+#: silent-mislabel failure mode where "employment" inherits a
+#: balance-sheet / QE topic just because its actual labor topic was
+#: claimed by a higher-priority slot.
+MIN_SEED_OVERLAP: int = 2
+SEED_OVERLAP_TOP_N: int = 10
+
+
 def _assign_named_topics(
     lda: LatentDirichletAllocation, vocab: Sequence[str]
 ) -> tuple[dict[str, int], tuple[int, ...]]:
@@ -446,8 +514,21 @@ def _assign_named_topics(
     Iterate the named slots in declaration order; for each slot pick
     the unassigned topic whose seed words receive the most cumulative
     posterior weight in the topic-word matrix. Ties broken by topic
-    index (lower wins) for determinism. Returns the slot->index map
-    plus the remaining topic indices in ascending order.
+    index (lower wins) for determinism: candidate topic indices are
+    walked in ascending order and a strict ``score > best_score``
+    comparison keeps the first (lowest-index) topic on ties.
+
+    Seed-overlap floor: the winning topic must contain at least
+    ``MIN_SEED_OVERLAP`` of the slot's seed words in its top-N
+    (``SEED_OVERLAP_TOP_N``) vocabulary, otherwise the slot is left
+    unassigned. Downstream callers emit ``0.0`` for the slot and the
+    topic that would have been pinned falls through to the misc pool.
+    This blocks the silent-mislabel failure mode observed on the
+    Sprint 1 fit where ``employment`` inherited a QE / balance-sheet
+    topic with zero labor vocabulary.
+
+    Returns the slot->index map plus the remaining topic indices in
+    ascending order.
     """
 
     word_to_idx = {w: i for i, w in enumerate(vocab)}
@@ -456,27 +537,47 @@ def _assign_named_topics(
     row_norms[row_norms == 0] = 1.0
     normalised = components / row_norms
 
+    # Precompute each topic's top-N vocabulary tokens for the overlap
+    # floor check. Re-uses the same deterministic ordering as
+    # ``_top_words_for_topic`` (weight desc, then vocab index asc).
+    top_n_per_topic: list[set[str]] = []
+    for topic_idx in range(normalised.shape[0]):
+        weights = lda.components_[topic_idx]
+        order = sorted(range(len(weights)), key=lambda i: (-weights[i], i))
+        top_n_per_topic.append({vocab[i] for i in order[:SEED_OVERLAP_TOP_N]})
+
     assignments: dict[str, int] = {}
     used: set[int] = set()
     for slot in NAMED_TOPIC_KEYS:
         seeds = TOPIC_SEED_WORDS[slot]
+        seed_set = set(seeds)
         seed_indices = [word_to_idx[w] for w in seeds if w in word_to_idx]
         if not seed_indices:
             continue
+        # Walk topic indices in ascending order with a strict ``>``
+        # comparison so ties go to the lower index (deterministic and
+        # documented).
         best_topic = -1
         best_score = -1.0
         for topic_idx in range(normalised.shape[0]):
             if topic_idx in used:
                 continue
             score = float(normalised[topic_idx, seed_indices].sum())
-            if score > best_score + 1e-12 or (
-                math.isclose(score, best_score, abs_tol=1e-12) and best_topic == -1
-            ):
+            if score > best_score:
                 best_score = score
                 best_topic = topic_idx
-        if best_topic >= 0:
-            assignments[slot] = best_topic
-            used.add(best_topic)
+        if best_topic < 0:
+            continue
+        # Seed-overlap floor: reject the assignment if the winning
+        # topic's top-N vocabulary does not contain at least
+        # ``MIN_SEED_OVERLAP`` of the slot's seed words. The topic is
+        # NOT marked as used, so it remains available to later slots
+        # (if any) and otherwise falls to the misc pool.
+        overlap = top_n_per_topic[best_topic] & seed_set
+        if len(overlap) < MIN_SEED_OVERLAP:
+            continue
+        assignments[slot] = best_topic
+        used.add(best_topic)
 
     misc = tuple(sorted(i for i in range(normalised.shape[0]) if i not in used))
     return assignments, misc
@@ -536,16 +637,22 @@ def fit_lda(
     coherence: dict[str, str] = {}
     for slot, topic_idx in assignments.items():
         seeds = TOPIC_SEED_WORDS[slot]
-        overlap = set(top_words[topic_idx][:10]) & set(seeds)
-        if overlap:
-            coherence[slot] = (
-                f"clean (overlap with seeds: {sorted(overlap)})"
-            )
-        else:
-            coherence[slot] = (
-                "weak coherence -- top words do not contain seed terms; "
-                "treat the share as a residual proxy"
-            )
+        overlap = set(top_words[topic_idx][:SEED_OVERLAP_TOP_N]) & set(seeds)
+        coherence[slot] = (
+            f"clean (overlap with seeds: {sorted(overlap)})"
+        )
+    # Slots that did NOT clear the seed-overlap floor are recorded so
+    # the audit JSON makes the drop-to-misc explicit. Downstream
+    # readers can see at a glance which named slot was emitted as 0.0.
+    for slot in NAMED_TOPIC_KEYS:
+        if slot in assignments:
+            continue
+        coherence[slot] = (
+            f"unassigned -- no candidate topic cleared the "
+            f"seed-overlap floor (MIN_SEED_OVERLAP={MIN_SEED_OVERLAP} of top-"
+            f"{SEED_OVERLAP_TOP_N}); slot emitted as 0.0 and the topic falls "
+            "to misc"
+        )
     return LdaArtifact(
         vectorizer=vectorizer,
         lda=lda,
@@ -580,7 +687,10 @@ def _topic_shares(text: str, artifact: LdaArtifact) -> np.ndarray:
 def compute_linguistic_features(
     text: str, lda_artifact: LdaArtifact | None = None
 ) -> LinguisticVector:
-    """Compute the 10-dim linguistic feature vector for one document.
+    """Compute the 14-dim linguistic feature vector for one document.
+
+    See :class:`LinguisticVector` for the full field list and the
+    seed-overlap floor that decides which named slot is emitted.
 
     When ``lda_artifact`` is None the five named topic shares plus the
     three misc slots all return 0.0 -- the hand-crafted densities are

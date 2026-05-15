@@ -12,9 +12,12 @@ from app.features.linguistic import (
     HAWK_TOKENS,
     HEDGE_TOKENS,
     LinguisticVector,
+    MIN_SEED_OVERLAP,
     NAMED_TOPIC_KEYS,
     NUM_TOPICS,
     RANDOM_STATE,
+    SEED_OVERLAP_TOP_N,
+    VOCAB_MIN_DF,
     build_linguistic_feature_frame,
     comparison_density,
     compute_linguistic_features,
@@ -98,6 +101,33 @@ def test_concrete_ratio_grows_with_numbers_and_dates():
     concrete = "in July 2022 the committee raised rates by 75 basis points to 2.5 percent"
     assert concrete_ratio(concrete) > concrete_ratio(abstract)
     assert concrete_ratio("") == 0.0
+
+
+def test_concrete_ratio_bounded_by_one_on_percent_tokens():
+    """``5.25%`` matches both the number regex and the currency regex.
+
+    The naive sum-of-match-counts implementation can push the ratio
+    above 1.0 on rate-heavy FOMC text. The deduplicated implementation
+    must collapse overlapping spans so the ratio stays in ``[0, 1]``.
+    """
+
+    assert concrete_ratio("Inflation reached 5.25% in June") <= 1.0
+
+
+def test_concrete_ratio_bounded_by_one_on_currency_amount_tokens():
+    """``$2.5 billion`` overlaps the currency and number regexes; ratio stays bounded."""
+
+    assert concrete_ratio("Reserves grew $2.5 billion in Q1") <= 1.0
+
+
+def test_concrete_ratio_dedup_keeps_single_concrete_span():
+    """``5.25%`` is one concrete span, not two; ratio = 1/words."""
+
+    text = "Rate hit 5.25% today"  # alphabetic words: Rate, hit, today -> 3
+    # The only concrete span is ``5.25%`` (number + currency marker
+    # merged into one). Ratio must equal 1 / number_of_alpha_words.
+    expected = 1 / 3
+    assert concrete_ratio(text) == pytest.approx(expected)
 
 
 def test_log_token_count_matches_log1p_of_whitespace_count():
@@ -342,3 +372,220 @@ def test_named_topic_keys_match_spec():
         "growth",
         "balance_sheet",
     )
+
+
+# ---------------------------------------------------------------------------
+# Seed-overlap floor + mislabel prevention
+# ---------------------------------------------------------------------------
+
+
+# Distinct vocabularies for 4 of the 5 named slots; the 5th slot
+# (``employment``) gets a corpus where its seed words never appear in
+# the top of any topic. The fit's 8 topics will spread across the 5
+# vocabulary islands; ``employment`` should fail the seed-overlap
+# floor and fall to misc rather than inheriting a balance-sheet /
+# policy topic.
+_FLOOR_INFLATION = (
+    "inflation prices price cpi pce core energy transitory elevated wages "
+    "inflation prices price cpi pce core energy elevated wages "
+    "inflation prices price cpi core elevated"
+)
+_FLOOR_FINANCIAL = (
+    "financial stability banks banking credit lending liquidity stress leverage vulnerability "
+    "financial stability banks banking credit lending liquidity stress leverage "
+    "financial stability banks credit lending leverage"
+)
+_FLOOR_GROWTH = (
+    "growth activity spending output gdp demand production consumption investment expansion "
+    "growth activity spending output gdp demand production consumption expansion "
+    "growth activity spending output gdp demand production"
+)
+_FLOOR_BALANCE_SHEET = (
+    "balance sheet securities treasury mbs agency holdings reinvestment purchases reserves "
+    "balance sheet securities treasury mbs agency holdings reinvestment purchases "
+    "balance sheet securities treasury mbs agency holdings reinvestment"
+)
+# Boilerplate FOMC-policy framing that does NOT contain employment
+# seed words. Any topic that absorbs this vocabulary should NOT be
+# pinned to the ``employment`` slot.
+_FLOOR_POLICY_NO_LABOR = (
+    "committee federal policy securities rate participants market reserve agency funds term purchases monetary range longer "
+    "committee federal policy securities rate participants market reserve agency funds term purchases monetary range longer "
+    "committee federal policy securities rate participants market reserve agency funds term purchases monetary range longer"
+)
+
+
+def _seed_overlap_corpus() -> list[str]:
+    """Toy corpus that exercises the seed-overlap floor.
+
+    Four named slots have distinct, repeating vocabularies. The fifth
+    slot (``employment``) gets only policy-framing boilerplate with no
+    labor seeds. With 8 topics over this corpus the LDA fit will
+    produce at least one topic that ``employment`` could try to claim
+    by total seed-weight, but the top-N vocabulary will be policy
+    boilerplate -- the seed-overlap floor must reject the assignment.
+    """
+
+    base = [
+        _FLOOR_INFLATION,
+        _FLOOR_FINANCIAL,
+        _FLOOR_GROWTH,
+        _FLOOR_BALANCE_SHEET,
+        _FLOOR_POLICY_NO_LABOR,
+    ]
+    # Repeats keep min_df happy even at production-style cutoffs.
+    return base * 6
+
+
+def test_seed_overlap_floor_drops_employment_to_misc_when_no_labor_topic():
+    """``employment`` falls to misc when no fitted topic contains labor seeds.
+
+    Mirrors the Sprint 1 mislabel: top-15 of the topic that would have
+    been pinned to ``employment`` is pure policy boilerplate
+    (``committee``, ``federal``, ``policy``, ``securities``, ``rate``,
+    ...). The seed-overlap floor must reject the assignment and emit
+    ``topic_share_employment == 0.0``.
+    """
+
+    artifact = fit_lda(_seed_overlap_corpus(), min_df=2)
+    # Four named slots get assignments; ``employment`` does not.
+    assert "employment" not in artifact.topic_assignments
+    # The 4 clean slots all map successfully.
+    assigned_slots = set(artifact.topic_assignments.keys())
+    for slot in ("inflation", "financial_stability", "growth", "balance_sheet"):
+        assert slot in assigned_slots, f"{slot} should pass the floor"
+    # The slot count plus misc count still equals NUM_TOPICS.
+    assert (
+        len(artifact.topic_assignments) + len(artifact.misc_topic_indices)
+        == NUM_TOPICS
+    )
+    # And the per-doc vector emits 0.0 for the unassigned slot.
+    vec = compute_linguistic_features(_FLOOR_INFLATION, artifact)
+    assert vec.topic_share_employment == 0.0
+
+
+def test_seed_overlap_floor_assigned_slot_actually_contains_seed_words():
+    """Every *assigned* slot's winning topic has >= MIN_SEED_OVERLAP seeds in top-N."""
+
+    artifact = fit_lda(_seed_overlap_corpus(), min_df=2)
+    # Re-load top words via the artifact directly.
+    for slot, topic_idx in artifact.topic_assignments.items():
+        from app.features.linguistic import TOPIC_SEED_WORDS
+
+        seeds = set(TOPIC_SEED_WORDS[slot])
+        top_n = set(artifact.top_words[topic_idx][:SEED_OVERLAP_TOP_N])
+        overlap = top_n & seeds
+        assert len(overlap) >= MIN_SEED_OVERLAP, (
+            f"slot {slot} -> topic {topic_idx} has only {len(overlap)} "
+            f"seed overlaps in top-{SEED_OVERLAP_TOP_N}: {top_n}"
+        )
+
+
+def test_unassigned_slot_does_not_steal_misc_count():
+    """A slot dropped by the floor does not double-count against misc."""
+
+    artifact = fit_lda(_seed_overlap_corpus(), min_df=2)
+    # ``misc_topic_indices`` is the complement of *assigned* topics.
+    # An unassigned slot leaves its candidate topic in the misc pool.
+    used = set(artifact.topic_assignments.values())
+    expected_misc = sorted(i for i in range(NUM_TOPICS) if i not in used)
+    assert list(artifact.misc_topic_indices) == expected_misc
+
+
+def test_assign_named_topics_tie_break_prefers_lower_index():
+    """When two unassigned topics tie on seed-weight, the lower index wins."""
+
+    # Build a synthetic LDA-like artifact: 3 topics, vocabulary
+    # {a, b, c, d}. Topics 0 and 1 have identical inflation seed weights
+    # (both have ``inflation`` and ``prices`` in the top, equal mass);
+    # topic 2 has none. The tie-break must pick topic 0.
+    from sklearn.decomposition import LatentDirichletAllocation
+    import numpy as np
+
+    from app.features.linguistic import _assign_named_topics
+
+    vocab = ["inflation", "prices", "labor", "jobs"]
+    # Hand-craft components_ to set up the tie.
+    components = np.array(
+        [
+            [5.0, 5.0, 0.5, 0.5],  # topic 0: inflation seed mass = 10
+            [5.0, 5.0, 0.5, 0.5],  # topic 1: identical inflation seed mass
+            [0.1, 0.1, 5.0, 5.0],  # topic 2: labor seed mass dominates
+        ]
+    )
+    lda = LatentDirichletAllocation(n_components=3)
+    lda.components_ = components
+
+    assignments, _misc = _assign_named_topics(lda, vocab)
+    # ``inflation`` should pick topic 0 (lower index) on the tie.
+    assert assignments["inflation"] == 0
+    # ``employment`` should land on topic 2 (clear labor seeds in top-N).
+    assert assignments["employment"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Vocabulary determinism + production-scale min_df
+# ---------------------------------------------------------------------------
+
+
+def test_lda_artifact_vocabulary_is_alphabetically_sorted():
+    """``CountVectorizer`` returns vocabulary in alphabetical order.
+
+    The LDA fit consumes the DTM whose columns are aligned with the
+    feature names, so an alphabetical vocabulary makes the LDA fit
+    independent of corpus-document hash ordering. Regression test:
+    catch silent drift if a future change swaps in a non-sorted
+    vectoriser.
+    """
+
+    artifact = fit_lda(_toy_corpus())
+    vocab = list(artifact.vectorizer.get_feature_names_out())
+    assert vocab == sorted(vocab), "vocabulary must be alphabetically sorted"
+
+
+def test_build_linguistic_feature_frame_deterministic_at_production_min_df(tmp_path):
+    """Determinism at production-style ``min_df=VOCAB_MIN_DF`` (5).
+
+    The smoke test above uses 10 docs which trips the < 50 docs
+    auto-downgrade to ``min_df=2``. Production runs hit
+    ``min_df=VOCAB_MIN_DF`` against 16k+ docs. Reproduce the
+    production cutoff with a 60-doc synthetic corpus so vocabulary-
+    order hash-dependence (if any) is exercised.
+    """
+
+    assert VOCAB_MIN_DF == 5  # Guardrail: catch silent drift.
+    package = tmp_path / "tp_prod"
+    base_docs = [
+        ("inf", _INFLATION_DOC),
+        ("emp", _EMPLOYMENT_DOC),
+        ("fin", _FINANCIAL_DOC),
+        ("gro", _GROWTH_DOC),
+        ("bal", _BALANCE_SHEET_DOC),
+    ]
+    # Repeat each base doc 12x with distinct text_hashes so the
+    # registry sees 60 rows; each token appears in 12 docs so it
+    # clears min_df=5 comfortably.
+    docs: list[tuple[str, str]] = []
+    for i in range(12):
+        for stem, text in base_docs:
+            docs.append((f"{stem}_{i:02d}", text))
+    _seed_training_package(package, docs)
+    frame_a, artifact_a = build_linguistic_feature_frame(package_dir=package)
+    frame_b, artifact_b = build_linguistic_feature_frame(package_dir=package)
+    pd.testing.assert_frame_equal(frame_a, frame_b)
+    # Both fits hit the production cutoff.
+    assert artifact_a.vectorizer.min_df == VOCAB_MIN_DF
+    assert artifact_b.vectorizer.min_df == VOCAB_MIN_DF
+    # Vocabulary is alphabetically sorted (regression for the order
+    # determinism contract).
+    vocab_a = list(artifact_a.vectorizer.get_feature_names_out())
+    assert vocab_a == sorted(vocab_a)
+    # Top-words match across runs.
+    assert artifact_a.top_words == artifact_b.top_words
+
+
+def test_min_seed_overlap_constants_pinned():
+    """Spec guardrails: catch silent drift on the floor settings."""
+
+    assert MIN_SEED_OVERLAP == 2
+    assert SEED_OVERLAP_TOP_N == 10
