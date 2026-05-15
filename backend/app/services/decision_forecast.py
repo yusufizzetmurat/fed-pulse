@@ -190,7 +190,7 @@ def load_next_fomc_artifacts(
         return base_response
 
     predictions_raw: list[dict[str, Any]] = list(results.get("predictions") or [])
-    summary = {k: int(v) for k, v in (results.get("summary") or {}).items() if isinstance(v, (int, float))}
+    summary = {k: int(v) for k, v in (results.get("summary") or {}).items() if isinstance(v, int | float)}
 
     # Decode each prediction; tolerate missing fields.
     decoded: list[_PredictedDecision] = []
