@@ -73,12 +73,13 @@ Baselines
   tenor (``post_event_curve_1m - ff_target_after``) * 100. Same
   information cutoff as the model (PR #156's fix): both the model's
   features and the baseline read off meeting ``N``'s post-event
-  curve, so the comparison is fair. The bp signal is fed as a raw
-  per-row prediction in basis-points-of-abnormal-return; we report
-  the comparison as a sanity check (the OIS path is in rate space,
-  abnormal returns are in price space, so RMSE comparability
-  depends on the asset -- DGS2 returns scale with bp moves, equity
-  returns less so). See the module docstring caveat below.
+  curve, so the comparison is fair. The bp signal is converted to
+  fractional return space (``bp / 10000``) before scoring so the
+  units match ``abnormal_return`` (1 bp = 0.0001, a 1% move = 100
+  bp). The OIS path is rate-direction, abnormal returns are price
+  responses, so RMSE comparability depends on the asset --
+  rate-sensitive cells (^TNX, DGS2) scale with bp moves;
+  equity cells do not.
 
 Caveat on baseline comparability: zero-prediction is a strict
 RMSE-comparable null. ``ois_bp`` is a signed *direction* baseline
@@ -562,14 +563,14 @@ def walk_forward_predict_cell(
         if include_zero_baseline:
             per_model["zero_baseline"] = 0.0
         if include_ois_bp_baseline:
-            # bp signal in "basis points"; rate-sensitive assets read
-            # this as a per-event direction prediction. Returned as
-            # the raw bp number divided by 100 so the units are
-            # comparable to percentage abnormal returns on equities
-            # (a 1% move == 100 bp). The reader is expected to read
-            # the docstring caveat before interpreting this.
+            # bp signal -> fractional return space. abnormal_return is a
+            # fractional close-to-close return (0.01 == 1%) so 1 bp =
+            # 0.0001. We divide the raw bp by 10000. The signal is
+            # rate-direction, not a calibrated return prediction;
+            # docstring caveat below covers the asymmetry between
+            # rate-sensitive cells (^TNX) and equity cells (XLE).
             if row.ois_baseline_bp is not None:
-                per_model["ois_bp_baseline"] = float(row.ois_baseline_bp) / 100.0
+                per_model["ois_bp_baseline"] = float(row.ois_baseline_bp) / 10000.0
             else:
                 per_model["ois_bp_baseline"] = 0.0
 
