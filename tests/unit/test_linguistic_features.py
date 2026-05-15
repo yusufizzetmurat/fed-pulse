@@ -9,12 +9,12 @@ import pandas as pd
 import pytest
 
 from app.features.linguistic import (
-    HAWK_TOKENS,
     HEDGE_TOKENS,
     LinguisticVector,
     MIN_SEED_OVERLAP,
     NAMED_TOPIC_KEYS,
     NUM_TOPICS,
+    PIVOT_DISTANCE_KIND,
     RANDOM_STATE,
     SEED_OVERLAP_TOP_N,
     VOCAB_MIN_DF,
@@ -27,6 +27,8 @@ from app.features.linguistic import (
     hawk_dove_asymmetry,
     hedge_density,
     log_token_count,
+    pivot_distance,
+    pivot_distance_tokens,
 )
 
 
@@ -352,9 +354,12 @@ def test_build_linguistic_feature_frame_is_byte_deterministic(tmp_path):
     pd.testing.assert_frame_equal(frame_a, frame_b)
     assert list(frame_a["text_hash"]) == sorted(h for h, _ in docs)
     assert artifact_a.lda.n_components == NUM_TOPICS
-    # Every numeric column is populated for every row.
+    # Every numeric column other than ``pivot_distance`` is populated
+    # for every row. ``pivot_distance`` is NaN by design for the first
+    # statement in chronological order and for non-statement kinds; the
+    # dedicated ``test_pivot_distance_*`` suite covers its semantics.
     for col in frame_a.columns:
-        if col == "text_hash":
+        if col in ("text_hash", "pivot_distance"):
             continue
         assert frame_a[col].notna().all(), f"column {col} has NaNs"
 
@@ -589,3 +594,223 @@ def test_min_seed_overlap_constants_pinned():
 
     assert MIN_SEED_OVERLAP == 2
     assert SEED_OVERLAP_TOP_N == 10
+
+
+# ---------------------------------------------------------------------------
+# pivot_distance: token-set Jaccard vs prior same-kind statement
+# ---------------------------------------------------------------------------
+
+
+def test_pivot_distance_pure_function_returns_nan_when_prior_is_none():
+    """No prior token set -> NaN. This is the unit-level guarantee that
+    backs the "first statement in the corpus" frame-level rule."""
+
+    result = pivot_distance("inflation remains elevated", None)
+    assert math.isnan(result)
+
+
+def test_pivot_distance_pure_function_zero_on_identical_tokens():
+    """Same vocabulary -> distance 0."""
+
+    text = "inflation has remained elevated reflecting broad price pressures"
+    result = pivot_distance(text, pivot_distance_tokens(text))
+    assert result == pytest.approx(0.0, abs=1e-12)
+
+
+def test_pivot_distance_pure_function_one_on_disjoint_tokens():
+    """Fully disjoint vocab -> distance 1."""
+
+    a = "alpha beta gamma delta"
+    b = "lorem ipsum dolor sit amet"
+    result = pivot_distance(a, pivot_distance_tokens(b))
+    assert result == pytest.approx(1.0, abs=1e-12)
+
+
+def _statement_entry(text_hash: str, event_date: str, text: str) -> dict:
+    return {
+        "text_hash": text_hash,
+        "text": text,
+        "event_date": event_date,
+        "source": "scraped_fed",
+        "source_record_id": text_hash,
+        "document_type": "statement",
+    }
+
+
+def _minutes_entry(text_hash: str, event_date: str, text: str) -> dict:
+    return {
+        "text_hash": text_hash,
+        "text": text,
+        "event_date": event_date,
+        "source": "scraped_fed",
+        "source_record_id": text_hash,
+        "document_type": "minutes",
+    }
+
+
+def _press_conference_entry(text_hash: str, event_date: str, text: str) -> dict:
+    return {
+        "text_hash": text_hash,
+        "text": text,
+        "event_date": event_date,
+        "source": "scraped_fed",
+        "source_record_id": text_hash,
+        "document_type": "press_conference",
+    }
+
+
+def _write_typed_registry(package_dir: Path, entries: list[dict]) -> None:
+    package_dir.mkdir(parents=True, exist_ok=True)
+    with (package_dir / "registry_normalized.jsonl").open(
+        "w", encoding="utf-8"
+    ) as fh:
+        for entry in entries:
+            fh.write(json.dumps(entry) + "\n")
+
+
+def test_pivot_distance_first_statement_is_nan(tmp_path):
+    """The chronologically first statement has no prior -> NaN."""
+
+    package = tmp_path / "tp_pivot_first"
+    entries = [
+        _statement_entry("a_first", "2023-01-31", _INFLATION_DOC),
+        _statement_entry("b_second", "2023-03-22", _EMPLOYMENT_DOC),
+        _statement_entry("c_third", "2023-05-03", _FINANCIAL_DOC),
+    ]
+    _write_typed_registry(package, entries)
+    artifact = fit_lda(_toy_corpus())
+    frame, _ = build_linguistic_feature_frame(package_dir=package, artifact=artifact)
+    by_hash = {row["text_hash"]: row for row in frame.to_dict(orient="records")}
+    # First statement -> NaN
+    assert math.isnan(by_hash["a_first"]["pivot_distance"])
+    # Subsequent statements have finite distances
+    assert not math.isnan(by_hash["b_second"]["pivot_distance"])
+    assert not math.isnan(by_hash["c_third"]["pivot_distance"])
+
+
+def test_pivot_distance_identical_text_is_zero(tmp_path):
+    """When a statement's text equals the previous statement's text the
+    Jaccard distance must be exactly 0."""
+
+    package = tmp_path / "tp_pivot_zero"
+    entries = [
+        _statement_entry("a_prior", "2023-01-31", _INFLATION_DOC),
+        _statement_entry("b_clone", "2023-03-22", _INFLATION_DOC),
+    ]
+    _write_typed_registry(package, entries)
+    artifact = fit_lda(_toy_corpus())
+    frame, _ = build_linguistic_feature_frame(package_dir=package, artifact=artifact)
+    by_hash = {row["text_hash"]: row for row in frame.to_dict(orient="records")}
+    assert math.isnan(by_hash["a_prior"]["pivot_distance"])
+    assert by_hash["b_clone"]["pivot_distance"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_pivot_distance_disjoint_vocab_is_one(tmp_path):
+    """Two statements with fully disjoint vocabularies produce distance 1."""
+
+    package = tmp_path / "tp_pivot_one"
+    entries = [
+        _statement_entry(
+            "a_prior", "2023-01-31", "alpha beta gamma delta epsilon zeta"
+        ),
+        _statement_entry(
+            "b_disjoint", "2023-03-22", "lorem ipsum dolor sit amet consectetur"
+        ),
+    ]
+    _write_typed_registry(package, entries)
+    artifact = fit_lda(_toy_corpus())
+    frame, _ = build_linguistic_feature_frame(package_dir=package, artifact=artifact)
+    by_hash = {row["text_hash"]: row for row in frame.to_dict(orient="records")}
+    assert by_hash["b_disjoint"]["pivot_distance"] == pytest.approx(1.0, abs=1e-12)
+
+
+def test_pivot_distance_nan_on_non_statement_kinds(tmp_path):
+    """Minutes / press conferences emit NaN regardless of prior history."""
+
+    package = tmp_path / "tp_pivot_nonstmt"
+    entries = [
+        _statement_entry("a_stmt", "2023-01-31", _INFLATION_DOC),
+        _minutes_entry("b_min", "2023-02-21", _INFLATION_DOC),
+        _press_conference_entry("c_pc", "2023-03-22", _INFLATION_DOC),
+        _statement_entry("d_stmt", "2023-03-22", _INFLATION_DOC),
+    ]
+    _write_typed_registry(package, entries)
+    artifact = fit_lda(_toy_corpus())
+    frame, _ = build_linguistic_feature_frame(package_dir=package, artifact=artifact)
+    by_hash = {row["text_hash"]: row for row in frame.to_dict(orient="records")}
+    # Minutes + press conference -> NaN regardless of prior availability.
+    assert math.isnan(by_hash["b_min"]["pivot_distance"])
+    assert math.isnan(by_hash["c_pc"]["pivot_distance"])
+    # The trailing statement has a prior (a_stmt) and emits a finite value.
+    assert not math.isnan(by_hash["d_stmt"]["pivot_distance"])
+    # That trailing statement is identical text to a_stmt -> distance 0.
+    assert by_hash["d_stmt"]["pivot_distance"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_pivot_distance_uses_strict_chronological_prior(tmp_path):
+    """When several priors exist, the LATEST one strictly before the current
+    date is used. We make the most-recent prior identical to the current
+    text (distance 0) and an earlier prior fully disjoint (would yield
+    distance 1). The result must be 0, proving the walker picked the
+    strict-less-than most-recent prior."""
+
+    package = tmp_path / "tp_pivot_strict"
+    entries = [
+        # Earliest prior: fully disjoint vocabulary.
+        _statement_entry(
+            "a_oldest", "2023-01-31", "alpha beta gamma delta epsilon"
+        ),
+        # Most-recent strictly-prior statement: identical text to current.
+        _statement_entry(
+            "b_recent_prior", "2023-03-22", _INFLATION_DOC
+        ),
+        # Current statement.
+        _statement_entry("c_current", "2023-05-03", _INFLATION_DOC),
+    ]
+    _write_typed_registry(package, entries)
+    artifact = fit_lda(_toy_corpus())
+    frame, _ = build_linguistic_feature_frame(package_dir=package, artifact=artifact)
+    by_hash = {row["text_hash"]: row for row in frame.to_dict(orient="records")}
+    # Must use the most-recent strict prior (b_recent_prior) -> distance 0.
+    assert by_hash["c_current"]["pivot_distance"] == pytest.approx(
+        0.0, abs=1e-12
+    )
+
+
+def test_pivot_distance_kind_constant_pinned():
+    """Spec guardrail: pivot_distance is only defined for the statement kind."""
+
+    assert PIVOT_DISTANCE_KIND == "statement"
+
+
+def test_linguistic_vector_has_pivot_distance_field():
+    """The 15-dim contract requires ``pivot_distance`` on every row."""
+
+    fields = list(LinguisticVector.__dataclass_fields__.keys())
+    assert "pivot_distance" in fields
+    assert len(fields) == 15
+
+
+def test_compute_linguistic_features_default_pivot_is_nan():
+    """When the caller does not pass ``prior_statement_tokens`` the
+    pivot field emits NaN (matches the non-statement / first-statement
+    semantics)."""
+
+    vec = compute_linguistic_features(_INFLATION_DOC)
+    assert math.isnan(vec.pivot_distance)
+
+
+def test_build_linguistic_feature_frame_pivot_column_present(tmp_path):
+    """The Sprint-1-style builder must emit a ``pivot_distance`` column."""
+
+    package = tmp_path / "tp_pivot_col"
+    entries = [
+        _statement_entry("a_stmt", "2023-01-31", _INFLATION_DOC),
+        _statement_entry("b_stmt", "2023-03-22", _EMPLOYMENT_DOC),
+    ]
+    _write_typed_registry(package, entries)
+    artifact = fit_lda(_toy_corpus())
+    frame, _ = build_linguistic_feature_frame(package_dir=package, artifact=artifact)
+    assert "pivot_distance" in frame.columns
+    # Non-NaN count = #statements with a strict prior = N - 1 here.
+    assert frame["pivot_distance"].notna().sum() == 1

@@ -14,7 +14,7 @@ The design follows three strands of Fed-NLP literature:
   communication." (forward-looking phrasing and comparison-to-prior
   signal the policy vs. growth-news split.)
 
-The output is a 14-dim numeric vector keyed by ``text_hash`` (see
+The output is a 15-dim numeric vector keyed by ``text_hash`` (see
 :class:`LinguisticVector` for the exact field order):
 
 1   ``topic_share_inflation``            -- LDA share for the inflation-aligned topic.
@@ -31,6 +31,11 @@ The output is a 14-dim numeric vector keyed by ``text_hash`` (see
 12  ``concrete_ratio``                   -- unique (numbers ∪ dates ∪ currency) spans / total words.
 13  ``hawk_dove_asymmetry``              -- (#hawk - #dove) / (#hawk + #dove + 1).
 14  ``log_token_count``                  -- log1p(whitespace token count).
+15  ``pivot_distance``                   -- token-set Jaccard distance vs the prior
+                                            same-kind statement (Hansen-McMahon 2016).
+                                            Only defined for ``event_kind = "statement"``;
+                                            other kinds and the first statement
+                                            in the corpus emit ``NaN``.
 
 When a named slot fails the seed-overlap floor (see
 :func:`_assign_named_topics`) the slot is emitted with value ``0.0``
@@ -277,7 +282,7 @@ _TOKEN_RE = re.compile(r"[a-zA-Z0-9]+")
 
 @dataclass(frozen=True)
 class LinguisticVector:
-    """The 14-dim structured linguistic feature row for a single document.
+    """The 15-dim structured linguistic feature row for a single document.
 
     Fields, in emission order:
 
@@ -295,11 +300,16 @@ class LinguisticVector:
     12. ``concrete_ratio``
     13. ``hawk_dove_asymmetry``
     14. ``log_token_count``
+    15. ``pivot_distance``
 
     A named slot that fails the seed-overlap floor in
     :func:`_assign_named_topics` is emitted with ``0.0`` and its
     would-be topic falls through into the next ``misc_*`` slot, so the
-    14 fields are always present regardless of LDA fit quality.
+    15 fields are always present regardless of LDA fit quality.
+
+    ``pivot_distance`` is ``NaN`` for documents whose event kind is not
+    ``statement``, and for the first statement in the corpus. The first
+    14 axes are always finite.
     """
 
     topic_share_inflation: float
@@ -316,6 +326,7 @@ class LinguisticVector:
     concrete_ratio: float
     hawk_dove_asymmetry: float
     log_token_count: float
+    pivot_distance: float = math.nan
 
     def as_dict(self) -> dict[str, float]:
         return {
@@ -333,6 +344,7 @@ class LinguisticVector:
             "concrete_ratio": self.concrete_ratio,
             "hawk_dove_asymmetry": self.hawk_dove_asymmetry,
             "log_token_count": self.log_token_count,
+            "pivot_distance": self.pivot_distance,
         }
 
 
@@ -680,14 +692,66 @@ def _topic_shares(text: str, artifact: LdaArtifact) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
+# Pivot distance (token-set Jaccard vs prior same-kind statement)
+# ---------------------------------------------------------------------------
+
+# The kind for which ``pivot_distance`` is defined. Minutes, press
+# conferences, speeches and testimonies follow different stylistic
+# conventions (Q&A transcripts vs. a curated written paragraph), so the
+# vocabulary diff against a prior statement would not be interpretable.
+PIVOT_DISTANCE_KIND: str = "statement"
+
+
+def pivot_distance_tokens(text: str) -> set[str]:
+    """Return the normalised token set used by :func:`pivot_distance`.
+
+    Reuses ``_TOKEN_RE`` -- the same tokeniser that backs ``_word_tokens``
+    -- so the Jaccard distance shares a tokenisation convention with the
+    rest of the module (case-folded alphanumeric runs of length >= 1).
+    """
+
+    return {m.group(0).lower() for m in _TOKEN_RE.finditer(text)}
+
+
+def pivot_distance(text: str, prior_tokens: set[str] | None) -> float:
+    """Token-set Jaccard distance between ``text`` and ``prior_tokens``.
+
+    ``1 - |A ∩ B| / |A ∪ B|`` over the normalised tokens of each
+    document. The result lies in ``[0, 1]``:
+
+    - 0.0 when ``text`` shares its full vocabulary with the prior;
+    - 1.0 when the two vocabularies are disjoint.
+
+    Returns ``NaN`` when ``prior_tokens`` is ``None`` -- there is no
+    prior statement to diff against (first statement in the corpus).
+    Also returns ``NaN`` when both token sets are empty, because the
+    Jaccard distance is undefined on an empty union.
+    """
+
+    if prior_tokens is None:
+        return math.nan
+    current = pivot_distance_tokens(text)
+    if not current and not prior_tokens:
+        return math.nan
+    intersection = len(current & prior_tokens)
+    union = len(current | prior_tokens)
+    if union == 0:
+        return math.nan
+    return 1.0 - (intersection / union)
+
+
+# ---------------------------------------------------------------------------
 # Per-document feature assembly
 # ---------------------------------------------------------------------------
 
 
 def compute_linguistic_features(
-    text: str, lda_artifact: LdaArtifact | None = None
+    text: str,
+    lda_artifact: LdaArtifact | None = None,
+    *,
+    prior_statement_tokens: set[str] | None = None,
 ) -> LinguisticVector:
-    """Compute the 14-dim linguistic feature vector for one document.
+    """Compute the 15-dim linguistic feature vector for one document.
 
     See :class:`LinguisticVector` for the full field list and the
     seed-overlap floor that decides which named slot is emitted.
@@ -696,10 +760,16 @@ def compute_linguistic_features(
     three misc slots all return 0.0 -- the hand-crafted densities are
     still emitted. Pass a fitted artifact (from :func:`fit_lda`) to get
     the full vector.
+
+    ``prior_statement_tokens`` is the normalised token set of the
+    previous statement (chronological order) used to compute
+    ``pivot_distance``. Pass ``None`` when the caller is processing a
+    non-statement document or the first statement in the corpus; the
+    pivot field then emits ``NaN``.
     """
 
     if lda_artifact is None:
-        topic_named = {slot: 0.0 for slot in NAMED_TOPIC_KEYS}
+        topic_named = dict.fromkeys(NAMED_TOPIC_KEYS, 0.0)
         misc_shares = (0.0, 0.0, 0.0)
     else:
         shares = _topic_shares(text, lda_artifact)
@@ -729,6 +799,7 @@ def compute_linguistic_features(
         concrete_ratio=concrete_ratio(text),
         hawk_dove_asymmetry=hawk_dove_asymmetry(text),
         log_token_count=log_token_count(text),
+        pivot_distance=pivot_distance(text, prior_statement_tokens),
     )
 
 
@@ -737,10 +808,27 @@ def compute_linguistic_features(
 # ---------------------------------------------------------------------------
 
 
+# ``document_type`` strings vary by source casing. The map mirrors the
+# event-row builder so the two share the same kind taxonomy.
+_DOCUMENT_TYPE_TO_KIND: dict[str, str] = {
+    "statement": "statement",
+    "Statement": "statement",
+    "minutes": "minutes",
+    "Minutes": "minutes",
+    "meeting_transcript": "minutes",
+    "press_conference": "press_conference",
+    "congressional_testimony": "testimony",
+    "chair_speech": "speech",
+    "governor_speech": "speech",
+}
+
+
 @dataclass
 class _CorpusDoc:
     text_hash: str
     text: str
+    event_date: str = ""
+    event_kind: str = ""
 
 
 def _aggregate_corpus(package_dir: Path) -> list[_CorpusDoc]:
@@ -750,6 +838,13 @@ def _aggregate_corpus(package_dir: Path) -> list[_CorpusDoc]:
     text_hash to give the LDA fit document-level granularity rather
     than per-sentence chatter. Sorted by ``text_hash`` so the corpus
     order is deterministic.
+
+    ``event_date`` and ``event_kind`` are lifted from the first
+    registry row contributing to each ``text_hash`` -- they are
+    properties of the document, not of any single sentence shard.
+    The kind is mapped via ``_DOCUMENT_TYPE_TO_KIND``; rows whose
+    ``document_type`` is unknown contribute an empty kind string and
+    will be skipped by the ``pivot_distance`` walker downstream.
     """
 
     registry = package_dir / "registry_normalized.jsonl"
@@ -757,6 +852,8 @@ def _aggregate_corpus(package_dir: Path) -> list[_CorpusDoc]:
         raise FileNotFoundError(f"Missing registry: {registry}")
     by_hash: dict[str, list[str]] = {}
     seen_order: list[str] = []
+    event_date_by_hash: dict[str, str] = {}
+    event_kind_by_hash: dict[str, str] = {}
     for line in registry.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
@@ -771,9 +868,18 @@ def _aggregate_corpus(package_dir: Path) -> list[_CorpusDoc]:
         if thash not in by_hash:
             by_hash[thash] = []
             seen_order.append(thash)
+            event_date_by_hash[thash] = str(payload.get("event_date", "") or "").strip()
+            doc_type = str(payload.get("document_type", "") or "").strip()
+            event_kind_by_hash[thash] = _DOCUMENT_TYPE_TO_KIND.get(doc_type, "")
         by_hash[thash].append(text)
     docs = [
-        _CorpusDoc(text_hash=h, text="\n".join(by_hash[h])) for h in seen_order
+        _CorpusDoc(
+            text_hash=h,
+            text="\n".join(by_hash[h]),
+            event_date=event_date_by_hash.get(h, ""),
+            event_kind=event_kind_by_hash.get(h, ""),
+        )
+        for h in seen_order
     ]
     docs.sort(key=lambda d: d.text_hash)
     return docs
@@ -789,15 +895,61 @@ def build_linguistic_feature_frame(
 
     The frame is sorted by ``text_hash`` so re-runs yield identical
     parquet bytes when paired with snappy compression. Columns:
-    ``text_hash`` followed by all 14 numeric feature axes.
+    ``text_hash`` followed by all 15 numeric feature axes.
+
+    ``pivot_distance`` is computed in chronological order over the
+    statement rows only. The walk picks the latest preceding statement
+    whose ``event_date`` is strictly less than the current one and
+    diffs its token set against the current document. The first
+    statement in the corpus (no strictly-prior peer) gets ``NaN``;
+    non-statement documents always get ``NaN``. Ties on ``event_date``
+    are broken by ``text_hash`` ascending, but a tied prior is treated
+    as concurrent and not used -- the prior must be strictly earlier.
     """
 
     docs = _aggregate_corpus(package_dir)
     if artifact is None:
         artifact = fit_lda(d.text for d in docs)
+
+    # Walk statement rows in chronological order and build a map from
+    # text_hash to the token set of the strictly-earlier prior statement
+    # (or None when there is no such peer). Non-statement rows are
+    # absent from the map and pass ``None`` to
+    # ``compute_linguistic_features`` so the pivot field emits NaN.
+    # Same-date statements share a prior (the latest strictly-earlier
+    # date); none of them become the prior for any other same-date peer
+    # because the contract requires ``as_of_ts < current.as_of_ts``.
+    prior_tokens_by_hash: dict[str, set[str] | None] = {}
+    statement_docs = [d for d in docs if d.event_kind == PIVOT_DISTANCE_KIND]
+    statement_docs.sort(key=lambda d: (d.event_date, d.text_hash))
+    by_date: dict[str, list[_CorpusDoc]] = {}
+    date_order: list[str] = []
+    for doc in statement_docs:
+        if doc.event_date not in by_date:
+            by_date[doc.event_date] = []
+            date_order.append(doc.event_date)
+        by_date[doc.event_date].append(doc)
+    prev_tokens: set[str] | None = None
+    for date in date_order:
+        bucket = by_date[date]
+        # All docs sharing this event_date see the same strictly-earlier prior.
+        for doc in bucket:
+            prior_tokens_by_hash[doc.text_hash] = (
+                set(prev_tokens) if prev_tokens is not None else None
+            )
+        # Promote this bucket to "prior" for any later date. When multiple
+        # statements share the same date, the first one in (event_date,
+        # text_hash) order is the canonical prior representative -- a
+        # deterministic, documented tie-break that matches the rest of
+        # the module's ordering convention.
+        prev_tokens = pivot_distance_tokens(bucket[0].text)
+
     rows: list[dict[str, Any]] = []
     for doc in docs:
-        vec = compute_linguistic_features(doc.text, artifact)
+        prior_tokens = prior_tokens_by_hash.get(doc.text_hash)
+        vec = compute_linguistic_features(
+            doc.text, artifact, prior_statement_tokens=prior_tokens
+        )
         row = {"text_hash": doc.text_hash}
         row.update(vec.as_dict())
         rows.append(row)
