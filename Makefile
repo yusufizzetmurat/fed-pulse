@@ -27,7 +27,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state next-fomc
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state next-fomc cross-asset
 
 help:
 	@echo "Targets:"
@@ -52,6 +52,7 @@ help:
 	@echo "  make pseudo-labels-audit-metrics-judge - Compute teacher precision against the LLM judge gold"
 	@echo "  make macro-state      - Build the FRED macro-state parquet (Phase 8 #147)"
 	@echo "  make next-fomc        - Predict next-FOMC decision (Phase 8 headline, #147)"
+	@echo "  make cross-asset      - Cross-asset abnormal-return response head (Phase 8, #148)"
 
 dev: dev-cpu
 
@@ -280,5 +281,18 @@ next-fomc:
 	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
 	docker compose run --rm backend \
 		python -m app.forecasting.next_fomc_decision \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		--seed "$(SEED)"
+
+# Predict the cross-section of asset abnormal returns to FOMC events using
+# text + macro + OIS + credibility + linguistic features (Phase 8, #148).
+# Required: TRAINING_PACKAGE_ID pointing at a package under
+# data/processed/<id>/ that contains events.parquet (with per-asset rows)
+# and linguistic_features.parquet. Reads mp_surprises.parquet and
+# macro_state.parquet from data/external/fred/.
+cross-asset:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.forecasting.cross_asset_response \
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--seed "$(SEED)"
