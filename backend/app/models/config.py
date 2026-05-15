@@ -44,6 +44,8 @@ FORECASTER_ARCHITECTURES: tuple[str, ...] = (
     "tcn",
     "transformer",
     "dlinear",
+    "informer",
+    "tft",
 )
 
 

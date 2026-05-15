@@ -554,8 +554,38 @@ inference path treat them interchangeably.
 | `tcn`        | Two dilated-conv `TemporalConvNet` blocks        | Causal padding; residual identity. |
 | `transformer`| `SmallTransformer` (2 layers, 4 heads)           | `hidden_size` must be divisible by 4 (default 64 satisfies). |
 | `dlinear`    | DLinear (trend + seasonal decomposition)         | Pinned to `SEQUENCE_LENGTH=20`. |
+| `informer`   | Informer encoder (ProbSparse self-attention)     | 2 encoder layers, 4 heads, `factor=5`. Same `(B,T,H)` core output as the recurrent variants. |
+| `tft`        | Temporal Fusion Transformer encoder              | VSN over 6 features + GRN gating + 4-head self-attention. `hidden_size` must be divisible by 4. |
 
 The official registry constant lives at `app.models.FORECASTER_ARCHITECTURES`.
+
+#### Informer
+
+`backend/app/models/informer.py` implements the encoder side of Informer
+(Zhou et al., AAAI 2021) in pure PyTorch — no `pytorch-forecasting` or
+upstream Informer repo dependency. ProbSparse self-attention reduces full
+self-attention's `O(L^2)` cost to `O(L log L)` by sampling probe keys per
+query and routing only the top-`u` queries through a real softmax;
+remaining queries fall back to the mean of the value sequence. Defaults
+match the AAAI-2021 short-horizon recipe: `d_model = hidden_size = 64`,
+`n_heads = 4`, `e_layers = 2`, `dropout = 0.1`, `factor = 5`. Input
+contract `(batch, 20, 6)`; encoder-output contract `(batch, 20,
+hidden_size)` + `None` so the wrapper's `output, _ = core(x)`
+destructuring keeps working unchanged.
+
+#### TFT
+
+`backend/app/models/tft.py` implements a lightweight Temporal Fusion
+Transformer encoder (Lim et al., 2021) in pure PyTorch — no
+`pytorch-forecasting` dependency. Per-timestep Variable Selection Network
+over the six scalar features, GRN-gated residual blocks, and a 4-head
+self-attention block sit between two LayerNorms. Defaults follow the
+small-budget setup from the paper: `hidden_size = 64`, `n_heads = 4`,
+`dropout = 0.1`. Same input/output contract as the rest of the registry.
+The published TFT's LSTM encoder/decoder, static-covariate enrichment, and
+multi-horizon quantile head are intentionally out of scope — the project's
+single-horizon head and time-decay/credibility paths live in
+`ForecasterModel` above the encoder.
 
 ### Credibility-features flag
 
@@ -577,7 +607,7 @@ the published `1e-4` contract covers cross-platform drift).
 {
   "mode": "sweep",
   "selection_metric": "combined_rmse",
-  "architectures": ["dlinear", "gru", "lstm", "lstm_attn", "tcn", "transformer"],
+  "architectures": ["dlinear", "gru", "informer", "lstm", "lstm_attn", "tcn", "tft", "transformer"],
   "seeds": [11, 29, 47, 71, 97],
   "credibility_features": false,
   "trial_count": 30,
@@ -628,7 +658,8 @@ aggregator output schema is:
 ### Make targets
 
 - `make forecaster-sweep TRAINING_PACKAGE_ID=<id>` — the full
-  6-arch x 5-seed sweep.
+  8-arch x 5-seed sweep. Pass `ARCHITECTURES=<csv>` (or
+  `--architectures …`) to restrict.
 - `make forecaster-sweep-aggregate TRAINING_PACKAGE_ID=<id>` —
   per-architecture headline (block-bootstrap CIs).
 - `make forecaster-credibility-train TRAINING_PACKAGE_ID=<id> ARCHITECTURE=lstm SEED=11`
