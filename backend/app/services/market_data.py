@@ -7,6 +7,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yfinance as yf
 
@@ -18,17 +19,12 @@ FOMC_MEETINGS_CSV = REPO_ROOT / "data" / "external" / "fomc_meetings_2010_2026.c
 # The FOMC press release lands at 2pm Eastern. Any market-side feature dated
 # on an FOMC day with a timestamp strictly after this boundary is looking at
 # information the model would not have had at decision time, so we reject it
-# at the feature-assembly seam.
-#
-# We use 19:00 UTC as the canonical cutoff because that matches both
-#   * 2pm ET (EST, Nov-Mar) — UTC-5, so 14:00 ET == 19:00 UTC
-#   * 2pm ET (EDT, Mar-Nov) — UTC-4, so 14:00 ET == 18:00 UTC
-# We deliberately pick the *later* of the two so a DST-ambiguous timestamp
-# (no tz, summer date) still fails closed during EST and at the boundary
-# during EDT. Callers that have a tz-aware timestamp should keep using it;
-# callers that pass a naive UTC timestamp get the stricter EST boundary,
-# which is the safer default.
-FOMC_DAY_CUTOFF_UTC = time(19, 0, 0, tzinfo=timezone.utc)
+# at the feature-assembly seam. The comparison is done in America/New_York
+# local time so DST is handled automatically: EST months land 14:00 ET at
+# 19:00 UTC, EDT months at 18:00 UTC, and either way the assertion fires
+# on bars later than 14:00 local time.
+FOMC_LOCAL_CUTOFF_TIME = time(14, 0, 0)
+FOMC_ZONE = ZoneInfo("America/New_York")
 
 
 def _market_source() -> str:
@@ -80,10 +76,9 @@ def assert_fomc_day_market_cutoff(
     the feature frame is a textbook lookahead bug.
 
     ``timestamp`` is expected to be tz-aware (UTC or otherwise). A naive
-    datetime is interpreted as UTC; the cutoff is then ``19:00 UTC``, which
-    is 2pm EST. Naive timestamps from EDT months can be marginally laxer
-    than the true 2pm ET boundary by one hour — callers that have a
-    tz-aware timestamp should keep using it.
+    datetime is interpreted as UTC. The comparison happens in
+    ``America/New_York`` local time so DST is handled automatically and
+    the cutoff is the same 14:00 wall-clock both halves of the year.
 
     Raises ``ValueError`` on violation so the caller can surface a clear
     error to the operator. No silent coercion: a bad row is a bug, not a
@@ -96,11 +91,12 @@ def assert_fomc_day_market_cutoff(
     if timestamp.tzinfo is None:
         anchored = timestamp.replace(tzinfo=timezone.utc)
     else:
-        anchored = timestamp.astimezone(timezone.utc)
-    cutoff = datetime.combine(anchored.date(), FOMC_DAY_CUTOFF_UTC)
-    if anchored > cutoff:
+        anchored = timestamp
+    local = anchored.astimezone(FOMC_ZONE)
+    cutoff = datetime.combine(local.date(), FOMC_LOCAL_CUTOFF_TIME, tzinfo=FOMC_ZONE)
+    if local > cutoff:
         raise ValueError(
-            f"{feature_name} dated {anchored.isoformat()} is after the FOMC "
+            f"{feature_name} dated {local.isoformat()} is after the FOMC "
             f"14:00 ET cutoff ({cutoff.isoformat()}) on a meeting day. "
             "Same-day post-announcement bars leak the policy decision into the "
             "feature frame. Drop the bar or rebuild the feature with an "

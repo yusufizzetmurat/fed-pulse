@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import sys
+import warnings
 import csv
 import itertools
 import json
@@ -191,7 +193,19 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Only inspect discovered datasets and exit without training.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    # Emit DeprecationWarning when the legacy --validation-split alias is
+    # used. argparse silently maps it onto validation_fraction, so callers
+    # would otherwise have no signal that the name is on its way out.
+    if any(arg == "--validation-split" or arg.startswith("--validation-split=") for arg in sys.argv[1:]):
+        warnings.warn(
+            "--validation-split is deprecated; use --validation-fraction. "
+            "The walk-forward validation slice is a chronological prefix, "
+            "not a sklearn-style random split, and the new flag name reflects that.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    return args
 
 
 def _build_model_config(args: argparse.Namespace) -> ModelConfig:

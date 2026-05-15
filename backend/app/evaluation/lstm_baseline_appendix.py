@@ -43,6 +43,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -463,6 +464,15 @@ def _evaluate_against_package(
     # cover the pure metric / baseline helpers above; this function is
     # not part of the testable surface until the GPU sweep produces a
     # checkpoint we can lock against.
+    print(
+        f"lstm_baseline_appendix: checkpoint evaluation is not yet wired "
+        f"(checkpoint={checkpoint_path}, training_package={package_dir}). "
+        "The GPU-bound inference loop lands in a follow-up PR after the "
+        "multi-architecture sweep produces a checkpoint we can lock "
+        "against. The output artefact will carry only the random-walk + "
+        "rolling-mean baseline cells until then.",
+        file=sys.stderr,
+    )
     del checkpoint_path, package_dir
     return []
 
