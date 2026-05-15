@@ -632,6 +632,333 @@ def test_real_release_calendar_changes_rate_on_smoke_package() -> None:
     assert 0.0 < real_rate < 1.0
 
 
+# ---------------------------------------------------------------------------
+# intra_meeting_{stance,certainty,factor}_shift -- statement vs same-day PC
+# ---------------------------------------------------------------------------
+
+
+def _intra_meeting_entry(
+    *,
+    event_date: str,
+    document_type: str,
+    source_record_id: str,
+    text: str,
+    stance: str | None = None,
+    certainty: float | str | None = None,
+    factor: float | str | None = None,
+    source: str = "scraped_fed",
+) -> dict:
+    """Synthetic registry row with a fixed multi-axis payload.
+
+    Stance is the mapped_label (categorical), certainty and factor land
+    in the ``axes`` payload so the builder lifts them onto the
+    ``_EventDoc.multi_axis`` map.
+    """
+
+    return {
+        "record_id": hashlib.sha256(
+            f"{event_date}|{document_type}|{source_record_id}".encode()
+        ).hexdigest()[:16],
+        "source": source,
+        "source_record_id": source_record_id,
+        "document_type": document_type,
+        "source_type": "fomc_press_conference"
+        if document_type == "press_conference"
+        else "fomc_statement",
+        "event_date": event_date,
+        "text": text,
+        "mapped_label": stance,
+        "axes": {
+            "stance": stance,
+            "time": None,
+            "certainty": certainty,
+            "factor": factor,
+            "topic": None,
+        },
+        "multi_axis_extras": {},
+        "sample_weight": 1.0,
+    }
+
+
+def test_intra_meeting_shift_both_kinds_present(tmp_path: Path) -> None:
+    """When the statement is hawkish and the press conference is dovish on
+    the same event_date, stance_shift = encode(dovish) - encode(hawkish)
+    = -1 - 1 = -2. Certainty and factor are regression-typed numerics
+    here; their shifts are direct subtractions."""
+
+    package = tmp_path / "package"
+    package.mkdir()
+    event_date = "2023-06-14"
+    _write_registry(
+        package / "registry_normalized.jsonl",
+        [
+            _intra_meeting_entry(
+                event_date=event_date,
+                document_type="Statement",
+                source_record_id="fomc_statements.json:1",
+                text="Statement: hawkish baseline.",
+                stance="hawkish",
+                certainty=0.7,
+                factor=0.4,
+            ),
+            _intra_meeting_entry(
+                event_date=event_date,
+                document_type="press_conference",
+                source_record_id="press_conference.json:1",
+                text="Press conference: chair softens on Q&A.",
+                stance="dovish",
+                certainty=0.3,
+                factor=-0.1,
+            ),
+        ],
+    )
+    dates = _make_trading_dates(_dt.date(2021, 1, 4), 800)
+    series = _series_from_closes(dates, [100.0] * 800)
+
+    df = edb.build_event_rows(
+        package_dir=package,
+        asset_series=series,
+        bench_series=series,
+    )
+    assert not df.empty
+    # Every row on the event_date carries the same shift values.
+    for v in df["intra_meeting_stance_shift"].tolist():
+        assert float(v) == pytest.approx(-2.0, abs=1e-9)
+    for v in df["intra_meeting_certainty_shift"].tolist():
+        # Numeric passthrough: 0.3 - 0.7 = -0.4
+        assert float(v) == pytest.approx(-0.4, abs=1e-9)
+    for v in df["intra_meeting_factor_shift"].tolist():
+        # Numeric passthrough: -0.1 - 0.4 = -0.5
+        assert float(v) == pytest.approx(-0.5, abs=1e-9)
+
+
+def test_intra_meeting_shift_missing_press_conference(tmp_path: Path) -> None:
+    """No press conference for the date -> all three shifts NaN."""
+
+    import math as _math
+
+    package = tmp_path / "package"
+    package.mkdir()
+    _write_registry(
+        package / "registry_normalized.jsonl",
+        [
+            _intra_meeting_entry(
+                event_date="2023-06-14",
+                document_type="Statement",
+                source_record_id="fomc_statements.json:1",
+                text="Statement only.",
+                stance="hawkish",
+                certainty=0.7,
+                factor=0.2,
+            ),
+        ],
+    )
+    dates = _make_trading_dates(_dt.date(2021, 1, 4), 800)
+    series = _series_from_closes(dates, [100.0] * 800)
+    df = edb.build_event_rows(
+        package_dir=package,
+        asset_series=series,
+        bench_series=series,
+    )
+    assert not df.empty
+    for col in (
+        "intra_meeting_stance_shift",
+        "intra_meeting_certainty_shift",
+        "intra_meeting_factor_shift",
+    ):
+        for v in df[col].tolist():
+            assert _math.isnan(float(v)), f"{col} expected NaN, got {v}"
+
+
+def test_intra_meeting_shift_missing_statement(tmp_path: Path) -> None:
+    """No statement for the date -> all three shifts NaN."""
+
+    import math as _math
+
+    package = tmp_path / "package"
+    package.mkdir()
+    _write_registry(
+        package / "registry_normalized.jsonl",
+        [
+            _intra_meeting_entry(
+                event_date="2023-06-14",
+                document_type="press_conference",
+                source_record_id="press_conference.json:1",
+                text="Press conference orphan.",
+                stance="dovish",
+                certainty=0.3,
+                factor=-0.4,
+            ),
+        ],
+    )
+    dates = _make_trading_dates(_dt.date(2021, 1, 4), 800)
+    series = _series_from_closes(dates, [100.0] * 800)
+    df = edb.build_event_rows(
+        package_dir=package,
+        asset_series=series,
+        bench_series=series,
+    )
+    assert not df.empty
+    for col in (
+        "intra_meeting_stance_shift",
+        "intra_meeting_certainty_shift",
+        "intra_meeting_factor_shift",
+    ):
+        for v in df[col].tolist():
+            assert _math.isnan(float(v)), f"{col} expected NaN, got {v}"
+
+
+def test_intra_meeting_shift_replicated_on_full_view(tmp_path: Path) -> None:
+    """On the full view (keep_all_sources=True), every (source, asset,
+    horizon) row sharing an event_date must carry the same shift values
+    because the shift is a property of the date, not of the source."""
+
+    package = tmp_path / "package"
+    package.mkdir()
+    event_date = "2023-06-14"
+    _write_registry(
+        package / "registry_normalized.jsonl",
+        [
+            # Two sources of the same statement; preferred = scraped_fed.
+            _intra_meeting_entry(
+                event_date=event_date,
+                document_type="Statement",
+                source_record_id="fomc_statements.json:5",
+                text="Scraped statement.",
+                stance="hawkish",
+                certainty=0.6,
+                factor=0.3,
+                source="scraped_fed",
+            ),
+            _intra_meeting_entry(
+                event_date=event_date,
+                document_type="statement",
+                source_record_id="kaggle:1",
+                text="Kaggle statement variant.",
+                stance="neutral",
+                certainty=0.5,
+                factor=0.0,
+                source="kaggle_fed_statements_minutes",
+            ),
+            _intra_meeting_entry(
+                event_date=event_date,
+                document_type="press_conference",
+                source_record_id="press_conference.json:1",
+                text="Press conference.",
+                stance="dovish",
+                certainty=0.2,
+                factor=-0.2,
+                source="scraped_fed",
+            ),
+        ],
+    )
+    dates = _make_trading_dates(_dt.date(2021, 1, 4), 800)
+    series = _series_from_closes(dates, [100.0] * 800)
+    df_full = edb.build_event_rows(
+        package_dir=package,
+        asset_series=series,
+        bench_series=series,
+        keep_all_sources=True,
+    )
+    # Filter to rows on the event_date and confirm uniform shift values.
+    same_date = df_full[df_full["event_date"] == event_date]
+    assert not same_date.empty
+    # The preferred-pair shift uses scraped_fed (hawkish) statement + dovish PC
+    # -> stance_shift = -1 - 1 = -2. Certainty = 0.2 - 0.6 = -0.4.
+    # Factor = -0.2 - 0.3 = -0.5.
+    for v in same_date["intra_meeting_stance_shift"].tolist():
+        assert float(v) == pytest.approx(-2.0, abs=1e-9)
+    for v in same_date["intra_meeting_certainty_shift"].tolist():
+        assert float(v) == pytest.approx(-0.4, abs=1e-9)
+    for v in same_date["intra_meeting_factor_shift"].tolist():
+        assert float(v) == pytest.approx(-0.5, abs=1e-9)
+    # And on the collapsed view the same value lands on the single
+    # preferred row per kind.
+    df_collapsed = edb.build_event_rows(
+        package_dir=package,
+        asset_series=series,
+        bench_series=series,
+        keep_all_sources=False,
+    )
+    same_date_c = df_collapsed[df_collapsed["event_date"] == event_date]
+    for v in same_date_c["intra_meeting_stance_shift"].tolist():
+        assert float(v) == pytest.approx(-2.0, abs=1e-9)
+
+
+def test_intra_meeting_shift_neutral_axes(tmp_path: Path) -> None:
+    """When both kinds carry the neutral stance and zeroed regression
+    axes, every shift is exactly 0.0 -- not NaN, not coerced."""
+
+    package = tmp_path / "package"
+    package.mkdir()
+    event_date = "2023-06-14"
+    _write_registry(
+        package / "registry_normalized.jsonl",
+        [
+            _intra_meeting_entry(
+                event_date=event_date,
+                document_type="Statement",
+                source_record_id="fomc_statements.json:1",
+                text="Statement neutral.",
+                stance="neutral",
+                certainty=0.5,
+                factor=0.0,
+            ),
+            _intra_meeting_entry(
+                event_date=event_date,
+                document_type="press_conference",
+                source_record_id="press_conference.json:1",
+                text="Press conference neutral.",
+                stance="neutral",
+                certainty=0.5,
+                factor=0.0,
+            ),
+        ],
+    )
+    dates = _make_trading_dates(_dt.date(2021, 1, 4), 800)
+    series = _series_from_closes(dates, [100.0] * 800)
+    df = edb.build_event_rows(
+        package_dir=package,
+        asset_series=series,
+        bench_series=series,
+    )
+    assert not df.empty
+    for col in (
+        "intra_meeting_stance_shift",
+        "intra_meeting_certainty_shift",
+        "intra_meeting_factor_shift",
+    ):
+        for v in df[col].tolist():
+            assert float(v) == pytest.approx(0.0, abs=1e-12), (
+                f"{col} expected 0.0, got {v}"
+            )
+
+
+def test_intra_meeting_shift_columns_in_schema(tmp_path: Path) -> None:
+    """The three shift columns must land on the events.parquet schema
+    even when no event_date carries both kinds."""
+
+    package = tmp_path / "package"
+    package.mkdir()
+    _write_registry(
+        package / "registry_normalized.jsonl",
+        [_registry_entry_for_statement("2023-06-14")],
+    )
+    dates = _make_trading_dates(_dt.date(2021, 1, 4), 800)
+    series = _series_from_closes(dates, [100.0] * 800)
+    df = edb.build_event_rows(
+        package_dir=package,
+        asset_series=series,
+        bench_series=series,
+    )
+    for col in (
+        "intra_meeting_stance_shift",
+        "intra_meeting_certainty_shift",
+        "intra_meeting_factor_shift",
+    ):
+        assert col in df.columns
+
+
 def test_real_release_calendar_contains_landmark_dates() -> None:
     """The shipped calendar must include the canonical landmark dates so
     downstream consumers (and reviewers) can sanity-check the flag.

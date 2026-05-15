@@ -166,6 +166,23 @@ Required columns (full schema in module docstring):
   even though it flags more events. Tightening the ±2-trading-day
   radius is an option if the higher rate proves too noisy for the
   downstream confounder analysis.
+- `intra_meeting_stance_shift`,
+  `intra_meeting_certainty_shift`,
+  `intra_meeting_factor_shift` — signed within-meeting tone shift
+  between the press-conference and statement rows that share an
+  `event_date`. The shift is computed as `press_conference_axis -
+  statement_axis` after encoding each side through
+  `_INTRA_MEETING_AXIS_ENCODING`. Categorical stance values are
+  encoded `hawkish=+1, dovish=-1, neutral=0`; categorical certainty
+  values, when present, are encoded `certain=+1, neutral=0,
+  uncertain=-1`. Numeric values (regression-typed `axis_certainty` /
+  `axis_factor` per `data/schema/labels.yaml`) pass through and are
+  subtracted directly. When either kind is missing for the date, all
+  three shifts are `NaN` — never coerced to zero. Multi-source
+  duplicates are collapsed via `_SOURCE_PREFERENCE` so the shift uses
+  the preferred statement / press-conference pair only; the same
+  per-date shift value is replicated to every row sharing that date
+  on both the collapsed and full views.
 - `asset_symbol` — default `^GSPC`. Per-asset rows are supported: a
   future sweep can rebuild with `--asset NDX` etc. without touching the
   schema.
@@ -278,18 +295,18 @@ been wired (out of scope for #146).
 
 ## Structured linguistic features (Phase 8)
 
-`backend/app/features/linguistic.py` emits a 14-dim interpretable
+`backend/app/features/linguistic.py` emits a 15-dim interpretable
 linguistic feature vector per document, keyed by `text_hash` so it joins
 directly onto event rows or any other registry-derived table.
 
 Output artifacts under `data/processed/<training_package_id>/`:
 
-- `linguistic_features.parquet` — one row per unique `text_hash`. 14
+- `linguistic_features.parquet` — one row per unique `text_hash`. 15
   numeric columns: 5 named LDA topic shares (`inflation`, `employment`,
   `financial_stability`, `growth`, `balance_sheet`), 3 misc topic shares
   (`misc_1..3`), `hedge_density`, `comparison_density`,
   `forward_density`, `concrete_ratio`, `hawk_dove_asymmetry`,
-  `log_token_count`.
+  `log_token_count`, `pivot_distance`.
 - `linguistic_lda_model.pkl` — pickled `(CountVectorizer, LatentDirichletAllocation)`
   bundle plus the slot→topic-index assignment map. Sufficient to score
   any new document without re-fitting.
@@ -359,6 +376,35 @@ Open follow-up: raising `num_topics` to 10-12 and widening the
 inflation seed list are out of scope for this correctness fix and
 will be separate PRs after the bake-off / forecaster sweep produce
 results.
+
+### `pivot_distance` — token diff vs prior FOMC statement
+
+The 15th column captures how much a given FOMC statement deviates in
+vocabulary from the previous statement. It is the token-set Jaccard
+distance `1 - |A ∩ B| / |A ∪ B|` between the normalised token sets of
+the current document and the latest preceding row whose `event_kind`
+is `statement` and whose `event_date` is strictly earlier. The
+tokeniser is the same `_TOKEN_RE` that backs the hand-crafted
+densities (case-folded alphanumeric runs).
+
+NaN semantics:
+
+- `pivot_distance = NaN` when `event_kind != "statement"` — minutes,
+  press conferences, speeches and testimonies follow different
+  stylistic conventions, so the diff is undefined.
+- `pivot_distance = NaN` for the first statement in the corpus (no
+  strictly-earlier peer).
+- Same-date duplicates share the same earlier prior; none of them
+  becomes the prior for any other same-date peer because the
+  contract requires `as_of_ts < current.as_of_ts` strictly.
+
+On the Sprint 1 fit the distribution audit is reproduced by re-running
+`make data-prep`. Placeholder ranges (fill in after the next pipeline
+run): `pivot_distance` ranges roughly `[<min>, <max>]` with mean
+`<mean>` across the statement rows of
+`tp_v2_sprint1_2026_05_15_sentiment_market_core_v1.0_epv1_v1.0`. The
+non-statement rows are NaN by construction and excluded from the
+summary.
 
 ## Next-FOMC decision dataset (Phase 8)
 

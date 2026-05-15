@@ -71,6 +71,38 @@ Schema (one row per event x kind x horizon x asset):
                                  (CPI, NFP, ISM) falls within +/-2 trading
                                  days. Heuristic dates only; we flag, never
                                  drop.
+- ``intra_meeting_stance_shift``    Signed shift in ``axis_stance`` between
+                                     the same-date press_conference and
+                                     statement rows. Numeric encoding
+                                     ``hawkish=+1, dovish=-1, neutral=0``
+                                     applies to categorical stance values;
+                                     ``shift = press - statement``. NaN
+                                     when either kind is missing for the
+                                     event_date, or when an axis value is
+                                     unencodable.
+- ``intra_meeting_certainty_shift`` Signed shift in ``axis_certainty``
+                                     between same-date press_conference
+                                     and statement. ``axis_certainty`` is
+                                     a regression score in ``[0, 1]`` per
+                                     ``data/schema/labels.yaml``; numeric
+                                     values are subtracted directly. If a
+                                     label-encoded variant is ever
+                                     introduced upstream, the encoder
+                                     applies ``uncertain=-1, neutral=0,
+                                     certain=+1`` as a fallback.
+- ``intra_meeting_factor_shift``    Signed shift in ``axis_factor``
+                                     (Gürkaynak-Sack-Swanson forward-
+                                     guidance loading, regression in
+                                     ``[-1, 1]``) between the same-date
+                                     press_conference and statement.
+                                     Numeric subtraction.
+
+The three ``intra_meeting_*_shift`` columns are a property of the FOMC
+date, not of the source. On the collapsed view the value comes from the
+preferred statement and the preferred press_conference. On the full view
+the same value is replicated to every (source x asset x horizon) row
+sharing the event_date, so cross-source analyses see a consistent
+intra-meeting tone shift regardless of which row they read.
 
 Methodological constraints, enforced by assertions in the builder:
 
@@ -98,6 +130,7 @@ import argparse
 import datetime as _dt
 import hashlib
 import json
+import math
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -153,6 +186,37 @@ _EVENT_KIND_MAP: dict[str, str] = {
 # Speech-like kinds use the speech time placeholder; everything else uses
 # the FOMC 2pm ET placeholder.
 _SPEECH_KINDS = frozenset({"speech", "testimony"})
+
+# Categorical encodings used by ``_axis_to_numeric`` when computing the
+# ``intra_meeting_*_shift`` columns. ``axis_stance`` is the only axis
+# that arrives as a categorical label in the bundled registry; the other
+# two axes are regression-typed per ``data/schema/labels.yaml`` and pass
+# their numeric values through unchanged. The ``certainty`` map is a
+# best-effort fallback for any future upstream that emits label strings
+# instead of a regression score.
+_STANCE_ENCODING: dict[str, float] = {
+    "hawkish": 1.0,
+    "dovish": -1.0,
+    "neutral": 0.0,
+}
+_CERTAINTY_ENCODING: dict[str, float] = {
+    "certain": 1.0,
+    "neutral": 0.0,
+    "uncertain": -1.0,
+}
+_FACTOR_ENCODING: dict[str, float] = {
+    # ``axis_factor`` is regression-only in the schema, so the fallback
+    # label map is intentionally empty; numeric passthrough is the only
+    # supported path. The dict is kept for symmetry with stance/certainty.
+}
+
+# Map ``axis_*`` column name to its categorical encoding. Numeric inputs
+# are accepted on every axis via the ``_axis_to_numeric`` fallback.
+_INTRA_MEETING_AXIS_ENCODING: dict[str, dict[str, float]] = {
+    "axis_stance": _STANCE_ENCODING,
+    "axis_certainty": _CERTAINTY_ENCODING,
+    "axis_factor": _FACTOR_ENCODING,
+}
 
 # When multiple registry sources cover the same (event_date, event_kind),
 # pick the row with the highest preference rank. This avoids near-duplicate
@@ -295,13 +359,19 @@ def _aggregate_events(rows: Iterable[_RegistryRow]) -> list[_EventDoc]:
         }
         # Use the first row whose mapped_label or axes carry a value as the
         # document-level label. Deterministic because bucket is sorted.
+        # ``val is not None`` (not truthy) preserves legitimate zeros for
+        # the regression-typed axes (``certainty``, ``factor`` per
+        # ``data/schema/labels.yaml``) -- otherwise a 0.0 factor would
+        # silently be dropped to None and downstream consumers (the
+        # ``intra_meeting_*_shift`` columns in particular) would lose
+        # the signal.
         for r in bucket_sorted:
             if multi_axis["stance"] is None and r.mapped_label:
                 multi_axis["stance"] = r.mapped_label
             for axis_name in ("time", "certainty", "factor", "topic"):
                 if multi_axis[axis_name] is None:
                     val = r.axes.get(axis_name)
-                    if val:
+                    if val is not None:
                         multi_axis[axis_name] = str(val)
             # multi_axis_extras (Op-Fed opinion etc.) is recorded only via
             # axes; the raw extras dict is not lifted into event rows.
@@ -751,6 +821,94 @@ def _has_concurrent_macro_release(
 
 
 # ---------------------------------------------------------------------------
+# Intra-meeting tone shift (statement vs same-day press conference)
+# ---------------------------------------------------------------------------
+
+
+def _axis_to_numeric(value: Any, encoding: dict[str, float]) -> float:
+    """Best-effort encode an axis value to a numeric scalar.
+
+    Returns ``math.nan`` when the value is missing or unencodable so the
+    downstream shift propagates NaN honestly instead of coercing to 0.
+    Order of preference:
+
+    1. ``None`` / empty -> NaN.
+    2. ``int`` / ``float`` (not NaN itself) -> passthrough.
+    3. ``str`` looked up case-insensitively in ``encoding``.
+    4. ``str`` parseable as ``float`` (e.g. "0.42") -> the float.
+    5. Otherwise NaN.
+    """
+
+    if value is None:
+        return math.nan
+    if isinstance(value, bool):
+        # bool is a subclass of int; treat as NaN to avoid surprising True->1.0
+        return math.nan
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and math.isnan(value):
+            return math.nan
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return math.nan
+        encoded = encoding.get(stripped.lower())
+        if encoded is not None:
+            return float(encoded)
+        try:
+            return float(stripped)
+        except ValueError:
+            return math.nan
+    return math.nan
+
+
+def _compute_intra_meeting_shifts(
+    docs: Sequence[_EventDoc],
+) -> dict[str, dict[str, float]]:
+    """Return ``{event_date: {axis_name: shift_value}}`` for every date.
+
+    The shift is ``press_conference_axis - statement_axis`` after
+    encoding each side through ``_axis_to_numeric``. When either side
+    is missing for the date, all three shift values are NaN -- never
+    coerced to zero. Multi-source duplicates are collapsed via
+    ``_choose_preferred`` so the shift is computed on the *preferred*
+    statement and the *preferred* press_conference per date.
+
+    The result is keyed by ``event_date`` (string, ISO date) so callers
+    can join the per-date shifts onto every row regardless of source,
+    asset, or horizon -- the shift is a property of the date.
+    """
+
+    nan_payload = {
+        "intra_meeting_stance_shift": math.nan,
+        "intra_meeting_certainty_shift": math.nan,
+        "intra_meeting_factor_shift": math.nan,
+    }
+    preferred = _choose_preferred(list(docs))
+    by_date: dict[str, dict[str, _EventDoc]] = defaultdict(dict)
+    for doc in preferred:
+        by_date[doc.event_date][doc.event_kind] = doc
+
+    shifts: dict[str, dict[str, float]] = {}
+    for event_date, kinds in by_date.items():
+        stmt = kinds.get("statement")
+        pc = kinds.get("press_conference")
+        if stmt is None or pc is None:
+            shifts[event_date] = dict(nan_payload)
+            continue
+        payload: dict[str, float] = {}
+        for axis_name, encoding in _INTRA_MEETING_AXIS_ENCODING.items():
+            stmt_val = _axis_to_numeric(stmt.multi_axis.get(axis_name[5:]), encoding)
+            pc_val = _axis_to_numeric(pc.multi_axis.get(axis_name[5:]), encoding)
+            if math.isnan(stmt_val) or math.isnan(pc_val):
+                payload[f"intra_meeting_{axis_name[5:]}_shift"] = math.nan
+            else:
+                payload[f"intra_meeting_{axis_name[5:]}_shift"] = pc_val - stmt_val
+        shifts[event_date] = payload
+    return shifts
+
+
+# ---------------------------------------------------------------------------
 # Per-event row construction
 # ---------------------------------------------------------------------------
 
@@ -830,6 +988,7 @@ def _build_event_rows(
     credibility_kwargs: dict[str, Any],
     macro_release_calendar: MacroReleaseCalendar,
     concurrent_macro_window_days: int = CONCURRENT_MACRO_TRADING_DAY_RADIUS,
+    intra_meeting_shift: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     event_date = _date(doc.event_date)
     as_of_ts = _as_of_for_event(doc.event_date, doc.event_kind)
@@ -883,6 +1042,13 @@ def _build_event_rows(
     document_id = _document_id(doc.source, doc.event_date, doc.event_kind)
     token_count = len(doc.text.split())
 
+    if intra_meeting_shift is None:
+        intra_meeting_shift = {
+            "intra_meeting_stance_shift": math.nan,
+            "intra_meeting_certainty_shift": math.nan,
+            "intra_meeting_factor_shift": math.nan,
+        }
+
     rows: list[dict[str, Any]] = []
     for h in horizons:
         tgt = targets.get(h)
@@ -928,6 +1094,15 @@ def _build_event_rows(
                 "direction_t1d": int(direction_t1d),
                 "volatility_shift": float(vol_shift) if vol_shift is not None else None,
                 "concurrent_macro_release": bool(concurrent_macro),
+                "intra_meeting_stance_shift": float(
+                    intra_meeting_shift["intra_meeting_stance_shift"]
+                ),
+                "intra_meeting_certainty_shift": float(
+                    intra_meeting_shift["intra_meeting_certainty_shift"]
+                ),
+                "intra_meeting_factor_shift": float(
+                    intra_meeting_shift["intra_meeting_factor_shift"]
+                ),
                 "realized_date": realized_date.isoformat() if realized_date else None,
             }
         )
@@ -984,6 +1159,9 @@ COLUMN_ORDER = (
     "direction_t1d",
     "volatility_shift",
     "concurrent_macro_release",
+    "intra_meeting_stance_shift",
+    "intra_meeting_certainty_shift",
+    "intra_meeting_factor_shift",
     "realized_date",
 )
 
@@ -1036,6 +1214,13 @@ def build_event_rows(
     if not docs:
         return _empty_frame()
 
+    # Pre-compute intra_meeting_*_shift on the preferred-source pair per
+    # event_date. The shift is a property of the date and is replicated
+    # to every (source x asset x horizon) row sharing that date, so the
+    # full and collapsed views report identical shifts even when the
+    # full view holds multiple source-level rows per kind.
+    intra_meeting_shifts = _compute_intra_meeting_shifts(docs_all)
+
     # Decide the window we need to fetch.
     event_dates = sorted({_date(d.event_date) for d in docs})
     earliest = event_dates[0] - _dt.timedelta(days=MARKET_MODEL_WINDOW_DAYS * 2 + 60)
@@ -1072,6 +1257,7 @@ def build_event_rows(
             credibility_kwargs=credibility_kwargs,
             macro_release_calendar=macro_release_calendar,
             concurrent_macro_window_days=concurrent_macro_window_days,
+            intra_meeting_shift=intra_meeting_shifts.get(doc.event_date),
         )
         if not rows:
             summary.dropped_no_prior_window += 1
