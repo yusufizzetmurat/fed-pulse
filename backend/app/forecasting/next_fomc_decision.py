@@ -323,7 +323,10 @@ class ProportionalOddsLogit:
         for k in range(1, K - 1):
             probs[:, k] = cum_prob[:, k] - cum_prob[:, k - 1]
         probs[:, K - 1] = 1.0 - cum_prob[:, K - 2]
-        return np.clip(probs, 1e-12, 1.0)
+        probs = np.clip(probs, 1e-12, 1.0)
+        # Re-normalise after the clip so rows sum to exactly 1.
+        probs /= probs.sum(axis=1, keepdims=True)
+        return probs
 
 
 # ---------------------------------------------------------------------------
@@ -448,25 +451,29 @@ def _build_mord_handle(
 
 def ois_baseline_probability(
     *,
-    pre_event_curve_3m: float | None,
-    ff_target_prior: float | None,
+    implied_rate: float | None,
+    base_rate: float | None,
     sigma_bp: float = OIS_BASELINE_SIGMA_BP,
 ) -> dict[str, float]:
     """Per-class probability from the OIS-implied curve.
 
-    Computes the OIS-implied next-meeting rate change in basis points
-    (``(pre_event_curve_3m - ff_target_prior) * 100``) and smooths it
-    with a Gaussian centred on each class midpoint::
+    Computes the implied next-meeting rate change in basis points
+    (``(implied_rate - base_rate) * 100``) and smooths it with a
+    Gaussian centred on each class midpoint::
 
         weight_k = exp(-0.5 * ((bp_signal - CLASS_BP[k]) / sigma_bp) ** 2)
         P(k)     = weight_k / sum_j weight_j
 
-    Returns a uniform probability vector when either input is missing.
+    Both inputs are in percent. ``implied_rate`` is the market-implied
+    rate at the chosen tenor (the call site picks the curve and tenor);
+    ``base_rate`` is the reference rate the deviation is measured
+    against. Returns a uniform probability vector when either input is
+    missing.
     """
 
-    if pre_event_curve_3m is None or ff_target_prior is None:
+    if implied_rate is None or base_rate is None:
         return _uniform()
-    bp_signal = (float(pre_event_curve_3m) - float(ff_target_prior)) * 100.0
+    bp_signal = (float(implied_rate) - float(base_rate)) * 100.0
     weights = {
         cls: math.exp(-0.5 * ((bp_signal - bp) / sigma_bp) ** 2)
         for cls, bp in CLASS_BP.items()
@@ -556,8 +563,13 @@ class MeetingRow:
     macro: list[float]
     # Inputs for the OIS baseline (separate from the feature vector so
     # the baseline does not double-count its inputs against the model).
-    pre_event_curve_3m_next: float | None
-    ff_target_prior_next: float | None
+    # The implied rate is read from meeting N's post-event curve at the
+    # 1-month tenor (closest free tenor to the ~6-week inter-meeting
+    # window), and the base rate is the ff target rate that meeting N
+    # just set. Same information cutoff as the model -- both consume
+    # what is known the moment meeting N's decision is public.
+    ois_baseline_implied_rate: float | None
+    ois_baseline_base_rate: float | None
     # Per-family column names, populated once and shared.
     feature_names: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
@@ -839,31 +851,13 @@ def build_supervised_rows(
             summary["dropped_target_out_of_class"] += 1
             continue
 
-        # Feature meeting's as-of: use as_of_ts from events.parquet when
-        # present, otherwise fall back to event_date noon UTC.
-        target_as_of = _parse_as_of(
-            event_row.get("as_of_ts") if "as_of_ts" in event_row else None
+        # The target is the next meeting's announcement; we anchor
+        # ``target_as_of`` to the next meeting's date at 19:00 UTC
+        # (the same placeholder convention the events builder uses for
+        # FOMC kinds).
+        target_as_of = _dt.datetime.combine(
+            next_event_date, _dt.time(19, 0), _dt.timezone.utc
         )
-        if target_as_of is None:
-            target_as_of = _dt.datetime.combine(
-                next_event_date, _dt.time(19, 0), _dt.timezone.utc
-            )
-        else:
-            # The target as_of is the *next* meeting's announcement
-            # time, not the current meeting's. Reconstruct from the
-            # next row when present.
-            target_as_of = _dt.datetime.combine(
-                next_event_date, _dt.time(19, 0), _dt.timezone.utc
-            )
-
-        # OIS baseline inputs use the *next meeting's* pre-event curve
-        # because the OIS baseline pricing window sits the day before
-        # the next meeting (which is still strictly before its
-        # announcement time -- no look-ahead).
-        pre_3m = _curve_value_at(next_row.get("pre_event_curve"), 3)
-        ff_prior_next = next_row.get("ff_target_prior")
-        if isinstance(ff_prior_next, float) and math.isnan(ff_prior_next):
-            ff_prior_next = None
 
         # Feature vectors at meeting N (current event_row + current
         # mp_surprise row -- not the next meeting's).
@@ -877,6 +871,18 @@ def build_supervised_rows(
         macro_vec = _extract_macro_features(macro_state, feature_event_date)
         ling_vec = _extract_linguistic_features(event_row.get("text_hash"), linguistic_features, ling_cols)
 
+        # OIS baseline inputs use the *post-event* curve of meeting N
+        # at the 1-month tenor (the closest free tenor to the ~6-week
+        # inter-meeting window). The implied rate is what the market
+        # prices for the next meeting given everything just announced
+        # at N. The base rate is the target rate meeting N just set
+        # (``ff_target_after``). Both are known the moment meeting N's
+        # decision is public -- same information cutoff as the model.
+        implied_rate = _curve_value_at(mp_row.get("post_event_curve"), 1)
+        ff_after_current = mp_row.get("ff_target_after")
+        if isinstance(ff_after_current, float) and math.isnan(ff_after_current):
+            ff_after_current = None
+
         out_rows.append(
             MeetingRow(
                 target_event_date=next_event_date,
@@ -888,8 +894,8 @@ def build_supervised_rows(
                 linguistic=ling_vec,
                 credibility=cred_vec,
                 macro=macro_vec,
-                pre_event_curve_3m_next=pre_3m,
-                ff_target_prior_next=(float(ff_prior_next) if ff_prior_next is not None else None),
+                ois_baseline_implied_rate=implied_rate,
+                ois_baseline_base_rate=(float(ff_after_current) if ff_after_current is not None else None),
                 feature_names=feature_names,
             )
         )
@@ -1000,8 +1006,8 @@ def walk_forward_predict(
 
         if include_ois_baseline:
             per_model["ois_baseline"] = ois_baseline_probability(
-                pre_event_curve_3m=row.pre_event_curve_3m_next,
-                ff_target_prior=row.ff_target_prior_next,
+                implied_rate=row.ois_baseline_implied_rate,
+                base_rate=row.ois_baseline_base_rate,
             )
         if include_naive:
             per_model["naive_carry"] = naive_carry_probability()

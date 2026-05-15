@@ -219,10 +219,10 @@ def test_ois_baseline_uses_documented_sigma() -> None:
     assert nfd.OIS_BASELINE_SIGMA_BP == 12.5
 
 
-def test_ois_baseline_peaks_at_hold_when_curve_equals_prior() -> None:
+def test_ois_baseline_peaks_at_hold_when_curve_equals_base() -> None:
     proba = nfd.ois_baseline_probability(
-        pre_event_curve_3m=4.50,
-        ff_target_prior=4.50,
+        implied_rate=4.50,
+        base_rate=4.50,
         sigma_bp=12.5,
     )
     assert sum(proba.values()) == pytest.approx(1.0, abs=1e-9)
@@ -233,8 +233,8 @@ def test_ois_baseline_peaks_at_hike25_when_curve_implies_25_bp() -> None:
     """A 25 bp implied move puts the peak on hike_25."""
 
     proba = nfd.ois_baseline_probability(
-        pre_event_curve_3m=4.75,
-        ff_target_prior=4.50,
+        implied_rate=4.75,
+        base_rate=4.50,
         sigma_bp=12.5,
     )
     # hike_25 should dominate; cut_25 should be vanishingly small.
@@ -245,7 +245,7 @@ def test_ois_baseline_peaks_at_hike25_when_curve_implies_25_bp() -> None:
 
 def test_ois_baseline_uniform_on_missing_inputs() -> None:
     proba = nfd.ois_baseline_probability(
-        pre_event_curve_3m=None, ff_target_prior=None
+        implied_rate=None, base_rate=None
     )
     expected = 1.0 / len(nfd.ORDINAL_CLASSES)
     for v in proba.values():
