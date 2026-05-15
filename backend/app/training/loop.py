@@ -55,6 +55,7 @@ def _coerce_model_config(model_config: ModelConfig | dict[str, Any] | None = Non
             text_channel=str(model_config.get("text_channel", "scalar")),
             embedding_adapter_dim=int(model_config.get("embedding_adapter_dim", 128)),
             credibility_features=bool(model_config.get("credibility_features", False)),
+            architecture=str(model_config.get("architecture", "lstm")),
         )
     return ModelConfig()
 
@@ -64,8 +65,12 @@ def _build_model(
     *,
     device: torch.device | None = None,
 ) -> ForecasterModel:
+    # Local import keeps ``app.models.factory`` cold until training fires,
+    # which keeps the FastAPI singleton import path narrow.
+    from app.models.factory import build_forecaster
+
     resolved_config = _coerce_model_config(model_config)
-    model = ForecasterModel(**resolved_config.to_dict())
+    model = build_forecaster(resolved_config)
     if device is not None:
         model = model.to(device)
     return model

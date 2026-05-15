@@ -5,6 +5,7 @@ FEATURE_VERSION ?=
 TRAINING_PACKAGE_ID ?=
 OWNER ?= unknown
 SEED ?= 11
+ARCHITECTURE ?= lstm
 
 TEACHER_CHECKPOINT ?= /data/artifacts/phase3/pilot_finetune_20260505T142652Z/hf_checkpoints
 PSEUDO_STRATEGY ?= chunk_vote
@@ -27,7 +28,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state next-fomc cross-asset
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state next-fomc cross-asset forecaster-sweep forecaster-sweep-aggregate forecaster-credibility-train
 
 help:
 	@echo "Targets:"
@@ -53,6 +54,9 @@ help:
 	@echo "  make macro-state      - Build the FRED macro-state parquet (Phase 8 #147)"
 	@echo "  make next-fomc        - Predict next-FOMC decision (Phase 8 headline, #147)"
 	@echo "  make cross-asset      - Cross-asset abnormal-return response head (Phase 8, #148)"
+	@echo "  make forecaster-sweep         - 6-arch x 5-seed forecaster sweep (Phase 8, #70)"
+	@echo "  make forecaster-sweep-aggregate - Aggregate sweep trials into per-arch CIs"
+	@echo "  make forecaster-credibility-train - Single training run with credibility features on"
 
 dev: dev-cpu
 
@@ -106,6 +110,37 @@ train-batch:
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--mode full \
 		--owner "$(OWNER)"
+
+# Forecaster architecture sweep: 6 architectures (lstm, lstm_attn, gru, tcn,
+# transformer, dlinear) x official 5-seed set {11, 29, 47, 71, 97}.
+# Writes forecaster_sweep_results.json + .csv next to the checkpoint.
+forecaster-sweep:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.train_forecaster \
+		--sweep \
+		--architectures lstm lstm_attn gru tcn transformer dlinear \
+		--seeds 11 29 47 71 97 \
+		--report-path "/data/artifacts/forecaster_sweep/$(TRAINING_PACKAGE_ID)/forecaster_sweep_results.json"
+
+# Aggregate per-trial JSONs into a per-architecture headline (block-bootstrap CIs).
+forecaster-sweep-aggregate:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.evaluation.forecaster_sweep_aggregator \
+		--artifact-dir "/data/artifacts/forecaster_sweep/$(TRAINING_PACKAGE_ID)"
+
+# Single-architecture training with --credibility-features ON. Used for
+# isolated credibility-vs-baseline comparisons; defaults to ARCHITECTURE=lstm
+# and SEED=11. Override either as needed.
+forecaster-credibility-train:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.train_forecaster \
+		--architecture "$(ARCHITECTURE)" \
+		--seed "$(SEED)" \
+		--credibility-features \
+		--checkpoint-path "/data/artifacts/forecaster_sweep/$(TRAINING_PACKAGE_ID)/credibility_$(ARCHITECTURE)_seed$(SEED).pt"
 
 changelog:
 	@command -v git-cliff >/dev/null 2>&1 || { \

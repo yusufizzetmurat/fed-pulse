@@ -89,6 +89,7 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             text_channel=str(raw.get("text_channel", "scalar")),
             embedding_adapter_dim=int(raw.get("embedding_adapter_dim", 128)),
             credibility_features=bool(raw.get("credibility_features", False)),
+            architecture=str(raw.get("architecture", "lstm")),
         )
     return ModelConfig()
 
