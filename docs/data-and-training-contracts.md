@@ -359,3 +359,82 @@ Open follow-up: raising `num_topics` to 10-12 and widening the
 inflation seed list are out of scope for this correctness fix and
 will be separate PRs after the bake-off / forecaster sweep produce
 results.
+
+## Next-FOMC decision dataset (Phase 8)
+
+The next-FOMC decision forecaster
+(`backend/app/forecasting/next_fomc_decision.py`, closes #147) reframes
+the project from price-forecasting to central-bank-forecasting. It
+predicts the rate decision at meeting `N+1` given features known
+strictly before meeting `N+1`'s `as_of_ts`.
+
+### Target
+
+Reconstructed from `mp_surprises.parquet`:
+
+    delta_bp = (ff_target_after_N1 - ff_target_prior_N1) * 100
+
+Mapped to the ordinal class set
+`{cut_50, cut_25, hold, hike_25, hike_50, hike_75}` with a 12.5 bp
+slack (half a 25 bp step). Deltas outside the set (e.g. the March
+2020 75 bp emergency cuts, the October 2008 emergency 50 bp cut
+sequence) emit a `UserWarning` and the row is dropped from the
+supervised set so jumbo intermeeting moves surface explicitly.
+Intermeeting meetings are excluded from the *target* role but still
+contribute as a feature meeting when the next scheduled meeting is
+the supervisor.
+
+### Feature matrix join
+
+Per-meeting feature row at meeting `N`:
+
+- `events.parquet` (`data/processed/<pkg>/`) provides multi-axis
+  stance / time / certainty / factor / topic and the 4-vector
+  `credibility_*`. Multi-source duplicates collapse to one row per
+  `event_date` via the same preference order
+  (statement -> press conference -> minutes -> first available).
+- `mp_surprises.parquet` (`data/external/fred/`) provides the 5-tenor
+  `pre_event_curve`, `mp_surprise_level`, `mp_surprise_path_factor`,
+  `fed_info_factor`, and the `ff_target_prior` / `ff_target_after`
+  used to reconstruct the target.
+- `linguistic_features.parquet` (`data/processed/<pkg>/`) joins on
+  `text_hash` and contributes the 14 structured features from #149.
+- `macro_state.parquet` (`data/external/fred/`) provides per-as-of-date
+  snapshots of UNRATE, CPI YoY, core PCE YoY, ISM proxy
+  (`MANEMP_3m_pct`, documented substitute for the paywalled NAPM
+  series), nonfarm-payroll MoM change, and retail-sales MoM.
+
+### OIS-implied baseline (sigma = 12.5 bp)
+
+For every held-out meeting `M`, the baseline reads
+`mp_surprises.parquet`'s `pre_event_curve` at the 3-month tenor
+*for meeting M itself* (which is published the trading day before
+`M.as_of_ts` -- strictly before, so no look-ahead). The OIS-implied
+next-meeting rate change in basis points is
+`(pre_curve_3m - ff_target_prior) * 100`, smoothed with a Gaussian
+of sigma 12.5 bp over the 6-class set. 12.5 bp is half the smallest
+non-zero class step (25 bp) so the kernel partitions the bp axis at
+class midpoints without aliasing one class onto its neighbour. The
+choice is pinned by `next_fomc_decision.OIS_BASELINE_SIGMA_BP` and
+asserted in `tests/unit/test_next_fomc_decision.py`.
+
+### Walk-forward CV
+
+Leave-one-meeting-out: at meeting `M+1`, the train set is every
+supervised row whose `target_event_date < M+1.target_event_date`.
+The constructor asserts this strict inequality on every fold. Train
+folds with fewer than 6 rows (one per class) fall back to baselines
+only.
+
+### Artifact layout
+
+Outputs land under `data/artifacts/next_fomc/`:
+
+- `results.json` -- per-meeting predictions for every model.
+- `metrics.json` -- Brier (multi-class), multi-class log-loss, top-1
+  accuracy, macro-F1, confusion matrix. Reports both the full window
+  and the pandemic-excluded window (`2020-04-01..2021-06-30`).
+- `feature_attribution.md` -- ablation table:
+  `ois_only`, `ois_text`, `ois_text_linguistic`, `ois_text_credibility`,
+  `ois_text_macro`, `full`, plus the model-free `ois_baseline_only`
+  and `naive_carry_only` rows for reference.
