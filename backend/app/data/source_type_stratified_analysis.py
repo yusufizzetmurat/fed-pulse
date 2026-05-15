@@ -1,7 +1,7 @@
 """Source-type stratified analysis over fine-tune-batch predictions.
 
 Reads per-row test predictions emitted by
-app.data.phase3_finetune_batch / phase3_finetune_pilot, joins them to
+app.data.finetune_batch / finetune_pilot, joins them to
 source_type from the source registry, and emits a per-source-type
 metrics table (macro-F1, accuracy, per-class precision/recall/F1).
 The output answers the project document's cross-source generalisation

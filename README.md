@@ -65,4 +65,4 @@ Narrative + design + research docs (project guide, system architecture, requirem
 
 - Forecast modes: `fast`, `quick_train`, `real_train`.
 - Realised overlay + error metrics are timestamp-aligned when the analysed document date is historical.
-- Phase-named data module entry points (`phase3_*`, `phase4_*`, `run_phase2_pipeline`) still work as the underlying implementation; new code should prefer the capability-first names (`source_ingestion`, `label_normalization`, `pipeline_data_prep`, …). Phase 7.2 will retire the phase-named names.
+- Data pipeline entry points are capability-first: `source_ingestion`, `label_normalization`, `quality_validation`, `training_package_builder`, `baseline_spec_generator`, `pipeline_data_prep`, `nlp_baseline_batch`, `finetune_pilot`, `finetune_batch`, `attention_ablation`. The earlier `phase3_*` / `phase4_*` / `run_phase2_pipeline` names were retired in Phase 7.2.

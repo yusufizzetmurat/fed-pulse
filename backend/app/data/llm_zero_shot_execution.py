@@ -3,7 +3,7 @@
 Prompts a small instruct LLM with a deterministic three-class template
 (hawkish | dovish | neutral) at temperature 0 and reports
 aggregator-compatible classification metrics on the fold's test slice.
-Mirrors :mod:`app.data.phase3_training_execution` CLI shape.
+Mirrors :mod:`app.data.nlp_baseline_batch` CLI shape.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from app.config import DATA_DIR
 from app.models.registry import revision_for
-from app.data.phase3_finetune_pilot import (
+from app.data.finetune_pilot import (
     LABELS,
     _compute_classification_metrics,
     _hf_token,

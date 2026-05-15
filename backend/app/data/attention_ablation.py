@@ -47,7 +47,7 @@ from app.data.chunk_embedding_retrieval import (
     load_chunk_store,
     resolve_store_path,
 )
-from app.data.phase3_finetune_pilot import (
+from app.data.finetune_pilot import (
     EvalRow,
     LABELS,
     _hf_token,
@@ -683,7 +683,7 @@ def main() -> int:
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
     summary = {
-        "pipeline": "phase4_attention_ablation",
+        "pipeline": "attention_ablation",
         "owner": args.owner,
         "training_package_id": args.training_package_id,
         "fold_id": args.fold_id,

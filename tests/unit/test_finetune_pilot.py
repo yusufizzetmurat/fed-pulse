@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.data.phase3_finetune_pilot import write_predictions_jsonl
+from app.data.finetune_pilot import write_predictions_jsonl
 
 
 def test_write_predictions_jsonl_emits_one_row_per_prediction(tmp_path: Path) -> None:

@@ -1,6 +1,6 @@
 """Phase 3 fine-tune full batch: 3 encoders × 5 official seeds on fold 2.
 
-Wraps :mod:`app.data.phase3_finetune_pilot` and aggregates results into a
+Wraps :mod:`app.data.finetune_pilot` and aggregates results into a
 single ``aggregate.json`` with mean ± std per encoder. Closes GitHub issue #20
 (SRS FR-30).
 """
@@ -19,7 +19,7 @@ from typing import Any
 
 import torch
 
-from app.data.phase3_finetune_pilot import DEFAULT_ARTIFACT_ROOT, run_one
+from app.data.finetune_pilot import DEFAULT_ARTIFACT_ROOT, run_one
 
 # Local-label keys identify the encoder slot in artefact paths and report
 # tables. The legacy "fomc_roberta" key maps to ZiweiChen/FinBERT-FOMC for
@@ -182,7 +182,7 @@ def main() -> int:
         }
 
     aggregate = {
-        "pipeline": "phase3_finetune_batch",
+        "pipeline": "finetune_batch",
         "owner": args.owner,
         "training_package_id": args.training_package_id,
         "fold_id": args.fold_id,

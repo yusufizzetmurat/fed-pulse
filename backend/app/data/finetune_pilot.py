@@ -331,7 +331,7 @@ def run_one(args: argparse.Namespace, *, artifact_dir: Path | None = None) -> di
     )
 
     metrics = {
-        "pipeline": "phase3_finetune_pilot",
+        "pipeline": "finetune_pilot",
         "owner": args.owner,
         "checkpoint": args.checkpoint,
         "fold_id": args.fold_id,
