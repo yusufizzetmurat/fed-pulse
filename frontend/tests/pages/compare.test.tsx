@@ -28,6 +28,16 @@ vi.mock("@/lib/analyze/api", () => ({
   resolveApiBaseUrl: () => "http://localhost:8000",
   fetchHistory: (...args: unknown[]) => fetchHistoryMock(...args),
   fetchHistoryRun: (...args: unknown[]) => fetchHistoryRunMock(...args),
+  // `compare()` defers to fetchHistoryRun under the hood; the page calls
+  // compare(baseUrl, id, id) for single-slot loads and compare(a, b) for
+  // pairs. Mirror that fan-out here so the test asserts both slot fetches.
+  compare: async (_base: string, idA: string, idB: string) => {
+    const [a, b] = await Promise.all([
+      fetchHistoryRunMock(_base, idA),
+      fetchHistoryRunMock(_base, idB),
+    ]);
+    return { a, b };
+  },
 }));
 
 const ENTRIES = [

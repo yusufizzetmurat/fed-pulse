@@ -82,6 +82,22 @@ export async function fetchHistoryRealized(
   return response.data as HistoryRealizedResponse;
 }
 
+// Pair-helper for the /compare page. There is no dedicated backend endpoint;
+// compare just fans out two history-detail reads in parallel. Kept separate
+// from `fetchHistoryRun` so call sites that need the pair can swap to a
+// future server-side endpoint without touching the page.
+export async function compare(
+  baseUrl: string,
+  runIdA: string,
+  runIdB: string,
+): Promise<{ a: HistoryDetail; b: HistoryDetail }> {
+  const [a, b] = await Promise.all([
+    fetchHistoryRun(baseUrl, runIdA),
+    fetchHistoryRun(baseUrl, runIdB),
+  ]);
+  return { a, b };
+}
+
 export async function fetchFomcCalendar(
   baseUrl: string,
   params?: { upcoming_limit?: number; past_limit?: number; as_of?: string }

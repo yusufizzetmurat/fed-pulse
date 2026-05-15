@@ -3,7 +3,7 @@ import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import dynamic from "next/dynamic";
-import { ArrowLeft, GitCompare } from "lucide-react";
+import { ArrowLeft, Download, GitCompare } from "lucide-react";
 import { toast } from "sonner";
 
 import { ErrorBadges } from "@/components/analyze/ErrorBadges";
@@ -23,12 +23,13 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchHistoryRun, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { downloadRunCsv } from "@/lib/export/run-export";
 import {
   buildCloseSeries,
   buildVolatilitySeries,
   computeErrorMetrics,
 } from "@/lib/analyze/derive";
-import { stanceLabel, toStance } from "@/lib/analyze/format";
+import { bandLabel, stanceLabel, toStance } from "@/lib/analyze/format";
 import type { AnalyzeResult, HistoryDetail } from "@/lib/analyze/types";
 
 const PreviewPanels = dynamic(() => import("@/components/analyze/PreviewPanels"), {
@@ -83,8 +84,7 @@ export default function HistoryDetailPage() {
   const errorMetrics = React.useMemo(() => computeErrorMetrics(result), [result]);
   const splitTimestamp = result?.series?.timestamps?.[result.series.timestamps.length - 1];
   const confidenceLevel = Math.round(Number(result?.series?.forecast_confidence_level || 0.8) * 100);
-  const bandKind = result?.series?.forecast_band_source === "conformal" ? "conformal" : "Gaussian";
-  const confidenceLabel = `${confidenceLevel}% ${bandKind} band`;
+  const confidenceLabel = bandLabel(confidenceLevel, result?.series?.forecast_band_source);
   const hasCloseConfidence = Boolean(result?.series?.forecast_close_lower?.length);
   const hasVolConfidence = Boolean(result?.series?.forecast_volatility_lower?.length);
   const volScale = result?.series?.volatility_scale || { suggested_ymin: 0.0, suggested_ymax: 1.0 };
@@ -121,12 +121,28 @@ export default function HistoryDetailPage() {
               )}
             </div>
             {detail ? (
-              <Button asChild variant="outline" size="sm">
-                <Link href={`/compare?a=${detail.id}`}>
-                  <GitCompare className="h-4 w-4" />
-                  Compare with…
-                </Link>
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    try {
+                      downloadRunCsv(detail);
+                    } catch (err) {
+                      toast.error((err as Error).message || "CSV export failed.");
+                    }
+                  }}
+                >
+                  <Download className="h-4 w-4" />
+                  Export CSV
+                </Button>
+                <Button asChild variant="outline" size="sm">
+                  <Link href={`/compare?a=${detail.id}`}>
+                    <GitCompare className="h-4 w-4" />
+                    Compare with…
+                  </Link>
+                </Button>
+              </div>
             ) : null}
           </div>
 

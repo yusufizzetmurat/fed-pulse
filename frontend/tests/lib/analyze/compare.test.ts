@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { computeCompareDelta, describeStanceShift } from "@/lib/analyze/compare";
+import {
+  computeCompareDelta,
+  computeMultiAxisDelta,
+  describeStanceShift,
+} from "@/lib/analyze/compare";
 import type { HistoryDetail } from "@/lib/analyze/types";
 
 function makeDetail(overrides: Partial<HistoryDetail> & { payload?: Record<string, unknown> }): HistoryDetail {
@@ -64,5 +68,52 @@ describe("computeCompareDelta", () => {
     expect(describeStanceShift("more_dovish")).toMatch(/dovish/i);
     expect(describeStanceShift("unchanged")).toMatch(/unchanged/i);
     expect(describeStanceShift("unknown")).toMatch(/unknown/i);
+  });
+});
+
+describe("computeMultiAxisDelta", () => {
+  it("emits per-axis deltas and shifts", () => {
+    const a = makeDetail({
+      payload: {
+        multi_axis: {
+          stance: { label: "hawkish", confidence: 0.9 },
+          factor: { value: 0.4, confidence: 0.2 },
+          certainty: { label: "decisive", confidence: 0.7 },
+          topic: { primary: "inflation", confidence: 0.6 },
+        },
+      },
+    });
+    const b = makeDetail({
+      payload: {
+        multi_axis: {
+          stance: { label: "dovish", confidence: 0.8 },
+          factor: { value: -0.1, confidence: 0.25 },
+          certainty: { label: "tentative", confidence: 0.55 },
+          topic: { primary: "growth", confidence: 0.5 },
+        },
+      },
+    });
+    const d = computeMultiAxisDelta(a, b);
+    expect(d.stanceRankDelta).toBe(2);
+    expect(d.stanceConfidenceDelta).toBeCloseTo(0.1, 5);
+    expect(d.factorDelta).toBeCloseTo(0.5, 5);
+    expect(d.factorConfidenceDelta).toBeCloseTo(-0.05, 5);
+    expect(d.certaintyShift).toBe("more_decisive");
+    expect(d.certaintyConfidenceDelta).toBeCloseTo(0.15, 5);
+    expect(d.topicChanged).toBe(true);
+  });
+
+  it("returns nulls when the axis is missing on either side", () => {
+    const a = makeDetail({ payload: {} });
+    const b = makeDetail({
+      payload: {
+        multi_axis: { stance: { label: "neutral", confidence: 0.5 } },
+      },
+    });
+    const d = computeMultiAxisDelta(a, b);
+    expect(d.stanceRankDelta).toBe(null);
+    expect(d.factorDelta).toBe(null);
+    expect(d.certaintyShift).toBe("unknown");
+    expect(d.topicChanged).toBe(null);
   });
 });

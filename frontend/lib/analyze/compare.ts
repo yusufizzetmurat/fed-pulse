@@ -1,4 +1,10 @@
-import type { AnalyzeResult, HistoryDetail, Stance } from "./types";
+import type {
+  AnalyzeResult,
+  HistoryDetail,
+  MultiAxisResponse,
+  Stance,
+  StanceAxis,
+} from "./types";
 
 export interface CompareDelta {
   closeAbsolute: number | null;
@@ -6,6 +12,25 @@ export interface CompareDelta {
   volatilityAbsolute: number | null;
   stanceShift: "more_hawkish" | "more_dovish" | "unchanged" | "unknown";
   scoreDelta: number | null;
+}
+
+// Per-axis deltas for the multi-axis schema (stance / factor / certainty /
+// topic). Each delta is A − B; null means at least one side is missing the
+// axis. Stance delta is the same hawkish=+1 / neutral=0 / dovish=−1 ranking
+// the headline `stanceShift` uses, but kept as a numeric value so the UI can
+// render the magnitude alongside the direction.
+export interface MultiAxisDelta {
+  stanceRankDelta: number | null;
+  stanceConfidenceDelta: number | null;
+  factorDelta: number | null;
+  factorConfidenceDelta: number | null;
+  certaintyConfidenceDelta: number | null;
+  certaintyShift:
+    | "more_decisive"
+    | "more_tentative"
+    | "unchanged"
+    | "unknown";
+  topicChanged: boolean | null;
 }
 
 function asResult(detail: HistoryDetail): AnalyzeResult {
@@ -73,4 +98,74 @@ export function describeStanceShift(shift: CompareDelta["stanceShift"]): string 
     default:
       return "Stance unknown";
   }
+}
+
+// Certainty axis ranks "decisive" highest and "tentative" lowest so the
+// shift label tracks confidence movement, not lexical similarity.
+const _CERTAINTY_RANK: Record<string, number> = {
+  decisive: 2,
+  measured: 1,
+  tentative: 0,
+};
+
+function _certaintyRank(label: string | undefined | null): number | null {
+  if (!label) return null;
+  const key = String(label).toLowerCase();
+  return key in _CERTAINTY_RANK ? _CERTAINTY_RANK[key] : null;
+}
+
+function _multiAxis(detail: HistoryDetail): MultiAxisResponse | undefined {
+  return ((detail.payload || {}) as AnalyzeResult).multi_axis;
+}
+
+export function computeMultiAxisDelta(
+  a: HistoryDetail,
+  b: HistoryDetail,
+): MultiAxisDelta {
+  const ma = _multiAxis(a);
+  const mb = _multiAxis(b);
+
+  const stanceA = ma?.stance ? stanceRank(ma.stance.label as StanceAxis) : null;
+  const stanceB = mb?.stance ? stanceRank(mb.stance.label as StanceAxis) : null;
+  const stanceRankDelta = stanceA != null && stanceB != null ? stanceA - stanceB : null;
+  const stanceConfA = ma?.stance?.confidence ?? null;
+  const stanceConfB = mb?.stance?.confidence ?? null;
+  const stanceConfidenceDelta =
+    stanceConfA != null && stanceConfB != null ? stanceConfA - stanceConfB : null;
+
+  const factorA = ma?.factor?.value ?? null;
+  const factorB = mb?.factor?.value ?? null;
+  const factorDelta = factorA != null && factorB != null ? factorA - factorB : null;
+  const factorConfA = ma?.factor?.confidence ?? null;
+  const factorConfB = mb?.factor?.confidence ?? null;
+  const factorConfidenceDelta =
+    factorConfA != null && factorConfB != null ? factorConfA - factorConfB : null;
+
+  const certA = _certaintyRank(ma?.certainty?.label);
+  const certB = _certaintyRank(mb?.certainty?.label);
+  let certaintyShift: MultiAxisDelta["certaintyShift"] = "unknown";
+  if (certA != null && certB != null) {
+    if (certA > certB) certaintyShift = "more_decisive";
+    else if (certA < certB) certaintyShift = "more_tentative";
+    else certaintyShift = "unchanged";
+  }
+  const certaintyConfidenceDelta =
+    ma?.certainty?.confidence != null && mb?.certainty?.confidence != null
+      ? ma.certainty.confidence - mb.certainty.confidence
+      : null;
+
+  const topicA = ma?.topic?.primary ?? null;
+  const topicB = mb?.topic?.primary ?? null;
+  const topicChanged =
+    topicA != null && topicB != null ? topicA !== topicB : null;
+
+  return {
+    stanceRankDelta,
+    stanceConfidenceDelta,
+    factorDelta,
+    factorConfidenceDelta,
+    certaintyConfidenceDelta,
+    certaintyShift,
+    topicChanged,
+  };
 }

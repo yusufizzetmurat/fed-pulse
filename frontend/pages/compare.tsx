@@ -4,9 +4,12 @@ import { useRouter } from "next/router";
 import { ArrowDownRight, ArrowRight, ArrowUpRight, GitCompare } from "lucide-react";
 import { toast } from "sonner";
 
+import { ForecastChart } from "@/components/analyze/ForecastChart";
+import { MultiAxisCards } from "@/components/analyze/MultiAxisCards";
 import { Header } from "@/components/shell/header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -15,14 +18,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetchHistory, fetchHistoryRun, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { compare, fetchHistory, resolveApiBaseUrl } from "@/lib/analyze/api";
 import {
   computeCompareDelta,
+  computeMultiAxisDelta,
   describeStanceShift,
   type CompareDelta,
+  type MultiAxisDelta,
 } from "@/lib/analyze/compare";
-import { formatPrice, stanceLabel, toStance } from "@/lib/analyze/format";
-import type { HistoryDetail, HistoryEntry } from "@/lib/analyze/types";
+import { buildCloseSeries, buildVolatilitySeries } from "@/lib/analyze/derive";
+import { downloadCompareCsv } from "@/lib/export/compare-export";
+import { bandLabel, formatPrice, stanceLabel, toStance } from "@/lib/analyze/format";
+import type { AnalyzeResult, HistoryDetail, HistoryEntry } from "@/lib/analyze/types";
 
 const SLOT_LABELS = { a: "Run A", b: "Run B" } as const;
 type Slot = keyof typeof SLOT_LABELS;
@@ -133,6 +140,219 @@ function RunSlotCard({
   );
 }
 
+function MultiAxisDeltaCard({ delta }: { delta: MultiAxisDelta }) {
+  const hasSignal =
+    delta.stanceRankDelta != null ||
+    delta.factorDelta != null ||
+    delta.certaintyShift !== "unknown" ||
+    delta.topicChanged != null;
+  if (!hasSignal) return null;
+  const stanceDir =
+    delta.stanceRankDelta == null
+      ? "—"
+      : delta.stanceRankDelta > 0
+      ? `+${delta.stanceRankDelta.toFixed(1)} hawkish`
+      : delta.stanceRankDelta < 0
+      ? `${delta.stanceRankDelta.toFixed(1)} dovish`
+      : "0";
+  const certaintyMessage =
+    delta.certaintyShift === "more_decisive"
+      ? "A more decisive"
+      : delta.certaintyShift === "more_tentative"
+      ? "A more tentative"
+      : delta.certaintyShift === "unchanged"
+      ? "Certainty unchanged"
+      : "Certainty unknown";
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Multi-axis Δ A − B</CardTitle>
+        <CardDescription>
+          Per-axis deltas from the multi-axis schema. Missing axes appear as
+          "—" when at least one side does not carry that axis.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <table className="w-full text-sm">
+          <thead className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+            <tr>
+              <th className="px-4 py-2 text-left">Axis</th>
+              <th className="px-4 py-2 text-right">Δ A − B</th>
+              <th className="px-4 py-2 text-right">Confidence Δ</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-b border-border">
+              <td className="px-4 py-2 font-mono">stance</td>
+              <td className="px-4 py-2 text-right font-mono">{stanceDir}</td>
+              <td className="px-4 py-2 text-right font-mono">
+                {delta.stanceConfidenceDelta != null
+                  ? `${delta.stanceConfidenceDelta >= 0 ? "+" : ""}${delta.stanceConfidenceDelta.toFixed(2)}`
+                  : "—"}
+              </td>
+            </tr>
+            <tr className="border-b border-border">
+              <td className="px-4 py-2 font-mono">factor</td>
+              <td className="px-4 py-2 text-right font-mono">
+                {delta.factorDelta != null
+                  ? `${delta.factorDelta >= 0 ? "+" : ""}${delta.factorDelta.toFixed(2)}`
+                  : "—"}
+              </td>
+              <td className="px-4 py-2 text-right font-mono">
+                {delta.factorConfidenceDelta != null
+                  ? `${delta.factorConfidenceDelta >= 0 ? "+" : ""}${delta.factorConfidenceDelta.toFixed(2)}`
+                  : "—"}
+              </td>
+            </tr>
+            <tr className="border-b border-border">
+              <td className="px-4 py-2 font-mono">certainty</td>
+              <td className="px-4 py-2 text-right text-xs text-muted-foreground">
+                {certaintyMessage}
+              </td>
+              <td className="px-4 py-2 text-right font-mono">
+                {delta.certaintyConfidenceDelta != null
+                  ? `${delta.certaintyConfidenceDelta >= 0 ? "+" : ""}${delta.certaintyConfidenceDelta.toFixed(2)}`
+                  : "—"}
+              </td>
+            </tr>
+            <tr>
+              <td className="px-4 py-2 font-mono">topic</td>
+              <td className="px-4 py-2 text-right text-xs text-muted-foreground" colSpan={2}>
+                {delta.topicChanged == null
+                  ? "—"
+                  : delta.topicChanged
+                  ? "primary topic changed"
+                  : "primary topic unchanged"}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
+  );
+}
+
+function MultiAxisSideBySide({
+  detailA,
+  detailB,
+}: {
+  detailA: HistoryDetail;
+  detailB: HistoryDetail;
+}) {
+  const ma = ((detailA.payload || {}) as AnalyzeResult).multi_axis;
+  const mb = ((detailB.payload || {}) as AnalyzeResult).multi_axis;
+  if (!ma && !mb) return null;
+  return (
+    <div className="grid gap-4 xl:grid-cols-2">
+      <div className="space-y-2">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Run A · multi-axis</p>
+        {ma ? <MultiAxisCards multiAxis={ma} /> : (
+          <Card>
+            <CardContent className="py-6 text-center text-sm text-muted-foreground">
+              Run A has no multi-axis payload.
+            </CardContent>
+          </Card>
+        )}
+      </div>
+      <div className="space-y-2">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Run B · multi-axis</p>
+        {mb ? <MultiAxisCards multiAxis={mb} /> : (
+          <Card>
+            <CardContent className="py-6 text-center text-sm text-muted-foreground">
+              Run B has no multi-axis payload.
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ForecastsSideBySide({
+  detailA,
+  detailB,
+}: {
+  detailA: HistoryDetail;
+  detailB: HistoryDetail;
+}) {
+  const ra = (detailA.payload || {}) as AnalyzeResult;
+  const rb = (detailB.payload || {}) as AnalyzeResult;
+  const closeA = buildCloseSeries(ra);
+  const closeB = buildCloseSeries(rb);
+  const volA = buildVolatilitySeries(ra);
+  const volB = buildVolatilitySeries(rb);
+  const splitA = ra.series?.timestamps?.[ra.series.timestamps.length - 1];
+  const splitB = rb.series?.timestamps?.[rb.series.timestamps.length - 1];
+  const confLvlA = Math.round(Number(ra.series?.forecast_confidence_level || 0.8) * 100);
+  const confLvlB = Math.round(Number(rb.series?.forecast_confidence_level || 0.8) * 100);
+  const labelA = bandLabel(confLvlA, ra.series?.forecast_band_source);
+  const labelB = bandLabel(confLvlB, rb.series?.forecast_band_source);
+  const hasCloseA = Boolean(ra.series?.forecast_close_lower?.length);
+  const hasCloseB = Boolean(rb.series?.forecast_close_lower?.length);
+  const hasVolA = Boolean(ra.series?.forecast_volatility_lower?.length);
+  const hasVolB = Boolean(rb.series?.forecast_volatility_lower?.length);
+  const realizedA = Boolean(ra.series?.realized_timestamps?.length);
+  const realizedB = Boolean(rb.series?.realized_timestamps?.length);
+  const volScaleA = ra.series?.volatility_scale || { suggested_ymin: 0.0, suggested_ymax: 1.0 };
+  const volScaleB = rb.series?.volatility_scale || { suggested_ymin: 0.0, suggested_ymax: 1.0 };
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 xl:grid-cols-2">
+        <ForecastChart
+          title="Run A · close forecast"
+          description={`Forecast line and ${labelA} over the horizon.`}
+          data={closeA}
+          kind="close"
+          splitTimestamp={splitA}
+          includeRealized={realizedA}
+          hasConfidence={hasCloseA}
+          confidenceLabel={labelA}
+        />
+        <ForecastChart
+          title="Run B · close forecast"
+          description={`Forecast line and ${labelB} over the horizon.`}
+          data={closeB}
+          kind="close"
+          splitTimestamp={splitB}
+          includeRealized={realizedB}
+          hasConfidence={hasCloseB}
+          confidenceLabel={labelB}
+        />
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <ForecastChart
+          title="Run A · volatility forecast"
+          description={`Forecast line and ${labelA} over the horizon.`}
+          data={volA}
+          kind="volatility"
+          splitTimestamp={splitA}
+          includeRealized={realizedA}
+          hasConfidence={hasVolA}
+          confidenceLabel={labelA}
+          yDomain={[
+            Number(volScaleA.suggested_ymin ?? 0),
+            Number(volScaleA.suggested_ymax ?? 1),
+          ]}
+        />
+        <ForecastChart
+          title="Run B · volatility forecast"
+          description={`Forecast line and ${labelB} over the horizon.`}
+          data={volB}
+          kind="volatility"
+          splitTimestamp={splitB}
+          includeRealized={realizedB}
+          hasConfidence={hasVolB}
+          confidenceLabel={labelB}
+          yDomain={[
+            Number(volScaleB.suggested_ymin ?? 0),
+            Number(volScaleB.suggested_ymax ?? 1),
+          ]}
+        />
+      </div>
+    </div>
+  );
+}
+
 function DeltaSummary({ delta }: { delta: CompareDelta }) {
   return (
     <Card>
@@ -216,6 +436,11 @@ export default function ComparePage() {
     };
   }, [apiBaseUrl]);
 
+  // We load each slot independently rather than going through compare() so
+  // selecting a single run still renders that side of the page while the
+  // other slot is empty. compare() is exposed for callers that want both
+  // detail records eagerly (e.g. CSV export); the page reaches for it on
+  // export, not on render.
   React.useEffect(() => {
     let cancelled = false;
     if (!aId) {
@@ -223,8 +448,8 @@ export default function ComparePage() {
       return;
     }
     setLoadingA(true);
-    fetchHistoryRun(apiBaseUrl, aId)
-      .then((detail) => {
+    compare(apiBaseUrl, aId, aId)
+      .then(({ a: detail }) => {
         if (!cancelled) setDetailA(detail);
       })
       .catch((err) => {
@@ -245,8 +470,8 @@ export default function ComparePage() {
       return;
     }
     setLoadingB(true);
-    fetchHistoryRun(apiBaseUrl, bId)
-      .then((detail) => {
+    compare(apiBaseUrl, bId, bId)
+      .then(({ a: detail }) => {
         if (!cancelled) setDetailB(detail);
       })
       .catch((err) => {
@@ -276,6 +501,20 @@ export default function ComparePage() {
   const delta = React.useMemo(() => {
     if (!detailA || !detailB) return null;
     return computeCompareDelta(detailA, detailB);
+  }, [detailA, detailB]);
+
+  const multiAxisDelta = React.useMemo(() => {
+    if (!detailA || !detailB) return null;
+    return computeMultiAxisDelta(detailA, detailB);
+  }, [detailA, detailB]);
+
+  const handleExportCsv = React.useCallback(() => {
+    if (!detailA || !detailB) return;
+    try {
+      downloadCompareCsv(detailA, detailB);
+    } catch (err) {
+      toast.error((err as Error).message || "CSV export failed.");
+    }
   }, [detailA, detailB]);
 
   return (
@@ -327,6 +566,18 @@ export default function ComparePage() {
           )}
 
           {delta ? <DeltaSummary delta={delta} /> : null}
+          {multiAxisDelta ? <MultiAxisDeltaCard delta={multiAxisDelta} /> : null}
+          {detailA && detailB ? (
+            <>
+              <MultiAxisSideBySide detailA={detailA} detailB={detailB} />
+              <ForecastsSideBySide detailA={detailA} detailB={detailB} />
+              <div className="flex justify-end">
+                <Button variant="outline" size="sm" onClick={handleExportCsv}>
+                  Export CSV
+                </Button>
+              </div>
+            </>
+          ) : null}
         </main>
       </div>
     </>
