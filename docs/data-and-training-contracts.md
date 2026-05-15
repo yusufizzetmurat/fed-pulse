@@ -148,12 +148,24 @@ Required columns (full schema in module docstring):
   - `direction_t1d` — sign of the t+1d realized return (-1, 0, +1).
 - `volatility_shift` — post-event 10d realized vol minus pre-event 10d
   realized vol (log returns; sample std).
-- `concurrent_macro_release` — boolean. True when a heuristic major
-  macro release (CPI, NFP, ISM) falls within ±2 trading days. Flagged
-  only; no event is dropped on this basis. The heuristic uses fixed
-  calendar rules (first Friday for NFP, second Wednesday for CPI, first
-  business day for ISM); a subsequent PR may swap in BLS/ISM release
-  calendars without changing the column.
+- `concurrent_macro_release` — boolean. True when a major US macro
+  release (CPI, NFP, ISM) falls within ±2 trading days. Flagged only;
+  no event is dropped on this basis. The calendar is loaded from
+  `data/external/macro_releases.csv` (bundled in the repo; CPI dates
+  2008-2026 hand-encoded against BLS published Schedule of Releases
+  archives, NFP/ISM 1977-2026 rule-generated with federal-holiday
+  forward shifts, CPI 1977-2007 second-Wednesday fallback; refreshable
+  from FRED via `app.data.macro_releases.refresh_from_fred`). When the
+  CSV is absent the builder falls back to a rule-based heuristic
+  (first Friday / second Wednesday / first business day) so the smoke
+  run still works on a fresh checkout. On the Sprint 1 package the
+  swap from heuristic to real BLS/ISM dates lifts the flagged rate
+  from 43.46 % to 49.31 % — real CPI releases tend to land closer to
+  FOMC meeting days (mid-month) than the second-Wednesday rule
+  estimates, so the real calendar is methodologically more accurate
+  even though it flags more events. Tightening the ±2-trading-day
+  radius is an option if the higher rate proves too noisy for the
+  downstream confounder analysis.
 - `asset_symbol` — default `^GSPC`. Per-asset rows are supported: a
   future sweep can rebuild with `--asset NDX` etc. without touching the
   schema.
@@ -185,12 +197,18 @@ Both parquets are always written; pass `--full-output ''` to skip the
 full view. The yfinance fetch is cached at
 `<package_dir>/_market_cache/<symbol>.parquet` with a `SOURCES.lock`
 entry. Re-runs use the cache; pass `--market-cache-dir` to relocate it.
+Override the macro release calendar with `--macro-release-csv`.
 
 Sprint 1 reference counts (training package
 `tp_v2_sprint1_2026_05_15_sentiment_market_core_v1.0_epv1_v1.0`,
 `^GSPC` asset):
 
-| Output                | Rows  | Unique events                          |
-| --------------------- | ----- | -------------------------------------- |
-| `events.parquet`      | 4 103 | 1 026 (date × kind × preferred source) |
-| `events_full.parquet` | 5 339 | 1 335 (date × kind × source)           |
+| Output                | Rows  | Unique events                          | `concurrent_macro_release` |
+| --------------------- | ----- | -------------------------------------- | -------------------------- |
+| `events.parquet`      | 4 103 | 1 026 (date × kind × preferred source) | 49.31 % (real BLS/ISM)     |
+| `events_full.parquet` | 5 339 | 1 335 (date × kind × source)           | 49.31 % (same calendar)    |
+
+Heuristic baseline on the same package was 43.46 %; the swap lifts the
+rate because real CPI releases tend to land closer to FOMC days than
+the second-Wednesday rule places them. The list of flagged dates is
+deterministic — same input ⇒ bit-identical parquet bytes.

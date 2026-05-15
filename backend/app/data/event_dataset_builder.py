@@ -107,6 +107,12 @@ from typing import Any, Iterable, Sequence
 import pandas as pd
 
 from app.config import DATA_DIR as DEFAULT_DATA_DIR
+from app.data.macro_releases import (
+    DEFAULT_MACRO_RELEASES_CSV,
+    MacroReleaseCalendar,
+    build_heuristic_calendar,
+    load_macro_release_calendar,
+)
 from app.features.credibility import CredibilityVector
 from app.services.credibility_loader import load_credibility_for_run
 
@@ -687,48 +693,31 @@ def _volatility_shift(
 
 
 # ---------------------------------------------------------------------------
-# Concurrent macro release heuristic
+# Concurrent macro release calendar (real BLS / ISM / FRED-derived dates)
 # ---------------------------------------------------------------------------
 
 
-def _macro_release_dates(year: int) -> set[_dt.date]:
-    """Approximate major US macro release dates for a calendar year.
+def _resolve_macro_calendar(
+    csv_path: Path | str | None,
+) -> MacroReleaseCalendar:
+    """Pick the real-release calendar when available, fall back to heuristic.
 
-    The intent is a confounder *flag*, not a precise calendar -- so we use:
+    Resolution order:
 
-    - NFP: first Friday of each month.
-    - CPI: second Wednesday of each month (BLS typically releases on the
-      10th-15th, but we anchor on the second Wednesday to keep this
-      deterministic without a network call).
-    - ISM Manufacturing: first business day of each month.
-
-    A subsequent PR may swap in real release calendars (BLS, ISM); the
-    column name + semantics stay stable.
+    1. ``csv_path`` argument (parquet or CSV). Used by tests.
+    2. ``data/external/macro_releases.csv`` -- a curated CSV shipped in the
+       repo. Loaded once per build call.
+    3. Pure-rule heuristic (legacy behaviour). Used when neither file is
+       present, so the builder still runs on a fresh checkout without
+       network calls.
     """
 
-    out: set[_dt.date] = set()
-    for month in range(1, 13):
-        # First business day (Mon-Fri)
-        d = _dt.date(year, month, 1)
-        while d.weekday() >= 5:
-            d += _dt.timedelta(days=1)
-        out.add(d)
-        # First Friday
-        d = _dt.date(year, month, 1)
-        while d.weekday() != 4:
-            d += _dt.timedelta(days=1)
-        out.add(d)
-        # Second Wednesday
-        d = _dt.date(year, month, 1)
-        weds_seen = 0
-        while True:
-            if d.weekday() == 2:
-                weds_seen += 1
-                if weds_seen == 2:
-                    out.add(d)
-                    break
-            d += _dt.timedelta(days=1)
-    return out
+    if csv_path is not None:
+        return load_macro_release_calendar(Path(csv_path))
+    default_path = DEFAULT_MACRO_RELEASES_CSV
+    if default_path.exists():
+        return load_macro_release_calendar(default_path)
+    return build_heuristic_calendar()
 
 
 def _has_concurrent_macro_release(
@@ -736,10 +725,22 @@ def _has_concurrent_macro_release(
     series: _CloseSeries,
     *,
     radius: int = CONCURRENT_MACRO_TRADING_DAY_RADIUS,
+    calendar: MacroReleaseCalendar | None = None,
 ) -> bool:
-    macro_dates = _macro_release_dates(event_date.year)
-    macro_dates |= _macro_release_dates(event_date.year - 1)
-    macro_dates |= _macro_release_dates(event_date.year + 1)
+    """Return True iff a major US macro release sits within ``radius``
+    trading days of ``event_date``.
+
+    The ``calendar`` argument carries the real release dates (BLS / ISM /
+    FRED-derived). When omitted we fall back to the rule-based heuristic
+    (legacy behaviour) so callers that never had a calendar continue to
+    work.
+    """
+
+    if calendar is None:
+        calendar = build_heuristic_calendar()
+    macro_dates = calendar.dates_in_year(event_date.year)
+    macro_dates |= calendar.dates_in_year(event_date.year - 1)
+    macro_dates |= calendar.dates_in_year(event_date.year + 1)
     base_idx = series.index_on_or_after(event_date)
     if base_idx >= len(series):
         return False
@@ -827,6 +828,7 @@ def _build_event_rows(
     bench_series: _CloseSeries,
     horizons: Sequence[int],
     credibility_kwargs: dict[str, Any],
+    macro_release_calendar: MacroReleaseCalendar,
 ) -> list[dict[str, Any]]:
     event_date = _date(doc.event_date)
     as_of_ts = _as_of_for_event(doc.event_date, doc.event_kind)
@@ -864,7 +866,9 @@ def _build_event_rows(
         bench_targets = _realized_returns(bench_series, as_of_date, horizons) or {}
 
     vol_shift = _volatility_shift(asset_series, as_of_date)
-    concurrent_macro = _has_concurrent_macro_release(event_date, asset_series)
+    concurrent_macro = _has_concurrent_macro_release(
+        event_date, asset_series, calendar=macro_release_calendar
+    )
 
     # Credibility vector (degrades to zeros when inputs are absent)
     cred = _safe_credibility(as_of_ts, credibility_kwargs)
@@ -995,6 +999,8 @@ def build_event_rows(
     stance_by_date: Sequence[tuple[str, float]] = (),
     summary: _BuildSummary | None = None,
     keep_all_sources: bool = False,
+    macro_release_calendar: MacroReleaseCalendar | None = None,
+    macro_release_csv_path: Path | str | None = None,
 ) -> pd.DataFrame:
     """Build the events DataFrame for one training package.
 
@@ -1006,10 +1012,18 @@ def build_event_rows(
     ``_SOURCE_PREFERENCE`` order. When ``keep_all_sources=True`` every
     source survives, producing one row per
     ``(event_date, event_kind, source, asset_symbol, horizon)``.
+
+    The ``concurrent_macro_release`` flag consults ``macro_release_calendar``
+    (a real BLS/ISM/FRED-derived calendar) when one is provided; otherwise it
+    falls back to the deterministic heuristic. Pass ``macro_release_csv_path``
+    to load a pre-built calendar parquet/CSV from disk.
     """
 
     if summary is None:
         summary = _BuildSummary()
+
+    if macro_release_calendar is None:
+        macro_release_calendar = _resolve_macro_calendar(macro_release_csv_path)
 
     registry_rows = _load_registry_rows(package_dir)
     docs_all = _aggregate_events(registry_rows)
@@ -1051,6 +1065,7 @@ def build_event_rows(
             bench_series=bench_series,
             horizons=horizons,
             credibility_kwargs=credibility_kwargs,
+            macro_release_calendar=macro_release_calendar,
         )
         if not rows:
             summary.dropped_no_prior_window += 1
@@ -1144,6 +1159,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=str(DEFAULT_DATA_DIR / "external" / "fred"),
         help="FRED cache directory for credibility realized-vs-stated gap.",
     )
+    parser.add_argument(
+        "--macro-release-csv",
+        default=None,
+        help=(
+            "Override the macro-release calendar source (CSV or parquet). "
+            "Defaults to data/external/macro_releases.csv when present, "
+            "else the legacy rule-based heuristic."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1160,6 +1184,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         else (package_dir / "_market_cache")
     )
 
+    macro_csv = Path(args.macro_release_csv) if args.macro_release_csv else None
+    macro_calendar = _resolve_macro_calendar(macro_csv)
+
     # Collapsed view
     summary = _BuildSummary()
     df = build_event_rows(
@@ -1171,6 +1198,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         embedding_path=Path(args.embedding_path) if args.embedding_path else None,
         fred_cache_dir=Path(args.fred_cache_dir) if args.fred_cache_dir else None,
         summary=summary,
+        macro_release_calendar=macro_calendar,
     )
     output_path = Path(args.output)
     if not output_path.is_absolute():
@@ -1184,6 +1212,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"[event-rows] concurrent_macro_release rows: {summary.concurrent_macro_release_rows} "
         f"({_pct(summary.concurrent_macro_release_rows, summary.rows_written)})"
     )
+    print(f"[event-rows] macro calendar source: {macro_calendar.source_label}")
     print("[event-rows] per-source breakdown (collapsed):")
     for src, count in sorted(summary.per_source_rows.items(), key=lambda x: -x[1]):
         print(f"  {src}: {count}")
@@ -1204,6 +1233,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             embedding_path=Path(args.embedding_path) if args.embedding_path else None,
             fred_cache_dir=Path(args.fred_cache_dir) if args.fred_cache_dir else None,
             summary=full_summary,
+            macro_release_calendar=macro_calendar,
             keep_all_sources=True,
         )
         full_output_path = Path(full_output_arg)

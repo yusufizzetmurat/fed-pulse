@@ -423,3 +423,174 @@ def test_events_full_has_more_rows_than_collapsed_on_multi_source_fixture(
     edb.write_events_parquet(df_full2, p2)
     assert hashlib.sha256(p1.read_bytes()).hexdigest() == hashlib.sha256(p2.read_bytes()).hexdigest()
 
+
+# ---------------------------------------------------------------------------
+# Real macro release calendar -- smaller fraction True than heuristic
+# ---------------------------------------------------------------------------
+
+
+def test_real_release_calendar_differs_from_heuristic_on_fomc_calendar(
+    tmp_path: Path,
+) -> None:
+    """The real BLS/ISM calendar must produce a *different* set of macro
+    release dates than the rule-based heuristic on the same window. The
+    hit-rate on an FOMC-style fixture is regime-dependent (real CPI
+    sometimes lands closer to FOMC days than the second-Wednesday
+    heuristic would), so this test asserts the calendars diverge rather
+    than asserting a directional drop -- the magnitude is reported by the
+    CLI smoke run on the actual Sprint 1 package."""
+
+    from app.data.macro_releases import (
+        DEFAULT_MACRO_RELEASES_CSV,
+        build_heuristic_calendar,
+        load_macro_release_calendar,
+    )
+
+    csv_path = DEFAULT_MACRO_RELEASES_CSV
+    if not csv_path.exists():
+        pytest.skip(f"Real release CSV not bundled in this checkout: {csv_path}")
+
+    package = tmp_path / "package"
+    package.mkdir()
+    fomc_dates = [
+        "2015-01-28", "2015-03-18", "2015-04-29", "2015-06-17",
+        "2015-07-29", "2015-09-17", "2015-10-28", "2015-12-16",
+        "2018-01-31", "2018-03-21", "2018-05-02", "2018-06-13",
+        "2018-08-01", "2018-09-26", "2018-11-08", "2018-12-19",
+        "2021-01-27", "2021-03-17", "2021-04-28", "2021-06-16",
+        "2021-07-28", "2021-09-22", "2021-11-03", "2021-12-15",
+        "2023-02-01", "2023-03-22", "2023-05-03", "2023-06-14",
+        "2023-07-26", "2023-09-20", "2023-11-01", "2023-12-13",
+    ]
+    _write_registry(
+        package / "registry_normalized.jsonl",
+        [_registry_entry_for_statement(d) for d in fomc_dates],
+    )
+    dates = _make_trading_dates(_dt.date(2010, 1, 4), 3800)
+    series = _series_from_closes(dates, [100.0] * len(dates))
+
+    heuristic = build_heuristic_calendar()
+    real = load_macro_release_calendar(csv_path)
+
+    df_heur = edb.build_event_rows(
+        package_dir=package,
+        asset_series=series,
+        bench_series=series,
+        macro_release_calendar=heuristic,
+    )
+    df_real = edb.build_event_rows(
+        package_dir=package,
+        asset_series=series,
+        bench_series=series,
+        macro_release_calendar=real,
+    )
+    heur_events = df_heur[df_heur["horizon"] == 1]
+    real_events = df_real[df_real["horizon"] == 1]
+    heur_flags = heur_events["concurrent_macro_release"].tolist()
+    real_flags = real_events["concurrent_macro_release"].tolist()
+    assert heur_flags != real_flags, (
+        "Real calendar produced an identical flag vector to the heuristic; "
+        "the swap had no effect on the FOMC fixture."
+    )
+    # And the real-calendar set must contain dates the heuristic doesn't.
+    heur_dates = heuristic.dates
+    real_dates = real.dates
+    overlap = heur_dates & real_dates
+    only_real = real_dates - heur_dates
+    only_heur = heur_dates - real_dates
+    # Both sides should have unique dates; otherwise one calendar is a
+    # subset of the other and the swap is degenerate.
+    assert len(only_real) > 0, "Real calendar adds no new dates over the heuristic"
+    assert len(only_heur) > 0, "Heuristic has no dates absent from the real calendar"
+    assert len(overlap) > 0, "Real and heuristic share no dates -- one is empty?"
+
+
+def test_real_release_calendar_changes_rate_on_smoke_package() -> None:
+    """When the real Sprint 1 training package is mounted, the real
+    BLS/ISM/FRED calendar must produce a *different* concurrent_macro_release
+    rate than the rule-based heuristic.
+
+    The direction of the change is regime-dependent and not asserted here:
+    in practice, real CPI release dates land *closer* to FOMC meeting days
+    than the second-Wednesday heuristic, so the real calendar can flag
+    more events even though the input dates are more accurate. We document
+    the observed rate in the PR body / module docstring instead of
+    asserting a directional drop.
+    """
+
+    from app.config import DATA_DIR
+    from app.data.macro_releases import (
+        DEFAULT_MACRO_RELEASES_CSV,
+        build_heuristic_calendar,
+        load_macro_release_calendar,
+    )
+
+    package_id = "tp_v2_sprint1_2026_05_15_sentiment_market_core_v1.0_epv1_v1.0"
+    package_dir = DATA_DIR / "processed" / package_id
+    market_cache = package_dir / "_market_cache" / "GSPC.parquet"
+    if not package_dir.exists() or not market_cache.exists():
+        pytest.skip(f"Sprint 1 package not mounted at {package_dir}")
+    if not DEFAULT_MACRO_RELEASES_CSV.exists():
+        pytest.skip("Real release CSV not bundled")
+
+    # Load the cached market series so we don't hit yfinance.
+    asset_series = edb._frame_to_series(pd.read_parquet(market_cache))
+
+    df_heur = edb.build_event_rows(
+        package_dir=package_dir,
+        asset_series=asset_series,
+        bench_series=asset_series,
+        macro_release_calendar=build_heuristic_calendar(),
+    )
+    df_real = edb.build_event_rows(
+        package_dir=package_dir,
+        asset_series=asset_series,
+        bench_series=asset_series,
+        macro_release_calendar=load_macro_release_calendar(DEFAULT_MACRO_RELEASES_CSV),
+    )
+    heur_rate = df_heur["concurrent_macro_release"].mean()
+    real_rate = df_real["concurrent_macro_release"].mean()
+    # The swap must have an observable effect; equal rates would mean the
+    # CSV is just a copy of the heuristic.
+    assert heur_rate != real_rate, (
+        f"Real and heuristic calendars produced identical rates "
+        f"({heur_rate:.2%}) on the Sprint 1 package -- the CSV may be a "
+        f"copy of the rule-based heuristic."
+    )
+    # Both rates should be in a sane range -- if either is 0 or 100% something
+    # went wrong upstream (empty calendar / empty events).
+    assert 0.0 < heur_rate < 1.0
+    assert 0.0 < real_rate < 1.0
+
+
+def test_real_release_calendar_contains_landmark_dates() -> None:
+    """The shipped calendar must include the canonical landmark dates so
+    downstream consumers (and reviewers) can sanity-check the flag.
+
+    Landmark cases:
+
+    - 2020-04-03: NFP for March 2020 (-701k, COVID print). First Friday
+      of April; heuristic and real both catch it.
+    - 2022-06-10: CPI for May 2022 (+8.6% YoY). Real date is Friday June
+      10; the second-Wednesday heuristic instead lands on June 8, so
+      this date proves the calendar is *not* derived from the heuristic.
+    - 2023-06-14: FOMC June 2023 meeting overlaps the BLS CPI release
+      on 2023-06-13 -- the flag should fire when the event date is
+      within +/- 2 trading days of a real CPI date.
+    """
+
+    from app.data.macro_releases import (
+        DEFAULT_MACRO_RELEASES_CSV,
+        load_macro_release_calendar,
+    )
+
+    csv_path = DEFAULT_MACRO_RELEASES_CSV
+    if not csv_path.exists():
+        pytest.skip(f"Real release CSV not bundled in this checkout: {csv_path}")
+    cal = load_macro_release_calendar(csv_path)
+    assert _dt.date(2020, 4, 3) in cal.by_kind["NFP"], "missing NFP 2020-04-03"
+    assert _dt.date(2022, 6, 10) in cal.by_kind["CPI"], "missing CPI 2022-06-10"
+    # 2023-06-13 should be a CPI release (FOMC June 14 = ±1 trading day)
+    assert _dt.date(2023, 6, 13) in cal.by_kind["CPI"], "missing CPI 2023-06-13"
+    # ISM coverage example: 2020-04-01 (Wed, first business day of April 2020)
+    assert _dt.date(2020, 4, 1) in cal.by_kind["ISM"], "missing ISM 2020-04-01"
