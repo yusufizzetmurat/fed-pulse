@@ -666,8 +666,8 @@ def _read_chunk_embedding_lookup(
     *,
     cache_dir: Path | None = None,
     registry_path: Path | None = None,
-) -> dict[str, "Any"]:
-    """Return ``text_hash -> pooled embedding`` for one encoder.
+) -> tuple[dict[str, "Any"], dict[str, str]]:
+    """Return ``(text_hash -> pooled embedding, text_hash -> event_date)``.
 
     Reads ``data/raw/embeddings/<encoder_alias>_<rev>.parquet`` (the
     artefact ``app.data.embedding_cache.build_cache`` writes per
@@ -681,13 +681,19 @@ def _read_chunk_embedding_lookup(
     The cache schema persists ``record_id`` rather than ``text_hash``.
     When ``registry_path`` is supplied the loader walks
     ``registry_normalized.jsonl`` to build a ``record_id -> text_hash``
-    mapping; the returned dict is then keyed on ``text_hash`` so the
+    mapping; the returned dicts are then keyed on ``text_hash`` so the
     per-event lookup matches the ``events.parquet`` join key directly.
     When the registry is unavailable the lookup falls back to
     ``record_id`` keys and the caller's text_hash lookup will miss.
 
-    Returns an empty dict when the parquet is missing; the caller
-    emits zeros + a missing flag for every row.
+    The two return dicts share the same key space. The first carries
+    pooled embeddings (``numpy.ndarray``), the second carries the
+    ISO-formatted event date for each key. The split replaces the
+    previous ``__event_dates__`` sentinel-key layout so the types stay
+    clean and the pooler doesn't need to filter prefix-reserved keys.
+
+    Returns a pair of empty dicts when the parquet is missing; the
+    caller emits zeros + a missing flag for every row.
     """
 
     import numpy as np
@@ -705,7 +711,7 @@ def _read_chunk_embedding_lookup(
             "text-embedding lookup will return empty",
             encoder_alias,
         )
-        return {}
+        return {}, {}
     paths = resolve_cache_paths(encoder_alias, revision=revision, cache_dir=cache_dir)
     if not paths.parquet.exists():
         _logger.warning(
@@ -714,7 +720,7 @@ def _read_chunk_embedding_lookup(
             encoder_alias,
             paths.parquet,
         )
-        return {}
+        return {}, {}
 
     frame = pd.read_parquet(paths.parquet)
     if "embedding" not in frame.columns or "event_date" not in frame.columns:
@@ -723,7 +729,7 @@ def _read_chunk_embedding_lookup(
             "(embedding / event_date); text-embedding lookup empty",
             paths.parquet,
         )
-        return {}
+        return {}, {}
     # Prefer ``record_id`` (Phase 8 cache builder) and fall back to
     # ``doc_id`` for backwards compatibility with older caches.
     key_column: str | None = None
@@ -737,7 +743,7 @@ def _read_chunk_embedding_lookup(
             "nor doc_id; text-embedding lookup empty",
             paths.parquet,
         )
-        return {}
+        return {}, {}
 
     # Build the ``record_id -> text_hash`` mapping when the registry is
     # available. Without it the lookup stays keyed on record_id and
@@ -792,9 +798,8 @@ def _read_chunk_embedding_lookup(
         event_dates[join_key] = str(chunk["event_date"].iloc[0])[:10]
 
     if not lookup:
-        return {}
-    lookup["__event_dates__"] = event_dates
-    return lookup
+        return {}, {}
+    return lookup, event_dates
 
 
 def _compute_prior4_pooled_embedding(
@@ -819,10 +824,12 @@ def _compute_prior4_pooled_embedding(
         Statement date of the event being processed. Prior statements
         are restricted to those strictly before this date.
     embedding_lookup:
-        Output of :func:`_read_chunk_embedding_lookup`. Keys are
-        ``record_id`` strings, values are 1-D ``numpy.ndarray`` per
-        statement. ``__event_dates__`` is reserved (carries the
-        statement date per record_id).
+        First element of the tuple returned by
+        :func:`_read_chunk_embedding_lookup`. Keys are ``record_id``
+        strings, values are 1-D ``numpy.ndarray`` per statement. The
+        companion ``event_dates`` dict from the same tuple is not
+        consumed here -- the pooler reads dates off ``prior_text_hashes``
+        which already carries the chronology.
     prior_text_hashes:
         Chronologically-sorted list of ``(statement_date, text_hash)``
         tuples for every statement in the corpus. The pooler filters
@@ -857,8 +864,6 @@ def _compute_prior4_pooled_embedding(
         if statement_date >= current_event_date:
             continue
         if prior_hash not in embedding_lookup:
-            continue
-        if prior_hash.startswith("__"):
             continue
         candidates.append((statement_date, prior_hash))
     if not candidates:
@@ -1177,6 +1182,7 @@ def _load_package_sequences_with_metadata(
         mp_surprise_lookup = _read_mp_surprise_lookup(package_dir)
 
     embedding_lookup: dict[str, Any] = {}
+    embedding_event_dates: dict[str, str] = {}
     use_text_path = bool(text_encoder) and bool(use_text_embeddings)
     text_adapter_dim_int = int(text_adapter_dim)
     if use_text_path:
@@ -1218,11 +1224,17 @@ def _load_package_sequences_with_metadata(
                 registry_for_lookup = None
         else:
             registry_for_lookup = None
-        embedding_lookup = _read_chunk_embedding_lookup(
+        embedding_lookup, embedding_event_dates = _read_chunk_embedding_lookup(
             text_encoder,
             cache_dir=cache_dir,
             registry_path=registry_for_lookup,
         )
+    # ``embedding_event_dates`` is captured for symmetry with the
+    # ``_read_chunk_embedding_lookup`` contract; the prior-4 pooler
+    # consumes statement dates off ``prior_chronology`` further down,
+    # so the dict is not read here. Kept in scope so a future
+    # consumer can pick it up without re-reading the cache.
+    _ = embedding_event_dates
 
     def _row_rank(row: dict[str, Any]) -> tuple[int, int, str]:
         horizon = row.get("horizon")
@@ -1652,6 +1664,7 @@ def load_training_sequences_from_package(
     # ``_compute_prior4_pooled_embedding`` returns None for every
     # event so the model sees the zero + missing-flag pair.
     embedding_lookup: dict[str, Any] = {}
+    embedding_event_dates: dict[str, str] = {}
     use_text_path = bool(text_encoder) and bool(use_text_embeddings)
     text_adapter_dim_int = int(text_adapter_dim)
     if use_text_path:
@@ -1707,11 +1720,14 @@ def load_training_sequences_from_package(
                 registry_for_lookup = None
         else:
             registry_for_lookup = None
-        embedding_lookup = _read_chunk_embedding_lookup(
+        embedding_lookup, embedding_event_dates = _read_chunk_embedding_lookup(
             text_encoder,
             cache_dir=cache_dir,
             registry_path=registry_for_lookup,
         )
+    # Captured for symmetry; the prior-4 pooler reads dates off
+    # ``prior_chronology`` so the dict is not consumed here.
+    _ = embedding_event_dates
 
     # Deduplicate to one row per text_hash. Prefer horizon=1 so the
     # appended target frame is the next trading day's close. Within a
