@@ -104,7 +104,7 @@ def _build_model(
     return model
 
 
-def _zero_credibility(model: ForecasterModel, batch_size: int, device: torch.device) -> torch.Tensor | None:
+def _zero_credibility(model: nn.Module, batch_size: int, device: torch.device) -> torch.Tensor | None:
     """Return a zero credibility tensor for the batch when the model expects one.
 
     Models trained with ``credibility_features=True`` must always receive a
@@ -120,7 +120,7 @@ def _zero_credibility(model: ForecasterModel, batch_size: int, device: torch.dev
 
 
 def _allocate_credibility_buffer(
-    model: ForecasterModel, max_batch_size: int, device: torch.device
+    model: nn.Module, max_batch_size: int, device: torch.device
 ) -> torch.Tensor | None:
     """Pre-allocate the largest credibility buffer the epoch loop needs.
 
@@ -180,7 +180,7 @@ def _snapshot_state(model: nn.Module) -> dict[str, torch.Tensor]:
 
 
 def _resolve_compile_amp_flags(
-    model: ForecasterModel,
+    model: nn.Module,
     architecture: str,
     device: torch.device,
     *,
@@ -217,7 +217,7 @@ def _resolve_compile_amp_flags(
 
 
 def _maybe_compile_model(
-    model: ForecasterModel, *, use_compile: bool
+    model: nn.Module, *, use_compile: bool
 ) -> nn.Module:
     """Wrap ``model`` in ``torch.compile`` when ``use_compile`` is on.
 
