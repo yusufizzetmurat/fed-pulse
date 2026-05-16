@@ -539,6 +539,44 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Only inspect discovered datasets and exit without training.",
     )
+    parser.add_argument(
+        "--grad-clip-norm",
+        type=float,
+        default=0.0,
+        help=(
+            "Per-step gradient-norm clip applied via "
+            "``nn.utils.clip_grad_norm_``. Default 0.0 disables the clip "
+            "(the per-step host sync the clip forced was a measurable "
+            "drag on small-model GPU saturation). Pass a positive value "
+            "to opt into clipping at that norm. The previous always-on "
+            "1.0 clip is reproducible by ``--grad-clip-norm 1.0``."
+        ),
+    )
+    parser.add_argument(
+        "--no-compile",
+        dest="use_compile",
+        action="store_false",
+        help=(
+            "Skip ``torch.compile(model, mode='reduce-overhead')`` on "
+            "the forecaster forward path. Default off-flag is on, so "
+            "compile fires whenever the architecture is in the "
+            "compatible table and the device is CUDA. CPU and "
+            "incompatible architectures auto-fall back to eager."
+        ),
+    )
+    parser.set_defaults(use_compile=True)
+    parser.add_argument(
+        "--no-amp",
+        dest="use_amp",
+        action="store_false",
+        help=(
+            "Skip ``torch.cuda.amp.autocast`` + ``GradScaler`` on the "
+            "train step. Default off-flag is on, so autocast fires on "
+            "CUDA for the architectures in the compatible table; CPU "
+            "and incompatible architectures fall back to fp32."
+        ),
+    )
+    parser.set_defaults(use_amp=True)
     args = parser.parse_args()
     # Emit DeprecationWarning when the legacy --validation-split alias is
     # used. argparse silently maps it onto validation_fraction, so callers
@@ -1011,6 +1049,9 @@ def _run_single_training(
     shuffle_targets_control: bool = False,
     text_encoder: str | None = None,
     text_pool_lambda_inv_days: float = 0.0,
+    grad_clip_norm: float = 0.0,
+    use_compile: bool = True,
+    use_amp: bool = True,
 ) -> TrainingRunSummary:
     # Three input paths, in precedence order:
     #
@@ -1043,6 +1084,9 @@ def _run_single_training(
             shuffle_targets_control=shuffle_targets_control,
             text_encoder=text_encoder,
             text_pool_lambda_inv_days=text_pool_lambda_inv_days,
+            grad_clip_norm=grad_clip_norm,
+            use_compile=use_compile,
+            use_amp=use_amp,
         )
     elif sequence_groups:
         result = _train_model_with_groups(
@@ -1061,6 +1105,9 @@ def _run_single_training(
             shuffle_targets_control=shuffle_targets_control,
             text_encoder=text_encoder,
             text_pool_lambda_inv_days=text_pool_lambda_inv_days,
+            grad_clip_norm=grad_clip_norm,
+            use_compile=use_compile,
+            use_amp=use_amp,
         )
     else:
         result = train_model(
@@ -1079,6 +1126,9 @@ def _run_single_training(
             shuffle_targets_control=shuffle_targets_control,
             text_encoder=text_encoder,
             text_pool_lambda_inv_days=text_pool_lambda_inv_days,
+            grad_clip_norm=grad_clip_norm,
+            use_compile=use_compile,
+            use_amp=use_amp,
         )
     return result.summary
 
@@ -1100,6 +1150,9 @@ def _train_model_with_groups(
     shuffle_targets_control: bool = False,
     text_encoder: str | None = None,
     text_pool_lambda_inv_days: float = 0.0,
+    grad_clip_norm: float = 0.0,
+    use_compile: bool = True,
+    use_amp: bool = True,
 ) -> Any:
     """Invoke ``train_model`` against pre-loaded sequence groups.
 
@@ -1127,6 +1180,9 @@ def _train_model_with_groups(
         shuffle_targets_control=shuffle_targets_control,
         text_encoder=text_encoder,
         text_pool_lambda_inv_days=text_pool_lambda_inv_days,
+        grad_clip_norm=grad_clip_norm,
+        use_compile=use_compile,
+        use_amp=use_amp,
     )
 
 
@@ -1161,6 +1217,9 @@ def _worker_run_cell(payload: dict[str, Any]) -> dict[str, Any]:
         shuffle_targets_control=bool(payload["shuffle_targets_control"]),
         text_encoder=payload["text_encoder"],
         text_pool_lambda_inv_days=float(payload["text_pool_lambda_inv_days"]),
+        grad_clip_norm=float(payload.get("grad_clip_norm", 0.0)),
+        use_compile=bool(payload.get("use_compile", True)),
+        use_amp=bool(payload.get("use_amp", True)),
     )
     return {
         "trial_index": int(payload["trial_index"]),
@@ -1207,6 +1266,9 @@ def _build_worker_payload(
         "shuffle_targets_control": bool(args.shuffle_targets_control),
         "text_encoder": text_encoder_arg,
         "text_pool_lambda_inv_days": float(text_pool_lambda),
+        "grad_clip_norm": float(getattr(args, "grad_clip_norm", 0.0)),
+        "use_compile": bool(getattr(args, "use_compile", True)),
+        "use_amp": bool(getattr(args, "use_amp", True)),
     }
 
 
@@ -1391,6 +1453,9 @@ def _run_sweep(
                     shuffle_targets_control=bool(args.shuffle_targets_control),
                     text_encoder=text_encoder_arg,
                     text_pool_lambda_inv_days=text_pool_lambda,
+                    grad_clip_norm=float(getattr(args, "grad_clip_norm", 0.0)),
+                    use_compile=bool(getattr(args, "use_compile", True)),
+                    use_amp=bool(getattr(args, "use_amp", True)),
                 )
             record: dict[str, Any] = {
                 "trial_index": int(trial_index),
@@ -1551,6 +1616,9 @@ def _run_sweep(
                 shuffle_targets_control=bool(args.shuffle_targets_control),
                 text_encoder=text_encoder_arg,
                 text_pool_lambda_inv_days=text_pool_lambda,
+                grad_clip_norm=float(getattr(args, "grad_clip_norm", 0.0)),
+                use_compile=bool(getattr(args, "use_compile", True)),
+                use_amp=bool(getattr(args, "use_amp", True)),
             )
             summaries.append(summary)
             record = {
@@ -1645,6 +1713,9 @@ def _run_sweep(
         shuffle_targets_control=bool(args.shuffle_targets_control),
         text_encoder=text_encoder_arg,
         text_pool_lambda_inv_days=text_pool_lambda,
+        grad_clip_norm=float(getattr(args, "grad_clip_norm", 0.0)),
+        use_compile=bool(getattr(args, "use_compile", True)),
+        use_amp=bool(getattr(args, "use_amp", True)),
     )
     for trial in trial_records:
         trial["selected"] = trial["trial_index"] == best_trial_index
@@ -1927,6 +1998,9 @@ def main() -> int:
         shuffle_targets_control=bool(args.shuffle_targets_control),
         text_encoder=None if str(args.text_encoder) == "none" else str(args.text_encoder),
         text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
+        grad_clip_norm=float(getattr(args, "grad_clip_norm", 0.0)),
+        use_compile=bool(getattr(args, "use_compile", True)),
+        use_amp=bool(getattr(args, "use_amp", True)),
     )
     metrics = summary.metrics
     if metrics is not None:
