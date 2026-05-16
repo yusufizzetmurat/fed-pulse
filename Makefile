@@ -171,6 +171,12 @@ RANDOM_SEARCH_SAMPLES ?= 50
 RANDOM_SEARCH_SEED ?= 42
 PARALLEL_WORKERS ?= 8
 BATCHING_MODE ?= auto
+# Gradient-norm clip applied to every training step. The training-loop
+# CLI default is 0.0 (off); the sweep target pins 1.0 here so the
+# post-#180 numbers stay comparable with earlier runs that used the
+# pre-rewrite implicit 1.0 clip. Override with ``GRAD_CLIP_NORM=0.0``
+# to ablate clipping explicitly.
+GRAD_CLIP_NORM ?= 1.0
 
 forecaster-sweep:
 	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
@@ -195,6 +201,7 @@ forecaster-sweep:
 		--random-search-seed $(RANDOM_SEARCH_SEED) \
 		--parallel-workers $(PARALLEL_WORKERS) \
 		--batching-mode $(BATCHING_MODE) \
+		--grad-clip-norm $(GRAD_CLIP_NORM) \
 		--report-path "/data/artifacts/forecaster_sweep/$(TRAINING_PACKAGE_ID)/forecaster_sweep_results.json"
 
 # Exhaustive sweep: every cell in the HP cross-product, single worker,
