@@ -86,7 +86,7 @@ export default function HistoryPage() {
       </Head>
       <div className="min-h-screen bg-background text-foreground">
         <Header />
-        <main className="container space-y-6 py-8">
+        <main id="main-content" tabIndex={-1} className="container space-y-6 py-8 focus:outline-none">
           <div className="space-y-2">
             <h1 className="text-3xl font-semibold tracking-tight">History</h1>
             <p className="max-w-2xl text-muted-foreground">
@@ -225,18 +225,18 @@ export default function HistoryPage() {
                           </td>
                           <td className="px-4 py-2 text-right">
                             <div className="flex items-center justify-end gap-1">
-                              <Button asChild variant="ghost" size="icon" aria-label="Open run">
+                              <Button asChild variant="ghost" size="icon" aria-label={`Open run on ${row.document_date}`}>
                                 <Link href={`/history/${row.id}`}>
-                                  <ChevronRight className="h-4 w-4" />
+                                  <ChevronRight className="h-4 w-4" aria-hidden="true" />
                                 </Link>
                               </Button>
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                aria-label="Delete run"
+                                aria-label={`Delete run on ${row.document_date}`}
                                 onClick={() => handleDelete(row.id)}
                               >
-                                <Trash2 className="h-4 w-4" />
+                                <Trash2 className="h-4 w-4" aria-hidden="true" />
                               </Button>
                             </div>
                           </td>

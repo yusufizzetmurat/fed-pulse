@@ -381,7 +381,7 @@ export default function DecisionsPage() {
       </Head>
       <div className="min-h-screen bg-background text-foreground">
         <Header />
-        <main className="container space-y-6 py-8">
+        <main id="main-content" tabIndex={-1} className="container space-y-6 py-8 focus:outline-none">
           <div className="space-y-2">
             <h1 className="flex items-center gap-2 text-3xl font-semibold tracking-tight">
               <Gavel className="h-7 w-7 text-primary" />
