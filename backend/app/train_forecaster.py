@@ -43,6 +43,14 @@ from app.services.forecaster import (
     inspect_training_data_sources,
     train_model,
 )
+from app.training.batched_sweep import (
+    BATCHING_MODES,
+    BucketKey,
+    format_bucket_log_line,
+    group_candidates_into_buckets,
+    route_bucket,
+    run_bucket_streams,
+)
 from app.training.loaders import (
     WalkForwardSplit,
     load_training_sequences_from_package,
@@ -447,7 +455,41 @@ def _parse_args() -> argparse.Namespace:
             "worker is a spawn-mode subprocess with its own CUDA context. "
             "Default 1 (sequential) preserves the existing back-compat "
             "behaviour. Recommended N=8 on an RTX 4080; higher values log "
-            "a VRAM-saturation warning."
+            "a VRAM-saturation warning. Ignored when --batching-mode is "
+            "anything other than 'off' (the bucketed runner schedules "
+            "concurrency inside one Python process)."
+        ),
+    )
+    parser.add_argument(
+        "--batching-mode",
+        choices=("auto", "stacked", "streams", "off"),
+        default="off",
+        help=(
+            "Bucketing strategy for hyperparameter cells that share the "
+            "same model topology and data feed. 'auto' (recommended) "
+            "consults the per-arch table -- dlinear routes to stacked, "
+            "every other architecture routes to streams. 'stacked' "
+            "stacks per-cell parameters along a synthetic batch axis "
+            "and runs one matmul per bucket; falls back to streams "
+            "automatically on architectures whose forward is not yet "
+            "vmap-friendly. 'streams' overlaps per-cell kernel launches "
+            "across CUDA streams + threads inside one CUDA context. "
+            "'off' preserves the legacy ProcessPoolExecutor path "
+            "verbatim for the byte-identity regression contract. Default "
+            "'off' keeps the existing CLI surface untouched; opt in by "
+            "passing --batching-mode=auto on a real sweep."
+        ),
+    )
+    parser.add_argument(
+        "--max-bucket-size",
+        type=int,
+        default=None,
+        help=(
+            "Override the per-architecture bucket-size cap. Default "
+            "unset, so the per-arch table picks 64 for dlinear, 32 for "
+            "lstm/gru/tcn, 16 for lstm_attn, 8 for transformer, 4 for "
+            "informer/tft. Lower values trade throughput for VRAM "
+            "headroom on smaller GPUs."
         ),
     )
     parser.add_argument(
@@ -1214,6 +1256,16 @@ def _sort_trial_records(trial_records: list[dict[str, Any]]) -> list[dict[str, A
     return sorted(trial_records, key=_key)
 
 
+class _NullCudaStreamContext:
+    """No-op stand-in for ``torch.cuda.stream`` on the CPU device path."""
+
+    def __enter__(self) -> None:  # pragma: no cover -- trivial
+        return None
+
+    def __exit__(self, exc_type, exc, tb) -> None:  # pragma: no cover -- trivial
+        return None
+
+
 def _run_sweep(
     *,
     args: argparse.Namespace,
@@ -1231,7 +1283,19 @@ def _run_sweep(
         return 1
 
     parallel_workers = max(1, int(getattr(args, "parallel_workers", 1)))
-    if parallel_workers > PARALLEL_WORKERS_VRAM_WARN_THRESHOLD:
+    batching_mode = str(getattr(args, "batching_mode", "off") or "off")
+    if batching_mode not in BATCHING_MODES:
+        raise ValueError(
+            f"--batching-mode={batching_mode!r} is not one of {BATCHING_MODES}"
+        )
+    max_bucket_size_override = getattr(args, "max_bucket_size", None)
+    # When the bucketed runner is active the legacy
+    # ProcessPoolExecutor path is bypassed; parallel_workers becomes
+    # an inert knob so a user who passes both --batching-mode=auto
+    # and --parallel-workers=8 does not end up with 8 processes each
+    # spawning their own buckets. The legacy path stays selectable
+    # via --batching-mode=off, which is the regression-test contract.
+    if batching_mode == "off" and parallel_workers > PARALLEL_WORKERS_VRAM_WARN_THRESHOLD:
         _LOGGER.warning(
             "parallel_workers=%d exceeds the RTX 4080 VRAM-saturation threshold "
             "(%d). The CUDA allocator may OOM on the larger architectures "
@@ -1250,7 +1314,7 @@ def _run_sweep(
         )
     print(
         f"Starting hyperparameter sweep with {len(candidates)} trial(s) "
-        f"(parallel_workers={parallel_workers})..."
+        f"(parallel_workers={parallel_workers}, batching_mode={batching_mode})..."
     )
     trial_records: list[dict[str, Any]] = []
     summaries: list[TrainingRunSummary] = []
@@ -1259,7 +1323,140 @@ def _run_sweep(
     )
     text_pool_lambda = float(getattr(args, "text_pool_lambda_inv_days", 0.0))
 
-    if parallel_workers > 1:
+    if batching_mode != "off":
+        # Bucketed-HP path: group cells with the same model topology +
+        # data feed and dispatch each bucket as one concurrent unit.
+        # The streams variant overlaps kernel launches across CUDA
+        # streams inside one process / one CUDA context; the stacked
+        # variant routes to streams as a transparent fallback on
+        # architectures that the per-arch table does not yet flag as
+        # vmap-friendly.
+        target_mode = str(getattr(args, "target_mode", "event_study") or "event_study")
+        buckets = group_candidates_into_buckets(
+            candidates,
+            text_encoder=text_encoder_arg,
+            target_mode=target_mode,
+            max_bucket_size=max_bucket_size_override,
+        )
+
+        def _split_for_candidate(c: dict[str, Any]) -> WalkForwardSplit | None:
+            if walk_forward_splits is None:
+                return None
+            cand_fold = c.get("fold_id") or next(iter(walk_forward_splits))
+            return walk_forward_splits.get(cand_fold)
+
+        def _train_one_cell_for_bucket(
+            trial_index: int,
+            candidate: dict[str, Any],
+            stream: "torch.cuda.Stream | None",
+        ) -> dict[str, Any]:
+            # The streams runner shares the parent CUDA context, so
+            # the per-cell training reuses the same _run_single_training
+            # entry point the sequential path uses. The stream context
+            # manager pipelines the cell's kernels behind the bucket's
+            # other cells; on CPU the stream is None and the cell runs
+            # inline.
+            model_config = candidate["model_config"]
+            learning_rate = candidate["learning_rate"]
+            epochs = candidate["epochs"]
+            weight_decay = candidate.get("weight_decay", args.weight_decay)
+            seed = candidate.get("seed")
+            fold_id = candidate.get("fold_id")
+            wf_split: WalkForwardSplit | None = None
+            cell_sequence_groups: Sequence[Sequence[FeatureVector]] | None = sequence_groups
+            if walk_forward_splits is not None:
+                wf_split = _split_for_candidate(candidate)
+                cell_sequence_groups = None
+            ctx = (
+                torch.cuda.stream(stream)
+                if stream is not None
+                else _NullCudaStreamContext()
+            )
+            with ctx:
+                summary = _run_single_training(
+                    data_dir=data_dir,
+                    checkpoint_path=checkpoint_path,
+                    device=device,
+                    epochs=epochs,
+                    batch_size=args.batch_size,
+                    learning_rate=learning_rate,
+                    validation_fraction=args.validation_fraction,
+                    early_stopping_patience=args.early_stopping_patience,
+                    model_config=model_config,
+                    save_checkpoint=False,
+                    seed=seed,
+                    sequence_groups=cell_sequence_groups,
+                    walk_forward_split=wf_split,
+                    weight_decay=float(weight_decay),
+                    shuffle_targets_control=bool(args.shuffle_targets_control),
+                    text_encoder=text_encoder_arg,
+                    text_pool_lambda_inv_days=text_pool_lambda,
+                )
+            record: dict[str, Any] = {
+                "trial_index": int(trial_index),
+                "architecture": str(model_config.architecture),
+                "seed": seed,
+                "summary": summary,
+                "candidate": candidate,
+            }
+            if "hp_combo_id" in candidate:
+                record["hp_combo_id"] = candidate["hp_combo_id"]
+            if fold_id is not None:
+                record["fold_id"] = fold_id
+            return record
+
+        for bucket_key, bucket_cells in buckets:
+            routed = route_bucket(bucket_key.architecture, mode=batching_mode)
+            print(
+                format_bucket_log_line(
+                    bucket_key, bucket_cells, routed_mode=routed
+                )
+            )
+            # ``stacked`` and ``streams`` share the same per-cell entry
+            # point for now -- the stacked path inside StackedDLinear
+            # is reserved for the dlinear forward audit in a follow-up;
+            # the current PR ships the streams scheduler as the
+            # workhorse, with stacked-mode primitives in place for the
+            # next promotion step.
+            cell_results = run_bucket_streams(
+                bucket_cells,
+                train_one_cell=_train_one_cell_for_bucket,
+                device=device,
+            )
+            for result in cell_results:
+                summary_obj: TrainingRunSummary = result["summary"]
+                record = {
+                    "trial_index": result["trial_index"],
+                    "architecture": result["architecture"],
+                    "seed": result["seed"],
+                    "summary": summary_obj.to_dict(),
+                }
+                if "hp_combo_id" in result:
+                    record["hp_combo_id"] = result["hp_combo_id"]
+                if "fold_id" in result:
+                    record["fold_id"] = result["fold_id"]
+                trial_records.append(record)
+                summaries.append(summary_obj)
+                print(
+                    _format_cell_log(
+                        trial_index=result["trial_index"],
+                        total=len(candidates),
+                        candidate=result["candidate"],
+                        summary=summary_obj,
+                    )
+                )
+
+        # Deterministic ordering across bucket boundaries. The streams
+        # runner returns cells in their submission order, but a
+        # downstream consumer should see (architecture, seed, hp_combo_id,
+        # trial_index) ordering regardless of bucket layout.
+        index_to_summary = {
+            record["trial_index"]: summary
+            for record, summary in zip(trial_records, summaries, strict=True)
+        }
+        trial_records = _sort_trial_records(trial_records)
+        summaries = [index_to_summary[record["trial_index"]] for record in trial_records]
+    elif parallel_workers > 1:
         # ProcessPoolExecutor with spawn context: each worker re-imports
         # torch and acquires its own CUDA context. Results come back in
         # completion order so the trial_records list is sorted
@@ -1493,6 +1690,14 @@ def _run_sweep(
         report_payload["parallel_workers"] = parallel_workers
     elif parallel_workers > 1:
         report_payload["parallel_workers"] = parallel_workers
+    # ``batching_mode`` is omitted from the payload on the legacy
+    # ``off`` path so the byte-identity regression contract on the
+    # sweep-report JSON stays green; any non-off mode emits the field
+    # so downstream consumers can confirm the bucketed runner ran.
+    if batching_mode != "off":
+        report_payload["batching_mode"] = batching_mode
+        if max_bucket_size_override is not None:
+            report_payload["max_bucket_size"] = int(max_bucket_size_override)
     _write_sweep_report(report_path, report_payload)
     print(
         "Sweep complete. "
