@@ -182,3 +182,139 @@ def test_row_dataclass_is_frozen() -> None:
     )
     with pytest.raises(Exception):
         row.architecture = "gru"  # type: ignore[misc]
+
+
+def _fold_trial(
+    *,
+    architecture: str,
+    seed: int,
+    fold_id: str,
+    test_rmse: float,
+    train_rmse: float,
+    val_rmse: float | None = None,
+) -> dict:
+    if val_rmse is None:
+        val_rmse = test_rmse
+    return {
+        "trial_index": 0,
+        "architecture": architecture,
+        "seed": seed,
+        "fold_id": fold_id,
+        "summary": {
+            "model_config": {
+                "architecture": architecture,
+                "credibility_features": False,
+            },
+            "metrics": {
+                "combined_rmse": test_rmse,
+                "close_rmse": test_rmse * 0.8,
+                "volatility_rmse": test_rmse * 0.2,
+                "loss": test_rmse,
+            },
+            "train_metrics": {
+                "combined_rmse": train_rmse,
+                "close_rmse": train_rmse * 0.8,
+                "volatility_rmse": train_rmse * 0.2,
+                "loss": train_rmse,
+            },
+            "val_metrics": {
+                "combined_rmse": val_rmse,
+                "close_rmse": val_rmse * 0.8,
+                "volatility_rmse": val_rmse * 0.2,
+                "loss": val_rmse,
+            },
+            "test_metrics": {
+                "combined_rmse": test_rmse,
+                "close_rmse": test_rmse * 0.8,
+                "volatility_rmse": test_rmse * 0.2,
+                "loss": test_rmse,
+            },
+            "fold_id": fold_id,
+            "protocol": "walk-forward",
+        },
+    }
+
+
+def test_aggregator_emits_test_rmse_column_in_markdown(tmp_path: Path) -> None:
+    """The markdown headline reflects the new test-RMSE label."""
+
+    trials = [
+        _trial(architecture="lstm", seed=11, combined_rmse=0.10),
+        _trial(architecture="lstm", seed=29, combined_rmse=0.11),
+    ]
+    _write_report(tmp_path / "sweep_results.json", trials)
+    _, markdown, _ = aggregate(tmp_path, seed=11)
+    assert "test-RMSE" in markdown
+    # Legacy combined-RMSE headline must no longer appear on the
+    # markdown table; the column rename was an explicit contract change.
+    assert "combined-RMSE (mean" not in markdown
+
+
+def test_aggregator_per_fold_plus_all_folds_rows(tmp_path: Path) -> None:
+    """Walk-forward trials emit one row per (arch, fold) plus an aggregate row."""
+
+    from app.evaluation.forecaster_sweep_aggregator import aggregate
+
+    trials = []
+    for fold_id, base_rmse in (
+        ("wf_fold_1", 0.10),
+        ("wf_fold_2", 0.11),
+        ("wf_fold_3", 0.12),
+        ("wf_fold_4", 0.13),
+    ):
+        for seed in (11, 29):
+            trials.append(
+                _fold_trial(
+                    architecture="lstm",
+                    seed=seed,
+                    fold_id=fold_id,
+                    test_rmse=base_rmse,
+                    train_rmse=base_rmse * 0.8,
+                )
+            )
+    _write_report(tmp_path / "wf_sweep_results.json", trials)
+
+    rows, markdown, _ = aggregate(tmp_path, seed=11)
+    fold_rows = [r for r in rows if r.fold_id and r.fold_id != "all-folds"]
+    all_folds_rows = [r for r in rows if r.fold_id == "all-folds"]
+    assert {r.fold_id for r in fold_rows} == {
+        "wf_fold_1",
+        "wf_fold_2",
+        "wf_fold_3",
+        "wf_fold_4",
+    }
+    # One all-folds aggregate row per architecture.
+    assert len(all_folds_rows) == 1
+    all_folds = all_folds_rows[0]
+    assert all_folds.architecture == "lstm"
+    # All-folds row collects every per-fold trial -> 4 folds x 2 seeds
+    # = 8 cells in its test_rmse_values list.
+    assert len(all_folds.test_rmse_values) == 8
+    # All-folds row carries the bootstrap CI computed across the 8 cells.
+    assert all_folds.test_rmse_ci is not None
+    assert all_folds.test_rmse_ci.lo <= all_folds.test_rmse_ci.point <= all_folds.test_rmse_ci.hi
+    # Markdown contains each fold id and the all-folds tag.
+    for fold_id in ("wf_fold_1", "wf_fold_2", "wf_fold_3", "wf_fold_4", "all-folds"):
+        assert fold_id in markdown
+    # Protocol column reflects walk-forward.
+    assert "walk-forward" in markdown
+
+
+def test_aggregator_test_train_gap_uses_held_out_test_metric(tmp_path: Path) -> None:
+    """``test_train_gap`` is (test_rmse - train_rmse) / train_rmse."""
+
+    trials = [
+        _fold_trial(
+            architecture="lstm",
+            seed=11,
+            fold_id="wf_fold_1",
+            test_rmse=0.40,
+            train_rmse=0.10,
+        ),
+    ]
+    _write_report(tmp_path / "wf_sweep_results.json", trials)
+    rows, _, _ = aggregate(tmp_path, seed=11)
+    # Per-fold row + all-folds row.
+    fold_row = next(r for r in rows if r.fold_id == "wf_fold_1")
+    assert fold_row.test_train_gap == pytest.approx((0.40 - 0.10) / 0.10)
+    assert fold_row.gap_flag == "high"

@@ -40,23 +40,28 @@ class ArchitectureRow:
     combined_rmse_ci: BootstrapCI
     close_rmse_ci: BootstrapCI
     volatility_rmse_ci: BootstrapCI
-    # Mitigation 4: per-row train + val RMSE and the gap derivative.
-    # ``train_rmse_values`` and ``val_rmse_values`` collect every trial
-    # under the architecture (one per seed x HP combo); the aggregator
-    # bootstraps the mean and emits a ``gap_flag`` when the mean gap
-    # crosses 0.5. The headline "val" label maps to the holdout-side
-    # RMSE the loop reports as ``combined_rmse``; "train" is the
-    # final-state training-set RMSE captured by
-    # ``TrainingRunSummary.train_metrics``. Defaults stay zero-valued
-    # so older callers / unit fixtures that predate the train-metrics
-    # column build a row without naming them.
+    # Per-row train / val / test RMSE + the test/train gap derivative.
+    # ``train_rmse_values`` is the final-state training-set RMSE;
+    # ``val_rmse_values`` is the best early-stopping checkpoint's val
+    # RMSE; ``test_rmse_values`` is the held-out test RMSE (the
+    # headline number the markdown emits as ``test-RMSE``). On the
+    # legacy 80/20 path no real held-out exists, so test_rmse_values
+    # collapses to val_rmse_values and the gap stays comparable to
+    # the pre-PR holdout_train_gap. Defaults stay zero-valued so
+    # callers that predate the new columns build a row without
+    # naming them.
     train_rmse_values: list[float] = field(default_factory=list)
     val_rmse_values: list[float] = field(default_factory=list)
+    test_rmse_values: list[float] = field(default_factory=list)
     train_rmse_ci: BootstrapCI | None = None
     val_rmse_ci: BootstrapCI | None = None
+    test_rmse_ci: BootstrapCI | None = None
     holdout_train_gap: float = 0.0
+    test_train_gap: float = 0.0
     gap_flag: str = "ok"
     target_mode: str = "real"
+    fold_id: str | None = None
+    protocol: str = "single-fold"
 
 
 def _load_report(path: Path) -> dict[str, Any]:
@@ -131,6 +136,55 @@ def _trial_train_metric(trial: dict[str, Any], key: str) -> float | None:
         return None
 
 
+def _trial_val_metric(trial: dict[str, Any], key: str) -> float | None:
+    summary = trial.get("summary") or {}
+    val_metrics = summary.get("val_metrics") or {}
+    value = val_metrics.get(key)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _trial_test_metric(trial: dict[str, Any], key: str) -> float | None:
+    """Return the held-out test RMSE.
+
+    Falls back to the trial's headline ``metrics`` block on the legacy
+    80/20 path where ``test_metrics`` is absent, so the aggregator's
+    test-RMSE column has a value in both protocols.
+    """
+
+    summary = trial.get("summary") or {}
+    test_metrics = summary.get("test_metrics") or summary.get("metrics") or {}
+    value = test_metrics.get(key)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _trial_fold_id(trial: dict[str, Any]) -> str | None:
+    if trial.get("fold_id"):
+        return str(trial["fold_id"])
+    summary = trial.get("summary") or {}
+    fold_id = summary.get("fold_id")
+    if fold_id:
+        return str(fold_id)
+    return None
+
+
+def _trial_protocol(trial: dict[str, Any]) -> str:
+    summary = trial.get("summary") or {}
+    protocol = summary.get("protocol")
+    if isinstance(protocol, str) and protocol:
+        return protocol
+    return "single-fold"
+
+
 def _trial_target_mode(trial: dict[str, Any]) -> str:
     summary = trial.get("summary") or {}
     mode = summary.get("target_mode")
@@ -139,37 +193,47 @@ def _trial_target_mode(trial: dict[str, Any]) -> str:
     return "real"
 
 
-def _bucket_key(architecture: str, target_mode: str) -> str:
+def _bucket_key(
+    architecture: str, target_mode: str, fold_id: str | None
+) -> str:
     """Compose the dict key the aggregator groups by.
 
     Shuffled-target trials sit in a separate bucket so the
     memorisation-control row does not contaminate the headline table.
-    The key is ``"<architecture>"`` for ``target_mode == "real"`` and
-    ``"<architecture>::shuffled"`` otherwise.
+    Walk-forward fold rows carry an explicit ``fold_id`` suffix so the
+    aggregator emits one row per (architecture, fold) pair plus an
+    all-folds aggregate row per architecture.
     """
 
-    if target_mode == "real":
-        return architecture
-    return f"{architecture}::{target_mode}"
+    base = architecture if target_mode == "real" else f"{architecture}::{target_mode}"
+    if fold_id:
+        return f"{base}::{fold_id}"
+    return base
 
 
-def _collect_per_architecture(reports: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _collect_per_architecture(reports: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:  # noqa: C901
     by_arch: dict[str, dict[str, Any]] = {}
     for report in reports:
         for trial in report.get("trials") or []:
             architecture = _trial_architecture(trial)
             target_mode = _trial_target_mode(trial)
-            key = _bucket_key(architecture, target_mode)
+            fold_id = _trial_fold_id(trial)
+            protocol = _trial_protocol(trial)
+            key = _bucket_key(architecture, target_mode, fold_id)
             bucket = by_arch.setdefault(
                 key,
                 {
                     "architecture": architecture,
                     "target_mode": target_mode,
+                    "fold_id": fold_id,
+                    "protocol": protocol,
                     "seeds": [],
                     "combined_rmse": [],
                     "close_rmse": [],
                     "volatility_rmse": [],
                     "train_combined_rmse": [],
+                    "val_combined_rmse": [],
+                    "test_combined_rmse": [],
                     "credibility_features": _trial_credibility(trial),
                 },
             )
@@ -189,13 +253,60 @@ def _collect_per_architecture(reports: list[dict[str, Any]]) -> dict[str, dict[s
             train_combined = _trial_train_metric(trial, "combined_rmse")
             if train_combined is not None:
                 bucket["train_combined_rmse"].append(train_combined)
+            val_combined = _trial_val_metric(trial, "combined_rmse")
+            if val_combined is not None:
+                bucket["val_combined_rmse"].append(val_combined)
+            test_combined = _trial_test_metric(trial, "combined_rmse")
+            if test_combined is not None:
+                bucket["test_combined_rmse"].append(test_combined)
             # Once any credibility-on trial lands for an architecture the
             # bucket flips on so the headline label stays honest.
             bucket["credibility_features"] = bucket["credibility_features"] or _trial_credibility(trial)
+    # Emit an all-folds aggregate row per (architecture, target_mode)
+    # when any per-fold bucket is present. The all-folds row collects
+    # every per-fold trial so the bootstrap CI is computed across
+    # (seed, fold) cells.
+    aggregate_keys: dict[str, dict[str, Any]] = {}
+    for _key, bucket in list(by_arch.items()):
+        fold_id = bucket.get("fold_id")
+        if not fold_id:
+            continue
+        agg_key = _bucket_key(bucket["architecture"], bucket["target_mode"], None) + "::all-folds"
+        agg_bucket = aggregate_keys.setdefault(
+            agg_key,
+            {
+                "architecture": bucket["architecture"],
+                "target_mode": bucket["target_mode"],
+                "fold_id": "all-folds",
+                "protocol": bucket["protocol"],
+                "seeds": [],
+                "combined_rmse": [],
+                "close_rmse": [],
+                "volatility_rmse": [],
+                "train_combined_rmse": [],
+                "val_combined_rmse": [],
+                "test_combined_rmse": [],
+                "credibility_features": bucket["credibility_features"],
+            },
+        )
+        for field_name in (
+            "seeds",
+            "combined_rmse",
+            "close_rmse",
+            "volatility_rmse",
+            "train_combined_rmse",
+            "val_combined_rmse",
+            "test_combined_rmse",
+        ):
+            agg_bucket[field_name].extend(bucket[field_name])
+        agg_bucket["credibility_features"] = (
+            agg_bucket["credibility_features"] or bucket["credibility_features"]
+        )
+    by_arch.update(aggregate_keys)
     return by_arch
 
 
-def _build_rows(
+def _build_rows(  # noqa: C901
     by_arch: dict[str, dict[str, Any]],
     *,
     block_size: int,
@@ -209,25 +320,41 @@ def _build_rows(
             continue
         architecture = str(payload.get("architecture", _bucket_key_str))
         target_mode = str(payload.get("target_mode", "real"))
+        fold_id = payload.get("fold_id")
+        protocol = str(payload.get("protocol", "single-fold"))
         train_values = list(payload.get("train_combined_rmse") or [])
-        val_values = list(payload["combined_rmse"])
+        val_values_field = list(payload.get("val_combined_rmse") or [])
+        test_values_field = list(payload.get("test_combined_rmse") or [])
+        headline_values = list(payload["combined_rmse"])
+        # Walk-forward path emits explicit test_metrics; fall back to
+        # the trial's headline ``combined_rmse`` when test_metrics is
+        # absent (legacy 80/20 reports). The aggregator's ``test-RMSE``
+        # column always reflects the held-out RMSE on the walk-forward
+        # path and the val RMSE on the legacy path.
+        if not test_values_field:
+            test_values_field = list(headline_values)
+        if not val_values_field:
+            val_values_field = list(headline_values)
         train_mean = (sum(train_values) / len(train_values)) if train_values else 0.0
-        val_mean = sum(val_values) / len(val_values) if val_values else 0.0
+        val_mean = sum(val_values_field) / len(val_values_field) if val_values_field else 0.0
+        test_mean = sum(test_values_field) / len(test_values_field) if test_values_field else 0.0
         if train_mean > 0.0:
-            gap = (val_mean - train_mean) / train_mean
+            holdout_gap = (val_mean - train_mean) / train_mean
+            test_gap = (test_mean - train_mean) / train_mean
         else:
-            gap = 0.0
-        gap_flag = "high" if gap > 0.5 else "ok"
+            holdout_gap = 0.0
+            test_gap = 0.0
+        gap_flag = "high" if test_gap > 0.5 else "ok"
         rows.append(
             ArchitectureRow(
                 architecture=architecture,
                 seeds=sorted(set(payload["seeds"])),
                 credibility_features=bool(payload["credibility_features"]),
-                combined_rmse_values=val_values,
+                combined_rmse_values=headline_values,
                 close_rmse_values=list(payload["close_rmse"]),
                 volatility_rmse_values=list(payload["volatility_rmse"]),
                 combined_rmse_ci=block_bootstrap_ci(
-                    val_values,
+                    headline_values,
                     statistic="mean",
                     block_size=block_size,
                     n_resamples=n_resamples,
@@ -251,7 +378,8 @@ def _build_rows(
                     seed=seed,
                 ),
                 train_rmse_values=train_values,
-                val_rmse_values=val_values,
+                val_rmse_values=val_values_field,
+                test_rmse_values=test_values_field,
                 train_rmse_ci=block_bootstrap_ci(
                     train_values or [0.0],
                     statistic="mean",
@@ -261,24 +389,86 @@ def _build_rows(
                     seed=seed,
                 ),
                 val_rmse_ci=block_bootstrap_ci(
-                    val_values,
+                    val_values_field,
                     statistic="mean",
                     block_size=block_size,
                     n_resamples=n_resamples,
                     coverage=coverage,
                     seed=seed,
                 ),
-                holdout_train_gap=float(gap),
+                test_rmse_ci=block_bootstrap_ci(
+                    test_values_field,
+                    statistic="mean",
+                    block_size=block_size,
+                    n_resamples=n_resamples,
+                    coverage=coverage,
+                    seed=seed,
+                ),
+                holdout_train_gap=float(holdout_gap),
+                test_train_gap=float(test_gap),
                 gap_flag=gap_flag,
                 target_mode=target_mode,
+                fold_id=fold_id if isinstance(fold_id, str) else None,
+                protocol=protocol,
             )
         )
-    # Lower combined-RMSE is better, so ascending sort gives rank order.
-    # Real-target rows sort first so the headline table is the
-    # production-relevant ranking; shuffled rows trail underneath in
-    # the same ascending order.
-    rows.sort(key=lambda r: (0 if r.target_mode == "real" else 1, r.combined_rmse_ci.point))
+
+    # Deterministic ordering. Real-target rows sort first so the
+    # headline table is the production-relevant ranking; shuffled rows
+    # trail underneath. Architectures rank by their representative
+    # test-RMSE (the all-folds-aggregate row when folds are present,
+    # otherwise the single row's test-RMSE). Within an architecture
+    # group folds sort as: single-fold None first (legacy path), then
+    # ``wf_fold_N`` in lexicographic order, with the all-folds
+    # aggregate row last so the eye flows fold-by-fold then summary.
+    def _fold_sort_key(fold_id: str | None) -> tuple[int, str]:
+        if fold_id is None:
+            return (0, "")
+        if fold_id == "all-folds":
+            return (2, "")
+        return (1, fold_id)
+
+    # Precompute the per-architecture representative test-RMSE so the
+    # sort key never reads off the rows list during the sort itself.
+    # ``rows`` is the same list that ``list.sort`` reorders in place;
+    # reading it during key extraction observes a partially-mutated
+    # view on some Python builds.
+    def _row_test_point(r: ArchitectureRow) -> float:
+        return r.test_rmse_ci.point if r.test_rmse_ci is not None else r.combined_rmse_ci.point
+
+    arch_rep: dict[tuple[str, str], float] = {}
+    arch_has_all_folds: dict[tuple[str, str], bool] = {}
+    for r in rows:
+        key = (r.architecture, r.target_mode)
+        point = _row_test_point(r)
+        if r.fold_id == "all-folds":
+            arch_rep[key] = point
+            arch_has_all_folds[key] = True
+        elif not arch_has_all_folds.get(key, False):
+            # Track the minimum per-fold / single-row value until an
+            # all-folds row claims the slot.
+            if key in arch_rep:
+                arch_rep[key] = min(arch_rep[key], point)
+            else:
+                arch_rep[key] = point
+
+    rows.sort(
+        key=lambda r: (
+            0 if r.target_mode == "real" else 1,
+            arch_rep.get((r.architecture, r.target_mode), float("inf")),
+            r.architecture,
+            _fold_sort_key(r.fold_id),
+        )
+    )
     return rows
+
+
+_HEADER = (
+    "| Rank | Architecture | Protocol | Fold | Credibility | n | mode | "
+    "train-RMSE | val-RMSE | test-RMSE (mean, {coverage_pct}% CI) | "
+    "test/train gap | close-RMSE | volatility-RMSE |"
+)
+_SEPARATOR = "|---:|---|:-:|:-:|:-:|---:|:-:|---|---|---|---:|---|---|"
 
 
 def render_markdown(rows: list[ArchitectureRow], *, coverage: float) -> str:
@@ -291,10 +481,8 @@ def render_markdown(rows: list[ArchitectureRow], *, coverage: float) -> str:
 
     lines: list[str] = []
     if real_rows:
-        lines.append(
-            f"| Rank | Architecture | Credibility | n | mode | train-RMSE | holdout-RMSE | holdout/train gap | combined-RMSE (mean, {coverage_pct}% CI) | close-RMSE | volatility-RMSE |"
-        )
-        lines.append("|---:|---|:-:|---:|:-:|---|---|---:|---|---|---|")
+        lines.append(_HEADER.format(coverage_pct=coverage_pct))
+        lines.append(_SEPARATOR)
         for rank, row in enumerate(real_rows, start=1):
             lines.append(_render_row_line(row, rank, coverage_pct))
 
@@ -302,10 +490,8 @@ def render_markdown(rows: list[ArchitectureRow], *, coverage: float) -> str:
         lines.append("")
         lines.append("### Shuffled-targets control")
         lines.append("")
-        lines.append(
-            f"| Rank | Architecture | Credibility | n | mode | train-RMSE | holdout-RMSE | holdout/train gap | combined-RMSE (mean, {coverage_pct}% CI) | close-RMSE | volatility-RMSE |"
-        )
-        lines.append("|---:|---|:-:|---:|:-:|---|---|---:|---|---|---|")
+        lines.append(_HEADER.format(coverage_pct=coverage_pct))
+        lines.append(_SEPARATOR)
         for rank, row in enumerate(shuffled_rows, start=1):
             lines.append(_render_row_line(row, rank, coverage_pct))
 
@@ -314,22 +500,23 @@ def render_markdown(rows: list[ArchitectureRow], *, coverage: float) -> str:
 
 def _render_row_line(row: ArchitectureRow, rank: int, coverage_pct: int) -> str:
     n = len(row.combined_rmse_values)
-    cr = row.combined_rmse_ci
     c = row.close_rmse_ci
     v = row.volatility_rmse_ci
     train_ci = row.train_rmse_ci
     val_ci = row.val_rmse_ci
-    gap_text = f"{row.holdout_train_gap:+.3f}"
+    test_ci = row.test_rmse_ci if row.test_rmse_ci is not None else row.combined_rmse_ci
+    gap_text = f"{row.test_train_gap:+.3f}"
     if row.gap_flag == "high":
         gap_text = f"{gap_text}!"
+    fold_label = row.fold_id if row.fold_id else "-"
     return (
-        f"| {rank} | `{row.architecture}` | "
+        f"| {rank} | `{row.architecture}` | {row.protocol} | {fold_label} | "
         f"{'on' if row.credibility_features else 'off'} | {n} | "
         f"{row.target_mode} | "
         f"{train_ci.point:.4f} [{train_ci.lo:.4f}, {train_ci.hi:.4f}] | "
         f"{val_ci.point:.4f} [{val_ci.lo:.4f}, {val_ci.hi:.4f}] | "
+        f"{test_ci.point:.4f} [{test_ci.lo:.4f}, {test_ci.hi:.4f}] | "
         f"{gap_text} | "
-        f"{cr.point:.4f} [{cr.lo:.4f}, {cr.hi:.4f}] | "
         f"{c.point:.4f} [{c.lo:.4f}, {c.hi:.4f}] | "
         f"{v.point:.4f} [{v.lo:.4f}, {v.hi:.4f}] |"
     )
@@ -339,6 +526,8 @@ def _row_to_json(row: ArchitectureRow) -> dict[str, Any]:
     return {
         "architecture": row.architecture,
         "target_mode": row.target_mode,
+        "fold_id": row.fold_id,
+        "protocol": row.protocol,
         "seeds": row.seeds,
         "credibility_features": row.credibility_features,
         "combined_rmse": {
@@ -361,7 +550,12 @@ def _row_to_json(row: ArchitectureRow) -> dict[str, Any]:
             "values": row.val_rmse_values,
             "ci": asdict(row.val_rmse_ci) if row.val_rmse_ci is not None else None,
         },
+        "test_rmse": {
+            "values": row.test_rmse_values,
+            "ci": asdict(row.test_rmse_ci) if row.test_rmse_ci is not None else None,
+        },
         "holdout_train_gap": row.holdout_train_gap,
+        "test_train_gap": row.test_train_gap,
         "gap_flag": row.gap_flag,
     }
 
