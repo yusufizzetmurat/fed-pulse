@@ -1086,8 +1086,16 @@ def load_lda_artifact(model_path: Path) -> LdaArtifact:
 
 
 def write_linguistic_parquet(df: pd.DataFrame, output_path: Path) -> None:
-    """Write the linguistic feature frame deterministically (snappy)."""
+    """Write the linguistic feature frame deterministically (snappy).
 
+    Validates each row against ``LinguisticFeatureRowSchema`` before
+    writing. Set ``FED_PULSE_SKIP_SCHEMA_VALIDATION=1`` to bypass for
+    diagnostic re-runs against intentionally malformed inputs.
+    """
+
+    from app.data.schemas import LinguisticFeatureRowSchema, validate_frame
+
+    validate_frame(LinguisticFeatureRowSchema, df)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(output_path, engine="pyarrow", index=False, compression="snappy")
 

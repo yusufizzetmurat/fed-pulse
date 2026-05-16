@@ -24,6 +24,7 @@ dependencies = [
   "beautifulsoup4",
   "yfinance",
   "pandas",
+  "pandera>=0.20",
   "pyarrow",
   "datasets",
   "kagglehub",

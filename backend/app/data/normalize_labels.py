@@ -184,7 +184,28 @@ def _coerce_optional_str(value: Any) -> str | None:
     return text or None
 
 
+def _validate_normalized_rows(rows: list[dict[str, Any]]) -> None:
+    """Run ``NormalizedDocSchema`` on the labeled-registry frame.
+
+    Lazy mode collects every column / row violation in one
+    ``SchemaErrors``. ``FED_PULSE_SKIP_SCHEMA_VALIDATION=1`` bypasses
+    validation for diagnostic re-runs.
+    """
+
+    if not rows:
+        return
+    try:
+        import pandas as pd  # type: ignore
+    except Exception:
+        return
+    from app.data.schemas import NormalizedDocSchema, validate_frame
+
+    frame = pd.DataFrame(rows)
+    validate_frame(NormalizedDocSchema, frame)
+
+
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    _validate_normalized_rows(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:

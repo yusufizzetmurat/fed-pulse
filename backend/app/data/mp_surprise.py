@@ -1085,8 +1085,14 @@ def write_mp_surprises_parquet(frame: pd.DataFrame, output_path: Path) -> str:
     The encoding settings below (``zstd`` level 3, statistics off,
     dictionary off) are tuned to minimise spurious metadata drift but
     are not load-bearing for the data-equality claim.
+
+    Validates against ``MpSurpriseRowSchema`` before writing; set
+    ``FED_PULSE_SKIP_SCHEMA_VALIDATION=1`` to bypass for diagnostic re-runs.
     """
 
+    from app.data.schemas import MpSurpriseRowSchema, validate_frame
+
+    validate_frame(MpSurpriseRowSchema, frame)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(
         output_path,

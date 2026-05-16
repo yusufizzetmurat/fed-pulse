@@ -27,7 +27,7 @@ def _write_quality_passed_fixture(target: Path) -> None:
                 "event_date": f"2024-{(idx % 12) + 1:02d}-15",
                 "title": f"FOMC doc {idx}",
                 "text": f"Document body {idx} hawkish dovish",
-                "text_hash": f"h{idx:03d}",
+                "text_hash": f"{idx:064x}",
                 "label": "hawkish" if idx % 3 == 0 else "dovish",
                 "label_origin": "human",
                 "license_scope": "public_source_scrape_terms_required",
@@ -36,6 +36,13 @@ def _write_quality_passed_fixture(target: Path) -> None:
                 "mapped_label": "hawkish" if idx % 3 == 0 else "dovish",
                 "label_map_version": "label_map_v1.0",
                 "label_taxonomy": "hawkish_dovish_neutral",
+                "sample_weight": 1.0,
+                "axes": {
+                    "stance": "hawkish" if idx % 3 == 0 else "dovish",
+                    "factor": None,
+                    "certainty": None,
+                    "topic": None,
+                },
             }
         )
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -162,7 +169,7 @@ def test_build_training_package_emits_source_drift_metadata_and_per_fold_distrib
                 "event_date": f"2024-{month:02d}-{(idx % 28) + 1:02d}",
                 "title": f"doc {idx}",
                 "text": f"body {idx}",
-                "text_hash": f"h{idx:03d}",
+                "text_hash": f"{idx:064x}",
                 "label": "hawkish" if idx % 3 == 0 else "dovish",
                 "label_origin": "human",
                 "license_scope": "public_source_scrape_terms_required",
@@ -171,6 +178,13 @@ def test_build_training_package_emits_source_drift_metadata_and_per_fold_distrib
                 "mapped_label": "hawkish" if idx % 3 == 0 else "dovish",
                 "label_map_version": "label_map_v1.0",
                 "label_taxonomy": "hawkish_dovish_neutral",
+                "sample_weight": 1.0,
+                "axes": {
+                    "stance": "hawkish" if idx % 3 == 0 else "dovish",
+                    "factor": None,
+                    "certainty": None,
+                    "topic": None,
+                },
             }
         )
     input_path.parent.mkdir(parents=True, exist_ok=True)
@@ -240,7 +254,7 @@ def test_build_training_package_aborts_when_drift_tolerance_exceeded(tmp_path: P
                 "event_date": f"2024-{month:02d}-{(idx % 28) + 1:02d}",
                 "title": f"doc {idx}",
                 "text": f"body {idx}",
-                "text_hash": f"h{idx:03d}",
+                "text_hash": f"{idx:064x}",
                 "label": "hawkish" if idx % 3 == 0 else "dovish",
                 "label_origin": "human",
                 "license_scope": "public_source_scrape_terms_required",
@@ -249,6 +263,13 @@ def test_build_training_package_aborts_when_drift_tolerance_exceeded(tmp_path: P
                 "mapped_label": "hawkish" if idx % 3 == 0 else "dovish",
                 "label_map_version": "label_map_v1.0",
                 "label_taxonomy": "hawkish_dovish_neutral",
+                "sample_weight": 1.0,
+                "axes": {
+                    "stance": "hawkish" if idx % 3 == 0 else "dovish",
+                    "factor": None,
+                    "certainty": None,
+                    "topic": None,
+                },
             }
         )
     input_path.parent.mkdir(parents=True, exist_ok=True)

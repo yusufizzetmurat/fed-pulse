@@ -753,7 +753,29 @@ def _iter_scraped_records(data_dir: Path) -> list[dict[str, Any]]:
     return records
 
 
+def _validate_ingested_rows(rows: list[dict[str, Any]]) -> None:
+    """Run ``IngestedDocSchema`` on the unified registry frame.
+
+    Pandera reports every column / row violation in a single
+    ``SchemaErrors`` so the ingestion stage halts before any downstream
+    consumer reads malformed JSONL. The ``FED_PULSE_SKIP_SCHEMA_VALIDATION``
+    env var bypasses validation for diagnostic re-runs.
+    """
+
+    if not rows:
+        return
+    try:
+        import pandas as pd  # type: ignore
+    except Exception:
+        return
+    from app.data.schemas import IngestedDocSchema, validate_frame
+
+    frame = pd.DataFrame(rows)
+    validate_frame(IngestedDocSchema, frame)
+
+
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    _validate_ingested_rows(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
