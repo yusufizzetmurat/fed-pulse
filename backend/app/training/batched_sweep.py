@@ -618,13 +618,17 @@ def run_bucket_streams(
         streams.append(torch.cuda.Stream(device=device))
 
     results: list[dict[str, Any] | None] = [None] * len(bucket_cells)
-    errors: list[BaseException | None] = [None] * len(bucket_cells)
+    errors: list[Exception | None] = [None] * len(bucket_cells)
 
     def _worker(slot: int, trial_index: int, candidate: dict[str, Any]) -> None:
         try:
             stream = streams[slot]
             results[slot] = train_one_cell(trial_index, candidate, stream)
-        except BaseException as exc:  # noqa: BLE001 -- re-raised after join
+        except Exception as exc:
+            # Narrowed from BaseException so KeyboardInterrupt / SystemExit
+            # propagate up to the main thread instead of being swallowed
+            # in the per-cell slot. Captured exceptions are re-raised
+            # below after every worker has joined.
             errors[slot] = exc
 
     threads = [
