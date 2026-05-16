@@ -314,7 +314,13 @@ def test_fast_mode_does_not_touch_redis(client, monkeypatch):
     with main_mod._train_jobs_lock:
         assert main_mod._train_jobs == {}
 
-    async def _queue_len():
-        return await pool.zcard("arq:queue")
+    # Construct a fresh pool inside asyncio.run() so the connection
+    # binds to that loop; factory-installed pools die with their
+    # request loop.
+    factory = main_mod.app.state.redis_pool
+
+    async def _queue_len() -> int:
+        check_pool = factory()
+        return await check_pool.zcard("arq:queue")
 
     assert asyncio.run(_queue_len()) == 0
