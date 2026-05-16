@@ -24,6 +24,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchHistoryRun, resolveApiBaseUrl } from "@/lib/analyze/api";
 import { downloadRunCsv } from "@/lib/export/run-export";
+import { downloadRunPdf } from "@/lib/export/pdf";
 import {
   buildCloseSeries,
   buildVolatilitySeries,
@@ -135,6 +136,18 @@ export default function HistoryDetailPage() {
                 >
                   <Download className="h-4 w-4" />
                   Export CSV
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    downloadRunPdf(detail).catch((err) => {
+                      toast.error((err as Error).message || "PDF export failed.");
+                    });
+                  }}
+                >
+                  <Download className="h-4 w-4" />
+                  Export PDF
                 </Button>
                 <Button asChild variant="outline" size="sm">
                   <Link href={`/compare?a=${detail.id}`}>

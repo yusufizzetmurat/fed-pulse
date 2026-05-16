@@ -28,6 +28,7 @@ import {
 } from "@/lib/analyze/compare";
 import { buildCloseSeries, buildVolatilitySeries } from "@/lib/analyze/derive";
 import { downloadCompareCsv } from "@/lib/export/compare-export";
+import { downloadComparePdf } from "@/lib/export/pdf";
 import { bandLabel, formatPrice, stanceLabel, toStance } from "@/lib/analyze/format";
 import type { AnalyzeResult, HistoryDetail, HistoryEntry } from "@/lib/analyze/types";
 
@@ -517,6 +518,13 @@ export default function ComparePage() {
     }
   }, [detailA, detailB]);
 
+  const handleExportPdf = React.useCallback(() => {
+    if (!detailA || !detailB) return;
+    downloadComparePdf(detailA, detailB).catch((err) => {
+      toast.error((err as Error).message || "PDF export failed.");
+    });
+  }, [detailA, detailB]);
+
   return (
     <>
       <Head>
@@ -571,9 +579,12 @@ export default function ComparePage() {
             <>
               <MultiAxisSideBySide detailA={detailA} detailB={detailB} />
               <ForecastsSideBySide detailA={detailA} detailB={detailB} />
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
                 <Button variant="outline" size="sm" onClick={handleExportCsv}>
                   Export CSV
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleExportPdf}>
+                  Export PDF
                 </Button>
               </div>
             </>
