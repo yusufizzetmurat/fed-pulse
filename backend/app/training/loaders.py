@@ -32,7 +32,13 @@ _STANCE_SENTIMENT_ENCODING: dict[str, float] = {
 # sequence construction. The Phase 8 packages currently emit
 # ``{train, val, test}`` only; the sentinel is reserved for future
 # packages that materialise an explicit holdout-from-training partition.
-_EXCLUDED_SPLIT_TAG = "excluded_from_training"
+# Only rows partitioned as the training fold itself feed the loss. The
+# walk-forward contract treats val + test as forward-looking holdouts;
+# either must never appear on the training side. The explicit
+# excluded_from_training sentinel from the data contract is also
+# treated as out-of-training when present.
+_TRAINING_PARTITION = "train"
+_NON_TRAINING_SPLIT_TAGS = frozenset({"val", "test", "excluded_from_training"})
 
 
 def _extract_required_float(record: dict[str, Any], keys: Sequence[str]) -> float:
@@ -396,13 +402,22 @@ def _read_events_frame(package_dir: Path) -> "Any":
 
 
 def _read_excluded_text_hashes(package_dir: Path) -> set[str]:
-    """Return the set of ``text_hash`` values flagged as excluded from training.
+    """Return the ``text_hash`` set that must NOT enter the training loss.
 
     Uses ``splits_train_val_test.parquet`` when present and joinable via
     a ``text_hash`` column. The split-tag column is matched as either
     ``partition`` (forward-looking name from the data contract) or
-    ``split_tag`` (current Phase 8 builder output). Returns an empty
-    set when the file is absent or carries no excluded rows.
+    ``split_tag`` (current Phase 8 builder output).
+
+    The training package builder writes ``split_tag`` ∈ {train, val,
+    test}; everything except ``train`` is a forward-looking holdout
+    under the walk-forward contract and must be excluded. The historical
+    ``excluded_from_training`` sentinel is also accepted for forward
+    compatibility with packages that materialise an explicit
+    holdout-from-training partition.
+
+    Returns an empty set when the file is absent or the schema is
+    unjoinable.
     """
 
     import pandas as pd
@@ -418,7 +433,12 @@ def _read_excluded_text_hashes(package_dir: Path) -> set[str]:
             break
     if tag_column is None or "text_hash" not in frame.columns:
         return set()
-    excluded = frame.loc[frame[tag_column].astype(str) == _EXCLUDED_SPLIT_TAG, "text_hash"]
+    tags = frame[tag_column].astype(str)
+    excluded_mask = tags.isin(_NON_TRAINING_SPLIT_TAGS) | (tags != _TRAINING_PARTITION)
+    # Anything that is not explicitly "train" is excluded. The isin OR
+    # is redundant but keeps the intent legible: val / test / explicit
+    # excluded sentinel all drop.
+    excluded = frame.loc[excluded_mask, "text_hash"]
     return {str(value) for value in excluded.tolist() if value}
 
 

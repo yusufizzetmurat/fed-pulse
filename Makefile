@@ -114,9 +114,17 @@ train-batch:
 # Forecaster architecture sweep: 6 architectures (lstm, lstm_attn, gru, tcn,
 # transformer, dlinear) x official 5-seed set {11, 29, 47, 71, 97}.
 # Writes forecaster_sweep_results.json + .csv next to the checkpoint.
+#
+# Runs against backend-gpu under the gpu compose profile so the sweep hits
+# the RTX 4080. Override FORECASTER_COMPOSE_SERVICE=backend and
+# FORECASTER_COMPOSE_PROFILE=default for a CPU-only smoke run. The
+# aggregate target uses the same overrides so artefact paths line up.
+FORECASTER_COMPOSE_SERVICE ?= backend-gpu
+FORECASTER_COMPOSE_PROFILE ?= gpu
+
 forecaster-sweep:
 	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
-	docker compose run --rm backend \
+	docker compose --profile "$(FORECASTER_COMPOSE_PROFILE)" run --rm "$(FORECASTER_COMPOSE_SERVICE)" \
 		python -m app.train_forecaster \
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--sweep \
@@ -125,6 +133,7 @@ forecaster-sweep:
 		--report-path "/data/artifacts/forecaster_sweep/$(TRAINING_PACKAGE_ID)/forecaster_sweep_results.json"
 
 # Aggregate per-trial JSONs into a per-architecture headline (block-bootstrap CIs).
+# The aggregator is CPU-bound; the default backend service is fine.
 forecaster-sweep-aggregate:
 	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
 	docker compose run --rm backend \
@@ -133,10 +142,11 @@ forecaster-sweep-aggregate:
 
 # Single-architecture training with --credibility-features ON. Used for
 # isolated credibility-vs-baseline comparisons; defaults to ARCHITECTURE=lstm
-# and SEED=11. Override either as needed.
+# and SEED=11. Override either as needed. GPU service by default; the same
+# FORECASTER_COMPOSE_* overrides switch to CPU for a smoke run.
 forecaster-credibility-train:
 	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
-	docker compose run --rm backend \
+	docker compose --profile "$(FORECASTER_COMPOSE_PROFILE)" run --rm "$(FORECASTER_COMPOSE_SERVICE)" \
 		python -m app.train_forecaster \
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--architecture "$(ARCHITECTURE)" \
