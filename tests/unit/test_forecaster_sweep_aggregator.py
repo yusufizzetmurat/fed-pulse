@@ -30,12 +30,13 @@ def _trial(
     close_rmse: float | None = None,
     volatility_rmse: float | None = None,
     credibility_features: bool = False,
+    fold_id: str | None = None,
 ) -> dict:
     if close_rmse is None:
         close_rmse = combined_rmse * 0.8
     if volatility_rmse is None:
         volatility_rmse = combined_rmse * 0.2
-    return {
+    record: dict = {
         "trial_index": 0,
         "architecture": architecture,
         "seed": seed,
@@ -52,6 +53,9 @@ def _trial(
             },
         },
     }
+    if fold_id is not None:
+        record["fold_id"] = fold_id
+    return record
 
 
 def _write_report(path: Path, trials: list[dict]) -> Path:
@@ -182,3 +186,96 @@ def test_row_dataclass_is_frozen() -> None:
     )
     with pytest.raises(Exception):
         row.architecture = "gru"  # type: ignore[misc]
+
+
+def test_aggregator_emits_per_fold_and_all_folds_rows(tmp_path: Path) -> None:
+    """Per-architecture-per-encoder rows are emitted once per fold plus
+    one aggregated row across all folds. The per-fold rows precede
+    the ``all-folds`` aggregate for each architecture in the markdown."""
+
+    trials: list[dict] = []
+    for fold_idx in range(1, 5):
+        # Two seeds per fold per architecture so the bootstrap has a
+        # non-degenerate sample size.
+        for seed_value in (11, 29):
+            trials.append(
+                _trial(
+                    architecture="lstm",
+                    seed=seed_value,
+                    combined_rmse=0.10 + 0.01 * fold_idx,
+                    fold_id=f"wf_fold_{fold_idx}",
+                )
+            )
+            trials.append(
+                _trial(
+                    architecture="gru",
+                    seed=seed_value,
+                    combined_rmse=0.20 + 0.01 * fold_idx,
+                    fold_id=f"wf_fold_{fold_idx}",
+                )
+            )
+    _write_report(tmp_path / "sweep_results.json", trials)
+
+    rows, markdown, _ = aggregate(tmp_path, seed=11)
+
+    # Two architectures x (4 per-fold rows + 1 all-folds row) = 10 rows.
+    assert len(rows) == 10
+
+    # Within each architecture, four per-fold rows precede the
+    # all-folds aggregate. Group rows by (architecture, target_mode)
+    # in emission order.
+    grouped: dict[str, list[ArchitectureRow]] = {}
+    for row in rows:
+        grouped.setdefault(row.architecture, []).append(row)
+    assert set(grouped.keys()) == {"lstm", "gru"}
+    for arch, rows_for_arch in grouped.items():
+        folds_seen = [r.fold for r in rows_for_arch]
+        assert folds_seen == [
+            "wf_fold_1",
+            "wf_fold_2",
+            "wf_fold_3",
+            "wf_fold_4",
+            "all-folds",
+        ], f"architecture={arch} fold order broke: {folds_seen}"
+
+    # The all-folds aggregate spans every cell -- 2 seeds x 4 folds = 8 values.
+    all_folds_rows = [row for row in rows if row.fold == "all-folds"]
+    assert all_folds_rows, "all-folds aggregate row missing"
+    for row in all_folds_rows:
+        assert len(row.combined_rmse_values) == 8
+
+    # Per-fold rows aggregate over the per-fold seed pool (n=2 here).
+    per_fold_rows = [row for row in rows if row.fold != "all-folds"]
+    for row in per_fold_rows:
+        assert len(row.combined_rmse_values) == 2
+
+    # Markdown carries the fold column and renders the per-fold rows
+    # under each architecture before the all-folds line.
+    assert "| fold |" in markdown
+    assert "| wf_fold_1 |" in markdown
+    assert "| all-folds |" in markdown
+
+
+def test_aggregator_single_fold_path_preserves_pre_pr_contract(tmp_path: Path) -> None:
+    """Trials without a fold_id collapse into one ``all-folds`` row per architecture.
+
+    The pre-PR sweep contract emits exactly one row per architecture;
+    pinning the row count + fold label here keeps that contract intact
+    for callers running the legacy single-fold path.
+    """
+
+    trials = [
+        _trial(architecture="lstm", seed=11, combined_rmse=0.10),
+        _trial(architecture="lstm", seed=29, combined_rmse=0.11),
+        _trial(architecture="gru", seed=11, combined_rmse=0.20),
+        _trial(architecture="gru", seed=29, combined_rmse=0.21),
+    ]
+    _write_report(tmp_path / "sweep_results.json", trials)
+
+    rows, _, _ = aggregate(tmp_path, seed=11)
+
+    # One row per architecture, tagged all-folds.
+    assert {row.architecture for row in rows} == {"lstm", "gru"}
+    assert len(rows) == 2
+    for row in rows:
+        assert row.fold == "all-folds"

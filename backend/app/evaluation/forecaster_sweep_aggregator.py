@@ -29,6 +29,12 @@ from typing import Any, Iterable
 from app.evaluation.bootstrap import BootstrapCI, block_bootstrap_ci
 
 
+# Sentinel used in the ``fold`` slot of an ``ArchitectureRow`` when the
+# row aggregates across every fold in the sweep. Real per-fold rows
+# carry their fold id (e.g. ``wf_fold_2``) here.
+ALL_FOLDS_LABEL = "all-folds"
+
+
 @dataclass(frozen=True)
 class ArchitectureRow:
     architecture: str
@@ -57,6 +63,12 @@ class ArchitectureRow:
     holdout_train_gap: float = 0.0
     gap_flag: str = "ok"
     target_mode: str = "real"
+    # ``fold`` carries the fold id for per-fold rows; the aggregated
+    # row across every fold under an (architecture, target_mode) bucket
+    # uses ``ALL_FOLDS_LABEL``. Single-fold sweeps (pre-PR contract)
+    # emit one row per architecture with fold == ALL_FOLDS_LABEL and
+    # no per-fold rows underneath it.
+    fold: str = ALL_FOLDS_LABEL
 
 
 def _load_report(path: Path) -> dict[str, Any]:
@@ -139,18 +151,71 @@ def _trial_target_mode(trial: dict[str, Any]) -> str:
     return "real"
 
 
-def _bucket_key(architecture: str, target_mode: str) -> str:
+def _trial_fold_id(trial: dict[str, Any]) -> str | None:
+    fold = trial.get("fold_id")
+    if fold is None:
+        summary = trial.get("summary") or {}
+        fold = summary.get("fold_id")
+    if fold is None:
+        return None
+    fold_str = str(fold).strip()
+    return fold_str or None
+
+
+def _bucket_key(architecture: str, target_mode: str, fold: str) -> str:
     """Compose the dict key the aggregator groups by.
 
     Shuffled-target trials sit in a separate bucket so the
     memorisation-control row does not contaminate the headline table.
-    The key is ``"<architecture>"`` for ``target_mode == "real"`` and
-    ``"<architecture>::shuffled"`` otherwise.
+    The fold component pins per-fold rows to their own bucket; the
+    ``all-folds`` aggregate row is materialised separately from the
+    per-fold buckets at row-build time.
     """
 
-    if target_mode == "real":
-        return architecture
-    return f"{architecture}::{target_mode}"
+    base = architecture if target_mode == "real" else f"{architecture}::{target_mode}"
+    return f"{base}::{fold}"
+
+
+def _empty_bucket(
+    *,
+    architecture: str,
+    target_mode: str,
+    credibility_features: bool,
+    fold: str,
+) -> dict[str, Any]:
+    return {
+        "architecture": architecture,
+        "target_mode": target_mode,
+        "fold": fold,
+        "seeds": [],
+        "combined_rmse": [],
+        "close_rmse": [],
+        "volatility_rmse": [],
+        "train_combined_rmse": [],
+        "credibility_features": credibility_features,
+    }
+
+
+def _accumulate_trial(bucket: dict[str, Any], trial: dict[str, Any]) -> None:
+    combined = _trial_metric(trial, "combined_rmse")
+    if combined is None:
+        return
+    seed = _trial_seed(trial)
+    if seed is not None:
+        bucket["seeds"].append(seed)
+    bucket["combined_rmse"].append(combined)
+    close = _trial_metric(trial, "close_rmse")
+    if close is not None:
+        bucket["close_rmse"].append(close)
+    vol = _trial_metric(trial, "volatility_rmse")
+    if vol is not None:
+        bucket["volatility_rmse"].append(vol)
+    train_combined = _trial_train_metric(trial, "combined_rmse")
+    if train_combined is not None:
+        bucket["train_combined_rmse"].append(train_combined)
+    # Once any credibility-on trial lands for an architecture the
+    # bucket flips on so the headline label stays honest.
+    bucket["credibility_features"] = bucket["credibility_features"] or _trial_credibility(trial)
 
 
 def _collect_per_architecture(reports: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -159,39 +224,37 @@ def _collect_per_architecture(reports: list[dict[str, Any]]) -> dict[str, dict[s
         for trial in report.get("trials") or []:
             architecture = _trial_architecture(trial)
             target_mode = _trial_target_mode(trial)
-            key = _bucket_key(architecture, target_mode)
-            bucket = by_arch.setdefault(
-                key,
-                {
-                    "architecture": architecture,
-                    "target_mode": target_mode,
-                    "seeds": [],
-                    "combined_rmse": [],
-                    "close_rmse": [],
-                    "volatility_rmse": [],
-                    "train_combined_rmse": [],
-                    "credibility_features": _trial_credibility(trial),
-                },
+            fold = _trial_fold_id(trial) or ALL_FOLDS_LABEL
+            # Per-fold bucket: only materialised when the trial carries
+            # a real fold_id. The all-folds aggregate row is built off
+            # the same trials in a second pass below.
+            if fold != ALL_FOLDS_LABEL:
+                per_fold_key = _bucket_key(architecture, target_mode, fold)
+                bucket = by_arch.setdefault(
+                    per_fold_key,
+                    _empty_bucket(
+                        architecture=architecture,
+                        target_mode=target_mode,
+                        credibility_features=_trial_credibility(trial),
+                        fold=fold,
+                    ),
+                )
+                _accumulate_trial(bucket, trial)
+            # All-folds aggregate. Single-fold sweeps land their entire
+            # trial set here so the headline number is the aggregate
+            # across every cell under the (architecture, target_mode)
+            # pair.
+            all_folds_key = _bucket_key(architecture, target_mode, ALL_FOLDS_LABEL)
+            all_bucket = by_arch.setdefault(
+                all_folds_key,
+                _empty_bucket(
+                    architecture=architecture,
+                    target_mode=target_mode,
+                    credibility_features=_trial_credibility(trial),
+                    fold=ALL_FOLDS_LABEL,
+                ),
             )
-            combined = _trial_metric(trial, "combined_rmse")
-            if combined is None:
-                continue
-            seed = _trial_seed(trial)
-            if seed is not None:
-                bucket["seeds"].append(seed)
-            bucket["combined_rmse"].append(combined)
-            close = _trial_metric(trial, "close_rmse")
-            if close is not None:
-                bucket["close_rmse"].append(close)
-            vol = _trial_metric(trial, "volatility_rmse")
-            if vol is not None:
-                bucket["volatility_rmse"].append(vol)
-            train_combined = _trial_train_metric(trial, "combined_rmse")
-            if train_combined is not None:
-                bucket["train_combined_rmse"].append(train_combined)
-            # Once any credibility-on trial lands for an architecture the
-            # bucket flips on so the headline label stays honest.
-            bucket["credibility_features"] = bucket["credibility_features"] or _trial_credibility(trial)
+            _accumulate_trial(all_bucket, trial)
     return by_arch
 
 
@@ -209,6 +272,7 @@ def _build_rows(
             continue
         architecture = str(payload.get("architecture", _bucket_key_str))
         target_mode = str(payload.get("target_mode", "real"))
+        fold = str(payload.get("fold", ALL_FOLDS_LABEL))
         train_values = list(payload.get("train_combined_rmse") or [])
         val_values = list(payload["combined_rmse"])
         train_mean = (sum(train_values) / len(train_values)) if train_values else 0.0
@@ -271,13 +335,33 @@ def _build_rows(
                 holdout_train_gap=float(gap),
                 gap_flag=gap_flag,
                 target_mode=target_mode,
+                fold=fold,
             )
         )
-    # Lower combined-RMSE is better, so ascending sort gives rank order.
-    # Real-target rows sort first so the headline table is the
-    # production-relevant ranking; shuffled rows trail underneath in
-    # the same ascending order.
-    rows.sort(key=lambda r: (0 if r.target_mode == "real" else 1, r.combined_rmse_ci.point))
+    # Ordering: real-target rows first (the shuffled-control trails
+    # underneath); within an (architecture, target_mode) pair, per-fold
+    # rows ascend by ``fold`` and the ``all-folds`` row trails so the
+    # per-regime detail sits above the headline aggregate. Across
+    # architectures the per-fold-and-all-folds groups sort by the
+    # ``all-folds`` combined-RMSE so the headline ranking is the
+    # production-relevant ordering.
+    fold_priority = {ALL_FOLDS_LABEL: 1}
+    all_folds_rank: dict[tuple[str, str], float] = {}
+    for row in rows:
+        if row.fold == ALL_FOLDS_LABEL:
+            all_folds_rank[(row.architecture, row.target_mode)] = row.combined_rmse_ci.point
+
+    def _sort_key(row: ArchitectureRow) -> tuple[int, float, str, int, str]:
+        anchor = all_folds_rank.get((row.architecture, row.target_mode), row.combined_rmse_ci.point)
+        return (
+            0 if row.target_mode == "real" else 1,
+            anchor,
+            row.architecture,
+            fold_priority.get(row.fold, 0),
+            row.fold,
+        )
+
+    rows.sort(key=_sort_key)
     return rows
 
 
@@ -292,9 +376,9 @@ def render_markdown(rows: list[ArchitectureRow], *, coverage: float) -> str:
     lines: list[str] = []
     if real_rows:
         lines.append(
-            f"| Rank | Architecture | Credibility | n | mode | train-RMSE | holdout-RMSE | holdout/train gap | combined-RMSE (mean, {coverage_pct}% CI) | close-RMSE | volatility-RMSE |"
+            f"| Rank | Architecture | fold | Credibility | n | mode | train-RMSE | holdout-RMSE | holdout/train gap | combined-RMSE (mean, {coverage_pct}% CI) | close-RMSE | volatility-RMSE |"
         )
-        lines.append("|---:|---|:-:|---:|:-:|---|---|---:|---|---|---|")
+        lines.append("|---:|---|:-:|:-:|---:|:-:|---|---|---:|---|---|---|")
         for rank, row in enumerate(real_rows, start=1):
             lines.append(_render_row_line(row, rank, coverage_pct))
 
@@ -303,9 +387,9 @@ def render_markdown(rows: list[ArchitectureRow], *, coverage: float) -> str:
         lines.append("### Shuffled-targets control")
         lines.append("")
         lines.append(
-            f"| Rank | Architecture | Credibility | n | mode | train-RMSE | holdout-RMSE | holdout/train gap | combined-RMSE (mean, {coverage_pct}% CI) | close-RMSE | volatility-RMSE |"
+            f"| Rank | Architecture | fold | Credibility | n | mode | train-RMSE | holdout-RMSE | holdout/train gap | combined-RMSE (mean, {coverage_pct}% CI) | close-RMSE | volatility-RMSE |"
         )
-        lines.append("|---:|---|:-:|---:|:-:|---|---|---:|---|---|---|")
+        lines.append("|---:|---|:-:|:-:|---:|:-:|---|---|---:|---|---|---|")
         for rank, row in enumerate(shuffled_rows, start=1):
             lines.append(_render_row_line(row, rank, coverage_pct))
 
@@ -324,6 +408,7 @@ def _render_row_line(row: ArchitectureRow, rank: int, coverage_pct: int) -> str:
         gap_text = f"{gap_text}!"
     return (
         f"| {rank} | `{row.architecture}` | "
+        f"{row.fold} | "
         f"{'on' if row.credibility_features else 'off'} | {n} | "
         f"{row.target_mode} | "
         f"{train_ci.point:.4f} [{train_ci.lo:.4f}, {train_ci.hi:.4f}] | "
@@ -339,6 +424,7 @@ def _row_to_json(row: ArchitectureRow) -> dict[str, Any]:
     return {
         "architecture": row.architecture,
         "target_mode": row.target_mode,
+        "fold": row.fold,
         "seeds": row.seeds,
         "credibility_features": row.credibility_features,
         "combined_rmse": {
