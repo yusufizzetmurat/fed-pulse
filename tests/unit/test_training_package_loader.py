@@ -828,3 +828,400 @@ def test_rebuilt_assets_drive_nonzero_mp_surprise_and_pivot_distance(
     assert nonzero_mp_seen, (
         "mp_surprises.parquet did not feed the MP-surprise slice"
     )
+
+
+# ---------------------------------------------------------------------------
+# Text-embedding tests (PR #176)
+#
+# The four tests below exercise the prior-4 statement pool, the missing-
+# flag semantics on the first event in the corpus, the encoder-driven
+# in_dim, and the byte-identical no-text path. They use a synthetic
+# embedding parquet under ``tmp_path`` so no real encoder fires; the
+# test patches ``revision_for`` and ``resolve_cache_paths`` so the
+# loader resolves to the synthetic file.
+# ---------------------------------------------------------------------------
+
+
+def _write_synthetic_embedding_parquet(
+    cache_dir: Path,
+    encoder_alias: str,
+    *,
+    rows: list[dict[str, "Any"]],
+    revision: str = "abc1234",
+) -> Path:
+    """Materialise a synthetic embedding-cache parquet on disk."""
+
+    import pandas as pd
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    parquet_path = cache_dir / f"{encoder_alias}_{revision[:12]}.parquet"
+    pd.DataFrame(rows).to_parquet(parquet_path, index=False)
+    return parquet_path
+
+
+def _patch_encoder_registry(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    encoder_alias: str,
+    revision: str = "abc1234",
+    cache_dir: Path | None = None,
+) -> None:
+    """Patch the registry + cache paths to point at a tmp_path artefact."""
+
+    from app.data import embedding_cache as embedding_cache_module
+    from app.training import loaders as loaders_module
+
+    def _revision_for(_alias: str) -> str:
+        return revision
+
+    monkeypatch.setattr(loaders_module, "_logger", loaders_module._logger)
+
+    # The loader does ``from app.models.registry import revision_for``
+    # inside ``_read_chunk_embedding_lookup`` -- patch the registry
+    # module itself so the import resolves to our stub.
+    import app.models.registry as registry_module
+
+    monkeypatch.setattr(registry_module, "revision_for", _revision_for)
+    monkeypatch.setattr(
+        embedding_cache_module, "DEFAULT_CACHE_DIR", cache_dir or embedding_cache_module.DEFAULT_CACHE_DIR
+    )
+
+
+def test_text_embedding_pool_weighting_decays_with_age(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The most recent prior statement gets the largest weight.
+
+    Synthesise four prior statements at Delta t = 0, 30, 60, 90 days.
+    The current event is the fifth statement, dated 90 days after the
+    oldest. With ``lambda_inv_days = 30`` the most recent (Delta t = 0)
+    statement contributes >0.5 of the pooled mass and the farthest
+    (Delta t = 90) contributes <0.1.
+    """
+
+    import numpy as np
+
+    package_id = "tp_unit_text_embed_weighting"
+    package_dir = tmp_path / "processed" / package_id
+    package_dir.mkdir(parents=True)
+    cache_dir = tmp_path / "raw" / "embeddings"
+
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+    _patch_encoder_registry(monkeypatch, encoder_alias="finbert", cache_dir=cache_dir)
+    monkeypatch.setattr(loaders, "_logger", loaders._logger)
+
+    # Five statements spaced 30 days apart, base_close stays constant.
+    dates = ["2024-01-01", "2024-01-31", "2024-03-01", "2024-03-31", "2024-04-30"]
+    text_hashes = [f"hash_{i}" for i in range(5)]
+    events = []
+    for date_str, hash_str in zip(dates, text_hashes):
+        events.append(
+            _event_row(
+                event_date=date_str,
+                text_hash=hash_str,
+                axis_stance="hawkish",
+                realized_return=0.001,
+                realized_date=f"{date_str[:8]}{int(date_str[8:]) + 1:02d}",
+                base_close=4500.0,
+            )
+        )
+    pd.DataFrame(events).to_parquet(package_dir / "events.parquet", index=False)
+    pd.DataFrame(
+        [{"text_hash": h, "split_tag": "train"} for h in text_hashes]
+    ).to_parquet(package_dir / "splits_train_val_test.parquet", index=False)
+
+    # Build four distinct embedding vectors so the pooled mean is
+    # identifiable. The fifth statement (current event) carries its
+    # own embedding too, but the pooler reads only the four priors.
+    in_dim = 8
+    embedding_rows = []
+    for i, (date_str, hash_str) in enumerate(zip(dates, text_hashes)):
+        vec = np.zeros(in_dim, dtype=np.float32)
+        vec[i] = 1.0
+        embedding_rows.append(
+            {
+                "record_id": hash_str,
+                "doc_id": hash_str,
+                "event_date": date_str,
+                "chunk_index": 0,
+                "chunk_preview": "",
+                "embedding": vec.tolist(),
+            }
+        )
+    _write_synthetic_embedding_parquet(
+        cache_dir, "finbert", rows=embedding_rows
+    )
+
+    sequences = loaders.load_training_sequences_from_package(
+        package_id,
+        text_encoder="finbert",
+        text_adapter_dim=64,
+        text_pool_lambda_inv_days=30.0,
+        text_embedding_cache_dir=cache_dir,
+    )
+    # 5 events all tagged train -> 5 sequences.
+    assert len(sequences) == 5
+
+    # Final event (hash_4) has 4 priors at Delta t = 30, 60, 90, 120.
+    # Expected softmax weights at lambda=30: exp(-1, -2, -3, -4)
+    # normalised. Most recent (hash_3, idx=3) > 0.5, oldest (hash_0,
+    # idx=0) < 0.1.
+    target_event = sequences[-1][0]
+    pooled = np.asarray(target_event.text_embedding_pooled, dtype=np.float32)
+    assert pooled.shape == (in_dim,)
+    # Weights on (hash_3, hash_2, hash_1, hash_0) -- the four prior
+    # statements in chronological order on the lookup. The most
+    # recent (hash_3 at Delta t = 30) places the largest mass on
+    # vec[3]; the oldest (hash_0 at Delta t = 120) gets the smallest.
+    weight_recent = float(pooled[3])
+    weight_oldest = float(pooled[0])
+    assert weight_recent > 0.5
+    assert weight_oldest < 0.1
+    assert target_event.text_embedding_missing == pytest.approx(0.0)
+
+
+def test_text_embedding_missing_when_fewer_than_one_prior(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The chronologically-earliest event has no prior to pool over."""
+
+    import numpy as np
+
+    package_id = "tp_unit_text_embed_missing"
+    package_dir = tmp_path / "processed" / package_id
+    package_dir.mkdir(parents=True)
+    cache_dir = tmp_path / "raw" / "embeddings"
+
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+    _patch_encoder_registry(monkeypatch, encoder_alias="finbert", cache_dir=cache_dir)
+
+    events = [
+        _event_row(
+            event_date="2024-01-01",
+            text_hash="hash_first",
+            axis_stance="hawkish",
+            realized_return=0.001,
+            realized_date="2024-01-02",
+            base_close=4500.0,
+        ),
+        _event_row(
+            event_date="2024-02-01",
+            text_hash="hash_second",
+            axis_stance="dovish",
+            realized_return=-0.001,
+            realized_date="2024-02-02",
+            base_close=4500.0,
+        ),
+    ]
+    pd.DataFrame(events).to_parquet(package_dir / "events.parquet", index=False)
+    pd.DataFrame(
+        [
+            {"text_hash": "hash_first", "split_tag": "train"},
+            {"text_hash": "hash_second", "split_tag": "train"},
+        ]
+    ).to_parquet(package_dir / "splits_train_val_test.parquet", index=False)
+
+    in_dim = 8
+    embedding_rows = [
+        {
+            "record_id": h,
+            "doc_id": h,
+            "event_date": d,
+            "chunk_index": 0,
+            "chunk_preview": "",
+            "embedding": np.eye(in_dim)[i].astype(np.float32).tolist(),
+        }
+        for i, (h, d) in enumerate(
+            [("hash_first", "2024-01-01"), ("hash_second", "2024-02-01")]
+        )
+    ]
+    _write_synthetic_embedding_parquet(
+        cache_dir, "finbert", rows=embedding_rows
+    )
+
+    sequences = loaders.load_training_sequences_from_package(
+        package_id,
+        text_encoder="finbert",
+        text_adapter_dim=64,
+        text_embedding_cache_dir=cache_dir,
+    )
+    assert len(sequences) == 2
+
+    by_event_date = {seq[0].date[:10]: seq for seq in sequences}
+    # First sequence's event_date doesn't have a chronological prior
+    # statement -> missing flag 1.0, pooled empty.
+    first = sequences[0]
+    assert first[0].text_embedding_missing == pytest.approx(1.0)
+    assert first[0].text_embedding_pooled == []
+    del by_event_date
+    # Second sequence has hash_first as its prior; pool should land on
+    # the eye[0] basis vector at full weight.
+    second = sequences[1]
+    assert second[0].text_embedding_missing == pytest.approx(0.0)
+    assert len(second[0].text_embedding_pooled) == in_dim
+    assert second[0].text_embedding_pooled[0] == pytest.approx(1.0)
+
+
+def test_text_embedding_encoder_choice_changes_input_dim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pooled embedding inherits the encoder's native dim."""
+
+    import numpy as np
+
+    package_id = "tp_unit_text_embed_dim"
+    package_dir = tmp_path / "processed" / package_id
+    package_dir.mkdir(parents=True)
+    cache_dir = tmp_path / "raw" / "embeddings"
+
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+
+    events = [
+        _event_row(
+            event_date=f"2024-{month:02d}-15",
+            text_hash=f"hash_{i}",
+            axis_stance="hawkish",
+            realized_return=0.001,
+            realized_date=f"2024-{month:02d}-16",
+            base_close=4500.0,
+        )
+        for i, month in enumerate([1, 2, 3])
+    ]
+    pd.DataFrame(events).to_parquet(package_dir / "events.parquet", index=False)
+    pd.DataFrame(
+        [{"text_hash": e["text_hash"], "split_tag": "train"} for e in events]
+    ).to_parquet(package_dir / "splits_train_val_test.parquet", index=False)
+
+    def _row_with_dim(dim: int) -> list[dict]:
+        return [
+            {
+                "record_id": e["text_hash"],
+                "doc_id": e["text_hash"],
+                "event_date": e["event_date"],
+                "chunk_index": 0,
+                "chunk_preview": "",
+                "embedding": np.ones(dim, dtype=np.float32).tolist(),
+            }
+            for e in events
+        ]
+
+    # FinBERT path: in_dim = 768.
+    _patch_encoder_registry(monkeypatch, encoder_alias="finbert", cache_dir=cache_dir)
+    _write_synthetic_embedding_parquet(
+        cache_dir, "finbert", rows=_row_with_dim(768)
+    )
+    finbert_sequences = loaders.load_training_sequences_from_package(
+        package_id,
+        text_encoder="finbert",
+        text_adapter_dim=64,
+        text_embedding_cache_dir=cache_dir,
+    )
+    second_event = finbert_sequences[1][0]
+    assert len(second_event.text_embedding_pooled) == 768
+
+    # voyage_finance_2 path: in_dim = 1024. Clear caches so the second
+    # invocation re-reads the synthetic parquet rather than reusing
+    # the FinBERT 768-dim payload.
+    _patch_encoder_registry(monkeypatch, encoder_alias="voyage_finance_2", cache_dir=cache_dir)
+    _write_synthetic_embedding_parquet(
+        cache_dir, "voyage_finance_2", rows=_row_with_dim(1024)
+    )
+    voyage_sequences = loaders.load_training_sequences_from_package(
+        package_id,
+        text_encoder="voyage_finance_2",
+        text_adapter_dim=64,
+        text_embedding_cache_dir=cache_dir,
+    )
+    voyage_second = voyage_sequences[1][0]
+    assert len(voyage_second.text_embedding_pooled) == 1024
+
+
+def test_no_text_embeddings_zeros_slice_but_shape_preserved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``use_text_embeddings=False`` skips the encoder lookup entirely."""
+
+    import numpy as np
+
+    package_id = "tp_unit_text_embed_off"
+    package_dir = tmp_path / "processed" / package_id
+    package_dir.mkdir(parents=True)
+    cache_dir = tmp_path / "raw" / "embeddings"
+
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+    _patch_encoder_registry(monkeypatch, encoder_alias="finbert", cache_dir=cache_dir)
+
+    events = [
+        _event_row(
+            event_date="2024-02-15",
+            text_hash="hash_a",
+            axis_stance="hawkish",
+            realized_return=0.001,
+            realized_date="2024-02-16",
+            base_close=4500.0,
+        ),
+        _event_row(
+            event_date="2024-03-15",
+            text_hash="hash_b",
+            axis_stance="dovish",
+            realized_return=-0.001,
+            realized_date="2024-03-16",
+            base_close=4500.0,
+        ),
+    ]
+    pd.DataFrame(events).to_parquet(package_dir / "events.parquet", index=False)
+    pd.DataFrame(
+        [{"text_hash": "hash_a", "split_tag": "train"}, {"text_hash": "hash_b", "split_tag": "train"}]
+    ).to_parquet(package_dir / "splits_train_val_test.parquet", index=False)
+
+    _write_synthetic_embedding_parquet(
+        cache_dir,
+        "finbert",
+        rows=[
+            {
+                "record_id": "hash_a",
+                "doc_id": "hash_a",
+                "event_date": "2024-02-15",
+                "chunk_index": 0,
+                "chunk_preview": "",
+                "embedding": np.ones(768, dtype=np.float32).tolist(),
+            }
+        ],
+    )
+
+    sequences_off = loaders.load_training_sequences_from_package(
+        package_id,
+        text_encoder="finbert",
+        text_adapter_dim=64,
+        use_text_embeddings=False,
+        text_embedding_cache_dir=cache_dir,
+    )
+    # text path off -> no pooled vector, missing-flag stays at the
+    # ``FeatureVector`` default (1.0).
+    for sequence in sequences_off:
+        for vector in sequence:
+            assert vector.text_embedding_pooled == []
+            assert vector.text_embedding_missing == pytest.approx(1.0)
+
+    sequences_on = loaders.load_training_sequences_from_package(
+        package_id,
+        text_encoder="finbert",
+        text_adapter_dim=64,
+        use_text_embeddings=True,
+        text_embedding_cache_dir=cache_dir,
+    )
+    # Both flag values produce the same number of sequences and the
+    # same per-bar scalar 35-dim slice. The only difference is the
+    # pooled list + missing-flag pair on the FeatureVector.
+    assert len(sequences_on) == len(sequences_off)
+    on_scalar = sequences_on[0][0].as_rich_list()
+    off_scalar = sequences_off[0][0].as_rich_list()
+    assert on_scalar == off_scalar
+    # hash_b (chronologically second) hits the pool with hash_a as the
+    # prior; the pooled embedding lands at the eye[0] basis vector.
+    chronological = sorted(
+        sequences_on, key=lambda seq: seq[-1].date[:10]
+    )
+    second_event = chronological[1][0]
+    assert len(second_event.text_embedding_pooled) == 768
+    assert second_event.text_embedding_missing == pytest.approx(0.0)
