@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -81,6 +81,37 @@ RICH_MULTI_AXIS_SLICE = slice(
     RICH_MP_SURPRISE_SLICE.stop + RICH_MULTI_AXIS_DIM,
 )
 
+# Text-embedding adapter dim search axis. The forecaster sweep iterates
+# over these values so the diminishing-returns curve across {32, 64, 128}
+# shows up in the aggregator table. The default mirrors the small-data
+# regime: 64 dims is enough capacity to register the encoder signal
+# without overfitting the ~895 training sequences.
+DEFAULT_TEXT_ADAPTER_DIM = 64
+TEXT_ADAPTER_DIM_CHOICES: tuple[int, ...] = (32, 64, 128)
+
+# Default time-decay window for the prior-4 statement pooling
+# (softmax(-Delta t / lambda_inv_days)). 30 days places roughly half the
+# weight on the most recent statement when the prior FOMC release was
+# 45 days ago; the sweep can override this through the CLI.
+DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS = 30.0
+
+
+def rich_feature_size_with_text(text_adapter_dim: int) -> int:
+    """Return the per-bar input size when the text-embedding path is on.
+
+    The scalar slice stays at ``RICH_FEATURE_SIZE`` (35). The adapter
+    projection contributes another ``text_adapter_dim`` dims that the
+    model broadcasts to every bar of the prior window plus the
+    event-day target frame. The trailing ``+1`` is the missing flag the
+    loader emits when fewer than one prior statement is available.
+    """
+
+    if text_adapter_dim <= 0:
+        raise ValueError(
+            f"text_adapter_dim must be a positive integer; got {text_adapter_dim}"
+        )
+    return RICH_FEATURE_SIZE + int(text_adapter_dim) + 1
+
 FORECAST_CONFIDENCE_LEVEL = 0.8
 CONFIDENCE_Z_SCORE = 1.2816  # Approximate central 80% interval
 DEFAULT_CLOSE_SCALE = 10000.0
@@ -128,6 +159,14 @@ class ModelConfig:
     embedding_adapter_dim: int = 128
     credibility_features: bool = False
     architecture: str = "lstm"
+    # Pooled text-embedding path (PR #176 onward). ``text_embedding_dim``
+    # is the encoder-native dim of the pooled vector the loader emits
+    # (FinBERT 768, voyage-finance-2 1024, ...); ``text_adapter_dim``
+    # is the projection target the recurrent core actually sees. Both
+    # default to ``0`` so any pre-existing checkpoint deserialises into
+    # the byte-identical no-text path.
+    text_embedding_dim: int = 0
+    text_adapter_dim: int = 0
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -145,6 +184,8 @@ class ModelConfig:
             embedding_adapter_dim=getattr(model, "chunk_projection_dim", 128) or 128,
             credibility_features=bool(getattr(model, "credibility_features", False)),
             architecture=str(architecture),
+            text_embedding_dim=int(getattr(model, "text_embedding_dim", 0) or 0),
+            text_adapter_dim=int(getattr(model, "text_adapter_dim", 0) or 0),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -219,6 +260,18 @@ class FeatureVector:
     axis_time: float = 0.0
     axis_time_missing: float = 1.0
     rich_payload: bool = False
+    # Pooled text-embedding payload (PR #176 onward). Carries the
+    # variable-length encoder-output vector (FinBERT 768, voyage-finance-2
+    # 1024, BGE 1024, ...) materialised by the loader's softmax(-Delta t /
+    # lambda) weighted mean over the four most recent prior statements.
+    # The list stays empty (and ``text_embedding_missing`` stays at 1.0)
+    # on the legacy 6-feature path; the model factory only widens the
+    # recurrent input when the loader explicitly attaches a pooled
+    # vector. ``as_rich_list`` does NOT include this field — the
+    # projection happens inside the model's forward pass through the
+    # ``TextEmbeddingAdapter`` so the scalar slice stays at 35 dims.
+    text_embedding_pooled: list[float] = field(default_factory=list)
+    text_embedding_missing: float = 1.0
 
     @classmethod
     def from_market_state(

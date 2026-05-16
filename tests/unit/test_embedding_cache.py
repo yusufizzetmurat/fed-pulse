@@ -38,6 +38,17 @@ def test_resolve_cache_paths_handles_unpinned_revision(tmp_path: Path) -> None:
     assert paths.parquet.name == "finbert_fed_adjacent_unpinned.parquet"
 
 
+def test_resolve_cache_paths_normalises_hyphens_in_revision(tmp_path: Path) -> None:
+    """Voyage-style revisions carry hyphens; the cache writer normalises
+    them to underscores. The resolver must apply the same normalisation
+    so the loader finds the parquet on disk."""
+
+    paths = ec.resolve_cache_paths(
+        "voyage_finance_2", revision="voyage-finance-2", cache_dir=tmp_path
+    )
+    assert paths.parquet.name == "voyage_finance_2_voyage_finan.parquet"
+
+
 def test_build_cache_hard_fails_without_allow_network(tmp_path: Path, monkeypatch) -> None:
     """The training-time invariant: never silently download at runtime."""
 

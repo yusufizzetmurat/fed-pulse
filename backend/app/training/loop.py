@@ -29,6 +29,7 @@ from app.models.config import (
 )
 from app.models.lstm import ForecasterModel
 from app.training.loaders import (
+    _build_text_embedding_tensors,
     _build_training_tensors,
     _split_train_validation,
     load_training_sequences_from_data,
@@ -56,6 +57,8 @@ def _coerce_model_config(model_config: ModelConfig | dict[str, Any] | None = Non
             embedding_adapter_dim=int(model_config.get("embedding_adapter_dim", 128)),
             credibility_features=bool(model_config.get("credibility_features", False)),
             architecture=str(model_config.get("architecture", "lstm")),
+            text_embedding_dim=int(model_config.get("text_embedding_dim", 0) or 0),
+            text_adapter_dim=int(model_config.get("text_adapter_dim", 0) or 0),
         )
     return ModelConfig()
 
@@ -91,6 +94,30 @@ def _zero_credibility(model: ForecasterModel, batch_size: int, device: torch.dev
     return torch.zeros((batch_size, dim), dtype=torch.float32, device=device)
 
 
+def _unpack_batch(batch: Any) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+    """Decode a DataLoader batch into (x, y, text_embedding, text_missing).
+
+    Two batch shapes are tolerated:
+
+    - ``(batch_x, batch_y)`` -- legacy two-tensor batch, used on the
+      pre-PR-#176 path. ``text_embedding`` and ``text_embedding_missing``
+      are ``None``.
+    - ``(batch_x, batch_y, batch_text_embedding, batch_text_missing)``
+      -- four-tensor batch emitted when the text-embedding path is
+      active. The model forward picks the extras up by name.
+    """
+
+    if len(batch) == 4:
+        batch_x, batch_y, batch_text, batch_text_missing = batch
+        return batch_x, batch_y, batch_text, batch_text_missing
+    if len(batch) == 2:
+        batch_x, batch_y = batch
+        return batch_x, batch_y, None, None
+    raise ValueError(
+        f"unexpected batch arity from DataLoader: {len(batch)} (want 2 or 4)"
+    )
+
+
 def _evaluate_model(
     model: ForecasterModel,
     loader: DataLoader[Any],
@@ -103,11 +130,22 @@ def _evaluate_model(
     close_squared_error = 0.0
     volatility_squared_error = 0.0
     with torch.no_grad():
-        for batch_x, batch_y in loader:
+        for batch in loader:
+            batch_x, batch_y, batch_text, batch_text_missing = _unpack_batch(batch)
             batch_x = batch_x.to(device, non_blocking=device.type == "cuda")
             batch_y = batch_y.to(device, non_blocking=device.type == "cuda")
             credibility = _zero_credibility(model, batch_x.size(0), device)
-            kwargs = {"credibility": credibility} if credibility is not None else {}
+            kwargs: dict[str, torch.Tensor] = {}
+            if credibility is not None:
+                kwargs["credibility"] = credibility
+            if batch_text is not None and getattr(model, "_text_path_active", False):
+                kwargs["text_embedding"] = batch_text.to(
+                    device, non_blocking=device.type == "cuda"
+                )
+                if batch_text_missing is not None:
+                    kwargs["text_embedding_missing"] = batch_text_missing.to(
+                        device, non_blocking=device.type == "cuda"
+                    )
             predictions = model(batch_x, **kwargs)
             loss = loss_fn(predictions, batch_y)
             batch_size = batch_x.size(0)
@@ -149,6 +187,10 @@ def train_model(
     save_checkpoint: bool = True,
     device: str | torch.device | None = None,
     seed: int | None = None,
+    weight_decay: float = 1e-4,
+    shuffle_targets_control: bool = False,
+    text_encoder: str | None = None,
+    text_pool_lambda_inv_days: float = 0.0,
 ) -> TrainingResult:
     if seed is not None:
         enable_deterministic_mode(seed)
@@ -174,6 +216,16 @@ def train_model(
     # inference can recover the original price magnitude. See
     # `app.training.loaders.fit_close_scale` for the fit details.
     x, y, close_scale = _build_training_tensors(sequence_groups)
+    # When the model is configured for the text path, pin the
+    # fallback in_dim so a batch whose every sequence is missing
+    # (e.g. the pre-corpus prefix) still materialises a zero-payload
+    # tensor of the right width. The model's adapter then projects a
+    # zero slot driven by the missing flag.
+    fallback_text_in_dim = int(getattr(active_model_config, "text_embedding_dim", 0) or 0)
+    text_emb_tensor, text_missing_tensor, text_emb_dim = _build_text_embedding_tensors(
+        sequence_groups,
+        fallback_in_dim=fallback_text_in_dim,
+    )
     if x is None or y is None:
         model = copy.deepcopy(base_model).to(device_obj) if base_model is not None else _build_model(active_model_config, device=device_obj)
         model.eval()
@@ -196,16 +248,50 @@ def train_model(
                 checkpoint_saved=False,
                 best_epoch=None,
                 metrics=None,
+                weight_decay=float(weight_decay),
+                target_mode="shuffled" if shuffle_targets_control else "real",
+                text_encoder=text_encoder,
+                text_adapter_dim=int(getattr(model, "text_adapter_dim", 0) or 0),
+                text_pool_lambda_inv_days=float(text_pool_lambda_inv_days),
             ),
         )
 
+    # Mitigation 3: shuffled-targets control. Deterministically permute
+    # the target column so the model has no signal beyond the per-fold
+    # mean. macro-RMSE on the shuffled-targets run should sit near
+    # the constant-mean predictor; a real-targets run whose RMSE is
+    # close to its shuffled counterpart is memorising, not learning.
+    if shuffle_targets_control:
+        if seed is None:
+            shuffle_seed = 11
+        else:
+            shuffle_seed = int(seed)
+        shuffle_generator = torch.Generator()
+        shuffle_generator.manual_seed(shuffle_seed)
+        perm = torch.randperm(y.shape[0], generator=shuffle_generator)
+        y = y[perm].clone()
+
     train_x, train_y, val_x, val_y = _split_train_validation(x, y, validation_split)
+    if text_emb_tensor is not None and text_missing_tensor is not None:
+        train_text_emb = text_emb_tensor[: len(train_x)]
+        val_text_emb = text_emb_tensor[len(train_x) :]
+        train_text_missing = text_missing_tensor[: len(train_x)]
+        val_text_missing = text_missing_tensor[len(train_x) :]
+    else:
+        train_text_emb = val_text_emb = None
+        train_text_missing = val_text_missing = None
     # The current Torch build emits deprecation warnings from DataLoader pinning internals.
     # For this dataset size, disabling pinning keeps training clean without a meaningful throughput hit.
     pin_memory = False
     loader_generator = make_generator(seed) if seed is not None else None
+    if train_text_emb is not None and train_text_missing is not None:
+        train_dataset = TensorDataset(train_x, train_y, train_text_emb, train_text_missing)
+        val_dataset = TensorDataset(val_x, val_y, val_text_emb, val_text_missing)
+    else:
+        train_dataset = TensorDataset(train_x, train_y)
+        val_dataset = TensorDataset(val_x, val_y)
     train_loader = DataLoader(
-        TensorDataset(train_x, train_y),
+        train_dataset,
         batch_size=min(batch_size, len(train_x)),
         shuffle=True,
         pin_memory=pin_memory,
@@ -213,7 +299,7 @@ def train_model(
         worker_init_fn=seed_worker if seed is not None else None,
     )
     val_loader = DataLoader(
-        TensorDataset(val_x, val_y),
+        val_dataset,
         batch_size=min(batch_size, len(val_x)),
         shuffle=False,
         pin_memory=pin_memory,
@@ -226,7 +312,7 @@ def train_model(
         else _build_model(active_model_config, device=device_obj)
     )
     work_model.train()
-    optimizer = torch.optim.AdamW(work_model.parameters(), lr=learning_rate, weight_decay=1e-4)
+    optimizer = torch.optim.AdamW(work_model.parameters(), lr=learning_rate, weight_decay=float(weight_decay))
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3)
     loss_fn = nn.SmoothL1Loss(beta=0.02)
 
@@ -239,12 +325,23 @@ def train_model(
 
     for epoch_index in range(epochs):
         work_model.train()
-        for batch_x, batch_y in train_loader:
+        for batch in train_loader:
+            batch_x, batch_y, batch_text, batch_text_missing = _unpack_batch(batch)
             batch_x = batch_x.to(device_obj, non_blocking=device_obj.type == "cuda")
             batch_y = batch_y.to(device_obj, non_blocking=device_obj.type == "cuda")
             optimizer.zero_grad(set_to_none=True)
             credibility = _zero_credibility(work_model, batch_x.size(0), device_obj)
-            kwargs = {"credibility": credibility} if credibility is not None else {}
+            kwargs: dict[str, torch.Tensor] = {}
+            if credibility is not None:
+                kwargs["credibility"] = credibility
+            if batch_text is not None and getattr(work_model, "_text_path_active", False):
+                kwargs["text_embedding"] = batch_text.to(
+                    device_obj, non_blocking=device_obj.type == "cuda"
+                )
+                if batch_text_missing is not None:
+                    kwargs["text_embedding_missing"] = batch_text_missing.to(
+                        device_obj, non_blocking=device_obj.type == "cuda"
+                    )
             predictions = work_model(batch_x, **kwargs)
             loss = loss_fn(predictions, batch_y)
             loss.backward()
@@ -269,6 +366,19 @@ def train_model(
     work_model.eval()
     if best_metrics is None:
         best_metrics = _evaluate_model(work_model, val_loader, device_obj, loss_fn)
+    # Mitigation 4: compute final-state training-set metrics so the
+    # aggregator can emit holdout_train_gap = (val_rmse - train_rmse) /
+    # train_rmse. The training set is re-evaluated through the same
+    # eval path (no dropout / no grad / fixed batch ordering) so the
+    # number is comparable to ``metrics``.
+    train_eval_loader = DataLoader(
+        train_dataset,
+        batch_size=min(batch_size, len(train_x)),
+        shuffle=False,
+        pin_memory=pin_memory,
+        worker_init_fn=seed_worker if seed is not None else None,
+    )
+    train_metrics = _evaluate_model(work_model, train_eval_loader, device_obj, loss_fn)
 
     summary = TrainingRunSummary(
         model_config=ModelConfig.from_model(work_model),
@@ -287,6 +397,12 @@ def train_model(
         checkpoint_saved=save_checkpoint,
         best_epoch=best_epoch,
         metrics=best_metrics,
+        train_metrics=train_metrics,
+        weight_decay=float(weight_decay),
+        target_mode="shuffled" if shuffle_targets_control else "real",
+        text_encoder=text_encoder,
+        text_adapter_dim=int(getattr(work_model, "text_adapter_dim", 0) or 0),
+        text_pool_lambda_inv_days=float(text_pool_lambda_inv_days),
     )
 
     if save_checkpoint:

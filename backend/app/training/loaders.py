@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import datetime
 import json
+import logging
 import warnings
 from pathlib import Path
 from typing import Any, Literal, Sequence
@@ -14,10 +15,14 @@ from app.evaluation.metrics import TrainingDataSourceSummary
 from app.models.config import (
     DEFAULT_CLOSE_SCALE,
     DEFAULT_DATA_DIR,
+    DEFAULT_TEXT_ADAPTER_DIM,
+    DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
     RICH_LINGUISTIC_DIM,
     SEQUENCE_LENGTH,
     FeatureVector,
 )
+
+_logger = logging.getLogger(__name__)
 
 # Ordered linguistic-feature columns expected on
 # ``linguistic_features.parquet``. The order mirrors the
@@ -622,6 +627,237 @@ def _read_mp_surprise_lookup(
     return lookup
 
 
+def _read_chunk_embedding_lookup(
+    encoder_alias: str,
+    *,
+    cache_dir: Path | None = None,
+    registry_path: Path | None = None,
+) -> dict[str, "Any"]:
+    """Return ``text_hash -> pooled embedding`` for one encoder.
+
+    Reads ``data/raw/embeddings/<encoder_alias>_<rev>.parquet`` (the
+    artefact ``app.data.embedding_cache.build_cache`` writes per
+    encoder x training-package). The cache stores one row per
+    document chunk for classifier/MLM encoders and one row per
+    document for sentence-embedding encoders; this helper collapses
+    all rows under a given ``record_id`` to a single mean-pooled
+    vector so the downstream prior-4 weighting sees one embedding per
+    statement.
+
+    The cache schema persists ``record_id`` rather than ``text_hash``.
+    When ``registry_path`` is supplied the loader walks
+    ``registry_normalized.jsonl`` to build a ``record_id -> text_hash``
+    mapping; the returned dict is then keyed on ``text_hash`` so the
+    per-event lookup matches the ``events.parquet`` join key directly.
+    When the registry is unavailable the lookup falls back to
+    ``record_id`` keys and the caller's text_hash lookup will miss.
+
+    Returns an empty dict when the parquet is missing; the caller
+    emits zeros + a missing flag for every row.
+    """
+
+    import numpy as np
+    import pandas as pd
+
+    # Local import keeps the heavy embedding-cache module out of the
+    # training-time import path on the legacy ``--data-dir`` flow.
+    from app.data.embedding_cache import resolve_cache_paths
+    from app.models.registry import revision_for
+
+    revision = revision_for(encoder_alias)
+    if revision is None:
+        _logger.warning(
+            "encoder %r is not pinned in models/registry.yaml; "
+            "text-embedding lookup will return empty",
+            encoder_alias,
+        )
+        return {}
+    paths = resolve_cache_paths(encoder_alias, revision=revision, cache_dir=cache_dir)
+    if not paths.parquet.exists():
+        _logger.warning(
+            "embedding cache parquet missing for encoder=%r at %s; "
+            "text-embedding lookup will return empty",
+            encoder_alias,
+            paths.parquet,
+        )
+        return {}
+
+    frame = pd.read_parquet(paths.parquet)
+    if "embedding" not in frame.columns or "event_date" not in frame.columns:
+        _logger.warning(
+            "embedding cache parquet at %s missing required columns "
+            "(embedding / event_date); text-embedding lookup empty",
+            paths.parquet,
+        )
+        return {}
+    # Prefer ``record_id`` (Phase 8 cache builder) and fall back to
+    # ``doc_id`` for backwards compatibility with older caches.
+    key_column: str | None = None
+    for candidate in ("record_id", "doc_id"):
+        if candidate in frame.columns:
+            key_column = candidate
+            break
+    if key_column is None:
+        _logger.warning(
+            "embedding cache parquet at %s carries neither record_id "
+            "nor doc_id; text-embedding lookup empty",
+            paths.parquet,
+        )
+        return {}
+
+    # Build the ``record_id -> text_hash`` mapping when the registry is
+    # available. Without it the lookup stays keyed on record_id and
+    # the per-event text_hash join misses every row.
+    record_to_text_hash: dict[str, str] = {}
+    if registry_path is not None and registry_path.exists():
+        with registry_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    record = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                rec_id = str(record.get("record_id") or "")
+                text_hash_str = str(record.get("text_hash") or "")
+                if rec_id and text_hash_str:
+                    record_to_text_hash[rec_id] = text_hash_str
+
+    lookup: dict[str, "Any"] = {}
+    event_dates: dict[str, str] = {}
+    grouped = frame.groupby(key_column, sort=False)
+    for key_value, chunk in grouped:
+        key_str = str(key_value).strip()
+        if not key_str:
+            continue
+        stacked: list[np.ndarray] = []
+        for embedding in chunk["embedding"].tolist():
+            try:
+                vec = np.asarray(embedding, dtype=np.float32)
+            except (TypeError, ValueError):
+                continue
+            if vec.ndim != 1 or vec.size == 0:
+                continue
+            stacked.append(vec)
+        if not stacked:
+            continue
+        # Drop rows whose embedding dim mismatches the first chunk; a
+        # mixed-dim parquet means the cache was rebuilt with two
+        # different encoders and silently appended -- safer to skip
+        # than to mean-pool across dims.
+        ref_dim = stacked[0].shape[0]
+        cleaned = [vec for vec in stacked if vec.shape[0] == ref_dim]
+        if not cleaned:
+            continue
+        pooled = np.mean(np.stack(cleaned, axis=0), axis=0)
+        # Prefer the text_hash key when the registry resolved one for
+        # this record_id; fall back to record_id otherwise.
+        join_key = record_to_text_hash.get(key_str, key_str)
+        lookup[join_key] = pooled
+        event_dates[join_key] = str(chunk["event_date"].iloc[0])[:10]
+
+    if not lookup:
+        return {}
+    lookup["__event_dates__"] = event_dates
+    return lookup
+
+
+def _compute_prior4_pooled_embedding(
+    *,
+    text_hash: str,
+    event_row_text_hash: str,
+    current_event_date: datetime.date,
+    embedding_lookup: dict[str, "Any"],
+    prior_text_hashes: Sequence[tuple[datetime.date, str]],
+    lambda_inv_days: float,
+    max_prior: int = 4,
+) -> "Any | None":
+    """Pool the four most recent prior-statement embeddings with time decay.
+
+    Parameters
+    ----------
+    text_hash:
+        ``text_hash`` (== embedding-cache ``record_id``) of the event
+        being processed. Used only for diagnostics; the pooler reads
+        prior statements off ``prior_text_hashes``.
+    current_event_date:
+        Statement date of the event being processed. Prior statements
+        are restricted to those strictly before this date.
+    embedding_lookup:
+        Output of :func:`_read_chunk_embedding_lookup`. Keys are
+        ``record_id`` strings, values are 1-D ``numpy.ndarray`` per
+        statement. ``__event_dates__`` is reserved (carries the
+        statement date per record_id).
+    prior_text_hashes:
+        Chronologically-sorted list of ``(statement_date, text_hash)``
+        tuples for every statement in the corpus. The pooler filters
+        on ``statement_date < current_event_date`` and picks the
+        ``max_prior`` most recent surviving rows.
+    lambda_inv_days:
+        Time-decay window. Weights derive from
+        ``softmax(-Delta t_days / lambda_inv_days)``; smaller values
+        concentrate the weight on the most recent statement, larger
+        values spread it across the four.
+
+    Returns
+    -------
+    ``numpy.ndarray`` (the weighted mean over ``min(4, n_prior)``
+    statements) or ``None`` when no usable prior is found.
+    """
+
+    import numpy as np
+
+    if not embedding_lookup:
+        return None
+    if lambda_inv_days <= 0:
+        raise ValueError(
+            f"lambda_inv_days must be positive; got {lambda_inv_days}"
+        )
+
+    # Filter to statements strictly before the current event date that
+    # actually have a pooled embedding in the lookup, then keep the
+    # ``max_prior`` most recent.
+    candidates: list[tuple[datetime.date, str]] = []
+    for statement_date, prior_hash in prior_text_hashes:
+        if statement_date >= current_event_date:
+            continue
+        if prior_hash not in embedding_lookup:
+            continue
+        if prior_hash.startswith("__"):
+            continue
+        candidates.append((statement_date, prior_hash))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    selected = candidates[:max_prior]
+
+    delta_days = np.array(
+        [float((current_event_date - statement_date).days) for statement_date, _ in selected],
+        dtype=np.float64,
+    )
+    logits = -delta_days / float(lambda_inv_days)
+    # Numerically-stable softmax: subtract max so exp does not overflow.
+    logits -= logits.max()
+    weights = np.exp(logits)
+    weights_sum = weights.sum()
+    if weights_sum <= 0:
+        return None
+    weights = weights / weights_sum
+
+    vectors = [np.asarray(embedding_lookup[h], dtype=np.float32) for _, h in selected]
+    # Tolerate ragged-dim entries by trimming to the shortest -- the
+    # lookup builder already filters mixed dims per record_id, but a
+    # cross-encoder corpus could still mix dims across records. Skip
+    # the pool entirely if the dims are not coherent.
+    ref_dim = vectors[0].shape[0]
+    if any(vec.shape[0] != ref_dim for vec in vectors):
+        return None
+    matrix = np.stack(vectors, axis=0)
+    pooled = (matrix * weights[:, None]).sum(axis=0)
+    return pooled.astype(np.float32)
+
+
 def _attach_rich_features(
     vectors: list[FeatureVector],
     *,
@@ -786,6 +1022,11 @@ def load_training_sequences_from_package(
     use_linguistic: bool = True,
     use_mp_surprise: bool = True,
     use_multi_axis: bool = True,
+    text_encoder: str | None = None,
+    text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
+    text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
+    use_text_embeddings: bool = True,
+    text_embedding_cache_dir: Path | str | None = None,
 ) -> list[list[FeatureVector]]:
     """Load one prior-window sequence per FOMC event in a training package.
 
@@ -857,6 +1098,26 @@ def load_training_sequences_from_package(
     ``as_rich_list`` falls back to ``as_list`` plus zero-padding (no
     rich payload attached), and the per-family ablation flags are
     ignored.
+
+    When ``text_encoder`` is set and ``use_text_embeddings`` is True
+    the loader pulls the per-statement embeddings from
+    ``data/raw/embeddings/<encoder>_<rev>.parquet`` (built by
+    ``app.data.embedding_cache``), pools the four most recent prior
+    statements with ``softmax(-Delta t_days / text_pool_lambda_inv_days)``
+    weights, and attaches the resulting ``in_dim``-vector to every
+    bar of the prior window plus the event-day target frame as
+    ``FeatureVector.text_embedding_pooled``. The pooled vector stays
+    encoder-native (FinBERT 768, voyage-finance-2 1024, ...); the
+    adapter projection to ``text_adapter_dim`` runs inside the model
+    forward so the recurrent core sees a fixed per-bar feature size.
+    When fewer than one prior statement is available (e.g. the first
+    event in the corpus), the pooled vector is filled with zeros and
+    ``FeatureVector.text_embedding_missing`` flips to ``1.0`` so the
+    model can tell "no prior signal" apart from "neutral prior
+    signal". Setting ``text_encoder=None`` or
+    ``use_text_embeddings=False`` skips the pooling step entirely and
+    every row keeps the default empty pooled list + missing-flag at
+    ``1.0``.
     """
 
     if target_mode not in _VALID_TARGET_MODES:
@@ -893,6 +1154,73 @@ def load_training_sequences_from_package(
         linguistic_lookup = _read_linguistic_lookup(package_dir)
         mp_surprise_lookup = _read_mp_surprise_lookup(package_dir)
 
+    # Text-embedding lookup. Loaded once per package; the per-event
+    # softmax-weighted pool runs against this dict. When the encoder
+    # is unset or the parquet is missing, the lookup stays empty and
+    # ``_compute_prior4_pooled_embedding`` returns None for every
+    # event so the model sees the zero + missing-flag pair.
+    embedding_lookup: dict[str, Any] = {}
+    use_text_path = bool(text_encoder) and bool(use_text_embeddings)
+    text_adapter_dim_int = int(text_adapter_dim)
+    if use_text_path:
+        if text_adapter_dim_int <= 0:
+            raise ValueError(
+                f"text_adapter_dim must be a positive integer; got {text_adapter_dim}"
+            )
+        cache_dir = (
+            Path(text_embedding_cache_dir)
+            if text_embedding_cache_dir is not None
+            else None
+        )
+        # The embedding cache builder keys rows on ``record_id``;
+        # events.parquet joins on ``text_hash``. The registry parquet
+        # under the training package carries both columns, so the
+        # lookup walks it once to materialise the record_id ->
+        # text_hash join. When the registry is absent the lookup
+        # falls back to record_id keys and the per-event join
+        # silently misses every row -- that's logged via the
+        # missing-flag count downstream.
+        registry_parquet = package_dir / "registry_normalized.parquet"
+        registry_jsonl = package_dir / "registry_normalized.jsonl"
+        registry_for_lookup: Path | None
+        if registry_jsonl.exists():
+            registry_for_lookup = registry_jsonl
+        elif registry_parquet.exists():
+            # When only the parquet is available, materialise a
+            # registry_normalized.jsonl-style view of the
+            # ``record_id`` / ``text_hash`` columns in-memory and
+            # ship that to the lookup helper via a tmp file. The
+            # parquet schema carries the same columns so the join
+            # remains exact.
+            import pandas as pd
+
+            reg_frame = pd.read_parquet(registry_parquet)
+            reg_subset = reg_frame[[c for c in ("record_id", "text_hash") if c in reg_frame.columns]]
+            if not reg_subset.empty and "record_id" in reg_subset.columns and "text_hash" in reg_subset.columns:
+                tmp_path = package_dir / "_registry_record_to_text_hash.jsonl"
+                with tmp_path.open("w", encoding="utf-8") as handle:
+                    for record in reg_subset.to_dict("records"):
+                        handle.write(
+                            json.dumps(
+                                {
+                                    "record_id": str(record.get("record_id") or ""),
+                                    "text_hash": str(record.get("text_hash") or ""),
+                                },
+                                sort_keys=True,
+                            )
+                            + "\n"
+                        )
+                registry_for_lookup = tmp_path
+            else:
+                registry_for_lookup = None
+        else:
+            registry_for_lookup = None
+        embedding_lookup = _read_chunk_embedding_lookup(
+            text_encoder,
+            cache_dir=cache_dir,
+            registry_path=registry_for_lookup,
+        )
+
     # Deduplicate to one row per text_hash. Prefer horizon=1 so the
     # appended target frame is the next trading day's close. Within a
     # text_hash bucket, lower horizons rank first; the chronological
@@ -910,16 +1238,33 @@ def load_training_sequences_from_package(
     by_text_hash: dict[str, dict[str, Any]] = {}
     records = frame.to_dict("records")
     records.sort(key=_row_rank)
+    # Track every text_hash + event_date seen in the package -- INCLUDING
+    # rows excluded from the training loss -- so the prior-4 statement
+    # pool sees the full historical chronology when scoring a training
+    # event. A val / test statement that chronologically precedes a
+    # train statement is still a "prior" for that train statement and
+    # contributes to the pooled embedding.
+    prior_chronology_set: set[tuple[datetime.date, str]] = set()
     for row in records:
-        text_hash = str(row.get("text_hash", ""))
-        if not text_hash:
+        candidate_hash = str(row.get("text_hash", ""))
+        if not candidate_hash:
             continue
-        if text_hash in excluded_text_hashes:
+        candidate_date_raw = str(row.get("event_date", ""))[:10]
+        if not candidate_date_raw:
             continue
-        if text_hash in seen:
+        try:
+            candidate_date = datetime.date.fromisoformat(candidate_date_raw)
+        except ValueError:
             continue
-        seen.add(text_hash)
-        by_text_hash[text_hash] = row
+        prior_chronology_set.add((candidate_date, candidate_hash))
+        if candidate_hash in excluded_text_hashes:
+            continue
+        if candidate_hash in seen:
+            continue
+        seen.add(candidate_hash)
+        by_text_hash[candidate_hash] = row
+
+    prior_chronology: list[tuple[datetime.date, str]] = sorted(prior_chronology_set)
 
     ordered_rows = sorted(
         by_text_hash.values(),
@@ -982,6 +1327,29 @@ def load_training_sequences_from_package(
                 use_mp_surprise=use_mp_surprise,
                 use_multi_axis=use_multi_axis,
             )
+        if use_text_path:
+            pooled = _compute_prior4_pooled_embedding(
+                text_hash=row_text_hash,
+                event_row_text_hash=row_text_hash,
+                current_event_date=event_date,
+                embedding_lookup=embedding_lookup,
+                prior_text_hashes=prior_chronology,
+                lambda_inv_days=float(text_pool_lambda_inv_days),
+                max_prior=4,
+            )
+            if pooled is None:
+                # Either the first event in the corpus (no prior to
+                # pool) or the encoder cache is missing/empty. Emit
+                # zeros + flip the missing flag so the model sees
+                # "no prior signal" rather than a hallucinated mean.
+                missing_flag = 1.0
+                pooled_list: list[float] = []
+            else:
+                missing_flag = 0.0
+                pooled_list = [float(v) for v in pooled.tolist()]
+            for vector in vectors:
+                vector.text_embedding_pooled = list(pooled_list)
+                vector.text_embedding_missing = missing_flag
         sequences.append(vectors)
     return sequences
 
@@ -1084,6 +1452,73 @@ def _build_training_tensors(
     x = torch.tensor(sequences, dtype=torch.float32)
     y = torch.tensor(targets, dtype=torch.float32)
     return x, y, fitted_scale
+
+
+def _build_text_embedding_tensors(
+    sequence_groups: Sequence[Sequence[FeatureVector]],
+    *,
+    fallback_in_dim: int = 0,
+) -> tuple[torch.Tensor | None, torch.Tensor | None, int]:
+    """Materialise the (pooled, missing_flag, in_dim) triple per training window.
+
+    For each window the per-event pooled embedding lives on every
+    ``FeatureVector`` in the group; the helper reads the embedding
+    off the LAST prior bar (index ``SEQUENCE_LENGTH - 1``) so the
+    chosen vector matches the supervised window the trainer sees.
+    Missing rows materialise a zero ``in_dim``-vector + a ``1.0``
+    missing flag so the model's adapter projects the same zero slot
+    it would in the encoder-disabled path.
+
+    ``fallback_in_dim`` lets the caller pin the expected encoder dim
+    when every sequence in the batch is missing (e.g. the prefix of
+    the corpus before any prior statement is available). Without
+    that fallback the helper would return ``(None, None, 0)`` and
+    the training loop would skip the text path entirely; with the
+    fallback it materialises a zero-payload tensor of the requested
+    width so the model's adapter still runs and the missing flag
+    drives the output to zero.
+
+    Returns ``(None, None, 0)`` when none of the sequences carry a
+    pooled embedding AND no ``fallback_in_dim`` is supplied. Callers
+    that hit the no-text path then skip the text-embedding kwargs
+    on the model forward entirely.
+    """
+
+    in_dim = 0
+    for sequence_group in sequence_groups:
+        for item in sequence_group:
+            pooled = getattr(item, "text_embedding_pooled", None) or []
+            if pooled:
+                in_dim = len(pooled)
+                break
+        if in_dim:
+            break
+    if in_dim == 0:
+        if fallback_in_dim <= 0:
+            return None, None, 0
+        in_dim = int(fallback_in_dim)
+
+    pooled_rows: list[list[float]] = []
+    missing_rows: list[list[float]] = []
+    for sequence_group in sequence_groups:
+        if len(sequence_group) < SEQUENCE_LENGTH + 1:
+            continue
+        for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
+            anchor = sequence_group[idx - 1]
+            pooled_payload = list(getattr(anchor, "text_embedding_pooled", []) or [])
+            missing_flag = float(getattr(anchor, "text_embedding_missing", 1.0))
+            if not pooled_payload or len(pooled_payload) != in_dim:
+                pooled_payload = [0.0] * in_dim
+                missing_flag = 1.0
+            pooled_rows.append(pooled_payload)
+            missing_rows.append([missing_flag])
+
+    if not pooled_rows:
+        return None, None, in_dim
+
+    pooled_tensor = torch.tensor(pooled_rows, dtype=torch.float32)
+    missing_tensor = torch.tensor(missing_rows, dtype=torch.float32)
+    return pooled_tensor, missing_tensor, in_dim
 
 
 def _split_train_validation(

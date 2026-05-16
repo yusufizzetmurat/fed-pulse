@@ -12,7 +12,14 @@ from typing import Any, Sequence
 import torch
 
 from app.models import FORECASTER_ARCHITECTURES
-from app.models.config import FEATURE_SIZE, RICH_FEATURE_SIZE
+from app.models.config import (
+    DEFAULT_TEXT_ADAPTER_DIM,
+    DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
+    FEATURE_SIZE,
+    RICH_FEATURE_SIZE,
+    TEXT_ADAPTER_DIM_CHOICES,
+    rich_feature_size_with_text,
+)
 from app.services.forecaster import (
     BEST_MODEL_PATH,
     DEFAULT_BATCH_SIZE,
@@ -235,6 +242,89 @@ def _parse_args() -> argparse.Namespace:
         use_mp_surprise=True,
         use_multi_axis=True,
     )
+    # Text-embedding path. ``--text-encoder=none`` keeps the no-text
+    # path. ``--no-text-embeddings`` is the symmetric per-family flag
+    # that mirrors PR #173's per-family ablation pattern (model input
+    # shape stays constant; the embedding slot zeros out).
+    _TEXT_ENCODER_CHOICES = (
+        "none",
+        "finbert",
+        "finbert_fomc",
+        "finbert_fed_adjacent",
+        "bert_base_fed_adjacent",
+        "bge_large_en_v15",
+        "nomic_embed_text_v15",
+        "voyage_finance_2",
+    )
+    parser.add_argument(
+        "--text-encoder",
+        choices=_TEXT_ENCODER_CHOICES,
+        default="none",
+        help=(
+            "Encoder alias whose pooled FOMC statement embeddings the "
+            "forecaster consumes as a 5th feature family. The loader "
+            "pulls the per-statement embeddings from "
+            "data/raw/embeddings/<encoder>_<rev>.parquet and applies a "
+            "softmax(-Delta t / lambda) weighted mean over the four "
+            "most recent prior statements per event. Default 'none' "
+            "keeps the rich-features-only path byte-identical."
+        ),
+    )
+    parser.add_argument(
+        "--text-adapter-dim",
+        type=int,
+        choices=list(TEXT_ADAPTER_DIM_CHOICES),
+        default=DEFAULT_TEXT_ADAPTER_DIM,
+        help=(
+            "Projection target for the encoder-agnostic text-embedding "
+            "adapter. The sweep iterates over {32, 64, 128} so the "
+            "diminishing-returns curve across adapter widths is visible "
+            "in the aggregator table."
+        ),
+    )
+    parser.add_argument(
+        "--text-pool-lambda-inv-days",
+        type=float,
+        default=DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
+        help=(
+            "Time-decay window for the prior-4 statement pool. Smaller "
+            "values concentrate the weight on the most recent statement, "
+            "larger values spread the weight across all four."
+        ),
+    )
+    parser.add_argument(
+        "--no-text-embeddings",
+        dest="use_text_embeddings",
+        action="store_false",
+        help=(
+            "Zero the text-embedding slice while keeping the model "
+            "input shape constant. Mirrors the per-family ablation "
+            "pattern from PR #173 -- the model architecture is fixed "
+            "across the with/without rows so a single sweep can "
+            "measure text-embedding lift without retraining."
+        ),
+    )
+    parser.add_argument(
+        "--shuffle-targets-control",
+        action="store_true",
+        help=(
+            "Permute the target column per fold (seed-fixed) before "
+            "training. macro-RMSE on the shuffled-targets run should "
+            "sit near the constant-mean predictor; a real-targets run "
+            "whose RMSE is close to its shuffled counterpart is "
+            "memorising, not learning."
+        ),
+    )
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=1e-4,
+        help=(
+            "AdamW weight decay. Default 1e-4 preserves the pre-PR-#176 "
+            "regularisation; the sweep searches over {0, 1e-4, 1e-3}."
+        ),
+    )
+    parser.set_defaults(use_text_embeddings=True)
     parser.add_argument(
         "--sweep",
         action="store_true",
@@ -269,6 +359,22 @@ def _parse_args() -> argparse.Namespace:
         nargs="+",
         type=int,
         help="Grid-search values for epochs.",
+    )
+    parser.add_argument(
+        "--weight-decays",
+        nargs="+",
+        type=float,
+        help="Grid-search values for AdamW weight decay.",
+    )
+    parser.add_argument(
+        "--text-adapter-dims",
+        nargs="+",
+        type=int,
+        choices=list(TEXT_ADAPTER_DIM_CHOICES),
+        help=(
+            "Grid-search values for the text-embedding adapter "
+            "projection dim. Ignored when --text-encoder=none."
+        ),
     )
     parser.add_argument(
         "--report-path",
@@ -310,15 +416,27 @@ def _parse_args() -> argparse.Namespace:
     return args
 
 
+def _text_path_active(args: argparse.Namespace) -> bool:
+    """Return True when the text-embedding path is wired for this run."""
+
+    encoder = str(getattr(args, "text_encoder", "none") or "none")
+    use_text = bool(getattr(args, "use_text_embeddings", True))
+    use_package_path = bool(getattr(args, "training_package_id", None))
+    return encoder != "none" and use_text and use_package_path
+
+
 def _resolved_input_size(args: argparse.Namespace) -> int:
-    """Return the per-bar input size implied by the rich-feature flag.
+    """Return the per-bar scalar input size implied by the rich-feature flag.
 
     The rich-feature input only takes effect when the loader actually
     populates the rich payload (``--training-package-id`` set AND
     ``--rich-features`` on). On the legacy ``--data-dir`` JSON / JSONL
     path the per-bar size stays at ``FEATURE_SIZE`` regardless of the
     flag, so the regression-test contract on the
-    ``--data-dir`` code path is unaffected.
+    ``--data-dir`` code path is unaffected. The text-embedding adapter
+    slot is widened separately inside ``ForecasterModel`` via
+    ``text_adapter_dim`` so this scalar size stays at 35 even when
+    text embeddings are on.
     """
 
     rich_on = bool(getattr(args, "rich_features", False))
@@ -326,6 +444,46 @@ def _resolved_input_size(args: argparse.Namespace) -> int:
     if rich_on and use_package_path:
         return RICH_FEATURE_SIZE
     return FEATURE_SIZE
+
+
+def _resolved_text_adapter_dim(args: argparse.Namespace, override: int | None = None) -> int:
+    """Return the adapter dim for the current run (0 disables the path)."""
+
+    if not _text_path_active(args):
+        return 0
+    if override is not None:
+        return int(override)
+    return int(getattr(args, "text_adapter_dim", DEFAULT_TEXT_ADAPTER_DIM))
+
+
+def _resolve_text_embedding_dim(args: argparse.Namespace) -> int:
+    """Resolve the encoder-native pooled embedding dim for the current encoder.
+
+    The model needs the encoder-native ``in_dim`` to materialise the
+    adapter; the loader emits embeddings of that width per row. The
+    helper reads the first non-empty pooled row off the loader's
+    output via a peek-style import, but the simpler approach used
+    here is to pin the dim from a small static table that matches
+    the registry. The forecaster sweep CLI does not have the parquet
+    open at this point so we fall back to a registry table; a
+    mismatch surfaces at the adapter's first forward pass.
+    """
+
+    if not _text_path_active(args):
+        return 0
+    table = {
+        "finbert": 768,
+        "finbert_fomc": 768,
+        "finbert_fed_adjacent": 768,
+        "bert_base_fed_adjacent": 768,
+        "bge_large_en_v15": 1024,
+        "nomic_embed_text_v15": 768,
+        "voyage_finance_2": 1024,
+    }
+    encoder = str(getattr(args, "text_encoder", "none") or "none")
+    if encoder == "none":
+        return 0
+    return int(table.get(encoder, 768))
 
 
 def _build_model_config(args: argparse.Namespace) -> ModelConfig:
@@ -337,6 +495,8 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         head_hidden_size=args.head_hidden_size,
         architecture=args.architecture,
         credibility_features=bool(args.credibility_features),
+        text_embedding_dim=_resolve_text_embedding_dim(args),
+        text_adapter_dim=_resolved_text_adapter_dim(args),
     )
 
 
@@ -390,6 +550,24 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
     learning_rates = args.learning_rates or [args.learning_rate]
     epochs_options = args.epochs_grid or [args.epochs]
     architectures = args.architectures or [args.architecture]
+    # ``getattr`` fallbacks below keep the existing
+    # ``test_build_sweep_candidates_creates_cartesian_product`` namespace
+    # (which predates the weight-decay / text-adapter axes) intact while
+    # the production CLI runs always pass the new flags through.
+    weight_decays = (
+        getattr(args, "weight_decays", None)
+        or [getattr(args, "weight_decay", 1e-4)]
+    )
+    # Text-adapter-dim axis. Iterated only when the text-embedding path
+    # is wired; on the no-text path the iteration collapses to a single
+    # dummy value so the loop product stays one-deep.
+    if _text_path_active(args):
+        text_adapter_dims = (
+            getattr(args, "text_adapter_dims", None)
+            or [getattr(args, "text_adapter_dim", DEFAULT_TEXT_ADAPTER_DIM)]
+        )
+    else:
+        text_adapter_dims = [0]
     # When the caller asks for an architecture sweep but doesn't list seeds we
     # fall back to the official five-seed set; this matches the bake-off
     # aggregator and avoids accidentally publishing a single-seed table.
@@ -401,13 +579,26 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
         seeds = [args.seed]
 
     candidates: list[dict[str, Any]] = []
-    for architecture, hidden_size, num_layers, dropout, learning_rate, epochs, seed in itertools.product(
+    text_embedding_dim = _resolve_text_embedding_dim(args)
+    for (
+        architecture,
+        hidden_size,
+        num_layers,
+        dropout,
+        learning_rate,
+        epochs,
+        weight_decay,
+        text_adapter_dim,
+        seed,
+    ) in itertools.product(
         architectures,
         hidden_sizes,
         num_layers_options,
         dropouts,
         learning_rates,
         epochs_options,
+        weight_decays,
+        text_adapter_dims,
         seeds,
     ):
         candidates.append(
@@ -420,9 +611,13 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                     head_hidden_size=args.head_hidden_size,
                     architecture=str(architecture),
                     credibility_features=bool(args.credibility_features),
+                    text_embedding_dim=int(text_embedding_dim) if int(text_adapter_dim) > 0 else 0,
+                    text_adapter_dim=int(text_adapter_dim),
                 ),
                 "learning_rate": float(learning_rate),
                 "epochs": int(epochs),
+                "weight_decay": float(weight_decay),
+                "text_adapter_dim": int(text_adapter_dim),
                 "seed": int(seed) if seed is not None else None,
             }
         )
@@ -432,6 +627,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
 def _flatten_trial_record(record: dict[str, Any]) -> dict[str, Any]:
     summary = record["summary"]
     metrics = summary.get("metrics") or {}
+    train_metrics = summary.get("train_metrics") or {}
     model_config = summary.get("model_config") or {}
     return {
         "trial_index": record["trial_index"],
@@ -449,10 +645,20 @@ def _flatten_trial_record(record: dict[str, Any]) -> dict[str, Any]:
         "batch_size": summary.get("batch_size"),
         "validation_split": summary.get("validation_split"),
         "best_epoch": summary.get("best_epoch"),
+        "weight_decay": summary.get("weight_decay"),
+        "target_mode": summary.get("target_mode"),
+        "text_encoder": summary.get("text_encoder"),
+        "text_adapter_dim": summary.get("text_adapter_dim") or model_config.get("text_adapter_dim"),
+        "text_embedding_dim": model_config.get("text_embedding_dim"),
+        "text_pool_lambda_inv_days": summary.get("text_pool_lambda_inv_days"),
         "combined_rmse": metrics.get("combined_rmse"),
         "loss": metrics.get("loss"),
         "close_rmse": metrics.get("close_rmse"),
         "volatility_rmse": metrics.get("volatility_rmse"),
+        "train_combined_rmse": train_metrics.get("combined_rmse"),
+        "train_close_rmse": train_metrics.get("close_rmse"),
+        "train_volatility_rmse": train_metrics.get("volatility_rmse"),
+        "train_loss": train_metrics.get("loss"),
         "checkpoint_saved": summary.get("checkpoint_saved"),
         "checkpoint_path": summary.get("checkpoint_path"),
     }
@@ -486,6 +692,10 @@ def _run_single_training(
     save_checkpoint: bool,
     seed: int | None = None,
     sequence_groups: Sequence[Sequence[FeatureVector]] | None = None,
+    weight_decay: float = 1e-4,
+    shuffle_targets_control: bool = False,
+    text_encoder: str | None = None,
+    text_pool_lambda_inv_days: float = 0.0,
 ) -> TrainingRunSummary:
     # ``validation_fraction`` is the new idiomatic kwarg name. The
     # underlying ``train_model`` keeps ``validation_split`` for backwards
@@ -508,6 +718,10 @@ def _run_single_training(
             device=device,
             model_config=model_config,
             seed=seed,
+            weight_decay=weight_decay,
+            shuffle_targets_control=shuffle_targets_control,
+            text_encoder=text_encoder,
+            text_pool_lambda_inv_days=text_pool_lambda_inv_days,
         )
     else:
         result = train_model(
@@ -522,6 +736,10 @@ def _run_single_training(
             device=device,
             model_config=model_config,
             seed=seed,
+            weight_decay=weight_decay,
+            shuffle_targets_control=shuffle_targets_control,
+            text_encoder=text_encoder,
+            text_pool_lambda_inv_days=text_pool_lambda_inv_days,
         )
     return result.summary
 
@@ -539,6 +757,10 @@ def _train_model_with_groups(
     device: torch.device,
     model_config: ModelConfig,
     seed: int | None,
+    weight_decay: float = 1e-4,
+    shuffle_targets_control: bool = False,
+    text_encoder: str | None = None,
+    text_pool_lambda_inv_days: float = 0.0,
 ) -> Any:
     """Invoke ``train_model`` against pre-loaded sequence groups.
 
@@ -562,6 +784,10 @@ def _train_model_with_groups(
         device=device,
         model_config=model_config,
         seed=seed,
+        weight_decay=weight_decay,
+        shuffle_targets_control=shuffle_targets_control,
+        text_encoder=text_encoder,
+        text_pool_lambda_inv_days=text_pool_lambda_inv_days,
     )
 
 
@@ -583,10 +809,15 @@ def _run_sweep(
     print(f"Starting hyperparameter sweep with {len(candidates)} trial(s)...")
     trial_records: list[dict[str, Any]] = []
     summaries: list[TrainingRunSummary] = []
+    text_encoder_arg = (
+        None if str(getattr(args, "text_encoder", "none")) == "none" else str(args.text_encoder)
+    )
+    text_pool_lambda = float(getattr(args, "text_pool_lambda_inv_days", 0.0))
     for index, candidate in enumerate(candidates, start=1):
         model_config = candidate["model_config"]
         learning_rate = candidate["learning_rate"]
         epochs = candidate["epochs"]
+        weight_decay = candidate.get("weight_decay", args.weight_decay)
         seed = candidate.get("seed")
         summary = _run_single_training(
             data_dir=data_dir,
@@ -601,6 +832,10 @@ def _run_sweep(
             save_checkpoint=False,
             seed=seed,
             sequence_groups=sequence_groups,
+            weight_decay=float(weight_decay),
+            shuffle_targets_control=bool(args.shuffle_targets_control),
+            text_encoder=text_encoder_arg,
+            text_pool_lambda_inv_days=text_pool_lambda,
         )
         summaries.append(summary)
         trial_records.append(
@@ -643,6 +878,7 @@ def _run_sweep(
         f"dropout={best_model_config.dropout:.3f}, lr={best_summary.learning_rate:.6g}, "
         f"epochs={best_summary.epochs_requested}"
     )
+    best_weight_decay = candidates[best_trial_index - 1].get("weight_decay", args.weight_decay)
     final_summary = _run_single_training(
         data_dir=data_dir,
         checkpoint_path=checkpoint_path,
@@ -652,14 +888,18 @@ def _run_sweep(
         learning_rate=best_summary.learning_rate,
         # ``best_summary.validation_split`` is the persisted summary
         # field (frozen for back-compat with the existing
-        # TrainingRunSummary dataclass); we pass it under the new
-        # idiomatic ``validation_fraction`` kwarg.
+        # TrainingRunSummary dataclass); the kwarg routes under the
+        # current ``validation_fraction`` name.
         validation_fraction=best_summary.validation_split,
         early_stopping_patience=best_summary.early_stopping_patience,
         model_config=best_model_config,
         save_checkpoint=True,
         seed=best_seed,
         sequence_groups=sequence_groups,
+        weight_decay=float(best_weight_decay),
+        shuffle_targets_control=bool(args.shuffle_targets_control),
+        text_encoder=text_encoder_arg,
+        text_pool_lambda_inv_days=text_pool_lambda,
     )
     for trial in trial_records:
         trial["selected"] = trial["trial_index"] == best_trial_index
@@ -679,6 +919,12 @@ def _run_sweep(
             "mp_surprise": bool(args.use_mp_surprise),
             "multi_axis": bool(args.use_multi_axis),
         },
+        "text_embeddings": {
+            "encoder": text_encoder_arg,
+            "use_text_embeddings": bool(args.use_text_embeddings),
+            "pool_lambda_inv_days": text_pool_lambda,
+        },
+        "shuffle_targets_control": bool(args.shuffle_targets_control),
         "architectures": sorted({trial["architecture"] for trial in trial_records}),
         "seeds": sorted({trial["seed"] for trial in trial_records if trial["seed"] is not None}),
         "trial_count": len(trial_records),
@@ -724,6 +970,9 @@ def main() -> int:
             f"(credibility={args.use_credibility}, linguistic={args.use_linguistic}, "
             f"mp_surprise={args.use_mp_surprise}, multi_axis={args.use_multi_axis})"
         )
+        loader_text_encoder = (
+            None if str(args.text_encoder) == "none" else str(args.text_encoder)
+        )
         package_sequences = load_training_sequences_from_package(
             args.training_package_id,
             target_mode=args.target_mode,
@@ -732,6 +981,10 @@ def main() -> int:
             use_linguistic=bool(args.use_linguistic),
             use_mp_surprise=bool(args.use_mp_surprise),
             use_multi_axis=bool(args.use_multi_axis),
+            text_encoder=loader_text_encoder,
+            text_adapter_dim=int(args.text_adapter_dim),
+            text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
+            use_text_embeddings=bool(args.use_text_embeddings),
         )
         sequence_count = len(package_sequences)
         observation_count = sum(len(sequence) for sequence in package_sequences)
@@ -787,6 +1040,8 @@ def main() -> int:
             args.epochs_grid,
             args.architectures,
             args.seeds,
+            args.weight_decays,
+            args.text_adapter_dims,
         )
     )
     if sweep_mode:
@@ -817,6 +1072,10 @@ def main() -> int:
         save_checkpoint=True,
         seed=args.seed,
         sequence_groups=package_sequences,
+        weight_decay=float(args.weight_decay),
+        shuffle_targets_control=bool(args.shuffle_targets_control),
+        text_encoder=None if str(args.text_encoder) == "none" else str(args.text_encoder),
+        text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
     )
     metrics = summary.metrics
     if metrics is not None:
