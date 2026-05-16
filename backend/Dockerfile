@@ -11,14 +11,15 @@ RUN apt-get update \
 
 COPY pyproject.toml ./
 
+# This image is the dev / research target consumed by `make dev-cpu` and
+# `make dev-gpu`; the CMD at the bottom runs uvicorn with --reload. There
+# is no separate production stage today, so the [dev] extra (pytest,
+# mypy, ruff, hypothesis, py-spy) is intentionally baked in — running
+# tests, type-checks, and flamegraph captures all happen against the
+# same image. When a production deployment lands, split this into a
+# multi-stage build with a runtime layer that installs only `"."`.
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir ".[dev]"
-
-# py-spy is the on-demand sampling profiler used by docs/perf/*.svg captures;
-# it needs the same image so attaching to the uvicorn worker does not require
-# a host-side install. The CPython binary in this image lets py-spy resolve
-# native frames without the ptrace caveats of an alpine base.
-RUN pip install --no-cache-dir py-spy>=0.3.14
 
 COPY . .
 
