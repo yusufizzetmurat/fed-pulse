@@ -759,7 +759,7 @@ def _read_chunk_embedding_lookup(
 
     if not lookup:
         return {}
-    lookup["__event_dates__"] = event_dates  # type: ignore[assignment]
+    lookup["__event_dates__"] = event_dates
     return lookup
 
 
