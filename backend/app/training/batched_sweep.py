@@ -198,6 +198,11 @@ class BatchedDropout(nn.Module):
     activation at training time matches the eval-time pass-through.
     """
 
+    # Class-level annotation pins ``self.p`` to ``torch.Tensor``;
+    # ``register_buffer`` routes through ``nn.Module.__getattr__``
+    # which mypy widens to ``Size | Tensor | Module`` otherwise.
+    p: torch.Tensor
+
     def __init__(self, p: torch.Tensor):
         super().__init__()
         if p.ndim != 1:
