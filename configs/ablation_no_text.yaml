@@ -1,9 +1,0 @@
-name: no_text
-description: >
-  Forecaster with the text channel zeroed out. Used as the lower-bound row in the
-  headline table — answers "do text features matter at all over calendar + market
-  context?" Keeps the same input shape so seeds and folds are comparable.
-text_channel: scalar
-zero_text: true
-feature_overrides:
-  sentiment_score: 0.0
