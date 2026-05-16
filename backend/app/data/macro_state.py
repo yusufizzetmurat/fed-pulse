@@ -544,8 +544,15 @@ def _sha256_of_file(path: Path) -> str:
 
 
 def write_macro_state_parquet(frame: pd.DataFrame, output_path: Path) -> str:
-    """Write deterministically and return the sha256 of the parquet bytes."""
+    """Write deterministically and return the sha256 of the parquet bytes.
 
+    Validates against ``MacroStateRowSchema`` before writing; set
+    ``FED_PULSE_SKIP_SCHEMA_VALIDATION=1`` to bypass for diagnostic re-runs.
+    """
+
+    from app.data.schemas import MacroStateRowSchema, validate_frame
+
+    validate_frame(MacroStateRowSchema, frame)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(
         output_path,

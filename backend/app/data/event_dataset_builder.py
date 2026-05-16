@@ -1294,8 +1294,14 @@ def write_events_parquet(df: pd.DataFrame, output_path: Path) -> None:
 
     Uses pandas + pyarrow with snappy compression (no creation-time
     metadata) and stable column order. Same input dataframe -> same bytes.
+    Validates each row against ``EventRowSchema`` before writing so a
+    contract violation raises at the write site rather than downstream.
+    Set ``FED_PULSE_SKIP_SCHEMA_VALIDATION=1`` for diagnostic re-runs.
     """
 
+    from app.data.schemas import EventRowSchema, validate_frame
+
+    validate_frame(EventRowSchema, df)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(output_path, engine="pyarrow", index=False, compression="snappy")
 

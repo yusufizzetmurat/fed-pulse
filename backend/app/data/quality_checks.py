@@ -49,7 +49,28 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _validate_quality_passed_rows(rows: list[dict[str, Any]]) -> None:
+    """Run ``QualityPassedRowSchema`` on the deduped frame before emit.
+
+    Lazy mode reports every violation in one ``SchemaErrors``. Set
+    ``FED_PULSE_SKIP_SCHEMA_VALIDATION=1`` to bypass for diagnostic
+    re-runs against intentionally malformed inputs.
+    """
+
+    if not rows:
+        return
+    try:
+        import pandas as pd  # type: ignore
+    except Exception:
+        return
+    from app.data.schemas import QualityPassedRowSchema, validate_frame
+
+    frame = pd.DataFrame(rows)
+    validate_frame(QualityPassedRowSchema, frame)
+
+
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    _validate_quality_passed_rows(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:

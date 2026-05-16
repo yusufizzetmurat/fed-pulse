@@ -710,3 +710,57 @@ aggregator output schema is:
   per-architecture headline (block-bootstrap CIs).
 - `make forecaster-credibility-train TRAINING_PACKAGE_ID=<id> ARCHITECTURE=lstm SEED=11`
   — single-architecture run with `--credibility-features` on.
+
+## Pipeline schema validation
+
+`backend/app/data/schemas.py` defines one `pandera.DataFrameSchema` per
+row contract the pipeline writes to disk. Each emitter calls
+`<schema>.validate(frame)` at its write seam so a row that violates the
+contract raises at the write site rather than three stages downstream.
+
+Schemas:
+
+| Schema                       | Emitter                              | Output                                                      |
+| ---------------------------- | ------------------------------------ | ----------------------------------------------------------- |
+| `IngestedDocSchema`          | `app.data.ingest_sources`            | `source_registry.jsonl`                                     |
+| `NormalizedDocSchema`        | `app.data.normalize_labels`          | `registry_labeled.jsonl` + `registry_normalized.parquet`    |
+| `QualityPassedRowSchema`     | `app.data.quality_checks`            | `registry_quality_passed.jsonl`                             |
+| `FoldRowSchema`              | `app.data.build_training_package`    | `splits_train_val_test.parquet`                             |
+| `EventRowSchema`             | `app.data.event_dataset_builder`     | `events.parquet`, `events_full.parquet`                     |
+| `LinguisticFeatureRowSchema` | `app.features.linguistic`            | `linguistic_features.parquet`                               |
+| `MpSurpriseRowSchema`        | `app.data.mp_surprise`               | `mp_surprises.parquet`                                      |
+| `MacroStateRowSchema`        | `app.data.macro_state`               | `macro_state.parquet`                                       |
+
+Each schema runs in lazy mode (`lazy=True`) so a single failed write
+reports every offending row / column in one `pandera.errors.SchemaErrors`
+exception rather than aborting on the first violation. The shared helper
+`app.data.schemas.validate_frame(schema, frame)` is the canonical entry
+point for emitters.
+
+Set `FED_PULSE_SKIP_SCHEMA_VALIDATION=1` to bypass validation. The env
+var exists for diagnostic re-runs against intentionally malformed inputs
+(reproducing a known bad-row scenario without unblocking it). Default
+behaviour is validation on; opt-in only.
+
+Schema notes:
+
+- `NormalizedDocSchema` accepts both the nested `axes` dict (the form
+  written by `build_training_package` into `registry_normalized.parquet`)
+  and the flat `axis_*` columns (the form written by
+  `event_dataset_builder` into `events.parquet`). The flat columns are
+  `required=False` on the normalized schema and `required=True` on
+  `EventRowSchema`.
+- `QualityPassedRowSchema` asserts `text_hash` uniqueness — the exact-
+  dedup pass must run before the schema gate.
+- `EventRowSchema` asserts `event_kind ∈ {statement, minutes, speech,
+  testimony, press_conference}`, `horizon ∈ {1, 5, 10, 30}`,
+  `direction_t1d ∈ {-1, 0, 1}`, and that `prior_window_sha256` is a
+  64-char lower-hex string. The no-look-ahead contract is enforced by
+  the builder's `_assert_no_lookahead`, not by the schema.
+- `LinguisticFeatureRowSchema` requires every named topic share and
+  hand-crafted density to be finite. `pivot_distance` is allowed to be
+  `NaN` (non-statement rows and the first statement in the corpus emit
+  `NaN` by design).
+- `MpSurpriseRowSchema` constrains `methodology ∈ {ois_proxy,
+  ff_futures}` so a future CME-settlement source is the only way to
+  emit a non-`ois_proxy` row.

@@ -191,13 +191,30 @@ def _build_folds(rows: list[dict[str, Any]], min_train_ratio: float, fold_count:
     return folds
 
 
-def _maybe_write_parquet(path: Path, rows: list[dict[str, Any]]) -> bool:
+def _maybe_write_parquet(
+    path: Path,
+    rows: list[dict[str, Any]],
+    *,
+    schema: Any | None = None,
+) -> bool:
+    """Write rows to parquet, validating against ``schema`` first when provided.
+
+    Validation errors propagate so a bad row halts the build at the
+    write site. The legacy ``except Exception`` fallback only catches
+    pandas / pyarrow availability + IO problems; pandera failures must
+    not be silently swallowed.
+    """
+
     try:
         import pandas as pd  # type: ignore
     except Exception:
         return False
+    df = pd.DataFrame(rows)
+    if schema is not None:
+        from app.data.schemas import validate_frame
+
+        validate_frame(schema, df)
     try:
-        df = pd.DataFrame(rows)
         df.to_parquet(path, index=False)
         return True
     except Exception:
@@ -234,10 +251,19 @@ def main() -> int:
     package_dir.mkdir(parents=True, exist_ok=True)
     quality_out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Pandera schemas guard each parquet write so a contract violation
+    # raises at this stage instead of downstream. Imported lazily to keep
+    # the module's existing import surface unchanged.
+    from app.data.schemas import FoldRowSchema, NormalizedDocSchema
+
     # Base registry artifact
     registry_jsonl = package_dir / "registry_normalized.jsonl"
     _write_jsonl(registry_jsonl, supervised_rows)
-    parquet_written = _maybe_write_parquet(package_dir / "registry_normalized.parquet", supervised_rows)
+    parquet_written = _maybe_write_parquet(
+        package_dir / "registry_normalized.parquet",
+        supervised_rows,
+        schema=NormalizedDocSchema,
+    )
 
     # Train/val/test split artifact
     train_rows, val_rows, test_rows = _time_split(supervised_rows)
@@ -250,7 +276,11 @@ def main() -> int:
         split_rows.append({**row, "split_tag": "test"})
     splits_jsonl = package_dir / "splits_train_val_test.jsonl"
     _write_jsonl(splits_jsonl, split_rows)
-    _maybe_write_parquet(package_dir / "splits_train_val_test.parquet", split_rows)
+    _maybe_write_parquet(
+        package_dir / "splits_train_val_test.parquet",
+        split_rows,
+        schema=FoldRowSchema,
+    )
 
     folds = _build_folds(supervised_rows, min_train_ratio=args.min_train_ratio, fold_count=args.fold_count)
 
