@@ -337,6 +337,35 @@ def test_event_row_rejects_short_prior_window_sha() -> None:
     assert "prior_window_sha256" in str(exc.value)
 
 
+def test_event_row_rejects_invalid_axis_stance() -> None:
+    # axis_stance is one of the most-commonly-mislabeled output columns;
+    # the closed three-class set must reject anything outside it.
+    bad = _event_row(axis_stance="bullish")
+    frame = pd.DataFrame([bad])
+    with pytest.raises(pa_errors.SchemaErrors) as exc:
+        ps.validate_frame(ps.EventRowSchema, frame)
+    assert "axis_stance" in str(exc.value)
+
+
+def test_event_row_rejects_invalid_direction_t1d() -> None:
+    # direction_t1d is sign-of-return; the closed {-1, 0, 1} set must
+    # reject any other value the upstream emitter could mis-produce.
+    bad = _event_row(direction_t1d=2)
+    frame = pd.DataFrame([bad])
+    with pytest.raises(pa_errors.SchemaErrors) as exc:
+        ps.validate_frame(ps.EventRowSchema, frame)
+    assert "direction_t1d" in str(exc.value)
+
+
+def test_event_row_rejects_negative_credibility_months_since_reversal() -> None:
+    # The column is months-since; negative values are nonsense.
+    bad = _event_row(credibility_months_since_reversal=-3)
+    frame = pd.DataFrame([bad])
+    with pytest.raises(pa_errors.SchemaErrors) as exc:
+        ps.validate_frame(ps.EventRowSchema, frame)
+    assert "credibility_months_since_reversal" in str(exc.value)
+
+
 def test_linguistic_row_rejects_nan_named_topic() -> None:
     bad = _linguistic_row(topic_share_inflation=float("nan"))
     frame = pd.DataFrame([bad])

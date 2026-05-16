@@ -42,13 +42,17 @@ themselves are pure data contracts.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pandera.pandas as pa
 from pandera.pandas import Check, Column, DataFrameSchema
+
+LOGGER = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Module-level shared validators
@@ -92,12 +96,22 @@ def validate_frame(schema: DataFrameSchema, frame: pd.DataFrame) -> pd.DataFrame
     """Run a pandera schema in lazy mode unless the skip flag is set.
 
     Returns the (possibly coerced) frame. When the skip flag is set the
-    frame passes through untouched. Otherwise pandera collects every
-    violation across rows and columns and raises a single
-    ``pandera.errors.SchemaErrors`` with the full failure table.
+    frame passes through untouched and a warning is logged so an
+    operator inspecting the run does not silently assume validation
+    succeeded. Otherwise pandera collects every violation across rows
+    and columns and raises a single ``pandera.errors.SchemaErrors`` with
+    the full failure table.
     """
 
     if _schema_validation_disabled():
+        schema_name = getattr(schema, "name", None) or schema.__class__.__name__
+        LOGGER.warning(
+            "schema validation bypassed via FED_PULSE_SKIP_SCHEMA_VALIDATION "
+            "for schema=%s rows=%d cols=%d",
+            schema_name,
+            len(frame),
+            len(frame.columns),
+        )
         return frame
     return schema.validate(frame, lazy=True)
 
@@ -134,19 +148,23 @@ def _nullable_str_or_none(series: pd.Series) -> pd.Series:
 
 
 def _nullable_finite_in_range(low: float, high: float) -> Any:
-    def _check(series: pd.Series) -> pd.Series:
-        def _ok(v: Any) -> bool:
-            if v is None:
-                return True
-            try:
-                f = float(v)
-            except (TypeError, ValueError):
-                return False
-            if f != f:  # NaN allowed for nullable regression axes
-                return True
-            return low <= f <= high
+    """Vectorised range check for regression-typed nullable columns.
 
-        return series.map(_ok)
+    NaN passes through; pandera's ``nullable=True`` flag handles None /
+    NaN rows before this fires, but the check stays NaN-tolerant in case
+    a non-nullable column reuses the same helper. Non-numeric values
+    fail. The check runs through ``pd.to_numeric(..., errors="coerce")``
+    so the whole column is one vectorised pass instead of a per-row
+    Python callback.
+    """
+
+    def _check(series: pd.Series) -> pd.Series:
+        coerced = pd.to_numeric(series, errors="coerce")
+        non_numeric_now = coerced.isna() & series.notna()
+        in_range = coerced.between(low, high)
+        # Accept: NaN-on-input (nullable contract) OR in-range numeric.
+        # Reject: non-numeric strings (non_numeric_now == True).
+        return (series.isna() | in_range) & ~non_numeric_now
 
     return _check
 
@@ -456,7 +474,11 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
         float, nullable=False, required=True, coerce=True
     ),
     "credibility_months_since_reversal": Column(
-        nullable=False, required=True
+        int,
+        Check.greater_than_or_equal_to(0),
+        nullable=False,
+        required=True,
+        coerce=True,
     ),
     "prior_window_sha256": Column(
         str,
@@ -567,7 +589,7 @@ LinguisticFeatureRowSchema = DataFrameSchema(
     name="LinguisticFeatureRowSchema",
     strict=False,
     coerce=False,
-    description="One row per text_hash with 14 finite features + nullable pivot_distance.",
+    description="One row per text_hash with 14 finite required features + nullable pivot_distance (15 columns total).",
 )
 
 
