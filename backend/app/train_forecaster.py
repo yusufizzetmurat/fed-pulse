@@ -201,6 +201,21 @@ def _parse_args() -> argparse.Namespace:
         help="Where to write the hyperparameter search report JSON.",
     )
     parser.add_argument(
+        "--target-mode",
+        choices=("event_study", "realized_return"),
+        default="event_study",
+        help=(
+            "Target-frame derivation for the training-package loader. "
+            "'event_study' (default) uses abnormal_return + volatility_shift "
+            "so the synthesised target removes the broad-market component "
+            "from the close and reconstructs the post-event 10d realised "
+            "vol from the prior vol + shift. 'realized_return' reproduces "
+            "the pre-fix behaviour (close * (1 + realized_return) and a "
+            "literal copy of prior vol_5d) and is preserved for back-compat "
+            "smoke tests only. Ignored when --training-package-id is unset."
+        ),
+    )
+    parser.add_argument(
         "--list-data",
         action="store_true",
         help="Only inspect discovered datasets and exit without training.",
@@ -601,7 +616,11 @@ def main() -> int:
     package_sequences: list[list[FeatureVector]] | None = None
     if use_package_path:
         print(f"Training-package id: {args.training_package_id}")
-        package_sequences = load_training_sequences_from_package(args.training_package_id)
+        print(f"Target mode: {args.target_mode}")
+        package_sequences = load_training_sequences_from_package(
+            args.training_package_id,
+            target_mode=args.target_mode,
+        )
         sequence_count = len(package_sequences)
         observation_count = sum(len(sequence) for sequence in package_sequences)
         window_count = sum(max(0, len(sequence) - SEQUENCE_LENGTH) for sequence in package_sequences)

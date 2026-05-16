@@ -296,3 +296,152 @@ def test_load_training_sequences_from_package_missing_package_raises(
     monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
     with pytest.raises(FileNotFoundError):
         loaders.load_training_sequences_from_package("does_not_exist")
+
+
+# ---------------------------------------------------------------------------
+# Target-frame derivation tests
+#
+# The event-study target frame replaces the pre-fix realized-return /
+# identity-copy target. These tests pin the close + volatility values
+# produced by each ``target_mode`` against synthetic event rows whose
+# ``abnormal_return`` and ``volatility_shift`` are deliberately
+# distinguishable from ``realized_return`` and the prior vol_5d, so the
+# two modes cannot accidentally produce the same numbers.
+# ---------------------------------------------------------------------------
+
+
+_TARGET_PACKAGE_ID = "tp_unit_target_modes_v0"
+
+
+@pytest.fixture
+def target_mode_package_dir(tmp_path: Path, monkeypatch) -> Path:
+    """Minimal one-event package with distinct event-study / realized fields.
+
+    ``abnormal_return`` (0.005) and ``realized_return`` (0.020) are
+    chosen far apart so the close target lands at clearly different
+    values under each mode. ``volatility_shift`` (-0.002) does the
+    same for the volatility column against the last prior bar's
+    vol_5d (0.012 + 4 * 0.0001 = 0.01240 with the synthesiser's
+    five-bar window, but the actual last-bar value depends on
+    SEQUENCE_LENGTH; the test reconstructs it from the same formula).
+    """
+
+    package_dir = tmp_path / "processed" / _TARGET_PACKAGE_ID
+    package_dir.mkdir(parents=True)
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+
+    row = _event_row(
+        event_date="2024-02-15",
+        text_hash="hash_targets",
+        axis_stance="hawkish",
+        realized_return=0.020,
+        realized_date="2024-02-16",
+        base_close=4500.0,
+    )
+    # Override the event-study columns: the helper defaults to
+    # ``abnormal_return == realized_return`` and ``volatility_shift =
+    # 0.0`` so the two modes would coincide; the test needs them
+    # distinct to lock the per-mode arithmetic.
+    row["abnormal_return"] = 0.005
+    row["volatility_shift"] = -0.002
+
+    pd.DataFrame([row]).to_parquet(package_dir / "events.parquet", index=False)
+    pd.DataFrame(
+        [{"text_hash": "hash_targets", "split_tag": "train"}]
+    ).to_parquet(package_dir / "splits_train_val_test.parquet", index=False)
+    return package_dir
+
+
+def _expected_last_prior_bar_close(base_close: float) -> float:
+    return base_close + (SEQUENCE_LENGTH - 1) * 1.5
+
+
+def _expected_last_prior_bar_vol() -> float:
+    return 0.012 + (SEQUENCE_LENGTH - 1) * 0.0001
+
+
+def test_target_uses_abnormal_return_in_event_study_mode(
+    target_mode_package_dir: Path,
+) -> None:
+    sequences = loaders.load_training_sequences_from_package(
+        _TARGET_PACKAGE_ID, target_mode="event_study"
+    )
+    assert len(sequences) == 1
+    target = sequences[0][-1]
+
+    last_close = _expected_last_prior_bar_close(4500.0)
+    last_vol = _expected_last_prior_bar_vol()
+    expected_close = last_close * (1.0 + 0.005)
+    expected_volatility = last_vol + (-0.002)
+
+    assert target.market_close == pytest.approx(expected_close)
+    assert target.market_volatility == pytest.approx(expected_volatility)
+    # Sanity: under realized_return the values would be different, so
+    # the test really does discriminate the two modes.
+    legacy_close = last_close * (1.0 + 0.020)
+    assert target.market_close != pytest.approx(legacy_close)
+    assert target.market_volatility != pytest.approx(last_vol)
+
+
+def test_target_falls_back_when_abnormal_return_is_nan(
+    tmp_path: Path, monkeypatch
+) -> None:
+    package_id = "tp_unit_target_nan_fallback_v0"
+    package_dir = tmp_path / "processed" / package_id
+    package_dir.mkdir(parents=True)
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+
+    row = _event_row(
+        event_date="2024-02-15",
+        text_hash="hash_nan",
+        axis_stance="hawkish",
+        realized_return=0.020,
+        realized_date="2024-02-16",
+        base_close=4500.0,
+    )
+    row["abnormal_return"] = float("nan")
+    row["volatility_shift"] = float("nan")
+
+    pd.DataFrame([row]).to_parquet(package_dir / "events.parquet", index=False)
+    pd.DataFrame(
+        [{"text_hash": "hash_nan", "split_tag": "train"}]
+    ).to_parquet(package_dir / "splits_train_val_test.parquet", index=False)
+
+    with pytest.warns(UserWarning):
+        sequences = loaders.load_training_sequences_from_package(
+            package_id, target_mode="event_study"
+        )
+
+    assert len(sequences) == 1
+    target = sequences[0][-1]
+    last_close = _expected_last_prior_bar_close(4500.0)
+    last_vol = _expected_last_prior_bar_vol()
+    # NaN abnormal_return falls back to realized_return; NaN
+    # volatility_shift falls back to the identity copy of the last
+    # prior bar's vol_5d.
+    assert target.market_close == pytest.approx(last_close * (1.0 + 0.020))
+    assert target.market_volatility == pytest.approx(last_vol)
+
+
+def test_target_mode_realized_return_reproduces_legacy_behaviour(
+    target_mode_package_dir: Path,
+) -> None:
+    sequences = loaders.load_training_sequences_from_package(
+        _TARGET_PACKAGE_ID, target_mode="realized_return"
+    )
+    assert len(sequences) == 1
+    target = sequences[0][-1]
+    last_close = _expected_last_prior_bar_close(4500.0)
+    last_vol = _expected_last_prior_bar_vol()
+    # Legacy formula: close * (1 + realized_return) and identity copy
+    # of the last prior bar's vol_5d. Locks the back-compat path.
+    assert target.market_close == pytest.approx(last_close * (1.0 + 0.020))
+    assert target.market_volatility == pytest.approx(last_vol)
+
+
+def test_target_mode_invalid_raises(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+    with pytest.raises(ValueError):
+        loaders.load_training_sequences_from_package(
+            "any_id", target_mode="not_a_mode"  # type: ignore[arg-type]
+        )
