@@ -777,11 +777,82 @@ aggregator output schema is:
 
 - `make forecaster-sweep TRAINING_PACKAGE_ID=<id>` — the full
   8-arch x 5-seed sweep. Pass `ARCHITECTURES=<csv>` (or
-  `--architectures …`) to restrict.
+  `--architectures …`) to restrict. Defaults to the bucketed runner
+  (`BATCHING_MODE=auto`); override `BATCHING_MODE=off` to fall back
+  to the legacy `ProcessPoolExecutor` path.
+- `make forecaster-sweep-exhaustive TRAINING_PACKAGE_ID=<id>` —
+  every cell in the HP cross-product on a single worker. Pinned to
+  `--batching-mode=off --parallel-workers=1` so the
+  byte-identity regression contract on the sweep-report JSON stays
+  green.
 - `make forecaster-sweep-aggregate TRAINING_PACKAGE_ID=<id>` —
   per-architecture headline (block-bootstrap CIs).
 - `make forecaster-credibility-train TRAINING_PACKAGE_ID=<id> ARCHITECTURE=lstm SEED=11`
   — single-architecture run with `--credibility-features` on.
+
+### Bucketed-HP sweep runner
+
+The default `make forecaster-sweep` path groups hyperparameter cells
+into model-topology buckets and dispatches each bucket as one
+concurrent unit, instead of one cell per spawn-mode subprocess. The
+goal is GPU saturation on the project's small-model regime (hidden in
+{32, 64, 128}, 1-3 layers, sequence length 20): each cell's
+forward + backward is a handful of CUDA kernels that finishes before
+the next is dispatched, so the GPU sits at ~25% TGP when each cell
+runs in its own process.
+
+A bucket is the maximal set of cells that share the same
+`(architecture, hidden_size, num_layers, text_adapter_dim, text_encoder,
+fold_id, target_mode)` tuple. Cells inside a bucket differ only on
+`(dropout, learning_rate, weight_decay, seed)`.
+
+`--batching-mode={auto, stacked, streams, off}` selects the routing:
+
+- `auto` (default) consults the per-architecture table. Architectures
+  whose forward is vmap-friendly route to `stacked`; the rest route
+  to `streams`. The current capability table is:
+
+  | Architecture | Routed mode | Reason                       |
+  |--------------|-------------|------------------------------|
+  | `dlinear`    | `stacked`   | Pure Linear stack            |
+  | `lstm`       | `streams`   | cuDNN RNN -- not vmap-able   |
+  | `lstm_attn`  | `streams`   | cuDNN RNN -- not vmap-able   |
+  | `gru`        | `streams`   | cuDNN RNN -- not vmap-able   |
+  | `tcn`        | `streams`   | Conv1d -- partial vmap       |
+  | `transformer`| `streams`   | Fused MHA -- not vmap-able   |
+  | `informer`   | `streams`   | Fused MHA -- not vmap-able   |
+  | `tft`        | `streams`   | Fused MHA + gating           |
+
+- `stacked` forces stacked-mode; an explicit `stacked` against an
+  architecture not flagged stacked-capable warns and falls back to
+  `streams` so the run still completes.
+- `streams` forces the CUDA-streams scheduler: one
+  `torch.cuda.Stream` per cell inside one Python process and one
+  CUDA context, so the GPU pipelines kernel launches across cells.
+  On the CPU device path the streams scheduler collapses to a
+  sequential loop because threads on CPU share a single global RNG
+  and concurrent training calls would trample each other's seed setup
+  -- the CPU path is not the saturation target anyway.
+- `off` preserves the legacy `ProcessPoolExecutor` path verbatim:
+  each cell runs in its own spawn-mode subprocess with its own
+  CUDA context. This is the byte-identity regression contract for
+  the pre-bucketed sweep output.
+
+`--max-bucket-size INT` overrides the per-architecture VRAM-budget
+cap. Default unset picks 64 for `dlinear`, 32 for `lstm`/`gru`/`tcn`,
+16 for `lstm_attn`, 8 for `transformer`, 4 for `informer`/`tft`.
+
+The grouped bucket emits one log line per bucket so the runner's
+routing decision is auditable from the run log:
+
+```
+[bucket] arch=lstm hidden=32 layers=1 text_adapter=0 encoder=none
+  fold=wf_fold_1 target_mode=event_study bucket_size=8 mode=streams
+```
+
+`bucket_size > 1` confirms the cells actually grouped rather than
+collapsing to one-cell-per-bucket. The `mode` field reflects the
+final routing decision after the per-arch table consultation.
 
 ### Training-package data flow
 
