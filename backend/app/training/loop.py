@@ -138,6 +138,7 @@ def train_model(
     base_model: ForecasterModel | None = None,
     model_config: ModelConfig | dict[str, Any] | None = None,
     vectors: list[FeatureVector] | None = None,
+    sequence_groups: list[list[FeatureVector]] | None = None,
     data_dir: str | Path | None = None,
     epochs: int = DEFAULT_EPOCHS,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -153,9 +154,19 @@ def train_model(
         enable_deterministic_mode(seed)
     device_obj = _resolve_device(device)
     active_model_config = ModelConfig.from_model(base_model) if base_model is not None else _coerce_model_config(model_config)
-    sequence_groups = load_training_sequences_from_data(data_dir)
+    # When ``sequence_groups`` is provided, the caller has already
+    # loaded its sequences (e.g. from a Phase 8 training package via
+    # ``load_training_sequences_from_package``). Bypass the legacy
+    # ``data_dir`` scan in that case so the trainer does not also pull
+    # in unrelated raw-market files. When omitted, behaviour is
+    # unchanged: the data-dir scan + ``vectors`` append path runs.
+    if sequence_groups is not None:
+        active_sequence_groups: list[list[FeatureVector]] = [list(group) for group in sequence_groups]
+    else:
+        active_sequence_groups = load_training_sequences_from_data(data_dir)
     if vectors:
-        sequence_groups.append(list(vectors))
+        active_sequence_groups.append(list(vectors))
+    sequence_groups = active_sequence_groups
 
     # `_build_training_tensors` now fits a per-fold close-scale from the
     # actual training rows and returns it as the third tuple element. The

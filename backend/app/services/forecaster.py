@@ -80,6 +80,7 @@ from app.training.loaders import (
     build_feature_vectors,
     inspect_training_data_sources,
     load_training_sequences_from_data,
+    load_training_sequences_from_package,
 )
 from app.training.loop import (
     _build_model,

@@ -24,12 +24,14 @@ from app.services.forecaster import (
     DEFAULT_LEARNING_RATE,
     DEFAULT_NUM_LAYERS,
     DEFAULT_VALIDATION_SPLIT,
+    FeatureVector,
     ModelConfig,
     TrainingRunSummary,
     SEQUENCE_LENGTH,
     inspect_training_data_sources,
     train_model,
 )
+from app.training.loaders import load_training_sequences_from_package
 
 # Official seed set for the multi-architecture sweep (mirrors the NLP bake-off
 # protocol in ``docs/benchmark-policy.md``).
@@ -46,6 +48,16 @@ def _parse_args() -> argparse.Namespace:
         "--data-dir",
         default=str(DEFAULT_DATA_DIR),
         help="Directory containing JSON, JSONL, or CSV training datasets.",
+    )
+    parser.add_argument(
+        "--training-package-id",
+        default=None,
+        help=(
+            "Phase 8 training-package id under data/processed/. When set, the "
+            "trainer consumes events.parquet's prior_bars_json column instead "
+            "of scanning --data-dir for raw market-record JSON/JSONL/CSV files. "
+            "Takes precedence over --data-dir when both are supplied."
+        ),
     )
     parser.add_argument(
         "--checkpoint-path",
@@ -363,12 +375,73 @@ def _run_single_training(
     model_config: ModelConfig,
     save_checkpoint: bool,
     seed: int | None = None,
+    sequence_groups: Sequence[Sequence[FeatureVector]] | None = None,
 ) -> TrainingRunSummary:
     # ``validation_fraction`` is the new idiomatic kwarg name. The
     # underlying ``train_model`` keeps ``validation_split`` for backwards
     # compatibility with checkpoints and tests; we relay by name here.
-    result = train_model(
-        data_dir=data_dir,
+    # When ``sequence_groups`` is provided (training-package path), the
+    # legacy ``data_dir`` scan is bypassed and the groups are appended as
+    # standalone ``vectors=`` payloads, one call per group. Doing it this
+    # way preserves the back-compat surface of ``train_model`` and
+    # avoids touching the regression-test contract.
+    if sequence_groups:
+        result = _train_model_with_groups(
+            sequence_groups=sequence_groups,
+            epochs=epochs,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+            validation_fraction=validation_fraction,
+            early_stopping_patience=early_stopping_patience,
+            checkpoint_path=checkpoint_path,
+            save_checkpoint=save_checkpoint,
+            device=device,
+            model_config=model_config,
+            seed=seed,
+        )
+    else:
+        result = train_model(
+            data_dir=data_dir,
+            epochs=epochs,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+            validation_split=validation_fraction,
+            early_stopping_patience=early_stopping_patience,
+            checkpoint_path=checkpoint_path,
+            save_checkpoint=save_checkpoint,
+            device=device,
+            model_config=model_config,
+            seed=seed,
+        )
+    return result.summary
+
+
+def _train_model_with_groups(
+    *,
+    sequence_groups: Sequence[Sequence[FeatureVector]],
+    epochs: int,
+    batch_size: int,
+    learning_rate: float,
+    validation_fraction: float,
+    early_stopping_patience: int,
+    checkpoint_path: Path,
+    save_checkpoint: bool,
+    device: torch.device,
+    model_config: ModelConfig,
+    seed: int | None,
+) -> Any:
+    """Invoke ``train_model`` against pre-loaded sequence groups.
+
+    Routes through the ``sequence_groups`` kwarg on ``train_model`` so
+    the legacy ``data_dir`` scan is bypassed entirely. Each inner list
+    becomes one group consumed by ``_build_training_tensors`` -- the
+    slicer treats each group independently, so prior bars from one
+    FOMC event never leak into another event's training window.
+    """
+
+    materialised: list[list[FeatureVector]] = [list(group) for group in sequence_groups]
+    return train_model(
+        sequence_groups=materialised,
         epochs=epochs,
         batch_size=batch_size,
         learning_rate=learning_rate,
@@ -380,7 +453,6 @@ def _run_single_training(
         model_config=model_config,
         seed=seed,
     )
-    return result.summary
 
 
 def _run_sweep(
@@ -390,6 +462,8 @@ def _run_sweep(
     checkpoint_path: Path,
     report_path: Path,
     device: torch.device,
+    sequence_groups: Sequence[Sequence[FeatureVector]] | None = None,
+    training_package_id: str | None = None,
 ) -> int:
     candidates = build_sweep_candidates(args)
     if not candidates:
@@ -416,6 +490,7 @@ def _run_sweep(
             model_config=model_config,
             save_checkpoint=False,
             seed=seed,
+            sequence_groups=sequence_groups,
         )
         summaries.append(summary)
         trial_records.append(
@@ -474,6 +549,7 @@ def _run_sweep(
         model_config=best_model_config,
         save_checkpoint=True,
         seed=best_seed,
+        sequence_groups=sequence_groups,
     )
     for trial in trial_records:
         trial["selected"] = trial["trial_index"] == best_trial_index
@@ -483,6 +559,7 @@ def _run_sweep(
         "selection_metric": "combined_rmse",
         "device": str(device),
         "data_dir": str(data_dir),
+        "training_package_id": training_package_id,
         "checkpoint_path": str(checkpoint_path),
         "credibility_features": bool(args.credibility_features),
         "architectures": sorted({trial["architecture"] for trial in trial_records}),
@@ -510,30 +587,64 @@ def main() -> int:
     report_path = Path(args.report_path)
     device = torch.device(args.device) if args.device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    sequences, summaries = inspect_training_data_sources(data_dir)
-    sequence_count = len(sequences)
-    observation_count = sum(len(sequence) for sequence in sequences)
-    window_count = sum(max(0, len(sequence) - SEQUENCE_LENGTH) for sequence in sequences)
-
-    _print_data_inventory(
-        data_dir,
-        checkpoint_path,
-        device,
-        summaries,
-        sequence_count=sequence_count,
-        observation_count=observation_count,
-        window_count=window_count,
-    )
-
-    if args.list_data:
-        return 0 if summaries else 1
-
-    if not sequence_count or not window_count:
+    # ``--training-package-id`` takes precedence over ``--data-dir`` so an
+    # exported DATA_DIR override never silently falls back to the legacy
+    # JSON/JSONL scan. The override path is logged so precedence is
+    # auditable from the run log.
+    use_package_path = bool(args.training_package_id)
+    if use_package_path and args.data_dir != str(DEFAULT_DATA_DIR):
         print(
-            "No sufficient training data found. Add prepared market series files under the data directory "
-            "with fields like date, close, volatility_5d, and optional sentiment_score."
+            f"--training-package-id is set; ignoring --data-dir={args.data_dir} "
+            "in favour of the Phase 8 events.parquet path."
         )
-        return 1
+
+    package_sequences: list[list[FeatureVector]] | None = None
+    if use_package_path:
+        print(f"Training-package id: {args.training_package_id}")
+        package_sequences = load_training_sequences_from_package(args.training_package_id)
+        sequence_count = len(package_sequences)
+        observation_count = sum(len(sequence) for sequence in package_sequences)
+        window_count = sum(max(0, len(sequence) - SEQUENCE_LENGTH) for sequence in package_sequences)
+        print(f"Device: {device}")
+        print(f"Checkpoint path: {checkpoint_path}")
+        print(f"Existing checkpoint: {'yes' if checkpoint_path.exists() else 'no'}")
+        print(f"Sequence groups discovered: {sequence_count}")
+        print(f"Observations discovered: {observation_count}")
+        print(f"Training windows available: {window_count}")
+        if args.list_data:
+            return 0 if sequence_count else 1
+        if not sequence_count or not window_count:
+            print(
+                "No sufficient training data found in training package "
+                f"{args.training_package_id}. Verify events.parquet carries "
+                "prior_bars_json with the full 20-bar prior window."
+            )
+            return 1
+    else:
+        sequences, summaries = inspect_training_data_sources(data_dir)
+        sequence_count = len(sequences)
+        observation_count = sum(len(sequence) for sequence in sequences)
+        window_count = sum(max(0, len(sequence) - SEQUENCE_LENGTH) for sequence in sequences)
+
+        _print_data_inventory(
+            data_dir,
+            checkpoint_path,
+            device,
+            summaries,
+            sequence_count=sequence_count,
+            observation_count=observation_count,
+            window_count=window_count,
+        )
+
+        if args.list_data:
+            return 0 if summaries else 1
+
+        if not sequence_count or not window_count:
+            print(
+                "No sufficient training data found. Add prepared market series files under the data directory "
+                "with fields like date, close, volatility_5d, and optional sentiment_score."
+            )
+            return 1
 
     sweep_mode = args.sweep or any(
         option is not None
@@ -554,6 +665,8 @@ def main() -> int:
             checkpoint_path=checkpoint_path,
             report_path=report_path,
             device=device,
+            sequence_groups=package_sequences,
+            training_package_id=args.training_package_id,
         )
 
     print(
@@ -572,6 +685,7 @@ def main() -> int:
         model_config=_build_model_config(args),
         save_checkpoint=True,
         seed=args.seed,
+        sequence_groups=package_sequences,
     )
     metrics = summary.metrics
     if metrics is not None:
