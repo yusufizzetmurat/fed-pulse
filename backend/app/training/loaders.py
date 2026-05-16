@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import dataclasses
 import datetime
 import json
 import logging
@@ -90,6 +91,39 @@ _NON_TRAINING_SPLIT_TAGS = frozenset({"val", "test", "excluded_from_training"})
 TargetMode = Literal["event_study", "realized_return"]
 _VALID_TARGET_MODES: frozenset[str] = frozenset({"event_study", "realized_return"})
 DEFAULT_TARGET_MODE: TargetMode = "event_study"
+
+
+@dataclasses.dataclass(frozen=True)
+class WalkForwardSplit:
+    """Pre-split sequence groups for a single walk-forward fold.
+
+    Holds the three sequence-group lists the trainer consumes
+    independently: the training partition the optimiser fits, the
+    validation partition early-stopping watches, and the held-out test
+    partition the aggregator reports as the headline RMSE. Per-list
+    ``event_dates`` mirror the per-list ``text_hash`` order so the
+    aggregator can audit fold boundaries without reopening the parquet.
+
+    ``fold_id`` is ``None`` on the single-fold default path (the
+    package's ``splits_train_val_test.parquet`` already names the
+    partition per row). Multi-fold callers populate it with the
+    manifest's fold id (``wf_fold_1`` ...).
+
+    ``protocol`` distinguishes ``single-fold`` (legacy split-tag
+    partition) from ``walk-forward`` (expanding training window read
+    off ``fold_manifest_expanding_walk_forward.json``) so the
+    aggregator can label rows without re-deriving the path from the
+    fold id.
+    """
+
+    train: list[list[FeatureVector]]
+    val: list[list[FeatureVector]]
+    test: list[list[FeatureVector]]
+    train_event_dates: list[str]
+    val_event_dates: list[str]
+    test_event_dates: list[str]
+    fold_id: str | None = None
+    protocol: str = "single-fold"
 
 
 def _coerce_finite_float(value: Any) -> float | None:
@@ -972,6 +1006,81 @@ def _read_events_frame(package_dir: Path) -> "Any":
     return pd.read_parquet(events_path)
 
 
+def _read_fold_manifest(package_dir: Path) -> dict[str, dict[str, str]]:
+    """Return ``fold_id -> {train_start, train_end, val_start, val_end, test_start, test_end}``.
+
+    Reads ``fold_manifest_expanding_walk_forward.json`` from the
+    training-package directory. The manifest ships one entry per
+    expanding-window fold (``wf_fold_1`` ... ``wf_fold_N``) with the
+    chronological date ranges that define the train, val and test
+    windows for that fold. Returns an empty dict when the file is
+    absent or the schema is unparseable; callers handle that as a
+    missing-fold error.
+    """
+
+    path = package_dir / "fold_manifest_expanding_walk_forward.json"
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    folds = payload.get("folds") if isinstance(payload, dict) else None
+    if not isinstance(folds, list):
+        return {}
+    result: dict[str, dict[str, str]] = {}
+    for fold in folds:
+        if not isinstance(fold, dict):
+            continue
+        fold_id = str(fold.get("fold_id", "")).strip()
+        if not fold_id:
+            continue
+        result[fold_id] = {
+            "train_start": str(fold.get("train_start", "")),
+            "train_end": str(fold.get("train_end", "")),
+            "val_start": str(fold.get("val_start", "")),
+            "val_end": str(fold.get("val_end", "")),
+            "test_start": str(fold.get("test_start", "")),
+            "test_end": str(fold.get("test_end", "")),
+        }
+    return result
+
+
+def _read_split_tag_lookup(package_dir: Path) -> dict[str, str]:
+    """Return ``text_hash -> split_tag`` from ``splits_train_val_test.parquet``.
+
+    Accepts either ``split_tag`` (current builder column name) or
+    ``partition`` (the forward-looking name from the data contract).
+    Returns an empty dict when the parquet is absent or the schema
+    does not expose a joinable ``text_hash`` column; downstream
+    callers then fall through to the legacy "train-only" filter.
+    """
+
+    import pandas as pd
+
+    splits_path = package_dir / "splits_train_val_test.parquet"
+    if not splits_path.exists():
+        return {}
+    frame = pd.read_parquet(splits_path)
+    tag_column: str | None = None
+    for candidate in ("partition", "split_tag"):
+        if candidate in frame.columns:
+            tag_column = candidate
+            break
+    if tag_column is None or "text_hash" not in frame.columns:
+        return {}
+    lookup: dict[str, str] = {}
+    for record in frame.to_dict("records"):
+        text_hash = str(record.get("text_hash", "")).strip()
+        if not text_hash:
+            continue
+        tag = str(record.get(tag_column, "")).strip().lower()
+        if not tag:
+            continue
+        lookup[text_hash] = tag
+    return lookup
+
+
 def _read_excluded_text_hashes(package_dir: Path) -> set[str]:
     """Return the ``text_hash`` set that must NOT enter the training loss.
 
@@ -1011,6 +1120,368 @@ def _read_excluded_text_hashes(package_dir: Path) -> set[str]:
     # excluded sentinel all drop.
     excluded = frame.loc[excluded_mask, "text_hash"]
     return {str(value) for value in excluded.tolist() if value}
+
+
+def _load_package_sequences_with_metadata(
+    training_package_id: str,
+    *,
+    target_mode: TargetMode = DEFAULT_TARGET_MODE,
+    rich_features: bool = True,
+    use_credibility: bool = True,
+    use_linguistic: bool = True,
+    use_mp_surprise: bool = True,
+    use_multi_axis: bool = True,
+    text_encoder: str | None = None,
+    text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
+    text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
+    use_text_embeddings: bool = True,
+    text_embedding_cache_dir: Path | str | None = None,
+) -> list[tuple[list[FeatureVector], str, str]]:
+    """Materialise every event in a training package as a sequence triple.
+
+    Returns ``[(sequence, text_hash, event_date), ...]`` for every event
+    whose ``prior_bars_json`` carries the full 20-bar prior window. No
+    split-tag or fold filter is applied here -- the caller partitions
+    on top of the returned list using either the package's
+    ``split_tag`` column or the walk-forward fold manifest.
+
+    Sequences are sorted by ``(event_date, text_hash)`` so the returned
+    order is deterministic across runs. Per-event prior-bar / target /
+    rich-feature / text-embedding logic is identical to the legacy
+    :func:`load_training_sequences_from_package`; only the partition
+    step changes.
+    """
+
+    if target_mode not in _VALID_TARGET_MODES:
+        raise ValueError(
+            f"Unsupported target_mode: {target_mode!r}. "
+            f"Choose one of {sorted(_VALID_TARGET_MODES)}."
+        )
+
+    package_dir = _resolve_training_package_dir(training_package_id)
+    frame = _read_events_frame(package_dir)
+    if frame.empty:
+        return []
+
+    required_columns = {"event_date", "text_hash", "prior_bars_json"}
+    missing = required_columns - set(frame.columns)
+    if missing:
+        raise ValueError(
+            f"events.parquet at {package_dir} missing columns: {sorted(missing)}"
+        )
+
+    linguistic_lookup: dict[str, list[float]] = {}
+    mp_surprise_lookup: dict[str, dict[str, float]] = {}
+    if rich_features:
+        linguistic_lookup = _read_linguistic_lookup(package_dir)
+        mp_surprise_lookup = _read_mp_surprise_lookup(package_dir)
+
+    embedding_lookup: dict[str, Any] = {}
+    use_text_path = bool(text_encoder) and bool(use_text_embeddings)
+    text_adapter_dim_int = int(text_adapter_dim)
+    if use_text_path:
+        if text_adapter_dim_int <= 0:
+            raise ValueError(
+                f"text_adapter_dim must be a positive integer; got {text_adapter_dim}"
+            )
+        cache_dir = (
+            Path(text_embedding_cache_dir)
+            if text_embedding_cache_dir is not None
+            else None
+        )
+        registry_parquet = package_dir / "registry_normalized.parquet"
+        registry_jsonl = package_dir / "registry_normalized.jsonl"
+        registry_for_lookup: Path | None
+        if registry_jsonl.exists():
+            registry_for_lookup = registry_jsonl
+        elif registry_parquet.exists():
+            import pandas as pd
+
+            reg_frame = pd.read_parquet(registry_parquet)
+            reg_subset = reg_frame[[c for c in ("record_id", "text_hash") if c in reg_frame.columns]]
+            if not reg_subset.empty and "record_id" in reg_subset.columns and "text_hash" in reg_subset.columns:
+                tmp_path = package_dir / "_registry_record_to_text_hash.jsonl"
+                with tmp_path.open("w", encoding="utf-8") as handle:
+                    for record in reg_subset.to_dict("records"):
+                        handle.write(
+                            json.dumps(
+                                {
+                                    "record_id": str(record.get("record_id") or ""),
+                                    "text_hash": str(record.get("text_hash") or ""),
+                                },
+                                sort_keys=True,
+                            )
+                            + "\n"
+                        )
+                registry_for_lookup = tmp_path
+            else:
+                registry_for_lookup = None
+        else:
+            registry_for_lookup = None
+        embedding_lookup = _read_chunk_embedding_lookup(
+            text_encoder,
+            cache_dir=cache_dir,
+            registry_path=registry_for_lookup,
+        )
+
+    def _row_rank(row: dict[str, Any]) -> tuple[int, int, str]:
+        horizon = row.get("horizon")
+        try:
+            horizon_int = int(horizon) if horizon is not None else 10_000
+        except (TypeError, ValueError):
+            horizon_int = 10_000
+        return (horizon_int, 0, str(row.get("source", "")))
+
+    seen: set[str] = set()
+    by_text_hash: dict[str, dict[str, Any]] = {}
+    records = frame.to_dict("records")
+    records.sort(key=_row_rank)
+    prior_chronology_set: set[tuple[datetime.date, str]] = set()
+    for row in records:
+        candidate_hash = str(row.get("text_hash", ""))
+        if not candidate_hash:
+            continue
+        candidate_date_raw = str(row.get("event_date", ""))[:10]
+        if not candidate_date_raw:
+            continue
+        try:
+            candidate_date = datetime.date.fromisoformat(candidate_date_raw)
+        except ValueError:
+            continue
+        prior_chronology_set.add((candidate_date, candidate_hash))
+        if candidate_hash in seen:
+            continue
+        seen.add(candidate_hash)
+        by_text_hash[candidate_hash] = row
+
+    prior_chronology: list[tuple[datetime.date, str]] = sorted(prior_chronology_set)
+
+    ordered_rows = sorted(
+        by_text_hash.values(),
+        key=lambda row: (str(row.get("event_date", "")), str(row.get("text_hash", ""))),
+    )
+
+    results: list[tuple[list[FeatureVector], str, str]] = []
+    for row in ordered_rows:
+        event_date_str = str(row.get("event_date", ""))
+        if not event_date_str:
+            continue
+        try:
+            event_date = datetime.date.fromisoformat(event_date_str[:10])
+        except ValueError:
+            continue
+        bars = _parse_prior_bars(row.get("prior_bars_json"))
+        if len(bars) < SEQUENCE_LENGTH:
+            continue
+        row_text_hash = str(row.get("text_hash", ""))
+        sentiment_score = _stance_to_sentiment(row.get("axis_stance"))
+        vectors = _bars_to_feature_vectors(
+            bars,
+            event_date=event_date,
+            sentiment_score=sentiment_score,
+        )
+        if len(vectors) < SEQUENCE_LENGTH:
+            continue
+        realized_return = _coerce_finite_float(row.get("realized_return"))
+        abnormal_return = _coerce_finite_float(row.get("abnormal_return"))
+        volatility_shift = _coerce_finite_float(row.get("volatility_shift"))
+        realized_date_raw = row.get("realized_date")
+        if (
+            realized_date_raw is None
+            or (isinstance(realized_date_raw, float) and realized_date_raw != realized_date_raw)
+        ):
+            realized_date = None
+        else:
+            text = str(realized_date_raw).strip()
+            realized_date = text or None
+        _append_event_day_target(
+            vectors,
+            event_date=event_date,
+            realized_return=realized_return,
+            realized_date=realized_date,
+            sentiment_score=sentiment_score,
+            abnormal_return=abnormal_return,
+            volatility_shift=volatility_shift,
+            target_mode=target_mode,
+        )
+        if rich_features:
+            _attach_rich_features(
+                vectors,
+                event_row=row,
+                linguistic_lookup=linguistic_lookup,
+                mp_surprise_lookup=mp_surprise_lookup,
+                text_hash=row_text_hash,
+                event_date_str=event_date_str[:10],
+                use_credibility=use_credibility,
+                use_linguistic=use_linguistic,
+                use_mp_surprise=use_mp_surprise,
+                use_multi_axis=use_multi_axis,
+            )
+        if use_text_path:
+            pooled = _compute_prior4_pooled_embedding(
+                text_hash=row_text_hash,
+                event_row_text_hash=row_text_hash,
+                current_event_date=event_date,
+                embedding_lookup=embedding_lookup,
+                prior_text_hashes=prior_chronology,
+                lambda_inv_days=float(text_pool_lambda_inv_days),
+                max_prior=4,
+            )
+            if pooled is None:
+                missing_flag = 1.0
+                pooled_list: list[float] = []
+            else:
+                missing_flag = 0.0
+                pooled_list = [float(v) for v in pooled.tolist()]
+            for vector in vectors:
+                vector.text_embedding_pooled = list(pooled_list)
+                vector.text_embedding_missing = missing_flag
+        results.append((vectors, row_text_hash, event_date_str[:10]))
+    return results
+
+
+def load_walk_forward_split(
+    training_package_id: str,
+    *,
+    fold_id: str | None = None,
+    target_mode: TargetMode = DEFAULT_TARGET_MODE,
+    rich_features: bool = True,
+    use_credibility: bool = True,
+    use_linguistic: bool = True,
+    use_mp_surprise: bool = True,
+    use_multi_axis: bool = True,
+    text_encoder: str | None = None,
+    text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
+    text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
+    use_text_embeddings: bool = True,
+    text_embedding_cache_dir: Path | str | None = None,
+) -> WalkForwardSplit:
+    """Return the (train, val, test) sequence partitions for one fold.
+
+    Two protocols are supported:
+
+    - ``fold_id=None`` (default, "single-fold"): partition events by
+      the ``split_tag`` column on ``splits_train_val_test.parquet``.
+      Rows tagged ``train`` enter the training list; ``val`` rows
+      drive early stopping; ``test`` rows are the held-out evaluation
+      set. The ``excluded_from_training`` sentinel (when present) is
+      treated as a fourth bucket and dropped from all three lists.
+    - ``fold_id="wf_fold_K"`` (multi-fold "walk-forward"): partition
+      events by chronological date against the fold's manifest entry
+      in ``fold_manifest_expanding_walk_forward.json``. Every event
+      with ``event_date < val_start`` belongs to the training list
+      (expanding-window contract: the train partition grows fold over
+      fold). The val list spans ``[val_start, val_end]``; the test
+      list spans ``[test_start, test_end]``.
+
+    The test partition is the canonical held-out set the forecaster
+    sweep aggregator reports as ``test_rmse``; the val partition is
+    consumed by the training loop for early stopping. Both paths
+    preserve the prior-bars + rich-feature + text-embedding attachment
+    logic; only the partition step changes.
+
+    Raises ``ValueError`` when the chosen partition produces an empty
+    test list: a sweep that silently runs on no held-out events is the
+    research-quality footgun this refactor was written to remove.
+    """
+
+    package_dir = _resolve_training_package_dir(training_package_id)
+    fold_window: dict[str, str] | None = None
+    if fold_id is not None:
+        manifest = _read_fold_manifest(package_dir)
+        if fold_id not in manifest:
+            raise ValueError(
+                f"fold_id={fold_id!r} not found in fold manifest at {package_dir}; "
+                f"known fold ids: {sorted(manifest.keys())}"
+            )
+        fold_window = manifest[fold_id]
+
+    items = _load_package_sequences_with_metadata(
+        training_package_id,
+        target_mode=target_mode,
+        rich_features=rich_features,
+        use_credibility=use_credibility,
+        use_linguistic=use_linguistic,
+        use_mp_surprise=use_mp_surprise,
+        use_multi_axis=use_multi_axis,
+        text_encoder=text_encoder,
+        text_adapter_dim=text_adapter_dim,
+        text_pool_lambda_inv_days=text_pool_lambda_inv_days,
+        use_text_embeddings=use_text_embeddings,
+        text_embedding_cache_dir=text_embedding_cache_dir,
+    )
+
+    train: list[list[FeatureVector]] = []
+    val: list[list[FeatureVector]] = []
+    test: list[list[FeatureVector]] = []
+    train_dates: list[str] = []
+    val_dates: list[str] = []
+    test_dates: list[str] = []
+
+    if fold_window is None:
+        # Single-fold path: partition by split_tag.
+        protocol = "single-fold"
+        tag_lookup = _read_split_tag_lookup(package_dir)
+        for sequence, text_hash, event_date_str in items:
+            tag = tag_lookup.get(text_hash, "").lower()
+            if tag == "train":
+                train.append(sequence)
+                train_dates.append(event_date_str)
+            elif tag == "val":
+                val.append(sequence)
+                val_dates.append(event_date_str)
+            elif tag == "test":
+                test.append(sequence)
+                test_dates.append(event_date_str)
+            else:
+                # Untagged or excluded -- skip from every partition.
+                continue
+    else:
+        protocol = "walk-forward"
+        val_start = fold_window.get("val_start", "")
+        val_end = fold_window.get("val_end", "")
+        test_start = fold_window.get("test_start", "")
+        test_end = fold_window.get("test_end", "")
+        if not (val_start and val_end and test_start and test_end):
+            raise ValueError(
+                f"fold {fold_id!r} manifest entry missing one of "
+                "val_start/val_end/test_start/test_end"
+            )
+        for sequence, _text_hash, event_date_str in items:
+            # Expanding-window contract: any event chronologically
+            # before the val window belongs to the training partition,
+            # so train_k strictly grows with k.
+            if event_date_str < val_start:
+                train.append(sequence)
+                train_dates.append(event_date_str)
+            elif val_start <= event_date_str <= val_end:
+                val.append(sequence)
+                val_dates.append(event_date_str)
+            elif test_start <= event_date_str <= test_end:
+                test.append(sequence)
+                test_dates.append(event_date_str)
+            else:
+                # Falls into the post-test gap (between the fold's
+                # test_end and the next fold's val_start) -- drop.
+                continue
+
+    if not test:
+        raise ValueError(
+            f"WalkForwardSplit for training_package_id={training_package_id!r} "
+            f"fold_id={fold_id!r} produced an empty test partition; refusing "
+            "to silently train on no held-out events"
+        )
+
+    return WalkForwardSplit(
+        train=train,
+        val=val,
+        test=test,
+        train_event_dates=train_dates,
+        val_event_dates=val_dates,
+        test_event_dates=test_dates,
+        fold_id=fold_id,
+        protocol=protocol,
+    )
 
 
 def load_training_sequences_from_package(
@@ -1118,7 +1589,24 @@ def load_training_sequences_from_package(
     ``use_text_embeddings=False`` skips the pooling step entirely and
     every row keeps the default empty pooled list + missing-flag at
     ``1.0``.
+
+    .. deprecated::
+        Returning only the training partition collapses the package's
+        ``val`` and ``test`` partitions back into "drop on the floor"
+        semantics, which is the bug that motivated
+        :func:`load_walk_forward_split`. New callers should use the
+        latter and consume the three lists separately. This wrapper
+        stays callable so the legacy regression-test contract holds
+        until in-tree callers migrate.
     """
+
+    warnings.warn(
+        "load_training_sequences_from_package returns only the train "
+        "partition and drops val + test on the floor; use "
+        "load_walk_forward_split() for proper train/val/test partitions.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     if target_mode not in _VALID_TARGET_MODES:
         raise ValueError(
@@ -1127,6 +1615,10 @@ def load_training_sequences_from_package(
         )
 
     package_dir = _resolve_training_package_dir(training_package_id)
+    if not (package_dir / "events.parquet").exists():
+        raise FileNotFoundError(
+            f"events.parquet missing from training package: {package_dir}"
+        )
     frame = _read_events_frame(package_dir)
     if frame.empty:
         return []
