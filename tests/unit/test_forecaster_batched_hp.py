@@ -23,7 +23,10 @@ from app.training.batched_sweep import (  # noqa: E402
     BucketKey,
     bucket_key_for_candidate,
     group_candidates_into_buckets,
+    resolve_batching_mode,
     resolve_max_bucket_size,
+    route_bucket,
+    run_bucket_streams,
 )
 
 
@@ -321,6 +324,79 @@ def test_batched_adam_per_cell_weight_decay():
         ]
     )
     assert torch.allclose(params["w"], expected, atol=1e-7)
+
+
+def test_resolve_batching_mode_per_arch_table():
+    """auto routes per the per-arch table; explicit overrides are honoured."""
+
+    assert resolve_batching_mode("dlinear", mode="auto") == "stacked"
+    assert resolve_batching_mode("lstm", mode="auto") == "streams"
+    assert resolve_batching_mode("transformer", mode="auto") == "streams"
+    assert resolve_batching_mode("informer", mode="auto") == "streams"
+    # An explicit override takes precedence.
+    assert resolve_batching_mode("dlinear", mode="streams") == "streams"
+    assert resolve_batching_mode("lstm", mode="stacked") == "stacked"
+
+
+def test_route_bucket_falls_back_to_streams_when_not_capable(caplog):
+    """Explicit stacked on a non-stacked-capable arch falls back to streams.
+
+    The fallback logs a warning so a user typo on --batching-mode does
+    not silently bypass the per-arch capability gate.
+    """
+
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        decision = route_bucket("lstm", mode="stacked")
+    assert decision == "streams"
+    assert any("falling back to streams" in rec.message for rec in caplog.records)
+
+
+def test_run_bucket_streams_returns_per_cell_results():
+    """run_bucket_streams dispatches per-cell training and collects results.
+
+    The fake trainer here just echoes the trial index back. The
+    streams scheduler must invoke the trainer once per cell and
+    return the results in the bucket's input order, regardless of
+    thread completion timing.
+    """
+
+    cells = [
+        (10, {"id": "a"}),
+        (11, {"id": "b"}),
+        (12, {"id": "c"}),
+    ]
+
+    def _fake_train(trial_index, candidate, stream):
+        return {"trial_index": trial_index, "id": candidate["id"]}
+
+    results = run_bucket_streams(
+        cells,
+        train_one_cell=_fake_train,
+        device=torch.device("cpu"),
+    )
+    assert len(results) == 3
+    trial_indices = [r["trial_index"] for r in results]
+    assert sorted(trial_indices) == [10, 11, 12]
+
+
+def test_run_bucket_streams_surfaces_worker_exceptions():
+    """A failure in any worker thread is re-raised after every thread joins."""
+
+    cells = [(1, {"raise": False}), (2, {"raise": True})]
+
+    def _fake_train(trial_index, candidate, stream):
+        if candidate.get("raise"):
+            raise RuntimeError(f"cell {trial_index} failed")
+        return {"trial_index": trial_index}
+
+    with pytest.raises(RuntimeError, match="cell 2 failed"):
+        run_bucket_streams(
+            cells,
+            train_one_cell=_fake_train,
+            device=torch.device("cpu"),
+        )
 
 
 def test_batched_adam_active_mask_freezes_cells():

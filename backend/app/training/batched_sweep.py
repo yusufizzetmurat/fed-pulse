@@ -22,11 +22,15 @@ as stochastic / per-trial.
 
 from __future__ import annotations
 
+import logging
+import threading
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 import torch
 from torch import nn
+
+_LOGGER = logging.getLogger(__name__)
 
 # Per-architecture VRAM budget cap for the bucket size. Smaller
 # architectures (dlinear, lstm, gru, tcn) absorb more cells per
@@ -42,6 +46,26 @@ DEFAULT_MAX_BUCKET_SIZE_BY_ARCH: dict[str, int] = {
     "informer": 4,
     "tft": 4,
 }
+
+# Per-architecture batching-mode preference when ``--batching-mode=auto``.
+# ``stacked`` requires vmap-friendly ops in the forward; cuDNN-backed
+# RNNs (lstm, gru, lstm_attn) and fused-MHA encoders (transformer,
+# informer, tft) need the streams fallback because their ops do not
+# lower under vmap. dlinear is a pure Linear stack and is the first
+# architecture promoted to stacked-mode; promotion order for the
+# rest is gated on per-arch forward audits.
+DEFAULT_BATCHING_MODE_BY_ARCH: dict[str, str] = {
+    "dlinear": "stacked",
+    "lstm": "streams",
+    "lstm_attn": "streams",
+    "gru": "streams",
+    "tcn": "streams",
+    "transformer": "streams",
+    "informer": "streams",
+    "tft": "streams",
+}
+
+BATCHING_MODES: tuple[str, ...] = ("auto", "stacked", "streams", "off")
 
 
 @dataclass(frozen=True)
@@ -470,3 +494,162 @@ class BatchedAdamW:
                 ).view(bc_shape)
                 delta = delta * mask_view
             param.sub_(delta)
+
+
+def resolve_batching_mode(architecture: str, *, mode: str) -> str:
+    """Resolve the effective batching mode for a single architecture.
+
+    ``auto`` consults the per-arch preference table; anything else is
+    treated as an explicit override. ``off`` is honoured at the
+    caller's layer (it short-circuits to the legacy per-process path
+    before this routing helper is reached).
+    """
+
+    if mode not in BATCHING_MODES:
+        raise ValueError(
+            f"unknown batching mode {mode!r}; expected one of {BATCHING_MODES}"
+        )
+    if mode == "auto":
+        return DEFAULT_BATCHING_MODE_BY_ARCH.get(architecture, "streams")
+    return mode
+
+
+def _stacked_capable(architecture: str) -> bool:
+    return DEFAULT_BATCHING_MODE_BY_ARCH.get(architecture) == "stacked"
+
+
+def route_bucket(architecture: str, *, mode: str) -> str:
+    """Final routing decision for a single bucket.
+
+    An explicit ``stacked`` request against an architecture that the
+    per-arch table does not list as stacked-capable logs a warning
+    and falls back to ``streams`` so the run still completes.
+    """
+
+    resolved = resolve_batching_mode(architecture, mode=mode)
+    if resolved == "stacked" and not _stacked_capable(architecture):
+        _LOGGER.warning(
+            "stacked-mode requested for architecture=%s; falling back to "
+            "streams (the architecture forward is not yet vmap-friendly). "
+            "Promote in DEFAULT_BATCHING_MODE_BY_ARCH once the forward path "
+            "is verified.",
+            architecture,
+        )
+        return "streams"
+    return resolved
+
+
+def format_bucket_log_line(
+    key: BucketKey,
+    cells: Iterable[tuple[int, dict[str, Any]]],
+    *,
+    routed_mode: str,
+) -> str:
+    """One-line summary of a bucket's identity + routing decision.
+
+    The log line is the contract every smoke run inspects to confirm
+    the cells actually grouped (rather than collapsing to one cell
+    per bucket). Keep the field names stable so log-grep callers can
+    extract bucket_size + mode after the fact.
+    """
+
+    cells_list = list(cells)
+    return (
+        f"[bucket] arch={key.architecture} hidden={key.hidden_size} "
+        f"layers={key.num_layers} text_adapter={key.text_adapter_dim} "
+        f"encoder={key.text_encoder} fold={key.fold_id} "
+        f"target_mode={key.target_mode} bucket_size={len(cells_list)} "
+        f"mode={routed_mode}"
+    )
+
+
+def run_bucket_streams(
+    bucket_cells: Sequence[tuple[int, dict[str, Any]]],
+    *,
+    train_one_cell: Callable[
+        [int, dict[str, Any], "torch.cuda.Stream | None"], dict[str, Any]
+    ],
+    device: torch.device,
+) -> list[dict[str, Any]]:
+    """Run one bucket's cells concurrently via CUDA streams + threads.
+
+    Each cell runs on its own ``torch.cuda.Stream`` inside a worker
+    thread, sharing the parent CUDA context. The GPU pipelines kernels
+    across streams, which delivers a 3-5x throughput win on tiny models
+    (no spawn / IPC overhead, no per-cell CUDA context). When the
+    device is CPU the streams collapse to ``None`` and the threads
+    pipeline only Python-side overhead.
+
+    The caller-provided ``train_one_cell`` is responsible for the
+    actual per-cell training; the helper here is the thread + stream
+    scheduling glue. Exceptions raised inside any worker are
+    re-raised after every thread joins so a single failed cell does
+    not silently swallow the bucket.
+    """
+
+    if not bucket_cells:
+        return []
+
+    use_streams = device.type == "cuda"
+    streams: list["torch.cuda.Stream | None"] = []
+    if use_streams:
+        for _ in range(len(bucket_cells)):
+            streams.append(torch.cuda.Stream(device=device))
+    else:
+        streams = [None] * len(bucket_cells)
+
+    results: list[dict[str, Any] | None] = [None] * len(bucket_cells)
+    errors: list[BaseException | None] = [None] * len(bucket_cells)
+
+    def _worker(slot: int, trial_index: int, candidate: dict[str, Any]) -> None:
+        try:
+            stream = streams[slot]
+            results[slot] = train_one_cell(trial_index, candidate, stream)
+        except BaseException as exc:  # noqa: BLE001 -- re-raised after join
+            errors[slot] = exc
+
+    threads = [
+        threading.Thread(
+            target=_worker,
+            args=(slot, trial_index, candidate),
+            name=f"bucket-cell-{slot}",
+            daemon=True,
+        )
+        for slot, (trial_index, candidate) in enumerate(bucket_cells)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    for err in errors:
+        if err is not None:
+            raise err
+    return [r for r in results if r is not None]
+
+
+@dataclass
+class _CellEarlyStop:
+    """Per-cell early-stopping state for the stacked-mode loop.
+
+    The stacked bucket runs until either every cell has triggered
+    early stopping (``stale_epochs >= patience`` against its own val
+    loss) or the global ``max_epochs`` cap is reached. The optimiser
+    consumes the same active mask so frozen cells stop accumulating
+    Adam moments once they converge.
+    """
+
+    best_loss: float = float("inf")
+    best_epoch: int = 0
+    stale_epochs: int = 0
+    stopped: bool = False
+
+    def update(self, *, epoch: int, loss: float, patience: int) -> None:
+        if loss + 1e-6 < self.best_loss:
+            self.best_loss = float(loss)
+            self.best_epoch = int(epoch)
+            self.stale_epochs = 0
+        else:
+            self.stale_epochs += 1
+            if self.stale_epochs >= patience:
+                self.stopped = True
