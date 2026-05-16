@@ -147,9 +147,25 @@ _train_jobs_lock = threading.Lock()
 
 
 def _redis_pool() -> ArqRedis | None:
-    """Return the arq pool stashed on ``app.state`` during lifespan, if any."""
+    """Return the arq pool stashed on ``app.state`` during lifespan, if any.
 
-    return getattr(app.state, "redis_pool", None)
+    ``app.state.redis_pool`` may be either an ``ArqRedis`` instance (the
+    production path — lifespan creates the pool once and the same object
+    serves every request) or a zero-arg callable that returns a fresh
+    ``ArqRedis`` (the test path — needed because ``TestClient`` runs
+    each request in its own anyio portal with a private event loop, so
+    a pool constructed in the test thread's loop would fail with
+    ``RuntimeError: Queue is bound to a different event loop`` when
+    consumed inside the request handler). The callable form lets tests
+    construct a fresh pool inside the request loop on demand.
+    """
+
+    pool = getattr(app.state, "redis_pool", None)
+    if pool is None:
+        return None
+    if callable(pool) and not isinstance(pool, ArqRedis):
+        return pool()
+    return pool
 
 app.add_middleware(RunIdMiddleware)
 app.add_middleware(

@@ -19,16 +19,38 @@ from fastapi.testclient import TestClient  # noqa: E402
 import app.main as main_mod  # noqa: E402
 
 
-def _fake_arq_pool(server: FakeServer | None = None) -> ArqRedis:
-    """Build an ArqRedis pool against a fakeredis backend.
+def _fake_arq_pool_factory(server: FakeServer | None = None):
+    """Return a zero-arg factory that constructs an ArqRedis on demand.
 
-    When ``server`` is None a fresh isolated FakeServer is allocated.
-    Passing a shared FakeServer between two _fake_arq_pool() calls
-    mimics two backend processes pointing at the same Redis: the pools
-    are independent Python objects, but their underlying key/value
-    store is the same. The restart-survival test relies on this to
-    prove the contract that job state lives in Redis, not in the
-    in-process pool.
+    The factory closes over a single ``FakeServer`` so every pool it
+    produces shares the same in-memory key/value store. The pool itself
+    is constructed inside the caller — when the caller is a request
+    handler running in TestClient's anyio portal, the pool's internal
+    ``asyncio.Queue`` binds to the portal's loop and the connection
+    survives the round-trip. Constructing the pool in the test thread
+    would bind it to a different loop and trip arq with
+    ``RuntimeError: Queue is bound to a different event loop`` on the
+    first ``enqueue_job`` call.
+    """
+
+    server = server if server is not None else FakeServer()
+
+    def _build() -> ArqRedis:
+        fake = FakeAsyncRedis(server=server)
+        return ArqRedis(connection_pool=fake.connection_pool)
+
+    _build.server = server  # type: ignore[attr-defined]
+    return _build
+
+
+def _fake_arq_pool(server: FakeServer | None = None) -> ArqRedis:
+    """Eager pool variant for tests that explicitly want one instance.
+
+    Most endpoint tests should use ``_fake_arq_pool_factory`` and
+    install the factory on ``app.state.redis_pool``; the lazy ``_redis_pool``
+    accessor unwraps the factory inside the request loop. Use the eager
+    form only when the test calls ArqJob / pool methods itself outside
+    a TestClient request (e.g. asserting state via ``asyncio.run``).
     """
 
     server = server if server is not None else FakeServer()
@@ -46,12 +68,16 @@ def _clear_state(monkeypatch):
     yield
     with main_mod._train_jobs_lock:
         main_mod._train_jobs.clear()
-    if getattr(main_mod.app.state, "redis_pool", None) is not None:
+    # Teardown only acts on an eager ArqRedis instance. Factories
+    # produce per-request pools that live and die inside the request
+    # loop, so there is nothing for the test thread to close.
+    pool = getattr(main_mod.app.state, "redis_pool", None)
+    if isinstance(pool, ArqRedis):
         try:
-            asyncio.run(main_mod.app.state.redis_pool.close(close_connection_pool=True))
+            asyncio.run(pool.close(close_connection_pool=True))
         except Exception:
             pass
-        main_mod.app.state.redis_pool = None
+    main_mod.app.state.redis_pool = None
 
 
 @pytest.fixture
@@ -64,8 +90,8 @@ def test_analyze_real_train_enqueues_into_redis(client):
     arq instead of spawning a daemon thread, and return the same
     accepted-response shape as before."""
 
-    pool = _fake_arq_pool()
-    main_mod.app.state.redis_pool = pool
+    factory = _fake_arq_pool_factory()
+    main_mod.app.state.redis_pool = factory
 
     response = client.post(
         "/analyze",
@@ -88,10 +114,13 @@ def test_analyze_real_train_enqueues_into_redis(client):
     with main_mod._train_jobs_lock:
         assert main_mod._train_jobs == {}
 
-    # The job is now visible via arq.jobs.Job against the same pool.
+    # The job is now visible via arq.jobs.Job against a pool on the
+    # asserting loop (asyncio.run creates a fresh loop, so we build
+    # the pool inside the run).
     from arq.jobs import Job as ArqJob, JobStatus
 
-    async def _status():
+    async def _status() -> JobStatus:
+        pool = factory()
         return await ArqJob(job_id, pool).status()
 
     assert asyncio.run(_status()) == JobStatus.queued
@@ -101,8 +130,7 @@ def test_get_train_job_reads_from_redis(client):
     """``/train-jobs/{id}`` must shape an arq-stored job into the legacy
     response model so the frontend polling loop does not change."""
 
-    pool = _fake_arq_pool()
-    main_mod.app.state.redis_pool = pool
+    main_mod.app.state.redis_pool = _fake_arq_pool_factory()
 
     response = client.post(
         "/analyze",
@@ -126,8 +154,7 @@ def test_get_train_job_reads_from_redis(client):
 
 
 def test_get_train_job_missing_returns_404(client):
-    pool = _fake_arq_pool()
-    main_mod.app.state.redis_pool = pool
+    main_mod.app.state.redis_pool = _fake_arq_pool_factory()
 
     response = client.get("/train-jobs/does-not-exist")
     assert response.status_code == 404
@@ -137,8 +164,7 @@ def test_list_train_jobs_reads_from_redis(client):
     """``/train-jobs`` listing must surface arq-stored jobs, not just the
     in-memory dict."""
 
-    pool = _fake_arq_pool()
-    main_mod.app.state.redis_pool = pool
+    main_mod.app.state.redis_pool = _fake_arq_pool_factory()
 
     for symbol in ("^GSPC", "QQQ"):
         client.post(
@@ -175,8 +201,8 @@ def test_real_train_state_survives_app_restart(client):
     """
 
     server = FakeServer()
-    pool = _fake_arq_pool(server)
-    main_mod.app.state.redis_pool = pool
+    factory = _fake_arq_pool_factory(server)
+    main_mod.app.state.redis_pool = factory
 
     response = client.post(
         "/analyze",
@@ -190,13 +216,14 @@ def test_real_train_state_survives_app_restart(client):
     )
     job_id = response.json()["job_id"]
 
-    # Drop the first pool entirely, then bind a brand-new pool that
-    # shares only the underlying FakeServer. From the endpoint's
-    # perspective this is a process restart against the same Redis.
+    # Drop the first factory, then bind a brand-new factory that shares
+    # only the underlying FakeServer. From the endpoint's perspective
+    # this is a process restart against the same Redis: no in-process
+    # Python reference to the first pool survives.
     main_mod.app.state.redis_pool = None
-    del pool
-    fresh_pool = _fake_arq_pool(server)
-    main_mod.app.state.redis_pool = fresh_pool
+    del factory
+    fresh_factory = _fake_arq_pool_factory(server)
+    main_mod.app.state.redis_pool = fresh_factory
     fresh_client = TestClient(main_mod.app)
 
     detail = fresh_client.get(f"/train-jobs/{job_id}")
@@ -209,8 +236,7 @@ def test_fast_mode_does_not_touch_redis(client, monkeypatch):
     """Regression contract from #103: fast-mode /analyze must stay
     synchronous and never hit Redis."""
 
-    pool = _fake_arq_pool()
-    main_mod.app.state.redis_pool = pool
+    main_mod.app.state.redis_pool = _fake_arq_pool_factory()
 
     monkeypatch.setattr(
         main_mod,
