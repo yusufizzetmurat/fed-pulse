@@ -79,7 +79,7 @@ export default function TrainingDetailPage() {
       </Head>
       <div className="min-h-screen bg-background text-foreground">
         <Header />
-        <main className="container space-y-6 py-8">
+        <main id="main-content" tabIndex={-1} className="container space-y-6 py-8 focus:outline-none">
           <div className="flex items-center justify-between gap-4">
             <div className="space-y-1">
               <h1 className="text-2xl font-semibold tracking-tight">Training job</h1>

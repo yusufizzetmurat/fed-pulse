@@ -35,16 +35,22 @@ export function WatchlistChips({ currentSymbol, onSelect }: WatchlistChipsProps)
     <div className="flex flex-wrap items-center gap-2">
       {symbols.map((symbol) => (
         <Badge key={symbol} variant={symbol === currentSymbol ? "default" : "outline"} className="gap-1">
-          <button type="button" onClick={() => onSelect(symbol)} className="font-medium">
+          <button
+            type="button"
+            onClick={() => onSelect(symbol)}
+            aria-label={`Select ${symbol}`}
+            aria-pressed={symbol === currentSymbol}
+            className="rounded-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+          >
             {symbol}
           </button>
           <button
             type="button"
             aria-label={`Remove ${symbol} from watchlist`}
             onClick={() => handleRemove(symbol)}
-            className="opacity-60 hover:opacity-100"
+            className="rounded-sm opacity-60 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
           >
-            <X className="h-3 w-3" />
+            <X className="h-3 w-3" aria-hidden="true" />
           </button>
         </Badge>
       ))}

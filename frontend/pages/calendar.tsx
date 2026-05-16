@@ -83,7 +83,7 @@ export default function CalendarPage() {
       </Head>
       <div className="min-h-screen bg-background text-foreground">
         <Header />
-        <main className="container space-y-6 py-8">
+        <main id="main-content" tabIndex={-1} className="container space-y-6 py-8 focus:outline-none">
           <div className="space-y-2">
             <h1 className="text-3xl font-semibold tracking-tight flex items-center gap-2">
               <CalendarIcon className="h-7 w-7 text-primary" />
