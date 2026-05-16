@@ -49,6 +49,8 @@ class ForecasterModel(nn.Module):
         text_channel: str = "scalar",
         embedding_adapter_dim: int = 128,
         credibility_features: bool = False,
+        text_embedding_dim: int = 0,
+        text_adapter_dim: int = 0,
     ):
         """Forecaster LSTM with optional text-feature variants.
 
@@ -143,7 +145,38 @@ class ForecasterModel(nn.Module):
         else:
             self.chunk_pooler = None
             self.chunk_projection = None
-        lstm_input_size = input_size + self.chunk_projection_dim + self.credibility_dim
+        # Pooled-text-embedding path (PR #176 onward). The adapter
+        # projects the encoder-native pooled vector (``text_embedding_dim``)
+        # to a fixed ``text_adapter_dim`` slot that the recurrent core
+        # broadcasts to every bar of the prior window plus the
+        # event-day target frame. Both dims are 0 by default so a
+        # checkpoint trained without the text path forwards
+        # byte-identically. The trailing +1 (when the path is active)
+        # is the missing flag the loader emits when fewer than one
+        # prior statement is available.
+        self.text_embedding_dim = int(text_embedding_dim or 0)
+        self.text_adapter_dim = int(text_adapter_dim or 0)
+        self._text_path_active = self.text_embedding_dim > 0 and self.text_adapter_dim > 0
+        if self._text_path_active:
+            from app.models.text_embedding_adapter import TextEmbeddingAdapter
+
+            self.text_adapter: nn.Module | None = TextEmbeddingAdapter(
+                in_dim=self.text_embedding_dim,
+                out_dim=self.text_adapter_dim,
+                zero_init=True,
+            )
+            text_path_dim = self.text_adapter_dim + 1
+        else:
+            self.text_adapter = None
+            text_path_dim = 0
+        self.text_path_dim = text_path_dim
+
+        lstm_input_size = (
+            input_size
+            + self.chunk_projection_dim
+            + self.credibility_dim
+            + text_path_dim
+        )
         self.lstm_input_size = lstm_input_size
         lstm_dropout = dropout if num_layers > 1 else 0.0
         self.recurrent_core = self._build_recurrent_core(
@@ -176,6 +209,8 @@ class ForecasterModel(nn.Module):
         elapsed_days: torch.Tensor | None = None,
         chunk_mask: torch.Tensor | None = None,
         credibility: torch.Tensor | None = None,
+        text_embedding: torch.Tensor | None = None,
+        text_embedding_missing: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if self.use_time_decay:
             x = self.time_decay(x)
@@ -208,6 +243,43 @@ class ForecasterModel(nn.Module):
                 )
             seq_len = x.shape[1]
             broadcast = credibility.unsqueeze(1).expand(-1, seq_len, -1)
+            x = torch.cat([x, broadcast], dim=-1)
+        if self._text_path_active:
+            if self.text_adapter is None:
+                raise RuntimeError(
+                    "text_adapter not initialised but text-embedding path is active"
+                )
+            if text_embedding is None:
+                raise ValueError(
+                    "ForecasterModel requires `text_embedding` when text_adapter_dim > 0"
+                )
+            if text_embedding.dim() == 1:
+                text_embedding = text_embedding.unsqueeze(0)
+            if text_embedding.shape[-1] != self.text_embedding_dim:
+                raise ValueError(
+                    f"text_embedding tensor must have shape (..., {self.text_embedding_dim}); "
+                    f"got {tuple(text_embedding.shape)}"
+                )
+            projected = self.text_adapter(text_embedding)
+            if text_embedding_missing is None:
+                missing_column = torch.zeros(
+                    (projected.shape[0], 1), dtype=projected.dtype, device=projected.device
+                )
+            else:
+                missing_column = text_embedding_missing
+                if missing_column.dim() == 1:
+                    missing_column = missing_column.unsqueeze(-1)
+                missing_column = missing_column.to(dtype=projected.dtype, device=projected.device)
+            # When the missing flag is on, the pooled embedding is
+            # zeros by construction (the loader emits zeros + flag=1
+            # together). Multiply the adapter output by (1 - missing)
+            # so the recurrent core sees an unambiguous zero slot
+            # even if a future loader path emits non-zero placeholders.
+            keep_mask = (1.0 - missing_column).clamp_(min=0.0, max=1.0)
+            projected = projected * keep_mask
+            text_slot = torch.cat([projected, missing_column], dim=-1)
+            seq_len = x.shape[1]
+            broadcast = text_slot.unsqueeze(1).expand(-1, seq_len, -1)
             x = torch.cat([x, broadcast], dim=-1)
         output, _ = self.lstm(x)
         if self.uses_attention_pool:
