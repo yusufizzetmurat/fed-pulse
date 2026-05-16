@@ -507,3 +507,40 @@ If you change architecture, schema, API surface, or evaluation protocol, name th
 - Grep for the function name across `tests/unit/` — the test usually shows how the function is meant to be used.
 - The wiki's `01_Progress_Snapshot.md` carries the freshest "what's done, what's in flight, what's at risk" snapshot.
 - The Makefile is the contract for every workflow — if it isn't in the Makefile, it isn't a supported flow.
+
+---
+
+## Durable real_train queue (closes #103)
+
+Real-Train runs used to live on a daemon thread inside the FastAPI process — `app/main.py` spawned `_run_real_train_job` and stored state in an in-memory dict. The dict evaporated on restart and the thread had no horizontal scale path. Closing issue #103 replaced both with an `arq`-backed Redis queue.
+
+**Topology**
+
+```
+POST /analyze (real_train) ──▶ FastAPI
+                                  │  pool.enqueue_job("real_train_task", payload)
+                                  ▼
+                              Redis (redis:7-alpine, healthcheck=redis-cli ping)
+                                  ▲                 ▲
+                                  │ result_info()   │ blpop / status
+                                  │                 │
+                              FastAPI            arq worker
+                              /train-jobs/{id}   container running
+                              /train-jobs        `arq app.worker.WorkerSettings`
+```
+
+**Code**
+
+- `backend/app/worker.py` — defines `WorkerSettings.functions = [real_train_task]`. `real_train_task(ctx, payload)` mirrors the legacy daemon-thread body: sentiment + market history + `bootstrap_checkpoint` + `_build_analyze_response`. Audit rows still land via `app.audit.append_audit_entry`. The function re-raises on failure so arq records `JobResult.success=False`.
+- `backend/app/main.py` — the `/analyze` real_train branch calls `_enqueue_real_train`, which goes through `app.state.redis_pool.enqueue_job` when a pool is attached. The pool is created in the FastAPI `lifespan` from `REDIS_URL` (default `redis://redis:6379`). When Redis is unreachable the lifespan logs `arq_pool_unavailable` and falls back to the in-process daemon thread + `_train_jobs` dict so dev boxes without docker compose still work.
+- `/train-jobs/{id}` reads `ArqJob(id, pool).status() / .info() / .result_info()` and shapes it into the existing `TrainJobStatusResponse`. `/train-jobs` listing scans `arq:job:*` and `arq:result:*` keys for the same shaping.
+
+**Compose**
+
+- `redis: image: redis:7-alpine` with `redis-cli ping` healthcheck.
+- `worker` and `worker-gpu` services share the backend image and run `arq app.worker.WorkerSettings`. `make dev-cpu` brings up `redis backend worker frontend`; `make dev-gpu` swaps in the gpu profile.
+
+**Tests**
+
+- `tests/unit/test_arq_worker.py` — task signature is `(ctx, payload) -> dict`, `WorkerSettings.functions` exposes it, the task returns a dict, the task re-raises on failure.
+- `tests/unit/test_real_train_endpoints.py` — `/analyze` real_train against a `fakeredis`-backed `ArqRedis` returns `queued`; `/train-jobs/{id}` and `/train-jobs` read state out of the same Redis; the in-memory `_train_jobs` map stays empty when a pool is attached. A restart-survival test recreates the `TestClient` against the same fakeredis and asserts the queued job is still visible.
