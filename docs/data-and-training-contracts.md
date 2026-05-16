@@ -927,11 +927,24 @@ pre-PR-#173 6-feature input. The per-family flags are no-ops when
 - `make forecaster-sweep TRAINING_PACKAGE_ID=<id> TEXT_ENCODER=<alias>`
   — 8-architecture rich-feature sweep (lstm, lstm_attn, gru, tcn,
   transformer, dlinear, informer, tft) across the official
-  five-seed set. The grid now sweeps hidden_size {32, 64, 128} x
+  five-seed set. The grid sweeps hidden_size {32, 64, 128} x
   num_layers {1, 2, 3} x dropout {0.1, 0.2, 0.3, 0.4} x
   learning_rate {1e-3, 3e-4} x weight_decay {0, 1e-4, 1e-3} x
-  text_adapter_dim {32, 64, 128}. Pass `TEXT_ENCODER=none` for the
-  text-off baseline row.
+  text_adapter_dim {32, 64, 128}. The target picks the speedup
+  defaults: `--random-search --random-search-samples=50
+  --random-search-seed=42 --parallel-workers=8`, so the headline run
+  draws 50 HP combos uniformly from the full 216-cell cross-product
+  and trains eight cells concurrently on the RTX 4080. Pass
+  `TEXT_ENCODER=none` for the text-off baseline row. Override
+  `RANDOM_SEARCH_SAMPLES=216` to fall back to exhaustive enumeration
+  inside the random-search wrapper, or `PARALLEL_WORKERS=1` for
+  sequential timing.
+- `make forecaster-sweep-exhaustive TRAINING_PACKAGE_ID=<id>
+  TEXT_ENCODER=<alias>` — same architecture roster and HP grid, but
+  enumerates every cell sequentially. Reproduces the pre-speedup
+  byte-identical sweep output and is the back-compat path the
+  regression test at `tests/regression/test_forecaster_sweep_back_compat.py`
+  pins.
 - `make forecaster-sweep-shuffled-control TRAINING_PACKAGE_ID=<id>
   TEXT_ENCODER=<alias>` — same architecture roster and seed set,
   median HP combo, `--shuffle-targets-control` on. The
@@ -940,6 +953,73 @@ pre-PR-#173 6-feature input. The per-family flags are no-ops when
 - `make forecaster-sweep-baseline TRAINING_PACKAGE_ID=<id>` — the
   pre-PR-#173 6-feature path against the original six architectures,
   preserved for back-compat smoke checks against earlier sweep numbers.
+
+#### Random-search HP sampler
+
+`--random-search` draws `M` HP combos uniformly without replacement
+from the full HP cross-product (the seven axes above except
+architecture and seed). The architecture roster and seed set
+enumerate exhaustively on top of the sampled subset, so an
+M-sample run produces `len(architectures) * len(seeds) * M` trial
+cells instead of the full `len(architectures) * len(seeds) *
+|HP grid|`.[^bb2012]
+
+[^bb2012]: Bergstra & Bengio, "Random Search for Hyper-Parameter
+Optimization," JMLR 13 (2012). The paper shows that on
+high-dimensional HP grids where only a small subset of axes
+dominate the loss surface, random search recovers grid-search
+performance at a fraction of the trial budget.
+
+Knobs:
+
+- `--random-search` — default off; the legacy exhaustive enumeration
+  is the back-compat path and stays byte-identical at the same
+  package + seed set.
+- `--random-search-samples M` — default 50; clamps to the grid size
+  when `M` exceeds the HP cross-product (asking for 500 against a
+  216-cell grid returns all 216 combos rather than erroring).
+- `--random-search-seed N` — default 42; controls the sampling RNG
+  separately from per-cell training seeds. Re-running with the same
+  `N` samples the same HP subset regardless of which architectures
+  or seeds the outer enumeration uses.
+
+Each sampled cell carries an `hp_combo_id` field (the index into the
+sampled subset, `0..M-1`) on its trial record so the aggregator can
+group by-combo for ablation. The exhaustive path omits the field
+entirely, which keeps the legacy CSV column set unchanged.
+
+#### Parallel-worker pool
+
+`--parallel-workers N` runs `N` cells concurrently on the same GPU
+via `concurrent.futures.ProcessPoolExecutor` with the spawn
+multiprocessing context. Each worker is a fresh subprocess that
+re-imports torch and acquires its own CUDA context; the parent
+collects per-cell results in completion order and sorts the trial
+records by `(architecture, seed, hp_combo_id, trial_index)` before
+writing the report, so the JSON / CSV output is independent of
+worker scheduling.
+
+The default is `1` (sequential, current behaviour). The
+`make forecaster-sweep` target picks `8`, which matches the RTX
+4080's 16 GB VRAM budget: the largest registered architecture
+(transformer, hidden=128, layers=3) holds roughly 1 GB per cell,
+leaving headroom for the CUDA allocator's fragmentation pool. The
+CLI logs a `WARNING` when `N > 8`; higher values risk an OOM on
+the larger architectures.
+
+#### Deterministic-result contract
+
+The same `--random-search-seed` plus the same per-cell `seed`
+reproduce both the sampled HP set and the per-cell model weights.
+The sampler RNG is isolated inside `numpy.random.RandomState(N)`
+so it is independent of torch / numpy / random module state in the
+parent process; per-cell determinism is the existing
+`enable_deterministic_mode(seed)` call at the top of
+`train_model`, which runs once per worker subprocess and re-seeds
+torch, numpy, and the standard `random` module. Two cells with
+the same `seed` produce bit-identical weights regardless of which
+worker process they ran in (modulo cuDNN nondeterminism, which is
+the existing default).
 
 ### Forecaster text-embedding input space
 

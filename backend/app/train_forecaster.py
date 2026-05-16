@@ -3,12 +3,16 @@ from __future__ import annotations
 import argparse
 import sys
 import warnings
+import concurrent.futures
 import csv
 import itertools
 import json
+import logging
+import multiprocessing
 from pathlib import Path
 from typing import Any, Sequence
 
+import numpy as np
 import torch
 
 from app.models import FORECASTER_ARCHITECTURES
@@ -46,6 +50,23 @@ from app.training.loaders import load_training_sequences_from_package
 DEFAULT_SWEEP_SEEDS: tuple[int, ...] = (11, 29, 47, 71, 97)
 
 DEFAULT_REPORT_PATH = BEST_MODEL_PATH.parent / "forecaster_sweep_results.json"
+
+# Random-search defaults. The sampler draws ``DEFAULT_RANDOM_SEARCH_SAMPLES``
+# HP combos uniformly without replacement from the full HP cross-product;
+# Bergstra & Bengio (JMLR 2012) show this matches grid search at a fraction
+# of the cost when only a handful of axes dominate the loss surface.
+DEFAULT_RANDOM_SEARCH_SAMPLES = 50
+DEFAULT_RANDOM_SEARCH_SEED = 42
+
+# VRAM-saturation warning threshold for the parallel-worker pool. The
+# RTX 4080 carries 16 GB and the largest registered architecture
+# (transformer, hidden=128, layers=3) holds roughly 1 GB per cell, so
+# eight concurrent cells leave headroom for the CUDA allocator's
+# fragmentation pool. Higher worker counts log a warning so a typo on
+# the make target does not silently OOM the GPU mid-sweep.
+PARALLEL_WORKERS_VRAM_WARN_THRESHOLD = 8
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -382,6 +403,50 @@ def _parse_args() -> argparse.Namespace:
         help="Where to write the hyperparameter search report JSON.",
     )
     parser.add_argument(
+        "--random-search",
+        action="store_true",
+        help=(
+            "Sample HP combos uniformly from the full cross-product instead "
+            "of iterating every cell exhaustively. The architecture and seed "
+            "axes are still enumerated in full -- only the HP grid "
+            "(hidden_size / num_layers / dropout / learning_rate / "
+            "epochs / weight_decay / text_adapter_dim) is subsampled. "
+            "Default off keeps the back-compat exhaustive path."
+        ),
+    )
+    parser.add_argument(
+        "--random-search-samples",
+        type=int,
+        default=DEFAULT_RANDOM_SEARCH_SAMPLES,
+        help=(
+            "Number of HP combos to draw when --random-search is on. "
+            "Clamps to the grid size when M exceeds the cross-product. "
+            "Ignored when --random-search is off."
+        ),
+    )
+    parser.add_argument(
+        "--random-search-seed",
+        type=int,
+        default=DEFAULT_RANDOM_SEARCH_SEED,
+        help=(
+            "RNG seed for the random-search sampler. Separate from per-cell "
+            "training seeds so re-running with the same value samples the "
+            "same HP subset regardless of the seeds axis."
+        ),
+    )
+    parser.add_argument(
+        "--parallel-workers",
+        type=int,
+        default=1,
+        help=(
+            "Number of cells to train concurrently on the same GPU. Each "
+            "worker is a spawn-mode subprocess with its own CUDA context. "
+            "Default 1 (sequential) preserves the existing back-compat "
+            "behaviour. Recommended N=8 on an RTX 4080; higher values log "
+            "a VRAM-saturation warning."
+        ),
+    )
+    parser.add_argument(
         "--target-mode",
         choices=("event_study", "realized_return"),
         default="event_study",
@@ -543,13 +608,22 @@ def select_best_summary(summaries: Sequence[TrainingRunSummary]) -> TrainingRunS
     return min(ranked, key=_metrics_rank)
 
 
-def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
+def _build_hp_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
+    """Return the cross-product of the HP axes (no architectures or seeds).
+
+    The HP grid is the seven hyperparameter axes the sweep tunes per
+    architecture-seed pair: hidden_size, num_layers, dropout,
+    learning_rate, epochs, weight_decay, text_adapter_dim. The outer
+    architecture and seed enumeration happens in
+    ``build_sweep_candidates`` so the same HP combo can be evaluated
+    across the bake-off architecture roster and the official seed set.
+    """
+
     hidden_sizes = args.hidden_sizes or [args.hidden_size]
     num_layers_options = args.num_layers_grid or [args.num_layers]
     dropouts = args.dropouts or [args.dropout]
     learning_rates = args.learning_rates or [args.learning_rate]
     epochs_options = args.epochs_grid or [args.epochs]
-    architectures = args.architectures or [args.architecture]
     # ``getattr`` fallbacks below keep the existing
     # ``test_build_sweep_candidates_creates_cartesian_product`` namespace
     # (which predates the weight-decay / text-adapter axes) intact while
@@ -568,6 +642,70 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
         )
     else:
         text_adapter_dims = [0]
+    hp_grid: list[dict[str, Any]] = []
+    for (
+        hidden_size,
+        num_layers,
+        dropout,
+        learning_rate,
+        epochs,
+        weight_decay,
+        text_adapter_dim,
+    ) in itertools.product(
+        hidden_sizes,
+        num_layers_options,
+        dropouts,
+        learning_rates,
+        epochs_options,
+        weight_decays,
+        text_adapter_dims,
+    ):
+        hp_grid.append(
+            {
+                "hidden_size": int(hidden_size),
+                "num_layers": int(num_layers),
+                "dropout": float(dropout),
+                "learning_rate": float(learning_rate),
+                "epochs": int(epochs),
+                "weight_decay": float(weight_decay),
+                "text_adapter_dim": int(text_adapter_dim),
+            }
+        )
+    return hp_grid
+
+
+def sample_random_search_subset(
+    hp_grid: Sequence[dict[str, Any]],
+    samples: int,
+    seed: int,
+) -> list[tuple[int, dict[str, Any]]]:
+    """Draw ``samples`` HP combos uniformly without replacement.
+
+    The returned tuples carry the original grid index as the first
+    element so the caller can persist a stable ``hp_combo_id`` per
+    sampled combo. ``samples`` clamps to ``len(hp_grid)`` -- asking
+    for more combos than the grid contains returns every combo, not
+    an error. The sampler RNG is isolated from per-cell training
+    seeds: re-running with the same ``seed`` reproduces the same
+    subset of combos.
+    """
+
+    grid_size = len(hp_grid)
+    if grid_size == 0:
+        return []
+    draw_count = min(int(samples), grid_size)
+    if draw_count < 1:
+        draw_count = grid_size
+    rng = np.random.RandomState(int(seed))
+    indices = rng.choice(grid_size, size=draw_count, replace=False)
+    # ``np.choice`` returns ``np.int64`` entries; cast to ``int`` so the
+    # downstream ``hp_combo_id`` field round-trips through JSON without
+    # extra serialiser shims.
+    return [(int(idx), dict(hp_grid[int(idx)])) for idx in indices]
+
+
+def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
+    architectures = args.architectures or [args.architecture]
     # When the caller asks for an architecture sweep but doesn't list seeds we
     # fall back to the official five-seed set; this matches the bake-off
     # aggregator and avoids accidentally publishing a single-seed table.
@@ -578,8 +716,66 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
     else:
         seeds = [args.seed]
 
-    candidates: list[dict[str, Any]] = []
+    use_random_search = bool(getattr(args, "random_search", False))
     text_embedding_dim = _resolve_text_embedding_dim(args)
+
+    if use_random_search:
+        # Random-search path: subsample the HP grid before the
+        # architecture-by-seed outer enumeration. Each sampled combo
+        # keeps its index into the full grid as ``hp_combo_id`` so the
+        # aggregator can group by-combo for ablation.
+        hp_grid = _build_hp_grid(args)
+        sampled_hp = sample_random_search_subset(
+            hp_grid,
+            int(getattr(args, "random_search_samples", DEFAULT_RANDOM_SEARCH_SAMPLES)),
+            int(getattr(args, "random_search_seed", DEFAULT_RANDOM_SEARCH_SEED)),
+        )
+        candidates: list[dict[str, Any]] = []
+        for architecture, seed in itertools.product(architectures, seeds):
+            for hp_combo_id, hp in sampled_hp:
+                text_adapter_dim = int(hp["text_adapter_dim"])
+                candidates.append(
+                    {
+                        "model_config": ModelConfig(
+                            input_size=_resolved_input_size(args),
+                            hidden_size=hp["hidden_size"],
+                            num_layers=hp["num_layers"],
+                            dropout=hp["dropout"],
+                            head_hidden_size=args.head_hidden_size,
+                            architecture=str(architecture),
+                            credibility_features=bool(args.credibility_features),
+                            text_embedding_dim=int(text_embedding_dim) if text_adapter_dim > 0 else 0,
+                            text_adapter_dim=text_adapter_dim,
+                        ),
+                        "learning_rate": float(hp["learning_rate"]),
+                        "epochs": int(hp["epochs"]),
+                        "weight_decay": float(hp["weight_decay"]),
+                        "text_adapter_dim": text_adapter_dim,
+                        "seed": int(seed) if seed is not None else None,
+                        "hp_combo_id": int(hp_combo_id),
+                    }
+                )
+        return candidates
+
+    # Exhaustive path: byte-identical to the pre-PR enumeration order so
+    # the regression-test contract on the legacy sweep output is preserved.
+    hidden_sizes = args.hidden_sizes or [args.hidden_size]
+    num_layers_options = args.num_layers_grid or [args.num_layers]
+    dropouts = args.dropouts or [args.dropout]
+    learning_rates = args.learning_rates or [args.learning_rate]
+    epochs_options = args.epochs_grid or [args.epochs]
+    weight_decays = (
+        getattr(args, "weight_decays", None)
+        or [getattr(args, "weight_decay", 1e-4)]
+    )
+    if _text_path_active(args):
+        text_adapter_dims = (
+            getattr(args, "text_adapter_dims", None)
+            or [getattr(args, "text_adapter_dim", DEFAULT_TEXT_ADAPTER_DIM)]
+        )
+    else:
+        text_adapter_dims = [0]
+    candidates = []
     for (
         architecture,
         hidden_size,
@@ -629,7 +825,7 @@ def _flatten_trial_record(record: dict[str, Any]) -> dict[str, Any]:
     metrics = summary.get("metrics") or {}
     train_metrics = summary.get("train_metrics") or {}
     model_config = summary.get("model_config") or {}
-    return {
+    flattened: dict[str, Any] = {
         "trial_index": record["trial_index"],
         "selected": record.get("selected", False),
         "architecture": model_config.get("architecture") or record.get("architecture"),
@@ -662,6 +858,12 @@ def _flatten_trial_record(record: dict[str, Any]) -> dict[str, Any]:
         "checkpoint_saved": summary.get("checkpoint_saved"),
         "checkpoint_path": summary.get("checkpoint_path"),
     }
+    # ``hp_combo_id`` is only present on random-search runs; the
+    # exhaustive path never carries it, so the column set stays
+    # byte-identical to the pre-PR CSV when --random-search is off.
+    if "hp_combo_id" in record:
+        flattened["hp_combo_id"] = record["hp_combo_id"]
+    return flattened
 
 
 def _write_sweep_report(report_path: Path, payload: dict[str, Any]) -> None:
@@ -791,6 +993,127 @@ def _train_model_with_groups(
     )
 
 
+def _worker_run_cell(payload: dict[str, Any]) -> dict[str, Any]:
+    """Train a single sweep cell inside a spawn-mode subprocess.
+
+    The payload carries every argument the worker needs to recreate
+    the call without sharing memory with the parent: a pickled
+    ``ModelConfig``, the per-cell HP values, the sequence-groups
+    payload, and the trial-index metadata. The worker re-imports
+    torch (the spawn context guarantees a fresh CUDA context) and
+    routes through the same ``_run_single_training`` helper the
+    sequential path uses, so the per-cell training code is shared
+    across both schedulers.
+    """
+
+    summary = _run_single_training(
+        data_dir=payload["data_dir"],
+        checkpoint_path=payload["checkpoint_path"],
+        device=torch.device(payload["device"]),
+        epochs=int(payload["epochs"]),
+        batch_size=int(payload["batch_size"]),
+        learning_rate=float(payload["learning_rate"]),
+        validation_fraction=float(payload["validation_fraction"]),
+        early_stopping_patience=int(payload["early_stopping_patience"]),
+        model_config=payload["model_config"],
+        save_checkpoint=False,
+        seed=payload["seed"],
+        sequence_groups=payload["sequence_groups"],
+        weight_decay=float(payload["weight_decay"]),
+        shuffle_targets_control=bool(payload["shuffle_targets_control"]),
+        text_encoder=payload["text_encoder"],
+        text_pool_lambda_inv_days=float(payload["text_pool_lambda_inv_days"]),
+    )
+    return {
+        "trial_index": int(payload["trial_index"]),
+        "architecture": str(payload["model_config"].architecture),
+        "seed": payload["seed"],
+        "hp_combo_id": payload.get("hp_combo_id"),
+        "summary": summary,
+    }
+
+
+def _build_worker_payload(
+    *,
+    candidate: dict[str, Any],
+    trial_index: int,
+    args: argparse.Namespace,
+    data_dir: Path,
+    checkpoint_path: Path,
+    device: torch.device,
+    sequence_groups: Sequence[Sequence[FeatureVector]] | None,
+    text_encoder_arg: str | None,
+    text_pool_lambda: float,
+) -> dict[str, Any]:
+    """Build a pickleable dict the worker process can consume."""
+
+    return {
+        "trial_index": int(trial_index),
+        "model_config": candidate["model_config"],
+        "learning_rate": candidate["learning_rate"],
+        "epochs": candidate["epochs"],
+        "weight_decay": candidate.get("weight_decay", args.weight_decay),
+        "seed": candidate.get("seed"),
+        "hp_combo_id": candidate.get("hp_combo_id"),
+        "data_dir": data_dir,
+        "checkpoint_path": checkpoint_path,
+        "device": str(device),
+        "batch_size": int(args.batch_size),
+        "validation_fraction": float(args.validation_fraction),
+        "early_stopping_patience": int(args.early_stopping_patience),
+        "sequence_groups": sequence_groups,
+        "shuffle_targets_control": bool(args.shuffle_targets_control),
+        "text_encoder": text_encoder_arg,
+        "text_pool_lambda_inv_days": float(text_pool_lambda),
+    }
+
+
+def _format_cell_log(
+    *,
+    trial_index: int,
+    total: int,
+    candidate: dict[str, Any],
+    summary: TrainingRunSummary,
+) -> str:
+    model_config = candidate["model_config"]
+    metrics = summary.metrics
+    metrics_label = (
+        f"combined_rmse={metrics.combined_rmse:.6f}, loss={metrics.loss:.6f}"
+        if metrics is not None
+        else "no-metrics"
+    )
+    return (
+        f"[trial {trial_index}/{total}] "
+        f"arch={model_config.architecture}, seed={candidate.get('seed')}, "
+        f"hidden={model_config.hidden_size}, layers={model_config.num_layers}, "
+        f"dropout={model_config.dropout:.3f}, lr={candidate['learning_rate']:.6g}, "
+        f"epochs={candidate['epochs']} -> {metrics_label}"
+    )
+
+
+def _sort_trial_records(trial_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Sort trials by (architecture, seed, hp_combo_id) deterministically.
+
+    The sort key is independent of worker-scheduling order so the
+    parallel and sequential paths emit byte-identical JSON / CSV at
+    the same input. ``hp_combo_id`` is missing on the exhaustive path
+    -- the fallback to ``trial_index`` preserves the legacy ordering
+    in that case.
+    """
+
+    def _key(record: dict[str, Any]) -> tuple[str, int, int, int]:
+        seed = record.get("seed")
+        hp_combo_id = record.get("hp_combo_id")
+        return (
+            str(record.get("architecture") or ""),
+            int(seed) if seed is not None else -1,
+            int(hp_combo_id) if hp_combo_id is not None else -1,
+            int(record.get("trial_index") or 0),
+        )
+
+    return sorted(trial_records, key=_key)
+
+
 def _run_sweep(
     *,
     args: argparse.Namespace,
@@ -806,71 +1129,165 @@ def _run_sweep(
         print("No sweep candidates generated.")
         return 1
 
-    print(f"Starting hyperparameter sweep with {len(candidates)} trial(s)...")
+    parallel_workers = max(1, int(getattr(args, "parallel_workers", 1)))
+    if parallel_workers > PARALLEL_WORKERS_VRAM_WARN_THRESHOLD:
+        _LOGGER.warning(
+            "parallel_workers=%d exceeds the RTX 4080 VRAM-saturation threshold "
+            "(%d). The CUDA allocator may OOM on the larger architectures "
+            "(transformer hidden=128, layers=3). Recommend N<=%d.",
+            parallel_workers,
+            PARALLEL_WORKERS_VRAM_WARN_THRESHOLD,
+            PARALLEL_WORKERS_VRAM_WARN_THRESHOLD,
+        )
+
+    use_random_search = bool(getattr(args, "random_search", False))
+    if use_random_search:
+        print(
+            "Random-search HP subset: "
+            f"M={getattr(args, 'random_search_samples', DEFAULT_RANDOM_SEARCH_SAMPLES)}, "
+            f"seed={getattr(args, 'random_search_seed', DEFAULT_RANDOM_SEARCH_SEED)}"
+        )
+    print(
+        f"Starting hyperparameter sweep with {len(candidates)} trial(s) "
+        f"(parallel_workers={parallel_workers})..."
+    )
     trial_records: list[dict[str, Any]] = []
     summaries: list[TrainingRunSummary] = []
     text_encoder_arg = (
         None if str(getattr(args, "text_encoder", "none")) == "none" else str(args.text_encoder)
     )
     text_pool_lambda = float(getattr(args, "text_pool_lambda_inv_days", 0.0))
-    for index, candidate in enumerate(candidates, start=1):
-        model_config = candidate["model_config"]
-        learning_rate = candidate["learning_rate"]
-        epochs = candidate["epochs"]
-        weight_decay = candidate.get("weight_decay", args.weight_decay)
-        seed = candidate.get("seed")
-        summary = _run_single_training(
-            data_dir=data_dir,
-            checkpoint_path=checkpoint_path,
-            device=device,
-            epochs=epochs,
-            batch_size=args.batch_size,
-            learning_rate=learning_rate,
-            validation_fraction=args.validation_fraction,
-            early_stopping_patience=args.early_stopping_patience,
-            model_config=model_config,
-            save_checkpoint=False,
-            seed=seed,
-            sequence_groups=sequence_groups,
-            weight_decay=float(weight_decay),
-            shuffle_targets_control=bool(args.shuffle_targets_control),
-            text_encoder=text_encoder_arg,
-            text_pool_lambda_inv_days=text_pool_lambda,
-        )
-        summaries.append(summary)
-        trial_records.append(
-            {
+
+    if parallel_workers > 1:
+        # ProcessPoolExecutor with spawn context: each worker re-imports
+        # torch and acquires its own CUDA context. Results come back in
+        # completion order so the trial_records list is sorted
+        # deterministically at the end of the loop.
+        spawn_ctx = multiprocessing.get_context("spawn")
+        index_to_candidate = dict(enumerate(candidates, start=1))
+        with concurrent.futures.ProcessPoolExecutor(
+            max_workers=parallel_workers,
+            mp_context=spawn_ctx,
+        ) as pool:
+            future_to_index = {
+                pool.submit(
+                    _worker_run_cell,
+                    _build_worker_payload(
+                        candidate=candidate,
+                        trial_index=index,
+                        args=args,
+                        data_dir=data_dir,
+                        checkpoint_path=checkpoint_path,
+                        device=device,
+                        sequence_groups=sequence_groups,
+                        text_encoder_arg=text_encoder_arg,
+                        text_pool_lambda=text_pool_lambda,
+                    ),
+                ): index
+                for index, candidate in index_to_candidate.items()
+            }
+            for future in concurrent.futures.as_completed(future_to_index):
+                index = future_to_index[future]
+                candidate = index_to_candidate[index]
+                result = future.result()
+                summary = result["summary"]
+                record = {
+                    "trial_index": index,
+                    "architecture": result["architecture"],
+                    "seed": result["seed"],
+                    "summary": summary.to_dict(),
+                }
+                if result.get("hp_combo_id") is not None:
+                    record["hp_combo_id"] = result["hp_combo_id"]
+                trial_records.append(record)
+                summaries.append(summary)
+                print(
+                    _format_cell_log(
+                        trial_index=index,
+                        total=len(candidates),
+                        candidate=candidate,
+                        summary=summary,
+                    )
+                )
+    else:
+        for index, candidate in enumerate(candidates, start=1):
+            model_config = candidate["model_config"]
+            learning_rate = candidate["learning_rate"]
+            epochs = candidate["epochs"]
+            weight_decay = candidate.get("weight_decay", args.weight_decay)
+            seed = candidate.get("seed")
+            summary = _run_single_training(
+                data_dir=data_dir,
+                checkpoint_path=checkpoint_path,
+                device=device,
+                epochs=epochs,
+                batch_size=args.batch_size,
+                learning_rate=learning_rate,
+                validation_fraction=args.validation_fraction,
+                early_stopping_patience=args.early_stopping_patience,
+                model_config=model_config,
+                save_checkpoint=False,
+                seed=seed,
+                sequence_groups=sequence_groups,
+                weight_decay=float(weight_decay),
+                shuffle_targets_control=bool(args.shuffle_targets_control),
+                text_encoder=text_encoder_arg,
+                text_pool_lambda_inv_days=text_pool_lambda,
+            )
+            summaries.append(summary)
+            record = {
                 "trial_index": index,
                 "architecture": model_config.architecture,
                 "seed": seed,
                 "summary": summary.to_dict(),
             }
-        )
-        metrics = summary.metrics
-        metrics_label = (
-            f"combined_rmse={metrics.combined_rmse:.6f}, loss={metrics.loss:.6f}"
-            if metrics is not None
-            else "no-metrics"
-        )
-        print(
-            f"[trial {index}/{len(candidates)}] "
-            f"arch={model_config.architecture}, seed={seed}, "
-            f"hidden={model_config.hidden_size}, layers={model_config.num_layers}, "
-            f"dropout={model_config.dropout:.3f}, lr={learning_rate:.6g}, epochs={epochs} -> {metrics_label}"
-        )
+            if "hp_combo_id" in candidate:
+                record["hp_combo_id"] = candidate["hp_combo_id"]
+            trial_records.append(record)
+            print(
+                _format_cell_log(
+                    trial_index=index,
+                    total=len(candidates),
+                    candidate=candidate,
+                    summary=summary,
+                )
+            )
+
+    # Deterministic ordering. The parallel branch collects in
+    # completion order; sort by (architecture, seed, hp_combo_id,
+    # trial_index) so the JSON / CSV emitter is independent of worker
+    # scheduling. ``summaries`` is re-aligned to the post-sort
+    # trial_records so the best-selection downstream picks the right
+    # record. The sequential branch is already in candidate order;
+    # trial_index then dominates the tiebreak and the sort is a
+    # stable no-op against the legacy exhaustive layout.
+    if parallel_workers > 1:
+        index_to_summary = {
+            record["trial_index"]: summary
+            for record, summary in zip(trial_records, summaries, strict=True)
+        }
+        trial_records = _sort_trial_records(trial_records)
+        summaries = [index_to_summary[record["trial_index"]] for record in trial_records]
 
     best_summary = select_best_summary(summaries)
     if best_summary is None or best_summary.metrics is None:
         print("Sweep completed, but no valid validation metrics were produced.")
         return 1
 
-    best_trial_index = next(
+    # ``best_summary_position`` is the 1-based slot in the
+    # post-sort summaries list; ``best_record["trial_index"]`` carries
+    # the original candidate's 1-based index, which is the key into
+    # the ``candidates`` list regardless of completion order.
+    best_summary_position = next(
         index
         for index, summary in enumerate(summaries, start=1)
         if summary == best_summary
     )
+    best_record = trial_records[best_summary_position - 1]
+    best_trial_index = int(best_record["trial_index"])
     best_model_config = best_summary.model_config
-    best_seed = candidates[best_trial_index - 1].get("seed")
+    best_candidate = candidates[best_trial_index - 1]
+    best_seed = best_candidate.get("seed")
     print(
         "Re-training best configuration for final checkpoint: "
         f"arch={best_model_config.architecture}, seed={best_seed}, "
@@ -878,7 +1295,7 @@ def _run_sweep(
         f"dropout={best_model_config.dropout:.3f}, lr={best_summary.learning_rate:.6g}, "
         f"epochs={best_summary.epochs_requested}"
     )
-    best_weight_decay = candidates[best_trial_index - 1].get("weight_decay", args.weight_decay)
+    best_weight_decay = best_candidate.get("weight_decay", args.weight_decay)
     final_summary = _run_single_training(
         data_dir=data_dir,
         checkpoint_path=checkpoint_path,
@@ -929,10 +1346,18 @@ def _run_sweep(
         "seeds": sorted({trial["seed"] for trial in trial_records if trial["seed"] is not None}),
         "trial_count": len(trial_records),
         "best_trial_index": best_trial_index,
-        "best_trial": trial_records[best_trial_index - 1],
+        "best_trial": best_record,
         "selected_checkpoint": final_summary.to_dict(),
         "trials": trial_records,
     }
+    if use_random_search:
+        report_payload["random_search"] = {
+            "samples": int(getattr(args, "random_search_samples", DEFAULT_RANDOM_SEARCH_SAMPLES)),
+            "seed": int(getattr(args, "random_search_seed", DEFAULT_RANDOM_SEARCH_SEED)),
+        }
+        report_payload["parallel_workers"] = parallel_workers
+    elif parallel_workers > 1:
+        report_payload["parallel_workers"] = parallel_workers
     _write_sweep_report(report_path, report_payload)
     print(
         "Sweep complete. "

@@ -28,7 +28,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train
 
 help:
 	@echo "Targets:"
@@ -60,7 +60,8 @@ help:
 	@echo "                         - Cache voyage-finance-2 embeddings for the FOMC corpus"
 	@echo "  make next-fomc        - Predict next-FOMC decision (Phase 8 headline, #147)"
 	@echo "  make cross-asset      - Cross-asset abnormal-return response head (Phase 8, #148)"
-	@echo "  make forecaster-sweep         - 8-arch x 5-seed forecaster sweep, rich-feature input + text-embedding adapter (TEXT_ENCODER=<alias>)"
+	@echo "  make forecaster-sweep         - 8-arch x 5-seed forecaster sweep, random-search subset of the HP grid + 8 parallel workers"
+	@echo "  make forecaster-sweep-exhaustive - 8-arch x 5-seed forecaster sweep, full HP cross-product, single worker (back-compat)"
 	@echo "  make forecaster-sweep-baseline - 6-arch x 5-seed forecaster sweep, legacy 6-feature input"
 	@echo "  make forecaster-sweep-shuffled-control - Memorisation-control row: same architectures + seeds, median HP, --shuffle-targets-control on"
 	@echo "  make forecaster-sweep-aggregate - Aggregate sweep trials into per-arch CIs"
@@ -129,11 +130,24 @@ train-batch:
 # forecaster sees the four feature families the data pipeline already
 # ships (credibility, linguistic, MP-surprise, multi-axis) on every bar.
 #
+# The default target draws a random subset of HP combos from the full
+# cross-product (--random-search-samples=50, seed=42) and runs eight
+# cells concurrently on the same GPU via the spawn-mode process pool.
+# The 8-worker default matches the RTX 4080's 16 GB; the larger
+# architectures (transformer hidden=128, layers=3) hold roughly 1 GB
+# per cell, leaving headroom for the CUDA allocator's fragmentation
+# pool.
+#
+# ``forecaster-sweep-exhaustive`` enumerates every cell in the HP
+# cross-product sequentially. It is the back-compat path for the
+# byte-identity regression test and for diagnostic re-runs that need
+# the deterministic candidate ordering of the pre-speedup sweep.
+#
 # The earlier 6-feature path is still available as
 # ``forecaster-sweep-baseline`` for back-compat smoke checks against
 # pre-PR-#173 sweep numbers.
 #
-# Both targets write forecaster_sweep_results.json + .csv under
+# All three targets write forecaster_sweep_results.json + .csv under
 # data/artifacts/forecaster_sweep/<TRAINING_PACKAGE_ID>/; the baseline
 # variant lands under a ``baseline_`` filename prefix so the two
 # artefact sets coexist on disk.
@@ -145,7 +159,42 @@ train-batch:
 FORECASTER_COMPOSE_SERVICE ?= backend-gpu
 FORECASTER_COMPOSE_PROFILE ?= gpu
 
+# Random-search + parallel-worker knobs the user can override on the
+# command line. ``RANDOM_SEARCH_SAMPLES=216`` against the full grid
+# collapses to the exhaustive enumeration (the sampler clamps to the
+# grid size); ``PARALLEL_WORKERS=1`` reproduces sequential timing.
+RANDOM_SEARCH_SAMPLES ?= 50
+RANDOM_SEARCH_SEED ?= 42
+PARALLEL_WORKERS ?= 8
+
 forecaster-sweep:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	@test -n "$(TEXT_ENCODER)" || (echo "TEXT_ENCODER is required (e.g. finbert, voyage_finance_2, or 'none' for the text-off row)"; exit 1)
+	docker compose --profile "$(FORECASTER_COMPOSE_PROFILE)" run --rm "$(FORECASTER_COMPOSE_SERVICE)" \
+		python -m app.train_forecaster \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		--sweep \
+		--rich-features \
+		--architectures lstm lstm_attn gru tcn transformer dlinear informer tft \
+		--seeds 11 29 47 71 97 \
+		--hidden-sizes 32 64 128 \
+		--num-layers-grid 1 2 3 \
+		--dropouts 0.1 0.2 0.3 0.4 \
+		--learning-rates 1e-3 3e-4 \
+		--weight-decays 0 1e-4 1e-3 \
+		--text-encoder "$(TEXT_ENCODER)" \
+		--text-adapter-dims 32 64 128 \
+		--random-search \
+		--random-search-samples $(RANDOM_SEARCH_SAMPLES) \
+		--random-search-seed $(RANDOM_SEARCH_SEED) \
+		--parallel-workers $(PARALLEL_WORKERS) \
+		--report-path "/data/artifacts/forecaster_sweep/$(TRAINING_PACKAGE_ID)/forecaster_sweep_results.json"
+
+# Exhaustive sweep: every cell in the HP cross-product, single worker.
+# Reproduces the pre-PR forecaster_sweep_results.json byte-identically
+# on the same package and seed set, which is the contract the
+# byte-identity regression test pins.
+forecaster-sweep-exhaustive:
 	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
 	@test -n "$(TEXT_ENCODER)" || (echo "TEXT_ENCODER is required (e.g. finbert, voyage_finance_2, or 'none' for the text-off row)"; exit 1)
 	docker compose --profile "$(FORECASTER_COMPOSE_PROFILE)" run --rm "$(FORECASTER_COMPOSE_SERVICE)" \
