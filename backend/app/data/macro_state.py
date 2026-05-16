@@ -9,22 +9,40 @@ alongside text / OIS / credibility / linguistic axes.
 Indicators
 ----------
 
-================= ============================ =================================
-column            FRED series                  transform
-================= ============================ =================================
-``unrate``        ``UNRATE``                   level (% civilian unemployment)
-``cpi_yoy``       ``CPIAUCSL``                 12-month log-change x 100 (% YoY)
-``core_pce_yoy``  ``PCEPILFE``                 12-month log-change x 100 (% YoY)
-``ism_proxy``     ``MANEMP``                   3-month % change (ISM manufacturing
-                                               employment is paywalled at NAPM
-                                               level; ``MANEMP`` from FRED is
-                                               the documented free-data proxy,
-                                               see methodology note below).
-``payems_mom``    ``PAYEMS``                   month-over-month change in
-                                               thousands of jobs
-``rsafs_mom``     ``RSAFS``                    month-over-month % change in
-                                               retail sales (advance)
-================= ============================ =================================
+==================== ============================ =================================
+column               FRED series                  transform
+==================== ============================ =================================
+``unrate``           ``UNRATE``                   level (% civilian unemployment)
+``cpi_yoy``          ``CPIAUCSL``                 12-month log-change x 100 (% YoY)
+``core_pce_yoy``     ``PCEPILFE``                 12-month log-change x 100 (% YoY)
+``ism_proxy``        ``MANEMP``                   3-month % change (ISM manufacturing
+                                                  employment is paywalled at NAPM
+                                                  level; ``MANEMP`` from FRED is
+                                                  the documented free-data proxy,
+                                                  see methodology note below).
+``payems_mom``       ``PAYEMS``                   month-over-month change in
+                                                  thousands of jobs
+``rsafs_mom``        ``RSAFS``                    month-over-month % change in
+                                                  retail sales (advance)
+``treas_10y``        ``DGS10``                    level (% 10-year Treasury
+                                                  constant maturity yield)
+``slope_10y_2y``     ``T10Y2Y``                   level (10y minus 2y, in pct
+                                                  points; FRED publishes the
+                                                  spread directly)
+``slope_10y_3m``     ``T10Y3M``                   level (10y minus 3m, in pct
+                                                  points; recession-signal
+                                                  spread)
+``hy_oas``           ``BAMLH0A0HYM2``             level (ICE BofA US High-Yield
+                                                  option-adjusted spread, in
+                                                  pct points)
+``nfci``             ``NFCI``                     level (Chicago Fed National
+                                                  Financial Conditions Index;
+                                                  weekly, 5-day publication
+                                                  delay -- see note below)
+``tips_10y_real``    ``DFII10``                   level (10-year Treasury
+                                                  Inflation-Protected real
+                                                  yield; daily)
+==================== ============================ =================================
 
 Why ``MANEMP`` proxies ISM. The published ISM Manufacturing PMI itself is
 behind a paywall (ISM survey aggregate, distributed via ISM and Haver).
@@ -35,6 +53,17 @@ Bank of Dallas Working Paper 2207, "Forecasting US Manufacturing
 Activity," 2022) and the 3-month change is the formulation NBER
 business-cycle dating uses as a covariate. Every row carries
 ``ism_proxy_source = "MANEMP_3m_pct"`` so the substitution is auditable.
+
+Rates + financial-conditions panel publication delays. ``DGS10``,
+``T10Y2Y``, ``T10Y3M``, ``BAMLH0A0HYM2``, and ``DFII10`` are daily
+market-data series whose FRED observation date equals their publication
+date, so they carry a zero-day delay before the as-of join. ``NFCI`` is
+published every Wednesday and references the prior Friday's data
+window, so the row dated ``2024-04-12`` (a Friday) is not public until
+the following Wednesday (``2024-04-17``). The 5-day publication delay
+captured in ``rates_panel_publication_delays_days[nfci]`` shifts every
+``NFCI`` reference date forward by five calendar days before the
+as-of-< join.
 
 No look-ahead
 -------------
@@ -115,6 +144,12 @@ DEFAULT_LOCK_KEY = "macro_state"
 # FRED series IDs used by this module. Order is significant: it pins the
 # SOURCES.lock entry shape and tests can iterate the tuple to validate
 # the API contract.
+#
+# The first six entries are the monthly activity + inflation panel. The
+# trailing six entries are the daily/weekly rates + financial-conditions
+# panel; their observation dates are publication dates (no 30-day
+# BLS/BEA delay), and each carries an explicit per-series delay through
+# :data:`RATES_PANEL_PUBLICATION_DELAYS_DAYS`.
 FRED_SERIES_IDS: tuple[str, ...] = (
     "UNRATE",
     "CPIAUCSL",
@@ -122,6 +157,12 @@ FRED_SERIES_IDS: tuple[str, ...] = (
     "MANEMP",
     "PAYEMS",
     "RSAFS",
+    "DGS10",
+    "T10Y2Y",
+    "T10Y3M",
+    "BAMLH0A0HYM2",
+    "NFCI",
+    "DFII10",
 )
 
 # Default conservative publication delay (in calendar days) applied to
@@ -130,6 +171,34 @@ FRED_SERIES_IDS: tuple[str, ...] = (
 # starts; 30 days matches the long-run median lag of the bundled
 # macro-release calendar.
 DEFAULT_PUBLICATION_DELAY_DAYS: int = 30
+
+# Per-series publication delays for the rates + financial-conditions
+# panel. Daily Treasury / spread / OAS / TIPS series share their FRED
+# observation date with their publication date, so the delay is zero.
+# ``NFCI`` is weekly: each Friday-dated observation is released the
+# following Wednesday, so its publication delay is 5 calendar days.
+# This mapping persists into the SOURCES.lock entry so the contract is
+# auditable from the artefact alone.
+RATES_PANEL_PUBLICATION_DELAYS_DAYS: dict[str, int] = {
+    "DGS10": 0,
+    "T10Y2Y": 0,
+    "T10Y3M": 0,
+    "BAMLH0A0HYM2": 0,
+    "NFCI": 5,
+    "DFII10": 0,
+}
+
+# Mapping from FRED series id to the output column name used in the
+# parquet schema. Pinned alongside :data:`COLUMN_ORDER` so column-order
+# drift surfaces in the unit tests.
+RATES_PANEL_COLUMN_BY_SERIES: dict[str, str] = {
+    "DGS10": "treas_10y",
+    "T10Y2Y": "slope_10y_2y",
+    "T10Y3M": "slope_10y_3m",
+    "BAMLH0A0HYM2": "hy_oas",
+    "NFCI": "nfci",
+    "DFII10": "tips_10y_real",
+}
 
 # Output column order. Pinned for determinism + tests.
 COLUMN_ORDER: tuple[str, ...] = (
@@ -140,6 +209,12 @@ COLUMN_ORDER: tuple[str, ...] = (
     "ism_proxy",
     "payems_mom",
     "rsafs_mom",
+    "treas_10y",
+    "slope_10y_2y",
+    "slope_10y_3m",
+    "hy_oas",
+    "nfci",
+    "tips_10y_real",
     "ism_proxy_source",
     "publication_delay_days",
     "data_version",
@@ -210,6 +285,17 @@ def _monthly_observations(series: FredSeriesResponse) -> list[_MonthlyObservatio
         out.append(_MonthlyObservation(reference_date=d, value=float(obs.value)))
     out.sort(key=lambda r: r.reference_date)
     return out
+
+
+def _level_observations(series: FredSeriesResponse) -> list[_MonthlyObservation]:
+    """Reduce a daily/weekly FRED response to sorted ``(date, value)`` pairs.
+
+    Identical to :func:`_monthly_observations`. The alias clarifies intent
+    at the call site: rates-panel series carry level data with daily or
+    weekly cadence and are not transformed before the as-of join.
+    """
+
+    return _monthly_observations(series)
 
 
 def _shifted_publication_index(
@@ -394,7 +480,7 @@ def build_macro_state(
     payems = _monthly_observations(fred_responses["PAYEMS"])
     rsafs = _monthly_observations(fred_responses["RSAFS"])
 
-    # Transforms
+    # Transforms (monthly panel).
     unrate_index = _shifted_publication_index(unrate, delay_days=publication_delay_days)
     cpi_yoy_index = _shifted_publication_index(
         _yoy_log_change(cpi), delay_days=publication_delay_days
@@ -412,6 +498,20 @@ def build_macro_state(
         _mom_pct_change(rsafs), delay_days=publication_delay_days
     )
 
+    # Rates + financial-conditions panel (level series, per-series
+    # publication delays). Daily series ship with a 0-day delay; NFCI
+    # ships with a 5-day delay anchoring the Friday-prior-week reference
+    # to a Wednesday publication. Each panel entry produces one index of
+    # ``(publication_date, value)`` pairs that the as-of-< join reads
+    # strictly before every target date.
+    rates_panel_indices: dict[str, list[tuple[_dt.date, float]]] = {}
+    for series_id in RATES_PANEL_COLUMN_BY_SERIES:
+        delay = RATES_PANEL_PUBLICATION_DELAYS_DAYS[series_id]
+        observations = _level_observations(fred_responses[series_id])
+        rates_panel_indices[series_id] = _shifted_publication_index(
+            observations, delay_days=delay
+        )
+
     # As-of date set.
     if as_of_dates is None:
         target_dates = _business_days(start, end)
@@ -426,6 +526,10 @@ def build_macro_state(
         _, ism_val = _value_strictly_before(ism_proxy_index, d)
         _, pay_val = _value_strictly_before(payems_mom_index, d)
         _, rsa_val = _value_strictly_before(rsafs_mom_index, d)
+        rates_panel_values: dict[str, float | None] = {}
+        for series_id, column_name in RATES_PANEL_COLUMN_BY_SERIES.items():
+            _, panel_val = _value_strictly_before(rates_panel_indices[series_id], d)
+            rates_panel_values[column_name] = _round(_clean_float(panel_val))
         rows.append(
             {
                 "as_of_date": d.isoformat(),
@@ -435,6 +539,7 @@ def build_macro_state(
                 "ism_proxy": _round(_clean_float(ism_val)),
                 "payems_mom": _round(_clean_float(pay_val)),
                 "rsafs_mom": _round(_clean_float(rsa_val)),
+                **rates_panel_values,
                 "ism_proxy_source": ISM_PROXY_SOURCE_LABEL,
                 "publication_delay_days": int(publication_delay_days),
             }
@@ -497,6 +602,12 @@ def _data_version_hash(
     target_dates: Sequence[_dt.date],
 ) -> str:
     parts: list[str] = [f"delay={publication_delay_days}"]
+    # Rates-panel per-series delays land in the hash so the lock changes
+    # whenever the publication-delay contract for a panel series moves.
+    for series_id in sorted(RATES_PANEL_PUBLICATION_DELAYS_DAYS):
+        parts.append(
+            f"rates_delay|{series_id}={RATES_PANEL_PUBLICATION_DELAYS_DAYS[series_id]}"
+        )
     for series_id in sorted(series_responses):
         resp = series_responses[series_id]
         parts.append(f"{series_id}|{resp.observation_end}|{resp.count}")
@@ -589,6 +700,10 @@ def update_sources_lock(
         "fred_series": list(artifacts.fred_series_used),
         "rows": int(artifacts.rows_written),
         "publication_delay_days": int(artifacts.publication_delay_days),
+        "rates_panel_publication_delays_days": dict(
+            RATES_PANEL_PUBLICATION_DELAYS_DAYS
+        ),
+        "rates_panel_columns": dict(RATES_PANEL_COLUMN_BY_SERIES),
         "data_version": artifacts.data_version,
         "value_hash": artifacts.value_hash,
         "ism_proxy_source": ISM_PROXY_SOURCE_LABEL,
@@ -726,6 +841,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     i=_fmt(row["ism_proxy"]),
                     pa=_fmt(row["payems_mom"]),
                     r=_fmt(row["rsafs_mom"]),
+                )
+            )
+            print(
+                "    rates: treas_10y={t10} slope_10y_2y={s2} slope_10y_3m={s3} hy_oas={oas} nfci={n} tips_10y_real={tr}".format(
+                    t10=_fmt(row["treas_10y"]),
+                    s2=_fmt(row["slope_10y_2y"]),
+                    s3=_fmt(row["slope_10y_3m"]),
+                    oas=_fmt(row["hy_oas"]),
+                    n=_fmt(row["nfci"]),
+                    tr=_fmt(row["tips_10y_real"]),
                 )
             )
     return 0

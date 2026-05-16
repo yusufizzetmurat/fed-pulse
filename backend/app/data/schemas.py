@@ -674,6 +674,15 @@ _MACRO_STATE_COLUMNS: dict[str, Column] = {
     "ism_proxy": Column(float, nullable=True, required=True, coerce=True),
     "payems_mom": Column(float, nullable=True, required=True, coerce=True),
     "rsafs_mom": Column(float, nullable=True, required=True, coerce=True),
+    # Rates + financial-conditions panel. All level columns, nullable so
+    # the contract degrades cleanly when an as-of date sits inside a
+    # holiday cluster where no upstream observation is published.
+    "treas_10y": Column(float, nullable=True, required=True, coerce=True),
+    "slope_10y_2y": Column(float, nullable=True, required=True, coerce=True),
+    "slope_10y_3m": Column(float, nullable=True, required=True, coerce=True),
+    "hy_oas": Column(float, nullable=True, required=True, coerce=True),
+    "nfci": Column(float, nullable=True, required=True, coerce=True),
+    "tips_10y_real": Column(float, nullable=True, required=True, coerce=True),
     "ism_proxy_source": Column(
         str,
         Check(lambda s: s.map(_non_empty_str), element_wise=False),
