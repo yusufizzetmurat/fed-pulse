@@ -73,10 +73,13 @@ def _torch_versions() -> dict[str, str | None]:
     cuda = torch.version.cuda if hasattr(torch, "version") else None
     cudnn = None
     # torch.backends.cudnn.{is_available,version} are dynamically attached
-    # and lack stubs; strict mode flags them as untyped calls.
-    if torch.backends.cudnn.is_available():  # type: ignore[no-untyped-call]
+    # and lack stubs; strict mode flags them as untyped calls while the
+    # CI mypy invocation runs with --ignore-missing-imports and treats
+    # them as Any. Pairing the strict code with ``unused-ignore`` keeps
+    # both modes silent.
+    if torch.backends.cudnn.is_available():  # type: ignore[no-untyped-call,unused-ignore]
         try:
-            cudnn = str(torch.backends.cudnn.version())  # type: ignore[no-untyped-call]
+            cudnn = str(torch.backends.cudnn.version())  # type: ignore[no-untyped-call,unused-ignore]
         except Exception:
             cudnn = None
     return {"torch": torch.__version__, "cuda": cuda, "cudnn": cudnn}
