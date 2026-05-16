@@ -43,8 +43,18 @@ axes:
       from external topic-share datasets where available; null otherwise.
 
 provenance:
+  # ``sample_weight`` is currently a binary inclusion gate, NOT a per-row
+  # loss multiplier. Downstream code (``app.data.finetune_pilot`` and
+  # the LSTM forecaster in ``app.training.loop``) treats any row whose
+  # ``sample_weight`` is exactly ``0.0`` as excluded from training and
+  # ignores the magnitude otherwise. The earlier ``kaggle: 0.7`` value
+  # was therefore cosmetic — it had no effect on the loss. The weights
+  # below are pinned to 0.0/1.0 to match what the implementation
+  # actually does. To re-introduce graded weighting later, multiply
+  # ``sample_weight`` into the per-row loss in the training loop AND
+  # document the empirical justification for the chosen ratios.
   sample_weights:
     peer_reviewed: 1.0
-    kaggle: 0.7
+    kaggle: 1.0
     peer_reviewed_cross_bank: 0.0  # ECB/BoJ/BoE/BoC/RBA labels held out from FOMC training; used for cross-CB generalization eval only.
     scraped: 0.0
