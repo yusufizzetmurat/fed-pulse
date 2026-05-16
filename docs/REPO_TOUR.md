@@ -501,6 +501,41 @@ If you change architecture, schema, API surface, or evaluation protocol, name th
 
 ---
 
+## Accessibility + Lighthouse
+
+The dashboard has a baked-in accessibility setup that keeps WCAG 2.1 AA and
+Lighthouse ≥ 90 (accessibility) reachable without per-PR tuning:
+
+- `frontend/pages/_app.js` boots `@axe-core/react` only in development; the
+  production bundle never imports it. Violations land in the browser console.
+- `frontend/pages/_document.tsx` pins `lang="en"` on the `<html>` root.
+- `frontend/components/shell/skip-link.tsx` renders the skip-to-main-content
+  link as the first focusable node on every page.
+- Every page wraps its body in `<main id="main-content" tabIndex={-1}>`; the
+  skip link jumps focus directly there.
+- `frontend/components/shell/keyboard-shortcuts.tsx` binds `?` to a shortcut
+  dialog (Radix Dialog, Escape closes); two-key `g + {a,h,d,c,p}` jumps
+  between top-level routes; `t` toggles theme.
+- Branded `frontend/pages/404.tsx`, `frontend/pages/500.tsx`, and
+  `frontend/pages/_error.tsx` share `components/shell/error-page.tsx` so the
+  error surface still has theme + header + skip link + back-to-home.
+
+Run the audit with the dev server up:
+
+```
+make dev-cpu                    # frontend at :3000
+npm --prefix frontend run audit:lighthouse
+```
+
+The script (`frontend/scripts/lighthouse-audit.mjs`) sweeps `/analyze`,
+`/history`, `/decisions`, `/compare`, `/performance`, `/calendar`,
+`/research`, `/training` against Performance / Accessibility / Best Practices
+/ SEO, writes per-route scores to `frontend/audit/lighthouse-<YYYY-MM-DD>.md`,
+and lists every audit that scored below 0.9. It does not gate the build —
+it's a one-shot audit, not CI.
+
+---
+
 ## 10. When in doubt
 
 - Read the docstring at the top of the file. Most modules have a 5-line summary.
