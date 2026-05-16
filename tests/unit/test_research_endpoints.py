@@ -23,7 +23,7 @@ def _reset_train_jobs(monkeypatch):
     """Each test starts with an empty in-memory train-jobs map and the
     arq Redis pool disabled so the legacy in-memory path is exercised."""
 
-    monkeypatch.setenv("DISABLE_REDIS_POOL", "1")
+    monkeypatch.setenv("FED_PULSE_DISABLE_REDIS_POOL", "1")
     if getattr(main_mod.app.state, "redis_pool", None) is not None:
         main_mod.app.state.redis_pool = None
     with main_mod._train_jobs_lock:

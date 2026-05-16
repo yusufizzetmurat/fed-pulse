@@ -97,12 +97,14 @@ async def _lifespan(app: FastAPI):
     # Bring up an arq Redis pool so /analyze can enqueue real_train jobs
     # into a durable queue. A missing or unreachable Redis is not fatal:
     # the endpoint falls back to the in-process daemon thread so dev
-    # boxes without docker compose still work. ``DISABLE_REDIS_POOL`` is
-    # a test-only escape hatch that skips the connect attempt entirely
+    # boxes without docker compose still work. ``FED_PULSE_DISABLE_REDIS_POOL``
+    # is a test-only escape hatch that skips the connect attempt entirely
     # (the default arq retry loop is otherwise long enough to slow the
-    # test suite noticeably).
+    # test suite noticeably). The prefix isolates the flag from any
+    # generic ``DISABLE_REDIS_POOL`` value an external tool or host
+    # environment might export.
     pool: ArqRedis | None = None
-    if os.environ.get("DISABLE_REDIS_POOL") not in {"1", "true", "TRUE"}:
+    if os.environ.get("FED_PULSE_DISABLE_REDIS_POOL", "").strip().lower() not in {"1", "true", "yes"}:
         try:
             pool = await create_pool(get_redis_settings())
             # Force a round-trip so an unreachable Redis fails fast instead of
@@ -527,6 +529,12 @@ async def _state_from_redis_job(pool: ArqRedis, job_id: str) -> dict[str, Any] |
     if status == JobStatus.not_found:
         return None
     info = await job.info()
+    # Skip jobs from other arq task functions so the dashboard listing
+    # stays scoped to real_train. A future arq task on the same Redis
+    # instance would otherwise leak into /train-jobs with no symbol /
+    # date / history_length payload and break the response shape.
+    if info is not None and getattr(info, "function", None) not in (None, "real_train_task"):
+        return None
     payload = _payload_from_args(info)
     state: dict[str, Any] = {
         "job_id": job_id,

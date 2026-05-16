@@ -13,14 +13,26 @@ pytest.importorskip("arq")
 pytest.importorskip("fakeredis")
 
 from arq.connections import ArqRedis  # noqa: E402
-from fakeredis import FakeAsyncRedis  # noqa: E402
+from fakeredis import FakeAsyncRedis, FakeServer  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 import app.main as main_mod  # noqa: E402
 
 
-def _fake_arq_pool() -> ArqRedis:
-    fake = FakeAsyncRedis()
+def _fake_arq_pool(server: FakeServer | None = None) -> ArqRedis:
+    """Build an ArqRedis pool against a fakeredis backend.
+
+    When ``server`` is None a fresh isolated FakeServer is allocated.
+    Passing a shared FakeServer between two _fake_arq_pool() calls
+    mimics two backend processes pointing at the same Redis: the pools
+    are independent Python objects, but their underlying key/value
+    store is the same. The restart-survival test relies on this to
+    prove the contract that job state lives in Redis, not in the
+    in-process pool.
+    """
+
+    server = server if server is not None else FakeServer()
+    fake = FakeAsyncRedis(server=server)
     return ArqRedis(connection_pool=fake.connection_pool)
 
 
@@ -28,7 +40,7 @@ def _fake_arq_pool() -> ArqRedis:
 def _clear_state(monkeypatch):
     """Each test sees an empty in-memory map and no Redis pool by default."""
 
-    monkeypatch.setenv("DISABLE_REDIS_POOL", "1")
+    monkeypatch.setenv("FED_PULSE_DISABLE_REDIS_POOL", "1")
     with main_mod._train_jobs_lock:
         main_mod._train_jobs.clear()
     yield
@@ -152,10 +164,18 @@ def test_list_train_jobs_reads_from_redis(client):
 
 def test_real_train_state_survives_app_restart(client):
     """The headline contract for #103: a queued job must still be
-    readable after the FastAPI app is torn down and a fresh instance
-    is bound to the same Redis."""
+    readable after the FastAPI app is torn down and a fresh pool
+    (backed by the same Redis data) is bound.
 
-    pool = _fake_arq_pool()
+    The two pools share a FakeServer but are otherwise independent
+    ArqRedis objects, so the second client cannot read state through
+    any in-process Python reference -- it has to round-trip through
+    Redis. That is the contract: job state lives in Redis, not in the
+    pool object.
+    """
+
+    server = FakeServer()
+    pool = _fake_arq_pool(server)
     main_mod.app.state.redis_pool = pool
 
     response = client.post(
@@ -170,12 +190,14 @@ def test_real_train_state_survives_app_restart(client):
     )
     job_id = response.json()["job_id"]
 
-    # Simulate a backend restart: drop the pool reference, then attach
-    # the same fakeredis instance to a fresh client. Same Redis data,
-    # different "app process".
+    # Drop the first pool entirely, then bind a brand-new pool that
+    # shares only the underlying FakeServer. From the endpoint's
+    # perspective this is a process restart against the same Redis.
     main_mod.app.state.redis_pool = None
+    del pool
+    fresh_pool = _fake_arq_pool(server)
+    main_mod.app.state.redis_pool = fresh_pool
     fresh_client = TestClient(main_mod.app)
-    main_mod.app.state.redis_pool = pool
 
     detail = fresh_client.get(f"/train-jobs/{job_id}")
     assert detail.status_code == 200
