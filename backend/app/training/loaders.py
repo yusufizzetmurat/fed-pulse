@@ -631,6 +631,7 @@ def _read_chunk_embedding_lookup(
     encoder_alias: str,
     *,
     cache_dir: Path | None = None,
+    registry_path: Path | None = None,
 ) -> dict[str, "Any"]:
     """Return ``text_hash -> pooled embedding`` for one encoder.
 
@@ -643,14 +644,13 @@ def _read_chunk_embedding_lookup(
     vector so the downstream prior-4 weighting sees one embedding per
     statement.
 
-    The cache schema does NOT carry a ``text_hash`` column directly,
-    so the lookup is keyed on ``record_id`` -- the
-    ``training-package`` event row's ``text_hash`` is what the cache
-    builder writes into ``record_id``. The collapsed dict maps
-    ``record_id`` -> ``numpy.ndarray`` (the per-statement pooled
-    embedding) and additionally carries the ``event_date`` of each
-    statement under ``__event_dates__`` so the pooler can look up
-    Delta t without re-reading the parquet.
+    The cache schema persists ``record_id`` rather than ``text_hash``.
+    When ``registry_path`` is supplied the loader walks
+    ``registry_normalized.jsonl`` to build a ``record_id -> text_hash``
+    mapping; the returned dict is then keyed on ``text_hash`` so the
+    per-event lookup matches the ``events.parquet`` join key directly.
+    When the registry is unavailable the lookup falls back to
+    ``record_id`` keys and the caller's text_hash lookup will miss.
 
     Returns an empty dict when the parquet is missing; the caller
     emits zeros + a missing flag for every row.
@@ -705,6 +705,25 @@ def _read_chunk_embedding_lookup(
         )
         return {}
 
+    # Build the ``record_id -> text_hash`` mapping when the registry is
+    # available. Without it the lookup stays keyed on record_id and
+    # the per-event text_hash join misses every row.
+    record_to_text_hash: dict[str, str] = {}
+    if registry_path is not None and registry_path.exists():
+        with registry_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    record = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                rec_id = str(record.get("record_id") or "")
+                text_hash_str = str(record.get("text_hash") or "")
+                if rec_id and text_hash_str:
+                    record_to_text_hash[rec_id] = text_hash_str
+
     lookup: dict[str, "Any"] = {}
     event_dates: dict[str, str] = {}
     grouped = frame.groupby(key_column, sort=False)
@@ -732,8 +751,11 @@ def _read_chunk_embedding_lookup(
         if not cleaned:
             continue
         pooled = np.mean(np.stack(cleaned, axis=0), axis=0)
-        lookup[key_str] = pooled
-        event_dates[key_str] = str(chunk["event_date"].iloc[0])[:10]
+        # Prefer the text_hash key when the registry resolved one for
+        # this record_id; fall back to record_id otherwise.
+        join_key = record_to_text_hash.get(key_str, key_str)
+        lookup[join_key] = pooled
+        event_dates[join_key] = str(chunk["event_date"].iloc[0])[:10]
 
     if not lookup:
         return {}
@@ -1150,9 +1172,53 @@ def load_training_sequences_from_package(
             if text_embedding_cache_dir is not None
             else None
         )
+        # The embedding cache builder keys rows on ``record_id``;
+        # events.parquet joins on ``text_hash``. The registry parquet
+        # under the training package carries both columns, so the
+        # lookup walks it once to materialise the record_id ->
+        # text_hash join. When the registry is absent the lookup
+        # falls back to record_id keys and the per-event join
+        # silently misses every row -- that's logged via the
+        # missing-flag count downstream.
+        registry_parquet = package_dir / "registry_normalized.parquet"
+        registry_jsonl = package_dir / "registry_normalized.jsonl"
+        registry_for_lookup: Path | None
+        if registry_jsonl.exists():
+            registry_for_lookup = registry_jsonl
+        elif registry_parquet.exists():
+            # When only the parquet is available, materialise a
+            # registry_normalized.jsonl-style view of the
+            # ``record_id`` / ``text_hash`` columns in-memory and
+            # ship that to the lookup helper via a tmp file. The
+            # parquet schema carries the same columns so the join
+            # remains exact.
+            import pandas as pd
+
+            reg_frame = pd.read_parquet(registry_parquet)
+            reg_subset = reg_frame[[c for c in ("record_id", "text_hash") if c in reg_frame.columns]]
+            if not reg_subset.empty and "record_id" in reg_subset.columns and "text_hash" in reg_subset.columns:
+                tmp_path = package_dir / "_registry_record_to_text_hash.jsonl"
+                with tmp_path.open("w", encoding="utf-8") as handle:
+                    for record in reg_subset.to_dict("records"):
+                        handle.write(
+                            json.dumps(
+                                {
+                                    "record_id": str(record.get("record_id") or ""),
+                                    "text_hash": str(record.get("text_hash") or ""),
+                                },
+                                sort_keys=True,
+                            )
+                            + "\n"
+                        )
+                registry_for_lookup = tmp_path
+            else:
+                registry_for_lookup = None
+        else:
+            registry_for_lookup = None
         embedding_lookup = _read_chunk_embedding_lookup(
             text_encoder,
             cache_dir=cache_dir,
+            registry_path=registry_for_lookup,
         )
 
     # Deduplicate to one row per text_hash. Prefer horizon=1 so the
@@ -1390,6 +1456,8 @@ def _build_training_tensors(
 
 def _build_text_embedding_tensors(
     sequence_groups: Sequence[Sequence[FeatureVector]],
+    *,
+    fallback_in_dim: int = 0,
 ) -> tuple[torch.Tensor | None, torch.Tensor | None, int]:
     """Materialise the (pooled, missing_flag, in_dim) triple per training window.
 
@@ -1401,9 +1469,19 @@ def _build_text_embedding_tensors(
     missing flag so the model's adapter projects the same zero slot
     it would in the encoder-disabled path.
 
+    ``fallback_in_dim`` lets the caller pin the expected encoder dim
+    when every sequence in the batch is missing (e.g. the prefix of
+    the corpus before any prior statement is available). Without
+    that fallback the helper would return ``(None, None, 0)`` and
+    the training loop would skip the text path entirely; with the
+    fallback it materialises a zero-payload tensor of the requested
+    width so the model's adapter still runs and the missing flag
+    drives the output to zero.
+
     Returns ``(None, None, 0)`` when none of the sequences carry a
-    pooled embedding. Callers that hit the no-text path then skip the
-    text-embedding kwargs on the model forward entirely.
+    pooled embedding AND no ``fallback_in_dim`` is supplied. Callers
+    that hit the no-text path then skip the text-embedding kwargs
+    on the model forward entirely.
     """
 
     in_dim = 0
@@ -1416,7 +1494,9 @@ def _build_text_embedding_tensors(
         if in_dim:
             break
     if in_dim == 0:
-        return None, None, 0
+        if fallback_in_dim <= 0:
+            return None, None, 0
+        in_dim = int(fallback_in_dim)
 
     pooled_rows: list[list[float]] = []
     missing_rows: list[list[float]] = []

@@ -216,8 +216,15 @@ def train_model(
     # inference can recover the original price magnitude. See
     # `app.training.loaders.fit_close_scale` for the fit details.
     x, y, close_scale = _build_training_tensors(sequence_groups)
+    # When the model is configured for the text path, pin the
+    # fallback in_dim so a batch whose every sequence is missing
+    # (e.g. the pre-corpus prefix) still materialises a zero-payload
+    # tensor of the right width. The model's adapter then projects a
+    # zero slot driven by the missing flag.
+    fallback_text_in_dim = int(getattr(active_model_config, "text_embedding_dim", 0) or 0)
     text_emb_tensor, text_missing_tensor, text_emb_dim = _build_text_embedding_tensors(
-        sequence_groups
+        sequence_groups,
+        fallback_in_dim=fallback_text_in_dim,
     )
     if x is None or y is None:
         model = copy.deepcopy(base_model).to(device_obj) if base_model is not None else _build_model(active_model_config, device=device_obj)
