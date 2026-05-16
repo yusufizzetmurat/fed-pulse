@@ -573,12 +573,19 @@ def run_bucket_streams(
 ) -> list[dict[str, Any]]:
     """Run one bucket's cells concurrently via CUDA streams + threads.
 
-    Each cell runs on its own ``torch.cuda.Stream`` inside a worker
-    thread, sharing the parent CUDA context. The GPU pipelines kernels
-    across streams, which delivers a 3-5x throughput win on tiny models
-    (no spawn / IPC overhead, no per-cell CUDA context). When the
-    device is CPU the streams collapse to ``None`` and the threads
-    pipeline only Python-side overhead.
+    On the CUDA device path each cell runs on its own
+    ``torch.cuda.Stream`` inside a worker thread, sharing the parent
+    CUDA context. The GPU pipelines kernels across streams, which
+    delivers a 3-5x throughput win on tiny models (no spawn / IPC
+    overhead, no per-cell CUDA context).
+
+    On the CPU device path the runner falls back to a sequential loop:
+    threads on CPU share a single global RNG (``torch.manual_seed``,
+    NumPy's seed) so concurrent ``_run_single_training`` calls trample
+    each other's seed-setup and produce non-deterministic per-cell
+    numerics. Running CPU cells sequentially preserves the per-cell
+    determinism the parity-regression contract pins, and the CPU
+    device path is not the saturation target anyway.
 
     The caller-provided ``train_one_cell`` is responsible for the
     actual per-cell training; the helper here is the thread + stream
@@ -591,12 +598,19 @@ def run_bucket_streams(
         return []
 
     use_streams = device.type == "cuda"
+    if not use_streams:
+        # CPU device: there is no per-stream speedup, and threads
+        # sharing a global RNG mutate each other's seed-setup. Run
+        # the cells sequentially so the per-cell numerics stay
+        # deterministic (the parity-regression contract).
+        results_cpu: list[dict[str, Any]] = []
+        for trial_index, candidate in bucket_cells:
+            results_cpu.append(train_one_cell(trial_index, candidate, None))
+        return results_cpu
+
     streams: list["torch.cuda.Stream | None"] = []
-    if use_streams:
-        for _ in range(len(bucket_cells)):
-            streams.append(torch.cuda.Stream(device=device))
-    else:
-        streams = [None] * len(bucket_cells)
+    for _ in range(len(bucket_cells)):
+        streams.append(torch.cuda.Stream(device=device))
 
     results: list[dict[str, Any] | None] = [None] * len(bucket_cells)
     errors: list[BaseException | None] = [None] * len(bucket_cells)

@@ -60,8 +60,8 @@ help:
 	@echo "                         - Cache voyage-finance-2 embeddings for the FOMC corpus"
 	@echo "  make next-fomc        - Predict next-FOMC decision (Phase 8 headline, #147)"
 	@echo "  make cross-asset      - Cross-asset abnormal-return response head (Phase 8, #148)"
-	@echo "  make forecaster-sweep         - 8-arch x 5-seed forecaster sweep, random-search subset of the HP grid + 8 parallel workers"
-	@echo "  make forecaster-sweep-exhaustive - 8-arch x 5-seed forecaster sweep, full HP cross-product, single worker (back-compat)"
+	@echo "  make forecaster-sweep         - 8-arch x 5-seed forecaster sweep, random-search subset of the HP grid, bucketed runner (BATCHING_MODE=auto)"
+	@echo "  make forecaster-sweep-exhaustive - 8-arch x 5-seed forecaster sweep, full HP cross-product, single worker, BATCHING_MODE=off (back-compat)"
 	@echo "  make forecaster-sweep-baseline - 6-arch x 5-seed forecaster sweep, legacy 6-feature input"
 	@echo "  make forecaster-sweep-shuffled-control - Memorisation-control row: same architectures + seeds, median HP, --shuffle-targets-control on"
 	@echo "  make forecaster-sweep-aggregate - Aggregate sweep trials into per-arch CIs"
@@ -159,13 +159,18 @@ train-batch:
 FORECASTER_COMPOSE_SERVICE ?= backend-gpu
 FORECASTER_COMPOSE_PROFILE ?= gpu
 
-# Random-search + parallel-worker knobs the user can override on the
-# command line. ``RANDOM_SEARCH_SAMPLES=216`` against the full grid
-# collapses to the exhaustive enumeration (the sampler clamps to the
-# grid size); ``PARALLEL_WORKERS=1`` reproduces sequential timing.
+# Random-search + parallel-worker + batching-mode knobs the user can
+# override on the command line. ``RANDOM_SEARCH_SAMPLES=216`` against
+# the full grid collapses to the exhaustive enumeration (the sampler
+# clamps to the grid size). ``BATCHING_MODE=auto`` (the default)
+# groups cells by model topology and runs each bucket as one
+# concurrent unit inside one CUDA context; ``BATCHING_MODE=off``
+# reverts to the legacy ProcessPoolExecutor path with
+# ``PARALLEL_WORKERS`` spawn-mode workers.
 RANDOM_SEARCH_SAMPLES ?= 50
 RANDOM_SEARCH_SEED ?= 42
 PARALLEL_WORKERS ?= 8
+BATCHING_MODE ?= auto
 
 forecaster-sweep:
 	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
@@ -189,12 +194,13 @@ forecaster-sweep:
 		--random-search-samples $(RANDOM_SEARCH_SAMPLES) \
 		--random-search-seed $(RANDOM_SEARCH_SEED) \
 		--parallel-workers $(PARALLEL_WORKERS) \
+		--batching-mode $(BATCHING_MODE) \
 		--report-path "/data/artifacts/forecaster_sweep/$(TRAINING_PACKAGE_ID)/forecaster_sweep_results.json"
 
-# Exhaustive sweep: every cell in the HP cross-product, single worker.
-# Reproduces the pre-PR forecaster_sweep_results.json byte-identically
-# on the same package and seed set, which is the contract the
-# byte-identity regression test pins.
+# Exhaustive sweep: every cell in the HP cross-product, single worker,
+# bucketed runner OFF. Reproduces the pre-PR forecaster_sweep_results.json
+# byte-identically on the same package and seed set, which is the
+# contract the byte-identity regression test pins.
 forecaster-sweep-exhaustive:
 	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
 	@test -n "$(TEXT_ENCODER)" || (echo "TEXT_ENCODER is required (e.g. finbert, voyage_finance_2, or 'none' for the text-off row)"; exit 1)
@@ -212,6 +218,8 @@ forecaster-sweep-exhaustive:
 		--weight-decays 0 1e-4 1e-3 \
 		--text-encoder "$(TEXT_ENCODER)" \
 		--text-adapter-dims 32 64 128 \
+		--batching-mode off \
+		--parallel-workers 1 \
 		--report-path "/data/artifacts/forecaster_sweep/$(TRAINING_PACKAGE_ID)/forecaster_sweep_results.json"
 
 # Memorisation control: one median-HP combo across all architectures
