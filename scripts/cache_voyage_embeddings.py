@@ -297,6 +297,8 @@ def cache_voyage_embeddings(
         pending_inputs.clear()
         pending_meta.clear()
 
+    progress_step = 200
+    last_progress_at = started_at
     with httpx.Client(timeout=DEFAULT_TIMEOUT_SECONDS) as client:
         for record in _iter_registry(registry_path, min_text_chars=min_text_chars):
             if max_docs and docs_processed >= max_docs:
@@ -314,6 +316,17 @@ def cache_voyage_embeddings(
             docs_processed += 1
             if len(pending_inputs) >= batch_size:
                 _flush(client)
+            if docs_processed % progress_step == 0:
+                now = time.time()
+                docs_per_sec = (
+                    progress_step / max(now - last_progress_at, 1e-6)
+                )
+                last_progress_at = now
+                print(
+                    f"[voyage] progress docs={docs_processed} "
+                    f"rate={docs_per_sec:.1f}/s elapsed={now - started_at:.0f}s",
+                    flush=True,
+                )
         _flush(client)
 
     elapsed = time.time() - started_at
