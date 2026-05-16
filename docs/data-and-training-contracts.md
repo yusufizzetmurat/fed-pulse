@@ -924,109 +924,12 @@ pre-PR-#173 6-feature input. The per-family flags are no-ops when
 
 #### Make targets
 
-- `make forecaster-sweep TRAINING_PACKAGE_ID=<id> TEXT_ENCODER=<alias>`
-  — 8-architecture rich-feature sweep (lstm, lstm_attn, gru, tcn,
-  transformer, dlinear, informer, tft) across the official
-  five-seed set. The grid now sweeps hidden_size {32, 64, 128} x
-  num_layers {1, 2, 3} x dropout {0.1, 0.2, 0.3, 0.4} x
-  learning_rate {1e-3, 3e-4} x weight_decay {0, 1e-4, 1e-3} x
-  text_adapter_dim {32, 64, 128}. Pass `TEXT_ENCODER=none` for the
-  text-off baseline row.
-- `make forecaster-sweep-shuffled-control TRAINING_PACKAGE_ID=<id>
-  TEXT_ENCODER=<alias>` — same architecture roster and seed set,
-  median HP combo, `--shuffle-targets-control` on. The
-  memorisation-control row lands in the aggregator's
-  "Shuffled-targets control" section.
+- `make forecaster-sweep TRAINING_PACKAGE_ID=<id>` — 8-architecture
+  rich-feature sweep (lstm, lstm_attn, gru, tcn, transformer, dlinear,
+  informer, tft) across the official five-seed set.
 - `make forecaster-sweep-baseline TRAINING_PACKAGE_ID=<id>` — the
   pre-PR-#173 6-feature path against the original six architectures,
   preserved for back-compat smoke checks against earlier sweep numbers.
-
-### Forecaster text-embedding input space
-
-The training-package loader optionally pulls per-statement
-embeddings from `data/raw/embeddings/<encoder>_<rev>.parquet` (built
-by `app.data.embedding_cache`) and feeds them to the forecaster as
-a fifth feature family on top of the 35-dim rich-feature scalar
-input. The encoder pick is exposed through the
-`--text-encoder {finbert, finbert_fomc, finbert_fed_adjacent,
-bert_base_fed_adjacent, bge_large_en_v15, nomic_embed_text_v15,
-voyage_finance_2, none}` CLI flag; the default `none` keeps the
-rich-features-only path byte-identical.
-
-#### Pooling formula
-
-For each event the loader picks the four most recent FOMC
-statements strictly before the event date and pools them with
-softmax-weighted means:
-
-```
-w_i = softmax_i ( - Delta t_i / lambda_inv_days )
-pooled = sum_i ( w_i * embedding_i )
-```
-
-where `Delta t_i` is the day count between the prior statement and
-the current event. `lambda_inv_days` defaults to 30.0 (override
-through `--text-pool-lambda-inv-days`). The closer the prior
-statement, the larger its weight; at `lambda_inv = 30` the most
-recent statement carries roughly half the mass when the prior was
-30 days back.
-
-#### Encoder list and pooled dim
-
-| Encoder alias              | Pooled `in_dim` | Source           |
-| -------------------------- | ---:           | ---------------- |
-| `finbert`                  | 768            | ProsusAI/finbert (Araci 2019) |
-| `finbert_fomc`             | 768            | ZiweiChen/FinBERT-FOMC |
-| `finbert_fed_adjacent`     | 768            | local continued-pretrain on BIS + Fed adjacent |
-| `bert_base_fed_adjacent`   | 768            | local continued-pretrain control |
-| `bge_large_en_v15`         | 1024           | BAAI/bge-large-en-v1.5 |
-| `nomic_embed_text_v15`     | 768            | nomic-ai/nomic-embed-text-v1.5 |
-| `voyage_finance_2`         | 1024           | voyageai/voyage-finance-2 |
-
-The encoder-native dim flows onto the `FeatureVector` as
-`text_embedding_pooled: list[float]`; the adapter projection from
-`in_dim` to `text_adapter_dim` runs inside `ForecasterModel.forward`
-so the recurrent core sees a fixed per-bar feature size regardless
-of which encoder is active. Adapter shape is
-`Linear(in_dim, out_dim) -> LayerNorm(out_dim) -> GELU`, zero-init
-so a freshly enabled text path forwards to the same point in
-feature space as the rich-features-only baseline.
-
-#### Per-bar input size when the text path is on
-
-| Slice                                    | Width  | Notes |
-| ---------------------------------------- | ------ | ----- |
-| `[0:35]`                                 | 35     | Existing scalar rich-feature slice (`as_rich_list`). |
-| `[35:35 + text_adapter_dim]`             | 32 / 64 / 128 | Adapter output broadcast onto every bar. |
-| `[35 + text_adapter_dim]`                | 1      | `text_embedding_missing` flag (1.0 when fewer than one prior statement is available). |
-
-#### Missing semantics
-
-When the four-statement pool can't materialise (e.g. the
-chronologically-earliest event in the corpus has no prior), the
-loader emits a zero `in_dim`-vector and flips
-`text_embedding_missing` to 1.0. The model multiplies the adapter
-output by `(1 - missing)` so the recurrent core sees an
-unambiguous zero slot rather than an interpolated mean. When the
-encoder parquet is missing from `data/raw/embeddings/`, the loader
-emits a single `WARNING` log line and the entire run degrades to
-the missing-flag path.
-
-#### Shuffled-targets memorisation control
-
-`--shuffle-targets-control` permutes the target column per fold
-(seed-fixed for reproducibility) before training. macro-RMSE on
-the shuffled-targets run should sit near the constant-mean
-predictor; a real-targets run whose RMSE is close to its shuffled
-counterpart is memorising rather than learning the input-target
-mapping. The aggregator reports the shuffled run in a separate
-"Shuffled-targets control" section so the headline real-target
-table is not contaminated.
-
-The `forecaster_sweep_aggregator` markdown table grows
-`train-RMSE`, `holdout-RMSE`, and `holdout/train gap` columns
-alongside the existing close / volatility / combined CIs. Rows
-whose mean gap crosses 0.5 get a trailing `!` on the gap cell.
 
 ## Pipeline schema validation
 
