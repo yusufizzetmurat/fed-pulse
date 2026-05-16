@@ -28,7 +28,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-credibility-train
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train
 
 help:
 	@echo "Targets:"
@@ -60,8 +60,9 @@ help:
 	@echo "                         - Cache voyage-finance-2 embeddings for the FOMC corpus"
 	@echo "  make next-fomc        - Predict next-FOMC decision (Phase 8 headline, #147)"
 	@echo "  make cross-asset      - Cross-asset abnormal-return response head (Phase 8, #148)"
-	@echo "  make forecaster-sweep         - 8-arch x 5-seed forecaster sweep, rich-feature input (35 dim)"
+	@echo "  make forecaster-sweep         - 8-arch x 5-seed forecaster sweep, rich-feature input + text-embedding adapter (TEXT_ENCODER=<alias>)"
 	@echo "  make forecaster-sweep-baseline - 6-arch x 5-seed forecaster sweep, legacy 6-feature input"
+	@echo "  make forecaster-sweep-shuffled-control - Memorisation-control row: same architectures + seeds, median HP, --shuffle-targets-control on"
 	@echo "  make forecaster-sweep-aggregate - Aggregate sweep trials into per-arch CIs"
 	@echo "  make forecaster-credibility-train - Single training run with credibility features on"
 
@@ -146,6 +147,7 @@ FORECASTER_COMPOSE_PROFILE ?= gpu
 
 forecaster-sweep:
 	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	@test -n "$(TEXT_ENCODER)" || (echo "TEXT_ENCODER is required (e.g. finbert, voyage_finance_2, or 'none' for the text-off row)"; exit 1)
 	docker compose --profile "$(FORECASTER_COMPOSE_PROFILE)" run --rm "$(FORECASTER_COMPOSE_SERVICE)" \
 		python -m app.train_forecaster \
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
@@ -153,7 +155,40 @@ forecaster-sweep:
 		--rich-features \
 		--architectures lstm lstm_attn gru tcn transformer dlinear informer tft \
 		--seeds 11 29 47 71 97 \
+		--hidden-sizes 32 64 128 \
+		--num-layers-grid 1 2 3 \
+		--dropouts 0.1 0.2 0.3 0.4 \
+		--learning-rates 1e-3 3e-4 \
+		--weight-decays 0 1e-4 1e-3 \
+		--text-encoder "$(TEXT_ENCODER)" \
+		--text-adapter-dims 32 64 128 \
 		--report-path "/data/artifacts/forecaster_sweep/$(TRAINING_PACKAGE_ID)/forecaster_sweep_results.json"
+
+# Memorisation control: one median-HP combo across all architectures
+# and the five seeds, with --shuffle-targets-control on. A model whose
+# real-targets RMSE is close to its shuffled-targets RMSE is memorising
+# rather than learning the input-target mapping. Output lands beside
+# the main sweep under a distinct filename so the aggregator picks it
+# up as the shuffled-control row.
+forecaster-sweep-shuffled-control:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	@test -n "$(TEXT_ENCODER)" || (echo "TEXT_ENCODER is required"; exit 1)
+	docker compose --profile "$(FORECASTER_COMPOSE_PROFILE)" run --rm "$(FORECASTER_COMPOSE_SERVICE)" \
+		python -m app.train_forecaster \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		--sweep \
+		--rich-features \
+		--architectures lstm lstm_attn gru tcn transformer dlinear informer tft \
+		--seeds 11 29 47 71 97 \
+		--hidden-sizes 64 \
+		--num-layers-grid 2 \
+		--dropouts 0.2 \
+		--learning-rates 1e-3 \
+		--weight-decays 0 \
+		--text-encoder "$(TEXT_ENCODER)" \
+		--text-adapter-dims 64 \
+		--shuffle-targets-control \
+		--report-path "/data/artifacts/forecaster_sweep/$(TRAINING_PACKAGE_ID)/shuffled_control_forecaster_sweep_results.json"
 
 forecaster-sweep-baseline:
 	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
