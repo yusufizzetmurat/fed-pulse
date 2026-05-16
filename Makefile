@@ -28,7 +28,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state next-fomc cross-asset forecaster-sweep forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-credibility-train
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-credibility-train
 
 help:
 	@echo "Targets:"
@@ -52,6 +52,12 @@ help:
 	@echo "  make pseudo-labels-judge-pass - Score the pseudo set with Gemini (judge-only audit gold)"
 	@echo "  make pseudo-labels-audit-metrics-judge - Compute teacher precision against the LLM judge gold"
 	@echo "  make macro-state      - Build the FRED macro-state parquet (Phase 8 #147)"
+	@echo "  make build-macro-state - Same as macro-state, named for the data-asset suite"
+	@echo "  make build-mp-surprises - Build the MP-surprise time-series parquet"
+	@echo "  make rebuild-linguistic-features TRAINING_PACKAGE_ID=<id>"
+	@echo "                         - Re-emit linguistic_features.parquet for a training package"
+	@echo "  make cache-voyage-embeddings"
+	@echo "                         - Cache voyage-finance-2 embeddings for the FOMC corpus"
 	@echo "  make next-fomc        - Predict next-FOMC decision (Phase 8 headline, #147)"
 	@echo "  make cross-asset      - Cross-asset abnormal-return response head (Phase 8, #148)"
 	@echo "  make forecaster-sweep         - 8-arch x 5-seed forecaster sweep, rich-feature input (35 dim)"
@@ -337,15 +343,50 @@ eval-cross-bank:
 		$(if $(EVAL_BANKS),--eval-banks "$(EVAL_BANKS)",)
 
 # Build the FRED macro-state snapshot at data/external/fred/macro_state.parquet.
-# Reads UNRATE, CPIAUCSL, PCEPILFE, MANEMP, PAYEMS, RSAFS. Requires FRED_API_KEY
-# in .env on first run (cached JSON afterwards).
+# Reads the activity + inflation panel (UNRATE, CPIAUCSL, PCEPILFE, MANEMP,
+# PAYEMS, RSAFS) plus the rates + financial-conditions panel (DGS10, T10Y2Y,
+# T10Y3M, BAMLH0A0HYM2, NFCI, DFII10). Requires FRED_API_KEY in .env on first
+# run (cached JSON afterwards).
 MACRO_STATE_START ?= 2010-01-01
 MACRO_STATE_END ?= today
-macro-state:
+macro-state: build-macro-state
+
+build-macro-state:
+	@test -f .env || (echo ".env required for FRED_API_KEY"; exit 1)
 	docker compose run --rm backend \
 		python -m app.data.macro_state \
+		--output data/external/fred/macro_state.parquet \
 		--start "$(MACRO_STATE_START)" \
 		--end "$(MACRO_STATE_END)"
+
+# Build the monetary-policy surprise time-series at
+# data/external/fred/mp_surprises.parquet. Requires FRED_API_KEY in .env on
+# first run; subsequent runs reuse the per-series JSON cache.
+build-mp-surprises:
+	@test -f .env || (echo ".env required for FRED_API_KEY"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.mp_surprise \
+		--output data/external/fred/mp_surprises.parquet
+
+# Re-emit linguistic_features.parquet for a given training package. The
+# default output filename and LDA-artifact filenames live under the package
+# directory. Required: TRAINING_PACKAGE_ID.
+rebuild-linguistic-features:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.features.linguistic \
+		--training-package-id "$(TRAINING_PACKAGE_ID)"
+
+# Cache voyage-finance-2 sentence embeddings for a training package under
+# data/raw/embeddings/. Requires VOYAGE_API_KEY in .env. The Voyage REST
+# API is contacted only when --allow-network is passed.
+cache-voyage-embeddings:
+	@test -f .env || (echo ".env required for VOYAGE_API_KEY"; exit 1)
+	docker compose run --rm backend \
+		python scripts/cache_voyage_embeddings.py --allow-network \
+		$(if $(TRAINING_PACKAGE_ID),--training-package-id "$(TRAINING_PACKAGE_ID)",) \
+		$(if $(BATCH_SIZE),--batch-size $(BATCH_SIZE),) \
+		$(if $(FORCE),--force,)
 
 # Predict the FOMC's next decision using text + macro + OIS + credibility +
 # linguistic features (Phase 8 headline, #147). Required: TRAINING_PACKAGE_ID
