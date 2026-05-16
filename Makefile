@@ -61,16 +61,19 @@ help:
 dev: dev-cpu
 
 dev-cpu:
-	docker compose up -d --build backend frontend
+	docker compose up -d --build redis backend worker frontend
 
 dev-gpu:
-	docker compose --profile gpu up -d --build backend-gpu frontend
+	docker compose --profile gpu up -d --build redis backend-gpu worker-gpu frontend
 
 down:
 	docker compose --profile gpu down
 
 logs:
 	docker compose logs -f --tail=200
+
+worker-logs:
+	docker compose logs -f --tail=200 worker
 
 lock:
 	docker compose run --rm backend bash -c "pip install --quiet uv && uv pip compile --generate-hashes --output-file requirements.lock pyproject.toml"
