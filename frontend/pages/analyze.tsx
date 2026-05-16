@@ -26,6 +26,7 @@ import {
   buildVolatilitySeries,
   computeErrorMetrics,
 } from "@/lib/analyze/derive";
+import { bandLabel } from "@/lib/analyze/format";
 import type { AnalyzeRequest, AnalyzeResult, TrainJobState } from "@/lib/analyze/types";
 
 // Lazy-load fixture-driven panels so the fixture module never ships to the
@@ -156,8 +157,7 @@ export default function AnalyzePage() {
   const splitTimestamp = result?.series?.timestamps?.[result.series.timestamps.length - 1];
   const volScale = result?.series?.volatility_scale || { suggested_ymin: 0.0, suggested_ymax: 1.0 };
   const confidenceLevel = Math.round(Number(result?.series?.forecast_confidence_level || 0.8) * 100);
-  const bandKind = result?.series?.forecast_band_source === "conformal" ? "conformal" : "Gaussian";
-  const confidenceLabel = `${confidenceLevel}% ${bandKind} band`;
+  const confidenceLabel = bandLabel(confidenceLevel, result?.series?.forecast_band_source);
   const hasCloseConfidence = Boolean(result?.series?.forecast_close_lower?.length);
   const hasVolConfidence = Boolean(result?.series?.forecast_volatility_lower?.length);
 

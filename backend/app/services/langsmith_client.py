@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import os
 from functools import wraps
-from typing import Callable, TypeVar
+from typing import Any, Callable, TypeVar
 
-T = TypeVar("T", bound=Callable)
+T = TypeVar("T", bound=Callable[..., Any])
 
 
 def traced(name: str) -> Callable[[T], T]:
@@ -30,16 +30,19 @@ def traced(name: str) -> Callable[[T], T]:
             return fn
 
         try:
-            from langsmith import traceable  # type: ignore
+            from langsmith import traceable
         except Exception:  # pragma: no cover - import guard
             return fn
 
         traced_fn = traceable(run_type="llm", name=name)(fn)
 
         @wraps(fn)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             return traced_fn(*args, **kwargs)
 
+        # wrapper preserves fn's signature via functools.wraps but mypy
+        # sees the bare (*args, **kwargs) -> Any signature and cannot prove
+        # the cast to T.
         return wrapper  # type: ignore[return-value]
 
     return decorator

@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 from urllib.parse import urljoin
 
 import requests
@@ -36,6 +36,18 @@ class FomcDocument:
 
 def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", value or "").strip()
+
+
+def _href_str(anchor: Any) -> str:
+    """Coerce a bs4 anchor href to a str. bs4 multi-value attrs come back as
+    ``AttributeValueList``; the federal-reserve markup never uses that shape,
+    so the join keeps the call sites monomorphic without changing behaviour.
+    """
+
+    href = anchor.get("href", "") or ""
+    if isinstance(href, list):
+        href = " ".join(str(part) for part in href)
+    return str(href).strip()
 
 
 def _fetch_soup(url: str, timeout: int = 20) -> BeautifulSoup:
@@ -113,7 +125,7 @@ def _calendar_pages() -> list[str]:
     root = _fetch_soup(CALENDAR_URL)
     pages = {CALENDAR_URL}
     for anchor in root.select("a[href]"):
-        href = anchor.get("href", "").strip()
+        href = _href_str(anchor)
         if ARCHIVE_PATTERN.match(href):
             pages.add(urljoin(BASE_URL, href))
     return sorted(pages, reverse=True)
@@ -123,7 +135,7 @@ def _statement_links_from_page(page_url: str) -> list[tuple[str, str]]:
     soup = _fetch_soup(page_url)
     links: list[tuple[str, str]] = []
     for anchor in soup.select("a[href]"):
-        href = anchor.get("href", "").strip()
+        href = _href_str(anchor)
         text = _clean_text(anchor.get_text(" ", strip=True))
         if "pressreleases/monetary" not in href:
             continue
@@ -137,7 +149,7 @@ def _minutes_links_from_page(page_url: str) -> list[tuple[str, str]]:
     soup = _fetch_soup(page_url)
     links: list[tuple[str, str]] = []
     for anchor in soup.select("a[href]"):
-        href = anchor.get("href", "").strip()
+        href = _href_str(anchor)
         text = _clean_text(anchor.get_text(" ", strip=True))
         href_lower = href.lower()
         text_lower = text.lower()

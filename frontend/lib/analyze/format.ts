@@ -102,3 +102,26 @@ export function errorToneLabel(tone: ErrorTone): string {
   if (tone === "high") return "High error";
   return "Awaiting data";
 }
+
+// Label that goes next to the forecast band so the reader can tell which
+// methodology produced it. The backend marks the band source in
+// `series.forecast_band_source`:
+//   - "conformal"   the band came from the conformal-prediction manifest
+//                   (empirical coverage, calibrated against holdout residuals)
+//   - "gaussian_z"  the band is the Gaussian-z fallback (volatility times the
+//                   80th-percentile z-score, applied symmetrically)
+//   - null/missing  the response did not carry a source — usually an older
+//                   history payload from before the band-source field
+//                   existed. We fall back to "confidence band" rather than
+//                   guessing.
+//
+// Confidence level is the integer percent (e.g. 80) the chart already
+// shows; this helper just decorates it with the methodology.
+export function bandLabel(
+  confidenceLevel: number,
+  source: "conformal" | "gaussian_z" | null | undefined,
+): string {
+  if (source === "conformal") return `${confidenceLevel}% conformal band`;
+  if (source === "gaussian_z") return `${confidenceLevel}% Gaussian-z band`;
+  return `${confidenceLevel}% confidence band`;
+}

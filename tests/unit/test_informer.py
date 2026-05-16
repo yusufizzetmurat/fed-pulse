@@ -44,23 +44,46 @@ def test_informer_forward_returns_tuple_for_lstm_destructuring() -> None:
     assert output.shape == (2, SEQUENCE_LENGTH, 32)
 
 
-def test_informer_gradient_flows_to_parameters() -> None:
+def test_informer_gradient_flows_to_every_parameter() -> None:
+    """Widened from the earlier "at least one parameter" assertion.
+
+    Every learnable parameter in the encoder must receive a strictly-
+    positive gradient norm after a small synthetic training step against
+    a noise target. A parameter that never receives a gradient is a
+    latent bug — the module is functionally insensitive to that weight
+    and the encoder is paying memory + compute for a dead unit. The
+    earlier per-tensor "at least one" check would silently pass when
+    that happened.
+    """
+
     _fresh()
     encoder = InformerEncoder(input_size=FEATURE_SIZE, hidden_size=32)
-    x = torch.randn(3, SEQUENCE_LENGTH, FEATURE_SIZE, requires_grad=True)
+    encoder.train()
+    x = torch.randn(3, SEQUENCE_LENGTH, FEATURE_SIZE)
+    target = torch.randn(3, SEQUENCE_LENGTH, 32)
     out, _ = encoder(x)
-    out.sum().backward()
-    # Every learnable parameter must receive a non-zero gradient.
-    grad_norms = [
-        param.grad.abs().sum().item()
-        for param in encoder.parameters()
-        if param.requires_grad and param.grad is not None
-    ]
-    assert grad_norms, "no learnable parameters received gradients"
-    assert all(norm >= 0.0 for norm in grad_norms)
-    # At least one parameter must have a strictly positive gradient norm
-    # (otherwise the encoder is functionally constant w.r.t. input).
-    assert any(norm > 0.0 for norm in grad_norms)
+    # MSE against a non-zero target so every output position has a
+    # gradient contribution. A bare `out.sum().backward()` lets every
+    # output coordinate share the same scalar derivative, which can
+    # silently zero-out gradients on parameters that only feed one
+    # coordinate.
+    loss = torch.nn.functional.mse_loss(out, target)
+    loss.backward()
+
+    zero_grad_names: list[str] = []
+    for name, param in encoder.named_parameters():
+        if not param.requires_grad:
+            continue
+        if param.grad is None:
+            zero_grad_names.append(f"{name}=None")
+            continue
+        norm = float(param.grad.abs().sum().item())
+        if not (norm > 0.0):
+            zero_grad_names.append(f"{name}={norm:.3e}")
+    assert not zero_grad_names, (
+        "InformerEncoder has parameters with zero / missing gradient norm "
+        "after one synthetic training step: " + ", ".join(zero_grad_names)
+    )
 
 
 def test_informer_is_deterministic_at_fixed_seed() -> None:

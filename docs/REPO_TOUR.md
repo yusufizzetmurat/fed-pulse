@@ -4,6 +4,8 @@ Single-page walkthrough of the Fed Pulse codebase, written so a reader who has n
 
 Read top to bottom the first time. After that, jump to §6 ("I want to …") for task-oriented entry points.
 
+**Last refresh: 2026-05-16, anchored at `dev` after PR #166 + the 2026-05-16 bundle.** When a change shifts the request flow, schema, or evaluation protocol, re-pin this anchor in your PR description so the reader knows the tour is current.
+
 ---
 
 ## 1. What Fed Pulse actually does
@@ -16,7 +18,7 @@ Fed Pulse is a research project (SWE 599 thesis at Boğaziçi University) that t
 4. A credibility panel showing how the document compares to the prior four FOMC communications.
 5. A persisted history so each analysis is searchable / comparable across runs.
 
-The thesis question is whether fusing FOMC text with market history through a small sequence model produces better short-horizon forecasts than a market-only baseline, and when runtime adaptation is worth its compute cost. Done criteria live in `../../fed-pulse.wiki/05_Project_Plan.md §1`.
+The question this codebase tries to answer is whether fusing FOMC text with market history through a small sequence model produces better short-horizon forecasts than a market-only baseline, and when runtime adaptation is worth its compute cost. Done criteria live in `../../fed-pulse.wiki/05_Project_Plan.md §1`.
 
 ---
 
@@ -410,6 +412,46 @@ make data-prep DATASET_VERSION=v1 FEATURE_VERSION=v1 OWNER=<who>
 make train-batch TRAINING_PACKAGE_ID=<id> OWNER=<who>
 ```
 
+### Reproduce the headline reporting numbers
+
+The reporting pack lives under `artifacts/experiments/<run_id>/` once a
+`train-batch` finishes. The fastest path to the same numbers without
+re-running the GPU sweep:
+
+```
+# 1. Pull the official training package (versioned).
+make data-prep DATASET_VERSION=v1 FEATURE_VERSION=v1 OWNER=<who>
+
+# 2. Run the v2 NLP baseline batch (BERT / FinBERT / FOMC-RoBERTa).
+docker compose run --rm backend \
+  python -m app.data.nlp_baseline_batch \
+  --training-package-id <id> --seeds 11,29,47,71,97
+
+# 3. Forecaster sweep (Plan-13 Variant A).
+docker compose run --rm backend \
+  python -m app.train_forecaster --sweep \
+  --training-package-id <id> --seeds 11,29,47,71,97
+
+# 4. Aggregate + verify the headline tables.
+docker compose run --rm backend \
+  python -m app.evaluation.bakeoff_aggregator --run-glob "run_*/" \
+  > artifacts/experiments/headline_<date>.json
+```
+
+Determinism is locked by the regression test
+`tests/regression/test_forecaster_determinism.py` — same seed produces a
+bit-identical combined RMSE, so a re-run of step 3 will match the
+checked-in artefacts up to floating-point noise.
+
+### Export a run as CSV
+
+The frontend ships a per-run CSV export and a compare-page CSV export
+(`frontend/lib/export/`). On the history detail page, click "Export CSV"
+to get a flat schema (`field,value` plus a `forecast_series` section);
+on the compare page, the same button emits a four-column CSV (`field,
+run_a, run_b, delta_a_minus_b`). The schema is stable across runs and
+documented inline in the export module.
+
 ---
 
 ## 7. What's currently dead vs alive
@@ -442,7 +484,7 @@ The audit ran on `dev` HEAD before PR #120. After the merge, the status of the m
 | `07_Data_Schema.md` (ER + table layouts) | `data/schema/labels.yaml`, `db.py` models, the parquet outputs under `data/processed/<package_id>/` |
 | `08_Test_and_Verification_Plan.md` | `tests/properties/test_no_leakage.py`, `tests/regression/test_plan13_variant_a.py`, `tests/contract/test_openapi_snapshot.py` |
 | `09_Risk_Register.md` | The known threats in `01_Progress_Snapshot.md §Risks` — see `docs/security-acceptance.md` for the security slice |
-| `12_ADRs.md` | `docs/adr/` (when Phase 2.1 ships the directory split) |
+| `12_ADRs.md` | `docs/adr/` — currently 0007 (Variant B verdict), 0008 (conformal bands), 0009 (multi-axis labels), 0010 (event-study vs continuous-time forecasting) |
 | `13_External_Corpora_Inventory.md` | `data/external/`, `backend/app/data/ingest_sources.py` |
 
 If you change architecture, schema, API surface, or evaluation protocol, name the wiki page in your PR description.
@@ -453,7 +495,7 @@ If you change architecture, schema, API surface, or evaluation protocol, name th
 
 - **Branches:** `feat/<short-desc>`, never push to `main`, always PR into `dev`.
 - **Commits:** present-tense imperative ("add the X", not "added the X"). No AI co-author trailers.
-- **PRs:** terse, in the user's voice. ≤8 summary bullets, ≤15 words each, ≤3 test-plan commands. The PR description is the durable accounting; don't repeat it in commit bodies.
+- **PRs:** terse and descriptive. ≤8 summary bullets, ≤15 words each, ≤3 test-plan commands. Describe what the change does. The PR description is the durable accounting; don't repeat it in commit bodies.
 - **Tests:** lint + typecheck + pytest + frontend + vuln-python + vuln-npm jobs must all be green before merge.
 - **Data conventions:** `BACKEND_ROOT` resolves via `Path(__file__).resolve().parents[2]`; `DEFAULT_DATA_DIR` falls back to `BACKEND_ROOT.parent / "data"` when `/data` is absent. `make` targets fail fast on missing `DATASET_VERSION` / `FEATURE_VERSION` / `TRAINING_PACKAGE_ID` — don't paper over with defaults.
 

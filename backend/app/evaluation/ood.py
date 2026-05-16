@@ -79,8 +79,8 @@ class OODManifest:
 
 
 def logit_energy(
-    model,
-    tokenizer,
+    model: Any,
+    tokenizer: Any,
     text: str,
     *,
     temperature: float = DEFAULT_TEMPERATURE,
@@ -150,7 +150,7 @@ def aggregate_energy(
 def calibrate_threshold(
     training_texts: Iterable[str],
     *,
-    classifier,
+    classifier: Any,
     percentile: float = DEFAULT_THRESHOLD_PERCENTILE,
     temperature: float = DEFAULT_TEMPERATURE,
 ) -> tuple[float, list[float]]:
@@ -182,6 +182,21 @@ def calibrate_threshold(
     return threshold, energies
 
 
+def _narrow_aggregation(value: object) -> EnergyAggregation:
+    """Narrow an untyped JSON value to the EnergyAggregation Literal.
+
+    Raises ``ValueError`` on anything outside the closed set; the
+    outer ``load_manifest`` try/except converts that to a ``None``
+    return so a malformed manifest degrades to the "no OOD signal"
+    fallback rather than reaching downstream code with an out-of-set
+    aggregation mode.
+    """
+
+    if value in ("mean", "max", "median"):
+        return value  # type: ignore[return-value]
+    raise ValueError(f"unknown OOD aggregation: {value!r}")
+
+
 def load_manifest(path: Path | str) -> OODManifest | None:
     """Read a calibration manifest from disk. Returns None when the file is
     missing or malformed — callers fall back to "no OOD signal" gracefully.
@@ -200,7 +215,7 @@ def load_manifest(path: Path | str) -> OODManifest | None:
             threshold=float(payload["threshold"]),
             percentile=float(payload["percentile"]),
             temperature=float(payload["temperature"]),
-            aggregation=str(payload.get("aggregation", DEFAULT_AGGREGATION)),  # type: ignore[arg-type]
+            aggregation=_narrow_aggregation(payload.get("aggregation", DEFAULT_AGGREGATION)),
             training_corpus_size=int(payload["training_corpus_size"]),
             training_energy_mean=float(payload["training_energy_mean"]),
             training_energy_std=float(payload["training_energy_std"]),
@@ -215,7 +230,7 @@ def load_manifest(path: Path | str) -> OODManifest | None:
 def score_text(
     text: str,
     *,
-    classifier,
+    classifier: Any,
     manifest: OODManifest,
     chunks: list[str] | None = None,
 ) -> dict[str, Any]:

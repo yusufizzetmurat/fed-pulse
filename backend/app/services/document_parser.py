@@ -64,7 +64,9 @@ def parse_pdf_stream(stream: IO[bytes], *, filename: str | None = None) -> Parse
         raise RuntimeError("pdfplumber not installed; cannot parse PDF uploads") from exc
 
     pages: list[str] = []
-    with pdfplumber.open(stream) as pdf:
+    # pdfplumber.open lacks stubs and types its argument as Path-like; the
+    # IO[bytes] stream upload path is valid at runtime.
+    with pdfplumber.open(stream) as pdf:  # type: ignore[arg-type]
         for page in pdf.pages:
             text = page.extract_text() or ""
             if text:
@@ -113,7 +115,7 @@ def _extract_visible_text(html: str) -> str:
 async def parse_url(url: str, *, client: httpx.AsyncClient | None = None) -> ParsedDocument:
     headers = {"User-Agent": _USER_AGENT, "Accept": "text/html,application/pdf"}
     owns_client = client is None
-    if owns_client:
+    if client is None:
         client = httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=20.0)
     try:
         response = await client.get(url)

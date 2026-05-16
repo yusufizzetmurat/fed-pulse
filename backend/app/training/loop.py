@@ -93,7 +93,7 @@ def _zero_credibility(model: ForecasterModel, batch_size: int, device: torch.dev
 
 def _evaluate_model(
     model: ForecasterModel,
-    loader: DataLoader,
+    loader: DataLoader[Any],
     device: torch.device,
     loss_fn: nn.Module,
 ) -> EvaluationMetrics:
@@ -157,7 +157,12 @@ def train_model(
     if vectors:
         sequence_groups.append(list(vectors))
 
-    x, y = _build_training_tensors(sequence_groups)
+    # `_build_training_tensors` now fits a per-fold close-scale from the
+    # actual training rows and returns it as the third tuple element. The
+    # scale is persisted in the checkpoint (`close_scale` field) so
+    # inference can recover the original price magnitude. See
+    # `app.training.loaders.fit_close_scale` for the fit details.
+    x, y, close_scale = _build_training_tensors(sequence_groups)
     if x is None or y is None:
         model = copy.deepcopy(base_model).to(device_obj) if base_model is not None else _build_model(active_model_config, device=device_obj)
         model.eval()
@@ -276,7 +281,14 @@ def train_model(
     if save_checkpoint:
         from app.training.checkpoint import _save_model_checkpoint
 
-        _save_model_checkpoint(work_model, checkpoint_target, summary)
+        # `close_scale` was fitted on this fold's training rows in
+        # `_build_training_tensors`; persisting it on the checkpoint is what
+        # lets inference (`services.forecaster._predict_next_point`) recover
+        # the original price magnitude. The two values must agree byte-for-
+        # byte across save/load — see the determinism regression test.
+        _save_model_checkpoint(
+            work_model, checkpoint_target, summary, close_scale=close_scale
+        )
         # Lazy-import the services facade so subsequent inference picks up the
         # freshly trained weights without a process restart. Doing this at the
         # module top would create a circular (services.forecaster -> training.loop -> services.forecaster).

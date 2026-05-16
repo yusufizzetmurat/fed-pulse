@@ -201,7 +201,8 @@ class _AttentionLayer(nn.Module):
         v = self.value_proj(x).view(b, seq_len, self.n_heads, self.d_keys)
         out = self.inner(q, k, v)  # (B, L, H, D)
         out = out.view(b, seq_len, self.n_heads * self.d_keys)
-        return self.out_proj(out)
+        projected: torch.Tensor = self.out_proj(out)
+        return projected
 
 
 class _EncoderLayer(nn.Module):
@@ -228,7 +229,7 @@ class _EncoderLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = x + self.dropout(self.attn(self.norm1(x)))
+        h: torch.Tensor = x + self.dropout(self.attn(self.norm1(x)))
         h = h + self.dropout(self.ff(self.norm2(h)))
         return h
 

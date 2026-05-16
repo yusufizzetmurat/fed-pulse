@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 # 2021 is intentionally outside the named windows. It is the post-COVID
 # recovery year — neither the zero-rate emergency stance nor the hike cycle
@@ -31,7 +31,7 @@ def _to_date(value: str) -> date:
 
 
 def aggregate_by_regime(
-    holdouts: Iterable[Mapping],
+    holdouts: Iterable[Mapping[str, Any]],
     *,
     regime_windows: Iterable[tuple[str, str, str]] = REGIME_WINDOWS,
     metric_keys: Iterable[str] = ("combined_rmse", "close_rmse", "volatility_rmse", "directional_accuracy"),
@@ -77,7 +77,7 @@ def aggregate_by_regime(
     return out
 
 
-def _coerce_optional_float(value) -> float | None:
+def _coerce_optional_float(value: Any) -> float | None:
     if value is None:
         return None
     try:

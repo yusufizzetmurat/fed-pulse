@@ -195,7 +195,22 @@ def _restore_rng_state(state: dict[str, Any] | None) -> None:
             pass
 
 
-def _checkpoint_payload(model: ForecasterModel, summary: TrainingRunSummary) -> dict[str, Any]:
+def _checkpoint_payload(
+    model: ForecasterModel,
+    summary: TrainingRunSummary,
+    *,
+    close_scale: float | None = None,
+) -> dict[str, Any]:
+    """Build the dict torch.save writes for one trained model.
+
+    ``close_scale`` is the per-fold normaliser fitted in
+    ``app.training.loaders.fit_close_scale``. Passing ``None`` falls back
+    to the legacy ``DEFAULT_CLOSE_SCALE`` constant — older paths that did
+    not thread the fitted scale through (e.g. bare manifest exports) keep
+    working unchanged. New callers always pass the fitted value so resume-
+    from-checkpoint matches the training-time normalisation.
+    """
+
     return {
         "model_state_dict": model.state_dict(),
         "best_loss": float(summary.metrics.loss) if summary.metrics else None,
@@ -204,14 +219,23 @@ def _checkpoint_payload(model: ForecasterModel, summary: TrainingRunSummary) -> 
         "training_summary": summary.to_dict(),
         "input_size": FEATURE_SIZE,
         "sequence_length": SEQUENCE_LENGTH,
-        "close_scale": DEFAULT_CLOSE_SCALE,
+        "close_scale": float(close_scale) if close_scale is not None else float(DEFAULT_CLOSE_SCALE),
         "rng_state": _capture_rng_state(),
     }
 
 
-def _save_model_checkpoint(model: ForecasterModel, checkpoint_path: Path, summary: TrainingRunSummary) -> None:
+def _save_model_checkpoint(
+    model: ForecasterModel,
+    checkpoint_path: Path,
+    summary: TrainingRunSummary,
+    *,
+    close_scale: float | None = None,
+) -> None:
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(_checkpoint_payload(model, summary), checkpoint_path)
+    torch.save(
+        _checkpoint_payload(model, summary, close_scale=close_scale),
+        checkpoint_path,
+    )
     try:
         from app.audit import append_audit_entry, hash_file
         from app.logging import current_run_id

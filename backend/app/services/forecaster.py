@@ -13,6 +13,7 @@ import copy
 import math
 import threading
 from pathlib import Path
+from collections.abc import Iterable
 from typing import Any
 
 import torch
@@ -169,7 +170,7 @@ def parse_horizon_steps(horizon: str) -> int:
     return _parse_horizon_steps(horizon)
 
 
-def _sample_std(values) -> float:
+def _sample_std(values: Iterable[float]) -> float:
     items = [float(value) for value in values]
     if len(items) < 2:
         return 0.0
@@ -178,7 +179,7 @@ def _sample_std(values) -> float:
     return math.sqrt(max(variance, 0.0))
 
 
-def _conformal_manifest_for(checkpoint_path: Path | None):
+def _conformal_manifest_for(checkpoint_path: Path | None) -> Any:
     if checkpoint_path is None:
         return None
     # `with_suffix(".conformal.json")` rejects multi-dot suffixes on Python < 3.12.

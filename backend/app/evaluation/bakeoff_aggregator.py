@@ -18,7 +18,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from app.evaluation.bootstrap import BootstrapCI, block_bootstrap_ci
 
@@ -36,8 +36,11 @@ class EncoderRow:
     accuracy_ci: BootstrapCI
 
 
-def _load_aggregate(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+def _load_aggregate(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"aggregate report must be a JSON object: {path}")
+    return payload
 
 
 def _iter_aggregate_files(artifact_dir: Path) -> Iterable[Path]:
@@ -49,8 +52,8 @@ def _iter_aggregate_files(artifact_dir: Path) -> Iterable[Path]:
     yield from sorted(artifact_dir.glob("**/aggregate.json"))
 
 
-def _collect_per_encoder(aggregates: list[dict]) -> dict[str, dict]:
-    by_encoder: dict[str, dict] = {}
+def _collect_per_encoder(aggregates: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    by_encoder: dict[str, dict[str, Any]] = {}
     for aggregate in aggregates:
         for encoder_key, payload in (aggregate.get("by_encoder") or {}).items():
             bucket = by_encoder.setdefault(
@@ -78,7 +81,7 @@ def _collect_per_encoder(aggregates: list[dict]) -> dict[str, dict]:
 
 
 def _build_rows(
-    by_encoder: dict[str, dict],
+    by_encoder: dict[str, dict[str, Any]],
     *,
     block_size: int,
     n_resamples: int,
@@ -147,7 +150,7 @@ def render_markdown(rows: list[EncoderRow], *, coverage: float) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _row_to_json(row: EncoderRow) -> dict:
+def _row_to_json(row: EncoderRow) -> dict[str, Any]:
     return {
         "encoder_key": row.encoder_key,
         "checkpoint": row.checkpoint,
@@ -174,7 +177,7 @@ def aggregate(
     n_resamples: int = 1000,
     coverage: float = 0.95,
     seed: int = 11,
-) -> tuple[list[EncoderRow], str, dict]:
+) -> tuple[list[EncoderRow], str, dict[str, Any]]:
     aggregate_paths = list(_iter_aggregate_files(artifact_dir))
     if not aggregate_paths:
         raise FileNotFoundError(f"no aggregate.json files found under {artifact_dir}")

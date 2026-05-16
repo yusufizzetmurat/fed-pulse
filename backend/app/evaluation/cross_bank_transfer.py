@@ -213,7 +213,7 @@ def evaluate_cross_bank(
     checkpoint: str,
     max_length: int = 256,
     batch_size: int = 32,
-    predict_fn=None,
+    predict_fn: Any = None,
 ) -> CrossBankResult:
     """Evaluate ``checkpoint`` zero-shot on the bank's cross-bank rows.
 

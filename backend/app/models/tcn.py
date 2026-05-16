@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import torch
 from torch import nn
 
 
@@ -37,7 +38,7 @@ class TemporalConvNet(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.activation = nn.ReLU()
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, None]:
         # x: [batch, seq, feat] -> [batch, feat, seq] for Conv1d
         seq_len = x.shape[1]
         x_t = x.transpose(1, 2)

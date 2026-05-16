@@ -196,4 +196,27 @@ describe("DecisionsPage", () => {
     expect(screen.getByText(/^full$/)).toBeInTheDocument();
     expect(screen.getByText(/ois, text, linguistic, credibility, macro/)).toBeInTheDocument();
   });
+
+  it("renders the OIS-implied baseline alongside the primary headline", async () => {
+    fetchNextFomcForecastMock.mockResolvedValue(POPULATED_RESPONSE);
+    const { default: DecisionsPage } = await import("@/pages/decisions");
+    render(<DecisionsPage />);
+    await waitFor(() =>
+      expect(screen.getByText(/OIS-implied baseline/i)).toBeInTheDocument(),
+    );
+    // The headline description mentions the active primary model.
+    expect(screen.getAllByText(/ordinal_logit/i).length).toBeGreaterThan(0);
+  });
+
+  it("renders the past-12-meetings hit-rate from history rows", async () => {
+    fetchNextFomcForecastMock.mockResolvedValue(POPULATED_RESPONSE);
+    const { default: DecisionsPage } = await import("@/pages/decisions");
+    render(<DecisionsPage />);
+    // History tab is the default. Hit-rate fixture: 2 resolved meetings, both
+    // ordinal_logit predictions match the realised class -> 100%.
+    await waitFor(() =>
+      expect(screen.getByText(/Past 12 meetings/i)).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/2\/2/)).toBeInTheDocument();
+  });
 });

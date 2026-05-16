@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  bandLabel,
   errorToneLabel,
   formatPercentDelta,
   formatPrice,
@@ -77,5 +78,15 @@ describe("format helpers", () => {
     expect(getErrorTone("rmse", null)).toBe("neutral");
     expect(getErrorTone("rmse", 30, 5000)).toBe("low");
     expect(errorToneLabel("medium")).toBe("Medium error");
+  });
+
+  it("bandLabel marks conformal vs Gaussian-z vs unknown", () => {
+    expect(bandLabel(80, "conformal")).toBe("80% conformal band");
+    expect(bandLabel(80, "gaussian_z")).toBe("80% Gaussian-z band");
+    // Null / missing source falls back to the legacy generic label so older
+    // history rows (saved before the band-source field existed) still render.
+    expect(bandLabel(80, null)).toBe("80% confidence band");
+    expect(bandLabel(80, undefined)).toBe("80% confidence band");
+    expect(bandLabel(95, "conformal")).toBe("95% conformal band");
   });
 });

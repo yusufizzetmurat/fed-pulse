@@ -43,19 +43,38 @@ def test_tft_forward_returns_tuple_for_lstm_destructuring() -> None:
     assert output.shape == (2, SEQUENCE_LENGTH, 32)
 
 
-def test_tft_gradient_flows_to_parameters() -> None:
+def test_tft_gradient_flows_to_every_parameter() -> None:
+    """Widened from the earlier "at least one parameter" assertion.
+
+    Every learnable parameter in the TFT encoder must receive a strictly
+    positive gradient norm after one synthetic training step against a
+    noise target. The earlier check only proved *some* parameter saw a
+    gradient, which would let a dead-weight module slip through.
+    """
+
     _fresh()
     encoder = TFTEncoder(input_size=FEATURE_SIZE, hidden_size=32)
-    x = torch.randn(3, SEQUENCE_LENGTH, FEATURE_SIZE, requires_grad=True)
+    encoder.train()
+    x = torch.randn(3, SEQUENCE_LENGTH, FEATURE_SIZE)
+    target = torch.randn(3, SEQUENCE_LENGTH, 32)
     out, _ = encoder(x)
-    out.sum().backward()
-    grad_norms = [
-        param.grad.abs().sum().item()
-        for param in encoder.parameters()
-        if param.requires_grad and param.grad is not None
-    ]
-    assert grad_norms, "no learnable parameters received gradients"
-    assert any(norm > 0.0 for norm in grad_norms)
+    loss = torch.nn.functional.mse_loss(out, target)
+    loss.backward()
+
+    zero_grad_names: list[str] = []
+    for name, param in encoder.named_parameters():
+        if not param.requires_grad:
+            continue
+        if param.grad is None:
+            zero_grad_names.append(f"{name}=None")
+            continue
+        norm = float(param.grad.abs().sum().item())
+        if not (norm > 0.0):
+            zero_grad_names.append(f"{name}={norm:.3e}")
+    assert not zero_grad_names, (
+        "TFTEncoder has parameters with zero / missing gradient norm "
+        "after one synthetic training step: " + ", ".join(zero_grad_names)
+    )
 
 
 def test_tft_is_deterministic_at_fixed_seed() -> None:

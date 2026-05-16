@@ -4,7 +4,7 @@ import json
 import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -169,7 +169,7 @@ def to_jsonable(manifest: ConformalManifest) -> dict[str, float | int | str | No
 
 
 def bootstrap_ci_columns(
-    rows: Iterable[Mapping],
+    rows: Iterable[Mapping[str, Any]],
     *,
     sample_key: str = "samples",
     block_size: int = 6,

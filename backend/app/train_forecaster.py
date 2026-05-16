@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import sys
+import warnings
 import csv
 import itertools
 import json
@@ -63,11 +65,22 @@ def _parse_args() -> argparse.Namespace:
         default=DEFAULT_LEARNING_RATE,
         help="Optimizer learning rate.",
     )
+    # The walk-forward validation slice is a *chronological* prefix of the
+    # windows we hold out from training, not a sklearn-style random split.
+    # The canonical flag is now ``--validation-fraction``; ``--validation-split``
+    # stays available as a deprecated alias so existing run scripts keep
+    # working until the next major version of the CLI lands.
     parser.add_argument(
+        "--validation-fraction",
         "--validation-split",
+        dest="validation_fraction",
         type=float,
         default=DEFAULT_VALIDATION_SPLIT,
-        help="Fraction of windows reserved for validation.",
+        help=(
+            "Fraction of windows reserved for the walk-forward validation "
+            "slice (chronological prefix, not a shuffle). The deprecated "
+            "--validation-split alias is accepted for backwards compatibility."
+        ),
     )
     parser.add_argument(
         "--early-stopping-patience",
@@ -180,7 +193,19 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Only inspect discovered datasets and exit without training.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    # Emit DeprecationWarning when the legacy --validation-split alias is
+    # used. argparse silently maps it onto validation_fraction, so callers
+    # would otherwise have no signal that the name is on its way out.
+    if any(arg == "--validation-split" or arg.startswith("--validation-split=") for arg in sys.argv[1:]):
+        warnings.warn(
+            "--validation-split is deprecated; use --validation-fraction. "
+            "The walk-forward validation slice is a chronological prefix, "
+            "not a sklearn-style random split, and the new flag name reflects that.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    return args
 
 
 def _build_model_config(args: argparse.Namespace) -> ModelConfig:
@@ -333,18 +358,21 @@ def _run_single_training(
     epochs: int,
     batch_size: int,
     learning_rate: float,
-    validation_split: float,
+    validation_fraction: float,
     early_stopping_patience: int,
     model_config: ModelConfig,
     save_checkpoint: bool,
     seed: int | None = None,
 ) -> TrainingRunSummary:
+    # ``validation_fraction`` is the new idiomatic kwarg name. The
+    # underlying ``train_model`` keeps ``validation_split`` for backwards
+    # compatibility with checkpoints and tests; we relay by name here.
     result = train_model(
         data_dir=data_dir,
         epochs=epochs,
         batch_size=batch_size,
         learning_rate=learning_rate,
-        validation_split=validation_split,
+        validation_split=validation_fraction,
         early_stopping_patience=early_stopping_patience,
         checkpoint_path=checkpoint_path,
         save_checkpoint=save_checkpoint,
@@ -383,7 +411,7 @@ def _run_sweep(
             epochs=epochs,
             batch_size=args.batch_size,
             learning_rate=learning_rate,
-            validation_split=args.validation_split,
+            validation_fraction=args.validation_fraction,
             early_stopping_patience=args.early_stopping_patience,
             model_config=model_config,
             save_checkpoint=False,
@@ -437,7 +465,11 @@ def _run_sweep(
         epochs=best_summary.epochs_requested,
         batch_size=best_summary.batch_size,
         learning_rate=best_summary.learning_rate,
-        validation_split=best_summary.validation_split,
+        # ``best_summary.validation_split`` is the persisted summary
+        # field (frozen for back-compat with the existing
+        # TrainingRunSummary dataclass); we pass it under the new
+        # idiomatic ``validation_fraction`` kwarg.
+        validation_fraction=best_summary.validation_split,
         early_stopping_patience=best_summary.early_stopping_patience,
         model_config=best_model_config,
         save_checkpoint=True,
@@ -535,7 +567,7 @@ def main() -> int:
         epochs=args.epochs,
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
-        validation_split=args.validation_split,
+        validation_fraction=args.validation_fraction,
         early_stopping_patience=args.early_stopping_patience,
         model_config=_build_model_config(args),
         save_checkpoint=True,

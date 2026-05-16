@@ -130,8 +130,8 @@ def _extract_record_groups(payload: Any) -> list[list[dict[str, Any]]]:
 
         for key in ("records", "rows", "data", "items"):
             nested = payload.get(key)
-            if _is_record_mapping_list(nested):
-                return [nested]
+            if nested is not None and _is_record_mapping_list(nested):
+                return [list(nested)]
 
     return []
 
@@ -220,9 +220,59 @@ def load_training_sequences_from_data(data_dir: str | Path | None = None) -> lis
     return sequences
 
 
+def fit_close_scale(sequence_groups: Sequence[Sequence[FeatureVector]]) -> float:
+    """Compute the per-fold close-price normaliser from the training rows.
+
+    The forecaster normalises the close target by dividing by a positive
+    scale so the regression head outputs O(1) values. Earlier code used a
+    global constant (``DEFAULT_CLOSE_SCALE = 10000``), which was correct
+    only when the asset happened to trade around 5000 — for crypto, bonds,
+    or pre-2000 history the constant under- or over-shoots by an order of
+    magnitude and the loss surface tilts.
+
+    The fit is the mean of the strictly-positive close values in the
+    training-target windows (i.e., the rows that actually become a y row,
+    not the lookback frames). When the data is empty or has no positive
+    closes (e.g., a synthetic-zero fixture) we fall back to
+    ``DEFAULT_CLOSE_SCALE`` so the legacy LSTM smoke-train path stays
+    valid.
+
+    Deterministic given identical input — same vectors -> same scale, no
+    randomness. The regression test
+    (``tests/regression/test_forecaster_determinism.py``) relies on this.
+    """
+
+    target_closes: list[float] = []
+    for group in sequence_groups:
+        if len(group) < SEQUENCE_LENGTH + 1:
+            continue
+        for idx in range(SEQUENCE_LENGTH, len(group)):
+            target = group[idx]
+            value = float(target.market_close)
+            if value > 0.0:
+                target_closes.append(value)
+    if not target_closes:
+        return float(DEFAULT_CLOSE_SCALE)
+    return float(sum(target_closes) / len(target_closes))
+
+
 def _build_training_tensors(
     sequence_groups: Sequence[Sequence[FeatureVector]],
-) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    close_scale: float | None = None,
+) -> tuple[torch.Tensor | None, torch.Tensor | None, float]:
+    """Materialise the (x, y, close_scale) triple for the legacy training path.
+
+    The third return value is the close-scale that was used for
+    normalisation. Callers that need to persist the scaler (training
+    loop) read it from the tuple; callers that only want the tensors
+    can keep the first two and discard the third. When ``close_scale``
+    is supplied, the caller has already fitted it (e.g. on a strict
+    train-only window for walk-forward); when ``None`` we fit it on
+    the fly from the same sequences.
+    """
+
+    fitted_scale = float(close_scale) if close_scale is not None else fit_close_scale(sequence_groups)
+
     sequences: list[list[list[float]]] = []
     targets: list[list[float]] = []
 
@@ -235,17 +285,17 @@ def _build_training_tensors(
             sequences.append([item.as_list() for item in window])
             targets.append(
                 [
-                    target.market_close / DEFAULT_CLOSE_SCALE,
+                    target.market_close / fitted_scale,
                     max(target.market_volatility, 0.0),
                 ]
             )
 
     if not sequences:
-        return None, None
+        return None, None, fitted_scale
 
     x = torch.tensor(sequences, dtype=torch.float32)
     y = torch.tensor(targets, dtype=torch.float32)
-    return x, y
+    return x, y, fitted_scale
 
 
 def _split_train_validation(

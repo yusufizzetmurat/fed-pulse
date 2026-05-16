@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -199,7 +201,7 @@ class HistoryEntry(BaseModel):
 
 
 class HistoryDetail(HistoryEntry):
-    payload: dict
+    payload: dict[str, Any]
 
 
 class HistoryList(BaseModel):
