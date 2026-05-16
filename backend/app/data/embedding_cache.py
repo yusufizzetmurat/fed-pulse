@@ -54,7 +54,11 @@ class CachePaths:
 def _short_revision(revision: str, length: int = 12) -> str:
     if not revision:
         return "unpinned"
-    return revision[:length]
+    # Cache writers (e.g. ``scripts/cache_voyage_embeddings.py``) normalise
+    # path-unsafe characters in the revision slug so a hyphenated tag like
+    # ``voyage-finance-2`` lands on disk as ``..._voyage_finan.parquet``.
+    # Match that normalisation here so the loader resolves the same name.
+    return revision.replace("-", "_").replace("/", "_")[:length]
 
 
 def resolve_cache_paths(
