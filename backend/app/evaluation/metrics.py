@@ -36,6 +36,12 @@ class TrainingRunSummary:
     checkpoint_saved: bool
     best_epoch: int | None = None
     metrics: EvaluationMetrics | None = None
+    train_metrics: EvaluationMetrics | None = None
+    weight_decay: float = 1e-4
+    target_mode: str = "real"
+    text_encoder: str | None = None
+    text_adapter_dim: int = 0
+    text_pool_lambda_inv_days: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
