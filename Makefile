@@ -118,6 +118,7 @@ forecaster-sweep:
 	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
 	docker compose run --rm backend \
 		python -m app.train_forecaster \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--sweep \
 		--architectures lstm lstm_attn gru tcn transformer dlinear \
 		--seeds 11 29 47 71 97 \
@@ -137,6 +138,7 @@ forecaster-credibility-train:
 	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
 	docker compose run --rm backend \
 		python -m app.train_forecaster \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--architecture "$(ARCHITECTURE)" \
 		--seed "$(SEED)" \
 		--credibility-features \

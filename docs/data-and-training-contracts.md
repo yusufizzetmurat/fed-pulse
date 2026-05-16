@@ -711,6 +711,52 @@ aggregator output schema is:
 - `make forecaster-credibility-train TRAINING_PACKAGE_ID=<id> ARCHITECTURE=lstm SEED=11`
   — single-architecture run with `--credibility-features` on.
 
+### Training-package data flow
+
+`train_forecaster.py` accepts `--training-package-id <id>` and consumes
+`data/processed/<id>/events.parquet` directly. The legacy `--data-dir`
+scan (raw market-record JSON / JSONL / CSV under `/data`) stays
+available; when both flags are set `--training-package-id` wins and
+the data-dir override is logged.
+
+Per-event sequence construction:
+
+- Reads the collapsed `events.parquet` view (one row per
+  `event_date × event_kind × asset_symbol × horizon`). Rows are
+  deduplicated to one per `text_hash`, preferring the `horizon=1` row
+  so the appended event-day target close is the next trading day.
+- Parses each row's `prior_bars_json` (a JSON list of 20 trading-day
+  prior bars). Each bar becomes one `FeatureVector` with
+  `sentiment_score` derived from `axis_stance`
+  (`hawkish=+1, dovish=-1, neutral/None=0`), `market_close` from
+  `bar.close`, `market_volatility` from `bar.vol_5d`,
+  `close_change_pct` and `volatility_change` computed bar-to-bar, and
+  `elapsed_time` set to the signed day count between the bar date and
+  the event date.
+- Appends one event-day target frame per event. The target close
+  projects the most recent prior bar via
+  `close * (1 + realized_return)` (h=1) and re-uses the bar's
+  `vol_5d` as the volatility proxy. The downstream window slicer
+  (`SEQUENCE_LENGTH = 20`) then materialises one supervised
+  `(window, target)` pair per event.
+- Sorts the resulting sequences by `event_date` (then `text_hash` as
+  a deterministic tiebreaker) so two runs on the same package emit
+  the same sequence ordering.
+
+Filtering against the splits parquet is opt-in: when
+`splits_train_val_test.parquet` is present and carries a
+`partition` (or legacy `split_tag`) column joinable on `text_hash`,
+rows tagged `excluded_from_training` are dropped before sequence
+construction. The current Phase 8 builder emits `{train, val, test}`
+only, so the filter is a no-op on existing packages.
+
+Regression contract: `architecture="lstm"` +
+`credibility_features=False` invoked through the legacy `--data-dir`
+path is bit-identical to prior versions. The
+`tests/regression/test_forecaster_determinism.py` suite drives the
+trainer directly with synthesised vectors and never crosses the
+training-package code path.
+
 ## Pipeline schema validation
 
 `backend/app/data/schemas.py` defines one `pandera.DataFrameSchema` per
