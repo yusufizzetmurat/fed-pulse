@@ -311,6 +311,183 @@ def test_load_training_sequences_from_package_missing_package_raises(
 
 
 # ---------------------------------------------------------------------------
+# Fold-manifest tests
+#
+# ``fold_id=<wf_fold_*>`` restricts the surviving sequences to events
+# whose ``event_date`` falls inside the fold's test window. The
+# split-tag filter is bypassed on the fold path because the manifest
+# already pins the chronological partition for the fold.
+# ---------------------------------------------------------------------------
+
+
+_FOLD_PACKAGE_ID = "tp_unit_fold_manifest_v0"
+
+
+@pytest.fixture
+def fold_manifest_package_dir(tmp_path: Path, monkeypatch) -> Path:
+    """Materialise a package with four events spread across four folds."""
+
+    package_dir = tmp_path / "processed" / _FOLD_PACKAGE_ID
+    package_dir.mkdir(parents=True)
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+
+    events = [
+        _event_row(
+            event_date="2020-03-15",
+            text_hash="hash_pre_covid",
+            axis_stance="hawkish",
+            realized_return=0.001,
+            realized_date="2020-03-16",
+            base_close=2800.0,
+        ),
+        _event_row(
+            event_date="2021-06-15",
+            text_hash="hash_covid",
+            axis_stance="dovish",
+            realized_return=-0.002,
+            realized_date="2021-06-16",
+            base_close=4200.0,
+        ),
+        _event_row(
+            event_date="2022-09-15",
+            text_hash="hash_hike",
+            axis_stance="hawkish",
+            realized_return=0.003,
+            realized_date="2022-09-16",
+            base_close=3900.0,
+        ),
+        _event_row(
+            event_date="2023-11-15",
+            text_hash="hash_pause",
+            axis_stance="neutral",
+            realized_return=0.0,
+            realized_date="2023-11-16",
+            base_close=4500.0,
+        ),
+    ]
+    pd.DataFrame(events).to_parquet(package_dir / "events.parquet", index=False)
+    pd.DataFrame(
+        [
+            {"text_hash": "hash_pre_covid", "split_tag": "train"},
+            {"text_hash": "hash_covid", "split_tag": "val"},
+            {"text_hash": "hash_hike", "split_tag": "test"},
+            {"text_hash": "hash_pause", "split_tag": "test"},
+        ]
+    ).to_parquet(package_dir / "splits_train_val_test.parquet", index=False)
+    manifest = {
+        "evaluation_protocol": "expanding_walk_forward",
+        "fold_count": 4,
+        "folds": [
+            {
+                "fold_id": "wf_fold_1",
+                "train_start": "2020-01-01",
+                "train_end": "2020-02-28",
+                "val_start": "2020-03-01",
+                "val_end": "2020-03-10",
+                "test_start": "2020-03-11",
+                "test_end": "2020-03-31",
+            },
+            {
+                "fold_id": "wf_fold_2",
+                "train_start": "2020-01-01",
+                "train_end": "2021-05-31",
+                "val_start": "2021-06-01",
+                "val_end": "2021-06-10",
+                "test_start": "2021-06-11",
+                "test_end": "2021-06-30",
+            },
+            {
+                "fold_id": "wf_fold_3",
+                "train_start": "2020-01-01",
+                "train_end": "2022-08-31",
+                "val_start": "2022-09-01",
+                "val_end": "2022-09-10",
+                "test_start": "2022-09-11",
+                "test_end": "2022-09-30",
+            },
+            {
+                "fold_id": "wf_fold_4",
+                "train_start": "2020-01-01",
+                "train_end": "2023-10-31",
+                "val_start": "2023-11-01",
+                "val_end": "2023-11-10",
+                "test_start": "2023-11-11",
+                "test_end": "2023-11-30",
+            },
+        ],
+    }
+    (package_dir / "fold_manifest_expanding_walk_forward.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+    return package_dir
+
+
+def test_read_fold_manifest_returns_fold_dict(
+    fold_manifest_package_dir: Path,
+) -> None:
+    manifest = loaders._read_fold_manifest(fold_manifest_package_dir)
+    assert set(manifest.keys()) == {"wf_fold_1", "wf_fold_2", "wf_fold_3", "wf_fold_4"}
+    assert manifest["wf_fold_2"]["test_start"] == "2021-06-11"
+    assert manifest["wf_fold_2"]["test_end"] == "2021-06-30"
+
+
+def test_read_fold_manifest_missing_returns_empty(tmp_path: Path) -> None:
+    assert loaders._read_fold_manifest(tmp_path) == {}
+
+
+def test_load_training_sequences_fold_filter_restricts_to_test_window(
+    fold_manifest_package_dir: Path,
+) -> None:
+    sequences = loaders.load_training_sequences_from_package(
+        _FOLD_PACKAGE_ID, fold_id="wf_fold_2", rich_features=False
+    )
+    # Only the 2021-06-15 event (hash_covid) lands inside the wf_fold_2
+    # test window. The package's val split-tag on that row is bypassed
+    # because the fold manifest pins the chronological partition.
+    assert len(sequences) == 1
+    assert sequences[0][-1].date[:10] == "2021-06-16"
+
+
+def test_load_training_sequences_fold_filter_picks_correct_fold(
+    fold_manifest_package_dir: Path,
+) -> None:
+    fold_to_target = {
+        "wf_fold_1": "2020-03-16",
+        "wf_fold_2": "2021-06-16",
+        "wf_fold_3": "2022-09-16",
+        "wf_fold_4": "2023-11-16",
+    }
+    for fold_id_str, expected_target in fold_to_target.items():
+        sequences = loaders.load_training_sequences_from_package(
+            _FOLD_PACKAGE_ID, fold_id=fold_id_str, rich_features=False
+        )
+        assert len(sequences) == 1
+        assert sequences[0][-1].date[:10] == expected_target
+
+
+def test_load_training_sequences_fold_filter_unknown_id_raises(
+    fold_manifest_package_dir: Path,
+) -> None:
+    with pytest.raises(ValueError, match="wf_fold_99"):
+        loaders.load_training_sequences_from_package(
+            _FOLD_PACKAGE_ID, fold_id="wf_fold_99"
+        )
+
+
+def test_load_training_sequences_fold_none_preserves_split_tag_filter(
+    fold_manifest_package_dir: Path,
+) -> None:
+    """``fold_id=None`` keeps the default split-tag filter behaviour."""
+
+    sequences = loaders.load_training_sequences_from_package(
+        _FOLD_PACKAGE_ID, fold_id=None, rich_features=False
+    )
+    # Only the single train-tagged row survives; val + test rows drop.
+    target_dates = {seq[-1].date[:10] for seq in sequences}
+    assert target_dates == {"2020-03-16"}
+
+
+# ---------------------------------------------------------------------------
 # Target-frame derivation tests
 #
 # The event-study target frame replaces the pre-fix realized-return /

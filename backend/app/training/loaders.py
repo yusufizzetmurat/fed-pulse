@@ -972,6 +972,46 @@ def _read_events_frame(package_dir: Path) -> "Any":
     return pd.read_parquet(events_path)
 
 
+def _read_fold_manifest(package_dir: Path) -> dict[str, dict[str, Any]]:
+    """Return ``fold_id -> {train_start, train_end, val_start, val_end, test_start, test_end}``.
+
+    Reads ``fold_manifest_expanding_walk_forward.json`` from the
+    training-package directory. The manifest is emitted by
+    :func:`app.data.build_training_package._build_folds` and ships one
+    entry per expanding-window fold (``wf_fold_1`` ... ``wf_fold_N``)
+    with the chronological date ranges that define the train, val and
+    test windows for that fold.
+
+    Returns an empty dict when the file is absent or the schema is
+    unjoinable; the caller then falls back to the package's default
+    split tag and the per-fold filter is a no-op.
+    """
+
+    path = package_dir / "fold_manifest_expanding_walk_forward.json"
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    folds = payload.get("folds") if isinstance(payload, dict) else None
+    if not isinstance(folds, list):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for fold in folds:
+        if not isinstance(fold, dict):
+            continue
+        fold_id = str(fold.get("fold_id", "")).strip()
+        if not fold_id:
+            continue
+        result[fold_id] = {
+            "train_start": str(fold.get("train_start", "")),
+            "train_end": str(fold.get("train_end", "")),
+            "val_start": str(fold.get("val_start", "")),
+            "val_end": str(fold.get("val_end", "")),
+            "test_start": str(fold.get("test_start", "")),
+            "test_end": str(fold.get("test_end", "")),
+        }
+    return result
+
+
 def _read_excluded_text_hashes(package_dir: Path) -> set[str]:
     """Return the ``text_hash`` set that must NOT enter the training loss.
 
@@ -1027,6 +1067,7 @@ def load_training_sequences_from_package(
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
     use_text_embeddings: bool = True,
     text_embedding_cache_dir: Path | str | None = None,
+    fold_id: str | None = None,
 ) -> list[list[FeatureVector]]:
     """Load one prior-window sequence per FOMC event in a training package.
 
@@ -1118,6 +1159,14 @@ def load_training_sequences_from_package(
     ``use_text_embeddings=False`` skips the pooling step entirely and
     every row keeps the default empty pooled list + missing-flag at
     ``1.0``.
+
+    When ``fold_id`` is set the loader reads
+    ``fold_manifest_expanding_walk_forward.json`` and restricts the
+    surviving sequence set to events whose ``event_date`` falls inside
+    the fold's test window. The split-tag filter is bypassed on the
+    fold path because the manifest already encodes the chronological
+    partition for that fold. ``fold_id=None`` (the default) preserves
+    the package-level ``split_tag`` filter unchanged.
     """
 
     if target_mode not in _VALID_TARGET_MODES:
@@ -1138,7 +1187,24 @@ def load_training_sequences_from_package(
             f"events.parquet at {package_dir} missing columns: {sorted(missing)}"
         )
 
-    excluded_text_hashes = _read_excluded_text_hashes(package_dir)
+    fold_window: dict[str, Any] | None = None
+    if fold_id is not None:
+        manifest = _read_fold_manifest(package_dir)
+        if fold_id not in manifest:
+            raise ValueError(
+                f"fold_id={fold_id!r} not found in fold manifest at {package_dir}; "
+                f"known fold ids: {sorted(manifest.keys())}"
+            )
+        fold_window = manifest[fold_id]
+
+    if fold_window is not None:
+        # The fold manifest pins the chronological test window per
+        # fold; the split-tag filter is sidestepped on the fold path
+        # because the manifest already encodes the train/val/test
+        # partition for the fold.
+        excluded_text_hashes: set[str] = set()
+    else:
+        excluded_text_hashes = _read_excluded_text_hashes(package_dir)
 
     # Side-tables for the rich-feature join. Both lookups are read
     # once per package so the per-event broadcast does not re-open the
@@ -1261,6 +1327,13 @@ def load_training_sequences_from_package(
             continue
         if candidate_hash in seen:
             continue
+        if fold_window is not None:
+            test_start = fold_window.get("test_start", "")
+            test_end = fold_window.get("test_end", "")
+            if test_start and candidate_date_raw < str(test_start)[:10]:
+                continue
+            if test_end and candidate_date_raw > str(test_end)[:10]:
+                continue
         seen.add(candidate_hash)
         by_text_hash[candidate_hash] = row
 
