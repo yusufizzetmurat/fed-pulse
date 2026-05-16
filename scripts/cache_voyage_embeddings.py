@@ -299,35 +299,48 @@ def cache_voyage_embeddings(
 
     progress_step = 200
     last_progress_at = started_at
+    aborted_at_doc: int | None = None
     with httpx.Client(timeout=DEFAULT_TIMEOUT_SECONDS) as client:
-        for record in _iter_registry(registry_path, min_text_chars=min_text_chars):
-            if max_docs and docs_processed >= max_docs:
-                break
-            text = str(record["text"]).strip()
-            doc_id = _doc_id(record)
-            record_id = str(record.get("record_id") or doc_id)
-            event_date = str(record["event_date"]).strip()
-            preview = text[:preview_chars]
-            # voyage-finance-2 is a sentence-embedding encoder; one
-            # row per document with chunk_index=0 matches the cache
-            # shape that BGE / Nomic already write.
-            pending_inputs.append(text)
-            pending_meta.append((record_id, doc_id, event_date, 0, preview))
-            docs_processed += 1
-            if len(pending_inputs) >= batch_size:
-                _flush(client)
-            if docs_processed % progress_step == 0:
-                now = time.time()
-                docs_per_sec = (
-                    progress_step / max(now - last_progress_at, 1e-6)
-                )
-                last_progress_at = now
-                print(
-                    f"[voyage] progress docs={docs_processed} "
-                    f"rate={docs_per_sec:.1f}/s elapsed={now - started_at:.0f}s",
-                    flush=True,
-                )
-        _flush(client)
+        try:
+            for record in _iter_registry(registry_path, min_text_chars=min_text_chars):
+                if max_docs and docs_processed >= max_docs:
+                    break
+                text = str(record["text"]).strip()
+                doc_id = _doc_id(record)
+                record_id = str(record.get("record_id") or doc_id)
+                event_date = str(record["event_date"]).strip()
+                preview = text[:preview_chars]
+                # voyage-finance-2 is a sentence-embedding encoder; one
+                # row per document with chunk_index=0 matches the cache
+                # shape that BGE / Nomic already write.
+                pending_inputs.append(text)
+                pending_meta.append((record_id, doc_id, event_date, 0, preview))
+                docs_processed += 1
+                if len(pending_inputs) >= batch_size:
+                    _flush(client)
+                if docs_processed % progress_step == 0:
+                    now = time.time()
+                    docs_per_sec = (
+                        progress_step / max(now - last_progress_at, 1e-6)
+                    )
+                    last_progress_at = now
+                    print(
+                        f"[voyage] progress docs={docs_processed} "
+                        f"rate={docs_per_sec:.1f}/s elapsed={now - started_at:.0f}s",
+                        flush=True,
+                    )
+            _flush(client)
+        except (httpx.HTTPError, RuntimeError) as exc:
+            aborted_at_doc = docs_processed
+            print(
+                f"[voyage] WARNING transient failure at docs={docs_processed}: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            print(
+                f"[voyage] persisting {len(rows)} rows collected so far before exit.",
+                flush=True,
+            )
 
     elapsed = time.time() - started_at
     print(
@@ -369,6 +382,7 @@ def cache_voyage_embeddings(
         "sha256": parquet_sha,
         "sources_lock_path": sources_lock_path,
         "embedding_dim": int(len(df["embedding"].iloc[0])),
+        "aborted_at_doc": aborted_at_doc,
     }
 
 
@@ -461,10 +475,14 @@ def main(argv: list[str] | None = None) -> int:
             f"(rows={result['rows']}, sha256={result['sha256'][:12]})"
         )
     else:
+        aborted = result.get("aborted_at_doc")
+        suffix = ""
+        if aborted is not None:
+            suffix = f" (PARTIAL -- aborted at doc {aborted})"
         print(
             f"[voyage] parquet={result['parquet_path']} "
             f"rows={result['rows']} embedding_dim={result['embedding_dim']} "
-            f"sha256={result['sha256'][:12]}"
+            f"sha256={result['sha256'][:12]}{suffix}"
         )
     return 0
 
