@@ -746,9 +746,14 @@ the published `1e-4` contract covers cross-platform drift).
 ```
 
 A sibling `.csv` with one row per trial is written next to the JSON.
+When `--folds` is set each trial record gains a `fold_id` field and
+the report payload adds a top-level `folds` list; the single-fold
+path omits both so the legacy CSV column set stays unchanged.
+
 The companion aggregator `app.evaluation.forecaster_sweep_aggregator`
 reads one or more sweep result files and emits a markdown headline
-table plus per-architecture block-bootstrap CIs (95% by default,
+table plus block-bootstrap CIs per `(architecture, fold)` pair plus
+an aggregated `all-folds` row per architecture (95% by default,
 `block_size=1`, `n_resamples=1000`, deterministic at `seed=11`). The
 aggregator output schema is:
 
@@ -762,6 +767,7 @@ aggregator output schema is:
   "architectures": [
     {
       "architecture": "<arch>",
+      "fold": "<wf_fold_*> | all-folds",
       "seeds": [...],
       "credibility_features": <bool>,
       "combined_rmse": {"values": [...], "ci": {...}},
@@ -772,6 +778,13 @@ aggregator output schema is:
   ]
 }
 ```
+
+Per-fold rows isolate cross-regime behaviour (each fold tests on a
+different time window — pre-2020, COVID, hike cycle, late-cycle
+pause); the `all-folds` row is the headline that ranks the
+architectures. Single-fold sweeps land their entire trial set in the
+`all-folds` row, which preserves the pre-PR shape of one row per
+architecture.
 
 ### Make targets
 
@@ -1020,6 +1033,41 @@ torch, numpy, and the standard `random` module. Two cells with
 the same `seed` produce bit-identical weights regardless of which
 worker process they ran in (modulo cuDNN nondeterminism, which is
 the existing default).
+
+#### Walk-forward fold iteration
+
+`--folds wf_fold_1 wf_fold_2 wf_fold_3 wf_fold_4` multiplies the
+sweep candidate set by `len(folds)` so each
+`(architecture, seed, hp_combo)` tuple expands into one trial per
+fold. The fold ids resolve against
+`fold_manifest_expanding_walk_forward.json` inside the training
+package; `load_training_sequences_from_package(..., fold_id=<id>)`
+restricts the surviving sequences to events whose `event_date`
+falls inside the named fold's test window. The expanding-window
+contract pins one fold per regime — `wf_fold_1` (pre-2020),
+`wf_fold_2` (COVID), `wf_fold_3` (hike cycle), `wf_fold_4`
+(late-cycle pause) — so the per-fold rows in the aggregator
+output isolate cross-regime performance instead of averaging it
+into the headline number.
+
+Each trial record carries a `fold_id` field; the aggregator emits
+one row per `(architecture, fold)` pair plus an aggregated
+`all-folds` row per architecture. The per-fold rows capture
+cross-regime risk (each fold tests on a different time window —
+pre-2020, COVID, hike cycle, late-cycle pause); the `all-folds`
+row carries the block-bootstrap CI computed over the
+4-fold × N-seed cell set and is the headline number that ranks the
+architectures.
+
+`--folds` defaults to an empty list. Without it the candidate set
+keeps the legacy single-fold shape (no `fold_id` field on the
+trial records, one `all-folds` row per architecture in the
+aggregator output), which is the contract the byte-identity
+regression at
+`tests/regression/test_forecaster_sweep_back_compat.py` pins. The
+`make forecaster-sweep` target opts into the four-fold iteration
+by default; `make forecaster-sweep-exhaustive` stays single-fold
+to preserve the byte-identity regression.
 
 ### Forecaster text-embedding input space
 

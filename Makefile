@@ -177,6 +177,7 @@ forecaster-sweep:
 		--rich-features \
 		--architectures lstm lstm_attn gru tcn transformer dlinear informer tft \
 		--seeds 11 29 47 71 97 \
+		--folds wf_fold_1 wf_fold_2 wf_fold_3 wf_fold_4 \
 		--hidden-sizes 32 64 128 \
 		--num-layers-grid 1 2 3 \
 		--dropouts 0.1 0.2 0.3 0.4 \

@@ -1477,18 +1477,18 @@ def main() -> int:
         loader_text_encoder = (
             None if str(args.text_encoder) == "none" else str(args.text_encoder)
         )
-        loader_kwargs: dict[str, Any] = dict(
-            target_mode=args.target_mode,
-            rich_features=bool(args.rich_features),
-            use_credibility=bool(args.use_credibility),
-            use_linguistic=bool(args.use_linguistic),
-            use_mp_surprise=bool(args.use_mp_surprise),
-            use_multi_axis=bool(args.use_multi_axis),
-            text_encoder=loader_text_encoder,
-            text_adapter_dim=int(args.text_adapter_dim),
-            text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
-            use_text_embeddings=bool(args.use_text_embeddings),
-        )
+        loader_kwargs: dict[str, Any] = {
+            "target_mode": args.target_mode,
+            "rich_features": bool(args.rich_features),
+            "use_credibility": bool(args.use_credibility),
+            "use_linguistic": bool(args.use_linguistic),
+            "use_mp_surprise": bool(args.use_mp_surprise),
+            "use_multi_axis": bool(args.use_multi_axis),
+            "text_encoder": loader_text_encoder,
+            "text_adapter_dim": int(args.text_adapter_dim),
+            "text_pool_lambda_inv_days": float(args.text_pool_lambda_inv_days),
+            "use_text_embeddings": bool(args.use_text_embeddings),
+        }
         folds_axis = list(getattr(args, "folds", None) or [])
         if folds_axis:
             print(f"Walk-forward folds: {' '.join(folds_axis)}")
