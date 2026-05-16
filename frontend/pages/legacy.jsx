@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import axios from "axios";
+import { SkipLink } from "@/components/shell/skip-link";
 import {
   Area,
   Bar,
@@ -706,7 +707,9 @@ export default function Home() {
   };
 
   return (
-    <main id="main-content" tabIndex={-1} className="legacy-shell container focus:outline-none">
+    <>
+      <SkipLink />
+      <main id="main-content" tabIndex={-1} className="legacy-shell container focus:outline-none">
       <header className="pageHeader">
         <h1>FOMC Quant Forecast Terminal</h1>
         <p className="subtitle">
@@ -1240,5 +1243,6 @@ export default function Home() {
         </>
       ) : null}
     </main>
+    </>
   );
 }

@@ -46,4 +46,54 @@ describe("KeyboardShortcuts", () => {
     fireEvent.keyDown(input, { key: "?" });
     expect(screen.queryByRole("dialog")).toBeNull();
   });
+
+  it("dispatches the nav target when `g` is followed by `a`", async () => {
+    const { KeyboardShortcuts } = await import("@/components/shell/keyboard-shortcuts");
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, assign },
+    });
+    render(<KeyboardShortcuts />);
+
+    fireEvent.keyDown(window, { key: "g" });
+    fireEvent.keyDown(window, { key: "a" });
+
+    expect(assign).toHaveBeenCalledTimes(1);
+    expect(assign).toHaveBeenCalledWith("/analyze");
+  });
+
+  it("does not dispatch nav when the `g` window has expired", async () => {
+    vi.useFakeTimers();
+    const { KeyboardShortcuts } = await import("@/components/shell/keyboard-shortcuts");
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, assign },
+    });
+    render(<KeyboardShortcuts />);
+
+    fireEvent.keyDown(window, { key: "g" });
+    // Advance past the 1200 ms g-sequence window before the nav key.
+    vi.advanceTimersByTime(1500);
+    fireEvent.keyDown(window, { key: "a" });
+
+    expect(assign).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("clicks the theme toggle when `t` is pressed", async () => {
+    const { KeyboardShortcuts } = await import("@/components/shell/keyboard-shortcuts");
+    const click = vi.fn();
+    const toggle = document.createElement("button");
+    toggle.setAttribute("aria-label", "Toggle theme");
+    toggle.addEventListener("click", click);
+    document.body.appendChild(toggle);
+
+    render(<KeyboardShortcuts />);
+    fireEvent.keyDown(window, { key: "t" });
+
+    expect(click).toHaveBeenCalledTimes(1);
+    document.body.removeChild(toggle);
+  });
 });
