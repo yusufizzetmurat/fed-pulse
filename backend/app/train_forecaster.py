@@ -12,6 +12,7 @@ from typing import Any, Sequence
 import torch
 
 from app.models import FORECASTER_ARCHITECTURES
+from app.models.config import FEATURE_SIZE, RICH_FEATURE_SIZE
 from app.services.forecaster import (
     BEST_MODEL_PATH,
     DEFAULT_BATCH_SIZE,
@@ -160,6 +161,80 @@ def _parse_args() -> argparse.Namespace:
         help="Enable the 4-axis credibility feature path on the forecaster. Default off "
         "preserves the byte-identical regression-test contract for architecture=lstm.",
     )
+    # Rich-feature input space. Default on so a make forecaster-sweep
+    # against a training package consumes the four-family per-bar
+    # vector. Explicit --no-rich-features reproduces the pre-PR-#173
+    # 6-dim path for back-compat smoke checks.
+    rich_group = parser.add_mutually_exclusive_group()
+    rich_group.add_argument(
+        "--rich-features",
+        dest="rich_features",
+        action="store_true",
+        help=(
+            "Enable the 35-dim rich-feature input space on the "
+            "training-package loader. The credibility / linguistic / "
+            "mp-surprise / multi-axis families are joined onto each "
+            "event and broadcast to every bar of the 20-day prior "
+            "window. Default on; ignored when --training-package-id "
+            "is unset."
+        ),
+    )
+    rich_group.add_argument(
+        "--no-rich-features",
+        dest="rich_features",
+        action="store_false",
+        help=(
+            "Disable the rich-feature input space. Reproduces the "
+            "pre-PR-#173 6-feature path for back-compat smoke runs."
+        ),
+    )
+    parser.set_defaults(rich_features=True)
+    # Per-family ablation flags. When a family is off, its slice in
+    # the per-bar feature vector is zeroed but the feature size stays
+    # at RICH_FEATURE_SIZE, so a single sweep can measure per-family
+    # lift without retraining the model architecture.
+    parser.add_argument(
+        "--no-credibility",
+        dest="use_credibility",
+        action="store_false",
+        help=(
+            "Zero the credibility 4-vector slice in the rich-feature "
+            "input. Default on. Ignored when --no-rich-features is set."
+        ),
+    )
+    parser.add_argument(
+        "--no-linguistic",
+        dest="use_linguistic",
+        action="store_false",
+        help=(
+            "Zero the 15-dim linguistic slice in the rich-feature "
+            "input. Default on. Ignored when --no-rich-features is set."
+        ),
+    )
+    parser.add_argument(
+        "--no-mp-surprise",
+        dest="use_mp_surprise",
+        action="store_false",
+        help=(
+            "Zero the MP-surprise 4-vector slice in the rich-feature "
+            "input. Default on. Ignored when --no-rich-features is set."
+        ),
+    )
+    parser.add_argument(
+        "--no-multi-axis",
+        dest="use_multi_axis",
+        action="store_false",
+        help=(
+            "Zero the 6-dim multi-axis slice in the rich-feature "
+            "input. Default on. Ignored when --no-rich-features is set."
+        ),
+    )
+    parser.set_defaults(
+        use_credibility=True,
+        use_linguistic=True,
+        use_mp_surprise=True,
+        use_multi_axis=True,
+    )
     parser.add_argument(
         "--sweep",
         action="store_true",
@@ -235,8 +310,27 @@ def _parse_args() -> argparse.Namespace:
     return args
 
 
+def _resolved_input_size(args: argparse.Namespace) -> int:
+    """Return the per-bar input size implied by the rich-feature flag.
+
+    The rich-feature input only takes effect when the loader actually
+    populates the rich payload (``--training-package-id`` set AND
+    ``--rich-features`` on). On the legacy ``--data-dir`` JSON / JSONL
+    path the per-bar size stays at ``FEATURE_SIZE`` regardless of the
+    flag, so the regression-test contract on the
+    ``--data-dir`` code path is unaffected.
+    """
+
+    rich_on = bool(getattr(args, "rich_features", False))
+    use_package_path = bool(getattr(args, "training_package_id", None))
+    if rich_on and use_package_path:
+        return RICH_FEATURE_SIZE
+    return FEATURE_SIZE
+
+
 def _build_model_config(args: argparse.Namespace) -> ModelConfig:
     return ModelConfig(
+        input_size=_resolved_input_size(args),
         hidden_size=args.hidden_size,
         num_layers=args.num_layers,
         dropout=args.dropout,
@@ -319,6 +413,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
         candidates.append(
             {
                 "model_config": ModelConfig(
+                    input_size=_resolved_input_size(args),
                     hidden_size=hidden_size,
                     num_layers=num_layers,
                     dropout=dropout,
@@ -577,6 +672,13 @@ def _run_sweep(
         "training_package_id": training_package_id,
         "checkpoint_path": str(checkpoint_path),
         "credibility_features": bool(args.credibility_features),
+        "rich_features": bool(args.rich_features) and bool(training_package_id),
+        "rich_feature_families": {
+            "credibility": bool(args.use_credibility),
+            "linguistic": bool(args.use_linguistic),
+            "mp_surprise": bool(args.use_mp_surprise),
+            "multi_axis": bool(args.use_multi_axis),
+        },
         "architectures": sorted({trial["architecture"] for trial in trial_records}),
         "seeds": sorted({trial["seed"] for trial in trial_records if trial["seed"] is not None}),
         "trial_count": len(trial_records),
@@ -617,9 +719,19 @@ def main() -> int:
     if use_package_path:
         print(f"Training-package id: {args.training_package_id}")
         print(f"Target mode: {args.target_mode}")
+        print(
+            f"Rich features: {'on' if args.rich_features else 'off'} "
+            f"(credibility={args.use_credibility}, linguistic={args.use_linguistic}, "
+            f"mp_surprise={args.use_mp_surprise}, multi_axis={args.use_multi_axis})"
+        )
         package_sequences = load_training_sequences_from_package(
             args.training_package_id,
             target_mode=args.target_mode,
+            rich_features=bool(args.rich_features),
+            use_credibility=bool(args.use_credibility),
+            use_linguistic=bool(args.use_linguistic),
+            use_mp_surprise=bool(args.use_mp_surprise),
+            use_multi_axis=bool(args.use_multi_axis),
         )
         sequence_count = len(package_sequences)
         observation_count = sum(len(sequence) for sequence in package_sequences)

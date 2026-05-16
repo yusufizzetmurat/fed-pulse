@@ -28,7 +28,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state next-fomc cross-asset forecaster-sweep forecaster-sweep-aggregate forecaster-credibility-train
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state next-fomc cross-asset forecaster-sweep forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-credibility-train
 
 help:
 	@echo "Targets:"
@@ -54,7 +54,8 @@ help:
 	@echo "  make macro-state      - Build the FRED macro-state parquet (Phase 8 #147)"
 	@echo "  make next-fomc        - Predict next-FOMC decision (Phase 8 headline, #147)"
 	@echo "  make cross-asset      - Cross-asset abnormal-return response head (Phase 8, #148)"
-	@echo "  make forecaster-sweep         - 6-arch x 5-seed forecaster sweep (Phase 8, #70)"
+	@echo "  make forecaster-sweep         - 8-arch x 5-seed forecaster sweep, rich-feature input (35 dim)"
+	@echo "  make forecaster-sweep-baseline - 6-arch x 5-seed forecaster sweep, legacy 6-feature input"
 	@echo "  make forecaster-sweep-aggregate - Aggregate sweep trials into per-arch CIs"
 	@echo "  make forecaster-credibility-train - Single training run with credibility features on"
 
@@ -114,12 +115,24 @@ train-batch:
 		--mode full \
 		--owner "$(OWNER)"
 
-# Forecaster architecture sweep: 6 architectures (lstm, lstm_attn, gru, tcn,
-# transformer, dlinear) x official 5-seed set {11, 29, 47, 71, 97}.
-# Writes forecaster_sweep_results.json + .csv next to the checkpoint.
+# Forecaster architecture sweep. The default target runs the
+# rich-feature path (35-dim per-bar input) across all eight registered
+# architectures (lstm, lstm_attn, gru, tcn, transformer, dlinear,
+# informer, tft) x the official 5-seed set {11, 29, 47, 71, 97}, so the
+# forecaster sees the four feature families the data pipeline already
+# ships (credibility, linguistic, MP-surprise, multi-axis) on every bar.
 #
-# Runs against backend-gpu under the gpu compose profile so the sweep hits
-# the RTX 4080. Override FORECASTER_COMPOSE_SERVICE=backend and
+# The earlier 6-feature path is still available as
+# ``forecaster-sweep-baseline`` for back-compat smoke checks against
+# pre-PR-#173 sweep numbers.
+#
+# Both targets write forecaster_sweep_results.json + .csv under
+# data/artifacts/forecaster_sweep/<TRAINING_PACKAGE_ID>/; the baseline
+# variant lands under a ``baseline_`` filename prefix so the two
+# artefact sets coexist on disk.
+#
+# Runs against backend-gpu under the gpu compose profile so the sweep
+# hits the RTX 4080. Override FORECASTER_COMPOSE_SERVICE=backend and
 # FORECASTER_COMPOSE_PROFILE=default for a CPU-only smoke run. The
 # aggregate target uses the same overrides so artefact paths line up.
 FORECASTER_COMPOSE_SERVICE ?= backend-gpu
@@ -131,9 +144,21 @@ forecaster-sweep:
 		python -m app.train_forecaster \
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--sweep \
-		--architectures lstm lstm_attn gru tcn transformer dlinear \
+		--rich-features \
+		--architectures lstm lstm_attn gru tcn transformer dlinear informer tft \
 		--seeds 11 29 47 71 97 \
 		--report-path "/data/artifacts/forecaster_sweep/$(TRAINING_PACKAGE_ID)/forecaster_sweep_results.json"
+
+forecaster-sweep-baseline:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose --profile "$(FORECASTER_COMPOSE_PROFILE)" run --rm "$(FORECASTER_COMPOSE_SERVICE)" \
+		python -m app.train_forecaster \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		--sweep \
+		--no-rich-features \
+		--architectures lstm lstm_attn gru tcn transformer dlinear \
+		--seeds 11 29 47 71 97 \
+		--report-path "/data/artifacts/forecaster_sweep/$(TRAINING_PACKAGE_ID)/baseline_forecaster_sweep_results.json"
 
 # Aggregate per-trial JSONs into a per-architecture headline (block-bootstrap CIs).
 # The aggregator is CPU-bound; the default backend service is fine.
