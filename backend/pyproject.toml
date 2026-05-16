@@ -170,6 +170,7 @@ ignore = [
 "app/training/loaders.py" = ["PLR0913", "C901"]
 "app/training/loop.py" = ["PLR0913", "C901"]
 "app/training/manifest.py" = ["PLR0913", "C901"]
+"app/training/batched_sweep.py" = ["PLR0913", "C901"]
 
 [tool.mypy]
 python_version = "3.11"

@@ -18,6 +18,7 @@ torch = pytest.importorskip("torch")
 from app.models.config import ModelConfig  # noqa: E402
 from app.train_forecaster import build_sweep_candidates  # noqa: E402
 from app.training.batched_sweep import (  # noqa: E402
+    BatchedDropout,
     BucketKey,
     bucket_key_for_candidate,
     group_candidates_into_buckets,
@@ -207,6 +208,54 @@ def test_resolve_max_bucket_size_per_arch_defaults():
     assert resolve_max_bucket_size("dlinear", override=16) == 16
     # Non-positive override is ignored.
     assert resolve_max_bucket_size("dlinear", override=0) == 64
+
+
+def test_batched_dropout_per_cell_p_values():
+    """Per-cell p values produce per-cell zero fractions in the mask.
+
+    The test draws a large per-element uniform-noise input and runs it
+    through BatchedDropout with three different p values. Each cell's
+    output zero fraction should converge to its own p (within Monte
+    Carlo noise at N=20000 elements).
+    """
+
+    p = torch.tensor([0.0, 0.25, 0.75])
+    layer = BatchedDropout(p)
+    layer.train()
+    # Input is a constant tensor so any zero in the output comes from
+    # the dropout mask (not the input). 3 cells, 20000 elements each.
+    x = torch.ones(3, 20000)
+    generator = torch.Generator()
+    generator.manual_seed(7)
+    y = layer(x, generator=generator)
+    # Cell 0 has p=0 so no element should be zeroed.
+    zero_fraction = (y == 0).float().mean(dim=1)
+    assert zero_fraction[0].item() == 0.0
+    # Cells 1 and 2 have p=0.25 and p=0.75; check within Monte Carlo
+    # tolerance (3 sigma at N=20000 -> ~0.01).
+    assert abs(zero_fraction[1].item() - 0.25) < 0.02
+    assert abs(zero_fraction[2].item() - 0.75) < 0.02
+
+
+def test_batched_dropout_eval_is_identity():
+    """eval() makes BatchedDropout a no-op for every cell, including p=1."""
+
+    p = torch.tensor([0.5, 1.0])
+    layer = BatchedDropout(p)
+    layer.eval()
+    x = torch.ones(2, 100)
+    y = layer(x)
+    # Even cell with p=1 passes through identically in eval mode.
+    assert torch.equal(x, y)
+
+
+def test_batched_dropout_rejects_out_of_range_p():
+    """p values outside [0, 1] raise ValueError at construction."""
+
+    with pytest.raises(ValueError):
+        BatchedDropout(torch.tensor([0.1, 1.5]))
+    with pytest.raises(ValueError):
+        BatchedDropout(torch.tensor([-0.1, 0.5]))
 
 
 def test_buckets_preserve_first_seen_order():

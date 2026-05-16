@@ -112,3 +112,4 @@ ignore = [
 "backend/app/training/loaders.py" = ["PLR0913", "C901"]
 "backend/app/training/loop.py" = ["PLR0913", "C901"]
 "backend/app/training/manifest.py" = ["PLR0913", "C901"]
+"backend/app/training/batched_sweep.py" = ["PLR0913", "C901"]
