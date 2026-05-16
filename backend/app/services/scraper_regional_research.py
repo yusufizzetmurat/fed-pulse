@@ -73,7 +73,10 @@ def extract_lse_listing(html: str) -> list[RegionalResearchListingEntry]:
     seen: set[str] = set()
 
     for anchor in soup.select("a[href]"):
-        href = (anchor.get("href") or "").strip().rstrip("/")
+        raw_href = anchor.get("href") or ""
+        href = (
+            raw_href if isinstance(raw_href, str) else " ".join(map(str, raw_href))
+        ).strip().rstrip("/")
         if not href:
             continue
         # Normalize trailing slash for the pattern check
@@ -114,7 +117,10 @@ def parse_lse_post(html: str, *, source_url: str) -> ParsedRegionalResearch:
     if not title:
         og = soup.find("meta", attrs={"property": "og:title"})
         if og and og.get("content"):
-            title = _clean_text(og["content"])
+            content_attr = og["content"]
+            title = _clean_text(
+                content_attr if isinstance(content_attr, str) else " ".join(map(str, content_attr))
+            )
             title = re.sub(r"\s*[-|]\s*Liberty Street.*$", "", title, flags=re.IGNORECASE)
     if not title:
         h1_generic = soup.select_one("h1.entry-title, h1.post-title, h1")

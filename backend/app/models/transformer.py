@@ -20,8 +20,10 @@ class _SinusoidalPositionalEncoding(nn.Module):
         pe[:, 1::2] = torch.cos(position * div_term)
         self.register_buffer("pe", pe.unsqueeze(0))
 
-    def forward(self, x):
-        return x + self.pe[:, : x.size(1), :]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        pe = self.pe
+        assert isinstance(pe, torch.Tensor)
+        return x + pe[:, : x.size(1), :]
 
 
 class SmallTransformer(nn.Module):
@@ -60,7 +62,7 @@ class SmallTransformer(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(layer, num_layers=num_layers)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, None]:
         h = self.input_proj(x)
         h = self.pos(h)
         out = self.encoder(h)

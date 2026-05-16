@@ -65,7 +65,8 @@ def extract_press_conference_listing(html: str) -> list[PressConferenceListingEn
     seen: set[str] = set()
 
     for anchor in soup.select("a[href]"):
-        href = (anchor.get("href") or "").strip()
+        raw_href = anchor.get("href") or ""
+        href = (raw_href if isinstance(raw_href, str) else " ".join(map(str, raw_href))).strip()
         if not PRESS_CONF_URL_PATTERN.match(href):
             continue
         absolute = urljoin(ARCHIVE_BASE_URL, href)
@@ -99,7 +100,7 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str:
     """
 
     try:
-        from pypdf import PdfReader  # type: ignore
+        from pypdf import PdfReader
 
         reader = PdfReader(BytesIO(pdf_bytes))
         chunks: list[str] = []
@@ -130,7 +131,10 @@ def parse_press_conference_page(html: str, *, source_url: str) -> ParsedPressCon
     title = ""
     og = soup.find("meta", attrs={"property": "og:title"})
     if og and og.get("content"):
-        title = _clean_text(og["content"])
+        content_attr = og["content"]
+        title = _clean_text(
+            content_attr if isinstance(content_attr, str) else " ".join(map(str, content_attr))
+        )
     if not title:
         title_tag = soup.find("title")
         if title_tag:

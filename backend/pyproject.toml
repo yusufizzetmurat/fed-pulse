@@ -46,6 +46,8 @@ dev = [
   "ruff",
   "mypy",
   "py-spy>=0.3.14",
+  "types-PyYAML",
+  "types-requests",
 ]
 gpu = []
 
@@ -170,56 +172,18 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 no_implicit_optional = true
 
-# `mypy --strict` is wired for the typed core. Files below carry legacy
-# patterns (untyped third-party clients, Any-returning loaders) that would
-# require a wider refactor to type cleanly; they get strict-relaxed
-# overrides until that refactor lands. Wherever this PR adds new symbols,
-# they are fully typed and pass strict against the file's per-module
-# config.
-[[tool.mypy.overrides]]
-module = [
-  "app.services.text_encoder",
-  "app.services.market_data",
-  "app.services.gemini_client",
-  "app.services.scraper",
-  "app.services.scraper_press_conferences",
-  "app.services.scraper_speeches",
-  "app.services.scraper_regional_research",
-  "app.services.scraper_testimonies",
-  "app.services.scraper_beige_book",
-  "app.services.langsmith_client",
-  "app.services.fred_client",
-  "app.services.sentiment",
-  "app.services.credibility_loader",
-  "app.services.document_parser",
-  "app.services.forecaster",
-  "app.forecasting.next_fomc_decision",
-  "app.forecasting.cross_asset_response",
-  "app.models.transformer",
-  "app.models.tft",
-  "app.models.informer",
-  "app.models.tcn",
-  "app.models.dlinear",
-  "app.models.embedding_adapter",
-  "app.models.registry",
-  "app.training.manifest",
-  "app.training.loop",
-  "app.training.loaders",
-  "app.training.config_loader",
-  "app.evaluation.ood",
-  "app.evaluation.regime_aggregator",
-  "app.evaluation.conformal",
-  "app.data.macro_state",
-  "app.logging",
-  "app.schemas",
-]
-ignore_errors = true
-ignore_missing_imports = true
+# `mypy --strict` is wired against the typed core. Legacy modules that
+# previously sat under `ignore_errors = true` have been migrated to fully
+# typed implementations; any residual third-party rough edges are pinned
+# at the call site with `# type: ignore[<code>]` instead of file-level
+# escapes.
 
 # Third-party libs without stubs. `ignore_missing_imports` keeps mypy from
 # spamming on every `import yfinance` / `import transformers`.
 [[tool.mypy.overrides]]
 module = [
+  "yaml",
+  "yaml.*",
   "yfinance",
   "yfinance.*",
   "transformers",

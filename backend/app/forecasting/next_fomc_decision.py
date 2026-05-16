@@ -425,6 +425,7 @@ def _build_statsmodels_handle(
 def _build_mord_handle(
     *, classes: Sequence[str], alpha: float
 ) -> OrdinalModelHandle:
+    # mord is an optional extra; not declared in pyproject.toml dependencies.
     from mord import LogisticIT  # type: ignore[import-not-found]
 
     model = LogisticIT(alpha=alpha)
@@ -439,7 +440,8 @@ def _build_mord_handle(
             return np.asarray(model.predict_proba(X), dtype=np.float64)
         scores = model.decision_function(X)
         exp = np.exp(scores - np.max(scores, axis=1, keepdims=True))
-        return exp / np.sum(exp, axis=1, keepdims=True)
+        normalised: np.ndarray = exp / np.sum(exp, axis=1, keepdims=True)
+        return normalised
 
     return OrdinalModelHandle(backend="mord_logistic_it", fit_fn=_fit, predict_proba_fn=_predict_proba)
 

@@ -90,7 +90,10 @@ def _extract_title(soup: BeautifulSoup) -> str:
     # tail stripped, then to any in-content h3/h2.
     og = soup.find("meta", attrs={"property": "og:title"})
     if og is not None and og.get("content"):
-        return _clean_text(og["content"])
+        content_attr = og["content"]
+        return _clean_text(
+            content_attr if isinstance(content_attr, str) else " ".join(map(str, content_attr))
+        )
     title_tag = soup.find("title")
     if title_tag is not None:
         return _TITLE_TAIL_PATTERN.sub("", _clean_text(title_tag.get_text(" ", strip=True)))
@@ -172,7 +175,8 @@ def extract_speech_listing(html: str) -> list[SpeechListingEntry]:
     seen_urls: set[str] = set()
 
     for anchor in soup.select("a[href]"):
-        href = (anchor.get("href") or "").strip()
+        raw_href = anchor.get("href") or ""
+        href = (raw_href if isinstance(raw_href, str) else " ".join(map(str, raw_href))).strip()
         if not SPEECH_URL_PATTERN.match(href):
             continue
         absolute = urljoin(ARCHIVE_BASE_URL, href)

@@ -73,7 +73,7 @@ def score_passage(text: str, *, model: Any) -> dict[str, Any]:
     return {"label": label, "confidence": confidence, "raw": raw}
 
 
-def load_model(model_name: str = "gemini-2.5-pro"):
+def load_model(model_name: str = "gemini-2.5-pro") -> _ModelAdapter:
     """Load a Gemini model. Imports the SDK lazily."""
 
     import os
@@ -84,7 +84,7 @@ def load_model(model_name: str = "gemini-2.5-pro"):
             "GEMINI_API_KEY is not set. Add it to fed-pulse/.env before running the live smoke."
         )
 
-    from google import genai  # type: ignore
+    from google import genai
 
     client = genai.Client(api_key=api_key)
     return _ModelAdapter(client, model_name)
@@ -97,8 +97,8 @@ class _ModelAdapter:
         self._client = client
         self._model_name = model_name
 
-    def generate_content(self, prompt: str, **kwargs):
-        from google.genai import types  # type: ignore
+    def generate_content(self, prompt: str, **kwargs: Any) -> Any:
+        from google.genai import types
 
         response = self._client.models.generate_content(
             model=self._model_name,
@@ -128,7 +128,7 @@ def embed_text(text: str, *, model: Any) -> list[float]:
     return [float(v) for v in values]
 
 
-def load_embedding_model(model_name: str = "gemini-embedding-001"):
+def load_embedding_model(model_name: str = "gemini-embedding-001") -> _EmbeddingAdapter:
     """Load a Gemini embedding model. Lazy import."""
 
     import os
@@ -139,7 +139,7 @@ def load_embedding_model(model_name: str = "gemini-embedding-001"):
             "GEMINI_API_KEY is not set. Add it to fed-pulse/.env before running embedding precompute."
         )
 
-    from google import genai  # type: ignore
+    from google import genai
 
     client = genai.Client(api_key=api_key)
     return _EmbeddingAdapter(client, model_name)
@@ -152,7 +152,7 @@ class _EmbeddingAdapter:
         self._client = client
         self._model_name = model_name
 
-    def embed_content(self, content: str, **kwargs):
+    def embed_content(self, content: str, **kwargs: Any) -> Any:
         response = self._client.models.embed_content(
             model=self._model_name,
             contents=content,

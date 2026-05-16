@@ -130,8 +130,8 @@ def _extract_record_groups(payload: Any) -> list[list[dict[str, Any]]]:
 
         for key in ("records", "rows", "data", "items"):
             nested = payload.get(key)
-            if _is_record_mapping_list(nested):
-                return [nested]
+            if nested is not None and _is_record_mapping_list(nested):
+                return [list(nested)]
 
     return []
 

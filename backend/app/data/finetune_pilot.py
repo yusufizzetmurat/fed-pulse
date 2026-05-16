@@ -126,7 +126,7 @@ def _load_fold(package_dir: Path, fold_id: str) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     for fold in payload.get("folds", []):
         if fold.get("fold_id") == fold_id:
-            return fold
+            return dict(fold)
     raise SystemExit(f"Fold {fold_id} not found in {path}")
 
 
@@ -139,7 +139,7 @@ def _split_by_fold(rows: list[EvalRow], fold: dict[str, Any]) -> tuple[list[Eval
     return train_rows, test_rows
 
 
-class TextClassificationDataset(Dataset):
+class TextClassificationDataset(Dataset[dict[str, Any]]):
     def __init__(self, rows: list[EvalRow], tokenizer: Any, max_length: int = 256) -> None:
         self.rows = rows
         self.tokenizer = tokenizer

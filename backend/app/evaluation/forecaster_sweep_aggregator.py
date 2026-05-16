@@ -24,7 +24,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from app.evaluation.bootstrap import BootstrapCI, block_bootstrap_ci
 
@@ -42,8 +42,11 @@ class ArchitectureRow:
     volatility_rmse_ci: BootstrapCI
 
 
-def _load_report(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+def _load_report(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"sweep report must be a JSON object: {path}")
+    return payload
 
 
 def _iter_report_files(artifact_dir: Path) -> Iterable[Path]:
@@ -62,7 +65,7 @@ def _iter_report_files(artifact_dir: Path) -> Iterable[Path]:
     yield from sorted(artifact_dir.glob("**/*sweep_results.json"))
 
 
-def _trial_seed(trial: dict) -> int | None:
+def _trial_seed(trial: dict[str, Any]) -> int | None:
     seed = trial.get("seed")
     if seed is None:
         return None
@@ -72,7 +75,7 @@ def _trial_seed(trial: dict) -> int | None:
         return None
 
 
-def _trial_architecture(trial: dict) -> str:
+def _trial_architecture(trial: dict[str, Any]) -> str:
     architecture = trial.get("architecture")
     if architecture:
         return str(architecture)
@@ -81,7 +84,7 @@ def _trial_architecture(trial: dict) -> str:
     return str(model_config.get("architecture", "lstm"))
 
 
-def _trial_metric(trial: dict, key: str) -> float | None:
+def _trial_metric(trial: dict[str, Any], key: str) -> float | None:
     summary = trial.get("summary") or {}
     metrics = summary.get("metrics") or {}
     value = metrics.get(key)
@@ -93,14 +96,14 @@ def _trial_metric(trial: dict, key: str) -> float | None:
         return None
 
 
-def _trial_credibility(trial: dict) -> bool:
+def _trial_credibility(trial: dict[str, Any]) -> bool:
     summary = trial.get("summary") or {}
     model_config = summary.get("model_config") or {}
     return bool(model_config.get("credibility_features", False))
 
 
-def _collect_per_architecture(reports: list[dict]) -> dict[str, dict]:
-    by_arch: dict[str, dict] = {}
+def _collect_per_architecture(reports: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    by_arch: dict[str, dict[str, Any]] = {}
     for report in reports:
         for trial in report.get("trials") or []:
             architecture = _trial_architecture(trial)
@@ -134,7 +137,7 @@ def _collect_per_architecture(reports: list[dict]) -> dict[str, dict]:
 
 
 def _build_rows(
-    by_arch: dict[str, dict],
+    by_arch: dict[str, dict[str, Any]],
     *,
     block_size: int,
     n_resamples: int,
@@ -206,7 +209,7 @@ def render_markdown(rows: list[ArchitectureRow], *, coverage: float) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _row_to_json(row: ArchitectureRow) -> dict:
+def _row_to_json(row: ArchitectureRow) -> dict[str, Any]:
     return {
         "architecture": row.architecture,
         "seeds": row.seeds,
@@ -233,7 +236,7 @@ def aggregate(
     n_resamples: int = 1000,
     coverage: float = 0.95,
     seed: int = 11,
-) -> tuple[list[ArchitectureRow], str, dict]:
+) -> tuple[list[ArchitectureRow], str, dict[str, Any]]:
     """Read sweep reports under ``artifact_dir`` and emit (rows, md, json_payload)."""
 
     report_paths = list(_iter_report_files(artifact_dir))

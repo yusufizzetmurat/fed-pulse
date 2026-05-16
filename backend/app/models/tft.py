@@ -38,7 +38,8 @@ class _GatedLinearUnit(nn.Module):
         self.gate = nn.Linear(input_size, hidden_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.proj(x) * torch.sigmoid(self.gate(x))
+        out: torch.Tensor = self.proj(x) * torch.sigmoid(self.gate(x))
+        return out
 
 
 class _GatedResidualNetwork(nn.Module):
@@ -82,7 +83,8 @@ class _GatedResidualNetwork(nn.Module):
         h = self.fc2(h)
         h = self.glu(h)
         h = self.dropout(h)
-        return self.norm(residual + h)
+        out: torch.Tensor = self.norm(residual + h)
+        return out
 
 
 class _VariableSelectionNetwork(nn.Module):
@@ -172,7 +174,8 @@ class _InterpretableMultiHeadAttention(nn.Module):
         attn = self.dropout(attn)
         ctx = torch.matmul(attn, v)  # (B, H, T, d_head)
         ctx = ctx.transpose(1, 2).contiguous().view(b, t, self.hidden_size)
-        return self.out_proj(ctx)
+        out: torch.Tensor = self.out_proj(ctx)
+        return out
 
 
 class TFTEncoder(nn.Module):

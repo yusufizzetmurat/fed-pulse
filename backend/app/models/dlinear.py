@@ -93,11 +93,12 @@ class DLinear(nn.Module):
         # linear, reshape back. The shared weights across features mirror the
         # published DLinear recipe.
         def _apply(linear: nn.Linear, tensor: torch.Tensor) -> torch.Tensor:
-            return (
+            projected: torch.Tensor = (
                 linear(tensor.transpose(1, 2).reshape(batch_size * feat, seq_len))
                 .reshape(batch_size, feat, seq_len)
                 .transpose(1, 2)
             )
+            return projected
 
         trend_out = _apply(self.trend_linear, trend)
         seasonal_out = _apply(self.seasonal_linear, seasonal)

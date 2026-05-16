@@ -53,7 +53,10 @@ def configure_logging(*, level: str | None = None, json_output: bool = True) -> 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     if not _configured:
         configure_logging()
-    return structlog.get_logger(name) if name else structlog.get_logger()
+    logger: structlog.stdlib.BoundLogger = (
+        structlog.get_logger(name) if name else structlog.get_logger()
+    )
+    return logger
 
 
 def bind_run_id(run_id: str | None) -> None:

@@ -120,7 +120,7 @@ def _snapshot_dir() -> Path:
 
 
 @lru_cache(maxsize=64)
-def _load_snapshot_series(symbol: str):
+def _load_snapshot_series(symbol: str) -> Any:
     import pandas as pd
 
     snapshot_dir = _snapshot_dir()
@@ -144,7 +144,7 @@ def _load_snapshot_series(symbol: str):
     return _snapshot_frame_to_series(frame)
 
 
-def _snapshot_frame_to_series(frame):
+def _snapshot_frame_to_series(frame: Any) -> Any:
     import pandas as pd
 
     if "date" not in frame.columns or "close" not in frame.columns:
@@ -157,7 +157,7 @@ def _snapshot_frame_to_series(frame):
     return series.sort_index().dropna()
 
 
-def _close_series_from_frame(frame):
+def _close_series_from_frame(frame: Any) -> Any:
     close_data = frame["Close"]
     if hasattr(close_data, "columns"):
         # yfinance may return a DataFrame (e.g., MultiIndex columns).
@@ -174,7 +174,7 @@ def _parse_iso_date(value: str) -> date:
         raise ValueError("date must be in YYYY-MM-DD format") from exc
 
 
-def _download_close_series_in_window(symbol: str, start: date, end: date):
+def _download_close_series_in_window(symbol: str, start: date, end: date) -> Any:
     if _market_source() == "snapshot":
         series = _load_snapshot_series(symbol)
         window = series.loc[
@@ -202,7 +202,9 @@ def _download_close_series_in_window(symbol: str, start: date, end: date):
     return close_series
 
 
-def _download_close_series(symbol: str, requested_date: date, lookback_days: int, extra_days: int):
+def _download_close_series(
+    symbol: str, requested_date: date, lookback_days: int, extra_days: int
+) -> Any:
     start = requested_date - timedelta(days=lookback_days + extra_days)
     end = requested_date + timedelta(days=1)
     return _download_close_series_in_window(symbol=symbol, start=start, end=end)

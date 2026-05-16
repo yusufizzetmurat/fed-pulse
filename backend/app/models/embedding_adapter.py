@@ -36,4 +36,5 @@ class EmbeddingAdapter(nn.Module):
     def forward(self, pooled: Tensor) -> Tensor:
         projected = self.linear(pooled)
         normalised = self.norm(projected)
-        return self.activation(normalised)
+        activated: Tensor = self.activation(normalised)
+        return activated

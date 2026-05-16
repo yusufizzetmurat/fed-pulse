@@ -148,13 +148,24 @@ def _aggregate_checkpoint_runs(
     macro = [r.macro_f1 for r in results]
     weighted = [r.weighted_f1 for r in results]
     acc = [r.accuracy for r in results]
-    summarise = _ci_summary if len(results) >= 2 else _point_only
-    kwargs = {"n_resamples": n_resamples, "coverage": coverage, "seed": seed}
+    if len(results) >= 2:
+        return {
+            "support": results[0].support,
+            "macro_f1": _ci_summary(
+                macro, n_resamples=n_resamples, coverage=coverage, seed=seed
+            ),
+            "weighted_f1": _ci_summary(
+                weighted, n_resamples=n_resamples, coverage=coverage, seed=seed
+            ),
+            "accuracy": _ci_summary(
+                acc, n_resamples=n_resamples, coverage=coverage, seed=seed
+            ),
+        }
     return {
         "support": results[0].support,
-        "macro_f1": summarise(macro, **kwargs) if len(results) >= 2 else _point_only(macro),
-        "weighted_f1": summarise(weighted, **kwargs) if len(results) >= 2 else _point_only(weighted),
-        "accuracy": summarise(acc, **kwargs) if len(results) >= 2 else _point_only(acc),
+        "macro_f1": _point_only(macro),
+        "weighted_f1": _point_only(weighted),
+        "accuracy": _point_only(acc),
     }
 
 
@@ -166,7 +177,7 @@ def build_matrix(
     n_resamples: int = 1000,
     coverage: float = 0.95,
     rng_seed: int = 11,
-    predict_fn=None,
+    predict_fn: Any = None,
 ) -> dict[str, Any]:
     """Build the transfer-matrix payload.
 

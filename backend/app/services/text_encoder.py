@@ -53,7 +53,7 @@ def _resolve_pipeline_device() -> int:
     return 0 if torch.cuda.is_available() else -1
 
 
-def _build_pipeline(model_id: str, device: int):
+def _build_pipeline(model_id: str, device: int) -> Any:
     kwargs: dict[str, Any] = {
         "model": model_id,
         "return_all_scores": True,
@@ -65,7 +65,7 @@ def _build_pipeline(model_id: str, device: int):
     return pipeline("text-classification", **kwargs)
 
 
-def get_classifier():
+def get_classifier() -> Any:
     global _classifier
     if _classifier is not None:
         return _classifier
@@ -168,7 +168,7 @@ def resolve_ood_manifest_path() -> Path | None:
 
 def split_into_chunks(
     text: str,
-    classifier=None,
+    classifier: Any = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     stride: int = DEFAULT_STRIDE,
 ) -> list[str]:
@@ -218,7 +218,7 @@ def _normalize_scores(output: Any) -> list[dict[str, float | str]]:
     return normalized
 
 
-def _pool_cls_embedding(model, tokenizer, chunk: str) -> list[float]:
+def _pool_cls_embedding(model: Any, tokenizer: Any, chunk: str) -> list[float]:
     device = next(model.parameters()).device
     with torch.no_grad():
         inputs = tokenizer(
@@ -234,7 +234,7 @@ def _pool_cls_embedding(model, tokenizer, chunk: str) -> list[float]:
     return list(cls_vec)
 
 
-def encode_chunks(text: str, classifier=None) -> list[ChunkEncoding]:
+def encode_chunks(text: str, classifier: Any = None) -> list[ChunkEncoding]:
     if not text:
         return []
     if classifier is None:
@@ -275,7 +275,7 @@ def aggregate_label(encodings: list[ChunkEncoding]) -> dict[str, Any]:
     if not aggregate or score_count == 0:
         return {"label": "UNKNOWN", "score": 0.0, "raw": []}
 
-    averaged = [
+    averaged: list[dict[str, float | str]] = [
         {"label": label, "score": score / score_count}
         for label, score in aggregate.items()
     ]

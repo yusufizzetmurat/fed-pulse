@@ -96,9 +96,10 @@ def _read_lock(lock_path: Path) -> dict[str, Any]:
     if not lock_path.exists():
         return {}
     try:
-        return json.loads(lock_path.read_text(encoding="utf-8"))
+        payload = json.loads(lock_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _write_lock(lock_path: Path, payload: dict[str, Any]) -> None:

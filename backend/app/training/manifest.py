@@ -72,9 +72,11 @@ def _torch_versions() -> dict[str, str | None]:
         return {"torch": None, "cuda": None, "cudnn": None}
     cuda = torch.version.cuda if hasattr(torch, "version") else None
     cudnn = None
-    if torch.backends.cudnn.is_available():
+    # torch.backends.cudnn.{is_available,version} are dynamically attached
+    # and lack stubs; strict mode flags them as untyped calls.
+    if torch.backends.cudnn.is_available():  # type: ignore[no-untyped-call]
         try:
-            cudnn = str(torch.backends.cudnn.version())
+            cudnn = str(torch.backends.cudnn.version())  # type: ignore[no-untyped-call]
         except Exception:
             cudnn = None
     return {"torch": torch.__version__, "cuda": cuda, "cudnn": cudnn}

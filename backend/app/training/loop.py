@@ -93,7 +93,7 @@ def _zero_credibility(model: ForecasterModel, batch_size: int, device: torch.dev
 
 def _evaluate_model(
     model: ForecasterModel,
-    loader: DataLoader,
+    loader: DataLoader[Any],
     device: torch.device,
     loss_fn: nn.Module,
 ) -> EvaluationMetrics:

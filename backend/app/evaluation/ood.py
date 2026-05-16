@@ -79,8 +79,8 @@ class OODManifest:
 
 
 def logit_energy(
-    model,
-    tokenizer,
+    model: Any,
+    tokenizer: Any,
     text: str,
     *,
     temperature: float = DEFAULT_TEMPERATURE,
@@ -150,7 +150,7 @@ def aggregate_energy(
 def calibrate_threshold(
     training_texts: Iterable[str],
     *,
-    classifier,
+    classifier: Any,
     percentile: float = DEFAULT_THRESHOLD_PERCENTILE,
     temperature: float = DEFAULT_TEMPERATURE,
 ) -> tuple[float, list[float]]:
@@ -200,6 +200,9 @@ def load_manifest(path: Path | str) -> OODManifest | None:
             threshold=float(payload["threshold"]),
             percentile=float(payload["percentile"]),
             temperature=float(payload["temperature"]),
+            # aggregation arrives as untyped JSON; the loaded manifest is
+            # validated against the Literal["mean", "max", "median"] at the
+            # next call site rather than narrowed here.
             aggregation=str(payload.get("aggregation", DEFAULT_AGGREGATION)),  # type: ignore[arg-type]
             training_corpus_size=int(payload["training_corpus_size"]),
             training_energy_mean=float(payload["training_energy_mean"]),
@@ -215,7 +218,7 @@ def load_manifest(path: Path | str) -> OODManifest | None:
 def score_text(
     text: str,
     *,
-    classifier,
+    classifier: Any,
     manifest: OODManifest,
     chunks: list[str] | None = None,
 ) -> dict[str, Any]:

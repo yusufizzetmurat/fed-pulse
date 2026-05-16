@@ -126,7 +126,8 @@ def extract_beige_book_listing(html: str) -> list[BeigeBookListingEntry]:
 
     # Source 1: explicit <a href> links
     for anchor in soup.select("a[href]"):
-        _add(anchor.get("href") or "")
+        raw_href = anchor.get("href") or ""
+        _add(raw_href if isinstance(raw_href, str) else " ".join(map(str, raw_href)))
 
     # Source 2: commented-out sitemap list embedded by the CMS
     # The listing page contains HTML comments like:
