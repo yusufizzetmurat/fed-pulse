@@ -733,15 +733,46 @@ Per-event sequence construction:
   `close_change_pct` and `volatility_change` computed bar-to-bar, and
   `elapsed_time` set to the signed day count between the bar date and
   the event date.
-- Appends one event-day target frame per event. The target close
-  projects the most recent prior bar via
-  `close * (1 + realized_return)` (h=1) and re-uses the bar's
-  `vol_5d` as the volatility proxy. The downstream window slicer
-  (`SEQUENCE_LENGTH = 20`) then materialises one supervised
-  `(window, target)` pair per event.
+- Appends one event-day target frame per event. The target's close
+  and volatility derive from one of two modes (selected via
+  `--target-mode` on `train_forecaster.py` and the `target_mode`
+  kwarg on `load_training_sequences_from_package`); both produce a
+  `SEQUENCE_LENGTH + 1`-row group so the downstream window slicer
+  materialises one supervised `(window, target)` pair per event.
 - Sorts the resulting sequences by `event_date` (then `text_hash` as
   a deterministic tiebreaker) so two runs on the same package emit
   the same sequence ordering.
+
+#### Forecaster training-package target modes
+
+`load_training_sequences_from_package(training_package_id, target_mode=...)`
+exposes two target-frame derivations. The default is `event_study`;
+`realized_return` is preserved for back-compat smoke tests against
+pre-event-study sweep numbers.
+
+| Mode              | Target close                                       | Target volatility                            |
+| ----------------- | -------------------------------------------------- | -------------------------------------------- |
+| `event_study`     | `prior_bars[-1].close * (1 + abnormal_return)`     | `prior_bars[-1].vol_5d + volatility_shift`   |
+| `realized_return` | `prior_bars[-1].close * (1 + realized_return)`     | `prior_bars[-1].vol_5d` (literal identity)   |
+
+`abnormal_return` is the market-model residual `realized_return -
+(alpha + beta * benchmark_return)` against the trailing 252-day window
+that `app.data.event_dataset_builder` fits per event; the target is the
+component of the realised move not explained by the broad market.
+`volatility_shift` is the post-event minus pre-event 10d realised vol
+(log-return std) shipped on the same parquet row, so reconstructing the
+target from `prior_vol + shift` yields the actual post-event vol rather
+than a copy of the input. The `realized_return` mode is mathematically
+identical to the pre-event-study target; under it the volatility column
+collapses to a literal identity over the last input row, which gives
+linear-decomposition models an artefactual edge on the volatility-RMSE
+column.
+
+`NaN` values in `abnormal_return` or `volatility_shift` fall back to
+the realized-return formula for that row and emit a `UserWarning`, so
+a downstream sweep against a package with missing target columns
+surfaces the gap immediately rather than silently training on the
+legacy target.
 
 Filtering against the splits parquet is opt-in: when
 `splits_train_val_test.parquet` is present and carries a

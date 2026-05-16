@@ -3,8 +3,9 @@ from __future__ import annotations
 import csv
 import datetime
 import json
+import warnings
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 import torch
 
@@ -39,6 +40,47 @@ _STANCE_SENTIMENT_ENCODING: dict[str, float] = {
 # treated as out-of-training when present.
 _TRAINING_PARTITION = "train"
 _NON_TRAINING_SPLIT_TAGS = frozenset({"val", "test", "excluded_from_training"})
+
+# Supported target-frame derivations for the training-package loader.
+#
+# ``event_study`` is the default and the production target. It derives
+# the synthesised target close from ``abnormal_return`` (market-model
+# residual against the trailing 252-day window written by
+# ``app.data.event_dataset_builder``) and the target volatility from
+# ``prior_bars[-1].vol_5d + volatility_shift`` (the post-event 10d
+# realised vol). Both quantities carry genuine temporal signal that the
+# forecaster has to actually learn rather than copy.
+#
+# ``realized_return`` reproduces the pre-fix behaviour: the close target
+# becomes ``prior_bars[-1].close * (1 + realized_return)`` and the
+# volatility target is a literal copy of ``prior_bars[-1].vol_5d``. The
+# volatility column is then a trivial identity over the input window;
+# linear-decomposition models (DLinear) win the volatility-RMSE column
+# at the identity task by construction. The mode is preserved only for
+# back-compat smoke tests that need to reproduce earlier sweep numbers.
+TargetMode = Literal["event_study", "realized_return"]
+_VALID_TARGET_MODES: frozenset[str] = frozenset({"event_study", "realized_return"})
+DEFAULT_TARGET_MODE: TargetMode = "event_study"
+
+
+def _coerce_finite_float(value: Any) -> float | None:
+    """Return ``float(value)`` when the result is finite, else ``None``.
+
+    Parquet nulls materialise as ``float('nan')`` through pandas; the
+    event-study target derivation must surface those as ``None`` so the
+    fallback path can kick in without comparing NaN.
+    """
+
+    if value is None:
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    # NaN comparison: ``x != x`` is the canonical Python NaN check.
+    if result != result:
+        return None
+    return result
 
 
 def _extract_required_float(record: dict[str, Any], keys: Sequence[str]) -> float:
@@ -331,29 +373,86 @@ def _append_event_day_target(
     realized_return: float | None,
     realized_date: str | None,
     sentiment_score: float,
+    abnormal_return: float | None = None,
+    volatility_shift: float | None = None,
+    target_mode: TargetMode = DEFAULT_TARGET_MODE,
 ) -> None:
-    """Append a single event-day target frame derived from ``realized_return``.
+    """Append a single event-day target frame for the supervised window.
 
     The Phase 8 ``events.parquet`` carries 20 trading-day prior bars but
     no event-day bar; the downstream training-tensor builder needs a
     ``SEQUENCE_LENGTH + 1`` row to compute one supervised (window,
-    target) pair per event. The appended frame projects the close from
-    the most recent prior bar via ``close * (1 + realized_return)`` and
-    re-uses that bar's ``vol_5d`` as the volatility proxy. When
-    ``realized_return`` is missing the projection falls back to a
-    flat repeat of the most recent bar (yields a zero-delta target row).
+    target) pair per event.
+
+    Two derivations are supported via ``target_mode``:
+
+    - ``event_study`` (default): the target close projects the last
+      prior bar via ``close * (1 + abnormal_return)`` -- the market-
+      model residual after removing the trailing-252-day SPX beta /
+      alpha. The target volatility is ``prior_bars[-1].vol_5d +
+      volatility_shift``, i.e. the actual post-event 10d realised vol
+      reconstructed from the prior vol plus the shift. Both quantities
+      have to be learnt from the prior window; neither is a literal
+      copy of an input feature.
+    - ``realized_return``: legacy back-compat path. Projects the close
+      via ``close * (1 + realized_return)`` and re-uses the last prior
+      bar's ``vol_5d`` as the volatility target. The volatility column
+      is then trivially identical to the last input volatility, which
+      gives linear-decomposition models an artefactual edge on the
+      volatility-RMSE column.
+
+    When the event-study fields are NaN / missing the loader emits a
+    ``UserWarning`` and falls back to the realized_return formula for
+    that row so a downstream sweep against a package with broken target
+    columns surfaces the gap immediately rather than silently training
+    on the legacy target.
     """
 
     if not vectors:
         return
     last = vectors[-1]
     base_close = float(last.market_close)
-    if realized_return is None or base_close <= 0.0:
+    base_volatility = float(last.market_volatility)
+
+    if target_mode == "event_study":
+        if abnormal_return is None:
+            warnings.warn(
+                "event-study target requested but abnormal_return is missing; "
+                "falling back to realized_return for this event-day target.",
+                UserWarning,
+                stacklevel=2,
+            )
+            close_shift = realized_return
+        else:
+            close_shift = abnormal_return
+
+        if volatility_shift is None:
+            warnings.warn(
+                "event-study target requested but volatility_shift is missing; "
+                "falling back to prior_bars[-1].vol_5d for this target.",
+                UserWarning,
+                stacklevel=2,
+            )
+            vol_offset: float = 0.0
+        else:
+            vol_offset = float(volatility_shift)
+    else:
+        close_shift = realized_return
+        vol_offset = 0.0
+
+    if close_shift is None or base_close <= 0.0:
         target_close = base_close
     else:
-        target_close = base_close * (1.0 + float(realized_return))
+        target_close = base_close * (1.0 + float(close_shift))
 
-    target_volatility = float(last.market_volatility)
+    target_volatility = base_volatility + vol_offset
+    # Volatility is a non-negative quantity (standard deviation). The
+    # event-study shift can drive the sum below zero on a regime that
+    # rotated from high to low realised vol; clip at zero so the target
+    # tensor never carries a negative volatility row.
+    if target_volatility < 0.0:
+        target_volatility = 0.0
+
     target_date_str: str
     if realized_date:
         target_date_str = str(realized_date)
@@ -373,7 +472,7 @@ def _append_event_day_target(
             market_close=target_close,
             market_volatility=target_volatility,
             previous_close=base_close,
-            previous_volatility=target_volatility,
+            previous_volatility=base_volatility,
             elapsed_time=elapsed_time,
         )
     )
@@ -444,6 +543,8 @@ def _read_excluded_text_hashes(package_dir: Path) -> set[str]:
 
 def load_training_sequences_from_package(
     training_package_id: str,
+    *,
+    target_mode: TargetMode = DEFAULT_TARGET_MODE,
 ) -> list[list[FeatureVector]]:
     """Load one prior-window sequence per FOMC event in a training package.
 
@@ -458,9 +559,26 @@ def load_training_sequences_from_package(
     event-day target frame is appended per event so the downstream
     window slicer (``SEQUENCE_LENGTH=20``) sees the
     ``SEQUENCE_LENGTH + 1`` row it needs to materialise one supervised
-    pair per event; the target close is projected from
-    ``realized_return`` at ``horizon=1`` and the target date is the
-    ``realized_date`` column.
+    pair per event.
+
+    The synthesised target frame's close and volatility derive from the
+    ``target_mode`` selector:
+
+    - ``event_study`` (default): target close projects the last prior
+      bar via ``close * (1 + abnormal_return)`` (market-model residual
+      against the 252-day window the events builder ships); target
+      volatility is ``prior_bars[-1].vol_5d + volatility_shift``
+      (the 10d post-event realised vol reconstructed from the prior
+      vol plus the shift column).
+    - ``realized_return``: legacy back-compat. Target close becomes
+      ``close * (1 + realized_return)`` and target volatility is a
+      literal copy of the last prior bar's ``vol_5d``. Preserved for
+      smoke tests reproducing pre-event-study sweep results.
+
+    NaN ``abnormal_return`` / ``volatility_shift`` rows fall back to
+    the realized-return formula for that event and emit a
+    ``UserWarning`` so a re-run against a package with missing target
+    columns surfaces the gap immediately.
 
     Sequences are deduplicated to one per ``text_hash`` so the
     horizon-multiplied rows in ``events.parquet`` (h in {1, 5, 10, 30})
@@ -481,6 +599,12 @@ def load_training_sequences_from_package(
     20 prior bars followed by 1 event-day target row (21 vectors
     total). Events with fewer than 20 prior bars are skipped.
     """
+
+    if target_mode not in _VALID_TARGET_MODES:
+        raise ValueError(
+            f"Unsupported target_mode: {target_mode!r}. "
+            f"Choose one of {sorted(_VALID_TARGET_MODES)}."
+        )
 
     package_dir = _resolve_training_package_dir(training_package_id)
     frame = _read_events_frame(package_dir)
@@ -549,17 +673,9 @@ def load_training_sequences_from_package(
         )
         if len(vectors) < SEQUENCE_LENGTH:
             continue
-        realized_return_raw = row.get("realized_return")
-        realized_return: float | None
-        try:
-            realized_return = (
-                float(realized_return_raw) if realized_return_raw is not None else None
-            )
-        except (TypeError, ValueError):
-            realized_return = None
-        if realized_return is not None and realized_return != realized_return:
-            # NaN: parquet null materialises as NaN through pandas
-            realized_return = None
+        realized_return = _coerce_finite_float(row.get("realized_return"))
+        abnormal_return = _coerce_finite_float(row.get("abnormal_return"))
+        volatility_shift = _coerce_finite_float(row.get("volatility_shift"))
         realized_date_raw = row.get("realized_date")
         if (
             realized_date_raw is None
@@ -575,6 +691,9 @@ def load_training_sequences_from_package(
             realized_return=realized_return,
             realized_date=realized_date,
             sentiment_score=sentiment_score,
+            abnormal_return=abnormal_return,
+            volatility_shift=volatility_shift,
+            target_mode=target_mode,
         )
         sequences.append(vectors)
     return sequences
