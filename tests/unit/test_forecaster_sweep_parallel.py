@@ -266,3 +266,211 @@ def test_exhaustive_path_omits_hp_combo_id():
             "exhaustive path leaked an hp_combo_id field; the CSV column set "
             "must stay byte-identical to the pre-PR sweep output"
         )
+
+
+def _folds_args(
+    *,
+    folds: list[str],
+    random_search: bool = False,
+    architectures: list[str] | None = None,
+    seeds: list[int] | None = None,
+) -> argparse.Namespace:
+    """Toy namespace tailored to fold-iteration tests."""
+
+    return argparse.Namespace(
+        hidden_size=32,
+        num_layers=1,
+        dropout=0.1,
+        learning_rate=1e-3,
+        epochs=4,
+        head_hidden_size=16,
+        hidden_sizes=[32],
+        num_layers_grid=[1],
+        dropouts=[0.1],
+        learning_rates=[1e-3],
+        epochs_grid=[4],
+        weight_decay=1e-4,
+        weight_decays=None,
+        text_adapter_dim=64,
+        text_adapter_dims=None,
+        text_encoder="none",
+        use_text_embeddings=True,
+        training_package_id=None,
+        rich_features=False,
+        architecture="lstm",
+        architectures=architectures or ["lstm"],
+        seed=None,
+        seeds=seeds or [11],
+        credibility_features=False,
+        random_search=random_search,
+        random_search_samples=50,
+        random_search_seed=42,
+        folds=folds,
+    )
+
+
+def test_folds_multiply_candidate_count():
+    """``--folds`` multiplies the candidate count by len(folds) cleanly."""
+
+    fold_set = ["wf_fold_1", "wf_fold_2", "wf_fold_3", "wf_fold_4"]
+    archs = ["lstm", "gru", "tcn", "transformer", "dlinear", "informer", "tft", "lstm_attn"]
+    seeds = [11, 29, 47, 71, 97]
+    args = _folds_args(folds=fold_set, architectures=archs, seeds=seeds)
+
+    candidates = build_sweep_candidates(args)
+    assert len(candidates) == len(fold_set) * len(archs) * len(seeds)
+
+    # Every candidate carries a fold_id drawn from the requested set.
+    seen_folds = {c["fold_id"] for c in candidates}
+    assert seen_folds == set(fold_set)
+
+    # And the per-fold cell count is identical across folds.
+    per_fold_counts = {fold: 0 for fold in fold_set}
+    for cand in candidates:
+        per_fold_counts[cand["fold_id"]] += 1
+    assert len(set(per_fold_counts.values())) == 1
+
+
+def test_fold_id_threads_through_payload():
+    """Each candidate's fold_id flows through the worker payload + result dict."""
+
+    from app.train_forecaster import _build_worker_payload, _worker_run_cell
+    from unittest.mock import patch
+
+    args = _folds_args(
+        folds=["wf_fold_1", "wf_fold_2"],
+        architectures=["lstm"],
+        seeds=[11],
+    )
+    candidates = build_sweep_candidates(args)
+    assert len(candidates) == 2
+    fold_assignments = [c["fold_id"] for c in candidates]
+    assert sorted(fold_assignments) == ["wf_fold_1", "wf_fold_2"]
+
+    # Worker payload carries fold_id.
+    from pathlib import Path
+
+    import torch
+
+    payload = _build_worker_payload(
+        candidate=candidates[0],
+        trial_index=1,
+        args=argparse.Namespace(
+            batch_size=8,
+            validation_fraction=0.2,
+            early_stopping_patience=2,
+            shuffle_targets_control=False,
+            weight_decay=1e-4,
+        ),
+        data_dir=Path("/tmp"),
+        checkpoint_path=Path("/tmp/cp.pt"),
+        device=torch.device("cpu"),
+        sequence_groups=None,
+        text_encoder_arg=None,
+        text_pool_lambda=0.0,
+    )
+    assert payload["fold_id"] == candidates[0]["fold_id"]
+
+    # The worker round-trips fold_id via the result dict. Patch
+    # _run_single_training so the test stays unit-level (no real
+    # training runs).
+    class _StubSummary:
+        def to_dict(self) -> dict:
+            return {}
+
+    with patch(
+        "app.train_forecaster._run_single_training",
+        return_value=_StubSummary(),
+    ):
+        result = _worker_run_cell(payload)
+    assert result["fold_id"] == candidates[0]["fold_id"]
+
+
+def test_no_folds_flag_reproduces_legacy_output():
+    """``--folds`` unset (default empty list) reproduces pre-PR candidate
+    enumeration: no fold_id field, same cell count, same model_config
+    shape per cell."""
+
+    args_no_folds = _folds_args(folds=[])
+    args_legacy = argparse.Namespace(
+        hidden_size=32,
+        num_layers=1,
+        dropout=0.1,
+        learning_rate=1e-3,
+        epochs=4,
+        head_hidden_size=16,
+        hidden_sizes=[32],
+        num_layers_grid=[1],
+        dropouts=[0.1],
+        learning_rates=[1e-3],
+        epochs_grid=[4],
+        weight_decay=1e-4,
+        weight_decays=None,
+        text_adapter_dim=64,
+        text_adapter_dims=None,
+        text_encoder="none",
+        use_text_embeddings=True,
+        training_package_id=None,
+        rich_features=False,
+        architecture="lstm",
+        architectures=["lstm"],
+        seed=None,
+        seeds=[11],
+        credibility_features=False,
+        random_search=False,
+        random_search_samples=50,
+        random_search_seed=42,
+    )
+
+    folds_off = build_sweep_candidates(args_no_folds)
+    legacy = build_sweep_candidates(args_legacy)
+
+    assert len(folds_off) == len(legacy)
+    for cand_off, cand_legacy in zip(folds_off, legacy, strict=True):
+        assert "fold_id" not in cand_off
+        assert "fold_id" not in cand_legacy
+        assert cand_off["seed"] == cand_legacy["seed"]
+        assert cand_off["learning_rate"] == cand_legacy["learning_rate"]
+        assert cand_off["model_config"].hidden_size == cand_legacy["model_config"].hidden_size
+
+
+def test_folds_with_random_search_multiplies_candidates():
+    """``--folds`` combined with --random-search yields M_samples x folds cells per (arch, seed)."""
+
+    args = argparse.Namespace(
+        hidden_size=32,
+        num_layers=1,
+        dropout=0.1,
+        learning_rate=1e-3,
+        epochs=4,
+        head_hidden_size=16,
+        hidden_sizes=[32, 64],
+        num_layers_grid=[1, 2],
+        dropouts=[0.1],
+        learning_rates=[1e-3],
+        epochs_grid=[4],
+        weight_decay=1e-4,
+        weight_decays=None,
+        text_adapter_dim=64,
+        text_adapter_dims=None,
+        text_encoder="none",
+        use_text_embeddings=True,
+        training_package_id=None,
+        rich_features=False,
+        architecture="lstm",
+        architectures=["lstm"],
+        seed=None,
+        seeds=[11],
+        credibility_features=False,
+        random_search=True,
+        random_search_samples=3,
+        random_search_seed=42,
+        folds=["wf_fold_1", "wf_fold_2", "wf_fold_3", "wf_fold_4"],
+    )
+    candidates = build_sweep_candidates(args)
+    # 1 arch x 1 seed x 4 folds x 3 sampled HP combos = 12 cells.
+    assert len(candidates) == 12
+    fold_counts: dict[str, int] = {}
+    for cand in candidates:
+        fold_counts[cand["fold_id"]] = fold_counts.get(cand["fold_id"], 0) + 1
+    assert fold_counts == {f"wf_fold_{i}": 3 for i in range(1, 5)}

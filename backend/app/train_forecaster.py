@@ -435,6 +435,20 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--folds",
+        nargs="+",
+        default=[],
+        help=(
+            "Walk-forward fold ids to iterate (e.g. wf_fold_1 wf_fold_2 "
+            "wf_fold_3 wf_fold_4). Each fold materialises one cell per "
+            "(architecture, seed, hp_combo) tuple by restricting the "
+            "training sequences to the fold's test window via "
+            "fold_manifest_expanding_walk_forward.json. Default empty "
+            "list keeps single-fold behaviour (the package's default "
+            "split tag drives the partition)."
+        ),
+    )
+    parser.add_argument(
         "--parallel-workers",
         type=int,
         default=1,
@@ -718,6 +732,13 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
 
     use_random_search = bool(getattr(args, "random_search", False))
     text_embedding_dim = _resolve_text_embedding_dim(args)
+    # ``--folds`` defaults to an empty list. An empty list keeps the
+    # single-fold behaviour and the per-cell record carries no
+    # ``fold_id`` field; a non-empty list multiplies the candidate set
+    # by ``len(folds)`` and tags each cell with its ``fold_id`` so the
+    # aggregator can group per-fold and across-folds for the headline
+    # row.
+    folds_axis = list(getattr(args, "folds", None) or [])
 
     if use_random_search:
         # Random-search path: subsample the HP grid before the
@@ -731,30 +752,32 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
             int(getattr(args, "random_search_seed", DEFAULT_RANDOM_SEARCH_SEED)),
         )
         candidates: list[dict[str, Any]] = []
-        for architecture, seed in itertools.product(architectures, seeds):
+        fold_iter: list[str | None] = list(folds_axis) if folds_axis else [None]
+        for architecture, seed, fold in itertools.product(architectures, seeds, fold_iter):
             for hp_combo_id, hp in sampled_hp:
                 text_adapter_dim = int(hp["text_adapter_dim"])
-                candidates.append(
-                    {
-                        "model_config": ModelConfig(
-                            input_size=_resolved_input_size(args),
-                            hidden_size=hp["hidden_size"],
-                            num_layers=hp["num_layers"],
-                            dropout=hp["dropout"],
-                            head_hidden_size=args.head_hidden_size,
-                            architecture=str(architecture),
-                            credibility_features=bool(args.credibility_features),
-                            text_embedding_dim=int(text_embedding_dim) if text_adapter_dim > 0 else 0,
-                            text_adapter_dim=text_adapter_dim,
-                        ),
-                        "learning_rate": float(hp["learning_rate"]),
-                        "epochs": int(hp["epochs"]),
-                        "weight_decay": float(hp["weight_decay"]),
-                        "text_adapter_dim": text_adapter_dim,
-                        "seed": int(seed) if seed is not None else None,
-                        "hp_combo_id": int(hp_combo_id),
-                    }
-                )
+                record: dict[str, Any] = {
+                    "model_config": ModelConfig(
+                        input_size=_resolved_input_size(args),
+                        hidden_size=hp["hidden_size"],
+                        num_layers=hp["num_layers"],
+                        dropout=hp["dropout"],
+                        head_hidden_size=args.head_hidden_size,
+                        architecture=str(architecture),
+                        credibility_features=bool(args.credibility_features),
+                        text_embedding_dim=int(text_embedding_dim) if text_adapter_dim > 0 else 0,
+                        text_adapter_dim=text_adapter_dim,
+                    ),
+                    "learning_rate": float(hp["learning_rate"]),
+                    "epochs": int(hp["epochs"]),
+                    "weight_decay": float(hp["weight_decay"]),
+                    "text_adapter_dim": text_adapter_dim,
+                    "seed": int(seed) if seed is not None else None,
+                    "hp_combo_id": int(hp_combo_id),
+                }
+                if fold is not None:
+                    record["fold_id"] = str(fold)
+                candidates.append(record)
         return candidates
 
     # Exhaustive path: byte-identical to the pre-PR enumeration order so
@@ -776,6 +799,38 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
     else:
         text_adapter_dims = [0]
     candidates = []
+    if folds_axis:
+        # Fold axis is the innermost slot under the seed axis so the
+        # per-(architecture, seed, hp_combo) tuple emits its four folds
+        # contiguously; downstream aggregation groups on
+        # (architecture, fold_id) for the per-fold rows.
+        outer = itertools.product(
+            architectures,
+            hidden_sizes,
+            num_layers_options,
+            dropouts,
+            learning_rates,
+            epochs_options,
+            weight_decays,
+            text_adapter_dims,
+            seeds,
+            folds_axis,
+        )
+    else:
+        outer = (
+            tup + (None,)
+            for tup in itertools.product(
+                architectures,
+                hidden_sizes,
+                num_layers_options,
+                dropouts,
+                learning_rates,
+                epochs_options,
+                weight_decays,
+                text_adapter_dims,
+                seeds,
+            )
+        )
     for (
         architecture,
         hidden_size,
@@ -786,37 +841,29 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
         weight_decay,
         text_adapter_dim,
         seed,
-    ) in itertools.product(
-        architectures,
-        hidden_sizes,
-        num_layers_options,
-        dropouts,
-        learning_rates,
-        epochs_options,
-        weight_decays,
-        text_adapter_dims,
-        seeds,
-    ):
-        candidates.append(
-            {
-                "model_config": ModelConfig(
-                    input_size=_resolved_input_size(args),
-                    hidden_size=hidden_size,
-                    num_layers=num_layers,
-                    dropout=dropout,
-                    head_hidden_size=args.head_hidden_size,
-                    architecture=str(architecture),
-                    credibility_features=bool(args.credibility_features),
-                    text_embedding_dim=int(text_embedding_dim) if int(text_adapter_dim) > 0 else 0,
-                    text_adapter_dim=int(text_adapter_dim),
-                ),
-                "learning_rate": float(learning_rate),
-                "epochs": int(epochs),
-                "weight_decay": float(weight_decay),
-                "text_adapter_dim": int(text_adapter_dim),
-                "seed": int(seed) if seed is not None else None,
-            }
-        )
+        fold,
+    ) in outer:
+        record = {
+            "model_config": ModelConfig(
+                input_size=_resolved_input_size(args),
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                dropout=dropout,
+                head_hidden_size=args.head_hidden_size,
+                architecture=str(architecture),
+                credibility_features=bool(args.credibility_features),
+                text_embedding_dim=int(text_embedding_dim) if int(text_adapter_dim) > 0 else 0,
+                text_adapter_dim=int(text_adapter_dim),
+            ),
+            "learning_rate": float(learning_rate),
+            "epochs": int(epochs),
+            "weight_decay": float(weight_decay),
+            "text_adapter_dim": int(text_adapter_dim),
+            "seed": int(seed) if seed is not None else None,
+        }
+        if fold is not None:
+            record["fold_id"] = str(fold)
+        candidates.append(record)
     return candidates
 
 
@@ -863,6 +910,10 @@ def _flatten_trial_record(record: dict[str, Any]) -> dict[str, Any]:
     # byte-identical to the pre-PR CSV when --random-search is off.
     if "hp_combo_id" in record:
         flattened["hp_combo_id"] = record["hp_combo_id"]
+    # ``fold_id`` is only present when --folds is set; the single-fold
+    # path keeps the legacy column set byte-identical.
+    if "fold_id" in record:
+        flattened["fold_id"] = record["fold_id"]
     return flattened
 
 
@@ -1029,6 +1080,7 @@ def _worker_run_cell(payload: dict[str, Any]) -> dict[str, Any]:
         "architecture": str(payload["model_config"].architecture),
         "seed": payload["seed"],
         "hp_combo_id": payload.get("hp_combo_id"),
+        "fold_id": payload.get("fold_id"),
         "summary": summary,
     }
 
@@ -1055,6 +1107,7 @@ def _build_worker_payload(
         "weight_decay": candidate.get("weight_decay", args.weight_decay),
         "seed": candidate.get("seed"),
         "hp_combo_id": candidate.get("hp_combo_id"),
+        "fold_id": candidate.get("fold_id"),
         "data_dir": data_dir,
         "checkpoint_path": checkpoint_path,
         "device": str(device),
@@ -1101,12 +1154,13 @@ def _sort_trial_records(trial_records: list[dict[str, Any]]) -> list[dict[str, A
     in that case.
     """
 
-    def _key(record: dict[str, Any]) -> tuple[str, int, int, int]:
+    def _key(record: dict[str, Any]) -> tuple[str, int, str, int, int]:
         seed = record.get("seed")
         hp_combo_id = record.get("hp_combo_id")
         return (
             str(record.get("architecture") or ""),
             int(seed) if seed is not None else -1,
+            str(record.get("fold_id") or ""),
             int(hp_combo_id) if hp_combo_id is not None else -1,
             int(record.get("trial_index") or 0),
         )
@@ -1122,12 +1176,27 @@ def _run_sweep(
     report_path: Path,
     device: torch.device,
     sequence_groups: Sequence[Sequence[FeatureVector]] | None = None,
+    fold_sequence_groups: dict[str, Sequence[Sequence[FeatureVector]]] | None = None,
     training_package_id: str | None = None,
 ) -> int:
     candidates = build_sweep_candidates(args)
     if not candidates:
         print("No sweep candidates generated.")
         return 1
+
+    def _resolve_cell_sequences(
+        candidate: dict[str, Any],
+    ) -> Sequence[Sequence[FeatureVector]] | None:
+        cell_fold = candidate.get("fold_id")
+        if cell_fold is None or not fold_sequence_groups:
+            return sequence_groups
+        groups = fold_sequence_groups.get(str(cell_fold))
+        if groups is None:
+            raise KeyError(
+                f"fold_id={cell_fold!r} carries no pre-loaded sequence groups; "
+                f"known fold ids: {sorted(fold_sequence_groups.keys())}"
+            )
+        return groups
 
     parallel_workers = max(1, int(getattr(args, "parallel_workers", 1)))
     if parallel_workers > PARALLEL_WORKERS_VRAM_WARN_THRESHOLD:
@@ -1179,7 +1248,7 @@ def _run_sweep(
                         data_dir=data_dir,
                         checkpoint_path=checkpoint_path,
                         device=device,
-                        sequence_groups=sequence_groups,
+                        sequence_groups=_resolve_cell_sequences(candidate),
                         text_encoder_arg=text_encoder_arg,
                         text_pool_lambda=text_pool_lambda,
                     ),
@@ -1199,6 +1268,8 @@ def _run_sweep(
                 }
                 if result.get("hp_combo_id") is not None:
                     record["hp_combo_id"] = result["hp_combo_id"]
+                if result.get("fold_id") is not None:
+                    record["fold_id"] = result["fold_id"]
                 trial_records.append(record)
                 summaries.append(summary)
                 print(
@@ -1228,7 +1299,7 @@ def _run_sweep(
                 model_config=model_config,
                 save_checkpoint=False,
                 seed=seed,
-                sequence_groups=sequence_groups,
+                sequence_groups=_resolve_cell_sequences(candidate),
                 weight_decay=float(weight_decay),
                 shuffle_targets_control=bool(args.shuffle_targets_control),
                 text_encoder=text_encoder_arg,
@@ -1243,6 +1314,8 @@ def _run_sweep(
             }
             if "hp_combo_id" in candidate:
                 record["hp_combo_id"] = candidate["hp_combo_id"]
+            if "fold_id" in candidate:
+                record["fold_id"] = candidate["fold_id"]
             trial_records.append(record)
             print(
                 _format_cell_log(
@@ -1312,7 +1385,7 @@ def _run_sweep(
         model_config=best_model_config,
         save_checkpoint=True,
         seed=best_seed,
-        sequence_groups=sequence_groups,
+        sequence_groups=_resolve_cell_sequences(best_candidate),
         weight_decay=float(best_weight_decay),
         shuffle_targets_control=bool(args.shuffle_targets_control),
         text_encoder=text_encoder_arg,
@@ -1358,6 +1431,11 @@ def _run_sweep(
         report_payload["parallel_workers"] = parallel_workers
     elif parallel_workers > 1:
         report_payload["parallel_workers"] = parallel_workers
+    fold_ids_present = sorted(
+        {str(trial["fold_id"]) for trial in trial_records if trial.get("fold_id")}
+    )
+    if fold_ids_present:
+        report_payload["folds"] = fold_ids_present
     _write_sweep_report(report_path, report_payload)
     print(
         "Sweep complete. "
@@ -1387,6 +1465,7 @@ def main() -> int:
         )
 
     package_sequences: list[list[FeatureVector]] | None = None
+    fold_sequence_groups: dict[str, list[list[FeatureVector]]] | None = None
     if use_package_path:
         print(f"Training-package id: {args.training_package_id}")
         print(f"Target mode: {args.target_mode}")
@@ -1398,8 +1477,7 @@ def main() -> int:
         loader_text_encoder = (
             None if str(args.text_encoder) == "none" else str(args.text_encoder)
         )
-        package_sequences = load_training_sequences_from_package(
-            args.training_package_id,
+        loader_kwargs: dict[str, Any] = dict(
             target_mode=args.target_mode,
             rich_features=bool(args.rich_features),
             use_credibility=bool(args.use_credibility),
@@ -1411,9 +1489,39 @@ def main() -> int:
             text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
             use_text_embeddings=bool(args.use_text_embeddings),
         )
-        sequence_count = len(package_sequences)
-        observation_count = sum(len(sequence) for sequence in package_sequences)
-        window_count = sum(max(0, len(sequence) - SEQUENCE_LENGTH) for sequence in package_sequences)
+        folds_axis = list(getattr(args, "folds", None) or [])
+        if folds_axis:
+            print(f"Walk-forward folds: {' '.join(folds_axis)}")
+            fold_sequence_groups = {}
+            for fold_id_str in folds_axis:
+                fold_sequence_groups[fold_id_str] = load_training_sequences_from_package(
+                    args.training_package_id,
+                    fold_id=fold_id_str,
+                    **loader_kwargs,
+                )
+            sequence_count = sum(len(groups) for groups in fold_sequence_groups.values())
+            observation_count = sum(
+                len(sequence)
+                for groups in fold_sequence_groups.values()
+                for sequence in groups
+            )
+            window_count = sum(
+                max(0, len(sequence) - SEQUENCE_LENGTH)
+                for groups in fold_sequence_groups.values()
+                for sequence in groups
+            )
+            # Surface per-fold counts so an operator can spot a fold
+            # that empties the surviving sequence set.
+            for fold_id_str, groups in fold_sequence_groups.items():
+                print(f"  {fold_id_str}: sequences={len(groups)}")
+        else:
+            package_sequences = load_training_sequences_from_package(
+                args.training_package_id,
+                **loader_kwargs,
+            )
+            sequence_count = len(package_sequences)
+            observation_count = sum(len(sequence) for sequence in package_sequences)
+            window_count = sum(max(0, len(sequence) - SEQUENCE_LENGTH) for sequence in package_sequences)
         print(f"Device: {device}")
         print(f"Checkpoint path: {checkpoint_path}")
         print(f"Existing checkpoint: {'yes' if checkpoint_path.exists() else 'no'}")
@@ -1477,6 +1585,7 @@ def main() -> int:
             report_path=report_path,
             device=device,
             sequence_groups=package_sequences,
+            fold_sequence_groups=fold_sequence_groups,
             training_package_id=args.training_package_id,
         )
 
