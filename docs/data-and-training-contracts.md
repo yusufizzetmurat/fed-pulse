@@ -788,6 +788,77 @@ path is bit-identical to prior versions. The
 trainer directly with synthesised vectors and never crosses the
 training-package code path.
 
+### Forecaster rich-feature input space
+
+The training-package loader joins four feature families onto every
+event and broadcasts the event-level signal onto every bar of the
+20-day prior window plus the appended event-day target frame. Per-bar
+feature size grows from `FEATURE_SIZE = 6` to `RICH_FEATURE_SIZE = 35`.
+
+Per-bar slice layout (positions inside `FeatureVector.as_rich_list()`):
+
+| Slice    | Width | Source / fields |
+| -------- | ----- | --------------- |
+| `[0:6]`  | 6     | Existing market features (`sentiment_score`, `market_close`, `market_volatility`, `close_change_pct`, `volatility_change`, `elapsed_time`). Byte-identical to `as_list()`. |
+| `[6:10]` | 4     | Credibility — `credibility_drift_score`, `credibility_realized_vs_stated_gap`, `credibility_market_implied_gap`, `credibility_months_since_reversal`. Off the event row directly. |
+| `[10:25]` | 15   | Linguistic — full `LinguisticVector` (8 LDA topic shares + `hedge_density` / `comparison_density` / `forward_density` / `concrete_ratio` / `hawk_dove_asymmetry` / `log_token_count` + `pivot_distance`). Joined on `text_hash` from `linguistic_features.parquet`. |
+| `[25:29]` | 4    | MP-surprise — `mp_surprise_level`, `mp_surprise_path_factor`, `fed_info_factor`, `mp_is_intermeeting` (boolean encoded as 0.0 / 1.0). Joined on `event_date` from `mp_surprises.parquet`. |
+| `[29:35]` | 6    | Multi-axis — `axis_factor` / `axis_factor_missing`, `axis_certainty` / `axis_certainty_missing`, `axis_time` / `axis_time_missing`. NaN inputs collapse to `0.0` and flip the paired missing flag to `1.0`. |
+
+The 6-dim `as_list()` output stays unchanged. The legacy
+`--data-dir` JSON / JSONL / CSV path emits `FeatureVector` rows whose
+`rich_payload` flag is `False`, so `_build_training_tensors`
+auto-routes them through `as_list()` and the pre-PR-#173 6-feature
+input contract is preserved.
+
+#### Loader flag and per-family ablation
+
+`load_training_sequences_from_package` accepts a `rich_features: bool
+= True` kwarg plus four per-family ablation flags
+(`use_credibility`, `use_linguistic`, `use_mp_surprise`,
+`use_multi_axis`, all `True` by default). When `rich_features=False`
+the loader bypasses the side-table joins entirely and the resulting
+sequences emit 6-dim feature rows. When a per-family flag is `False`
+the relevant slice is zeroed on every bar but the per-bar feature
+size stays at 35, so a single sweep can measure per-family lift
+without changing the model input shape.
+
+The `train_forecaster.py` CLI exposes the same flags:
+
+```
+--rich-features / --no-rich-features
+--no-credibility
+--no-linguistic
+--no-mp-surprise
+--no-multi-axis
+```
+
+`--rich-features` is the default; `--no-rich-features` reproduces the
+pre-PR-#173 6-feature input. The per-family flags are no-ops when
+`--no-rich-features` is set.
+
+#### Missing side-table semantics
+
+- `linguistic_features.parquet` absent or unjoined on `text_hash` →
+  the linguistic slice is all zeros for that event.
+- `mp_surprises.parquet` absent or unjoined on `event_date` → the
+  MP-surprise slice is all zeros for that event.
+- `axis_factor` / `axis_certainty` / `axis_time` NaN → the value
+  collapses to `0.0` AND the paired `*_missing` flag flips to `1.0`,
+  so the model can tell "no signal" apart from "neutral signal".
+- Credibility fields are required on `events.parquet` (the
+  event-row builder guarantees them) and so do not carry a missing
+  flag; absent fields are coerced to `0.0` defensively.
+
+#### Make targets
+
+- `make forecaster-sweep TRAINING_PACKAGE_ID=<id>` — 8-architecture
+  rich-feature sweep (lstm, lstm_attn, gru, tcn, transformer, dlinear,
+  informer, tft) across the official five-seed set.
+- `make forecaster-sweep-baseline TRAINING_PACKAGE_ID=<id>` — the
+  pre-PR-#173 6-feature path against the original six architectures,
+  preserved for back-compat smoke checks against earlier sweep numbers.
+
 ## Pipeline schema validation
 
 `backend/app/data/schemas.py` defines one `pandera.DataFrameSchema` per

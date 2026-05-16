@@ -19,7 +19,19 @@ import pytest
 pd = pytest.importorskip("pandas")
 pytest.importorskip("pyarrow")
 
-from app.models.config import SEQUENCE_LENGTH
+from app.models.config import (
+    FEATURE_SIZE,
+    RICH_CREDIBILITY_DIM,
+    RICH_CREDIBILITY_SLICE,
+    RICH_FEATURE_SIZE,
+    RICH_LINGUISTIC_DIM,
+    RICH_LINGUISTIC_SLICE,
+    RICH_MP_SURPRISE_DIM,
+    RICH_MP_SURPRISE_SLICE,
+    RICH_MULTI_AXIS_DIM,
+    RICH_MULTI_AXIS_SLICE,
+    SEQUENCE_LENGTH,
+)
 from app.training import loaders
 
 
@@ -445,3 +457,326 @@ def test_target_mode_invalid_raises(tmp_path: Path, monkeypatch) -> None:
         loaders.load_training_sequences_from_package(
             "any_id", target_mode="not_a_mode"  # type: ignore[arg-type]
         )
+
+
+# ---------------------------------------------------------------------------
+# Rich-feature loader tests (PR #173)
+#
+# The training-package loader joins linguistic_features.parquet on
+# text_hash, mp_surprises.parquet on event_date, reads the credibility +
+# multi-axis fields straight off the events parquet, and broadcasts the
+# event-level signal onto every bar in the 20-day prior window plus the
+# appended event-day target frame. Per-bar feature size grows from
+# FEATURE_SIZE (6) to RICH_FEATURE_SIZE (35) and is emitted through
+# ``FeatureVector.as_rich_list``.
+# ---------------------------------------------------------------------------
+
+
+_RICH_PACKAGE_ID = "tp_unit_rich_features_v0"
+
+
+def _linguistic_row(text_hash: str, base: float) -> dict:
+    """Build a synthetic linguistic-feature row with the full 15 columns.
+
+    Values are chosen to be unique per-text_hash so the broadcaster's
+    join-on-text_hash contract is observable: each surviving sequence
+    should carry exactly the row keyed by its event's text_hash.
+    """
+
+    return {
+        "text_hash": text_hash,
+        "topic_share_inflation": base + 0.01,
+        "topic_share_employment": base + 0.02,
+        "topic_share_financial_stability": base + 0.03,
+        "topic_share_growth": base + 0.04,
+        "topic_share_balance_sheet": base + 0.05,
+        "topic_share_misc_1": base + 0.06,
+        "topic_share_misc_2": base + 0.07,
+        "topic_share_misc_3": base + 0.08,
+        "hedge_density": base + 0.10,
+        "comparison_density": base + 0.11,
+        "forward_density": base + 0.12,
+        "concrete_ratio": base + 0.13,
+        "hawk_dove_asymmetry": base + 0.14,
+        "log_token_count": base + 0.15,
+        "pivot_distance": base + 0.16,
+    }
+
+
+def _mp_surprise_row(event_date: str, base: float) -> dict:
+    """Build a synthetic mp_surprises row keyed by ``event_date``."""
+
+    return {
+        "event_date": event_date,
+        "mp_surprise_level": base + 0.001,
+        "mp_surprise_path_factor": base + 0.002,
+        "fed_info_factor": base + 0.003,
+        "is_intermeeting": bool(base > 0.5),
+    }
+
+
+@pytest.fixture
+def rich_feature_package_dir(tmp_path: Path, monkeypatch) -> Path:
+    """Materialise a small package with linguistic + mp-surprise parquets.
+
+    Two train-tagged events with known credibility / multi-axis /
+    linguistic / mp-surprise values let the rich-feature tests pin
+    each slice against an arithmetically reconstructible expectation.
+    A third event drops its linguistic row so the missing-join
+    fallback test has a candidate to validate against.
+    """
+
+    package_dir = tmp_path / "processed" / _RICH_PACKAGE_ID
+    package_dir.mkdir(parents=True)
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+
+    events = []
+    for text_hash, event_date, realized_date, base_close, base, factor, certainty in (
+        ("hash_a", "2024-01-31", "2024-02-01", 4400.0, 0.10, 0.25, 0.5),
+        ("hash_b", "2024-02-15", "2024-02-16", 4500.0, 0.20, -0.40, 0.8),
+        ("hash_no_ling", "2024-03-15", "2024-03-16", 4600.0, 0.30, 0.10, 0.2),
+    ):
+        row = _event_row(
+            event_date=event_date,
+            text_hash=text_hash,
+            axis_stance="hawkish",
+            realized_return=0.001,
+            realized_date=realized_date,
+            base_close=base_close,
+        )
+        # Pin credibility + multi-axis to distinguishable, non-zero
+        # values so the per-bar slice assertions are observable.
+        row["credibility_drift_score"] = base + 0.001
+        row["credibility_realized_vs_stated_gap"] = base + 0.002
+        row["credibility_market_implied_gap"] = base + 0.003
+        row["credibility_months_since_reversal"] = int(base * 10)
+        row["axis_factor"] = factor
+        row["axis_certainty"] = certainty
+        row["axis_time"] = base + 0.5
+        events.append(row)
+    pd.DataFrame(events).to_parquet(package_dir / "events.parquet", index=False)
+    pd.DataFrame(
+        [
+            {"text_hash": "hash_a", "split_tag": "train"},
+            {"text_hash": "hash_b", "split_tag": "train"},
+            {"text_hash": "hash_no_ling", "split_tag": "train"},
+        ]
+    ).to_parquet(package_dir / "splits_train_val_test.parquet", index=False)
+
+    # Linguistic parquet covers hash_a and hash_b but NOT hash_no_ling,
+    # so the join-fallback test can assert that the third event's
+    # linguistic slice is all zeros.
+    pd.DataFrame(
+        [
+            _linguistic_row("hash_a", 0.10),
+            _linguistic_row("hash_b", 0.20),
+        ]
+    ).to_parquet(package_dir / "linguistic_features.parquet", index=False)
+
+    # MP-surprise parquet keyed on event_date. Covers all three events.
+    pd.DataFrame(
+        [
+            _mp_surprise_row("2024-01-31", 0.10),
+            _mp_surprise_row("2024-02-15", 0.20),
+            _mp_surprise_row("2024-03-15", 0.30),
+        ]
+    ).to_parquet(package_dir / "mp_surprises.parquet", index=False)
+
+    return package_dir
+
+
+def test_rich_features_emit_35_per_bar(rich_feature_package_dir: Path) -> None:
+    sequences = loaders.load_training_sequences_from_package(
+        _RICH_PACKAGE_ID, rich_features=True
+    )
+    assert len(sequences) == 3
+    # Per-bar size on the rich emitter is the documented constant; the
+    # legacy emitter stays at FEATURE_SIZE for any non-rich vector.
+    for sequence in sequences:
+        for vector in sequence:
+            assert vector.rich_payload is True
+            assert len(vector.as_rich_list()) == RICH_FEATURE_SIZE
+            # Back-compat: the 6-dim slice is still emitted.
+            assert len(vector.as_list()) == FEATURE_SIZE
+            # Positions [0:6] of as_rich_list match as_list bit-for-bit
+            # so models built on the legacy slice keep seeing the same
+            # values when widened to RICH_FEATURE_SIZE.
+            assert vector.as_rich_list()[:FEATURE_SIZE] == vector.as_list()
+
+    # Pin one full slice composition against the synthetic fixture so
+    # the per-family broadcast and the column-ordering contract are
+    # locked together. hash_a: base = 0.10, factor = 0.25, certainty
+    # = 0.5, axis_time = 0.60.
+    by_target_date = {seq[-1].date[:10]: seq for seq in sequences}
+    hash_a_target = by_target_date["2024-02-01"][-1]
+    rich = hash_a_target.as_rich_list()
+    cred_slice = rich[RICH_CREDIBILITY_SLICE]
+    assert cred_slice == pytest.approx([0.101, 0.102, 0.103, 1.0])
+    ling_slice = rich[RICH_LINGUISTIC_SLICE]
+    expected_ling = [
+        0.11, 0.12, 0.13, 0.14, 0.15, 0.16, 0.17, 0.18,
+        0.20, 0.21, 0.22, 0.23, 0.24, 0.25, 0.26,
+    ]
+    assert ling_slice == pytest.approx(expected_ling)
+    mp_slice = rich[RICH_MP_SURPRISE_SLICE]
+    # hash_a has base=0.10 in the mp parquet (is_intermeeting=False).
+    assert mp_slice == pytest.approx([0.101, 0.102, 0.103, 0.0])
+    multi_axis_slice = rich[RICH_MULTI_AXIS_SLICE]
+    # All three axes present -> missing flags zero.
+    assert multi_axis_slice == pytest.approx([0.25, 0.0, 0.5, 0.0, 0.6, 0.0])
+
+
+def test_rich_features_missing_linguistic_row_zeros_and_flags(
+    rich_feature_package_dir: Path,
+) -> None:
+    sequences = loaders.load_training_sequences_from_package(
+        _RICH_PACKAGE_ID, rich_features=True
+    )
+    # hash_no_ling has no linguistic-parquet row -- its linguistic
+    # slice must be all zeros on every bar of the sequence. The
+    # ablation flag is *not* set (the family is still on); the row's
+    # absence is what zeros the slice.
+    by_target_date = {seq[-1].date[:10]: seq for seq in sequences}
+    no_ling_sequence = by_target_date["2024-03-16"]
+    for vector in no_ling_sequence:
+        ling_slice = vector.as_rich_list()[RICH_LINGUISTIC_SLICE]
+        assert ling_slice == [0.0] * RICH_LINGUISTIC_DIM
+
+    # Sanity: the credibility + mp-surprise + multi-axis slices are
+    # still populated (only the missing family zeros out), so the
+    # broadcaster did not also drop unrelated families.
+    target = no_ling_sequence[-1].as_rich_list()
+    assert target[RICH_CREDIBILITY_SLICE][0] == pytest.approx(0.301)
+    assert target[RICH_MP_SURPRISE_SLICE][0] == pytest.approx(0.301)
+    assert target[RICH_MULTI_AXIS_SLICE][2] == pytest.approx(0.2)
+
+
+def test_rich_features_per_family_ablation_zeros_correct_slice(
+    rich_feature_package_dir: Path,
+) -> None:
+    sequences = loaders.load_training_sequences_from_package(
+        _RICH_PACKAGE_ID,
+        rich_features=True,
+        use_credibility=False,
+    )
+    assert len(sequences) == 3
+    # Credibility slice on every bar must be zero. The per-bar
+    # feature size stays at RICH_FEATURE_SIZE so the model input
+    # shape is unchanged -- the ablation measures lift by zeroing
+    # the slice rather than shrinking the input.
+    for sequence in sequences:
+        for vector in sequence:
+            rich = vector.as_rich_list()
+            assert len(rich) == RICH_FEATURE_SIZE
+            assert rich[RICH_CREDIBILITY_SLICE] == [0.0] * RICH_CREDIBILITY_DIM
+
+    # Other families stay populated: pick hash_a and verify the
+    # linguistic + mp-surprise + multi-axis slices match the
+    # all-on baseline above.
+    by_target_date = {seq[-1].date[:10]: seq for seq in sequences}
+    hash_a_target = by_target_date["2024-02-01"][-1].as_rich_list()
+    assert hash_a_target[RICH_LINGUISTIC_SLICE][0] == pytest.approx(0.11)
+    assert hash_a_target[RICH_MP_SURPRISE_SLICE][0] == pytest.approx(0.101)
+    assert hash_a_target[RICH_MULTI_AXIS_SLICE][0] == pytest.approx(0.25)
+
+
+def test_rich_features_multi_axis_missing_flips_missing_flag(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """NaN multi-axis fields collapse to zero and flip the missing flag."""
+
+    package_id = "tp_unit_multi_axis_missing_v0"
+    package_dir = tmp_path / "processed" / package_id
+    package_dir.mkdir(parents=True)
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+
+    row = _event_row(
+        event_date="2024-04-30",
+        text_hash="hash_nan_axes",
+        axis_stance="neutral",
+        realized_return=0.0,
+        realized_date="2024-05-01",
+        base_close=4700.0,
+    )
+    # axis_factor / axis_certainty / axis_time stay None (default
+    # from ``_event_row``); the loader must collapse them to 0.0 and
+    # flip each *_missing flag to 1.0.
+    pd.DataFrame([row]).to_parquet(package_dir / "events.parquet", index=False)
+    pd.DataFrame(
+        [{"text_hash": "hash_nan_axes", "split_tag": "train"}]
+    ).to_parquet(package_dir / "splits_train_val_test.parquet", index=False)
+
+    sequences = loaders.load_training_sequences_from_package(
+        package_id, rich_features=True
+    )
+    assert len(sequences) == 1
+    target = sequences[0][-1].as_rich_list()
+    multi_axis = target[RICH_MULTI_AXIS_SLICE]
+    # axis_factor, axis_factor_missing, axis_certainty,
+    # axis_certainty_missing, axis_time, axis_time_missing
+    assert multi_axis == pytest.approx([0.0, 1.0, 0.0, 1.0, 0.0, 1.0])
+
+
+def test_no_rich_features_reproduces_legacy_6dim_path(
+    rich_feature_package_dir: Path,
+) -> None:
+    """``rich_features=False`` is byte-identical to the pre-PR-#173 output."""
+
+    legacy = loaders.load_training_sequences_from_package(
+        _RICH_PACKAGE_ID, rich_features=False
+    )
+    assert len(legacy) == 3
+    for sequence in legacy:
+        for vector in sequence:
+            # Rich payload flag stays at the dataclass default.
+            assert vector.rich_payload is False
+            assert len(vector.as_list()) == FEATURE_SIZE
+            # ``as_rich_list`` on a non-rich vector falls back to
+            # ``as_list`` plus zero-padding, so its 6-dim prefix is
+            # unchanged. The remaining 29 dims are zeros plus the
+            # default multi-axis missing flags (1.0 each).
+            rich = vector.as_rich_list()
+            assert len(rich) == RICH_FEATURE_SIZE
+            assert rich[:FEATURE_SIZE] == vector.as_list()
+            assert rich[RICH_CREDIBILITY_SLICE] == [0.0] * RICH_CREDIBILITY_DIM
+            assert rich[RICH_LINGUISTIC_SLICE] == [0.0] * RICH_LINGUISTIC_DIM
+            assert rich[RICH_MP_SURPRISE_SLICE] == [0.0] * RICH_MP_SURPRISE_DIM
+
+
+def test_rich_features_ignored_when_mp_parquet_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No mp_surprises.parquet -> mp-surprise slice is zero, other
+    families still flow. Confirms the loader degrades cleanly when one
+    of the optional side-tables is absent."""
+
+    package_id = "tp_unit_no_mp_v0"
+    package_dir = tmp_path / "processed" / package_id
+    package_dir.mkdir(parents=True)
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+
+    row = _event_row(
+        event_date="2024-06-15",
+        text_hash="hash_no_mp",
+        axis_stance="hawkish",
+        realized_return=0.001,
+        realized_date="2024-06-16",
+        base_close=4800.0,
+    )
+    row["credibility_drift_score"] = 0.5
+    pd.DataFrame([row]).to_parquet(package_dir / "events.parquet", index=False)
+    pd.DataFrame(
+        [{"text_hash": "hash_no_mp", "split_tag": "train"}]
+    ).to_parquet(package_dir / "splits_train_val_test.parquet", index=False)
+    # NO linguistic_features.parquet, NO mp_surprises.parquet.
+
+    sequences = loaders.load_training_sequences_from_package(
+        package_id, rich_features=True
+    )
+    assert len(sequences) == 1
+    target = sequences[0][-1].as_rich_list()
+    # Credibility still populated from the events row.
+    assert target[RICH_CREDIBILITY_SLICE][0] == pytest.approx(0.5)
+    # Linguistic + mp-surprise slices zero (parquet missing).
+    assert target[RICH_LINGUISTIC_SLICE] == [0.0] * RICH_LINGUISTIC_DIM
+    assert target[RICH_MP_SURPRISE_SLICE] == [0.0] * RICH_MP_SURPRISE_DIM

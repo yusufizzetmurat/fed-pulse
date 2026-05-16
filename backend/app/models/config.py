@@ -14,6 +14,73 @@ SEQUENCE_LENGTH = 20
 FEATURE_SIZE = 6  # [sentiment_score, market_close, market_volatility, close_change_pct, volatility_change, elapsed_time]
 SENTIMENT_FEATURE_INDEX = 0
 ELAPSED_TIME_FEATURE_INDEX = 5
+
+# Rich-feature input space (PR-#173 onward). The training-package loader
+# joins the four feature families produced under Phase 8 onto the
+# per-bar feature vector:
+#
+# - 4 credibility fields (drift_score, realized_vs_stated_gap,
+#   market_implied_gap, months_since_reversal) -- direct off the
+#   events.parquet row.
+# - 15 linguistic features (8 LDA topic shares + 6 hand-crafted
+#   densities + pivot_distance) -- joined on text_hash from
+#   linguistic_features.parquet.
+# - 4 MP-surprise fields (mp_surprise_level, mp_surprise_path_factor,
+#   fed_info_factor, mp_is_intermeeting) -- joined on event_date from
+#   mp_surprises.parquet. ``mp_is_intermeeting`` is the boolean
+#   ``is_intermeeting`` field encoded as 0.0 / 1.0.
+# - 6 multi-axis fields (axis_factor, axis_certainty, axis_time, each
+#   with a paired *_missing flag) -- direct off the events.parquet row.
+#
+# The event-level signal is broadcast to every bar of the 20-day prior
+# window plus the appended event-day target frame, so every bar in a
+# supervised window carries the same rich-feature row.
+#
+# Per-bar slice ordering (deterministic; documented on
+# ``FeatureVector`` below):
+#
+#   [0:6]    market features (existing FEATURE_SIZE slice)
+#   [6:10]   credibility 4-vector
+#   [10:25]  linguistic 15-vector
+#   [25:29]  MP-surprise 4-vector
+#   [29:35]  multi-axis 6-vector (3 values + 3 missing flags)
+#
+# ``RICH_FEATURE_SIZE`` is the constant downstream model factories /
+# CLI use to widen the input projection when ``rich_features=True``.
+RICH_CREDIBILITY_DIM = 4
+RICH_LINGUISTIC_DIM = 15
+RICH_MP_SURPRISE_DIM = 4
+RICH_MULTI_AXIS_DIM = 6
+RICH_EXTRA_FEATURE_SIZE = (
+    RICH_CREDIBILITY_DIM
+    + RICH_LINGUISTIC_DIM
+    + RICH_MP_SURPRISE_DIM
+    + RICH_MULTI_AXIS_DIM
+)
+RICH_FEATURE_SIZE = FEATURE_SIZE + RICH_EXTRA_FEATURE_SIZE
+
+# Slice offsets inside the rich vector. Used by the per-family
+# ablation path on the loader to zero an individual family without
+# changing the per-bar feature size; a downstream sweep can then
+# measure per-family lift while keeping the model input shape
+# constant.
+RICH_MARKET_SLICE = slice(0, FEATURE_SIZE)
+RICH_CREDIBILITY_SLICE = slice(
+    FEATURE_SIZE, FEATURE_SIZE + RICH_CREDIBILITY_DIM
+)
+RICH_LINGUISTIC_SLICE = slice(
+    RICH_CREDIBILITY_SLICE.stop,
+    RICH_CREDIBILITY_SLICE.stop + RICH_LINGUISTIC_DIM,
+)
+RICH_MP_SURPRISE_SLICE = slice(
+    RICH_LINGUISTIC_SLICE.stop,
+    RICH_LINGUISTIC_SLICE.stop + RICH_MP_SURPRISE_DIM,
+)
+RICH_MULTI_AXIS_SLICE = slice(
+    RICH_MP_SURPRISE_SLICE.stop,
+    RICH_MP_SURPRISE_SLICE.stop + RICH_MULTI_AXIS_DIM,
+)
+
 FORECAST_CONFIDENCE_LEVEL = 0.8
 CONFIDENCE_Z_SCORE = 1.2816  # Approximate central 80% interval
 DEFAULT_CLOSE_SCALE = 10000.0
@@ -86,6 +153,42 @@ class ModelConfig:
 
 @dataclass
 class FeatureVector:
+    """Per-bar feature row consumed by the forecaster.
+
+    The 6 market fields (``sentiment_score`` through ``elapsed_time``)
+    are the legacy ``FEATURE_SIZE`` input; ``as_list`` emits exactly
+    that slice and is back-compat with every pre-PR-#173 inference and
+    training path.
+
+    The trailing fields carry the rich-feature input (``RICH_FEATURE_SIZE
+    = 35``) added in PR #173. They are populated by
+    ``app.training.loaders.load_training_sequences_from_package`` when
+    ``rich_features=True``; on the legacy path they stay at their
+    documented defaults so ``as_list`` and ``as_rich_list`` agree on
+    the 6 market positions. ``as_rich_list`` emits the full 35-dim
+    layout in the order documented at the module-level slice
+    constants:
+
+    - positions ``[0:6]`` -- market features.
+    - positions ``[6:10]`` -- credibility 4-vector
+      (``credibility_drift_score`` / ``credibility_realized_vs_stated_gap``
+      / ``credibility_market_implied_gap`` /
+      ``credibility_months_since_reversal``).
+    - positions ``[10:25]`` -- 15-dim linguistic vector
+      (8 LDA topic shares + 6 hand-crafted densities +
+      ``pivot_distance``), in the same field order as
+      ``app.features.linguistic.LinguisticVector``.
+    - positions ``[25:29]`` -- MP-surprise 4-vector
+      (``mp_surprise_level`` / ``mp_surprise_path_factor`` /
+      ``fed_info_factor`` / ``mp_is_intermeeting``).
+    - positions ``[29:35]`` -- 6-dim multi-axis vector
+      (``axis_factor`` / ``axis_factor_missing`` /
+      ``axis_certainty`` / ``axis_certainty_missing`` /
+      ``axis_time`` / ``axis_time_missing``). NaN inputs collapse to
+      ``0.0`` and the paired ``*_missing`` flag flips to ``1.0`` so
+      the model can tell "no signal" apart from "neutral signal".
+    """
+
     date: str
     sentiment_score: float
     market_close: float
@@ -94,6 +197,28 @@ class FeatureVector:
     volatility_change: float = 0.0
     elapsed_time: float = 0.0
     text_embedding: list[float] | None = None
+    # Rich-feature payload (PR #173). Default values match
+    # "all-zero / no-signal" so a FeatureVector built via the legacy
+    # constructors round-trips ``as_rich_list`` to the existing
+    # ``as_list`` plus zero-padding. The loader sets ``rich_payload``
+    # to ``True`` after populating the trailing fields; the tensor
+    # builder dispatches on that flag.
+    credibility_drift_score: float = 0.0
+    credibility_realized_vs_stated_gap: float = 0.0
+    credibility_market_implied_gap: float = 0.0
+    credibility_months_since_reversal: float = 0.0
+    linguistic_features: list[float] | None = None
+    mp_surprise_level: float = 0.0
+    mp_surprise_path_factor: float = 0.0
+    fed_info_factor: float = 0.0
+    mp_is_intermeeting: float = 0.0
+    axis_factor: float = 0.0
+    axis_factor_missing: float = 1.0
+    axis_certainty: float = 0.0
+    axis_certainty_missing: float = 1.0
+    axis_time: float = 0.0
+    axis_time_missing: float = 1.0
+    rich_payload: bool = False
 
     @classmethod
     def from_market_state(
@@ -136,6 +261,43 @@ class FeatureVector:
             max(min(float(self.volatility_change), 1.0), -1.0),
             float(self.elapsed_time) / 30.0,
         ]
+
+    def as_rich_list(self, close_scale: float = DEFAULT_CLOSE_SCALE) -> list[float]:
+        """Emit the full 35-dim per-bar feature vector.
+
+        Layout matches the slice constants at the top of this module
+        and the docstring on :class:`FeatureVector`. The first six
+        positions are byte-identical to :meth:`as_list` so models
+        widened to ``RICH_FEATURE_SIZE`` still see the legacy market
+        signal in positions ``[0:6]``.
+        """
+
+        market = self.as_list(close_scale=close_scale)
+        credibility = [
+            float(self.credibility_drift_score),
+            float(self.credibility_realized_vs_stated_gap),
+            float(self.credibility_market_implied_gap),
+            float(self.credibility_months_since_reversal),
+        ]
+        linguistic_source = self.linguistic_features or []
+        linguistic = [float(v) for v in linguistic_source[:RICH_LINGUISTIC_DIM]]
+        if len(linguistic) < RICH_LINGUISTIC_DIM:
+            linguistic = linguistic + [0.0] * (RICH_LINGUISTIC_DIM - len(linguistic))
+        mp_surprise = [
+            float(self.mp_surprise_level),
+            float(self.mp_surprise_path_factor),
+            float(self.fed_info_factor),
+            float(self.mp_is_intermeeting),
+        ]
+        multi_axis = [
+            float(self.axis_factor),
+            float(self.axis_factor_missing),
+            float(self.axis_certainty),
+            float(self.axis_certainty_missing),
+            float(self.axis_time),
+            float(self.axis_time_missing),
+        ]
+        return market + credibility + linguistic + mp_surprise + multi_axis
 
 
 def build_lookback_sequence(vectors: Iterable[FeatureVector], length: int = SEQUENCE_LENGTH) -> list[FeatureVector]:
