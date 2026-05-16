@@ -45,6 +45,7 @@ dev = [
   "hypothesis",
   "ruff",
   "mypy",
+  "py-spy>=0.3.14",
 ]
 gpu = []
 

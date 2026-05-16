@@ -14,6 +14,12 @@ COPY pyproject.toml ./
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir ".[dev]"
 
+# py-spy is the on-demand sampling profiler used by docs/perf/*.svg captures;
+# it needs the same image so attaching to the uvicorn worker does not require
+# a host-side install. The CPython binary in this image lets py-spy resolve
+# native frames without the ptrace caveats of an alpine base.
+RUN pip install --no-cache-dir py-spy>=0.3.14
+
 COPY . .
 
 EXPOSE 8000
