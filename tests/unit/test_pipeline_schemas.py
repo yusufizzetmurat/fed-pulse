@@ -173,6 +173,12 @@ def _macro_state_row(**overrides) -> dict:
         "ism_proxy": 0.1,
         "payems_mom": 200_000.0,
         "rsafs_mom": 0.005,
+        "treas_10y": 4.0,
+        "slope_10y_2y": 0.45,
+        "slope_10y_3m": -0.20,
+        "hy_oas": 400.0,
+        "nfci": -0.30,
+        "tips_10y_real": 2.0,
         "ism_proxy_source": "MANEMP_3m_pct",
     }
     base.update(overrides)
