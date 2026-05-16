@@ -61,11 +61,19 @@ def _series_payload(
     }
 
 
+def _daily_dates(start: _dt.date, count: int) -> list[_dt.date]:
+    return [start + _dt.timedelta(days=i) for i in range(count)]
+
+
 def _build_canned_fred_responses() -> dict[str, fred_client.FredSeriesResponse]:
-    """Hand-built FRED responses covering 2018-2024 monthly.
+    """Hand-built FRED responses covering 2018-2024.
 
     Values are smoothly increasing per series so YoY / MoM transforms
     produce non-zero, non-NaN signals that the as-of join can read.
+    The monthly panel uses month-start reference dates; the rates +
+    financial-conditions panel uses daily reference dates for the
+    Treasury / spread / OAS / TIPS series, and weekly Friday reference
+    dates for NFCI.
     """
 
     months = _months_of(_dt.date(2018, 1, 1), 84)  # 7 years
@@ -97,6 +105,33 @@ def _build_canned_fred_responses() -> dict[str, fred_client.FredSeriesResponse]:
         # Parse via fred_client's own parser so we get the same shape
         # the production code will see.
         responses[sid] = fred_client._parse_observations(payload, sid)
+
+    # Daily rates panel: 7 years of calendar-daily observations. Values
+    # are smooth so every as-of date inside the canned window finds a
+    # non-NaN strictly-before value.
+    daily_dates = _daily_dates(_dt.date(2018, 1, 1), 365 * 7)
+    daily_series_inputs = {
+        "DGS10": [2.0 + 0.001 * i for i in range(len(daily_dates))],
+        "T10Y2Y": [0.5 - 0.0002 * i for i in range(len(daily_dates))],
+        "T10Y3M": [0.7 - 0.0003 * i for i in range(len(daily_dates))],
+        "BAMLH0A0HYM2": [3.5 + 0.0005 * i for i in range(len(daily_dates))],
+        "DFII10": [0.4 + 0.0001 * i for i in range(len(daily_dates))],
+    }
+    for sid, vals in daily_series_inputs.items():
+        observations = [(d.isoformat(), v) for d, v in zip(daily_dates, vals)]
+        payload = _series_payload(observations)
+        responses[sid] = fred_client._parse_observations(payload, sid)
+
+    # NFCI: weekly Friday observations. 2018-01-05 is the first Friday
+    # of 2018; every subsequent observation lands 7 days later.
+    first_friday = _dt.date(2018, 1, 5)
+    n_weeks = 52 * 7
+    nfci_dates = [first_friday + _dt.timedelta(days=7 * i) for i in range(n_weeks)]
+    nfci_vals = [-0.5 + 0.001 * i for i in range(n_weeks)]
+    nfci_observations = [(d.isoformat(), v) for d, v in zip(nfci_dates, nfci_vals)]
+    responses["NFCI"] = fred_client._parse_observations(
+        _series_payload(nfci_observations), "NFCI"
+    )
     return responses
 
 
@@ -164,6 +199,127 @@ def test_build_macro_state_raises_on_missing_series() -> None:
             end=_dt.date(2020, 6, 30),
             fred_responses=responses,
         )
+
+
+def test_rates_panel_columns_present_and_typed() -> None:
+    """The 12-column macro panel emits the rates + financial-conditions slice."""
+
+    responses = _build_canned_fred_responses()
+    artifacts = macro_state.build_macro_state(
+        start=_dt.date(2022, 1, 3),
+        end=_dt.date(2022, 1, 7),
+        fred_responses=responses,
+        publication_delay_days=30,
+    )
+    df = artifacts.frame
+    rates_columns = (
+        "treas_10y",
+        "slope_10y_2y",
+        "slope_10y_3m",
+        "hy_oas",
+        "nfci",
+        "tips_10y_real",
+    )
+    for column in rates_columns:
+        assert column in df.columns, f"missing rates-panel column {column}"
+        # Daily-cadence canned data covers the window, so every row
+        # must read a non-None value off the strictly-before join.
+        non_null = df[column].dropna()
+        assert not non_null.empty, f"rates-panel column {column} has no rows"
+        # Every non-null value must coerce to float (level data).
+        for v in non_null:
+            assert isinstance(v, float), f"{column} value not float: {v!r}"
+
+
+def test_macro_state_column_order_pins_rates_panel_layout() -> None:
+    """``COLUMN_ORDER`` lists the rates panel between rsafs_mom and ism_proxy_source."""
+
+    order = list(macro_state.COLUMN_ORDER)
+    assert order.index("rsafs_mom") < order.index("treas_10y")
+    assert order.index("tips_10y_real") < order.index("ism_proxy_source")
+    rates_layout = (
+        "treas_10y",
+        "slope_10y_2y",
+        "slope_10y_3m",
+        "hy_oas",
+        "nfci",
+        "tips_10y_real",
+    )
+    rates_positions = [order.index(c) for c in rates_layout]
+    assert rates_positions == sorted(rates_positions), (
+        f"rates panel columns out of contiguous order: {rates_positions}"
+    )
+
+
+def test_nfci_publication_delay_is_five_days() -> None:
+    """NFCI carries a 5-day publication delay; the daily series carry zero."""
+
+    delays = macro_state.RATES_PANEL_PUBLICATION_DELAYS_DAYS
+    assert delays["NFCI"] == 5
+    for series_id in ("DGS10", "T10Y2Y", "T10Y3M", "BAMLH0A0HYM2", "DFII10"):
+        assert delays[series_id] == 0, (
+            f"{series_id} should carry a zero-day publication delay"
+        )
+
+
+def test_nfci_publication_delay_pushes_friday_observation_to_following_thursday() -> None:
+    """The 5-day shift parks each Friday NFCI observation strictly after
+    the following Tuesday, so a Wednesday as-of-date reading strictly-<
+    sees the prior Friday's print only after the Wednesday publication
+    window has closed.
+    """
+
+    responses = _build_canned_fred_responses()
+    # 2022-04-08 (Friday) NFCI observation -> publication on 2022-04-13
+    # (Wednesday) under the 5-day delay. A Wednesday-2022-04-13 as-of
+    # date reading strictly-< must therefore NOT see the 2022-04-08
+    # value yet; a Thursday-2022-04-14 as-of date MUST see it.
+    as_of_dates = [_dt.date(2022, 4, 13), _dt.date(2022, 4, 14)]
+    artifacts = macro_state.build_macro_state(
+        start=_dt.date(2022, 1, 1),
+        end=_dt.date(2022, 12, 31),
+        fred_responses=responses,
+        as_of_dates=as_of_dates,
+    )
+    by_date = {row["as_of_date"]: row for _, row in artifacts.frame.iterrows()}
+    wednesday = by_date["2022-04-13"]
+    thursday = by_date["2022-04-14"]
+    # Wednesday: the latest NFCI observation visible is 2022-04-01
+    # (pub_date 2022-04-06, strictly before 2022-04-13). Thursday: the
+    # 2022-04-08 observation has pub_date 2022-04-13, strictly before
+    # 2022-04-14, so it is now visible. The two reads must therefore
+    # come from different observation rows, i.e. their NFCI values
+    # differ.
+    assert wednesday["nfci"] is not None
+    assert thursday["nfci"] is not None
+    assert thursday["nfci"] != wednesday["nfci"]
+
+
+def test_sources_lock_records_rates_panel_publication_delays(tmp_path: Path) -> None:
+    """SOURCES.lock carries the rates-panel column map + delay map so the
+    publication-delay contract round-trips through the parquet."""
+
+    responses = _build_canned_fred_responses()
+    artifacts = macro_state.build_macro_state(
+        start=_dt.date(2022, 1, 3),
+        end=_dt.date(2022, 1, 7),
+        fred_responses=responses,
+    )
+    output_path = tmp_path / "macro_state.parquet"
+    sha = macro_state.write_macro_state_parquet(artifacts.frame, output_path)
+    lock_path = tmp_path / fred_client.SOURCES_LOCK_NAME
+    macro_state.update_sources_lock(
+        lock_path=lock_path,
+        artifacts=artifacts,
+        parquet_path=output_path,
+        parquet_sha256=sha,
+    )
+    entry = json.loads(lock_path.read_text())[macro_state.DEFAULT_LOCK_KEY]
+    assert entry["rates_panel_publication_delays_days"]["NFCI"] == 5
+    assert entry["rates_panel_publication_delays_days"]["DGS10"] == 0
+    assert entry["rates_panel_columns"]["DGS10"] == "treas_10y"
+    assert entry["rates_panel_columns"]["NFCI"] == "nfci"
+    assert set(entry["fred_series"]) == set(macro_state.FRED_SERIES_IDS)
 
 
 def test_publication_delay_shifts_as_of_window() -> None:

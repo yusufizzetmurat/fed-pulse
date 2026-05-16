@@ -1100,6 +1100,51 @@ def write_linguistic_parquet(df: pd.DataFrame, output_path: Path) -> None:
     df.to_parquet(output_path, engine="pyarrow", index=False, compression="snappy")
 
 
+def update_sources_lock_for_linguistic_features(
+    *,
+    lock_path: Path,
+    parquet_path: Path,
+    frame: pd.DataFrame,
+    lock_key: str = "linguistic_features",
+) -> None:
+    """Persist provenance for the linguistic-features parquet.
+
+    Writes a JSON entry under ``lock_key`` recording the parquet
+    sha256, row count, column list, and retrieval timestamp so a
+    downstream consumer can confirm the parquet matches the documented
+    15-column contract without reading the file.
+    """
+
+    import datetime as _dt
+    import hashlib
+    import json as _json
+
+    digest = hashlib.sha256()
+    digest.update(parquet_path.read_bytes())
+    sha = digest.hexdigest()
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    existing: dict[str, object] = {}
+    if lock_path.exists():
+        try:
+            existing = _json.loads(lock_path.read_text(encoding="utf-8"))
+        except _json.JSONDecodeError:
+            existing = {}
+    feature_columns = [c for c in frame.columns if c != "text_hash"]
+    existing[lock_key] = {
+        "parquet_path": parquet_path.name,
+        "sha256": sha,
+        "rows": int(len(frame)),
+        "columns": list(frame.columns),
+        "feature_columns": feature_columns,
+        "feature_column_count": len(feature_columns),
+        "retrieved_at_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+    }
+    lock_path.write_text(
+        _json.dumps(existing, indent=2, sort_keys=True), encoding="utf-8"
+    )
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1143,6 +1188,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not output_path.is_absolute():
         output_path = package_dir / output_path
     write_linguistic_parquet(frame, output_path)
+    update_sources_lock_for_linguistic_features(
+        lock_path=package_dir / "SOURCES.lock",
+        parquet_path=output_path,
+        frame=frame,
+    )
 
     model_path = Path(args.model_output)
     if not model_path.is_absolute():

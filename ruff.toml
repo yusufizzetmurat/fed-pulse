@@ -41,6 +41,9 @@ ignore = [
 # Tests are intentionally not a package (no __init__.py) and test
 # fixtures naturally pile up positional arguments.
 "tests/**/*.py" = ["C901", "PLR0913", "INP001"]
+# Scripts are top-level entrypoints, not a package; CLI builders accept a
+# fan-out of keyword arguments by design.
+"scripts/**/*.py" = ["C901", "PLR0913", "INP001"]
 # Backend-side debt is keyed in backend/pyproject.toml; root invocations
 # delegate to it implicitly by ignoring the same rules on backend paths.
 "backend/app/audit.py" = ["PLR0913"]

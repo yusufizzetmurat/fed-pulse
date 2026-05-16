@@ -84,6 +84,20 @@ encoders:
     task: sentence_embedding
     description: Nomic embed text v1.5. Sentence-embedding encoder; second bake-off entry alongside BGE.
 
+  voyage_finance_2:
+    repo: voyageai/voyage-finance-2
+    revision: voyage-finance-2
+    gated: true
+    task: sentence_embedding
+    description: |
+      Voyage AI voyage-finance-2 sentence-embedding encoder (1024-dim,
+      finance-tuned). Served by Voyage's hosted REST API, not the
+      Hugging Face hub, so the cache builder lives at
+      ``scripts/cache_voyage_embeddings.py`` rather than going through
+      ``app.data.embedding_cache``. ``VOYAGE_API_KEY`` must be set;
+      Voyage does not publish a checkpoint sha, so the revision field
+      pins the model name itself.
+
   finbert_fed_adjacent:
     repo: local/finbert-fed-adjacent
     revision: ""

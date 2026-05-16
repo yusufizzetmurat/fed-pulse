@@ -780,3 +780,51 @@ def test_rich_features_ignored_when_mp_parquet_missing(
     # Linguistic + mp-surprise slices zero (parquet missing).
     assert target[RICH_LINGUISTIC_SLICE] == [0.0] * RICH_LINGUISTIC_DIM
     assert target[RICH_MP_SURPRISE_SLICE] == [0.0] * RICH_MP_SURPRISE_DIM
+
+
+def test_rebuilt_assets_drive_nonzero_mp_surprise_and_pivot_distance(
+    rich_feature_package_dir: Path,
+) -> None:
+    """End-to-end contract: post-rebuild parquets put nonzero values in
+    both the MP-surprise slice and the ``pivot_distance`` position of
+    the linguistic slice.
+
+    The rich_feature_package_dir fixture mirrors the shape produced by
+    the post-PR-#173 emitters (``mp_surprises.parquet`` keyed on
+    ``event_date`` and ``linguistic_features.parquet`` with the
+    15-column schema including ``pivot_distance``). This test confirms
+    that the rebuilt artefacts feed the rich-feature slice without
+    falling back to the all-zeros path that the pre-PR-#173 loader hit.
+    """
+
+    sequences = loaders.load_training_sequences_from_package(
+        _RICH_PACKAGE_ID, rich_features=True
+    )
+    assert len(sequences) == 3
+
+    # ``pivot_distance`` sits at the trailing slot of the linguistic
+    # 15-vector (column index 14 within ``_LINGUISTIC_FEATURE_COLUMNS``).
+    pivot_distance_offset = RICH_LINGUISTIC_DIM - 1
+    pivot_distance_global = RICH_LINGUISTIC_SLICE.start + pivot_distance_offset
+
+    nonzero_pivot_seen = False
+    nonzero_mp_seen = False
+    for sequence in sequences:
+        for vector in sequence:
+            if vector.date.startswith("2024-03"):
+                # hash_no_ling has no linguistic row -> the slice
+                # collapses to zero by design; skip when validating
+                # pivot_distance is wired.
+                continue
+            rich = vector.as_rich_list()
+            if rich[pivot_distance_global] != 0.0:
+                nonzero_pivot_seen = True
+            if rich[RICH_MP_SURPRISE_SLICE][0] != 0.0:
+                nonzero_mp_seen = True
+    assert nonzero_pivot_seen, (
+        "linguistic_features.parquet rebuild did not feed pivot_distance "
+        "into the rich-feature slice"
+    )
+    assert nonzero_mp_seen, (
+        "mp_surprises.parquet did not feed the MP-surprise slice"
+    )

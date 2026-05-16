@@ -71,14 +71,18 @@ class FredSeriesResponse:
 
 def _resolve_api_key(api_key: str | None) -> str:
     if api_key:
-        return api_key
+        return api_key.strip()
     env_value = os.environ.get("FRED_API_KEY") or os.environ.get("FRED_TOKEN")
     if not env_value:
         raise RuntimeError(
             "FRED_API_KEY (or FRED_TOKEN) not set. Get a free key at "
             "https://fred.stlouisfed.org/docs/api/api_key.html."
         )
-    return env_value
+    # Strip surrounding whitespace -- env-file editors often leave a
+    # trailing space after the value, which httpx URL-encodes to ``+``
+    # and FRED rejects with a 400. The defensive strip keeps the
+    # builder usable against operator-edited dotenv files.
+    return env_value.strip()
 
 
 def _cache_paths(series_id: str, cache_dir: Path) -> tuple[Path, Path]:
