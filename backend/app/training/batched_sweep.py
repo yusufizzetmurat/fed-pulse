@@ -357,3 +357,116 @@ class StackedDLinear(nn.Module):
         close = raw[..., 0:1]
         volatility = nn.functional.softplus(raw[..., 1:2])
         return torch.cat([close, volatility], dim=-1)
+
+
+class BatchedAdamW:
+    """AdamW variant with per-cell ``lr`` and ``weight_decay``.
+
+    The optimiser keeps Adam's first and second moments as stacked
+    tensors of shape ``(N, *param_shape)`` for each registered
+    parameter. ``lr`` and ``weight_decay`` are length-``N`` tensors
+    broadcast along the parameter axes at the step. The implementation
+    follows the decoupled AdamW update (the weight-decay term is
+    applied to the parameters directly, not folded into the gradient),
+    matching ``torch.optim.AdamW``'s default.
+
+    The class is deliberately not a ``torch.optim.Optimizer`` subclass
+    because it operates on stacked tensors, not on a list of separate
+    ``Parameter`` objects -- the standard optimizer base class assumes
+    the latter and reaches into ``.grad`` on the parameter directly,
+    which is the wrong invariant when the per-cell gradients come from
+    ``torch.func.grad``.
+    """
+
+    def __init__(
+        self,
+        params: dict[str, torch.Tensor],
+        *,
+        lr: torch.Tensor,
+        weight_decay: torch.Tensor,
+        betas: tuple[float, float] = (0.9, 0.999),
+        eps: float = 1e-8,
+    ):
+        if lr.ndim != 1 or weight_decay.ndim != 1:
+            raise ValueError(
+                "BatchedAdamW lr and weight_decay must be 1-D (per-cell)"
+            )
+        if lr.shape[0] != weight_decay.shape[0]:
+            raise ValueError(
+                "BatchedAdamW lr and weight_decay must have the same length"
+            )
+        self._bucket_size = int(lr.shape[0])
+        for name, tensor in params.items():
+            if tensor.shape[0] != self._bucket_size:
+                raise ValueError(
+                    f"BatchedAdamW parameter {name!r} has leading dim "
+                    f"{tensor.shape[0]}; expected bucket size {self._bucket_size}"
+                )
+        self.params: dict[str, torch.Tensor] = params
+        self.lr = lr.detach().clone()
+        self.weight_decay = weight_decay.detach().clone()
+        self.beta1, self.beta2 = betas
+        self.eps = float(eps)
+        self.step_count = 0
+        # First and second moment tensors, one per parameter. Each
+        # lives on the same device + dtype as the parameter it tracks.
+        self._m: dict[str, torch.Tensor] = {
+            name: torch.zeros_like(tensor) for name, tensor in params.items()
+        }
+        self._v: dict[str, torch.Tensor] = {
+            name: torch.zeros_like(tensor) for name, tensor in params.items()
+        }
+
+    @property
+    def bucket_size(self) -> int:
+        return self._bucket_size
+
+    def step(
+        self,
+        grads: dict[str, torch.Tensor],
+        *,
+        active_mask: torch.Tensor | None = None,
+    ) -> None:
+        """Apply one optimiser step against the per-parameter gradients.
+
+        ``active_mask`` (optional) is a 1-D boolean tensor of length
+        ``bucket_size``. Cells with ``active_mask[i] == False`` are
+        treated as frozen for this step: their parameters are not
+        updated. This is how early-stopped cells stay in the stacked
+        forward without continuing to learn.
+        """
+
+        self.step_count += 1
+        for name, param in self.params.items():
+            grad = grads.get(name)
+            if grad is None:
+                continue
+            m = self._m[name]
+            v = self._v[name]
+            # AdamW moment updates (in-place to spare the allocator).
+            m.mul_(self.beta1).add_(grad, alpha=1.0 - self.beta1)
+            v.mul_(self.beta2).addcmul_(grad, grad, value=1.0 - self.beta2)
+            # Bias correction.
+            bias_correction1 = 1.0 - self.beta1**self.step_count
+            bias_correction2 = 1.0 - self.beta2**self.step_count
+            m_hat = m / bias_correction1
+            v_hat = v / bias_correction2
+            # Per-cell lr / weight_decay broadcast over the param's
+            # tail dims. The leading dim is the bucket axis.
+            bc_shape = (self._bucket_size,) + (1,) * (param.ndim - 1)
+            lr_view = self.lr.view(bc_shape).to(
+                dtype=param.dtype, device=param.device
+            )
+            wd_view = self.weight_decay.view(bc_shape).to(
+                dtype=param.dtype, device=param.device
+            )
+            update = lr_view * m_hat / (torch.sqrt(v_hat) + self.eps)
+            # Decoupled weight decay: param <- param - lr * wd * param.
+            wd_term = lr_view * wd_view * param
+            delta = update + wd_term
+            if active_mask is not None:
+                mask_view = active_mask.to(
+                    dtype=param.dtype, device=param.device
+                ).view(bc_shape)
+                delta = delta * mask_view
+            param.sub_(delta)

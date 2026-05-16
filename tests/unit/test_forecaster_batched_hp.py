@@ -18,6 +18,7 @@ torch = pytest.importorskip("torch")
 from app.models.config import ModelConfig  # noqa: E402
 from app.train_forecaster import build_sweep_candidates  # noqa: E402
 from app.training.batched_sweep import (  # noqa: E402
+    BatchedAdamW,
     BatchedDropout,
     BucketKey,
     bucket_key_for_candidate,
@@ -256,6 +257,86 @@ def test_batched_dropout_rejects_out_of_range_p():
         BatchedDropout(torch.tensor([0.1, 1.5]))
     with pytest.raises(ValueError):
         BatchedDropout(torch.tensor([-0.1, 0.5]))
+
+
+def test_batched_adam_per_cell_lr_wd():
+    """A single Adam step moves each cell by its own per-cell lr.
+
+    The test stacks three cells with the same gradient but different
+    learning rates and zero weight decay. After one step, the change
+    in the parameter for cell i is approximately
+    -lr_i * grad / sqrt(grad^2 + eps), which is just -lr_i * sign(grad)
+    when |grad| dominates eps. The expected ratios across cells must
+    hold to within floating-point precision.
+    """
+
+    # Three cells: lr in {1e-3, 2e-3, 4e-3}, weight decay = 0.
+    lr = torch.tensor([1e-3, 2e-3, 4e-3])
+    wd = torch.zeros(3)
+    # Single parameter shaped (3, 2) -- 3 cells, 2 weights each.
+    params = {"w": torch.ones(3, 2)}
+    initial = params["w"].clone()
+    opt = BatchedAdamW(params, lr=lr, weight_decay=wd)
+    grads = {"w": torch.ones(3, 2)}
+    opt.step(grads)
+    # Each cell's parameter should decrease by approximately its lr
+    # (because the first Adam step normalizes the gradient to unit
+    # magnitude via bias correction). The expected delta is
+    # -lr * 1.0 to within ~1e-9.
+    delta = params["w"] - initial
+    for i in range(3):
+        expected = -float(lr[i])
+        observed = float(delta[i, 0])
+        assert abs(observed - expected) < 1e-7, (
+            f"cell {i}: expected delta ~{expected}, got {observed}"
+        )
+    # Cross-cell ratios should match the lr ratios (float32 precision).
+    ratio_1_to_0 = float(delta[1, 0] / delta[0, 0])
+    ratio_2_to_0 = float(delta[2, 0] / delta[0, 0])
+    assert abs(ratio_1_to_0 - 2.0) < 1e-4
+    assert abs(ratio_2_to_0 - 4.0) < 1e-4
+
+
+def test_batched_adam_per_cell_weight_decay():
+    """Decoupled weight decay scales the update by lr * wd * param.
+
+    With zero gradient (so the Adam moments stay zero), one step
+    against per-cell weight decay produces ``param <- param * (1 - lr * wd)``.
+    Cells with wd=0 stay put; cells with wd>0 shrink proportionally.
+    """
+
+    lr = torch.tensor([1.0, 1.0, 1.0])
+    wd = torch.tensor([0.0, 0.1, 0.2])
+    params = {"w": torch.ones(3, 4)}
+    opt = BatchedAdamW(params, lr=lr, weight_decay=wd)
+    grads = {"w": torch.zeros(3, 4)}
+    opt.step(grads)
+    # No gradient means no Adam-update component; only the wd term
+    # applies. param[i] <- param[i] * (1 - lr_i * wd_i).
+    expected = torch.tensor(
+        [
+            [1.0, 1.0, 1.0, 1.0],
+            [0.9, 0.9, 0.9, 0.9],
+            [0.8, 0.8, 0.8, 0.8],
+        ]
+    )
+    assert torch.allclose(params["w"], expected, atol=1e-7)
+
+
+def test_batched_adam_active_mask_freezes_cells():
+    """Cells whose active_mask is False do not update on the step."""
+
+    lr = torch.tensor([1e-3, 1e-3])
+    wd = torch.zeros(2)
+    params = {"w": torch.ones(2, 3)}
+    initial = params["w"].clone()
+    opt = BatchedAdamW(params, lr=lr, weight_decay=wd)
+    grads = {"w": torch.ones(2, 3)}
+    mask = torch.tensor([True, False])
+    opt.step(grads, active_mask=mask)
+    # Cell 0 moves; cell 1 stays put.
+    assert not torch.equal(params["w"][0], initial[0])
+    assert torch.equal(params["w"][1], initial[1])
 
 
 def test_buckets_preserve_first_seen_order():
