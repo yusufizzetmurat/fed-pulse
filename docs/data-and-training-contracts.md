@@ -293,6 +293,70 @@ The output parquet lands under `data/external/fred/`. Pass
 `--methodology ff_futures` only when a real CME settlement source has
 been wired (out of scope for #146).
 
+### `macro_state.parquet` — FOMC decision-eve macro snapshot
+
+Path: `data/external/fred/macro_state.parquet`. Built by
+`backend/app/data/macro_state.py`; closes #147. One row per business
+day in `[start, end]` carrying the last published value strictly
+before that day for every FRED indicator listed below. The as-of join
+applies `publication_delay_days` (default 30) to monthly observations
+to mirror the conservative BLS / BEA release lag.
+
+Columns (twelve numeric series plus the four bookkeeping columns):
+
+| column            | FRED series      | transform                                    |
+| ----------------- | ---------------- | -------------------------------------------- |
+| `unrate`          | `UNRATE`         | level (% civilian unemployment)              |
+| `cpi_yoy`         | `CPIAUCSL`       | 12-month log-change × 100 (% YoY)            |
+| `core_pce_yoy`    | `PCEPILFE`       | 12-month log-change × 100 (% YoY)            |
+| `ism_proxy`       | `MANEMP`         | 3-month % change (documented NAPM proxy)     |
+| `payems_mom`      | `PAYEMS`         | MoM change in thousands of jobs              |
+| `rsafs_mom`       | `RSAFS`          | MoM % change in retail sales                 |
+| `treas_10y`       | `DGS10`          | level (% 10y Treasury constant maturity)     |
+| `slope_10y_2y`    | `T10Y2Y`         | level (% 10y - 2y slope)                     |
+| `slope_10y_3m`    | `T10Y3M`         | level (% 10y - 3m slope, recession signal)   |
+| `hy_oas`          | `BAMLH0A0HYM2`   | level (% ICE BofA HY OAS)                    |
+| `nfci`            | `NFCI`           | level (Chicago Fed NFCI; 5-day pub delay)    |
+| `tips_10y_real`   | `DFII10`         | level (% 10y TIPS real yield)                |
+
+Plus `as_of_date` (ISO date string), `ism_proxy_source`
+(`MANEMP_3m_pct`), `publication_delay_days` (monthly-panel delay), and
+`data_version` (short sha over FRED inputs + rates-panel delay map).
+Daily Treasury / spread / OAS / TIPS series ship with a zero-day
+publication delay; NFCI carries a 5-day delay so a Friday-dated print
+is visible the following Wednesday. The SOURCES.lock entry persists
+the per-series delay map and the column mapping so the join contract
+round-trips through the artefact.
+
+CLI:
+
+```
+python -m app.data.macro_state \
+    --start 2010-01-01 --end today \
+    --output data/external/fred/macro_state.parquet
+```
+
+## Encoder embedding cache
+
+Sentence-embedding and chunk-pool encoders cache one parquet per
+`(encoder_alias, training_package_id)` under
+`data/raw/embeddings/<encoder_alias>_<rev_slug>.parquet`. Each row has
+`record_id`, `doc_id`, `event_date`, `chunk_index`, `chunk_preview`,
+and a `embedding` list. The per-encoder SOURCES.lock at
+`data/raw/embeddings/SOURCES.lock` is JSON Lines (one entry per
+encoder revision) and carries the encoder alias, model repo /
+revision, registry sha256, parquet sha256, row count, and retrieval
+timestamp.
+
+The cache set covers the bake-off encoders shipped through
+`backend/app/data/embedding_cache.py` (FinBERT, FinBERT-FOMC,
+BGE-large-en-v1.5, Nomic-embed-text-v1.5, FinBERT-fed-adjacent,
+BERT-base-fed-adjacent) plus voyage-finance-2 (1024-dim,
+finance-tuned) served by the hosted Voyage REST API. Voyage entries
+land via `scripts/cache_voyage_embeddings.py --allow-network`; the
+SOURCES.lock format is identical to the Hugging Face encoders so a
+downstream consumer reads voyage rows with no shape change.
+
 ## Structured linguistic features (Phase 8)
 
 `backend/app/features/linguistic.py` emits a 15-dim interpretable
@@ -444,11 +508,19 @@ Per-meeting feature row at meeting `N`:
   `fed_info_factor`, and the `ff_target_prior` / `ff_target_after`
   used to reconstruct the target.
 - `linguistic_features.parquet` (`data/processed/<pkg>/`) joins on
-  `text_hash` and contributes the 14 structured features from #149.
+  `text_hash` and contributes the 15 structured features
+  (14 from #149 plus `pivot_distance` from #166).
 - `macro_state.parquet` (`data/external/fred/`) provides per-as-of-date
   snapshots of UNRATE, CPI YoY, core PCE YoY, ISM proxy
   (`MANEMP_3m_pct`, documented substitute for the paywalled NAPM
-  series), nonfarm-payroll MoM change, and retail-sales MoM.
+  series), nonfarm-payroll MoM change, retail-sales MoM, and the
+  rates + financial-conditions panel: 10-year Treasury yield
+  (`treas_10y`), 10y-2y slope (`slope_10y_2y`), 10y-3m slope
+  (`slope_10y_3m`), ICE BofA High-Yield OAS (`hy_oas`), Chicago Fed
+  National Financial Conditions Index (`nfci`, 5-day publication
+  delay), and 10y TIPS real yield (`tips_10y_real`). Twelve numeric
+  columns in total alongside `as_of_date`, `ism_proxy_source`,
+  `publication_delay_days`, and `data_version`.
 
 ### OIS-implied baseline (sigma = 12.5 bp)
 
