@@ -43,7 +43,11 @@ from app.services.forecaster import (
     inspect_training_data_sources,
     train_model,
 )
-from app.training.loaders import load_training_sequences_from_package
+from app.training.loaders import (
+    WalkForwardSplit,
+    load_training_sequences_from_package,
+    load_walk_forward_split,
+)
 
 # Official seed set for the multi-architecture sweep (mirrors the NLP bake-off
 # protocol in ``docs/benchmark-policy.md``).
@@ -447,6 +451,33 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--folds",
+        nargs="+",
+        default=None,
+        help=(
+            "Walk-forward fold ids from "
+            "fold_manifest_expanding_walk_forward.json (e.g. wf_fold_1 "
+            "wf_fold_2 wf_fold_3 wf_fold_4). When set, each cell trains "
+            "once per (architecture, seed, hp_combo, fold). The per-fold "
+            "splits come from the manifest's expanding-window date "
+            "ranges; the val + test partitions are honoured separately "
+            "by the training loop. Ignored when "
+            "--training-package-id is unset."
+        ),
+    )
+    parser.add_argument(
+        "--protocol",
+        choices=("auto", "single-fold", "walk-forward"),
+        default="auto",
+        help=(
+            "Force the split protocol. 'auto' (default) routes to "
+            "walk-forward when --folds is supplied and to single-fold "
+            "(package's splits_train_val_test.parquet) otherwise. "
+            "'single-fold' / 'walk-forward' override the auto choice. "
+            "Ignored when --training-package-id is unset."
+        ),
+    )
+    parser.add_argument(
         "--target-mode",
         choices=("event_study", "realized_return"),
         default="event_study",
@@ -704,6 +735,24 @@ def sample_random_search_subset(
     return [(int(idx), dict(hp_grid[int(idx)])) for idx in indices]
 
 
+def _resolved_fold_ids(args: argparse.Namespace) -> list[str | None]:
+    """Return the fold ids the candidate enumeration iterates over.
+
+    The list always has at least one entry. On the single-fold path the
+    entry is ``None`` (the trainer reads
+    ``splits_train_val_test.parquet`` for the package's default
+    partition); on the walk-forward path the list mirrors the
+    ``--folds`` argument verbatim, so each candidate cell expands to
+    ``len(folds)`` trials.
+    """
+
+    folds = getattr(args, "folds", None) or []
+    folds = [str(f).strip() for f in folds if str(f).strip()]
+    if not folds:
+        return [None]
+    return list(folds)
+
+
 def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
     architectures = args.architectures or [args.architecture]
     # When the caller asks for an architecture sweep but doesn't list seeds we
@@ -715,6 +764,8 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
         seeds = list(DEFAULT_SWEEP_SEEDS)
     else:
         seeds = [args.seed]
+
+    fold_ids = _resolved_fold_ids(args)
 
     use_random_search = bool(getattr(args, "random_search", False))
     text_embedding_dim = _resolve_text_embedding_dim(args)
@@ -734,8 +785,8 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
         for architecture, seed in itertools.product(architectures, seeds):
             for hp_combo_id, hp in sampled_hp:
                 text_adapter_dim = int(hp["text_adapter_dim"])
-                candidates.append(
-                    {
+                for fold_id in fold_ids:
+                    candidate = {
                         "model_config": ModelConfig(
                             input_size=_resolved_input_size(args),
                             hidden_size=hp["hidden_size"],
@@ -754,7 +805,9 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                         "seed": int(seed) if seed is not None else None,
                         "hp_combo_id": int(hp_combo_id),
                     }
-                )
+                    if fold_id is not None:
+                        candidate["fold_id"] = fold_id
+                    candidates.append(candidate)
         return candidates
 
     # Exhaustive path: byte-identical to the pre-PR enumeration order so
@@ -797,8 +850,8 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
         text_adapter_dims,
         seeds,
     ):
-        candidates.append(
-            {
+        for fold_id in fold_ids:
+            candidate = {
                 "model_config": ModelConfig(
                     input_size=_resolved_input_size(args),
                     hidden_size=hidden_size,
@@ -816,7 +869,9 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                 "text_adapter_dim": int(text_adapter_dim),
                 "seed": int(seed) if seed is not None else None,
             }
-        )
+            if fold_id is not None:
+                candidate["fold_id"] = fold_id
+            candidates.append(candidate)
     return candidates
 
 
@@ -824,6 +879,8 @@ def _flatten_trial_record(record: dict[str, Any]) -> dict[str, Any]:
     summary = record["summary"]
     metrics = summary.get("metrics") or {}
     train_metrics = summary.get("train_metrics") or {}
+    val_metrics = summary.get("val_metrics") or {}
+    test_metrics = summary.get("test_metrics") or {}
     model_config = summary.get("model_config") or {}
     flattened: dict[str, Any] = {
         "trial_index": record["trial_index"],
@@ -855,6 +912,19 @@ def _flatten_trial_record(record: dict[str, Any]) -> dict[str, Any]:
         "train_close_rmse": train_metrics.get("close_rmse"),
         "train_volatility_rmse": train_metrics.get("volatility_rmse"),
         "train_loss": train_metrics.get("loss"),
+        # Walk-forward partition metrics. On the legacy single-tensor
+        # path ``val_metrics`` collapses to ``metrics`` and
+        # ``test_metrics`` is absent; emit the columns when present so
+        # the CSV reflects the new train/val/test contract on the
+        # walk-forward path without breaking the legacy column set.
+        "val_combined_rmse": val_metrics.get("combined_rmse"),
+        "val_close_rmse": val_metrics.get("close_rmse"),
+        "val_volatility_rmse": val_metrics.get("volatility_rmse"),
+        "test_combined_rmse": test_metrics.get("combined_rmse"),
+        "test_close_rmse": test_metrics.get("close_rmse"),
+        "test_volatility_rmse": test_metrics.get("volatility_rmse"),
+        "fold_id": summary.get("fold_id"),
+        "protocol": summary.get("protocol"),
         "checkpoint_saved": summary.get("checkpoint_saved"),
         "checkpoint_path": summary.get("checkpoint_path"),
     }
@@ -894,20 +964,45 @@ def _run_single_training(
     save_checkpoint: bool,
     seed: int | None = None,
     sequence_groups: Sequence[Sequence[FeatureVector]] | None = None,
+    walk_forward_split: WalkForwardSplit | None = None,
     weight_decay: float = 1e-4,
     shuffle_targets_control: bool = False,
     text_encoder: str | None = None,
     text_pool_lambda_inv_days: float = 0.0,
 ) -> TrainingRunSummary:
-    # ``validation_fraction`` is the new idiomatic kwarg name. The
-    # underlying ``train_model`` keeps ``validation_split`` for backwards
-    # compatibility with checkpoints and tests; we relay by name here.
-    # When ``sequence_groups`` is provided (training-package path), the
-    # legacy ``data_dir`` scan is bypassed and the groups are appended as
-    # standalone ``vectors=`` payloads, one call per group. Doing it this
-    # way preserves the back-compat surface of ``train_model`` and
-    # avoids touching the regression-test contract.
-    if sequence_groups:
+    # Three input paths, in precedence order:
+    #
+    # - ``walk_forward_split`` set: pre-split train/val/test partitions
+    #   from ``load_walk_forward_split``; the training loop honours
+    #   them separately and reports the real held-out test_rmse.
+    # - ``sequence_groups`` set: single-list training-package path
+    #   (pre-walk-forward back-compat); the training loop falls back
+    #   to the legacy 80/20 internal split. Kept callable so the
+    #   regression-test fixture path keeps the byte-identity contract.
+    # - neither set: data-dir JSON / JSONL / CSV scan, also legacy.
+    if walk_forward_split is not None:
+        result = train_model(
+            train_sequence_groups=walk_forward_split.train,
+            val_sequence_groups=walk_forward_split.val,
+            test_sequence_groups=walk_forward_split.test,
+            fold_id=walk_forward_split.fold_id,
+            protocol=walk_forward_split.protocol,
+            epochs=epochs,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+            validation_split=validation_fraction,
+            early_stopping_patience=early_stopping_patience,
+            checkpoint_path=checkpoint_path,
+            save_checkpoint=save_checkpoint,
+            device=device,
+            model_config=model_config,
+            seed=seed,
+            weight_decay=weight_decay,
+            shuffle_targets_control=shuffle_targets_control,
+            text_encoder=text_encoder,
+            text_pool_lambda_inv_days=text_pool_lambda_inv_days,
+        )
+    elif sequence_groups:
         result = _train_model_with_groups(
             sequence_groups=sequence_groups,
             epochs=epochs,
@@ -998,12 +1093,12 @@ def _worker_run_cell(payload: dict[str, Any]) -> dict[str, Any]:
 
     The payload carries every argument the worker needs to recreate
     the call without sharing memory with the parent: a pickled
-    ``ModelConfig``, the per-cell HP values, the sequence-groups
-    payload, and the trial-index metadata. The worker re-imports
-    torch (the spawn context guarantees a fresh CUDA context) and
-    routes through the same ``_run_single_training`` helper the
-    sequential path uses, so the per-cell training code is shared
-    across both schedulers.
+    ``ModelConfig``, the per-cell HP values, the per-fold
+    ``WalkForwardSplit`` (or the legacy flat sequence-groups payload),
+    and the trial-index metadata. The worker re-imports torch (the
+    spawn context guarantees a fresh CUDA context) and routes through
+    the same ``_run_single_training`` helper the sequential path uses,
+    so the per-cell training code is shared across both schedulers.
     """
 
     summary = _run_single_training(
@@ -1018,7 +1113,8 @@ def _worker_run_cell(payload: dict[str, Any]) -> dict[str, Any]:
         model_config=payload["model_config"],
         save_checkpoint=False,
         seed=payload["seed"],
-        sequence_groups=payload["sequence_groups"],
+        sequence_groups=payload.get("sequence_groups"),
+        walk_forward_split=payload.get("walk_forward_split"),
         weight_decay=float(payload["weight_decay"]),
         shuffle_targets_control=bool(payload["shuffle_targets_control"]),
         text_encoder=payload["text_encoder"],
@@ -1029,6 +1125,7 @@ def _worker_run_cell(payload: dict[str, Any]) -> dict[str, Any]:
         "architecture": str(payload["model_config"].architecture),
         "seed": payload["seed"],
         "hp_combo_id": payload.get("hp_combo_id"),
+        "fold_id": payload.get("fold_id"),
         "summary": summary,
     }
 
@@ -1042,6 +1139,7 @@ def _build_worker_payload(
     checkpoint_path: Path,
     device: torch.device,
     sequence_groups: Sequence[Sequence[FeatureVector]] | None,
+    walk_forward_split: WalkForwardSplit | None,
     text_encoder_arg: str | None,
     text_pool_lambda: float,
 ) -> dict[str, Any]:
@@ -1055,6 +1153,7 @@ def _build_worker_payload(
         "weight_decay": candidate.get("weight_decay", args.weight_decay),
         "seed": candidate.get("seed"),
         "hp_combo_id": candidate.get("hp_combo_id"),
+        "fold_id": candidate.get("fold_id"),
         "data_dir": data_dir,
         "checkpoint_path": checkpoint_path,
         "device": str(device),
@@ -1062,6 +1161,7 @@ def _build_worker_payload(
         "validation_fraction": float(args.validation_fraction),
         "early_stopping_patience": int(args.early_stopping_patience),
         "sequence_groups": sequence_groups,
+        "walk_forward_split": walk_forward_split,
         "shuffle_targets_control": bool(args.shuffle_targets_control),
         "text_encoder": text_encoder_arg,
         "text_pool_lambda_inv_days": float(text_pool_lambda),
@@ -1122,6 +1222,7 @@ def _run_sweep(
     report_path: Path,
     device: torch.device,
     sequence_groups: Sequence[Sequence[FeatureVector]] | None = None,
+    walk_forward_splits: dict[str, WalkForwardSplit] | None = None,
     training_package_id: str | None = None,
 ) -> int:
     candidates = build_sweep_candidates(args)
@@ -1169,6 +1270,12 @@ def _run_sweep(
             max_workers=parallel_workers,
             mp_context=spawn_ctx,
         ) as pool:
+            def _split_for_candidate(c: dict[str, Any]) -> WalkForwardSplit | None:
+                if walk_forward_splits is None:
+                    return None
+                cand_fold = c.get("fold_id") or next(iter(walk_forward_splits))
+                return walk_forward_splits.get(cand_fold)
+
             future_to_index = {
                 pool.submit(
                     _worker_run_cell,
@@ -1179,7 +1286,8 @@ def _run_sweep(
                         data_dir=data_dir,
                         checkpoint_path=checkpoint_path,
                         device=device,
-                        sequence_groups=sequence_groups,
+                        sequence_groups=None if walk_forward_splits is not None else sequence_groups,
+                        walk_forward_split=_split_for_candidate(candidate),
                         text_encoder_arg=text_encoder_arg,
                         text_pool_lambda=text_pool_lambda,
                     ),
@@ -1199,6 +1307,8 @@ def _run_sweep(
                 }
                 if result.get("hp_combo_id") is not None:
                     record["hp_combo_id"] = result["hp_combo_id"]
+                if result.get("fold_id") is not None:
+                    record["fold_id"] = result["fold_id"]
                 trial_records.append(record)
                 summaries.append(summary)
                 print(
@@ -1216,6 +1326,16 @@ def _run_sweep(
             epochs = candidate["epochs"]
             weight_decay = candidate.get("weight_decay", args.weight_decay)
             seed = candidate.get("seed")
+            fold_id = candidate.get("fold_id")
+            wf_split: WalkForwardSplit | None = None
+            cell_sequence_groups: Sequence[Sequence[FeatureVector]] | None = sequence_groups
+            if walk_forward_splits is not None:
+                # On the walk-forward path the per-fold split carries
+                # train/val/test partitions; the trainer skips the
+                # legacy single-list code path entirely.
+                split_key = fold_id if fold_id is not None else next(iter(walk_forward_splits))
+                wf_split = walk_forward_splits[split_key]
+                cell_sequence_groups = None
             summary = _run_single_training(
                 data_dir=data_dir,
                 checkpoint_path=checkpoint_path,
@@ -1228,7 +1348,8 @@ def _run_sweep(
                 model_config=model_config,
                 save_checkpoint=False,
                 seed=seed,
-                sequence_groups=sequence_groups,
+                sequence_groups=cell_sequence_groups,
+                walk_forward_split=wf_split,
                 weight_decay=float(weight_decay),
                 shuffle_targets_control=bool(args.shuffle_targets_control),
                 text_encoder=text_encoder_arg,
@@ -1243,6 +1364,8 @@ def _run_sweep(
             }
             if "hp_combo_id" in candidate:
                 record["hp_combo_id"] = candidate["hp_combo_id"]
+            if fold_id is not None:
+                record["fold_id"] = fold_id
             trial_records.append(record)
             print(
                 _format_cell_log(
@@ -1296,6 +1419,13 @@ def _run_sweep(
         f"epochs={best_summary.epochs_requested}"
     )
     best_weight_decay = best_candidate.get("weight_decay", args.weight_decay)
+    best_fold_id = best_candidate.get("fold_id")
+    best_wf_split: WalkForwardSplit | None = None
+    final_sequence_groups: Sequence[Sequence[FeatureVector]] | None = sequence_groups
+    if walk_forward_splits is not None:
+        key = best_fold_id if best_fold_id is not None else next(iter(walk_forward_splits))
+        best_wf_split = walk_forward_splits[key]
+        final_sequence_groups = None
     final_summary = _run_single_training(
         data_dir=data_dir,
         checkpoint_path=checkpoint_path,
@@ -1312,7 +1442,8 @@ def _run_sweep(
         model_config=best_model_config,
         save_checkpoint=True,
         seed=best_seed,
-        sequence_groups=sequence_groups,
+        sequence_groups=final_sequence_groups,
+        walk_forward_split=best_wf_split,
         weight_decay=float(best_weight_decay),
         shuffle_targets_control=bool(args.shuffle_targets_control),
         text_encoder=text_encoder_arg,
@@ -1342,6 +1473,10 @@ def _run_sweep(
             "pool_lambda_inv_days": text_pool_lambda,
         },
         "shuffle_targets_control": bool(args.shuffle_targets_control),
+        "protocol": (
+            "walk-forward" if walk_forward_splits is not None else "single-fold"
+        ),
+        "folds": sorted({str(trial.get("fold_id")) for trial in trial_records if trial.get("fold_id")}),
         "architectures": sorted({trial["architecture"] for trial in trial_records}),
         "seeds": sorted({trial["seed"] for trial in trial_records if trial["seed"] is not None}),
         "trial_count": len(trial_records),
@@ -1387,6 +1522,7 @@ def main() -> int:
         )
 
     package_sequences: list[list[FeatureVector]] | None = None
+    walk_forward_splits: dict[str, WalkForwardSplit] | None = None
     if use_package_path:
         print(f"Training-package id: {args.training_package_id}")
         print(f"Target mode: {args.target_mode}")
@@ -1398,22 +1534,96 @@ def main() -> int:
         loader_text_encoder = (
             None if str(args.text_encoder) == "none" else str(args.text_encoder)
         )
-        package_sequences = load_training_sequences_from_package(
-            args.training_package_id,
-            target_mode=args.target_mode,
-            rich_features=bool(args.rich_features),
-            use_credibility=bool(args.use_credibility),
-            use_linguistic=bool(args.use_linguistic),
-            use_mp_surprise=bool(args.use_mp_surprise),
-            use_multi_axis=bool(args.use_multi_axis),
-            text_encoder=loader_text_encoder,
-            text_adapter_dim=int(args.text_adapter_dim),
-            text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
-            use_text_embeddings=bool(args.use_text_embeddings),
-        )
-        sequence_count = len(package_sequences)
-        observation_count = sum(len(sequence) for sequence in package_sequences)
-        window_count = sum(max(0, len(sequence) - SEQUENCE_LENGTH) for sequence in package_sequences)
+
+        protocol_choice = str(getattr(args, "protocol", "auto") or "auto")
+        cli_folds: list[str] = [str(f).strip() for f in (args.folds or []) if str(f).strip()]
+        if protocol_choice == "auto":
+            resolved_protocol = "walk-forward" if cli_folds else "single-fold"
+        else:
+            resolved_protocol = protocol_choice
+        if resolved_protocol == "walk-forward" and not cli_folds:
+            raise SystemExit(
+                "--protocol walk-forward requires --folds <fold_id> [<fold_id> ...]; "
+                "got an empty fold list"
+            )
+        if str(getattr(args, "validation_fraction", 0.0)) and (cli_folds or resolved_protocol != "single-fold"):
+            # The walk-forward and single-fold paths both honour the
+            # package's pre-built partitions; the random/chronological
+            # validation_fraction knob is inert on those paths.
+            _LOGGER.info(
+                "--validation-fraction=%s ignored on protocol=%s; the "
+                "training partition is honoured from the package.",
+                args.validation_fraction,
+                resolved_protocol,
+            )
+
+        print(f"Protocol: {resolved_protocol}")
+
+        if resolved_protocol == "walk-forward":
+            walk_forward_splits = {}
+            for fold_id in cli_folds:
+                split = load_walk_forward_split(
+                    args.training_package_id,
+                    fold_id=fold_id,
+                    target_mode=args.target_mode,
+                    rich_features=bool(args.rich_features),
+                    use_credibility=bool(args.use_credibility),
+                    use_linguistic=bool(args.use_linguistic),
+                    use_mp_surprise=bool(args.use_mp_surprise),
+                    use_multi_axis=bool(args.use_multi_axis),
+                    text_encoder=loader_text_encoder,
+                    text_adapter_dim=int(args.text_adapter_dim),
+                    text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
+                    use_text_embeddings=bool(args.use_text_embeddings),
+                )
+                walk_forward_splits[fold_id] = split
+                print(
+                    f"  {fold_id}: train={len(split.train)} val={len(split.val)} "
+                    f"test={len(split.test)}"
+                )
+            sequence_count = sum(
+                len(s.train) + len(s.val) + len(s.test) for s in walk_forward_splits.values()
+            )
+            observation_count = sum(
+                sum(len(seq) for seq in (s.train + s.val + s.test))
+                for s in walk_forward_splits.values()
+            )
+            window_count = sum(
+                sum(max(0, len(seq) - SEQUENCE_LENGTH) for seq in (s.train + s.val + s.test))
+                for s in walk_forward_splits.values()
+            )
+        else:
+            # Single-fold path: read the package's
+            # splits_train_val_test.parquet partition. The trainer
+            # honours the val and test lists as the early-stopping
+            # signal and the held-out evaluation set.
+            split = load_walk_forward_split(
+                args.training_package_id,
+                fold_id=None,
+                target_mode=args.target_mode,
+                rich_features=bool(args.rich_features),
+                use_credibility=bool(args.use_credibility),
+                use_linguistic=bool(args.use_linguistic),
+                use_mp_surprise=bool(args.use_mp_surprise),
+                use_multi_axis=bool(args.use_multi_axis),
+                text_encoder=loader_text_encoder,
+                text_adapter_dim=int(args.text_adapter_dim),
+                text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
+                use_text_embeddings=bool(args.use_text_embeddings),
+            )
+            walk_forward_splits = {"_single_fold": split}
+            print(
+                f"  single-fold: train={len(split.train)} val={len(split.val)} "
+                f"test={len(split.test)}"
+            )
+            sequence_count = len(split.train) + len(split.val) + len(split.test)
+            observation_count = sum(
+                len(seq) for seq in (split.train + split.val + split.test)
+            )
+            window_count = sum(
+                max(0, len(seq) - SEQUENCE_LENGTH)
+                for seq in (split.train + split.val + split.test)
+            )
         print(f"Device: {device}")
         print(f"Checkpoint path: {checkpoint_path}")
         print(f"Existing checkpoint: {'yes' if checkpoint_path.exists() else 'no'}")
@@ -1467,6 +1677,7 @@ def main() -> int:
             args.seeds,
             args.weight_decays,
             args.text_adapter_dims,
+            args.folds,
         )
     )
     if sweep_mode:
@@ -1477,6 +1688,7 @@ def main() -> int:
             report_path=report_path,
             device=device,
             sequence_groups=package_sequences,
+            walk_forward_splits=walk_forward_splits,
             training_package_id=args.training_package_id,
         )
 
@@ -1484,6 +1696,14 @@ def main() -> int:
         "Starting professional forecaster training "
         f"(architecture={args.architecture}, credibility_features={bool(args.credibility_features)})..."
     )
+    single_run_split: WalkForwardSplit | None = None
+    single_run_sequence_groups: Sequence[Sequence[FeatureVector]] | None = package_sequences
+    if walk_forward_splits is not None:
+        # On the package path the single-run also honours the
+        # walk-forward partition the loader resolved; the legacy
+        # ``--data-dir`` path keeps the flat sequence list.
+        single_run_split = next(iter(walk_forward_splits.values()))
+        single_run_sequence_groups = None
     summary = _run_single_training(
         data_dir=data_dir,
         checkpoint_path=checkpoint_path,
@@ -1496,7 +1716,8 @@ def main() -> int:
         model_config=_build_model_config(args),
         save_checkpoint=True,
         seed=args.seed,
-        sequence_groups=package_sequences,
+        sequence_groups=single_run_sequence_groups,
+        walk_forward_split=single_run_split,
         weight_decay=float(args.weight_decay),
         shuffle_targets_control=bool(args.shuffle_targets_control),
         text_encoder=None if str(args.text_encoder) == "none" else str(args.text_encoder),

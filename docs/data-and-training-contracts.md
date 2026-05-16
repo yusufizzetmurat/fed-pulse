@@ -815,6 +815,74 @@ Per-event sequence construction:
   a deterministic tiebreaker) so two runs on the same package emit
   the same sequence ordering.
 
+#### Walk-forward CV protocol
+
+The forecaster sweep partitions training-package events into three
+sequence lists (train, val, test) per fold and the training loop
+consumes them independently. Two protocols are supported through the
+loader's `load_walk_forward_split(training_package_id, fold_id=...)`
+entrypoint and the corresponding `train_forecaster.py` flags
+(`--folds`, `--protocol`).
+
+**OLD pre-PR semantics (removed).** The loader read
+`splits_train_val_test.parquet` and KEPT ONLY rows tagged `train`,
+discarding `val` and `test` outright. The training loop then ran an
+internal 80/20 random split on the already-train-only sequences and
+reported the resulting "validation" RMSE as the headline number. Net
+effect: no real held-out test partition existed, and the per-trial
+`combined_rmse` was the internal 80/20-val RMSE on the train
+partition. The wiki and the contracts documented the result as
+"walk-forward CV" but the implementation never honoured that.
+
+**NEW single-fold semantics (`--protocol single-fold`, default when
+`--folds` is unset).** Reads `splits_train_val_test.parquet` and
+partitions events by the `split_tag` column into three lists. All
+three lists feed the loop: `train` drives the optimiser, `val` drives
+early stopping, `test` is the held-out evaluation set whose RMSE is
+the reported `test_rmse`. The package's `splits_train_val_test.parquet`
+already encodes a chronological partition (a single fold), so no
+internal random split happens.
+
+**NEW walk-forward multi-fold semantics (`--protocol walk-forward`,
+selected when `--folds wf_fold_1 wf_fold_2 ...` is set).** Reads
+`fold_manifest_expanding_walk_forward.json` and, for each named
+fold, partitions events into three lists by `event_date` falling in
+the manifest's date ranges:
+
+- Train list: every event with `event_date < val_start`. Expanding
+  window — fold k's train set strictly contains fold (k-1)'s.
+- Val list: `[val_start, val_end]`.
+- Test list: `[test_start, test_end]`.
+
+Each (architecture, seed, hp_combo, fold) becomes one trial. The
+aggregator emits one row per (architecture, fold) plus an all-folds
+aggregate row per architecture, with the all-folds CI bootstrapped
+across every (seed, fold) cell.
+
+**Why the refactor was necessary (ADR).** The pre-PR loader silently
+discarded the val + test partitions and reported the internal 80/20
+random split as the headline number; under that protocol no
+held-out event ever entered the loss or the reported RMSE, which
+breaks the walk-forward CV contract the project documents. The
+refactor introduces three changes that restore the documented
+protocol: (a) the loader returns a `WalkForwardSplit` dataclass with
+explicit train, val, test sequence lists, (b) the training loop
+honours those partitions separately (no internal 80/20 random split
+on the walk-forward path), and (c) the aggregator's headline column
+renames from `combined-RMSE` to `test-RMSE` so the published number
+is the real held-out RMSE rather than an internal-val artefact. The
+back-compat wrapper `load_training_sequences_from_package` stays
+callable on the legacy `--data-dir` path so the byte-identity
+regression contract on that path stays green.
+
+**Aggregator output schema changes.** The per-trial summary now
+carries explicit `train_metrics`, `val_metrics`, and `test_metrics`
+blocks; the headline `metrics` slot maps to `test_metrics` on the
+walk-forward path. The aggregator emits a per-fold row plus an
+all-folds aggregate row per architecture and the `test_train_gap =
+(test_rmse - train_rmse) / train_rmse` column. The pre-PR
+`holdout_train_gap` column stays for back-compat readers.
+
 #### Forecaster training-package target modes
 
 `load_training_sequences_from_package(training_package_id, target_mode=...)`

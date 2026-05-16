@@ -1225,3 +1225,221 @@ def test_no_text_embeddings_zeros_slice_but_shape_preserved(
     second_event = chronological[1][0]
     assert len(second_event.text_embedding_pooled) == 768
     assert second_event.text_embedding_missing == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Walk-forward split tests
+#
+# ``load_walk_forward_split`` returns three pre-partitioned sequence
+# lists (train + val + test) plus per-list event dates. The tests
+# below exercise both the single-fold path (split-tag partition off
+# ``splits_train_val_test.parquet``) and the multi-fold path
+# (chronological partition off ``fold_manifest_expanding_walk_forward.json``).
+# ---------------------------------------------------------------------------
+
+
+_WALK_FORWARD_PACKAGE_ID = "tp_unit_walk_forward_v0"
+
+
+def _wf_event_row(*, event_date: str, text_hash: str, base_close: float) -> dict:
+    """Build a minimal event row for the walk-forward tests."""
+
+    return _event_row(
+        event_date=event_date,
+        text_hash=text_hash,
+        axis_stance="neutral",
+        realized_return=0.001,
+        realized_date=event_date,
+        base_close=base_close,
+    )
+
+
+@pytest.fixture
+def walk_forward_package_dir(tmp_path: Path, monkeypatch) -> Path:
+    """Materialise a tiny package with split tags + a two-fold manifest."""
+
+    package_dir = tmp_path / "processed" / _WALK_FORWARD_PACKAGE_ID
+    package_dir.mkdir(parents=True)
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+
+    # Six events spaced across two fold windows. The fold manifest
+    # below makes wf_fold_1 train cover the first two events and
+    # wf_fold_2 train cover the first four (expanding window).
+    events = [
+        _wf_event_row(event_date="2020-01-15", text_hash="hash_t1", base_close=4400.0),
+        _wf_event_row(event_date="2020-02-15", text_hash="hash_t2", base_close=4410.0),
+        _wf_event_row(event_date="2020-03-15", text_hash="hash_v1", base_close=4420.0),
+        _wf_event_row(event_date="2020-04-15", text_hash="hash_v2", base_close=4430.0),
+        _wf_event_row(event_date="2020-05-15", text_hash="hash_te1", base_close=4440.0),
+        _wf_event_row(event_date="2020-06-15", text_hash="hash_te2", base_close=4450.0),
+    ]
+    pd.DataFrame(events).to_parquet(package_dir / "events.parquet", index=False)
+
+    splits = [
+        {"text_hash": "hash_t1", "split_tag": "train"},
+        {"text_hash": "hash_t2", "split_tag": "train"},
+        {"text_hash": "hash_v1", "split_tag": "val"},
+        {"text_hash": "hash_v2", "split_tag": "val"},
+        {"text_hash": "hash_te1", "split_tag": "test"},
+        {"text_hash": "hash_te2", "split_tag": "test"},
+    ]
+    pd.DataFrame(splits).to_parquet(
+        package_dir / "splits_train_val_test.parquet", index=False
+    )
+
+    manifest = {
+        "evaluation_protocol": "evaluation_protocol_v1",
+        "folds": [
+            {
+                "fold_id": "wf_fold_1",
+                "train_start": "2020-01-01",
+                "train_end": "2020-02-29",
+                "val_start": "2020-03-01",
+                "val_end": "2020-03-31",
+                "test_start": "2020-04-01",
+                "test_end": "2020-04-30",
+            },
+            {
+                "fold_id": "wf_fold_2",
+                "train_start": "2020-01-01",
+                "train_end": "2020-04-30",
+                "val_start": "2020-05-01",
+                "val_end": "2020-05-31",
+                "test_start": "2020-06-01",
+                "test_end": "2020-06-30",
+            },
+        ],
+    }
+    (package_dir / "fold_manifest_expanding_walk_forward.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    return package_dir
+
+
+def test_walk_forward_split_single_fold_partitions_from_split_tag(
+    walk_forward_package_dir: Path,
+) -> None:
+    split = loaders.load_walk_forward_split(
+        _WALK_FORWARD_PACKAGE_ID, rich_features=False
+    )
+    assert split.fold_id is None
+    assert split.protocol == "single-fold"
+    # Six events: 2 train, 2 val, 2 test.
+    assert len(split.train) == 2
+    assert len(split.val) == 2
+    assert len(split.test) == 2
+    # Sum equals the events.parquet total.
+    assert len(split.train) + len(split.val) + len(split.test) == 6
+    # Event-date ordering matches the per-list count.
+    assert split.train_event_dates == ["2020-01-15", "2020-02-15"]
+    assert split.val_event_dates == ["2020-03-15", "2020-04-15"]
+    assert split.test_event_dates == ["2020-05-15", "2020-06-15"]
+
+
+def test_walk_forward_split_multi_fold_partitions_from_manifest(
+    walk_forward_package_dir: Path,
+) -> None:
+    fold_1 = loaders.load_walk_forward_split(
+        _WALK_FORWARD_PACKAGE_ID, fold_id="wf_fold_1", rich_features=False
+    )
+    fold_2 = loaders.load_walk_forward_split(
+        _WALK_FORWARD_PACKAGE_ID, fold_id="wf_fold_2", rich_features=False
+    )
+    assert fold_1.protocol == "walk-forward"
+    assert fold_1.fold_id == "wf_fold_1"
+    # fold_1: train covers everything before val_start=2020-03-01 ->
+    # hash_t1 (2020-01-15) + hash_t2 (2020-02-15) -> 2 sequences.
+    assert len(fold_1.train) == 2
+    assert fold_1.train_event_dates == ["2020-01-15", "2020-02-15"]
+    # fold_1 val: 2020-03-01 to 2020-03-31 -> hash_v1.
+    assert len(fold_1.val) == 1
+    assert fold_1.val_event_dates == ["2020-03-15"]
+    # fold_1 test: 2020-04-01 to 2020-04-30 -> hash_v2.
+    assert len(fold_1.test) == 1
+    assert fold_1.test_event_dates == ["2020-04-15"]
+
+    # fold_2: train covers everything before 2020-05-01 ->
+    # hash_t1 + hash_t2 + hash_v1 + hash_v2 -> 4 sequences.
+    assert len(fold_2.train) == 4
+    assert fold_2.train_event_dates == [
+        "2020-01-15",
+        "2020-02-15",
+        "2020-03-15",
+        "2020-04-15",
+    ]
+    # Expanding-window contract: train_2 strictly contains train_1.
+    assert set(fold_1.train_event_dates).issubset(set(fold_2.train_event_dates))
+    assert len(fold_2.train) > len(fold_1.train)
+    # fold_2 val and test.
+    assert fold_2.val_event_dates == ["2020-05-15"]
+    assert fold_2.test_event_dates == ["2020-06-15"]
+
+
+def test_walk_forward_split_unknown_fold_raises(
+    walk_forward_package_dir: Path,
+) -> None:
+    with pytest.raises(ValueError, match="not found in fold manifest"):
+        loaders.load_walk_forward_split(
+            _WALK_FORWARD_PACKAGE_ID, fold_id="wf_fold_does_not_exist"
+        )
+
+
+def test_walk_forward_split_no_test_events_raises(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A fold whose test window is empty must raise loudly."""
+
+    package_id = "tp_unit_empty_test_window"
+    package_dir = tmp_path / "processed" / package_id
+    package_dir.mkdir(parents=True)
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+
+    events = [
+        _wf_event_row(event_date="2020-01-15", text_hash="hash_only", base_close=4400.0),
+    ]
+    pd.DataFrame(events).to_parquet(package_dir / "events.parquet", index=False)
+    pd.DataFrame(
+        [{"text_hash": "hash_only", "split_tag": "train"}]
+    ).to_parquet(package_dir / "splits_train_val_test.parquet", index=False)
+
+    manifest = {
+        "folds": [
+            {
+                "fold_id": "wf_fold_1",
+                "train_start": "2020-01-01",
+                "train_end": "2020-02-29",
+                "val_start": "2020-03-01",
+                "val_end": "2020-03-31",
+                "test_start": "2020-04-01",
+                "test_end": "2020-04-30",
+            }
+        ],
+    }
+    (package_dir / "fold_manifest_expanding_walk_forward.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="empty test partition"):
+        loaders.load_walk_forward_split(package_id, fold_id="wf_fold_1")
+
+
+def test_walk_forward_split_back_compat_wrapper_emits_deprecation(
+    walk_forward_package_dir: Path,
+) -> None:
+    """The legacy ``load_training_sequences_from_package`` is deprecated.
+
+    It still returns the train partition (the pre-PR semantics) so the
+    callers that have not migrated keep working, but every call emits
+    a DeprecationWarning pointing at ``load_walk_forward_split``.
+    """
+
+    with pytest.warns(DeprecationWarning, match="load_walk_forward_split"):
+        sequences = loaders.load_training_sequences_from_package(
+            _WALK_FORWARD_PACKAGE_ID, rich_features=False
+        )
+    # Two train-tagged events survive the legacy wrapper.
+    assert len(sequences) == 2
+    target_dates = sorted(seq[-1].date[:10] for seq in sequences)
+    # Synthesised realized_date was the same date as event_date in the
+    # fixture, so the appended target frame uses each event's own date.
+    assert target_dates == ["2020-01-15", "2020-02-15"]
