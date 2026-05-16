@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import torch
 from torch import nn
@@ -171,12 +172,65 @@ def _evaluate_model(
     )
 
 
+def _build_partition_tensors(
+    sequence_groups: Sequence[Sequence[FeatureVector]],
+    *,
+    fallback_text_in_dim: int,
+    close_scale: float | None = None,
+) -> tuple[
+    torch.Tensor | None,
+    torch.Tensor | None,
+    float,
+    torch.Tensor | None,
+    torch.Tensor | None,
+]:
+    """Tensorise one partition into (x, y, close_scale, text_emb, text_missing).
+
+    The text-embedding tensor is materialised against the same
+    ``fallback_text_in_dim`` the legacy single-partition path uses, so a
+    partition whose every sequence is missing a pooled embedding still
+    materialises a zero-payload tensor of the right width when the
+    model's adapter is configured for the text channel.
+    """
+
+    x, y, scale = _build_training_tensors(sequence_groups, close_scale=close_scale)
+    text_emb, text_missing, _ = _build_text_embedding_tensors(
+        sequence_groups, fallback_in_dim=fallback_text_in_dim
+    )
+    return x, y, scale, text_emb, text_missing
+
+
+@dataclasses.dataclass(frozen=True)
+class BackCompatTrainingSplit:
+    """Marker for callers that need the legacy 80/20 internal split.
+
+    The walk-forward training-package path supplies pre-split
+    ``train_sequence_groups`` / ``val_sequence_groups`` /
+    ``test_sequence_groups`` and the loop honours those partitions.
+    Pre-walk-forward callers (the ``--data-dir`` scan path and the
+    determinism regression-test fixture) pass a single flat list and
+    the loop falls back to the documented-but-deprecated 80/20
+    chronological split on the tensorised windows so the byte-identity
+    contract on those legacy paths stays green.
+
+    Constructing this object on a call signals the legacy path; the
+    field is read only as a marker.
+    """
+
+    validation_fraction: float = DEFAULT_VALIDATION_SPLIT
+
+
 def train_model(
     *,
     base_model: ForecasterModel | None = None,
     model_config: ModelConfig | dict[str, Any] | None = None,
     vectors: list[FeatureVector] | None = None,
     sequence_groups: list[list[FeatureVector]] | None = None,
+    train_sequence_groups: Sequence[Sequence[FeatureVector]] | None = None,
+    val_sequence_groups: Sequence[Sequence[FeatureVector]] | None = None,
+    test_sequence_groups: Sequence[Sequence[FeatureVector]] | None = None,
+    fold_id: str | None = None,
+    protocol: str | None = None,
     data_dir: str | Path | None = None,
     epochs: int = DEFAULT_EPOCHS,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -196,37 +250,128 @@ def train_model(
         enable_deterministic_mode(seed)
     device_obj = _resolve_device(device)
     active_model_config = ModelConfig.from_model(base_model) if base_model is not None else _coerce_model_config(model_config)
-    # When ``sequence_groups`` is provided, the caller has already
-    # loaded its sequences (e.g. from a Phase 8 training package via
-    # ``load_training_sequences_from_package``). Bypass the legacy
-    # ``data_dir`` scan in that case so the trainer does not also pull
-    # in unrelated raw-market files. When omitted, behaviour is
-    # unchanged: the data-dir scan + ``vectors`` append path runs.
-    if sequence_groups is not None:
-        active_sequence_groups: list[list[FeatureVector]] = [list(group) for group in sequence_groups]
-    else:
-        active_sequence_groups = load_training_sequences_from_data(data_dir)
-    if vectors:
-        active_sequence_groups.append(list(vectors))
-    sequence_groups = active_sequence_groups
 
-    # `_build_training_tensors` now fits a per-fold close-scale from the
-    # actual training rows and returns it as the third tuple element. The
-    # scale is persisted in the checkpoint (`close_scale` field) so
-    # inference can recover the original price magnitude. See
-    # `app.training.loaders.fit_close_scale` for the fit details.
-    x, y, close_scale = _build_training_tensors(sequence_groups)
-    # When the model is configured for the text path, pin the
-    # fallback in_dim so a batch whose every sequence is missing
-    # (e.g. the pre-corpus prefix) still materialises a zero-payload
-    # tensor of the right width. The model's adapter then projects a
-    # zero slot driven by the missing flag.
-    fallback_text_in_dim = int(getattr(active_model_config, "text_embedding_dim", 0) or 0)
-    text_emb_tensor, text_missing_tensor, text_emb_dim = _build_text_embedding_tensors(
-        sequence_groups,
-        fallback_in_dim=fallback_text_in_dim,
+    # Two split protocols are honoured:
+    #
+    # - Walk-forward (preferred): the caller supplies pre-split
+    #   train_sequence_groups / val_sequence_groups /
+    #   test_sequence_groups lists. ``_split_train_validation`` is NOT
+    #   called; the partitions are tensorised independently and the
+    #   final reported ``test_metrics`` is the real held-out RMSE.
+    # - Legacy 80/20 (back-compat): the caller supplies a single flat
+    #   sequence-groups list (``vectors`` / ``sequence_groups`` /
+    #   ``data_dir`` scan). The loop falls back to the documented
+    #   chronological 80/20 split on the tensorised windows so the
+    #   pre-walk-forward regression contract stays green.
+    walk_forward_path = (
+        train_sequence_groups is not None
+        and val_sequence_groups is not None
+        and test_sequence_groups is not None
     )
-    if x is None or y is None:
+    active_protocol = protocol or ("walk-forward" if walk_forward_path else "legacy-80-20")
+    fallback_text_in_dim = int(getattr(active_model_config, "text_embedding_dim", 0) or 0)
+
+    if walk_forward_path:
+        train_groups: list[list[FeatureVector]] = [list(group) for group in train_sequence_groups or []]
+        val_groups: list[list[FeatureVector]] = [list(group) for group in val_sequence_groups or []]
+        test_groups: list[list[FeatureVector]] = [list(group) for group in test_sequence_groups or []]
+        # Fit the close-scale on the training partition only; never on
+        # the val or test rows. The walk-forward protocol forbids
+        # fitting any scaler over held-out events.
+        train_x, train_y, close_scale, train_text_emb, train_text_missing = _build_partition_tensors(
+            train_groups,
+            fallback_text_in_dim=fallback_text_in_dim,
+            close_scale=None,
+        )
+        val_x, val_y, _val_scale, val_text_emb, val_text_missing = _build_partition_tensors(
+            val_groups,
+            fallback_text_in_dim=fallback_text_in_dim,
+            close_scale=close_scale,
+        )
+        test_x, test_y, _test_scale, test_text_emb, test_text_missing = _build_partition_tensors(
+            test_groups,
+            fallback_text_in_dim=fallback_text_in_dim,
+            close_scale=close_scale,
+        )
+        sequence_groups_for_summary = train_groups + val_groups + test_groups
+    else:
+        if sequence_groups is not None:
+            active_sequence_groups: list[list[FeatureVector]] = [list(group) for group in sequence_groups]
+        else:
+            active_sequence_groups = load_training_sequences_from_data(data_dir)
+        if vectors:
+            active_sequence_groups.append(list(vectors))
+        sequence_groups_for_summary = active_sequence_groups
+
+        x, y, close_scale = _build_training_tensors(active_sequence_groups)
+        text_emb_tensor, text_missing_tensor, _text_emb_dim = _build_text_embedding_tensors(
+            active_sequence_groups,
+            fallback_in_dim=fallback_text_in_dim,
+        )
+        if x is None or y is None:
+            model = copy.deepcopy(base_model).to(device_obj) if base_model is not None else _build_model(active_model_config, device=device_obj)
+            model.eval()
+            return TrainingResult(
+                model=model,
+                summary=TrainingRunSummary(
+                    model_config=ModelConfig.from_model(model),
+                    device=str(device_obj),
+                    epochs_requested=epochs,
+                    epochs_completed=0,
+                    batch_size=batch_size,
+                    learning_rate=learning_rate,
+                    validation_split=validation_split,
+                    early_stopping_patience=early_stopping_patience,
+                    sequence_groups=len(active_sequence_groups),
+                    total_windows=0,
+                    train_windows=0,
+                    validation_windows=0,
+                    checkpoint_path=str(checkpoint_path) if checkpoint_path is not None else str(BEST_MODEL_PATH),
+                    checkpoint_saved=False,
+                    best_epoch=None,
+                    metrics=None,
+                    fold_id=fold_id,
+                    protocol=active_protocol,
+                    weight_decay=float(weight_decay),
+                    target_mode="shuffled" if shuffle_targets_control else "real",
+                    text_encoder=text_encoder,
+                    text_adapter_dim=int(getattr(model, "text_adapter_dim", 0) or 0),
+                    text_pool_lambda_inv_days=float(text_pool_lambda_inv_days),
+                ),
+            )
+
+        # Shuffled-targets control runs only on the legacy single-tensor
+        # path; the walk-forward branch applies the same permutation
+        # per partition below.
+        if shuffle_targets_control:
+            if seed is None:
+                shuffle_seed = 11
+            else:
+                shuffle_seed = int(seed)
+            shuffle_generator = torch.Generator()
+            shuffle_generator.manual_seed(shuffle_seed)
+            perm = torch.randperm(y.shape[0], generator=shuffle_generator)
+            y = y[perm].clone()
+
+        train_x, train_y, val_x, val_y = _split_train_validation(x, y, validation_split)
+        if text_emb_tensor is not None and text_missing_tensor is not None:
+            train_text_emb = text_emb_tensor[: len(train_x)]
+            val_text_emb = text_emb_tensor[len(train_x) :]
+            train_text_missing = text_missing_tensor[: len(train_x)]
+            val_text_missing = text_missing_tensor[len(train_x) :]
+        else:
+            train_text_emb = val_text_emb = None
+            train_text_missing = val_text_missing = None
+        # Legacy path has no real held-out test partition; the val
+        # tensors serve as both early-stopping and final-report eval.
+        test_x = val_x
+        test_y = val_y
+        test_text_emb = val_text_emb
+        test_text_missing = val_text_missing
+
+    # Empty-tensor guard for the walk-forward branch. The legacy branch
+    # already short-circuits above on (x, y) == (None, None).
+    if walk_forward_path and (train_x is None or train_y is None):
         model = copy.deepcopy(base_model).to(device_obj) if base_model is not None else _build_model(active_model_config, device=device_obj)
         model.eval()
         return TrainingResult(
@@ -240,7 +385,7 @@ def train_model(
                 learning_rate=learning_rate,
                 validation_split=validation_split,
                 early_stopping_patience=early_stopping_patience,
-                sequence_groups=len(sequence_groups),
+                sequence_groups=len(sequence_groups_for_summary),
                 total_windows=0,
                 train_windows=0,
                 validation_windows=0,
@@ -248,6 +393,8 @@ def train_model(
                 checkpoint_saved=False,
                 best_epoch=None,
                 metrics=None,
+                fold_id=fold_id,
+                protocol=active_protocol,
                 weight_decay=float(weight_decay),
                 target_mode="shuffled" if shuffle_targets_control else "real",
                 text_encoder=text_encoder,
@@ -256,40 +403,56 @@ def train_model(
             ),
         )
 
-    # Mitigation 3: shuffled-targets control. Deterministically permute
-    # the target column so the model has no signal beyond the per-fold
-    # mean. macro-RMSE on the shuffled-targets run should sit near
-    # the constant-mean predictor; a real-targets run whose RMSE is
-    # close to its shuffled counterpart is memorising, not learning.
-    if shuffle_targets_control:
+    if walk_forward_path and shuffle_targets_control and train_y is not None:
+        # Permute the train partition only -- the val / test partitions
+        # keep their real targets so the memorisation control's
+        # held-out RMSE still measures what the model learns.
         if seed is None:
             shuffle_seed = 11
         else:
             shuffle_seed = int(seed)
         shuffle_generator = torch.Generator()
         shuffle_generator.manual_seed(shuffle_seed)
-        perm = torch.randperm(y.shape[0], generator=shuffle_generator)
-        y = y[perm].clone()
-
-    train_x, train_y, val_x, val_y = _split_train_validation(x, y, validation_split)
-    if text_emb_tensor is not None and text_missing_tensor is not None:
-        train_text_emb = text_emb_tensor[: len(train_x)]
-        val_text_emb = text_emb_tensor[len(train_x) :]
-        train_text_missing = text_missing_tensor[: len(train_x)]
-        val_text_missing = text_missing_tensor[len(train_x) :]
-    else:
-        train_text_emb = val_text_emb = None
-        train_text_missing = val_text_missing = None
+        perm = torch.randperm(train_y.shape[0], generator=shuffle_generator)
+        train_y = train_y[perm].clone()
     # The current Torch build emits deprecation warnings from DataLoader pinning internals.
     # For this dataset size, disabling pinning keeps training clean without a meaningful throughput hit.
     pin_memory = False
     loader_generator = make_generator(seed) if seed is not None else None
     if train_text_emb is not None and train_text_missing is not None:
         train_dataset = TensorDataset(train_x, train_y, train_text_emb, train_text_missing)
-        val_dataset = TensorDataset(val_x, val_y, val_text_emb, val_text_missing)
     else:
         train_dataset = TensorDataset(train_x, train_y)
-        val_dataset = TensorDataset(val_x, val_y)
+
+    # Early-stopping val loader: when the walk-forward branch supplied
+    # an empty val partition (rare, edge-case folds), reuse the train
+    # tensors as a tracker so the loop still has a stopping signal.
+    # ``val_metrics`` then collapses to the training-set value and
+    # ``test_metrics`` stays the headline number.
+    if val_x is None or val_y is None or len(val_x) == 0:
+        val_x_used = train_x
+        val_y_used = train_y
+        val_text_emb_used = train_text_emb
+        val_text_missing_used = train_text_missing
+    else:
+        val_x_used = val_x
+        val_y_used = val_y
+        val_text_emb_used = val_text_emb
+        val_text_missing_used = val_text_missing
+
+    if val_text_emb_used is not None and val_text_missing_used is not None:
+        val_dataset = TensorDataset(val_x_used, val_y_used, val_text_emb_used, val_text_missing_used)
+    else:
+        val_dataset = TensorDataset(val_x_used, val_y_used)
+
+    if test_x is not None and test_y is not None and len(test_x) > 0:
+        if test_text_emb is not None and test_text_missing is not None:
+            test_dataset = TensorDataset(test_x, test_y, test_text_emb, test_text_missing)
+        else:
+            test_dataset = TensorDataset(test_x, test_y)
+    else:
+        test_dataset = None
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=min(batch_size, len(train_x)),
@@ -300,7 +463,7 @@ def train_model(
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=min(batch_size, len(val_x)),
+        batch_size=min(batch_size, len(val_x_used)),
         shuffle=False,
         pin_memory=pin_memory,
         worker_init_fn=seed_worker if seed is not None else None,
@@ -316,7 +479,7 @@ def train_model(
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3)
     loss_fn = nn.SmoothL1Loss(beta=0.02)
 
-    best_metrics: EvaluationMetrics | None = None
+    best_val_metrics: EvaluationMetrics | None = None
     best_state = copy.deepcopy(work_model.state_dict())
     best_epoch: int | None = None
     completed_epochs = 0
@@ -352,8 +515,8 @@ def train_model(
         eval_metrics = _evaluate_model(work_model, val_loader, device_obj, loss_fn)
         scheduler.step(eval_metrics.loss)
 
-        if best_metrics is None or eval_metrics.loss + 1e-6 < best_metrics.loss:
-            best_metrics = eval_metrics
+        if best_val_metrics is None or eval_metrics.loss + 1e-6 < best_val_metrics.loss:
+            best_val_metrics = eval_metrics
             best_state = copy.deepcopy(work_model.state_dict())
             best_epoch = completed_epochs
             stale_epochs = 0
@@ -364,13 +527,13 @@ def train_model(
 
     work_model.load_state_dict(best_state)
     work_model.eval()
-    if best_metrics is None:
-        best_metrics = _evaluate_model(work_model, val_loader, device_obj, loss_fn)
-    # Mitigation 4: compute final-state training-set metrics so the
-    # aggregator can emit holdout_train_gap = (val_rmse - train_rmse) /
-    # train_rmse. The training set is re-evaluated through the same
-    # eval path (no dropout / no grad / fixed batch ordering) so the
-    # number is comparable to ``metrics``.
+    if best_val_metrics is None:
+        best_val_metrics = _evaluate_model(work_model, val_loader, device_obj, loss_fn)
+    # Final-state training-set evaluation so the aggregator can emit
+    # ``test_train_gap = (test_rmse - train_rmse) / train_rmse``. The
+    # training set is re-evaluated through the same eval path (no
+    # dropout / no grad / fixed batch ordering) so the number is
+    # comparable to the held-out RMSE.
     train_eval_loader = DataLoader(
         train_dataset,
         batch_size=min(batch_size, len(train_x)),
@@ -379,6 +542,31 @@ def train_model(
         worker_init_fn=seed_worker if seed is not None else None,
     )
     train_metrics = _evaluate_model(work_model, train_eval_loader, device_obj, loss_fn)
+
+    # Final-state held-out test evaluation. On the walk-forward path
+    # this is the real test partition the manifest pins; on the legacy
+    # 80/20 path no real held-out exists so the test loader is the val
+    # loader's tensors -- the per-trial record's ``test_rmse`` then
+    # equals the ``val_rmse``, which is exactly the pre-PR behaviour
+    # the legacy regression contract pins.
+    if test_dataset is not None:
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=min(batch_size, len(test_x)),
+            shuffle=False,
+            pin_memory=pin_memory,
+            worker_init_fn=seed_worker if seed is not None else None,
+        )
+        test_metrics = _evaluate_model(work_model, test_loader, device_obj, loss_fn)
+    else:
+        test_metrics = best_val_metrics
+
+    # ``metrics`` keeps the pre-PR semantics: the headline number the
+    # downstream best-selection ranks by. On the walk-forward path
+    # this is the held-out ``test_metrics``; on the legacy 80/20 path
+    # this is ``best_val_metrics`` so the byte-identity regression on
+    # ``test_forecaster_determinism.py`` stays green.
+    headline_metrics = test_metrics if walk_forward_path else best_val_metrics
 
     summary = TrainingRunSummary(
         model_config=ModelConfig.from_model(work_model),
@@ -389,15 +577,19 @@ def train_model(
         learning_rate=learning_rate,
         validation_split=validation_split,
         early_stopping_patience=early_stopping_patience,
-        sequence_groups=len(sequence_groups),
-        total_windows=len(x),
+        sequence_groups=len(sequence_groups_for_summary),
+        total_windows=len(train_x) + (len(val_x) if val_x is not None else 0) + (len(test_x) if test_x is not None else 0),
         train_windows=len(train_x),
-        validation_windows=len(val_x),
+        validation_windows=len(val_x) if val_x is not None else 0,
         checkpoint_path=str(checkpoint_target),
         checkpoint_saved=save_checkpoint,
         best_epoch=best_epoch,
-        metrics=best_metrics,
+        metrics=headline_metrics,
         train_metrics=train_metrics,
+        val_metrics=best_val_metrics,
+        test_metrics=test_metrics,
+        fold_id=fold_id,
+        protocol=active_protocol,
         weight_decay=float(weight_decay),
         target_mode="shuffled" if shuffle_targets_control else "real",
         text_encoder=text_encoder,
