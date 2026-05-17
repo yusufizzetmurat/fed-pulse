@@ -34,6 +34,8 @@ from app.training.loaders import (
     _build_text_embedding_tensors,
     _build_training_tensors,
     _split_train_validation,
+    apply_rich_feature_scaler_tensor,
+    fit_rich_feature_scaler_tensor,
     load_training_sequences_from_data,
 )
 
@@ -460,16 +462,25 @@ def train_model(
             fallback_text_in_dim=fallback_text_in_dim,
             close_scale=None,
         )
+        # Fit the rich-feature RobustScaler on the TRAIN tensor only;
+        # no-op for legacy 6-feature tensors so the regression contract
+        # at tests/regression/test_forecaster_determinism.py stays
+        # byte-identical. Apply to every partition with the same
+        # parameters so val + test see the train-time normalisation.
+        rich_feature_scaler = fit_rich_feature_scaler_tensor(train_x)
+        train_x = apply_rich_feature_scaler_tensor(train_x, rich_feature_scaler)
         val_x, val_y, _val_scale, val_text_emb, val_text_missing = _build_partition_tensors(
             val_groups,
             fallback_text_in_dim=fallback_text_in_dim,
             close_scale=close_scale,
         )
+        val_x = apply_rich_feature_scaler_tensor(val_x, rich_feature_scaler)
         test_x, test_y, _test_scale, test_text_emb, test_text_missing = _build_partition_tensors(
             test_groups,
             fallback_text_in_dim=fallback_text_in_dim,
             close_scale=close_scale,
         )
+        test_x = apply_rich_feature_scaler_tensor(test_x, rich_feature_scaler)
         sequence_groups_for_summary = train_groups + val_groups + test_groups
     else:
         if sequence_groups is not None:
@@ -531,6 +542,11 @@ def train_model(
             y = y[perm].clone()
 
         train_x, train_y, val_x, val_y = _split_train_validation(x, y, validation_split)
+        # Fit rich-feature scaler on the train slice; legacy 6-feature
+        # tensors short-circuit to no-op.
+        rich_feature_scaler = fit_rich_feature_scaler_tensor(train_x)
+        train_x = apply_rich_feature_scaler_tensor(train_x, rich_feature_scaler)
+        val_x = apply_rich_feature_scaler_tensor(val_x, rich_feature_scaler)
         if text_emb_tensor is not None and text_missing_tensor is not None:
             train_text_emb = text_emb_tensor[: len(train_x)]
             val_text_emb = text_emb_tensor[len(train_x) :]
@@ -878,7 +894,11 @@ def train_model(
         # the original price magnitude. The two values must agree byte-for-
         # byte across save/load — see the determinism regression test.
         _save_model_checkpoint(
-            work_model, checkpoint_target, summary, close_scale=close_scale
+            work_model,
+            checkpoint_target,
+            summary,
+            close_scale=close_scale,
+            rich_feature_scaler=rich_feature_scaler,
         )
         # Lazy-import the services facade so subsequent inference picks up the
         # freshly trained weights without a process restart. Doing this at the

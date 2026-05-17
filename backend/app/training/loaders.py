@@ -18,7 +18,10 @@ from app.models.config import (
     DEFAULT_DATA_DIR,
     DEFAULT_TEXT_ADAPTER_DIM,
     DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
+    FEATURE_SIZE,
+    RICH_FEATURE_SIZE,
     RICH_LINGUISTIC_DIM,
+    RichFeatureScalerParams,
     SEQUENCE_LENGTH,
     FeatureVector,
 )
@@ -963,23 +966,43 @@ def _attach_rich_features(
     else:
         mp_level = mp_path = fed_info = mp_intermeeting = 0.0
 
-    # Multi-axis 6-vector (3 values + 3 missing flags). NaN flips the
-    # missing flag for that axis but the value still collapses to
-    # zero, so the model sees "no signal" rather than "neutral
-    # numeric value".
+    # Option-A multi-axis slot: stance one-hot + gtfintechlab indicators
+    # + stance_missing flag. Replaces the pre-2026-05-17 numeric axes
+    # (axis_factor / axis_certainty / axis_time) that were 0% populated
+    # upstream. ``use_multi_axis=False`` zeros every position including
+    # ``stance_missing`` so the per-family ablation reads as a true
+    # "no slot" rather than "stance is unknown".
     if use_multi_axis:
-        factor_raw = _coerce_finite_float(event_row.get("axis_factor"))
-        certainty_raw = _coerce_finite_float(event_row.get("axis_certainty"))
-        time_raw = _coerce_finite_float(event_row.get("axis_time"))
-        axis_factor = factor_raw if factor_raw is not None else 0.0
-        axis_factor_missing = 0.0 if factor_raw is not None else 1.0
-        axis_certainty = certainty_raw if certainty_raw is not None else 0.0
-        axis_certainty_missing = 0.0 if certainty_raw is not None else 1.0
-        axis_time = time_raw if time_raw is not None else 0.0
-        axis_time_missing = 0.0 if time_raw is not None else 1.0
+        stance_raw = event_row.get("axis_stance")
+        stance = (
+            str(stance_raw).strip().lower()
+            if isinstance(stance_raw, str) and stance_raw.strip()
+            else None
+        )
+        stance_hawk = 1.0 if stance == "hawkish" else 0.0
+        stance_dove = 1.0 if stance == "dovish" else 0.0
+        stance_neutral = 1.0 if stance == "neutral" else 0.0
+        stance_missing = 1.0 if stance is None else 0.0
+
+        time_raw = event_row.get("axis_time_label")
+        time_label_forward = (
+            1.0
+            if isinstance(time_raw, str)
+            and time_raw.strip().lower() == "forward looking"
+            else 0.0
+        )
+
+        certain_raw = event_row.get("axis_certain_label")
+        certain_label_certain = (
+            1.0
+            if isinstance(certain_raw, str)
+            and certain_raw.strip().lower() == "certain"
+            else 0.0
+        )
     else:
-        axis_factor = axis_certainty = axis_time = 0.0
-        axis_factor_missing = axis_certainty_missing = axis_time_missing = 0.0
+        stance_hawk = stance_dove = stance_neutral = 0.0
+        time_label_forward = certain_label_certain = 0.0
+        stance_missing = 0.0
 
     for vector in vectors:
         vector.credibility_drift_score = cred_drift
@@ -991,12 +1014,12 @@ def _attach_rich_features(
         vector.mp_surprise_path_factor = mp_path
         vector.fed_info_factor = fed_info
         vector.mp_is_intermeeting = mp_intermeeting
-        vector.axis_factor = axis_factor
-        vector.axis_factor_missing = axis_factor_missing
-        vector.axis_certainty = axis_certainty
-        vector.axis_certainty_missing = axis_certainty_missing
-        vector.axis_time = axis_time
-        vector.axis_time_missing = axis_time_missing
+        vector.stance_hawk = stance_hawk
+        vector.stance_dove = stance_dove
+        vector.stance_neutral = stance_neutral
+        vector.time_label_forward = time_label_forward
+        vector.certain_label_certain = certain_label_certain
+        vector.stance_missing = stance_missing
         vector.rich_payload = True
 
 
@@ -1860,6 +1883,84 @@ def load_training_sequences_from_package(
                 vector.text_embedding_missing = missing_flag
         sequences.append(vectors)
     return sequences
+
+
+def fit_rich_feature_scaler_tensor(
+    train_x: "torch.Tensor",
+    *,
+    epsilon: float = 1e-6,
+) -> "RichFeatureScalerParams | None":
+    """Fit per-column median + IQR over positions [FEATURE_SIZE:RICH_FEATURE_SIZE].
+
+    Operates on the TRAIN tensor only -- never call on val / test rows.
+    The walk-forward and legacy paths in ``app.training.loop`` both
+    honour this by fitting before any val / test transform is applied.
+    Quantiles are estimated over the full (n_windows x sequence_length)
+    population so each feature gets the maximum statistical mass; at
+    the small corpus size the autocorrelation tax is well under the
+    sparsity tax on the linguistic right tail.
+
+    Returns ``None`` when the tensor isn't rich-payload (input_dim
+    != ``RICH_FEATURE_SIZE``). Keeps the legacy 6-feature training
+    path byte-identical for the existing regression contract at
+    ``tests/regression/test_forecaster_determinism.py``.
+
+    Constant columns (IQR < ``epsilon`` on the train slice) get their
+    IQR coerced to ``1.0`` so the transform reduces to a pure
+    centering step. Catches the placeholder
+    ``credibility_market_implied_gap`` (always 0.0 by contract today)
+    and any per-family ablation that zeros a slot before fit time.
+    """
+
+    import numpy as np
+    from datetime import datetime, timezone
+
+    if train_x is None or train_x.numel() == 0:
+        return None
+    if train_x.shape[-1] != RICH_FEATURE_SIZE:
+        return None
+
+    flat = train_x.reshape(-1, RICH_FEATURE_SIZE)
+    rich_block = flat[:, FEATURE_SIZE:RICH_FEATURE_SIZE].detach().cpu().numpy()
+    medians = np.median(rich_block, axis=0)
+    q1 = np.quantile(rich_block, 0.25, axis=0)
+    q3 = np.quantile(rich_block, 0.75, axis=0)
+    iqrs = q3 - q1
+    iqrs = np.where(iqrs < epsilon, 1.0, iqrs)
+    return RichFeatureScalerParams(
+        medians=tuple(float(v) for v in medians.tolist()),
+        iqrs=tuple(float(v) for v in iqrs.tolist()),
+        epsilon=float(epsilon),
+        fitted_at_utc=datetime.now(timezone.utc).isoformat(),
+        n_train_observations=int(rich_block.shape[0]),
+    )
+
+
+def apply_rich_feature_scaler_tensor(
+    x: "torch.Tensor",
+    scaler: "RichFeatureScalerParams | None",
+) -> "torch.Tensor":
+    """Apply ``(x - median) / iqr`` to positions [FEATURE_SIZE:RICH_FEATURE_SIZE].
+
+    No-op when ``scaler`` is ``None`` or when the tensor isn't
+    rich-payload (input_dim != ``RICH_FEATURE_SIZE``). The market
+    block [0:FEATURE_SIZE] passes through untouched -- the
+    ``close_scale`` fitted in :func:`fit_close_scale` is the only
+    transform on the legacy six positions.
+    """
+
+    if scaler is None or x is None or x.numel() == 0:
+        return x
+    if x.shape[-1] != RICH_FEATURE_SIZE:
+        return x
+
+    medians = torch.tensor(scaler.medians, dtype=x.dtype, device=x.device)
+    iqrs = torch.tensor(scaler.iqrs, dtype=x.dtype, device=x.device)
+    out = x.clone()
+    out[..., FEATURE_SIZE:RICH_FEATURE_SIZE] = (
+        x[..., FEATURE_SIZE:RICH_FEATURE_SIZE] - medians
+    ) / iqrs
+    return out
 
 
 def fit_close_scale(sequence_groups: Sequence[Sequence[FeatureVector]]) -> float:

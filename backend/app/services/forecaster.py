@@ -46,6 +46,8 @@ from app.models.config import (
     ELAPSED_TIME_FEATURE_INDEX,
     FEATURE_SIZE,
     FORECAST_CONFIDENCE_LEVEL,
+    RICH_FEATURE_SIZE,
+    RichFeatureScalerParams,
     MODELS_DIR,
     SENTIMENT_FEATURE_INDEX,
     SEQUENCE_LENGTH,
@@ -138,9 +140,37 @@ def _set_singleton_after_train(
         )
 
 
+def _build_inference_tensor(
+    sequence: list[FeatureVector],
+    model: ForecasterModel,
+    device: torch.device,
+) -> torch.Tensor:
+    """Build the per-event input tensor for one forward pass.
+
+    Dispatches on the loaded model's ``input_size``: rich-features
+    models (input_size == RICH_FEATURE_SIZE = 35) use
+    ``as_rich_list`` and apply the persisted RobustScaler from the
+    checkpoint metadata so inference matches training-time
+    normalisation. Legacy 6-feature models keep the byte-identical
+    ``as_list`` path so the existing /analyze contract is unchanged.
+    """
+
+    if int(getattr(model, "input_size", FEATURE_SIZE)) == RICH_FEATURE_SIZE:
+        rows = [item.as_rich_list() for item in sequence]
+        x = torch.tensor([rows], dtype=torch.float32, device=device)
+        scaler = (_model_artifact_metadata or {}).get("rich_feature_scaler")
+        if scaler is not None:
+            from app.training.loaders import apply_rich_feature_scaler_tensor
+
+            x = apply_rich_feature_scaler_tensor(x, scaler)
+        return x
+    rows = [item.as_list() for item in sequence]
+    return torch.tensor([rows], dtype=torch.float32, device=device)
+
+
 def _predict_next_point(model: ForecasterModel, sequence: list[FeatureVector]) -> tuple[float, float]:
     device = next(model.parameters()).device
-    x = torch.tensor([[item.as_list() for item in sequence]], dtype=torch.float32, device=device)
+    x = _build_inference_tensor(sequence, model, device)
     kwargs: dict[str, torch.Tensor] = {}
     if getattr(model, "credibility_features", False):
         # Inference-side credibility uses a zero vector by default; the live
