@@ -192,6 +192,80 @@ class ModelConfig:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class RichFeatureScalerParams:
+    """Median + IQR fitted on the rich-feature block [FEATURE_SIZE:RICH_FEATURE_SIZE].
+
+    Fitted on the training slice only via
+    ``app.training.loaders.fit_rich_feature_scaler_tensor`` and persisted
+    into the checkpoint payload alongside ``close_scale`` so resume + the
+    inference path apply the same transform deterministically.
+
+    The scaler is a robust z-score ``(x - median) / iqr``. Constant
+    columns (IQR < ``epsilon`` on the train slice) get their IQR coerced
+    to ``1.0`` so the transform reduces to a pure centering step --
+    safe against the placeholder ``credibility_market_implied_gap``
+    (always 0.0 by contract today) and against any per-family ablation
+    that zeros a slot before the scaler sees it.
+    """
+
+    medians: tuple[float, ...]
+    iqrs: tuple[float, ...]
+    epsilon: float = 1e-6
+    fitted_at_utc: str = ""
+    n_train_observations: int = 0
+
+    def __post_init__(self) -> None:
+        if len(self.medians) != RICH_EXTRA_FEATURE_SIZE:
+            raise ValueError(
+                "RichFeatureScalerParams.medians must have length "
+                f"{RICH_EXTRA_FEATURE_SIZE}; got {len(self.medians)}"
+            )
+        if len(self.iqrs) != RICH_EXTRA_FEATURE_SIZE:
+            raise ValueError(
+                "RichFeatureScalerParams.iqrs must have length "
+                f"{RICH_EXTRA_FEATURE_SIZE}; got {len(self.iqrs)}"
+            )
+        for i, iqr in enumerate(self.iqrs):
+            if iqr <= 0.0:
+                raise ValueError(
+                    f"RichFeatureScalerParams.iqrs[{i}] must be positive "
+                    "(constant columns are floored to 1.0 at fit time); "
+                    f"got {iqr}"
+                )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "medians": list(self.medians),
+            "iqrs": list(self.iqrs),
+            "epsilon": float(self.epsilon),
+            "fitted_at_utc": str(self.fitted_at_utc),
+            "n_train_observations": int(self.n_train_observations),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "RichFeatureScalerParams | None":
+        """Rehydrate from a checkpoint payload entry.
+
+        Returns ``None`` on any malformed input so legacy checkpoints
+        without the scaler key load cleanly under the unscaled-train
+        regression contract.
+        """
+
+        if not isinstance(data, dict) or not data:
+            return None
+        try:
+            return cls(
+                medians=tuple(float(x) for x in data["medians"]),
+                iqrs=tuple(float(x) for x in data["iqrs"]),
+                epsilon=float(data.get("epsilon", 1e-6)),
+                fitted_at_utc=str(data.get("fitted_at_utc", "")),
+                n_train_observations=int(data.get("n_train_observations", 0)),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+
+
 @dataclass
 class FeatureVector:
     """Per-bar feature row consumed by the forecaster.
@@ -222,12 +296,17 @@ class FeatureVector:
     - positions ``[25:29]`` -- MP-surprise 4-vector
       (``mp_surprise_level`` / ``mp_surprise_path_factor`` /
       ``fed_info_factor`` / ``mp_is_intermeeting``).
-    - positions ``[29:35]`` -- 6-dim multi-axis vector
-      (``axis_factor`` / ``axis_factor_missing`` /
-      ``axis_certainty`` / ``axis_certainty_missing`` /
-      ``axis_time`` / ``axis_time_missing``). NaN inputs collapse to
-      ``0.0`` and the paired ``*_missing`` flag flips to ``1.0`` so
-      the model can tell "no signal" apart from "neutral signal".
+    - positions ``[29:35]`` -- 6-dim Option-A multi-axis slot:
+      ``stance_hawk`` / ``stance_dove`` / ``stance_neutral`` (one-hot
+      from ``axis_stance`` on events.parquet) plus
+      ``time_label_forward`` / ``certain_label_certain`` (binary
+      indicators lifted off ``multi_axis_extras`` for gtfintechlab
+      cross-bank rows) plus ``stance_missing`` (1.0 when the stance
+      label is absent so the model can tell "unknown" apart from a
+      genuine neutral). Replaces the pre-2026-05-17 numeric axes
+      (``axis_factor`` / ``axis_certainty`` / ``axis_time``) that were
+      0% populated upstream. Slot size unchanged so existing checkpoints
+      load without state_dict reshape.
     """
 
     date: str
@@ -253,12 +332,17 @@ class FeatureVector:
     mp_surprise_path_factor: float = 0.0
     fed_info_factor: float = 0.0
     mp_is_intermeeting: float = 0.0
-    axis_factor: float = 0.0
-    axis_factor_missing: float = 1.0
-    axis_certainty: float = 0.0
-    axis_certainty_missing: float = 1.0
-    axis_time: float = 0.0
-    axis_time_missing: float = 1.0
+    # Option-A multi-axis slot (PR after 2026-05-17). Slot positions
+    # [29:35] in ``as_rich_list``; field-order in this dataclass is
+    # cosmetic. ``stance_missing`` defaults to 1.0 ("unknown" prior)
+    # so a default-constructed FeatureVector behaves as "no stance
+    # signal" rather than "stance=hawkish/dovish/neutral with weight 0".
+    stance_hawk: float = 0.0
+    stance_dove: float = 0.0
+    stance_neutral: float = 0.0
+    time_label_forward: float = 0.0
+    certain_label_certain: float = 0.0
+    stance_missing: float = 1.0
     rich_payload: bool = False
     # Pooled text-embedding payload (PR #176 onward). Carries the
     # variable-length encoder-output vector (FinBERT 768, voyage-finance-2
@@ -343,12 +427,12 @@ class FeatureVector:
             float(self.mp_is_intermeeting),
         ]
         multi_axis = [
-            float(self.axis_factor),
-            float(self.axis_factor_missing),
-            float(self.axis_certainty),
-            float(self.axis_certainty_missing),
-            float(self.axis_time),
-            float(self.axis_time_missing),
+            float(self.stance_hawk),
+            float(self.stance_dove),
+            float(self.stance_neutral),
+            float(self.time_label_forward),
+            float(self.certain_label_certain),
+            float(self.stance_missing),
         ]
         return market + credibility + linguistic + mp_surprise + multi_axis
 

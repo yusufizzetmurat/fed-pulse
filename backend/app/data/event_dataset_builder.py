@@ -130,6 +130,7 @@ import argparse
 import datetime as _dt
 import hashlib
 import json
+import logging
 import math
 import sys
 from collections import defaultdict
@@ -262,6 +263,12 @@ class _EventDoc:
     text: str
     record_ids: list[str]
     multi_axis: dict[str, str | None]
+    # Populated from registry ``multi_axis_extras`` when available. Only the
+    # gtfintechlab cross-bank corpora carry these labels today; every other
+    # source leaves them ``None`` and downstream consumers encode them as
+    # 0.0 in the rich-feature slot.
+    time_label: str | None = None       # "forward looking" / "not forward looking"
+    certain_label: str | None = None    # "certain" / "uncertain"
 
     @property
     def source_record_id(self) -> str:
@@ -359,6 +366,14 @@ def _aggregate_events(rows: Iterable[_RegistryRow]) -> list[_EventDoc]:
             "factor": None,
             "topic": None,
         }
+        # gtfintechlab cross-bank corpora ship two extra categorical labels
+        # ("time_label" forward/not-forward, "certain_label" certain/uncertain)
+        # on ``multi_axis_extras``. Lift them into the event doc so the
+        # rich-feature loader can use them as Option-A indicators on the
+        # multi-axis slot. Initialised per bucket iteration to prevent any
+        # leakage between adjacent (source, date, kind) groups.
+        time_label: str | None = None
+        certain_label: str | None = None
         # Use the first row whose mapped_label or axes carry a value as the
         # document-level label. Deterministic because bucket is sorted.
         # ``val is not None`` (not truthy) preserves legitimate zeros for
@@ -375,8 +390,14 @@ def _aggregate_events(rows: Iterable[_RegistryRow]) -> list[_EventDoc]:
                     val = r.axes.get(axis_name)
                     if val is not None:
                         multi_axis[axis_name] = str(val)
-            # multi_axis_extras (Op-Fed opinion etc.) is recorded only via
-            # axes; the raw extras dict is not lifted into event rows.
+            if time_label is None:
+                candidate = r.multi_axis_extras.get("gtfintechlab_time_label")
+                if isinstance(candidate, str) and candidate.strip():
+                    time_label = candidate.strip().lower()
+            if certain_label is None:
+                candidate = r.multi_axis_extras.get("gtfintechlab_certain_label")
+                if isinstance(candidate, str) and candidate.strip():
+                    certain_label = candidate.strip().lower()
         docs.append(
             _EventDoc(
                 source=source,
@@ -385,9 +406,44 @@ def _aggregate_events(rows: Iterable[_RegistryRow]) -> list[_EventDoc]:
                 text=text,
                 record_ids=[r.source_record_id for r in bucket_sorted],
                 multi_axis=multi_axis,
+                time_label=time_label,
+                certain_label=certain_label,
             )
         )
     return docs
+
+
+_STANCE_SCORE: dict[str, float] = {"hawkish": 1.0, "dovish": -1.0, "neutral": 0.0}
+
+
+def _derive_stance_by_date(
+    registry_rows: Sequence[_RegistryRow],
+) -> tuple[tuple[str, float], ...]:
+    """Aggregate per-date stance scores from registry ``mapped_label``.
+
+    Encodes hawkish=+1, dovish=-1, neutral=0 and averages the score per
+    ``event_date`` so the credibility loader has a stance history to
+    correlate against the FRED-DFF realized path
+    (``realized_vs_stated_gap``) and to count sign flips for the
+    ``months_since_reversal`` axis. The auto-derivation is what previously
+    forced both axes to 0.0 — the CLI never exposed ``--stance-by-date``,
+    so every event_dataset_builder run before 2026-05-17 silently passed
+    an empty tuple.
+
+    Returns a chronologically-sorted tuple of (date_iso, mean_score)
+    pairs. Empty for packages where no row carries a mapped stance label.
+    """
+
+    by_date: dict[str, list[float]] = defaultdict(list)
+    for row in registry_rows:
+        score = _STANCE_SCORE.get((row.mapped_label or "").lower())
+        if score is None or not row.event_date:
+            continue
+        by_date[row.event_date].append(float(score))
+    return tuple(
+        (date, sum(scores) / len(scores))
+        for date, scores in sorted(by_date.items())
+    )
 
 
 def _choose_preferred(docs: list[_EventDoc]) -> list[_EventDoc]:
@@ -1081,6 +1137,8 @@ def _build_event_rows(
                 "axis_certainty": doc.multi_axis.get("certainty"),
                 "axis_factor": doc.multi_axis.get("factor"),
                 "axis_topic": doc.multi_axis.get("topic"),
+                "axis_time_label": doc.time_label,
+                "axis_certain_label": doc.certain_label,
                 "credibility_drift_score": float(cred.drift_score),
                 "credibility_realized_vs_stated_gap": float(cred.realized_vs_stated_gap),
                 "credibility_market_implied_gap": float(cred.market_implied_gap),
@@ -1111,6 +1169,9 @@ def _build_event_rows(
     return rows
 
 
+_CREDIBILITY_EMPTY_INPUTS_WARNED = False
+
+
 def _safe_credibility(as_of_ts: str, kwargs: dict[str, Any]) -> CredibilityVector:
     """Wrap ``load_credibility_for_run`` so missing inputs degrade to zeros.
 
@@ -1118,7 +1179,27 @@ def _safe_credibility(as_of_ts: str, kwargs: dict[str, Any]) -> CredibilityVecto
     but we still catch ValueError so a malformed ``as_of_ts`` placeholder
     never aborts the whole build. Documented behaviour: zero vector means
     "credibility unknown", not "credibility zero".
+
+    Logs a one-shot warning when ``embedding_path`` is None AND
+    ``stance_by_date`` is empty — that combination guarantees a zero
+    credibility vector and was the silent-failure mode in pre-2026-05-17
+    events.parquet builds.
     """
+
+    global _CREDIBILITY_EMPTY_INPUTS_WARNED
+    if (
+        not _CREDIBILITY_EMPTY_INPUTS_WARNED
+        and kwargs.get("embedding_path") is None
+        and not kwargs.get("stance_by_date")
+    ):
+        logging.getLogger(__name__).warning(
+            "credibility inputs empty (no embedding_path, no stance_by_date); "
+            "all four credibility axes will be 0.0 for every event. "
+            "Pass --embedding-path data/raw/embeddings/<encoder>_<rev>.parquet "
+            "to enable drift_score, and confirm the registry carries "
+            "mapped_label values so the auto-derived stance series is non-empty."
+        )
+        _CREDIBILITY_EMPTY_INPUTS_WARNED = True
 
     try:
         return load_credibility_for_run(as_of_ts=as_of_ts, **kwargs)
@@ -1146,6 +1227,8 @@ COLUMN_ORDER = (
     "axis_certainty",
     "axis_factor",
     "axis_topic",
+    "axis_time_label",
+    "axis_certain_label",
     "credibility_drift_score",
     "credibility_realized_vs_stated_gap",
     "credibility_market_implied_gap",
@@ -1211,6 +1294,16 @@ def build_event_rows(
         macro_release_calendar = _resolve_macro_calendar(macro_release_csv_path)
 
     registry_rows = _load_registry_rows(package_dir)
+
+    # Auto-derive a stance series from the registry when the caller did not
+    # supply one. The credibility loader needs this to compute
+    # ``realized_vs_stated_gap`` (Pearson against the FRED-DFF window) and
+    # ``months_since_reversal`` (sign flips); without it both axes degrade
+    # silently to 0.0. Explicit ``stance_by_date`` callers (tests, smoke
+    # runs) keep their override unchanged.
+    if not stance_by_date:
+        stance_by_date = _derive_stance_by_date(registry_rows)
+
     docs_all = _aggregate_events(registry_rows)
     docs = list(docs_all) if keep_all_sources else _choose_preferred(docs_all)
     if not docs:
@@ -1351,8 +1444,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--embedding-path",
-        default=None,
-        help="Optional per-encoder embedding parquet for credibility drift.",
+        default=str(
+            DEFAULT_DATA_DIR / "raw" / "embeddings" / "finbert_4556d1301521.parquet"
+        ),
+        help=(
+            "Per-encoder embedding parquet for the credibility drift axis. "
+            "Defaults to the cached FinBERT parquet so the builder is "
+            "batteries-included; pass 'none' (or an empty string) to skip "
+            "the drift computation. Non-'none' values must point at an "
+            "existing file -- missing-file is a hard error."
+        ),
     )
     parser.add_argument(
         "--fred-cache-dir",
@@ -1382,6 +1483,30 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _resolve_embedding_path(raw: str | None) -> Path | None:
+    """Resolve the ``--embedding-path`` CLI value.
+
+    Empty string or the literal ``"none"`` (case-insensitive) opts out of
+    the drift axis. Any other value must exist on disk -- a typo that
+    misses the cache parquet has to be a hard error so the
+    silent-zero-credibility regression from pre-2026-05-17 cannot recur.
+    """
+
+    if raw is None:
+        return None
+    cleaned = str(raw).strip()
+    if not cleaned or cleaned.lower() == "none":
+        return None
+    path = Path(cleaned)
+    if not path.exists():
+        raise SystemExit(
+            f"--embedding-path points at a missing file: {path}. "
+            "Pass 'none' to skip drift computation, or point at an existing "
+            "data/raw/embeddings/<encoder>_<rev>.parquet."
+        )
+    return path
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     package_dir = DEFAULT_DATA_DIR / "processed" / args.training_package_id
@@ -1407,7 +1532,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         horizons=horizons,
         market_cache_dir=market_cache_dir,
         concurrent_macro_window_days=int(args.concurrent_macro_window_days),
-        embedding_path=Path(args.embedding_path) if args.embedding_path else None,
+        embedding_path=_resolve_embedding_path(args.embedding_path),
         fred_cache_dir=Path(args.fred_cache_dir) if args.fred_cache_dir else None,
         summary=summary,
         macro_release_calendar=macro_calendar,
@@ -1443,7 +1568,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             horizons=horizons,
             market_cache_dir=market_cache_dir,
             concurrent_macro_window_days=int(args.concurrent_macro_window_days),
-            embedding_path=Path(args.embedding_path) if args.embedding_path else None,
+            embedding_path=_resolve_embedding_path(args.embedding_path),
             fred_cache_dir=Path(args.fred_cache_dir) if args.fred_cache_dir else None,
             summary=full_summary,
             macro_release_calendar=macro_calendar,

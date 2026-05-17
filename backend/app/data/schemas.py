@@ -466,6 +466,20 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
         nullable=True,
         required=True,
     ),
+    # String indicators lifted off ``multi_axis_extras`` (only the
+    # gtfintechlab cross-bank corpora ship them today). Required=False
+    # so older events.parquet files validate; the loader treats absent
+    # columns as ``None`` everywhere.
+    "axis_time_label": Column(
+        checks=Check(_nullable_in_set({"forward looking", "not forward looking"})),
+        nullable=True,
+        required=False,
+    ),
+    "axis_certain_label": Column(
+        checks=Check(_nullable_in_set({"certain", "uncertain"})),
+        nullable=True,
+        required=False,
+    ),
     "credibility_drift_score": Column(float, nullable=False, required=True, coerce=True),
     "credibility_realized_vs_stated_gap": Column(
         float, nullable=False, required=True, coerce=True

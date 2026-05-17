@@ -65,6 +65,8 @@ def _event_row(
     realized_date: str,
     base_close: float,
     horizon: int = 1,
+    axis_time_label: str | None = None,
+    axis_certain_label: str | None = None,
 ) -> dict:
     return {
         "event_date": event_date,
@@ -81,6 +83,8 @@ def _event_row(
         "axis_certainty": None,
         "axis_factor": None,
         "axis_topic": None,
+        "axis_time_label": axis_time_label,
+        "axis_certain_label": axis_certain_label,
         "credibility_drift_score": 0.0,
         "credibility_realized_vs_stated_gap": 0.0,
         "credibility_market_implied_gap": 0.0,
@@ -531,28 +535,36 @@ def rich_feature_package_dir(tmp_path: Path, monkeypatch) -> Path:
     monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
 
     events = []
-    for text_hash, event_date, realized_date, base_close, base, factor, certainty in (
-        ("hash_a", "2024-01-31", "2024-02-01", 4400.0, 0.10, 0.25, 0.5),
-        ("hash_b", "2024-02-15", "2024-02-16", 4500.0, 0.20, -0.40, 0.8),
-        ("hash_no_ling", "2024-03-15", "2024-03-16", 4600.0, 0.30, 0.10, 0.2),
+    for (
+        text_hash,
+        event_date,
+        realized_date,
+        base_close,
+        base,
+        stance,
+        time_label,
+        certain_label,
+    ) in (
+        ("hash_a", "2024-01-31", "2024-02-01", 4400.0, 0.10, "hawkish", "forward looking", "certain"),
+        ("hash_b", "2024-02-15", "2024-02-16", 4500.0, 0.20, "dovish", "not forward looking", "uncertain"),
+        ("hash_no_ling", "2024-03-15", "2024-03-16", 4600.0, 0.30, "neutral", None, None),
     ):
         row = _event_row(
             event_date=event_date,
             text_hash=text_hash,
-            axis_stance="hawkish",
+            axis_stance=stance,
             realized_return=0.001,
             realized_date=realized_date,
             base_close=base_close,
+            axis_time_label=time_label,
+            axis_certain_label=certain_label,
         )
-        # Pin credibility + multi-axis to distinguishable, non-zero
-        # values so the per-bar slice assertions are observable.
+        # Pin credibility to distinguishable non-zero values so the
+        # per-bar slice assertions remain observable.
         row["credibility_drift_score"] = base + 0.001
         row["credibility_realized_vs_stated_gap"] = base + 0.002
         row["credibility_market_implied_gap"] = base + 0.003
         row["credibility_months_since_reversal"] = int(base * 10)
-        row["axis_factor"] = factor
-        row["axis_certainty"] = certainty
-        row["axis_time"] = base + 0.5
         events.append(row)
     pd.DataFrame(events).to_parquet(package_dir / "events.parquet", index=False)
     pd.DataFrame(
@@ -622,8 +634,11 @@ def test_rich_features_emit_35_per_bar(rich_feature_package_dir: Path) -> None:
     # hash_a has base=0.10 in the mp parquet (is_intermeeting=False).
     assert mp_slice == pytest.approx([0.101, 0.102, 0.103, 0.0])
     multi_axis_slice = rich[RICH_MULTI_AXIS_SLICE]
-    # All three axes present -> missing flags zero.
-    assert multi_axis_slice == pytest.approx([0.25, 0.0, 0.5, 0.0, 0.6, 0.0])
+    # Option-A slot: [stance_hawk, stance_dove, stance_neutral,
+    # time_label_forward, certain_label_certain, stance_missing].
+    # hash_a fixture: stance="hawkish", time="forward looking",
+    # certain="certain" -> 1, 0, 0, 1, 1, 0.
+    assert multi_axis_slice == pytest.approx([1.0, 0.0, 0.0, 1.0, 1.0, 0.0])
 
 
 def test_rich_features_missing_linguistic_row_zeros_and_flags(
@@ -648,7 +663,9 @@ def test_rich_features_missing_linguistic_row_zeros_and_flags(
     target = no_ling_sequence[-1].as_rich_list()
     assert target[RICH_CREDIBILITY_SLICE][0] == pytest.approx(0.301)
     assert target[RICH_MP_SURPRISE_SLICE][0] == pytest.approx(0.301)
-    assert target[RICH_MULTI_AXIS_SLICE][2] == pytest.approx(0.2)
+    # hash_no_ling fixture: stance="neutral", no gtfintechlab labels.
+    # Slot position 2 is the stance_neutral one-hot bit -> 1.0.
+    assert target[RICH_MULTI_AXIS_SLICE][2] == pytest.approx(1.0)
 
 
 def test_rich_features_per_family_ablation_zeros_correct_slice(
@@ -677,13 +694,14 @@ def test_rich_features_per_family_ablation_zeros_correct_slice(
     hash_a_target = by_target_date["2024-02-01"][-1].as_rich_list()
     assert hash_a_target[RICH_LINGUISTIC_SLICE][0] == pytest.approx(0.11)
     assert hash_a_target[RICH_MP_SURPRISE_SLICE][0] == pytest.approx(0.101)
-    assert hash_a_target[RICH_MULTI_AXIS_SLICE][0] == pytest.approx(0.25)
+    # hash_a fixture: stance="hawkish" -> Option-A slot[0] = stance_hawk = 1.0.
+    assert hash_a_target[RICH_MULTI_AXIS_SLICE][0] == pytest.approx(1.0)
 
 
 def test_rich_features_multi_axis_missing_flips_missing_flag(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """NaN multi-axis fields collapse to zero and flip the missing flag."""
+    """Absent ``axis_stance`` flips the ``stance_missing`` flag to 1.0."""
 
     package_id = "tp_unit_multi_axis_missing_v0"
     package_dir = tmp_path / "processed" / package_id
@@ -693,14 +711,15 @@ def test_rich_features_multi_axis_missing_flips_missing_flag(
     row = _event_row(
         event_date="2024-04-30",
         text_hash="hash_nan_axes",
-        axis_stance="neutral",
+        axis_stance=None,
         realized_return=0.0,
         realized_date="2024-05-01",
         base_close=4700.0,
     )
-    # axis_factor / axis_certainty / axis_time stay None (default
-    # from ``_event_row``); the loader must collapse them to 0.0 and
-    # flip each *_missing flag to 1.0.
+    # ``axis_time_label`` / ``axis_certain_label`` default to None;
+    # the loader emits 0.0 in each indicator position and trips the
+    # ``stance_missing`` flag (slot position 5) because ``axis_stance``
+    # is also absent.
     pd.DataFrame([row]).to_parquet(package_dir / "events.parquet", index=False)
     pd.DataFrame(
         [{"text_hash": "hash_nan_axes", "split_tag": "train"}]
@@ -712,9 +731,10 @@ def test_rich_features_multi_axis_missing_flips_missing_flag(
     assert len(sequences) == 1
     target = sequences[0][-1].as_rich_list()
     multi_axis = target[RICH_MULTI_AXIS_SLICE]
-    # axis_factor, axis_factor_missing, axis_certainty,
-    # axis_certainty_missing, axis_time, axis_time_missing
-    assert multi_axis == pytest.approx([0.0, 1.0, 0.0, 1.0, 0.0, 1.0])
+    # Option-A slot: [stance_hawk, stance_dove, stance_neutral,
+    # time_label_forward, certain_label_certain, stance_missing].
+    # All inputs absent -> only stance_missing fires.
+    assert multi_axis == pytest.approx([0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
 
 
 def test_no_rich_features_reproduces_legacy_6dim_path(

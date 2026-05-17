@@ -13,6 +13,7 @@ from app.models.config import (
     FEATURE_SIZE,
     SEQUENCE_LENGTH,
     ModelConfig,
+    RichFeatureScalerParams,
 )
 from app.models.lstm import ForecasterModel
 
@@ -126,6 +127,11 @@ def _checkpoint_metadata(
             if isinstance(payload, dict)
             else float(DEFAULT_CLOSE_SCALE)
         ),
+        "rich_feature_scaler": (
+            RichFeatureScalerParams.from_dict(payload.get("rich_feature_scaler"))
+            if isinstance(payload, dict)
+            else None
+        ),
         "sequence_length": (
             int(payload.get("sequence_length", SEQUENCE_LENGTH))
             if isinstance(payload, dict)
@@ -200,6 +206,7 @@ def _checkpoint_payload(
     summary: TrainingRunSummary,
     *,
     close_scale: float | None = None,
+    rich_feature_scaler: RichFeatureScalerParams | None = None,
 ) -> dict[str, Any]:
     """Build the dict torch.save writes for one trained model.
 
@@ -209,6 +216,13 @@ def _checkpoint_payload(
     not thread the fitted scale through (e.g. bare manifest exports) keep
     working unchanged. New callers always pass the fitted value so resume-
     from-checkpoint matches the training-time normalisation.
+
+    ``rich_feature_scaler`` is the RobustScaler (median + IQR) fitted in
+    ``app.training.loaders.fit_rich_feature_scaler_tensor`` over the
+    train slice of the rich-feature block [FEATURE_SIZE:RICH_FEATURE_SIZE].
+    ``None`` is the legacy 6-feature path -- it serialises to a literal
+    None key so the rehydration side returns no scaler and inference
+    falls back to the identity transform.
     """
 
     return {
@@ -220,6 +234,11 @@ def _checkpoint_payload(
         "input_size": FEATURE_SIZE,
         "sequence_length": SEQUENCE_LENGTH,
         "close_scale": float(close_scale) if close_scale is not None else float(DEFAULT_CLOSE_SCALE),
+        "rich_feature_scaler": (
+            rich_feature_scaler.to_dict()
+            if rich_feature_scaler is not None
+            else None
+        ),
         "rng_state": _capture_rng_state(),
     }
 
@@ -230,10 +249,16 @@ def _save_model_checkpoint(
     summary: TrainingRunSummary,
     *,
     close_scale: float | None = None,
+    rich_feature_scaler: RichFeatureScalerParams | None = None,
 ) -> None:
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
-        _checkpoint_payload(model, summary, close_scale=close_scale),
+        _checkpoint_payload(
+            model,
+            summary,
+            close_scale=close_scale,
+            rich_feature_scaler=rich_feature_scaler,
+        ),
         checkpoint_path,
     )
     try:
