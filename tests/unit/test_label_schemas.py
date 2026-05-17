@@ -22,8 +22,11 @@ def test_schema_yaml_loads_with_expected_keys() -> None:
 
 
 def test_sample_weights_table_matches_provenance() -> None:
+    # ``sample_weight`` is a binary inclusion gate, not a per-row loss
+    # multiplier — see ``data/schema/labels.yaml`` for the contract.
     assert sample_weight_for("peer_reviewed") == 1.0
-    assert sample_weight_for("kaggle") == 0.7
+    assert sample_weight_for("kaggle") == 1.0
+    assert sample_weight_for("peer_reviewed_cross_bank") == 0.0
     assert sample_weight_for("scraped") == 0.0
     assert sample_weight_for("unknown-bucket") == 0.0
 
