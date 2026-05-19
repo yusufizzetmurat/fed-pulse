@@ -55,7 +55,7 @@ _logger = logging.getLogger(__name__)
 # common deviation so the validator gets a fair shot at the payload.
 
 
-def _parse_response_json(text: str) -> dict[str, Any]:
+def _parse_response_json(text: str) -> dict[str, Any]:  # noqa: C901
     """Strip markdown fences and any leading / trailing prose, then
     parse the first JSON object found in the response.
 
@@ -359,7 +359,7 @@ def _persist_cache(rows: Iterable[dict[str, Any]], path: Path) -> None:
 _DONE_STATUSES: frozenset[str] = frozenset({"ok", "document_too_short"})
 
 
-def extract_for_package(
+def extract_for_package(  # noqa: PLR0913
     *,
     training_package_id: str,
     documents: Iterable[tuple[str, str]],
