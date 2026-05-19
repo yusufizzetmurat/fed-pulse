@@ -111,3 +111,25 @@ def test_modelconfig_round_trips_classification_fields() -> None:
     assert payload["n_classes"] == 3
     assert payload["vol_regime_quantiles"] == (0.0015, 0.0042)
     assert payload["vol_regime_target"] == "forward_realized_vol_10d"
+
+
+def test_factory_persists_vol_regime_quantiles_onto_model() -> None:
+    """Per-fold quantile cutoffs must ride on the built module so the
+    checkpoint round-trip via ``ModelConfig.from_model`` recovers them."""
+
+    cutoffs = (0.0015, 0.0042)
+    model = build_forecaster(
+        ModelConfig(
+            architecture="lstm",
+            output_mode="classification",
+            n_classes=3,
+            vol_regime_quantiles=cutoffs,
+        )
+    )
+    assert model.vol_regime_quantiles == cutoffs
+    assert model.vol_regime_target == "forward_realized_vol_10d"
+    # The reverse trip must give back the same tuple bit-for-bit.
+    restored = ModelConfig.from_model(model)
+    assert restored.vol_regime_quantiles == cutoffs
+    assert restored.output_mode == "classification"
+    assert restored.n_classes == 3

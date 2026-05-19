@@ -45,14 +45,10 @@ def build_forecaster(config: ModelConfig | dict[str, Any]) -> ForecasterModel:
 
     kwargs = resolved.to_dict()
     kwargs.pop("architecture", None)
-    # Phase 9 V2 (#195) loader-side fields are consumed by the
-    # training-loop loss dispatch + the per-fold quantile cutoff
-    # fitter, not by ``ForecasterModel.__init__``. Strip them before
-    # forwarding so the wrapper's ``**kwargs`` contract stays
-    # unchanged. ``output_mode`` and ``n_classes`` ARE forwarded;
-    # the wrapper now dispatches the output-head shape on them.
-    for loader_only_field in ("vol_regime_quantiles", "vol_regime_target"):
-        kwargs.pop(loader_only_field, None)
+    # Phase 9 V2 (#195) fields all forwarded: ``output_mode`` /
+    # ``n_classes`` drive the head shape; ``vol_regime_quantiles`` /
+    # ``vol_regime_target`` ride on the module so the checkpoint
+    # round-trips the per-fold boundaries via ``ModelConfig.from_model``.
     return ForecasterModel(model_type=architecture, **kwargs)
 
 

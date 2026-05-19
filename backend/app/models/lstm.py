@@ -57,6 +57,15 @@ class ForecasterModel(nn.Module):
         # loss dispatched in the training loop.
         output_mode: str = "regression",
         n_classes: int = 3,
+        # Phase 9 V2 (#195) per-fold quantile cutoffs + target column.
+        # Stored on the module so ``ModelConfig.from_model`` can round
+        # them into the saved checkpoint payload. Inference + eval read
+        # the same cutoffs back through ``ModelConfig.vol_regime_quantiles``
+        # and apply ``vol_regime_class_for`` to keep the boundary
+        # identical to training. Default ``()`` keeps the regression
+        # path byte-identical.
+        vol_regime_quantiles: tuple[float, ...] = (),
+        vol_regime_target: str = "forward_realized_vol_10d",
     ):
         """Forecaster LSTM with optional text-feature variants.
 
@@ -216,6 +225,8 @@ class ForecasterModel(nn.Module):
         # representation capacity stays comparable.
         self.output_mode = output_mode
         self.n_classes = int(n_classes)
+        self.vol_regime_quantiles = tuple(float(v) for v in vol_regime_quantiles or ())
+        self.vol_regime_target = str(vol_regime_target or "forward_realized_vol_10d")
         head_out = self.n_classes if output_mode == "classification" else 2
         self.head = nn.Sequential(
             nn.LayerNorm(hidden_size),
