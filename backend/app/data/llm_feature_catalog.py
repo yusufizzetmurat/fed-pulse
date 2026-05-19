@@ -29,7 +29,7 @@ from typing import Final
 # old cache and triggers a fresh extraction run.
 
 CATALOG_VERSION: Final[str] = "2026-05-19.v1"
-MODEL_ID: Final[str] = "claude-sonnet-4-7"
+MODEL_ID: Final[str] = "claude-sonnet-4-6"
 
 # Temperature 0.0 makes the extraction deterministic for the same input
 # (modulo the model's residual non-determinism on a tied logit). Combined

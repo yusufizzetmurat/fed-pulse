@@ -47,6 +47,74 @@ _logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Robust JSON parser for LLM responses
+# ---------------------------------------------------------------------------
+# Frontier LLMs occasionally wrap their JSON output in markdown fences,
+# add a preamble ("Here is the JSON:"), or append a closing sentence
+# despite the system prompt forbidding prose. This parser handles every
+# common deviation so the validator gets a fair shot at the payload.
+
+
+def _parse_response_json(text: str) -> dict[str, Any]:
+    """Strip markdown fences and any leading / trailing prose, then
+    parse the first JSON object found in the response.
+
+    Returns ``{}`` when no valid JSON object can be recovered.
+    """
+
+    candidate = text.strip()
+    # Strip ```json ... ``` or ``` ... ``` fences.
+    if candidate.startswith("```"):
+        # remove opening fence + optional language tag
+        first_newline = candidate.find("\n")
+        if first_newline != -1:
+            candidate = candidate[first_newline + 1 :]
+        # remove closing fence
+        if candidate.endswith("```"):
+            candidate = candidate[:-3]
+        candidate = candidate.strip()
+
+    # Find the first balanced JSON object substring. The catalogue's
+    # schema is a single top-level object, so we walk braces from the
+    # first ``{`` and stop at the matching ``}``.
+    start = candidate.find("{")
+    if start == -1:
+        return {}
+    depth = 0
+    end = -1
+    in_string = False
+    escape = False
+    for i in range(start, len(candidate)):
+        ch = candidate[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    if end == -1:
+        return {}
+    json_text = candidate[start : end + 1]
+    try:
+        parsed = json.loads(json_text)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+# ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
@@ -132,10 +200,7 @@ class AnthropicExtractorClient:
         if not response.content:
             return "", {}
         text = response.content[0].text  # type: ignore[union-attr]
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            parsed = {}
+        parsed = _parse_response_json(text)
         return text, parsed
 
 
@@ -255,6 +320,10 @@ def _serialise_result(result: ExtractionResult) -> dict[str, Any]:
         "elapsed_seconds": result.elapsed_seconds,
         "model_id": MODEL_ID,
         "catalog_version": CATALOG_VERSION,
+        # Keep the model's raw text response on failures so a future
+        # debug pass can see exactly what came back without re-spending
+        # the API call. Truncated at 4 KB so the parquet stays small.
+        "raw_response": (result.raw_response or "")[:4096],
     }
     for name in feature_names():
         row[name] = (result.features or {}).get(name)

@@ -17,10 +17,60 @@ from app.data.llm_feature_catalog import (
 from app.data.llm_feature_extractor import (
     AnthropicExtractorClient,
     ExtractionResult,
+    _parse_response_json,
     _validate,
     extract_for_package,
     extract_one,
 )
+
+
+# ---------------------------------------------------------------------------
+# Robust JSON parser (handles the common LLM JSON-corruption patterns)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_clean_json() -> None:
+    assert _parse_response_json('{"a": "b"}') == {"a": "b"}
+
+
+def test_parse_strips_markdown_fence_with_language_tag() -> None:
+    payload = '```json\n{"a": "b"}\n```'
+    assert _parse_response_json(payload) == {"a": "b"}
+
+
+def test_parse_strips_markdown_fence_without_language_tag() -> None:
+    payload = '```\n{"a": "b"}\n```'
+    assert _parse_response_json(payload) == {"a": "b"}
+
+
+def test_parse_recovers_from_leading_prose() -> None:
+    payload = 'Here is the JSON:\n{"a": "b"}\n'
+    assert _parse_response_json(payload) == {"a": "b"}
+
+
+def test_parse_recovers_from_trailing_prose() -> None:
+    payload = '{"a": "b"}\nLet me know if you need clarification.'
+    assert _parse_response_json(payload) == {"a": "b"}
+
+
+def test_parse_handles_nested_braces() -> None:
+    payload = '{"outer": "x", "inner": {"y": 1}}'
+    result = _parse_response_json(payload)
+    assert result == {"outer": "x", "inner": {"y": 1}}
+
+
+def test_parse_handles_braces_inside_strings() -> None:
+    payload = '{"text": "an opening { brace doesn\'t end the object"}'
+    result = _parse_response_json(payload)
+    assert "text" in result
+
+
+def test_parse_returns_empty_on_no_json() -> None:
+    assert _parse_response_json("Sorry, I cannot help with that.") == {}
+
+
+def test_parse_returns_empty_on_unbalanced_braces() -> None:
+    assert _parse_response_json("{ unbalanced") == {}
 
 
 # ---------------------------------------------------------------------------
