@@ -204,6 +204,15 @@ class ModelConfig:
     n_classes: int = 3
     vol_regime_quantiles: tuple[float, ...] = ()
     vol_regime_target: str = "forward_realized_vol_10d"
+    # A6 (#211) target axis selector. ``vol_regime_10d`` (default) is
+    # the Phase 9 V2 path with 3-class regime classification from
+    # ``forward_realized_vol_10d`` under per-fold quantile cutoffs.
+    # ``direction_t1d`` swaps the target to the binary sign of forward
+    # 1-day return ({-1, +1}); the partition-tensor builder skips
+    # the quantile fit entirely and maps the discrete label to {0, 1}.
+    # Used as a diagnostic to test whether the 3-class vol-regime
+    # target is the bottleneck or whether the model is.
+    target_axis: str = "vol_regime_10d"
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -231,6 +240,10 @@ class ModelConfig:
             vol_regime_target=str(
                 getattr(model, "vol_regime_target", "forward_realized_vol_10d")
                 or "forward_realized_vol_10d"
+            ),
+            target_axis=str(
+                getattr(model, "target_axis", "vol_regime_10d")
+                or "vol_regime_10d"
             ),
         )
 
@@ -412,6 +425,12 @@ class FeatureVector:
     # mapper consume the target-row value only. Default ``None`` so
     # regression-only callers stay byte-identical.
     forward_realized_vol_10d: float | None = None
+    # A6 (#211) alternative classification target. Sign of the
+    # forward 1-trading-day return ({-1, 0, +1}). Set only on the
+    # target row by the loader when ``ModelConfig.target_axis`` is
+    # configured to ``direction_t1d``. Default ``None`` keeps the
+    # vol-regime path byte-identical.
+    direction_t1d: int | None = None
     # Pooled text-embedding payload (PR #176 onward). Carries the
     # variable-length encoder-output vector (FinBERT 768, voyage-finance-2
     # 1024, BGE 1024, ...) materialised by the loader's softmax(-Delta t /

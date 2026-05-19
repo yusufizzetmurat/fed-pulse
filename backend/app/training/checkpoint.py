@@ -126,6 +126,7 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             vol_regime_target=str(
                 raw.get("vol_regime_target", "forward_realized_vol_10d")
             ),
+            target_axis=str(raw.get("target_axis", "vol_regime_10d")),
         )
     return ModelConfig()
 

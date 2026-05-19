@@ -304,6 +304,22 @@ def _parse_args() -> argparse.Namespace:
             "slice of each walk-forward fold."
         ),
     )
+    # A6 (#211) target axis selector. ``vol_regime_10d`` is the
+    # 3-class vol-regime classifier (default). ``direction_t1d``
+    # is the binary diagnostic: predict sign of next-day return
+    # ({-1, +1}). When the latter is set, ``--vol-regime-classes``
+    # is overridden to 2 and the per-fold quantile fit is skipped.
+    parser.add_argument(
+        "--target-axis",
+        type=str,
+        choices=("vol_regime_10d", "direction_t1d"),
+        default="vol_regime_10d",
+        help=(
+            "Classification target axis. ``vol_regime_10d`` keeps the "
+            "headline 3-class regime path; ``direction_t1d`` swaps to "
+            "the 2-class direction diagnostic."
+        ),
+    )
     # Text-embedding path. ``--text-encoder=none`` keeps the no-text
     # path. ``--no-text-embeddings`` is the symmetric per-family flag
     # that mirrors PR #173's per-family ablation pattern (model input
@@ -693,7 +709,12 @@ def _resolve_text_embedding_dim(args: argparse.Namespace) -> int:
 
 def _build_model_config(args: argparse.Namespace) -> ModelConfig:
     output_mode = str(getattr(args, "output_mode", "regression") or "regression")
-    n_classes = int(getattr(args, "vol_regime_classes", 3) or 3)
+    target_axis = str(getattr(args, "target_axis", "vol_regime_10d") or "vol_regime_10d")
+    # A6 override: direction target is intrinsically 2-class.
+    if target_axis == "direction_t1d":
+        n_classes = 2
+    else:
+        n_classes = int(getattr(args, "vol_regime_classes", 3) or 3)
     return ModelConfig(
         input_size=_resolved_input_size(args),
         hidden_size=args.hidden_size,
@@ -706,6 +727,7 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         text_adapter_dim=_resolved_text_adapter_dim(args),
         output_mode=output_mode,
         n_classes=n_classes,
+        target_axis=target_axis,
     )
 
 
@@ -911,7 +933,12 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                             text_embedding_dim=int(text_embedding_dim) if text_adapter_dim > 0 else 0,
                             text_adapter_dim=text_adapter_dim,
                             output_mode=str(getattr(args, "output_mode", "regression") or "regression"),
-                            n_classes=int(getattr(args, "vol_regime_classes", 3) or 3),
+                            n_classes=(
+                                2
+                                if str(getattr(args, "target_axis", "vol_regime_10d") or "vol_regime_10d") == "direction_t1d"
+                                else int(getattr(args, "vol_regime_classes", 3) or 3)
+                            ),
+                            target_axis=str(getattr(args, "target_axis", "vol_regime_10d") or "vol_regime_10d"),
                         ),
                         "learning_rate": float(hp["learning_rate"]),
                         "epochs": int(hp["epochs"]),
@@ -978,7 +1005,12 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                     text_embedding_dim=int(text_embedding_dim) if int(text_adapter_dim) > 0 else 0,
                     text_adapter_dim=int(text_adapter_dim),
                     output_mode=str(getattr(args, "output_mode", "regression") or "regression"),
-                    n_classes=int(getattr(args, "vol_regime_classes", 3) or 3),
+                    n_classes=(
+                        2
+                        if str(getattr(args, "target_axis", "vol_regime_10d") or "vol_regime_10d") == "direction_t1d"
+                        else int(getattr(args, "vol_regime_classes", 3) or 3)
+                    ),
+                    target_axis=str(getattr(args, "target_axis", "vol_regime_10d") or "vol_regime_10d"),
                 ),
                 "learning_rate": float(learning_rate),
                 "epochs": int(epochs),

@@ -1364,8 +1364,22 @@ def _load_package_sequences_with_metadata(
         forward_vol_value = _coerce_finite_float(
             row.get("forward_realized_vol_10d")
         )
+        # A6 (#211) direction_t1d label rides on the same target row
+        # so the partition tensor builder can map directly to a 2-class
+        # index when ``ModelConfig.target_axis == "direction_t1d"``.
+        # ``int`` coercion preserves the {-1, 0, +1} convention from
+        # the event-row builder; the partition builder drops 0-class
+        # rows (4 events total) at training time.
+        direction_raw = row.get("direction_t1d")
+        try:
+            direction_value: int | None = (
+                int(direction_raw) if direction_raw is not None else None
+            )
+        except (TypeError, ValueError):
+            direction_value = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
+            vector.direction_t1d = direction_value
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -1880,8 +1894,22 @@ def load_training_sequences_from_package(
         forward_vol_value = _coerce_finite_float(
             row.get("forward_realized_vol_10d")
         )
+        # A6 (#211) direction_t1d label rides on the same target row
+        # so the partition tensor builder can map directly to a 2-class
+        # index when ``ModelConfig.target_axis == "direction_t1d"``.
+        # ``int`` coercion preserves the {-1, 0, +1} convention from
+        # the event-row builder; the partition builder drops 0-class
+        # rows (4 events total) at training time.
+        direction_raw = row.get("direction_t1d")
+        try:
+            direction_value: int | None = (
+                int(direction_raw) if direction_raw is not None else None
+            )
+        except (TypeError, ValueError):
+            direction_value = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
+            vector.direction_t1d = direction_value
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -2083,6 +2111,28 @@ def fit_class_weights(
     return tuple((w / total) * n_classes for w in raw)
 
 
+def direction_class_for(value: int | None) -> int:
+    """A6 (#211) binary direction class mapping.
+
+    ``direction_t1d`` is a {-1, 0, +1} integer where +1 is "next-day
+    close above today's close" and -1 is "below". The 4 no-move events
+    (value=0) lack a defensible direction and are dropped from the
+    classification training set; the function returns ``-1`` for them
+    so the partition-tensor builder skips the row.
+
+    Returns: 0 for down (-1), 1 for up (+1), -1 for missing / no-move.
+    """
+
+    if value is None:
+        return -1
+    iv = int(value)
+    if iv > 0:
+        return 1
+    if iv < 0:
+        return 0
+    return -1
+
+
 def vol_regime_class_for(value: float | None, quantiles: Sequence[float]) -> int:
     """Map a forward-vol value to a class index using fitted quantiles.
 
@@ -2168,6 +2218,7 @@ def _build_training_tensors(
     *,
     output_mode: str = "regression",
     vol_regime_quantiles: Sequence[float] = (),
+    target_axis: str = "vol_regime_10d",
 ) -> tuple[torch.Tensor | None, torch.Tensor | None, float]:
     """Materialise the (x, y, close_scale) triple for the training path.
 
@@ -2204,6 +2255,7 @@ def _build_training_tensors(
     targets: list[list[float]] = []
     class_indices: list[int] = []
     is_classification = output_mode == "classification"
+    is_direction_target = is_classification and target_axis == "direction_t1d"
 
     for sequence_group in sequence_groups:
         if len(sequence_group) < SEQUENCE_LENGTH + 1:
@@ -2212,14 +2264,18 @@ def _build_training_tensors(
             window = sequence_group[idx - SEQUENCE_LENGTH : idx]
             target = sequence_group[idx]
             if is_classification:
-                cls_idx = vol_regime_class_for(
-                    getattr(target, "forward_realized_vol_10d", None),
-                    vol_regime_quantiles,
-                )
-                # Drop rows whose forward-vol target is missing instead
-                # of silently coercing them to class 0 (calm). This
-                # matches the regression contract: rows without a
-                # defensible target never see the optimiser.
+                if is_direction_target:
+                    cls_idx = direction_class_for(
+                        getattr(target, "direction_t1d", None)
+                    )
+                else:
+                    cls_idx = vol_regime_class_for(
+                        getattr(target, "forward_realized_vol_10d", None),
+                        vol_regime_quantiles,
+                    )
+                # Drop rows whose target is missing / no-move instead of
+                # silently coercing them. Matches the regression contract:
+                # rows without a defensible target never see the optimiser.
                 if cls_idx < 0:
                     continue
                 class_indices.append(cls_idx)

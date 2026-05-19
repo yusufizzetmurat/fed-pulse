@@ -466,6 +466,7 @@ def _build_partition_tensors(
     close_scale: float | None = None,
     output_mode: str = "regression",
     vol_regime_quantiles: Sequence[float] = (),
+    target_axis: str = "vol_regime_10d",
 ) -> tuple[
     torch.Tensor | None,
     torch.Tensor | None,
@@ -489,21 +490,29 @@ def _build_partition_tensors(
     """
 
     if output_mode == "classification":
-        # Pre-filter groups whose target row has an unusable forward-vol
-        # column. The training-tensor builder + text-embedding builder
-        # then both operate on the same filtered list and emit
-        # row-aligned tensors.
+        # Pre-filter groups whose target row has an unusable label.
+        # Filter key depends on target axis: ``forward_realized_vol_10d``
+        # for vol-regime, ``direction_t1d`` for the A6 binary diagnostic.
+        # Both null and the "no-move" (direction == 0) cases get dropped
+        # so the partition-tensor builder never sees a degenerate row.
         filtered: list[list[FeatureVector]] = []
+        is_direction = target_axis == "direction_t1d"
         for group in sequence_groups:
             if len(group) < SEQUENCE_LENGTH + 1:
                 continue
-            target_value = getattr(
-                group[SEQUENCE_LENGTH], "forward_realized_vol_10d", None
-            )
-            if target_value is None:
-                continue
-            if target_value != target_value:  # NaN
-                continue
+            target_row = group[SEQUENCE_LENGTH]
+            if is_direction:
+                v = getattr(target_row, "direction_t1d", None)
+                if v is None:
+                    continue
+                if int(v) == 0:
+                    continue
+            else:
+                target_value = getattr(target_row, "forward_realized_vol_10d", None)
+                if target_value is None:
+                    continue
+                if target_value != target_value:  # NaN
+                    continue
             filtered.append(list(group))
         active_groups: Sequence[Sequence[FeatureVector]] = filtered
     else:
@@ -514,6 +523,7 @@ def _build_partition_tensors(
         close_scale=close_scale,
         output_mode=output_mode,
         vol_regime_quantiles=vol_regime_quantiles,
+        target_axis=target_axis,
     )
     text_emb, text_missing, _ = _build_text_embedding_tensors(
         active_groups, fallback_in_dim=fallback_text_in_dim
@@ -609,33 +619,64 @@ def train_model(
         active_output_mode = str(
             getattr(active_model_config, "output_mode", "regression") or "regression"
         )
+        active_target_axis = str(
+            getattr(active_model_config, "target_axis", "vol_regime_10d")
+            or "vol_regime_10d"
+        )
         if active_output_mode == "classification":
             n_classes_active = int(getattr(active_model_config, "n_classes", 3) or 3)
-            train_forward_vols = collect_forward_vols(train_groups)
-            fitted_quantiles = fit_vol_regime_quantiles(
-                train_forward_vols, n_classes=n_classes_active
-            )
-            if not fitted_quantiles:
-                raise ValueError(
-                    "vol-regime classification requires >= n_classes valid "
-                    "forward_realized_vol_10d targets on the train slice; "
-                    f"got {len(train_forward_vols)} valid rows for "
-                    f"n_classes={n_classes_active}."
+            if active_target_axis == "direction_t1d":
+                # A6 (#211) direction target -- already-discrete labels,
+                # no quantile fit needed. Cutoffs stay empty so the
+                # partition-tensor builder routes through
+                # direction_class_for instead of vol_regime_class_for.
+                # Per-fold class weighting is still applied but counts
+                # from the train slice's direction labels directly.
+                fitted_quantiles = ()
+                # Inline inverse-frequency weights from the train slice.
+                train_dirs: list[int] = []
+                for grp in train_groups:
+                    if len(grp) < SEQUENCE_LENGTH + 1:
+                        continue
+                    v = getattr(grp[SEQUENCE_LENGTH], "direction_t1d", None)
+                    if v is None or int(v) == 0:
+                        continue
+                    train_dirs.append(0 if int(v) < 0 else 1)
+                if not train_dirs:
+                    raise ValueError(
+                        "direction_t1d classification requires non-empty "
+                        "{-1, +1} labels on the train slice; got 0."
+                    )
+                counts = [train_dirs.count(0), train_dirs.count(1)]
+                if any(c == 0 for c in counts):
+                    fitted_class_weights = ()
+                else:
+                    raw_w = [1.0 / (c + 1.0) for c in counts]
+                    total = sum(raw_w)
+                    fitted_class_weights = tuple(
+                        (w / total) * n_classes_active for w in raw_w
+                    )
+            else:
+                train_forward_vols = collect_forward_vols(train_groups)
+                fitted_quantiles = fit_vol_regime_quantiles(
+                    train_forward_vols, n_classes=n_classes_active
                 )
-            active_model_config = dataclasses.replace(
-                active_model_config, vol_regime_quantiles=fitted_quantiles
-            )
-            # A1 (#206) per-fold class weighting. Counts each class in
-            # the train slice under the just-fitted quantile cutoffs,
-            # then builds inverse-frequency weights so the loss path
-            # of least resistance is no longer "predict the majority
-            # prior". Train-only fit; val + test see the same weights
-            # but only at loss computation, not in their own slices.
-            fitted_class_weights = fit_class_weights(
-                train_forward_vols,
-                fitted_quantiles,
-                n_classes=n_classes_active,
-            )
+                if not fitted_quantiles:
+                    raise ValueError(
+                        "vol-regime classification requires >= n_classes valid "
+                        "forward_realized_vol_10d targets on the train slice; "
+                        f"got {len(train_forward_vols)} valid rows for "
+                        f"n_classes={n_classes_active}."
+                    )
+                active_model_config = dataclasses.replace(
+                    active_model_config, vol_regime_quantiles=fitted_quantiles
+                )
+                # A1 (#206) per-fold class weighting on the vol-regime path.
+                fitted_class_weights = fit_class_weights(
+                    train_forward_vols,
+                    fitted_quantiles,
+                    n_classes=n_classes_active,
+                )
         else:
             fitted_quantiles = ()
             fitted_class_weights = ()
@@ -648,6 +689,7 @@ def train_model(
             close_scale=None,
             output_mode=active_output_mode,
             vol_regime_quantiles=fitted_quantiles,
+            target_axis=active_target_axis,
         )
         # Fit the rich-feature RobustScaler on the TRAIN tensor only;
         # no-op for legacy 6-feature tensors so the regression contract
@@ -662,6 +704,7 @@ def train_model(
             close_scale=close_scale,
             output_mode=active_output_mode,
             vol_regime_quantiles=fitted_quantiles,
+            target_axis=active_target_axis,
         )
         val_x = apply_rich_feature_scaler_tensor(val_x, rich_feature_scaler)
         test_x, test_y, _test_scale, test_text_emb, test_text_missing = _build_partition_tensors(
@@ -670,6 +713,7 @@ def train_model(
             close_scale=close_scale,
             output_mode=active_output_mode,
             vol_regime_quantiles=fitted_quantiles,
+            target_axis=active_target_axis,
         )
         test_x = apply_rich_feature_scaler_tensor(test_x, rich_feature_scaler)
         sequence_groups_for_summary = train_groups + val_groups + test_groups

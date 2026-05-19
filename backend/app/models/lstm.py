@@ -66,6 +66,10 @@ class ForecasterModel(nn.Module):
         # path byte-identical.
         vol_regime_quantiles: tuple[float, ...] = (),
         vol_regime_target: str = "forward_realized_vol_10d",
+        # A6 (#211) target axis selector. Passed through from
+        # ModelConfig so the checkpoint round-trip via
+        # ModelConfig.from_model preserves it.
+        target_axis: str = "vol_regime_10d",
     ):
         """Forecaster LSTM with optional text-feature variants.
 
@@ -227,6 +231,7 @@ class ForecasterModel(nn.Module):
         self.n_classes = int(n_classes)
         self.vol_regime_quantiles = tuple(float(v) for v in vol_regime_quantiles or ())
         self.vol_regime_target = str(vol_regime_target or "forward_realized_vol_10d")
+        self.target_axis = str(target_axis or "vol_regime_10d")
         head_out = self.n_classes if output_mode == "classification" else 2
         self.head = nn.Sequential(
             nn.LayerNorm(hidden_size),
