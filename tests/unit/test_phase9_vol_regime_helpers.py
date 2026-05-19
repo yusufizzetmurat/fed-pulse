@@ -89,3 +89,95 @@ def test_train_quantile_roundtrip_yields_balanced_classes() -> None:
     counts = [labels.count(c) for c in range(3)]
     for c in counts:
         assert 270 <= c <= 330, f"class counts {counts} should be near 300 each"
+
+
+# ---------------------------------------------------------------------------
+# A1 (#206) per-fold class weighting
+# ---------------------------------------------------------------------------
+
+
+def test_class_weights_invert_frequency_on_balanced_train_slice() -> None:
+    """Perfectly-balanced train slice -> weights all close to 1.0."""
+
+    from app.training.loaders import fit_class_weights
+
+    quantiles = (0.01, 0.02)
+    # 30 events evenly across the 3 classes
+    vols = [0.005] * 10 + [0.015] * 10 + [0.025] * 10
+    weights = fit_class_weights(vols, quantiles, n_classes=3)
+    assert len(weights) == 3
+    # All near 1.0 (perfect balance); sum should equal n_classes
+    assert sum(weights) == pytest.approx(3.0)
+    for w in weights:
+        assert 0.9 < w < 1.1
+
+
+def test_class_weights_upweight_minority_class() -> None:
+    """A rare class gets the largest weight; the dominant class the
+    smallest. Inverse-frequency invariant."""
+
+    from app.training.loaders import fit_class_weights
+
+    quantiles = (0.01, 0.02)
+    # 90% calm, 5% normal, 5% high
+    vols = [0.005] * 90 + [0.015] * 5 + [0.025] * 5
+    weights = fit_class_weights(vols, quantiles, n_classes=3)
+    # calm has lowest weight; normal + high tied at the top
+    assert weights[0] < weights[1]
+    assert weights[0] < weights[2]
+    assert weights[1] == pytest.approx(weights[2], abs=0.05)
+
+
+def test_class_weights_handle_missing_class_via_smoothing() -> None:
+    """A class with zero training rows must still get a finite weight
+    -- the smoothing constant prevents 1/0 blow-up."""
+
+    from app.training.loaders import fit_class_weights
+
+    quantiles = (0.01, 0.02)
+    # No "high" class events
+    vols = [0.005] * 20 + [0.015] * 20
+    weights = fit_class_weights(vols, quantiles, n_classes=3)
+    assert len(weights) == 3
+    assert all(w > 0 for w in weights)
+    # The empty class should have the highest weight
+    assert weights[2] >= weights[0]
+    assert weights[2] >= weights[1]
+
+
+def test_class_weights_empty_quantiles_returns_empty() -> None:
+    from app.training.loaders import fit_class_weights
+
+    weights = fit_class_weights([0.01, 0.02, 0.03], (), n_classes=3)
+    assert weights == ()
+
+
+def test_class_weights_empty_vols_returns_empty() -> None:
+    from app.training.loaders import fit_class_weights
+
+    weights = fit_class_weights([], (0.01, 0.02), n_classes=3)
+    assert weights == ()
+
+
+def test_class_weights_normalisation_sums_to_n_classes() -> None:
+    """The normalisation contract: weights sum to ``n_classes`` so a
+    class at the dataset's average frequency gets weight ~1.0."""
+
+    from app.training.loaders import fit_class_weights
+
+    quantiles = (0.01, 0.02)
+    vols = [0.005] * 50 + [0.015] * 30 + [0.025] * 20
+    weights = fit_class_weights(vols, quantiles, n_classes=3)
+    assert sum(weights) == pytest.approx(3.0, abs=1e-6)
+
+
+def test_class_weights_skip_nan_and_none() -> None:
+    from app.training.loaders import fit_class_weights
+
+    quantiles = (0.01, 0.02)
+    vols = [0.005, 0.015, 0.025, None, float("nan")]
+    weights = fit_class_weights(vols, quantiles, n_classes=3)
+    # 3 valid events, one per class -> balanced
+    assert sum(weights) == pytest.approx(3.0)
+    for w in weights:
+        assert 0.9 < w < 1.1
