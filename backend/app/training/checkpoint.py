@@ -61,12 +61,32 @@ def _metrics_from_payload(payload: dict[str, Any] | None) -> EvaluationMetrics |
         return None
     metrics = payload.get("metrics")
     if isinstance(metrics, dict):
+        # Phase 9 V2 (#195) classification fields are nullable and
+        # default to None on EvaluationMetrics; passing missing keys
+        # explicitly keeps the regression-mode contract byte-identical
+        # while letting a classification-mode checkpoint round-trip its
+        # regime_accuracy / regime_f1_macro / regime_loss annotations.
+        def _opt_float(key: str) -> float | None:
+            value = metrics.get(key)
+            if value is None:
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
         try:
             return EvaluationMetrics(
                 loss=float(metrics["loss"]),
                 close_rmse=float(metrics["close_rmse"]),
                 volatility_rmse=float(metrics["volatility_rmse"]),
                 combined_rmse=float(metrics["combined_rmse"]),
+                direction_accuracy=_opt_float("direction_accuracy"),
+                f1_macro=_opt_float("f1_macro"),
+                direction_auc=_opt_float("direction_auc"),
+                regime_accuracy=_opt_float("regime_accuracy"),
+                regime_f1_macro=_opt_float("regime_f1_macro"),
+                regime_loss=_opt_float("regime_loss"),
             )
         except (KeyError, TypeError, ValueError):
             return None
