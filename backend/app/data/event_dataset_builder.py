@@ -165,6 +165,15 @@ PRIOR_WINDOW_DAYS = 20
 # vol-regime literature; together with the existing 5d window they
 # give the model access to short / medium / long horizons.
 EXTRA_VOL_WINDOWS: tuple[int, ...] = (20, 60)
+# A3 (#208) cross-asset yfinance symbols joined onto every prior bar
+# by date. Symbol → FeatureVector field-name mapping; consumed by the
+# pipeline orchestrator below and the per-bar attachment helper.
+CROSS_ASSET_SYMBOLS: tuple[tuple[str, str], ...] = (
+    ("^VIX", "vix_close"),
+    ("DX-Y.NYB", "dxy_close"),
+    ("^TNX", "tnx_close"),
+    ("GC=F", "gold_close"),
+)
 MARKET_MODEL_WINDOW_DAYS = 252
 VOL_WINDOW_DAYS = 10
 ROLLING_VOL_DAYS = 5
@@ -303,6 +312,15 @@ class _PriorBar:
     # these working without crashing the schema.
     vol_20d: float = 0.0
     vol_60d: float = 0.0
+    # A3 (#208): cross-asset close levels at this bar's date. Joined
+    # in from independent yfinance caches at the top of the pipeline;
+    # a series with no observation on the bar's date emits 0.0 rather
+    # than blocking the whole bar (e.g. VIX pre-1990, gold front-month
+    # contract roll days).
+    vix_close: float = 0.0
+    dxy_close: float = 0.0
+    tnx_close: float = 0.0
+    gold_close: float = 0.0
 
 
 @dataclass
@@ -645,12 +663,36 @@ def _log_returns(closes: Sequence[float]) -> list[float]:
     return out
 
 
+def _build_cross_asset_lookup(
+    series_by_symbol: dict[str, _CloseSeries],
+) -> dict[_dt.date, dict[str, float]]:
+    """Build ``{date: {field_name: close}}`` for O(1) per-bar joins.
+
+    Sparse: a date present in only one series's calendar still produces
+    an entry, but only that series's field is populated. The
+    ``_build_prior_window`` attachment fills missing fields with 0.0
+    at read time.
+    """
+
+    out: dict[_dt.date, dict[str, float]] = {}
+    field_by_symbol = dict(CROSS_ASSET_SYMBOLS)
+    for symbol, series in series_by_symbol.items():
+        field_name = field_by_symbol.get(symbol)
+        if field_name is None:
+            continue
+        for d, c in zip(series.dates, series.close):
+            row = out.setdefault(d, {})
+            row[field_name] = float(c)
+    return out
+
+
 def _build_prior_window(
     series: _CloseSeries,
     as_of: _dt.date,
     *,
     window_days: int = PRIOR_WINDOW_DAYS,
     vol_window: int = ROLLING_VOL_DAYS,
+    cross_asset_lookup: dict[_dt.date, dict[str, float]] | None = None,
 ) -> list[_PriorBar] | None:
     """Return ``window_days`` prior bars ending strictly before ``as_of``.
 
@@ -706,15 +748,29 @@ def _build_prior_window(
             w_var = sum((x - w_mean) ** 2 for x in w_chunk) / (w - 1)
             extra_vols[w] = w_var**0.5
         cum_return = (series.close[i] - base_close) / base_close if base_close > 0 else 0.0
+        # A3 (#208) cross-asset join. Lookup is keyed on the bar's
+        # date; absent fields default to 0.0 because non-trading days
+        # for one asset (e.g. VIX before 1990, gold futures contract
+        # roll gaps) should not block the bar.
+        bar_date = series.dates[i]
+        cross_asset_row = (
+            cross_asset_lookup.get(bar_date, {})
+            if cross_asset_lookup is not None
+            else {}
+        )
         bars.append(
             _PriorBar(
-                date=series.dates[i],
+                date=bar_date,
                 close=series.close[i],
                 volume=series.volume[i],
                 vol_5d=vol,
                 cum_return_20d=cum_return,
                 vol_20d=extra_vols.get(20, 0.0),
                 vol_60d=extra_vols.get(60, 0.0),
+                vix_close=float(cross_asset_row.get("vix_close", 0.0)),
+                dxy_close=float(cross_asset_row.get("dxy_close", 0.0)),
+                tnx_close=float(cross_asset_row.get("tnx_close", 0.0)),
+                gold_close=float(cross_asset_row.get("gold_close", 0.0)),
             )
         )
     # Enforce no look-ahead: last prior bar must be < as_of
@@ -1062,6 +1118,10 @@ def _prior_window_sha(bars: Sequence[_PriorBar]) -> str:
                     f"{b.vol_20d:.10f}",
                     f"{b.vol_60d:.10f}",
                     f"{b.cum_return_20d:.10f}",
+                    f"{b.vix_close:.6f}",
+                    f"{b.dxy_close:.6f}",
+                    f"{b.tnx_close:.6f}",
+                    f"{b.gold_close:.6f}",
                 ]
             )
         )
@@ -1078,6 +1138,10 @@ def _bars_to_json(bars: Sequence[_PriorBar]) -> str:
             "vol_20d": round(b.vol_20d, 10),
             "vol_60d": round(b.vol_60d, 10),
             "cum_return_20d": round(b.cum_return_20d, 10),
+            "vix_close": round(b.vix_close, 6),
+            "dxy_close": round(b.dxy_close, 6),
+            "tnx_close": round(b.tnx_close, 6),
+            "gold_close": round(b.gold_close, 6),
         }
         for b in bars
     ]
@@ -1120,12 +1184,15 @@ def _build_event_rows(
     macro_release_calendar: MacroReleaseCalendar,
     concurrent_macro_window_days: int = CONCURRENT_MACRO_TRADING_DAY_RADIUS,
     intra_meeting_shift: dict[str, float] | None = None,
+    cross_asset_lookup: dict[_dt.date, dict[str, float]] | None = None,
 ) -> list[dict[str, Any]]:
     event_date = _date(doc.event_date)
     as_of_ts = _as_of_for_event(doc.event_date, doc.event_kind)
     as_of_date = event_date  # placeholder time is same-day; window cuts on date
 
-    prior_bars = _build_prior_window(asset_series, as_of_date)
+    prior_bars = _build_prior_window(
+        asset_series, as_of_date, cross_asset_lookup=cross_asset_lookup
+    )
     if prior_bars is None:
         return []
     _assert_no_lookahead(as_of_date, prior_bars)
@@ -1415,6 +1482,26 @@ def build_event_rows(
                 benchmark, start=earliest, end=latest, cache_dir=market_cache_dir
             )
 
+    # A3 (#208) cross-asset cache pre-fetch + lookup index. Each symbol
+    # fails gracefully -- a missing symbol's contribution to every bar
+    # collapses to 0.0 rather than blocking the whole pipeline. This
+    # matters because the historical coverage of VIX (1990+),
+    # DX-Y.NYB, ^TNX, and GC=F is not uniform and we still want event
+    # rows from earlier years to land with their existing features.
+    cross_asset_series: dict[str, _CloseSeries] = {}
+    for symbol, _field_name in CROSS_ASSET_SYMBOLS:
+        try:
+            cross_asset_series[symbol] = _fetch_close_series(
+                symbol, start=earliest, end=latest, cache_dir=market_cache_dir
+            )
+        except RuntimeError as exc:
+            print(
+                f"[event_dataset_builder] cross-asset fetch failed for "
+                f"{symbol}: {exc}; field will be 0.0 across all bars.",
+                file=sys.stderr,
+            )
+    cross_asset_lookup = _build_cross_asset_lookup(cross_asset_series)
+
     credibility_kwargs = {
         "embedding_path": embedding_path,
         "stance_by_date": tuple(stance_by_date),
@@ -1435,6 +1522,7 @@ def build_event_rows(
             macro_release_calendar=macro_release_calendar,
             concurrent_macro_window_days=concurrent_macro_window_days,
             intra_meeting_shift=intra_meeting_shifts.get(doc.event_date),
+            cross_asset_lookup=cross_asset_lookup,
         )
         if not rows:
             summary.dropped_no_prior_window += 1

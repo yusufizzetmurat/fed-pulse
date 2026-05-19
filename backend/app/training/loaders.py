@@ -420,6 +420,13 @@ def _bars_to_feature_vectors(
         # default 0.0 keeps the deser tolerant.
         vol_20d_value = float(bar.get("vol_20d", 0.0))
         vol_60d_value = float(bar.get("vol_60d", 0.0))
+        # A3 (#208) cross-asset close levels. Same back-compat
+        # contract as A2 -- pre-A3 events.parquet emits 0.0 for every
+        # cross-asset axis and the rich-feature block keeps loading.
+        vix_close_value = float(bar.get("vix_close", 0.0))
+        dxy_close_value = float(bar.get("dxy_close", 0.0))
+        tnx_close_value = float(bar.get("tnx_close", 0.0))
+        gold_close_value = float(bar.get("gold_close", 0.0))
         elapsed_time = float((bar_date - event_date).days)
         fv = FeatureVector.from_market_state(
             date=date_value,
@@ -432,6 +439,10 @@ def _bars_to_feature_vectors(
         )
         fv.realized_vol_20d = vol_20d_value
         fv.realized_vol_60d = vol_60d_value
+        fv.vix_close = vix_close_value
+        fv.dxy_close = dxy_close_value
+        fv.tnx_close = tnx_close_value
+        fv.gold_close = gold_close_value
         vectors.append(fv)
         previous_close = close_value
         previous_volatility = volatility_value
