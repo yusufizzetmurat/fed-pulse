@@ -63,6 +63,12 @@ RICH_REALIZED_VOL_DIM = 2
 # forward-vol forecast; the others capture risk-on/risk-off (DXY),
 # the rates-pricing layer (TNX), and flight-to-safety (gold).
 RICH_CROSS_ASSET_DIM = 4
+# B1 (#212) LLM-as-features one-hot block. 10 catalogue features with
+# {4, 4, 5, 4, 4, 4, 2, 2, 3, 3} levels = 35 one-hot dimensions plus
+# one ``llm_features_missing`` flag for events where the extraction
+# failed or the document was too short to assess.
+RICH_LLM_FEATURE_DIM = 35
+RICH_LLM_FEATURE_MISSING_DIM = 1
 RICH_EXTRA_FEATURE_SIZE = (
     RICH_CREDIBILITY_DIM
     + RICH_LINGUISTIC_DIM
@@ -70,6 +76,8 @@ RICH_EXTRA_FEATURE_SIZE = (
     + RICH_MULTI_AXIS_DIM
     + RICH_REALIZED_VOL_DIM
     + RICH_CROSS_ASSET_DIM
+    + RICH_LLM_FEATURE_DIM
+    + RICH_LLM_FEATURE_MISSING_DIM
 )
 RICH_FEATURE_SIZE = FEATURE_SIZE + RICH_EXTRA_FEATURE_SIZE
 
@@ -103,6 +111,15 @@ RICH_REALIZED_VOL_SLICE = slice(
 RICH_CROSS_ASSET_SLICE = slice(
     RICH_REALIZED_VOL_SLICE.stop,
     RICH_REALIZED_VOL_SLICE.stop + RICH_CROSS_ASSET_DIM,
+)
+# B1 (#212) LLM-as-features slice (positions [41:76] one-hot + 76 flag).
+RICH_LLM_FEATURE_SLICE = slice(
+    RICH_CROSS_ASSET_SLICE.stop,
+    RICH_CROSS_ASSET_SLICE.stop + RICH_LLM_FEATURE_DIM,
+)
+RICH_LLM_FEATURE_MISSING_SLICE = slice(
+    RICH_LLM_FEATURE_SLICE.stop,
+    RICH_LLM_FEATURE_SLICE.stop + RICH_LLM_FEATURE_MISSING_DIM,
 )
 
 # Text-embedding adapter dim search axis. The forecaster sweep iterates
@@ -404,6 +421,13 @@ class FeatureVector:
     dxy_close: float = 0.0
     tnx_close: float = 0.0
     gold_close: float = 0.0
+    # B1 (#212) LLM-as-features one-hot block. 35-dim list mirroring
+    # the catalogue order; each per-feature slot is a one-hot over the
+    # feature's allowed levels. Default ``None`` keeps the regression /
+    # legacy paths byte-identical (``as_rich_list`` emits an all-zeros
+    # block + a missing flag of 1.0).
+    llm_features: list[float] | None = None
+    llm_features_missing: float = 1.0
     rich_payload: bool = False
     # Phase 9 V2 (#195) classification target. The forward 10-trading-day
     # realised volatility lives on the target row (the last vector in
@@ -512,6 +536,18 @@ class FeatureVector:
             float(self.tnx_close),
             float(self.gold_close),
         ]
+        # B1 (#212) LLM-as-features block. When ``llm_features`` is
+        # ``None`` (legacy path or extraction not yet attached) the
+        # whole 35-dim slot collapses to zeros and the missing flag
+        # stays at its 1.0 default. The loader sets the flag to 0.0
+        # only on rows that received a successful extraction.
+        if self.llm_features is None:
+            llm_block = [0.0] * RICH_LLM_FEATURE_DIM
+        else:
+            llm_block = [float(v) for v in self.llm_features[:RICH_LLM_FEATURE_DIM]]
+            if len(llm_block) < RICH_LLM_FEATURE_DIM:
+                llm_block = llm_block + [0.0] * (RICH_LLM_FEATURE_DIM - len(llm_block))
+        llm_missing = [float(self.llm_features_missing)]
         return (
             market
             + credibility
@@ -520,6 +556,8 @@ class FeatureVector:
             + multi_axis
             + realized_vol
             + cross_asset
+            + llm_block
+            + llm_missing
         )
 
 
