@@ -61,6 +61,15 @@ def _resolve_device(device: str | torch.device | None = None) -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+from typing import overload
+
+
+@overload
+def _move_to_device(tensor: None, device: torch.device) -> None: ...
+@overload
+def _move_to_device(tensor: torch.Tensor, device: torch.device) -> torch.Tensor: ...
+
+
 def _move_to_device(
     tensor: torch.Tensor | None, device: torch.device
 ) -> torch.Tensor | None:
@@ -483,8 +492,8 @@ def _build_partition_tensors(
     output_mode: str = "regression",
     vol_regime_quantiles: Sequence[float] = (),
 ) -> tuple[
-    torch.Tensor | None,
-    torch.Tensor | None,
+    torch.Tensor,
+    torch.Tensor,
     float,
     torch.Tensor | None,
     torch.Tensor | None,
@@ -531,6 +540,18 @@ def _build_partition_tensors(
         output_mode=output_mode,
         vol_regime_quantiles=vol_regime_quantiles,
     )
+    if x is None or y is None:
+        # ``_build_training_tensors`` returns None tensors only when the
+        # partition has zero usable windows. The walk-forward path
+        # guarantees every partition has at least one event so the
+        # caller can rely on a non-None return; this assertion-style
+        # raise pushes the failure mode to the data-prep layer where
+        # it belongs and unlocks the rest of the training loop from
+        # ``Tensor | None`` typing.
+        raise ValueError(
+            "_build_partition_tensors produced an empty partition; "
+            "every walk-forward fold must carry at least one event."
+        )
     text_emb, text_missing, _ = _build_text_embedding_tensors(
         active_groups, fallback_in_dim=fallback_text_in_dim
     )
