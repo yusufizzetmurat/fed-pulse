@@ -91,3 +91,27 @@ def test_realized_vol_slice_default_is_zero() -> None:
 
     fv = _base_vector()
     assert fv.as_rich_list()[RICH_REALIZED_VOL_SLICE] == [0.0, 0.0]
+
+
+def test_cross_asset_slice_emits_at_documented_positions() -> None:
+    """A3 (#208) cross-asset close levels land at positions [37:41]
+    in the order VIX, DXY, TNX, gold."""
+
+    from app.models.config import RICH_CROSS_ASSET_SLICE
+
+    fv = _base_vector(
+        vix_close=22.3,
+        dxy_close=104.5,
+        tnx_close=4.21,
+        gold_close=1942.0,
+    )
+    assert fv.as_rich_list()[RICH_CROSS_ASSET_SLICE] == [22.3, 104.5, 4.21, 1942.0]
+
+
+def test_cross_asset_slice_default_is_zero() -> None:
+    """Legacy / pre-A3 FeatureVectors carry 0.0 across all 4 axes."""
+
+    from app.models.config import RICH_CROSS_ASSET_SLICE
+
+    fv = _base_vector()
+    assert fv.as_rich_list()[RICH_CROSS_ASSET_SLICE] == [0.0, 0.0, 0.0, 0.0]

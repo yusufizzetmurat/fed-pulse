@@ -58,12 +58,18 @@ RICH_MULTI_AXIS_DIM = 6
 # consistently identifies as the strongest single predictor of forward
 # vol regime.
 RICH_REALIZED_VOL_DIM = 2
+# A3 (#208): cross-asset daily close levels (VIX, USD index, 10Y yield,
+# gold). Each is a single float per bar. VIX is the market's own
+# forward-vol forecast; the others capture risk-on/risk-off (DXY),
+# the rates-pricing layer (TNX), and flight-to-safety (gold).
+RICH_CROSS_ASSET_DIM = 4
 RICH_EXTRA_FEATURE_SIZE = (
     RICH_CREDIBILITY_DIM
     + RICH_LINGUISTIC_DIM
     + RICH_MP_SURPRISE_DIM
     + RICH_MULTI_AXIS_DIM
     + RICH_REALIZED_VOL_DIM
+    + RICH_CROSS_ASSET_DIM
 )
 RICH_FEATURE_SIZE = FEATURE_SIZE + RICH_EXTRA_FEATURE_SIZE
 
@@ -92,6 +98,11 @@ RICH_MULTI_AXIS_SLICE = slice(
 RICH_REALIZED_VOL_SLICE = slice(
     RICH_MULTI_AXIS_SLICE.stop,
     RICH_MULTI_AXIS_SLICE.stop + RICH_REALIZED_VOL_DIM,
+)
+# A3 (#208) cross-asset slice (positions [37:41]).
+RICH_CROSS_ASSET_SLICE = slice(
+    RICH_REALIZED_VOL_SLICE.stop,
+    RICH_REALIZED_VOL_SLICE.stop + RICH_CROSS_ASSET_DIM,
 )
 
 # Text-embedding adapter dim search axis. The forecaster sweep iterates
@@ -384,6 +395,15 @@ class FeatureVector:
     # loader on the rich-feature path from per-bar prior_bars_json.
     realized_vol_20d: float = 0.0
     realized_vol_60d: float = 0.0
+    # A3 (#208) cross-asset close levels per bar. Joined from
+    # independent yfinance caches; a series with no observation on the
+    # bar's date emits 0.0 rather than blocking the whole bar. The
+    # per-fold RobustScaler handles the cross-symbol scale mismatch
+    # downstream.
+    vix_close: float = 0.0
+    dxy_close: float = 0.0
+    tnx_close: float = 0.0
+    gold_close: float = 0.0
     rich_payload: bool = False
     # Phase 9 V2 (#195) classification target. The forward 10-trading-day
     # realised volatility lives on the target row (the last vector in
@@ -486,7 +506,21 @@ class FeatureVector:
             float(self.realized_vol_20d),
             float(self.realized_vol_60d),
         ]
-        return market + credibility + linguistic + mp_surprise + multi_axis + realized_vol
+        cross_asset = [
+            float(self.vix_close),
+            float(self.dxy_close),
+            float(self.tnx_close),
+            float(self.gold_close),
+        ]
+        return (
+            market
+            + credibility
+            + linguistic
+            + mp_surprise
+            + multi_axis
+            + realized_vol
+            + cross_asset
+        )
 
 
 def build_lookback_sequence(vectors: Iterable[FeatureVector], length: int = SEQUENCE_LENGTH) -> list[FeatureVector]:
