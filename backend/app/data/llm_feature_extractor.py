@@ -282,19 +282,42 @@ def _persist_cache(rows: Iterable[dict[str, Any]], path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Status values that the bulk extractor treats as "permanently cached"
+# and skips on a re-run. Everything else (api_error, invalid_json,
+# out_of_vocab) might be transient -- a model upgrade, a rate-limit
+# burst, or a one-off content-filter trip -- so re-runs default to
+# retrying those rows.
+_DONE_STATUSES: frozenset[str] = frozenset({"ok", "document_too_short"})
+
+
 def extract_for_package(
     *,
     training_package_id: str,
     documents: Iterable[tuple[str, str]],
     cache_dir: Path = _DEFAULT_CACHE_DIR,
     client: AnthropicExtractorClient | None = None,
-    progress_every: int = 25,
+    progress_every: int = 1,
+    retry_failed: bool = False,
 ) -> Path:
     """Run extraction over every (text_hash, document_text) pair.
 
-    Idempotent: looks up the existing cache parquet, skips rows already
-    materialised under the same ``(text_hash, model_id, catalog_version)``,
-    and appends new rows to the same file.
+    **Idempotent resume contract:**
+
+    - ``ok`` and ``document_too_short`` rows in the existing cache are
+      treated as final and skipped on every subsequent run -- they
+      cannot change on retry.
+    - ``api_error`` / ``invalid_json`` / ``out_of_vocab`` rows are
+      retried by default, because each of those is a transient
+      failure mode (rate-limit burst, model jitter, content-filter
+      trip) that often clears on a retry.
+    - Pass ``retry_failed=True`` to also re-extract rows the prior
+      run marked ``ok`` -- useful when the catalogue prompt changes
+      but ``CATALOG_VERSION`` was not yet bumped.
+
+    The cache is flushed after every successful row by default
+    (``progress_every=1``) so a SIGKILL between rows loses at most
+    one document of work. Set higher values if API rate is the
+    bottleneck.
 
     Returns the cache parquet path.
     """
@@ -302,37 +325,54 @@ def extract_for_package(
     client = client or AnthropicExtractorClient()
     cache_path = _cache_path(training_package_id, cache_dir=cache_dir)
     existing = _load_existing_cache(cache_path)
-    all_rows: list[dict[str, Any]] = list(existing.values())
-    seen_hashes = set(existing.keys())
+
+    # Partition the existing cache into "final" rows we keep verbatim and
+    # "retryable" rows we drop from the cache so the loop below re-runs
+    # them. retry_failed=True forces a fresh run on every row.
+    done_hashes: set[str] = set()
+    rows_to_keep: list[dict[str, Any]] = []
+    for h, row in existing.items():
+        status = str(row.get("status", "")).strip()
+        is_final = status in _DONE_STATUSES and not retry_failed
+        if is_final:
+            done_hashes.add(h)
+            rows_to_keep.append(row)
+    all_rows: list[dict[str, Any]] = list(rows_to_keep)
 
     total_processed = 0
     total_skipped = 0
+    total_retried = 0
     for text_hash, document_text in documents:
-        if text_hash in seen_hashes:
+        if text_hash in done_hashes:
             total_skipped += 1
             continue
+        if text_hash in existing and text_hash not in done_hashes:
+            total_retried += 1
         result = extract_one(
             text_hash=text_hash,
             document_text=document_text,
             client=client,
         )
         all_rows.append(_serialise_result(result))
-        seen_hashes.add(text_hash)
+        done_hashes.add(text_hash)
         total_processed += 1
         if progress_every and (total_processed % progress_every == 0):
             _logger.info(
-                "[llm_features] %d processed, %d skipped (cached)",
+                "[llm_features] %d processed (%d retried), %d skipped (cached)",
                 total_processed,
+                total_retried,
                 total_skipped,
             )
-            # Periodic flush so an interrupted run does not lose progress.
+            # Per-row flush is the default so an interrupted run
+            # never loses more than the one document mid-flight.
             _persist_cache(all_rows, cache_path)
 
     _persist_cache(all_rows, cache_path)
     _logger.info(
-        "[llm_features] done. total=%d processed=%d skipped=%d cache=%s",
+        "[llm_features] done. total=%d processed=%d (retried=%d) skipped=%d cache=%s",
         len(all_rows),
         total_processed,
+        total_retried,
         total_skipped,
         cache_path,
     )

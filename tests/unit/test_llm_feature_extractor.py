@@ -284,7 +284,8 @@ def test_extract_for_package_is_idempotent_on_existing_cache(tmp_path: Path) -> 
 
 def test_extract_for_package_persists_failure_rows(tmp_path: Path) -> None:
     """Documents that fail validation should still land in the cache so
-    a re-run does not retry them silently."""
+    a re-run can see what happened, but they must be retryable -- never
+    cached as permanent."""
 
     bad_payload = {"unknown_key": "x"}
     client = _StubClient([("{}", bad_payload)] * 3)
@@ -303,6 +304,157 @@ def test_extract_for_package_persists_failure_rows(tmp_path: Path) -> None:
     assert len(frame) == 1
     assert frame.iloc[0]["status"] in {"invalid_json", "out_of_vocab"}
     assert frame.iloc[0]["text_hash"] == "hash_zzz"
+
+
+# ---------------------------------------------------------------------------
+# Resume + retry contract (the robustness asks)
+# ---------------------------------------------------------------------------
+
+
+def test_resume_retries_api_error_rows_automatically(tmp_path: Path) -> None:
+    """If the prior run cached an api_error row, a fresh run must
+    re-extract it -- a transient API outage should not be remembered
+    as a permanent failure."""
+
+    payload = _valid_response()
+
+    # Run 1: every call fails (client raises). Each row caches with
+    # status="invalid_json" or similar because the stub returns ("", {})
+    # when exhausted -- but we want to simulate a real API exception.
+    class _FlakyClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def extract(self, document_text: str) -> tuple[str, dict[str, object]]:
+            self.calls += 1
+            raise RuntimeError("simulated network outage")
+
+    flaky = _FlakyClient()
+    documents = [("hash_aaa", "x" * 500)]
+    extract_for_package(
+        training_package_id="test_pkg",
+        documents=documents,
+        cache_dir=tmp_path,
+        client=flaky,  # type: ignore[arg-type]
+    )
+
+    import pandas as pd
+
+    cache_path = next(tmp_path.glob("*/*.parquet"))
+    frame = pd.read_parquet(cache_path)
+    assert frame.iloc[0]["status"] in {"invalid_json", "out_of_vocab"}
+
+    # Run 2: same documents, but the client recovers. The cached
+    # failure row should be RE-EXTRACTED automatically (not skipped).
+    good_client = _StubClient([(json.dumps(payload), dict(payload))])
+    extract_for_package(
+        training_package_id="test_pkg",
+        documents=documents,
+        cache_dir=tmp_path,
+        client=good_client,  # type: ignore[arg-type]
+    )
+    frame_after = pd.read_parquet(cache_path)
+    assert len(frame_after) == 1
+    assert frame_after.iloc[0]["status"] == "ok", (
+        "second run should have re-extracted the failed row"
+    )
+    assert len(good_client.calls) == 1
+
+
+def test_resume_does_not_retry_document_too_short(tmp_path: Path) -> None:
+    """A short-document skip is deterministic -- re-running cannot
+    change it. Must NOT be retried."""
+
+    client = _StubClient([])
+    documents = [("hash_short", "tiny")]  # below the 200-char floor
+    extract_for_package(
+        training_package_id="test_pkg",
+        documents=documents,
+        cache_dir=tmp_path,
+        client=client,  # type: ignore[arg-type]
+    )
+    assert len(client.calls) == 0  # never called
+
+    # Second run -- still no calls (the document is permanently "too short").
+    extract_for_package(
+        training_package_id="test_pkg",
+        documents=documents,
+        cache_dir=tmp_path,
+        client=client,  # type: ignore[arg-type]
+    )
+    assert len(client.calls) == 0
+
+
+def test_retry_failed_flag_forces_re_extraction(tmp_path: Path) -> None:
+    """Passing retry_failed=True re-extracts every row including
+    successfully-extracted ones. Useful when the catalogue prompt
+    text changes without bumping CATALOG_VERSION."""
+
+    payload_v1 = _valid_response()
+    client_v1 = _StubClient([(json.dumps(payload_v1), dict(payload_v1))])
+    extract_for_package(
+        training_package_id="test_pkg",
+        documents=[("hash_aaa", "x" * 500)],
+        cache_dir=tmp_path,
+        client=client_v1,  # type: ignore[arg-type]
+    )
+    assert len(client_v1.calls) == 1
+
+    # Same hash, retry_failed=True -> should re-call.
+    payload_v2 = _valid_response()  # different content the LLM "could" give
+    client_v2 = _StubClient([(json.dumps(payload_v2), dict(payload_v2))])
+    extract_for_package(
+        training_package_id="test_pkg",
+        documents=[("hash_aaa", "x" * 500)],
+        cache_dir=tmp_path,
+        client=client_v2,  # type: ignore[arg-type]
+        retry_failed=True,
+    )
+    assert len(client_v2.calls) == 1
+
+
+def test_per_row_flush_persists_after_every_extraction(tmp_path: Path) -> None:
+    """Robustness against SIGKILL: cache must be persisted after every
+    successful row, not just at the end of the loop. We simulate the
+    SIGKILL with a KeyboardInterrupt that ``extract_one``'s broad
+    ``except Exception`` does NOT swallow."""
+
+    payload = _valid_response()
+
+    class _CrashAfterOne:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def extract(self, document_text: str) -> tuple[str, dict[str, object]]:
+            self.calls += 1
+            if self.calls > 1:
+                # KeyboardInterrupt is a BaseException -- escapes the
+                # broad ``except Exception`` inside extract_one and
+                # propagates out of extract_for_package.
+                raise KeyboardInterrupt("simulated SIGINT")
+            return json.dumps(payload), dict(payload)
+
+    documents = [("hash_first", "x" * 500), ("hash_second", "x" * 500)]
+    with pytest.raises(KeyboardInterrupt):
+        extract_for_package(
+            training_package_id="test_pkg",
+            documents=documents,
+            cache_dir=tmp_path,
+            client=_CrashAfterOne(),  # type: ignore[arg-type]
+            progress_every=1,
+        )
+
+    # The first row must be on disk despite the crash.
+    import pandas as pd
+
+    cache_files = list(tmp_path.glob("*/*.parquet"))
+    assert cache_files, "per-row flush did not write the cache parquet"
+    frame = pd.read_parquet(cache_files[0])
+    text_hashes_in_cache = set(frame["text_hash"].tolist())
+    assert "hash_first" in text_hashes_in_cache, (
+        "per-row flush should have persisted the first row before the crash"
+    )
+    assert "hash_second" not in text_hashes_in_cache
 
 
 # ---------------------------------------------------------------------------

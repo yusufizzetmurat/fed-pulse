@@ -103,6 +103,27 @@ def main(argv: list[str] | None = None) -> int:
         default=_DEFAULT_CACHE_DIR,
         help="Root directory for the LLM-features cache parquet.",
     )
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help=(
+            "Re-extract every row currently in the cache, including "
+            "rows marked ok. Use after editing the catalogue prompt "
+            "wording (without bumping CATALOG_VERSION). Default: "
+            "skip ok / document_too_short rows; retry api_error / "
+            "invalid_json / out_of_vocab rows automatically."
+        ),
+    )
+    parser.add_argument(
+        "--flush-every",
+        type=int,
+        default=1,
+        help=(
+            "Flush the cache parquet to disk after every N successful "
+            "extractions. Default 1 (write per row) keeps SIGKILL "
+            "recovery within a single document; raise to batch I/O."
+        ),
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -123,6 +144,8 @@ def main(argv: list[str] | None = None) -> int:
         training_package_id=args.training_package_id,
         documents=documents,
         cache_dir=args.cache_dir,
+        retry_failed=args.retry_failed,
+        progress_every=max(1, args.flush_every),
     )
     _LOG.info("Cache parquet: %s", cache_path)
     return 0
