@@ -28,7 +28,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate
 
 help:
 	@echo "Targets:"
@@ -290,6 +290,38 @@ regime-baseline-tiers:
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--nlp-text-encoder "$(NLP_TEXT_ENCODER)" \
 		--report-root /data/artifacts/regime_baseline_tiers
+
+# Phase A (#226) architecture sweep -- per-architecture random-search
+# HP at the A5 best-cell neighbourhood, all on the Tier 5 surface
+# (rich + LLM, no NLP) by default. The downstream
+# ``regime-ensemble-aggregate`` target consumes the per-architecture
+# JSONs and reports mean-logit / mean-softmax / plurality-vote macro-F1.
+USE_LLM_FEATURES ?= on
+regime-arch-sweep:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose --profile "$(FORECASTER_COMPOSE_PROFILE)" run --rm "$(FORECASTER_COMPOSE_SERVICE)" \
+		python scripts/run_regime_architecture_sweep.py \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		$(if $(filter on,$(USE_LLM_FEATURES)),--use-llm-features,--no-llm-features) \
+		$(if $(NLP_TEXT_ENCODER),--text-encoder "$(NLP_TEXT_ENCODER)",) \
+		--report-root /data/artifacts/regime_arch_sweep
+
+# Pooled-fold macro-F1 with bootstrap CIs across every per-fold trial in
+# INPUT_DIR. INPUT_DIR is recursively walked for
+# forecaster_sweep_results.json files.
+regime-pooled-aggregate:
+	@test -n "$(INPUT_DIR)" || (echo "INPUT_DIR is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.evaluation.regime_pooled_aggregator \
+		--input-dir "$(INPUT_DIR)"
+
+# Multi-architecture ensemble macro-F1. ARCH_SWEEP_DIR is the parent of
+# the per-architecture subdirectories produced by ``regime-arch-sweep``.
+regime-ensemble-aggregate:
+	@test -n "$(ARCH_SWEEP_DIR)" || (echo "ARCH_SWEEP_DIR is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.evaluation.ensemble_aggregator \
+		--arch-sweep-dir "$(ARCH_SWEEP_DIR)"
 
 # Single-architecture training with --credibility-features ON. Used for
 # isolated credibility-vs-baseline comparisons; defaults to ARCHITECTURE=lstm
