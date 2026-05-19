@@ -28,6 +28,7 @@ dependencies = [
   "pyarrow",
   "datasets",
   "kagglehub",
+  "anthropic>=0.40.0",
   "google-genai>=1.0.0",
   "langsmith>=0.1.0",
   "scikit-learn",

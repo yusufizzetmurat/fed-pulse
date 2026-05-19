@@ -115,3 +115,40 @@ def test_cross_asset_slice_default_is_zero() -> None:
 
     fv = _base_vector()
     assert fv.as_rich_list()[RICH_CROSS_ASSET_SLICE] == [0.0, 0.0, 0.0, 0.0]
+
+
+def test_llm_features_slice_default_is_missing_flag_one() -> None:
+    """B1 (#212): a FeatureVector built without LLM-feature payload
+    emits an all-zeros 35-dim slot + a missing flag at 1.0."""
+
+    from app.models.config import (
+        RICH_LLM_FEATURE_DIM,
+        RICH_LLM_FEATURE_SLICE,
+        RICH_LLM_FEATURE_MISSING_SLICE,
+    )
+
+    fv = _base_vector()
+    rich = fv.as_rich_list()
+    assert rich[RICH_LLM_FEATURE_SLICE] == [0.0] * RICH_LLM_FEATURE_DIM
+    assert rich[RICH_LLM_FEATURE_MISSING_SLICE] == [1.0]
+
+
+def test_llm_features_slice_emits_attached_vector() -> None:
+    """An attached one-hot vector lands at the documented offsets and
+    the missing flag flips to 0."""
+
+    from app.models.config import (
+        RICH_LLM_FEATURE_DIM,
+        RICH_LLM_FEATURE_SLICE,
+        RICH_LLM_FEATURE_MISSING_SLICE,
+    )
+
+    fv = _base_vector()
+    one_hot = [0.0] * RICH_LLM_FEATURE_DIM
+    one_hot[0] = 1.0
+    one_hot[10] = 1.0
+    fv.llm_features = one_hot
+    fv.llm_features_missing = 0.0
+    rich = fv.as_rich_list()
+    assert rich[RICH_LLM_FEATURE_SLICE] == one_hot
+    assert rich[RICH_LLM_FEATURE_MISSING_SLICE] == [0.0]

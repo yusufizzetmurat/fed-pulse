@@ -1,6 +1,6 @@
-"""3-tier baseline harness for the Phase 9 V2 vol-regime classifier.
+"""4-tier baseline harness for the Phase 9 V2 vol-regime classifier.
 
-Runs three increasingly rich classification baselines so the aggregate
+Runs four increasingly rich classification baselines so the aggregate
 table can show the marginal lift of each input family on top of the
 market-only floor:
 
@@ -15,8 +15,18 @@ market-only floor:
     tier3_market_rich_nlp     -- Three-stream input: tier-2 rich +
                                   pooled text embeddings from the
                                   configured encoder (default
-                                  finbert_fed_adjacent). This is the
-                                  full Phase 9 V2 input contract.
+                                  finbert_fed_adjacent).
+    tier4_market_rich_nlp_llm -- Full stack: tier-3 plus the B1 (#212)
+                                  catalogue one-hot LLM-features block.
+                                  Tells us whether the full v2 stack
+                                  beats tier 2/3 on the held-out folds.
+    tier5_market_rich_llm     -- Clean B1 ablation: tier-2 rich + LLM
+                                  features only (no NLP embeddings).
+                                  Isolates the LLM-features lift from
+                                  any NLP-channel interaction. This is
+                                  the headline cell for the B1 claim
+                                  when Tier 3 is roughly null over
+                                  Tier 2 (the empirical case as of A5).
 
 Each tier reuses the same architecture / fold / seed grid so the only
 moving variable between tiers is the input-feature family. The harness
@@ -51,7 +61,7 @@ _DEFAULT_REPORT_ROOT = Path("data/artifacts/regime_baseline_tiers")
 
 def _build_common_args(args: argparse.Namespace) -> list[str]:
     """Tier-invariant flags. Architecture, seeds, folds, and the
-    classification dispatch all stay constant across the three tiers."""
+    classification dispatch all stay constant across the five tiers."""
 
     return [
         "--training-package-id",
@@ -114,6 +124,28 @@ def _tier_args(
             args.nlp_text_encoder,
             "--text-adapter-dims",
             *[str(d) for d in args.text_adapter_dims],
+            "--report-path",
+            str(report_path),
+        ]
+    if tier == "tier4_market_rich_nlp_llm":
+        return [
+            *common,
+            "--rich-features",
+            "--use-llm-features",
+            "--text-encoder",
+            args.nlp_text_encoder,
+            "--text-adapter-dims",
+            *[str(d) for d in args.text_adapter_dims],
+            "--report-path",
+            str(report_path),
+        ]
+    if tier == "tier5_market_rich_llm":
+        return [
+            *common,
+            "--rich-features",
+            "--use-llm-features",
+            "--text-encoder",
+            "none",
             "--report-path",
             str(report_path),
         ]
@@ -189,9 +221,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--tiers",
         nargs="+",
-        choices=("tier1_market_only", "tier2_market_rich", "tier3_market_rich_nlp"),
-        default=("tier1_market_only", "tier2_market_rich", "tier3_market_rich_nlp"),
-        help="Subset of tiers to run. Default: all three.",
+        choices=(
+            "tier1_market_only",
+            "tier2_market_rich",
+            "tier3_market_rich_nlp",
+            "tier4_market_rich_nlp_llm",
+            "tier5_market_rich_llm",
+        ),
+        default=(
+            "tier1_market_only",
+            "tier2_market_rich",
+            "tier3_market_rich_nlp",
+            "tier4_market_rich_nlp_llm",
+            "tier5_market_rich_llm",
+        ),
+        help="Subset of tiers to run. Default: all five.",
     )
     parser.add_argument(
         "--dry-run",

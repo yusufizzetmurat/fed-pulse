@@ -1051,6 +1051,69 @@ def _read_events_frame(package_dir: Path) -> "Any":
     return pd.read_parquet(events_path)
 
 
+def _load_llm_feature_lookup(
+    training_package_id: str,
+) -> dict[str, list[float]]:
+    """B1 (#212) loader hook.
+
+    Read the LLM-features cache parquet for the configured training
+    package and return a ``text_hash -> one-hot-vector`` lookup. The
+    one-hot vector has exactly ``RICH_LLM_FEATURE_DIM`` floats in the
+    documented catalogue order.
+
+    Returns ``{}`` when the cache does not exist; the rich-feature
+    attachment then leaves every row with the all-zeros block + the
+    missing flag set to 1.0.
+    """
+
+    from app.data.llm_feature_catalog import CATALOG_VERSION, CATALOG, MODEL_ID
+
+    candidates = (
+        Path(f"/data/raw/llm_features/{MODEL_ID}_{CATALOG_VERSION}/{training_package_id}.parquet"),
+        Path(f"data/raw/llm_features/{MODEL_ID}_{CATALOG_VERSION}/{training_package_id}.parquet"),
+        Path(f"backend/data/raw/llm_features/{MODEL_ID}_{CATALOG_VERSION}/{training_package_id}.parquet"),
+    )
+    cache_path = next((p for p in candidates if p.exists()), None)
+    if cache_path is None:
+        return {}
+
+    import pandas as pd
+
+    frame = pd.read_parquet(cache_path)
+    # Pre-build the contiguous one-hot slot offsets so the per-row
+    # encoding is a single dict lookup + index write.
+    feature_levels: list[tuple[str, tuple[str, ...]]] = [
+        (f.name, f.levels) for f in CATALOG
+    ]
+    total_dim = sum(len(levels) for _, levels in feature_levels)
+
+    out: dict[str, list[float]] = {}
+    for _, row in frame.iterrows():
+        if str(row.get("status", "")) != "ok":
+            continue
+        text_hash = str(row.get("text_hash", ""))
+        if not text_hash:
+            continue
+        vec = [0.0] * total_dim
+        offset = 0
+        ok = True
+        for feature_name, levels in feature_levels:
+            raw_value = row.get(feature_name)
+            if not isinstance(raw_value, str) or raw_value not in levels:
+                # Defensive: skip this row entirely if any feature is
+                # out-of-vocab or missing in the cache. The loader
+                # then leaves the row in the all-zeros + missing-flag
+                # state, treating the extraction as failed.
+                ok = False
+                break
+            idx = levels.index(raw_value)
+            vec[offset + idx] = 1.0
+            offset += len(levels)
+        if ok:
+            out[text_hash] = vec
+    return out
+
+
 def _read_fold_manifest(package_dir: Path) -> dict[str, dict[str, str]]:
     """Return ``fold_id -> {train_start, train_end, val_start, val_end, test_start, test_end}``.
 
@@ -1176,6 +1239,7 @@ def _load_package_sequences_with_metadata(
     use_linguistic: bool = True,
     use_mp_surprise: bool = True,
     use_multi_axis: bool = True,
+    use_llm_features: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -1217,9 +1281,12 @@ def _load_package_sequences_with_metadata(
 
     linguistic_lookup: dict[str, list[float]] = {}
     mp_surprise_lookup: dict[str, dict[str, float]] = {}
+    llm_lookup: dict[str, list[float]] = {}
     if rich_features:
         linguistic_lookup = _read_linguistic_lookup(package_dir)
         mp_surprise_lookup = _read_mp_surprise_lookup(package_dir)
+        if use_llm_features:
+            llm_lookup = _load_llm_feature_lookup(training_package_id)
 
     embedding_lookup: dict[str, Any] = {}
     embedding_event_dates: dict[str, str] = {}
@@ -1364,8 +1431,21 @@ def _load_package_sequences_with_metadata(
         forward_vol_value = _coerce_finite_float(
             row.get("forward_realized_vol_10d")
         )
+        # B1 (#212) LLM-features lookup -- one-hot block + missing flag
+        # per event row. Lookup is built once per package outside the
+        # loop. Hashes absent from the lookup (failed extraction or
+        # below-min-chars document) leave the row in the all-zeros +
+        # missing=1.0 state so the rich-feature input shape stays
+        # constant regardless of extraction coverage.
+        llm_vector = llm_lookup.get(row_text_hash)
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
+            if llm_vector is not None:
+                vector.llm_features = list(llm_vector)
+                vector.llm_features_missing = 0.0
+            else:
+                vector.llm_features = None
+                vector.llm_features_missing = 1.0
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -1412,6 +1492,7 @@ def load_walk_forward_split(
     use_linguistic: bool = True,
     use_mp_surprise: bool = True,
     use_multi_axis: bool = True,
+    use_llm_features: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -1466,6 +1547,7 @@ def load_walk_forward_split(
         use_linguistic=use_linguistic,
         use_mp_surprise=use_mp_surprise,
         use_multi_axis=use_multi_axis,
+        use_llm_features=use_llm_features,
         text_encoder=text_encoder,
         text_adapter_dim=text_adapter_dim,
         text_pool_lambda_inv_days=text_pool_lambda_inv_days,
@@ -1555,6 +1637,7 @@ def load_training_sequences_from_package(
     use_linguistic: bool = True,
     use_mp_surprise: bool = True,
     use_multi_axis: bool = True,
+    use_llm_features: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -1704,9 +1787,12 @@ def load_training_sequences_from_package(
     # the legacy 6-dim path is undisturbed.
     linguistic_lookup: dict[str, list[float]] = {}
     mp_surprise_lookup: dict[str, dict[str, float]] = {}
+    llm_lookup: dict[str, list[float]] = {}
     if rich_features:
         linguistic_lookup = _read_linguistic_lookup(package_dir)
         mp_surprise_lookup = _read_mp_surprise_lookup(package_dir)
+        if use_llm_features:
+            llm_lookup = _load_llm_feature_lookup(training_package_id)
 
     # Text-embedding lookup. Loaded once per package; the per-event
     # softmax-weighted pool runs against this dict. When the encoder
@@ -1880,8 +1966,21 @@ def load_training_sequences_from_package(
         forward_vol_value = _coerce_finite_float(
             row.get("forward_realized_vol_10d")
         )
+        # B1 (#212) LLM-features lookup -- one-hot block + missing flag
+        # per event row. Lookup is built once per package outside the
+        # loop. Hashes absent from the lookup (failed extraction or
+        # below-min-chars document) leave the row in the all-zeros +
+        # missing=1.0 state so the rich-feature input shape stays
+        # constant regardless of extraction coverage.
+        llm_vector = llm_lookup.get(row_text_hash)
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
+            if llm_vector is not None:
+                vector.llm_features = list(llm_vector)
+                vector.llm_features_missing = 0.0
+            else:
+                vector.llm_features = None
+                vector.llm_features_missing = 1.0
         if rich_features:
             _attach_rich_features(
                 vectors,

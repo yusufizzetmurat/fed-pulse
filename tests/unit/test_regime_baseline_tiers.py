@@ -40,6 +40,8 @@ def test_parses_required_package_id(harness_module) -> None:
         "tier1_market_only",
         "tier2_market_rich",
         "tier3_market_rich_nlp",
+        "tier4_market_rich_nlp_llm",
+        "tier5_market_rich_llm",
     )
 
 
@@ -105,6 +107,35 @@ def test_tier2_does_not_forward_text_adapter_dims(harness_module, tmp_path) -> N
     assert "--text-adapter-dims" not in cmd
 
 
+def test_tier4_layers_llm_features_on_top_of_tier3(harness_module, tmp_path) -> None:
+    args = harness_module._parse_args(["--training-package-id", "pkg"])
+    cmd = harness_module._tier_args(
+        "tier4_market_rich_nlp_llm", args, tmp_path / "tier4.json"
+    )
+    assert "--rich-features" in cmd
+    assert "--use-llm-features" in cmd
+    assert "--text-adapter-dims" in cmd
+    # The 1/2/3 tiers must NOT include --use-llm-features.
+    for tier in ("tier1_market_only", "tier2_market_rich", "tier3_market_rich_nlp"):
+        baseline = harness_module._tier_args(tier, args, tmp_path / f"{tier}.json")
+        assert "--use-llm-features" not in baseline
+
+
+def test_tier5_isolates_llm_features_with_no_nlp_channel(harness_module, tmp_path) -> None:
+    """Tier 5 is the clean B1 ablation: rich + LLM, no NLP. The
+    text-encoder must read ``none`` so the only delta vs tier 2 is the
+    LLM-features block, and the adapter-dims slot must stay omitted."""
+
+    args = harness_module._parse_args(["--training-package-id", "pkg"])
+    cmd = harness_module._tier_args(
+        "tier5_market_rich_llm", args, tmp_path / "tier5.json"
+    )
+    assert "--rich-features" in cmd
+    assert "--use-llm-features" in cmd
+    assert cmd[cmd.index("--text-encoder") + 1] == "none"
+    assert "--text-adapter-dims" not in cmd
+
+
 def test_unknown_tier_raises(harness_module, tmp_path) -> None:
     args = harness_module._parse_args(["--training-package-id", "pkg"])
     with pytest.raises(ValueError, match="Unknown tier"):
@@ -131,8 +162,10 @@ def test_dry_run_prints_commands_for_each_tier(harness_module, tmp_path, capsys)
     assert "tier1_market_only" in captured
     assert "tier2_market_rich" in captured
     assert "tier3_market_rich_nlp" in captured
+    assert "tier4_market_rich_nlp_llm" in captured
+    assert "tier5_market_rich_llm" in captured
     # Each per-tier line records the cmd that would have run.
-    assert captured.count("[regime_tiers] cmd:") == 3
+    assert captured.count("[regime_tiers] cmd:") == 5
 
 
 def test_dry_run_can_restrict_tier_subset(harness_module, tmp_path, capsys) -> None:
