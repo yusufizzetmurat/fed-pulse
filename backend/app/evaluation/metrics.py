@@ -23,6 +23,15 @@ class EvaluationMetrics:
     direction_accuracy: float | None = None
     f1_macro: float | None = None
     direction_auc: float | None = None
+    # Phase 9 V2 (#195) vol-regime classification view. Populated when
+    # the model was trained with ``output_mode="classification"``;
+    # ``None`` on regression-only runs so the legacy contract holds.
+    # ``regime_accuracy`` is plain top-1 over the (n_classes) head;
+    # ``regime_f1_macro`` is the unweighted macro F1; ``regime_loss``
+    # is the cross-entropy averaged across the partition.
+    regime_accuracy: float | None = None
+    regime_f1_macro: float | None = None
+    regime_loss: float | None = None
 
     def to_dict(self) -> dict[str, float | None]:
         return asdict(self)

@@ -922,6 +922,16 @@ def _attach_rich_features(
     flip the paired missing flag to ``1.0``.
     """
 
+    # Phase 9 V2 (#195) classification target. ``forward_realized_vol_10d``
+    # is the per-event continuous label that the per-fold quantile fit
+    # turns into a 3-class regime index. The broadcast keeps it on every
+    # bar in the sequence (mirroring the credibility / linguistic
+    # pattern) and the partition-tensor builder reads it off the
+    # post-lookback target row only. Rows whose vol column is null
+    # (insufficient forward window) land here as ``None`` and the
+    # classification partition builder drops them downstream.
+    forward_vol_10d = _coerce_finite_float(event_row.get("forward_realized_vol_10d"))
+
     # Credibility 4-vector is sourced directly off the event row.
     if use_credibility:
         cred_drift = _coerce_finite_float(event_row.get("credibility_drift_score"))
@@ -1020,6 +1030,7 @@ def _attach_rich_features(
         vector.time_label_forward = time_label_forward
         vector.certain_label_certain = certain_label_certain
         vector.stance_missing = stance_missing
+        vector.forward_realized_vol_10d = forward_vol_10d
         vector.rich_payload = True
 
 
@@ -2019,6 +2030,33 @@ def vol_regime_class_for(value: float | None, quantiles: Sequence[float]) -> int
     return len(quantiles)
 
 
+def collect_forward_vols(
+    sequence_groups: Sequence[Sequence[FeatureVector]],
+) -> list[float]:
+    """Pull the forward-vol target off every supervised target row.
+
+    A "target" row is the bar at index ``SEQUENCE_LENGTH`` in a sequence
+    group (the event-day bar appended by ``_append_event_day_target``).
+    Non-target bars are skipped because their ``forward_realized_vol_10d``
+    is irrelevant to the y axis. Rows whose target column is null /
+    NaN are dropped so the caller (per-fold quantile fit) only sees
+    valid floats.
+    """
+
+    out: list[float] = []
+    for sequence_group in sequence_groups:
+        if len(sequence_group) < SEQUENCE_LENGTH + 1:
+            continue
+        for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
+            value = getattr(sequence_group[idx], "forward_realized_vol_10d", None)
+            if value is None:
+                continue
+            if value != value:  # NaN
+                continue
+            out.append(float(value))
+    return out
+
+
 def fit_close_scale(sequence_groups: Sequence[Sequence[FeatureVector]]) -> float:
     """Compute the per-fold close-price normaliser from the training rows.
 
@@ -2058,6 +2096,9 @@ def fit_close_scale(sequence_groups: Sequence[Sequence[FeatureVector]]) -> float
 def _build_training_tensors(
     sequence_groups: Sequence[Sequence[FeatureVector]],
     close_scale: float | None = None,
+    *,
+    output_mode: str = "regression",
+    vol_regime_quantiles: Sequence[float] = (),
 ) -> tuple[torch.Tensor | None, torch.Tensor | None, float]:
     """Materialise the (x, y, close_scale) triple for the training path.
 
@@ -2092,6 +2133,8 @@ def _build_training_tensors(
 
     sequences: list[list[list[float]]] = []
     targets: list[list[float]] = []
+    class_indices: list[int] = []
+    is_classification = output_mode == "classification"
 
     for sequence_group in sequence_groups:
         if len(sequence_group) < SEQUENCE_LENGTH + 1:
@@ -2099,23 +2142,39 @@ def _build_training_tensors(
         for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
             window = sequence_group[idx - SEQUENCE_LENGTH : idx]
             target = sequence_group[idx]
+            if is_classification:
+                cls_idx = vol_regime_class_for(
+                    getattr(target, "forward_realized_vol_10d", None),
+                    vol_regime_quantiles,
+                )
+                # Drop rows whose forward-vol target is missing instead
+                # of silently coercing them to class 0 (calm). This
+                # matches the regression contract: rows without a
+                # defensible target never see the optimiser.
+                if cls_idx < 0:
+                    continue
+                class_indices.append(cls_idx)
+            else:
+                targets.append(
+                    [
+                        target.market_close / fitted_scale,
+                        max(target.market_volatility, 0.0),
+                    ]
+                )
             if use_rich:
                 row_list = [item.as_rich_list() for item in window]
             else:
                 row_list = [item.as_list() for item in window]
             sequences.append(row_list)
-            targets.append(
-                [
-                    target.market_close / fitted_scale,
-                    max(target.market_volatility, 0.0),
-                ]
-            )
 
     if not sequences:
         return None, None, fitted_scale
 
     x = torch.tensor(sequences, dtype=torch.float32)
-    y = torch.tensor(targets, dtype=torch.float32)
+    if is_classification:
+        y = torch.tensor(class_indices, dtype=torch.long)
+    else:
+        y = torch.tensor(targets, dtype=torch.float32)
     return x, y, fitted_scale
 
 

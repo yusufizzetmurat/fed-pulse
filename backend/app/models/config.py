@@ -366,6 +366,13 @@ class FeatureVector:
     certain_label_certain: float = 0.0
     stance_missing: float = 1.0
     rich_payload: bool = False
+    # Phase 9 V2 (#195) classification target. The forward 10-trading-day
+    # realised volatility lives on the target row (the last vector in
+    # a sequence). For non-target lookback bars the loader leaves it as
+    # ``None``; the per-fold quantile-cutoff fitter and class-index
+    # mapper consume the target-row value only. Default ``None`` so
+    # regression-only callers stay byte-identical.
+    forward_realized_vol_10d: float | None = None
     # Pooled text-embedding payload (PR #176 onward). Carries the
     # variable-length encoder-output vector (FinBERT 768, voyage-finance-2
     # 1024, BGE 1024, ...) materialised by the loader's softmax(-Delta t /
