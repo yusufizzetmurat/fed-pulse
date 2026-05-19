@@ -37,6 +37,7 @@ from app.training.loaders import (
     _split_train_validation,
     apply_rich_feature_scaler_tensor,
     collect_forward_vols,
+    fit_class_weights,
     fit_rich_feature_scaler_tensor,
     fit_vol_regime_quantiles,
     load_training_sequences_from_data,
@@ -624,8 +625,20 @@ def train_model(
             active_model_config = dataclasses.replace(
                 active_model_config, vol_regime_quantiles=fitted_quantiles
             )
+            # A1 (#206) per-fold class weighting. Counts each class in
+            # the train slice under the just-fitted quantile cutoffs,
+            # then builds inverse-frequency weights so the loss path
+            # of least resistance is no longer "predict the majority
+            # prior". Train-only fit; val + test see the same weights
+            # but only at loss computation, not in their own slices.
+            fitted_class_weights = fit_class_weights(
+                train_forward_vols,
+                fitted_quantiles,
+                n_classes=n_classes_active,
+            )
         else:
             fitted_quantiles = ()
+            fitted_class_weights = ()
         # Fit the close-scale on the training partition only; never on
         # the val or test rows. The walk-forward protocol forbids
         # fitting any scaler over held-out events.
@@ -878,7 +891,17 @@ def train_model(
     _active_output_mode = str(getattr(work_model, "output_mode", "regression"))
     loss_fn: nn.Module
     if _active_output_mode == "classification":
-        loss_fn = nn.CrossEntropyLoss()
+        # A1 (#206) -- pass the per-fold class weights when available.
+        # ``walk_forward_path`` is the only branch that computes
+        # ``fitted_class_weights``; the legacy 80/20 path leaves it
+        # absent and the loss falls back to uniform weighting.
+        weights_tuple = locals().get("fitted_class_weights", ())
+        class_weight_tensor: torch.Tensor | None = None
+        if weights_tuple:
+            class_weight_tensor = torch.tensor(
+                list(weights_tuple), dtype=torch.float32, device=device_obj
+            )
+        loss_fn = nn.CrossEntropyLoss(weight=class_weight_tensor)
     else:
         loss_fn = nn.SmoothL1Loss(beta=0.02)
 

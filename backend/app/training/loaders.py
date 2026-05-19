@@ -2023,6 +2023,49 @@ def fit_vol_regime_quantiles(
     return tuple(float(c) for c in cutoffs)
 
 
+def fit_class_weights(
+    forward_vols: Sequence[float],
+    quantiles: Sequence[float],
+    *,
+    n_classes: int,
+    smoothing: float = 1.0,
+) -> tuple[float, ...]:
+    """Return inverse-frequency class weights fitted on a train slice (#206).
+
+    Computes per-class counts under the supplied quantile cutoffs, then
+    returns weights proportional to ``1 / (count + smoothing)`` so a
+    class with no events still receives finite weight rather than
+    blowing up the loss. The weights are normalised so they sum to
+    ``n_classes`` -- a class with the dataset's average frequency gets
+    weight ~1, a rare class gets > 1, a dominant class gets < 1.
+
+    Returns ``()`` (empty) when no quantile cutoffs are available; the
+    caller then falls back to uniform weighting via the standard
+    ``CrossEntropyLoss`` default.
+
+    The motivation is the Tier 1 collapse in §6.3 of the wiki: the
+    optimiser learns the training-distribution prior because the loss
+    path of least resistance is "predict the majority class". Inverse-
+    frequency weights flatten that prior so the gradient is forced to
+    discriminate the minority classes.
+    """
+
+    if not quantiles or n_classes < 2:
+        return ()
+    counts = [0] * n_classes
+    for v in forward_vols:
+        if v is None or v != v:
+            continue
+        cls = vol_regime_class_for(v, quantiles)
+        if 0 <= cls < n_classes:
+            counts[cls] += 1
+    if sum(counts) == 0:
+        return ()
+    raw = [1.0 / (c + smoothing) for c in counts]
+    total = sum(raw)
+    return tuple((w / total) * n_classes for w in raw)
+
+
 def vol_regime_class_for(value: float | None, quantiles: Sequence[float]) -> int:
     """Map a forward-vol value to a class index using fitted quantiles.
 
