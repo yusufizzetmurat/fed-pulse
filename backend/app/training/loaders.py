@@ -922,16 +922,6 @@ def _attach_rich_features(
     flip the paired missing flag to ``1.0``.
     """
 
-    # Phase 9 V2 (#195) classification target. ``forward_realized_vol_10d``
-    # is the per-event continuous label that the per-fold quantile fit
-    # turns into a 3-class regime index. The broadcast keeps it on every
-    # bar in the sequence (mirroring the credibility / linguistic
-    # pattern) and the partition-tensor builder reads it off the
-    # post-lookback target row only. Rows whose vol column is null
-    # (insufficient forward window) land here as ``None`` and the
-    # classification partition builder drops them downstream.
-    forward_vol_10d = _coerce_finite_float(event_row.get("forward_realized_vol_10d"))
-
     # Credibility 4-vector is sourced directly off the event row.
     if use_credibility:
         cred_drift = _coerce_finite_float(event_row.get("credibility_drift_score"))
@@ -1030,7 +1020,6 @@ def _attach_rich_features(
         vector.time_label_forward = time_label_forward
         vector.certain_label_certain = certain_label_certain
         vector.stance_missing = stance_missing
-        vector.forward_realized_vol_10d = forward_vol_10d
         vector.rich_payload = True
 
 
@@ -1350,6 +1339,16 @@ def _load_package_sequences_with_metadata(
             volatility_shift=volatility_shift,
             target_mode=target_mode,
         )
+        # Phase 9 V2 (#195) classification target rides on every supervised
+        # row regardless of rich-features being on or off -- it is the y
+        # axis, not an input feature. Tier 1 (Market-Only) needs it just
+        # like tier 3 (Market+Rich+NLP); a missing target would crash the
+        # per-fold quantile fit with "0 valid rows for n_classes=3".
+        forward_vol_value = _coerce_finite_float(
+            row.get("forward_realized_vol_10d")
+        )
+        for vector in vectors:
+            vector.forward_realized_vol_10d = forward_vol_value
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -1856,6 +1855,16 @@ def load_training_sequences_from_package(
             volatility_shift=volatility_shift,
             target_mode=target_mode,
         )
+        # Phase 9 V2 (#195) classification target rides on every supervised
+        # row regardless of rich-features being on or off -- it is the y
+        # axis, not an input feature. Tier 1 (Market-Only) needs it just
+        # like tier 3 (Market+Rich+NLP); a missing target would crash the
+        # per-fold quantile fit with "0 valid rows for n_classes=3".
+        forward_vol_value = _coerce_finite_float(
+            row.get("forward_realized_vol_10d")
+        )
+        for vector in vectors:
+            vector.forward_realized_vol_10d = forward_vol_value
         if rich_features:
             _attach_rich_features(
                 vectors,
