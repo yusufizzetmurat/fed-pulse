@@ -87,6 +87,18 @@ def _parse_args() -> argparse.Namespace:
         default=list(OFFICIAL_SEEDS),
         help="Seeds to run per encoder (defaults to the official set).",
     )
+    # Phase C (#228) cross-bank supervision -- forwarded to finetune_pilot.
+    parser.add_argument(
+        "--cross-bank-supervision",
+        choices=("off", "on", "multitask_alpha"),
+        default="off",
+        help=(
+            "Forwarded to finetune_pilot. ``off`` (default) keeps the "
+            "supervised pool strictly FOMC. ``on`` admits cross-bank "
+            "rows as full-weight training rows. ``multitask_alpha`` is "
+            "reserved for the head-side multi-task implementation."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -104,6 +116,9 @@ def _build_run_args(args: argparse.Namespace, *, checkpoint: str, seed: int) -> 
         max_length=args.max_length,
         owner=args.owner,
         artifact_root=args.artifact_root,
+        cross_bank_supervision=str(
+            getattr(args, "cross_bank_supervision", "off") or "off"
+        ),
     )
 
 

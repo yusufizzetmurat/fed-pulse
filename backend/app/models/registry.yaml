@@ -121,3 +121,19 @@ encoders:
       finbert. Run via ``make finbert-fed-adjacent-pretrain-bert-control``; the
       bake-off pairs the two checkpoints so we can isolate the contribution of
       the FinBERT prior versus the BIS substrate alone.
+
+  finbert_fed_adjacent_xbank:
+    repo: local/finbert-fed-adjacent-xbank
+    revision: ""
+    gated: false
+    task: stance_classification
+    description: |
+      Phase C (#228) cross-bank auxiliary-supervised variant of
+      ``finbert_fed_adjacent``. Same MLM substrate; the supervised
+      stance head trains with ``--cross-bank-supervision=on`` so the
+      15k cross-bank rows (ECB / BoJ / BoE / BoC / RBA at
+      ``provenance=peer_reviewed_cross_bank``) join the FOMC pool as
+      full-weight training rows. ``revision`` stays empty until the
+      checkpoint lands; downstream bake-off skips this encoder until
+      a revision is pinned, matching the ``finbert_fed_adjacent``
+      contract.

@@ -42,6 +42,8 @@ def test_parses_required_package_id(harness_module) -> None:
         "tier3_market_rich_nlp",
         "tier4_market_rich_nlp_llm",
         "tier5_market_rich_llm",
+        "tier6_market_rich_nlp_xbank",
+        "tier7_market_rich_nlp_xbank_llm",
     )
 
 
@@ -121,6 +123,34 @@ def test_tier4_layers_llm_features_on_top_of_tier3(harness_module, tmp_path) -> 
         assert "--use-llm-features" not in baseline
 
 
+def test_tier6_uses_cross_bank_encoder_alias_without_llm(harness_module, tmp_path) -> None:
+    """Tier 6 is rich + cross-bank-NLP, no LLM features. The text
+    encoder must be ``finbert_fed_adjacent_xbank``."""
+
+    args = harness_module._parse_args(["--training-package-id", "pkg"])
+    cmd = harness_module._tier_args(
+        "tier6_market_rich_nlp_xbank", args, tmp_path / "tier6.json"
+    )
+    assert "--rich-features" in cmd
+    assert "--use-llm-features" not in cmd
+    assert cmd[cmd.index("--text-encoder") + 1] == "finbert_fed_adjacent_xbank"
+    assert "--text-adapter-dims" in cmd
+
+
+def test_tier7_combines_cross_bank_encoder_and_llm_features(harness_module, tmp_path) -> None:
+    """Tier 7 is the umbrella issue #225 defending cell: rich +
+    cross-bank-NLP + LLM features."""
+
+    args = harness_module._parse_args(["--training-package-id", "pkg"])
+    cmd = harness_module._tier_args(
+        "tier7_market_rich_nlp_xbank_llm", args, tmp_path / "tier7.json"
+    )
+    assert "--rich-features" in cmd
+    assert "--use-llm-features" in cmd
+    assert cmd[cmd.index("--text-encoder") + 1] == "finbert_fed_adjacent_xbank"
+    assert "--text-adapter-dims" in cmd
+
+
 def test_tier5_isolates_llm_features_with_no_nlp_channel(harness_module, tmp_path) -> None:
     """Tier 5 is the clean B1 ablation: rich + LLM, no NLP. The
     text-encoder must read ``none`` so the only delta vs tier 2 is the
@@ -164,8 +194,10 @@ def test_dry_run_prints_commands_for_each_tier(harness_module, tmp_path, capsys)
     assert "tier3_market_rich_nlp" in captured
     assert "tier4_market_rich_nlp_llm" in captured
     assert "tier5_market_rich_llm" in captured
+    assert "tier6_market_rich_nlp_xbank" in captured
+    assert "tier7_market_rich_nlp_xbank_llm" in captured
     # Each per-tier line records the cmd that would have run.
-    assert captured.count("[regime_tiers] cmd:") == 5
+    assert captured.count("[regime_tiers] cmd:") == 7
 
 
 def test_dry_run_can_restrict_tier_subset(harness_module, tmp_path, capsys) -> None:

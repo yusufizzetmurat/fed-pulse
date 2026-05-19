@@ -1,6 +1,6 @@
-"""4-tier baseline harness for the Phase 9 V2 vol-regime classifier.
+"""7-tier baseline harness for the Phase 9 V2 vol-regime classifier.
 
-Runs four increasingly rich classification baselines so the aggregate
+Runs seven increasingly rich classification baselines so the aggregate
 table can show the marginal lift of each input family on top of the
 market-only floor:
 
@@ -27,6 +27,20 @@ market-only floor:
                                   the headline cell for the B1 claim
                                   when Tier 3 is roughly null over
                                   Tier 2 (the empirical case as of A5).
+    tier6_market_rich_nlp_xbank
+                              -- Phase C (#228) cross-bank ablation:
+                                  tier-2 rich + NLP pooled embeddings
+                                  from the cross-bank auxiliary-
+                                  supervised encoder
+                                  ``finbert_fed_adjacent_xbank``. Tells
+                                  us whether cross-bank supervision
+                                  lifts the FOMC vol-regime headline on
+                                  top of the rich block.
+    tier7_market_rich_nlp_xbank_llm
+                              -- Phase C full stack: tier-6 plus the B1
+                                  LLM-features block. The defending cell
+                                  for the umbrella issue #225 exit
+                                  criterion (pooled-CI macro-F1 >= 0.45).
 
 Each tier reuses the same architecture / fold / seed grid so the only
 moving variable between tiers is the input-feature family. The harness
@@ -61,7 +75,7 @@ _DEFAULT_REPORT_ROOT = Path("data/artifacts/regime_baseline_tiers")
 
 def _build_common_args(args: argparse.Namespace) -> list[str]:
     """Tier-invariant flags. Architecture, seeds, folds, and the
-    classification dispatch all stay constant across the five tiers."""
+    classification dispatch all stay constant across the seven tiers."""
 
     return [
         "--training-package-id",
@@ -149,6 +163,29 @@ def _tier_args(
             "--report-path",
             str(report_path),
         ]
+    if tier == "tier6_market_rich_nlp_xbank":
+        return [
+            *common,
+            "--rich-features",
+            "--text-encoder",
+            "finbert_fed_adjacent_xbank",
+            "--text-adapter-dims",
+            *[str(d) for d in args.text_adapter_dims],
+            "--report-path",
+            str(report_path),
+        ]
+    if tier == "tier7_market_rich_nlp_xbank_llm":
+        return [
+            *common,
+            "--rich-features",
+            "--use-llm-features",
+            "--text-encoder",
+            "finbert_fed_adjacent_xbank",
+            "--text-adapter-dims",
+            *[str(d) for d in args.text_adapter_dims],
+            "--report-path",
+            str(report_path),
+        ]
     raise ValueError(f"Unknown tier: {tier!r}")
 
 
@@ -227,6 +264,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "tier3_market_rich_nlp",
             "tier4_market_rich_nlp_llm",
             "tier5_market_rich_llm",
+            "tier6_market_rich_nlp_xbank",
+            "tier7_market_rich_nlp_xbank_llm",
         ),
         default=(
             "tier1_market_only",
@@ -234,8 +273,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "tier3_market_rich_nlp",
             "tier4_market_rich_nlp_llm",
             "tier5_market_rich_llm",
+            "tier6_market_rich_nlp_xbank",
+            "tier7_market_rich_nlp_xbank_llm",
         ),
-        help="Subset of tiers to run. Default: all five.",
+        help="Subset of tiers to run. Default: all seven.",
     )
     parser.add_argument(
         "--dry-run",
