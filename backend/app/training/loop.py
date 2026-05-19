@@ -310,6 +310,7 @@ def _evaluate_model(
     # regression runs.
     pred_class_chunks: list[torch.Tensor] = []
     true_class_chunks: list[torch.Tensor] = []
+    class_score_chunks: list[torch.Tensor] = []
     use_text_path = bool(getattr(model, "_text_path_active", False))
     non_blocking = device.type == "cuda"
     with torch.no_grad():
@@ -346,6 +347,13 @@ def _evaluate_model(
                     predictions.argmax(dim=1).detach().to("cpu", torch.long)
                 )
                 true_class_chunks.append(batch_y.detach().to("cpu", torch.long))
+                # Per-class softmax probabilities ride alongside the
+                # argmax so the breakdown helper can compute one-vs-rest
+                # ROC-AUC + PR-AUC at the end of the loop. Keep on CPU
+                # in float32 to bound memory on long partitions.
+                class_score_chunks.append(
+                    torch.softmax(predictions, dim=1).detach().to("cpu", torch.float32)
+                )
             else:
                 delta = predictions - batch_y
                 close_squared_error += torch.square(delta[:, 0]).sum().to(torch.float64)
@@ -375,34 +383,46 @@ def _evaluate_model(
         # Classification partition: surface accuracy + macro-F1 on the
         # regime axis, leave the regression columns at +inf so legacy
         # consumers that read them notice immediately rather than seeing
-        # zeros that look like a perfect regression fit.
+        # zeros that look like a perfect regression fit. The full
+        # breakdown (confusion matrix + per-class P/R/F1 + one-vs-rest
+        # AUC) lives on ``EvaluationMetrics.classification_breakdown``.
+        from app.evaluation.classification_breakdown import (
+            compute_classification_breakdown,
+        )
+
         pred_classes = torch.cat(pred_class_chunks) if pred_class_chunks else torch.empty(0, dtype=torch.long)
         true_classes = torch.cat(true_class_chunks) if true_class_chunks else torch.empty(0, dtype=torch.long)
+        class_scores_tensor = (
+            torch.cat(class_score_chunks) if class_score_chunks else None
+        )
         n_classes_eval = int(getattr(model, "n_classes", 3) or 3)
-        regime_acc = float((pred_classes == true_classes).float().mean().item()) if pred_classes.numel() else 0.0
-        # Macro-F1: unweighted mean of per-class F1. Computed in pure
-        # torch so this works in containers without sklearn pinned.
-        per_class_f1: list[float] = []
-        for cls in range(n_classes_eval):
-            tp = int(((pred_classes == cls) & (true_classes == cls)).sum().item())
-            fp = int(((pred_classes == cls) & (true_classes != cls)).sum().item())
-            fn = int(((pred_classes != cls) & (true_classes == cls)).sum().item())
-            if tp + fp + fn == 0:
-                continue
-            precision = tp / (tp + fp) if (tp + fp) else 0.0
-            recall = tp / (tp + fn) if (tp + fn) else 0.0
-            f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
-            per_class_f1.append(f1)
-        regime_f1 = float(sum(per_class_f1) / len(per_class_f1)) if per_class_f1 else 0.0
+        regime_acc = (
+            float((pred_classes == true_classes).float().mean().item())
+            if pred_classes.numel()
+            else 0.0
+        )
         regime_loss = total_loss_value / total_items_int
+
+        class_scores_list: list[list[float]] | None = None
+        if class_scores_tensor is not None and class_scores_tensor.numel():
+            class_scores_list = class_scores_tensor.tolist()
+
+        breakdown = compute_classification_breakdown(
+            predictions=pred_classes.tolist(),
+            targets=true_classes.tolist(),
+            n_classes=n_classes_eval,
+            class_scores=class_scores_list,
+        )
+
         return EvaluationMetrics(
             loss=regime_loss,
             close_rmse=float("inf"),
             volatility_rmse=float("inf"),
             combined_rmse=float("inf"),
             regime_accuracy=regime_acc,
-            regime_f1_macro=regime_f1,
+            regime_f1_macro=float(breakdown.macro_f1),
             regime_loss=regime_loss,
+            classification_breakdown=breakdown.to_dict(),
         )
 
     close_value = float(close_squared_error.item())
