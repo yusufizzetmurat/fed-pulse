@@ -307,6 +307,26 @@ def _evaluate_model(
     is_classification = str(getattr(model, "output_mode", "regression")) == "classification"
     total_loss_sum = torch.zeros((), dtype=torch.float64, device=device)
     total_items = torch.zeros((), dtype=torch.int64, device=device)
+    # Weighted CE bookkeeping. When ``loss_fn`` is
+    # ``CrossEntropyLoss(weight=w, reduction='mean')`` the per-batch
+    # loss is ``sum_i(w[y_i] * l_i) / sum_i(w[y_i])`` -- NOT divided by
+    # batch_size. Multiplying the batch-mean loss by batch_size to get
+    # the running total (the legacy regression-path arithmetic) over-
+    # or under-weighs the val loss whenever the in-batch class mix
+    # diverges from the corpus mean. The fix: accumulate
+    # ``loss * weight_sum_in_batch`` against ``weight_total`` and
+    # divide at the end. Falls back to ``batch_size`` when ``loss_fn``
+    # has no ``weight`` attribute or weights are uniform, so the
+    # regression byte-identity regression contract stays green.
+    ce_weight: torch.Tensor | None = None
+    weight_attr = getattr(loss_fn, "weight", None)
+    if (
+        is_classification
+        and isinstance(weight_attr, torch.Tensor)
+        and weight_attr.numel() > 0
+    ):
+        ce_weight = weight_attr.to(device=device, dtype=torch.float64)
+    total_weight_sum = torch.zeros((), dtype=torch.float64, device=device)
     close_squared_error = torch.zeros((), dtype=torch.float64, device=device)
     volatility_squared_error = torch.zeros((), dtype=torch.float64, device=device)
     # Per-event arrays for the directional view. Empty until Phase 9
@@ -352,7 +372,14 @@ def _evaluate_model(
                     kwargs["text_embedding_missing"] = batch_text_missing
             predictions = model(batch_x, **kwargs)
             loss = loss_fn(predictions, batch_y)
-            total_loss_sum += loss.detach().to(torch.float64) * batch_size
+            if ce_weight is not None:
+                batch_weight_sum = ce_weight.index_select(
+                    0, batch_y.detach().to(device=device, dtype=torch.long)
+                ).sum()
+                total_loss_sum += loss.detach().to(torch.float64) * batch_weight_sum
+                total_weight_sum += batch_weight_sum
+            else:
+                total_loss_sum += loss.detach().to(torch.float64) * batch_size
             total_items += batch_size
             if is_classification:
                 pred_class_chunks.append(
@@ -390,6 +417,11 @@ def _evaluate_model(
         )
 
     total_loss_value = float(total_loss_sum.item())
+    # Weighted CE: the mean is ``sum_b (loss_b * weight_sum_b) / total_weight_sum``,
+    # not ``sum_b (loss_b * batch_size) / total_batch_size``. Falls back
+    # to the per-item count when no class weights were supplied.
+    total_weight_value = float(total_weight_sum.item()) if ce_weight is not None else 0.0
+    loss_divisor = total_weight_value if (ce_weight is not None and total_weight_value > 0.0) else float(total_items_int)
 
     if is_classification:
         # Classification partition: surface accuracy + macro-F1 on the
@@ -413,7 +445,7 @@ def _evaluate_model(
             if pred_classes.numel()
             else 0.0
         )
-        regime_loss = total_loss_value / total_items_int
+        regime_loss = total_loss_value / loss_divisor
 
         class_scores_list: list[list[float]] | None = None
         if class_scores_tensor is not None and class_scores_tensor.numel():
@@ -474,7 +506,7 @@ def _evaluate_model(
         )
 
     return EvaluationMetrics(
-        loss=total_loss_value / total_items_int,
+        loss=total_loss_value / loss_divisor,
         close_rmse=math.sqrt(close_value / total_items_int),
         volatility_rmse=math.sqrt(volatility_value / total_items_int),
         combined_rmse=math.sqrt(combined_squared_error / (total_items_int * 2)),

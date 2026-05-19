@@ -27,6 +27,15 @@ from app.models.tcn import TemporalConvNet
 from app.models.transformer import SmallTransformer
 
 _ATTENTION_POOL_MODELS = frozenset({"lstm_attn"})
+# Non-causal sequence cores: the encoder produces a contextualised
+# token per timestep but does not accumulate global state into the
+# final position the way an LSTM/GRU or a causal TCN does. Pooling the
+# last timestep would discard the contextualised representation of
+# every other position; the standard fix is to mean-pool across the
+# sequence axis (or prepend a learnable [CLS] token, equivalent in the
+# limit). Without this, ``output[:, -1, :]`` reads timestep T-1 only,
+# losing the contextualised representations of timesteps 0..T-2.
+_MEAN_POOL_MODELS = frozenset({"transformer", "tft", "informer"})
 _DLINEAR_MODELS = frozenset({"dlinear"})
 
 
@@ -211,6 +220,7 @@ class ForecasterModel(nn.Module):
         )
         self.lstm = self.recurrent_core  # alias for backward compatibility
         self.uses_attention_pool = self.model_type in _ATTENTION_POOL_MODELS
+        self.uses_mean_pool = self.model_type in _MEAN_POOL_MODELS
         if self.uses_attention_pool:
             self.recurrent_attention: RecurrentSequenceAttention | None = (
                 RecurrentSequenceAttention(hidden_size=hidden_size)
@@ -322,6 +332,14 @@ class ForecasterModel(nn.Module):
                     "recurrent_attention not initialised but lstm_attn variant is active"
                 )
             pooled_step, _attn_weights = self.recurrent_attention(output)
+        elif self.uses_mean_pool:
+            # Non-causal cores (transformer / tft / informer): the
+            # encoder does not accumulate global state into the final
+            # token, so the last-step slice would only see the
+            # contextualised representation of position T-1. Mean-pool
+            # across the sequence axis recovers the full-sequence
+            # representation.
+            pooled_step = output.mean(dim=1)
         else:
             pooled_step = output[:, -1, :]
         raw = self.head(pooled_step)

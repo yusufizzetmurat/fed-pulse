@@ -99,16 +99,17 @@ encoders:
       pins the model name itself.
 
   finbert_fed_adjacent:
-    repo: local/finbert-fed-adjacent
-    revision: ""
+    repo: /data/artifacts/continued_pretraining/finbert_fed_adjacent_20260515T104824Z_s11/checkpoint
+    revision: "20260515T104824Z"
     gated: false
     task: masked_lm
     description: |
       FinBERT continued-pretrained on BIS speeches (+ optional local Fed-adjacent
-      auxiliary). Produced by ``make finbert-fed-adjacent-pretrain``; the
-      ``revision`` is filled in with the local checkpoint directory or its sha256
-      after the GPU run completes. Empty revision means "not yet trained" — the
-      bake-off CLI skips this encoder until a revision is pinned.
+      auxiliary). Produced by ``make finbert-fed-adjacent-pretrain``; pinned to
+      the 2026-05-15 GPU run whose embedding cache lives at
+      ``data/raw/embeddings/finbert_fed_adjacent_20260515T104.parquet``. The
+      bake-off CLI now treats this encoder as runnable; cross-bank-supervised
+      variants ride under ``finbert_fed_adjacent_xbank``.
 
   bert_base_fed_adjacent:
     repo: local/bert-base-fed-adjacent
@@ -123,8 +124,8 @@ encoders:
       the FinBERT prior versus the BIS substrate alone.
 
   finbert_fed_adjacent_xbank:
-    repo: local/finbert-fed-adjacent-xbank
-    revision: ""
+    repo: /data/artifacts/phase3/finetune_batch_20260519T190604Z/finbert_fed_adjacent_s11/hf_checkpoints
+    revision: "20260519T190604Z_s11"
     gated: false
     task: stance_classification
     description: |
@@ -133,7 +134,8 @@ encoders:
       stance head trains with ``--cross-bank-supervision=on`` so the
       15k cross-bank rows (ECB / BoJ / BoE / BoC / RBA at
       ``provenance=peer_reviewed_cross_bank``) join the FOMC pool as
-      full-weight training rows. ``revision`` stays empty until the
-      checkpoint lands; downstream bake-off skips this encoder until
-      a revision is pinned, matching the ``finbert_fed_adjacent``
-      contract.
+      full-weight training rows. Pinned to the s11 checkpoint from the
+      2026-05-19 GPU run (macro-F1 0.672 mean across 5 seeds on the
+      stance head); the remaining four seeds are kept on disk under
+      ``finetune_batch_20260519T190604Z/finbert_fed_adjacent_s{29,47,71,97}``
+      for reproducibility but the embedding cache builds against s11.
