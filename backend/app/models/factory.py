@@ -45,20 +45,14 @@ def build_forecaster(config: ModelConfig | dict[str, Any]) -> ForecasterModel:
 
     kwargs = resolved.to_dict()
     kwargs.pop("architecture", None)
-    # Phase 9 V2 (#195) classification-mode fields are consumed by the
-    # training loop's loss dispatch + the loader's per-fold quantile
-    # cutoffs, not by ``ForecasterModel.__init__`` (which still owns
-    # the recurrent + attention scaffolding). Strip them here so the
-    # wrapper's existing ``**kwargs`` contract stays unchanged. The
-    # classification head itself is plumbed via ``output_mode`` on
-    # the wrapper in a follow-up commit on this branch.
-    for phase9_field in (
-        "output_mode",
-        "n_classes",
-        "vol_regime_quantiles",
-        "vol_regime_target",
-    ):
-        kwargs.pop(phase9_field, None)
+    # Phase 9 V2 (#195) loader-side fields are consumed by the
+    # training-loop loss dispatch + the per-fold quantile cutoff
+    # fitter, not by ``ForecasterModel.__init__``. Strip them before
+    # forwarding so the wrapper's ``**kwargs`` contract stays
+    # unchanged. ``output_mode`` and ``n_classes`` ARE forwarded;
+    # the wrapper now dispatches the output-head shape on them.
+    for loader_only_field in ("vol_regime_quantiles", "vol_regime_target"):
+        kwargs.pop(loader_only_field, None)
     return ForecasterModel(model_type=architecture, **kwargs)
 
 
