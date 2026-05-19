@@ -49,6 +49,12 @@ def build_forecaster(config: ModelConfig | dict[str, Any]) -> ForecasterModel:
     # ``n_classes`` drive the head shape; ``vol_regime_quantiles`` /
     # ``vol_regime_target`` ride on the module so the checkpoint
     # round-trips the per-fold boundaries via ``ModelConfig.from_model``.
+    # Phase B (#227) fields ride on the ``ModelConfig`` so the checkpoint
+    # carries the schedule + sequence-length choice into resume, but the
+    # underlying ``ForecasterModel`` does not consume them on
+    # construction (the training loop reads them from the config).
+    kwargs.pop("lr_schedule", None)
+    kwargs.pop("sequence_length", None)
     return ForecasterModel(model_type=architecture, **kwargs)
 
 

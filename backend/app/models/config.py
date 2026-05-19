@@ -221,6 +221,18 @@ class ModelConfig:
     n_classes: int = 3
     vol_regime_quantiles: tuple[float, ...] = ()
     vol_regime_target: str = "forward_realized_vol_10d"
+    # Phase B (#227) LR-schedule selector. ``plateau`` is the legacy
+    # ReduceLROnPlateau path (locked by the determinism regression).
+    # ``cosine_warmup`` builds a OneCycleLR over the configured epoch
+    # budget (warmup -> cosine -> tail). Persisted on the checkpoint so
+    # resume reuses the same schedule the original run trained under.
+    lr_schedule: str = "plateau"
+    # Sequence length the loader emits per training row. ``0`` means
+    # "use the module-level ``SEQUENCE_LENGTH`` default" so legacy
+    # checkpoints deserialise into the byte-identical 20-bar window.
+    # The CLI surfaces this as ``--sequence-length`` for the capacity
+    # push at hidden=512 / seq=60.
+    sequence_length: int = 0
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -249,6 +261,8 @@ class ModelConfig:
                 getattr(model, "vol_regime_target", "forward_realized_vol_10d")
                 or "forward_realized_vol_10d"
             ),
+            lr_schedule=str(getattr(model, "lr_schedule", "plateau") or "plateau"),
+            sequence_length=int(getattr(model, "sequence_length", 0) or 0),
         )
 
     def to_dict(self) -> dict[str, Any]:
