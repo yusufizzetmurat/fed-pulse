@@ -856,6 +856,7 @@ def train_model(
     # forward path emits raw logits in classification mode so
     # CrossEntropyLoss can apply log_softmax internally.
     _active_output_mode = str(getattr(work_model, "output_mode", "regression"))
+    loss_fn: nn.Module
     if _active_output_mode == "classification":
         loss_fn = nn.CrossEntropyLoss()
     else:
