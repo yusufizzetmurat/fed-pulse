@@ -293,6 +293,13 @@ def _evaluate_model(
     total_items = torch.zeros((), dtype=torch.int64, device=device)
     close_squared_error = torch.zeros((), dtype=torch.float64, device=device)
     volatility_squared_error = torch.zeros((), dtype=torch.float64, device=device)
+    # Per-event arrays for the directional view. Empty until Phase 9
+    # wired this in; downstream helper short-circuits on a zero-length
+    # input so the regression-only legacy regression contract stays
+    # byte-identical when these stay empty.
+    pred_close_chunks: list[torch.Tensor] = []
+    true_close_chunks: list[torch.Tensor] = []
+    prev_close_chunks: list[torch.Tensor] = []
     use_text_path = bool(getattr(model, "_text_path_active", False))
     non_blocking = device.type == "cuda"
     with torch.no_grad():
@@ -327,6 +334,16 @@ def _evaluate_model(
             delta = predictions - batch_y
             close_squared_error += torch.square(delta[:, 0]).sum().to(torch.float64)
             volatility_squared_error += torch.square(delta[:, 1]).sum().to(torch.float64)
+            # Collect the close-axis arrays for the directional view.
+            # Eval partitions are small (val ~60, test ~60-70 windows
+            # per fold), so the per-event copy is cheap. ``batch_x[:, -1, 1]``
+            # is the prev-bar's close in scaled units; the model's
+            # output and the target are in the same scaled units so
+            # ``sign(pred - prev) == sign(true - prev)`` is the
+            # directional ground truth.
+            pred_close_chunks.append(predictions[:, 0].detach().to("cpu", torch.float32))
+            true_close_chunks.append(batch_y[:, 0].detach().to("cpu", torch.float32))
+            prev_close_chunks.append(batch_x[:, -1, 1].detach().to("cpu", torch.float32))
     total_items_int = int(total_items.item())
     if total_items_int <= 0:
         return EvaluationMetrics(
@@ -340,11 +357,33 @@ def _evaluate_model(
     close_value = float(close_squared_error.item())
     volatility_value = float(volatility_squared_error.item())
     combined_squared_error = close_value + volatility_value
+
+    # Directional view (Phase 9). The helper returns None on every
+    # axis when no events were collected, so the dataclass field
+    # stays None and the regression contract is unchanged for callers
+    # that ignore the new metrics.
+    directional: dict[str, float | None] = {
+        "direction_accuracy": None,
+        "f1_macro": None,
+        "direction_auc": None,
+    }
+    if pred_close_chunks:
+        from app.evaluation.directional_metrics import compute_directional_metrics
+
+        directional = compute_directional_metrics(
+            torch.cat(pred_close_chunks),
+            torch.cat(true_close_chunks),
+            torch.cat(prev_close_chunks),
+        )
+
     return EvaluationMetrics(
         loss=total_loss_value / total_items_int,
         close_rmse=math.sqrt(close_value / total_items_int),
         volatility_rmse=math.sqrt(volatility_value / total_items_int),
         combined_rmse=math.sqrt(combined_squared_error / (total_items_int * 2)),
+        direction_accuracy=directional["direction_accuracy"],
+        f1_macro=directional["f1_macro"],
+        direction_auc=directional["direction_auc"],
     )
 
 

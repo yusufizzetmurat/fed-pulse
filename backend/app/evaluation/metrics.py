@@ -13,8 +13,18 @@ class EvaluationMetrics:
     close_rmse: float
     volatility_rmse: float
     combined_rmse: float
+    # Classification view of the same predictions (Phase 9). Derived in
+    # ``app.evaluation.directional_metrics.compute_directional_metrics``
+    # by comparing the sign of the predicted close-delta against
+    # ``direction_t1d`` from the events parquet. Optional so legacy
+    # eval paths (the regression-only tests, pre-Phase-9 checkpoints
+    # round-tripped through ``from_dict``) keep validating; populated
+    # by :func:`app.training.loop._evaluate_model` on every new run.
+    direction_accuracy: float | None = None
+    f1_macro: float | None = None
+    direction_auc: float | None = None
 
-    def to_dict(self) -> dict[str, float]:
+    def to_dict(self) -> dict[str, float | None]:
         return asdict(self)
 
 
