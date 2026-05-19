@@ -32,8 +32,14 @@ class EvaluationMetrics:
     regime_accuracy: float | None = None
     regime_f1_macro: float | None = None
     regime_loss: float | None = None
+    # Per-class breakdown for the regime classifier (#199). The
+    # dataclass lives in ``app.evaluation.classification_breakdown`` but
+    # serialises to a dict here so the existing JSON contract on
+    # ``EvaluationMetrics.to_dict()`` keeps round-tripping cleanly.
+    # ``None`` on regression-only runs so the legacy contract holds.
+    classification_breakdown: dict[str, Any] | None = None
 
-    def to_dict(self) -> dict[str, float | None]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
