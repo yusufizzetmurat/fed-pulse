@@ -57,20 +57,27 @@ def _load_font(size: int) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
+_DEFAULT_BASE_COLOR: tuple[int, int, int] = (32, 96, 196)
+_CELL_PX = 96
+_MARGIN_PX = 84
+_TITLE_PX = 36
+
+
 def render_confusion_matrix_png(
     confusion_matrix: Sequence[Sequence[int]],
     output_path: Path | str,
     *,
     class_labels: Sequence[str] | None = None,
     title: str | None = None,
-    cell_px: int = 96,
-    margin_px: int = 84,
-    base_color: tuple[int, int, int] = (32, 96, 196),
+    base_color: tuple[int, int, int] = _DEFAULT_BASE_COLOR,
 ) -> Path:
     """Render ``confusion_matrix`` to a PNG heatmap.
 
     ``class_labels`` defaults to ``("0", "1", ...)`` when ``None``.
     ``title`` renders above the grid; ``None`` skips the title row.
+    ``base_color`` is the cell ramp's saturated endpoint at the matrix
+    max; cells linear-interpolate from white at zero to ``base_color``
+    at vmax.
 
     Returns the path the PNG was written to.
     """
@@ -92,7 +99,9 @@ def render_confusion_matrix_png(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    title_height = 36 if title else 0
+    cell_px = _CELL_PX
+    margin_px = _MARGIN_PX
+    title_height = _TITLE_PX if title else 0
     img_width = margin_px + cell_px * n + margin_px // 2
     img_height = title_height + margin_px + cell_px * n + margin_px // 2
 
