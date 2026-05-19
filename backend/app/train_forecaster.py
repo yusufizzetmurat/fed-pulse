@@ -269,11 +269,33 @@ def _parse_args() -> argparse.Namespace:
             "input. Default on. Ignored when --no-rich-features is set."
         ),
     )
+    # B1 (#212) LLM-as-features. Default off so the existing
+    # Tier 1/2/3 sweep baselines stay byte-identical with cached
+    # extractions present on disk; --use-llm-features flips the per-event
+    # one-hot block + missing flag on for the Tier 4 comparison.
+    parser.add_argument(
+        "--use-llm-features",
+        dest="use_llm_features",
+        action="store_true",
+        help=(
+            "Attach the cached LLM-extracted categorical feature block "
+            "(35-dim one-hot + 1-dim missing flag) to every event. "
+            "Requires the catalogue extractor to have been run for the "
+            "training package. Default off."
+        ),
+    )
+    parser.add_argument(
+        "--no-llm-features",
+        dest="use_llm_features",
+        action="store_false",
+        help="Disable the LLM-features block (zeros + missing=1.0).",
+    )
     parser.set_defaults(
         use_credibility=True,
         use_linguistic=True,
         use_mp_surprise=True,
         use_multi_axis=True,
+        use_llm_features=False,
     )
     # Phase 9 V2 (#195) classification dispatch. Default stays
     # ``regression`` so the existing ablation grid + determinism
@@ -1771,6 +1793,7 @@ def _run_sweep(
             "linguistic": bool(args.use_linguistic),
             "mp_surprise": bool(args.use_mp_surprise),
             "multi_axis": bool(args.use_multi_axis),
+            "llm_features": bool(args.use_llm_features),
         },
         "text_embeddings": {
             "encoder": text_encoder_arg,
@@ -1842,7 +1865,8 @@ def main() -> int:
         print(
             f"Rich features: {'on' if args.rich_features else 'off'} "
             f"(credibility={args.use_credibility}, linguistic={args.use_linguistic}, "
-            f"mp_surprise={args.use_mp_surprise}, multi_axis={args.use_multi_axis})"
+            f"mp_surprise={args.use_mp_surprise}, multi_axis={args.use_multi_axis}, "
+            f"llm_features={args.use_llm_features})"
         )
         loader_text_encoder = (
             None if str(args.text_encoder) == "none" else str(args.text_encoder)
@@ -1884,6 +1908,7 @@ def main() -> int:
                     use_linguistic=bool(args.use_linguistic),
                     use_mp_surprise=bool(args.use_mp_surprise),
                     use_multi_axis=bool(args.use_multi_axis),
+                    use_llm_features=bool(args.use_llm_features),
                     text_encoder=loader_text_encoder,
                     text_adapter_dim=int(args.text_adapter_dim),
                     text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
@@ -1919,6 +1944,7 @@ def main() -> int:
                 use_linguistic=bool(args.use_linguistic),
                 use_mp_surprise=bool(args.use_mp_surprise),
                 use_multi_axis=bool(args.use_multi_axis),
+                use_llm_features=bool(args.use_llm_features),
                 text_encoder=loader_text_encoder,
                 text_adapter_dim=int(args.text_adapter_dim),
                 text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),

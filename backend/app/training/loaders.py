@@ -1239,6 +1239,7 @@ def _load_package_sequences_with_metadata(
     use_linguistic: bool = True,
     use_mp_surprise: bool = True,
     use_multi_axis: bool = True,
+    use_llm_features: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -1280,10 +1281,12 @@ def _load_package_sequences_with_metadata(
 
     linguistic_lookup: dict[str, list[float]] = {}
     mp_surprise_lookup: dict[str, dict[str, float]] = {}
+    llm_lookup: dict[str, list[float]] = {}
     if rich_features:
         linguistic_lookup = _read_linguistic_lookup(package_dir)
         mp_surprise_lookup = _read_mp_surprise_lookup(package_dir)
-        llm_lookup = _load_llm_feature_lookup(training_package_id)
+        if use_llm_features:
+            llm_lookup = _load_llm_feature_lookup(training_package_id)
 
     embedding_lookup: dict[str, Any] = {}
     embedding_event_dates: dict[str, str] = {}
@@ -1489,6 +1492,7 @@ def load_walk_forward_split(
     use_linguistic: bool = True,
     use_mp_surprise: bool = True,
     use_multi_axis: bool = True,
+    use_llm_features: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -1543,6 +1547,7 @@ def load_walk_forward_split(
         use_linguistic=use_linguistic,
         use_mp_surprise=use_mp_surprise,
         use_multi_axis=use_multi_axis,
+        use_llm_features=use_llm_features,
         text_encoder=text_encoder,
         text_adapter_dim=text_adapter_dim,
         text_pool_lambda_inv_days=text_pool_lambda_inv_days,
@@ -1632,6 +1637,7 @@ def load_training_sequences_from_package(
     use_linguistic: bool = True,
     use_mp_surprise: bool = True,
     use_multi_axis: bool = True,
+    use_llm_features: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -1781,10 +1787,12 @@ def load_training_sequences_from_package(
     # the legacy 6-dim path is undisturbed.
     linguistic_lookup: dict[str, list[float]] = {}
     mp_surprise_lookup: dict[str, dict[str, float]] = {}
+    llm_lookup: dict[str, list[float]] = {}
     if rich_features:
         linguistic_lookup = _read_linguistic_lookup(package_dir)
         mp_surprise_lookup = _read_mp_surprise_lookup(package_dir)
-        llm_lookup = _load_llm_feature_lookup(training_package_id)
+        if use_llm_features:
+            llm_lookup = _load_llm_feature_lookup(training_package_id)
 
     # Text-embedding lookup. Loaded once per package; the per-event
     # softmax-weighted pool runs against this dict. When the encoder

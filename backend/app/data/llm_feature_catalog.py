@@ -1,5 +1,5 @@
 """B1 (#212): catalogue of structured semantic features extracted by a
-frontier LLM (Claude Sonnet 4.7) from each FOMC document.
+frontier LLM (Claude Sonnet 4.6) from each FOMC document.
 
 Each feature is a small categorical (2-4 levels) chosen so it maps to
 a specific finding in the published monetary-policy text-analysis
@@ -97,16 +97,23 @@ CATALOG: Final[tuple[CatalogFeature, ...]] = (
         unanswerable_level="not_present",
     ),
     CatalogFeature(
+        # The fallback level differs from the level for "mixed signal":
+        # 'ambiguous' means the document discusses path but the signal is
+        # mixed; 'not_assessable' means the document does not discuss
+        # path direction at all. Both are valid in the LLM's vocabulary
+        # so the catalogue allows them as discrete levels.
         name="policy_path_direction",
-        levels=("tighter", "looser", "same", "ambiguous"),
+        levels=("tighter", "looser", "same", "ambiguous", "not_assessable"),
         prompt_question=(
             "What direction does the document signal for the near-term fed "
             "funds policy path? 'tighter' = signalling higher rates ahead, "
             "'looser' = signalling lower rates ahead, 'same' = on-hold, "
-            "'ambiguous' = mixed or unclear signal."
+            "'ambiguous' = the path is discussed but the signal is mixed or "
+            "unclear; 'not_assessable' if the document does not discuss the "
+            "path at all."
         ),
         citation="Gürkaynak, Sack & Swanson (2005), Do Actions Speak Louder Than Words? The Response of Asset Prices to Monetary Policy Actions and Statements",
-        unanswerable_level="ambiguous",
+        unanswerable_level="not_assessable",
     ),
     CatalogFeature(
         name="fed_vs_market_gap",
