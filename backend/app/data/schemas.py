@@ -260,14 +260,31 @@ def _axes_dict_ok(series: pd.Series) -> pd.Series:
         stance = value.get("stance")
         if stance is not None and stance not in _ALLOWED_STANCE:
             return False
-        for numeric_key in ("factor", "certainty"):
-            v = value.get(numeric_key)
-            if v is None:
-                continue
+        # ``factor`` stays numeric (GSS factor decomposition).
+        factor = value.get("factor")
+        if factor is not None:
             try:
-                float(v)
+                float(factor)
             except (TypeError, ValueError):
                 return False
+        # Audit Tier 1.8: ``certainty`` may carry either a regression
+        # value (per data/schema/labels.yaml) or a string label
+        # (gtfintechlab's ``certain`` / ``uncertain`` category). The
+        # validator accepts both shapes; downstream consumers (event
+        # builder's Option-A multi-axis slot) inspect the type and
+        # route accordingly.
+        certainty = value.get("certainty")
+        if certainty is not None:
+            try:
+                float(certainty)
+            except (TypeError, ValueError):
+                if not isinstance(certainty, str):
+                    return False
+        # ``time`` is the new gtfintechlab-derived horizon label
+        # ("forward looking" / "not forward looking"). String-only.
+        time_label = value.get("time")
+        if time_label is not None and not isinstance(time_label, str):
+            return False
         topic = value.get("topic")
         if topic is not None and not isinstance(topic, str):
             return False

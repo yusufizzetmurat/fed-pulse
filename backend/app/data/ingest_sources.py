@@ -169,7 +169,16 @@ def _map_kaggle_document_type(raw_type: str) -> str:
 
 
 def _coerce_label_origin(label: str) -> str:
-    return "human" if label else "pseudo"
+    # Audit Tier 1.6: previous behaviour coerced empty labels to
+    # ``"pseudo"`` -- the same value emitted for actual teacher-model
+    # pseudo-labels. Downstream filters that select for ``human`` (or
+    # exclude ``pseudo``) therefore silently mixed unlabeled rows with
+    # genuine teacher predictions. Emit ``"unlabeled"`` so the three
+    # cases stay distinguishable end-to-end. Whitespace-only labels
+    # are treated as empty.
+    if not label or not str(label).strip():
+        return "unlabeled"
+    return "human"
 
 
 def _build_registry_record(

@@ -569,7 +569,10 @@ def test_iter_fomc_archive_records_routes_statements_and_minutes(monkeypatch) ->
     assert all(r["provenance"] == "scraped" for r in records)
     assert all(r["license_scope"] == "public_source_scrape_terms_required" for r in records)
     assert all(r["label"] == "" for r in records)
-    assert all(r["label_origin"] == "pseudo" for r in records)
+    # Audit Tier 1.6: vtasca records carry no stance label, so they
+    # now emit ``label_origin="unlabeled"`` instead of the legacy
+    # ``"pseudo"`` collision with teacher-model pseudo-labels.
+    assert all(r["label_origin"] == "unlabeled" for r in records)
 
     by_type = {r["document_type"]: r for r in records}
     assert by_type["statement"]["source_type"] == "fomc_statement"
