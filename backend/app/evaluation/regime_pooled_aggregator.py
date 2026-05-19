@@ -136,11 +136,11 @@ def _select_best_cell(  # noqa: C901
                 breakdown = test_metrics.get("classification_breakdown")
                 if isinstance(breakdown, Mapping):
                     point = breakdown.get("macro_f1")
-                    if isinstance(point, (int, float)):
+                    if isinstance(point, int | float):
                         values.append(float(point))
             else:
                 point = test_metrics.get(selection_metric)
-                if isinstance(point, (int, float)):
+                if isinstance(point, int | float):
                     values.append(float(point))
         if not values:
             return float("-inf") if higher_is_better else float("inf")
