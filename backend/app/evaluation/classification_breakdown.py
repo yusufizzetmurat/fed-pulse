@@ -151,7 +151,7 @@ def _binary_pr_auc(scores: Sequence[float], labels: Sequence[int]) -> float | No
     last_recall = 0.0
     last_precision = 1.0
     area = 0.0
-    for score, label in indexed:
+    for _score, label in indexed:
         if label == 1:
             tp += 1
         else:
