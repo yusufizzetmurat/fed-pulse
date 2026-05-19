@@ -44,14 +44,17 @@ from PIL import Image, ImageDraw, ImageFont
 # ---------------------------------------------------------------------------
 
 
+_DEFAULT_INITIAL_T = 1.0
+_T_FLOOR = 1e-4
+
+
 def fit_temperature(
     val_logits: torch.Tensor,
     val_targets: torch.Tensor,
     *,
     max_iter: int = 200,
     lr: float = 0.01,
-    initial_T: float = 1.0,
-    eps: float = 1e-4,
+    initial_T: float = _DEFAULT_INITIAL_T,
 ) -> float:
     """Optimise the scalar temperature against the validation cross-entropy.
 
@@ -60,7 +63,8 @@ def fit_temperature(
 
     Uses LBFGS the way the Guo et al. reference implementation does:
     a single scalar parameter, log-parameterised so ``T`` stays
-    strictly positive. Returns the fitted ``T`` as a Python float.
+    strictly positive (floored at ``_T_FLOOR`` to avoid softmax
+    overflow). Returns the fitted ``T`` as a Python float.
     """
 
     if val_logits.shape[0] != val_targets.shape[0]:
@@ -87,13 +91,13 @@ def fit_temperature(
 
     def _closure() -> torch.Tensor:
         optimiser.zero_grad()
-        T = torch.exp(log_T).clamp(min=eps)
+        T = torch.exp(log_T).clamp(min=_T_FLOOR)
         loss = F.cross_entropy(logits / T, targets)
         loss.backward()
         return loss
 
     optimiser.step(_closure)
-    return float(torch.exp(log_T).detach().clamp(min=eps).item())
+    return float(torch.exp(log_T).detach().clamp(min=_T_FLOOR).item())
 
 
 def apply_temperature(logits: torch.Tensor, T: float) -> torch.Tensor:
