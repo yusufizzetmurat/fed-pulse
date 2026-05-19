@@ -51,6 +51,21 @@ class ForecasterModel(nn.Module):
         credibility_features: bool = False,
         text_embedding_dim: int = 0,
         text_adapter_dim: int = 0,
+        # Phase 9 V2 (#195) classification mode. Default "regression"
+        # preserves the byte-identical 2-output (close, vol) head;
+        # "classification" swaps in a 3-class head with CrossEntropy
+        # loss dispatched in the training loop.
+        output_mode: str = "regression",
+        n_classes: int = 3,
+        # Phase 9 V2 (#195) per-fold quantile cutoffs + target column.
+        # Stored on the module so ``ModelConfig.from_model`` can round
+        # them into the saved checkpoint payload. Inference + eval read
+        # the same cutoffs back through ``ModelConfig.vol_regime_quantiles``
+        # and apply ``vol_regime_class_for`` to keep the boundary
+        # identical to training. Default ``()`` keeps the regression
+        # path byte-identical.
+        vol_regime_quantiles: tuple[float, ...] = (),
+        vol_regime_target: str = "forward_realized_vol_10d",
     ):
         """Forecaster LSTM with optional text-feature variants.
 
@@ -98,6 +113,14 @@ class ForecasterModel(nn.Module):
         if text_channel not in {"scalar", "embeddings"}:
             raise ValueError(
                 f"Unknown text_channel: {text_channel!r}. Allowed: scalar, embeddings"
+            )
+        if output_mode not in {"regression", "classification"}:
+            raise ValueError(
+                f"Unknown output_mode: {output_mode!r}. Allowed: regression, classification"
+            )
+        if output_mode == "classification" and int(n_classes) < 2:
+            raise ValueError(
+                f"output_mode='classification' requires n_classes >= 2; got {n_classes}"
             )
         self.model_type = model_type
         self.input_size = input_size
@@ -194,12 +217,23 @@ class ForecasterModel(nn.Module):
             )
         else:
             self.recurrent_attention = None
+        # Phase 9 V2 (#195) head dispatch. ``regression`` keeps the
+        # 2-output (close, vol) shape; ``classification`` switches the
+        # final linear to emit ``n_classes`` logits for CrossEntropy.
+        # The intermediate LayerNorm + Linear(hidden, head_hidden) +
+        # GELU + Dropout stack is shared across modes so the
+        # representation capacity stays comparable.
+        self.output_mode = output_mode
+        self.n_classes = int(n_classes)
+        self.vol_regime_quantiles = tuple(float(v) for v in vol_regime_quantiles or ())
+        self.vol_regime_target = str(vol_regime_target or "forward_realized_vol_10d")
+        head_out = self.n_classes if output_mode == "classification" else 2
         self.head = nn.Sequential(
             nn.LayerNorm(hidden_size),
             nn.Linear(hidden_size, head_hidden_size),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(head_hidden_size, 2),
+            nn.Linear(head_hidden_size, head_out),
         )
 
     def forward(
@@ -291,8 +325,14 @@ class ForecasterModel(nn.Module):
         else:
             pooled_step = output[:, -1, :]
         raw = self.head(pooled_step)
+        # Phase 9 V2 (#195) dispatch. Classification mode returns the
+        # raw class logits ``(batch, n_classes)`` so the training-loop
+        # CrossEntropyLoss path can apply ``log_softmax`` itself. The
+        # regression path keeps the existing softplus-on-volatility
+        # post-processing (unconstrained close + non-negative vol).
+        if self.output_mode == "classification":
+            return raw
         close = raw[:, 0:1]
-        # Volatility must stay non-negative, while close remains unconstrained.
         volatility = F.softplus(raw[:, 1:2])
         return torch.cat((close, volatility), dim=1)
 

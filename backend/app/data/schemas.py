@@ -559,6 +559,13 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
         required=True,
     ),
     "volatility_shift": Column(float, nullable=True, required=True, coerce=True),
+    # Phase 9 V2 (#195) target: forward 10-trading-day realised vol of
+    # log returns. Nullable for events too close to the end of the
+    # price series; required=False so older events.parquet files (pre
+    # Phase 9 V2) validate without the column present.
+    "forward_realized_vol_10d": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
     "concurrent_macro_release": Column(
         bool, nullable=False, required=True, coerce=True
     ),

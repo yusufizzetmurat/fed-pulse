@@ -1339,6 +1339,16 @@ def _load_package_sequences_with_metadata(
             volatility_shift=volatility_shift,
             target_mode=target_mode,
         )
+        # Phase 9 V2 (#195) classification target rides on every supervised
+        # row regardless of rich-features being on or off -- it is the y
+        # axis, not an input feature. Tier 1 (Market-Only) needs it just
+        # like tier 3 (Market+Rich+NLP); a missing target would crash the
+        # per-fold quantile fit with "0 valid rows for n_classes=3".
+        forward_vol_value = _coerce_finite_float(
+            row.get("forward_realized_vol_10d")
+        )
+        for vector in vectors:
+            vector.forward_realized_vol_10d = forward_vol_value
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -1845,6 +1855,16 @@ def load_training_sequences_from_package(
             volatility_shift=volatility_shift,
             target_mode=target_mode,
         )
+        # Phase 9 V2 (#195) classification target rides on every supervised
+        # row regardless of rich-features being on or off -- it is the y
+        # axis, not an input feature. Tier 1 (Market-Only) needs it just
+        # like tier 3 (Market+Rich+NLP); a missing target would crash the
+        # per-fold quantile fit with "0 valid rows for n_classes=3".
+        forward_vol_value = _coerce_finite_float(
+            row.get("forward_realized_vol_10d")
+        )
+        for vector in vectors:
+            vector.forward_realized_vol_10d = forward_vol_value
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -1963,6 +1983,89 @@ def apply_rich_feature_scaler_tensor(
     return out
 
 
+def fit_vol_regime_quantiles(
+    forward_vols: Sequence[float],
+    *,
+    n_classes: int = 3,
+) -> tuple[float, ...]:
+    """Fit per-fold quantile cutoffs for the vol-regime classifier (#195).
+
+    Takes a list of forward-realised-vol values from the TRAIN slice
+    only and returns the (``n_classes - 1``) interior quantile cutoffs
+    that map a continuous vol value to a class index. For the default
+    3-class plan: returns the (33%, 67%) cutoffs so a continuous vol
+    ``v`` lands in class 0 (calm) when ``v < q33``, class 1 (normal)
+    when ``q33 <= v < q67``, class 2 (high) when ``v >= q67``.
+
+    Train-only fit: never call this on val / test rows. The cutoffs
+    persist into the model checkpoint via
+    ``ModelConfig.vol_regime_quantiles`` so inference + eval apply
+    the same boundaries.
+
+    Returns an empty tuple when ``forward_vols`` carries fewer than
+    ``n_classes`` non-NaN values (no defensible split possible).
+    """
+
+    import numpy as np
+
+    if n_classes < 2:
+        raise ValueError(f"n_classes must be >= 2; got {n_classes}")
+    arr = np.asarray(
+        [v for v in forward_vols if v is not None and v == v],  # filter None + NaN
+        dtype=np.float64,
+    )
+    if arr.size < n_classes:
+        return ()
+    # Interior quantile boundaries: for 3-class -> (1/3, 2/3); for
+    # 5-class -> (0.2, 0.4, 0.6, 0.8). Excludes 0% and 100%.
+    qs = [(i + 1) / n_classes for i in range(n_classes - 1)]
+    cutoffs = np.quantile(arr, qs)
+    return tuple(float(c) for c in cutoffs)
+
+
+def vol_regime_class_for(value: float | None, quantiles: Sequence[float]) -> int:
+    """Map a forward-vol value to a class index using fitted quantiles.
+
+    Returns ``-1`` when ``value`` is missing (``None`` / NaN) so the
+    caller can drop the row from the classification training set
+    rather than silently coercing it to class 0 (calm).
+    """
+
+    if value is None or value != value:
+        return -1
+    for cls_idx, cutoff in enumerate(quantiles):
+        if value < cutoff:
+            return cls_idx
+    return len(quantiles)
+
+
+def collect_forward_vols(
+    sequence_groups: Sequence[Sequence[FeatureVector]],
+) -> list[float]:
+    """Pull the forward-vol target off every supervised target row.
+
+    A "target" row is the bar at index ``SEQUENCE_LENGTH`` in a sequence
+    group (the event-day bar appended by ``_append_event_day_target``).
+    Non-target bars are skipped because their ``forward_realized_vol_10d``
+    is irrelevant to the y axis. Rows whose target column is null /
+    NaN are dropped so the caller (per-fold quantile fit) only sees
+    valid floats.
+    """
+
+    out: list[float] = []
+    for sequence_group in sequence_groups:
+        if len(sequence_group) < SEQUENCE_LENGTH + 1:
+            continue
+        for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
+            value = getattr(sequence_group[idx], "forward_realized_vol_10d", None)
+            if value is None:
+                continue
+            if value != value:  # NaN
+                continue
+            out.append(float(value))
+    return out
+
+
 def fit_close_scale(sequence_groups: Sequence[Sequence[FeatureVector]]) -> float:
     """Compute the per-fold close-price normaliser from the training rows.
 
@@ -2002,6 +2105,9 @@ def fit_close_scale(sequence_groups: Sequence[Sequence[FeatureVector]]) -> float
 def _build_training_tensors(
     sequence_groups: Sequence[Sequence[FeatureVector]],
     close_scale: float | None = None,
+    *,
+    output_mode: str = "regression",
+    vol_regime_quantiles: Sequence[float] = (),
 ) -> tuple[torch.Tensor | None, torch.Tensor | None, float]:
     """Materialise the (x, y, close_scale) triple for the training path.
 
@@ -2036,6 +2142,8 @@ def _build_training_tensors(
 
     sequences: list[list[list[float]]] = []
     targets: list[list[float]] = []
+    class_indices: list[int] = []
+    is_classification = output_mode == "classification"
 
     for sequence_group in sequence_groups:
         if len(sequence_group) < SEQUENCE_LENGTH + 1:
@@ -2043,23 +2151,39 @@ def _build_training_tensors(
         for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
             window = sequence_group[idx - SEQUENCE_LENGTH : idx]
             target = sequence_group[idx]
+            if is_classification:
+                cls_idx = vol_regime_class_for(
+                    getattr(target, "forward_realized_vol_10d", None),
+                    vol_regime_quantiles,
+                )
+                # Drop rows whose forward-vol target is missing instead
+                # of silently coercing them to class 0 (calm). This
+                # matches the regression contract: rows without a
+                # defensible target never see the optimiser.
+                if cls_idx < 0:
+                    continue
+                class_indices.append(cls_idx)
+            else:
+                targets.append(
+                    [
+                        target.market_close / fitted_scale,
+                        max(target.market_volatility, 0.0),
+                    ]
+                )
             if use_rich:
                 row_list = [item.as_rich_list() for item in window]
             else:
                 row_list = [item.as_list() for item in window]
             sequences.append(row_list)
-            targets.append(
-                [
-                    target.market_close / fitted_scale,
-                    max(target.market_volatility, 0.0),
-                ]
-            )
 
     if not sequences:
         return None, None, fitted_scale
 
     x = torch.tensor(sequences, dtype=torch.float32)
-    y = torch.tensor(targets, dtype=torch.float32)
+    if is_classification:
+        y = torch.tensor(class_indices, dtype=torch.long)
+    else:
+        y = torch.tensor(targets, dtype=torch.float32)
     return x, y, fitted_scale
 
 

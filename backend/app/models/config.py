@@ -167,6 +167,19 @@ class ModelConfig:
     # the byte-identical no-text path.
     text_embedding_dim: int = 0
     text_adapter_dim: int = 0
+    # Phase 9 V2 (#195) classification mode. ``"regression"`` keeps
+    # the existing 2-output (close, vol) head and SmoothL1 loss path
+    # byte-identical for every legacy caller. ``"classification"``
+    # routes the forward pass through a new ``Linear(hidden, n_classes)``
+    # head and switches the training loss to CrossEntropy. The
+    # per-fold quantile cutoffs that turn the continuous target into
+    # class indices are fitted on the train slice and persisted into
+    # the checkpoint payload alongside ``close_scale`` and
+    # ``rich_feature_scaler``.
+    output_mode: str = "regression"
+    n_classes: int = 3
+    vol_regime_quantiles: tuple[float, ...] = ()
+    vol_regime_target: str = "forward_realized_vol_10d"
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -186,6 +199,15 @@ class ModelConfig:
             architecture=str(architecture),
             text_embedding_dim=int(getattr(model, "text_embedding_dim", 0) or 0),
             text_adapter_dim=int(getattr(model, "text_adapter_dim", 0) or 0),
+            output_mode=str(getattr(model, "output_mode", "regression") or "regression"),
+            n_classes=int(getattr(model, "n_classes", 3) or 3),
+            vol_regime_quantiles=tuple(
+                float(v) for v in getattr(model, "vol_regime_quantiles", ()) or ()
+            ),
+            vol_regime_target=str(
+                getattr(model, "vol_regime_target", "forward_realized_vol_10d")
+                or "forward_realized_vol_10d"
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -344,6 +366,13 @@ class FeatureVector:
     certain_label_certain: float = 0.0
     stance_missing: float = 1.0
     rich_payload: bool = False
+    # Phase 9 V2 (#195) classification target. The forward 10-trading-day
+    # realised volatility lives on the target row (the last vector in
+    # a sequence). For non-target lookback bars the loader leaves it as
+    # ``None``; the per-fold quantile-cutoff fitter and class-index
+    # mapper consume the target-row value only. Default ``None`` so
+    # regression-only callers stay byte-identical.
+    forward_realized_vol_10d: float | None = None
     # Pooled text-embedding payload (PR #176 onward). Carries the
     # variable-length encoder-output vector (FinBERT 768, voyage-finance-2
     # 1024, BGE 1024, ...) materialised by the loader's softmax(-Delta t /

@@ -26,6 +26,7 @@ from app.models.config import (
     DEFAULT_NUM_LAYERS,
     DEFAULT_VALIDATION_SPLIT,
     FEATURE_SIZE,
+    SEQUENCE_LENGTH,
     FeatureVector,
     ModelConfig,
 )
@@ -35,7 +36,9 @@ from app.training.loaders import (
     _build_training_tensors,
     _split_train_validation,
     apply_rich_feature_scaler_tensor,
+    collect_forward_vols,
     fit_rich_feature_scaler_tensor,
+    fit_vol_regime_quantiles,
     load_training_sequences_from_data,
 )
 
@@ -289,6 +292,7 @@ def _evaluate_model(
     """
 
     model.eval()
+    is_classification = str(getattr(model, "output_mode", "regression")) == "classification"
     total_loss_sum = torch.zeros((), dtype=torch.float64, device=device)
     total_items = torch.zeros((), dtype=torch.int64, device=device)
     close_squared_error = torch.zeros((), dtype=torch.float64, device=device)
@@ -300,6 +304,12 @@ def _evaluate_model(
     pred_close_chunks: list[torch.Tensor] = []
     true_close_chunks: list[torch.Tensor] = []
     prev_close_chunks: list[torch.Tensor] = []
+    # Phase 9 V2 (#195) classification view. Holds per-batch argmax
+    # predictions + class targets so the post-loop helper can produce
+    # top-1 accuracy + macro-F1 over the whole partition. Empty on
+    # regression runs.
+    pred_class_chunks: list[torch.Tensor] = []
+    true_class_chunks: list[torch.Tensor] = []
     use_text_path = bool(getattr(model, "_text_path_active", False))
     non_blocking = device.type == "cuda"
     with torch.no_grad():
@@ -331,19 +341,25 @@ def _evaluate_model(
             loss = loss_fn(predictions, batch_y)
             total_loss_sum += loss.detach().to(torch.float64) * batch_size
             total_items += batch_size
-            delta = predictions - batch_y
-            close_squared_error += torch.square(delta[:, 0]).sum().to(torch.float64)
-            volatility_squared_error += torch.square(delta[:, 1]).sum().to(torch.float64)
-            # Collect the close-axis arrays for the directional view.
-            # Eval partitions are small (val ~60, test ~60-70 windows
-            # per fold), so the per-event copy is cheap. ``batch_x[:, -1, 1]``
-            # is the prev-bar's close in scaled units; the model's
-            # output and the target are in the same scaled units so
-            # ``sign(pred - prev) == sign(true - prev)`` is the
-            # directional ground truth.
-            pred_close_chunks.append(predictions[:, 0].detach().to("cpu", torch.float32))
-            true_close_chunks.append(batch_y[:, 0].detach().to("cpu", torch.float32))
-            prev_close_chunks.append(batch_x[:, -1, 1].detach().to("cpu", torch.float32))
+            if is_classification:
+                pred_class_chunks.append(
+                    predictions.argmax(dim=1).detach().to("cpu", torch.long)
+                )
+                true_class_chunks.append(batch_y.detach().to("cpu", torch.long))
+            else:
+                delta = predictions - batch_y
+                close_squared_error += torch.square(delta[:, 0]).sum().to(torch.float64)
+                volatility_squared_error += torch.square(delta[:, 1]).sum().to(torch.float64)
+                # Collect the close-axis arrays for the directional view.
+                # Eval partitions are small (val ~60, test ~60-70 windows
+                # per fold), so the per-event copy is cheap. ``batch_x[:, -1, 1]``
+                # is the prev-bar's close in scaled units; the model's
+                # output and the target are in the same scaled units so
+                # ``sign(pred - prev) == sign(true - prev)`` is the
+                # directional ground truth.
+                pred_close_chunks.append(predictions[:, 0].detach().to("cpu", torch.float32))
+                true_close_chunks.append(batch_y[:, 0].detach().to("cpu", torch.float32))
+                prev_close_chunks.append(batch_x[:, -1, 1].detach().to("cpu", torch.float32))
     total_items_int = int(total_items.item())
     if total_items_int <= 0:
         return EvaluationMetrics(
@@ -354,6 +370,41 @@ def _evaluate_model(
         )
 
     total_loss_value = float(total_loss_sum.item())
+
+    if is_classification:
+        # Classification partition: surface accuracy + macro-F1 on the
+        # regime axis, leave the regression columns at +inf so legacy
+        # consumers that read them notice immediately rather than seeing
+        # zeros that look like a perfect regression fit.
+        pred_classes = torch.cat(pred_class_chunks) if pred_class_chunks else torch.empty(0, dtype=torch.long)
+        true_classes = torch.cat(true_class_chunks) if true_class_chunks else torch.empty(0, dtype=torch.long)
+        n_classes_eval = int(getattr(model, "n_classes", 3) or 3)
+        regime_acc = float((pred_classes == true_classes).float().mean().item()) if pred_classes.numel() else 0.0
+        # Macro-F1: unweighted mean of per-class F1. Computed in pure
+        # torch so this works in containers without sklearn pinned.
+        per_class_f1: list[float] = []
+        for cls in range(n_classes_eval):
+            tp = int(((pred_classes == cls) & (true_classes == cls)).sum().item())
+            fp = int(((pred_classes == cls) & (true_classes != cls)).sum().item())
+            fn = int(((pred_classes != cls) & (true_classes == cls)).sum().item())
+            if tp + fp + fn == 0:
+                continue
+            precision = tp / (tp + fp) if (tp + fp) else 0.0
+            recall = tp / (tp + fn) if (tp + fn) else 0.0
+            f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+            per_class_f1.append(f1)
+        regime_f1 = float(sum(per_class_f1) / len(per_class_f1)) if per_class_f1 else 0.0
+        regime_loss = total_loss_value / total_items_int
+        return EvaluationMetrics(
+            loss=regime_loss,
+            close_rmse=float("inf"),
+            volatility_rmse=float("inf"),
+            combined_rmse=float("inf"),
+            regime_accuracy=regime_acc,
+            regime_f1_macro=regime_f1,
+            regime_loss=regime_loss,
+        )
+
     close_value = float(close_squared_error.item())
     volatility_value = float(volatility_squared_error.item())
     combined_squared_error = close_value + volatility_value
@@ -392,6 +443,8 @@ def _build_partition_tensors(
     *,
     fallback_text_in_dim: int,
     close_scale: float | None = None,
+    output_mode: str = "regression",
+    vol_regime_quantiles: Sequence[float] = (),
 ) -> tuple[
     torch.Tensor | None,
     torch.Tensor | None,
@@ -401,16 +454,48 @@ def _build_partition_tensors(
 ]:
     """Tensorise one partition into (x, y, close_scale, text_emb, text_missing).
 
-    The text-embedding tensor is materialised against the same
-    ``fallback_text_in_dim`` the legacy single-partition path uses, so a
-    partition whose every sequence is missing a pooled embedding still
-    materialises a zero-payload tensor of the right width when the
-    model's adapter is configured for the text channel.
+    Regression mode (``output_mode="regression"``) preserves the
+    byte-identity contract: ``y`` is the (N, 2) float tensor of
+    (close / close_scale, max(vol, 0)) and the text tensors align
+    one-to-one with the x rows.
+
+    Classification mode (``output_mode="classification"``) materialises
+    ``y`` as a 1-D Long tensor of class indices computed via the
+    per-fold ``vol_regime_quantiles`` cutoffs. Groups whose target row
+    has a null ``forward_realized_vol_10d`` are dropped from BOTH the
+    x/y tensors and the text-embedding tensors so the row alignment
+    invariant holds.
     """
 
-    x, y, scale = _build_training_tensors(sequence_groups, close_scale=close_scale)
+    if output_mode == "classification":
+        # Pre-filter groups whose target row has an unusable forward-vol
+        # column. The training-tensor builder + text-embedding builder
+        # then both operate on the same filtered list and emit
+        # row-aligned tensors.
+        filtered: list[list[FeatureVector]] = []
+        for group in sequence_groups:
+            if len(group) < SEQUENCE_LENGTH + 1:
+                continue
+            target_value = getattr(
+                group[SEQUENCE_LENGTH], "forward_realized_vol_10d", None
+            )
+            if target_value is None:
+                continue
+            if target_value != target_value:  # NaN
+                continue
+            filtered.append(list(group))
+        active_groups: Sequence[Sequence[FeatureVector]] = filtered
+    else:
+        active_groups = sequence_groups
+
+    x, y, scale = _build_training_tensors(
+        active_groups,
+        close_scale=close_scale,
+        output_mode=output_mode,
+        vol_regime_quantiles=vol_regime_quantiles,
+    )
     text_emb, text_missing, _ = _build_text_embedding_tensors(
-        sequence_groups, fallback_in_dim=fallback_text_in_dim
+        active_groups, fallback_in_dim=fallback_text_in_dim
     )
     return x, y, scale, text_emb, text_missing
 
@@ -493,6 +578,34 @@ def train_model(
         train_groups: list[list[FeatureVector]] = [list(group) for group in train_sequence_groups or []]
         val_groups: list[list[FeatureVector]] = [list(group) for group in val_sequence_groups or []]
         test_groups: list[list[FeatureVector]] = [list(group) for group in test_sequence_groups or []]
+        # Phase 9 V2 (#195) per-fold quantile fit. In classification
+        # mode we fit (n_classes-1) interior cutoffs on the train slice
+        # only so val + test see the same boundaries the optimiser saw.
+        # The cutoffs persist onto ``active_model_config`` (and from
+        # there into the saved checkpoint) so inference + eval apply
+        # the identical mapping. In regression mode the call is skipped
+        # and the cutoff tuple stays empty.
+        active_output_mode = str(
+            getattr(active_model_config, "output_mode", "regression") or "regression"
+        )
+        if active_output_mode == "classification":
+            n_classes_active = int(getattr(active_model_config, "n_classes", 3) or 3)
+            train_forward_vols = collect_forward_vols(train_groups)
+            fitted_quantiles = fit_vol_regime_quantiles(
+                train_forward_vols, n_classes=n_classes_active
+            )
+            if not fitted_quantiles:
+                raise ValueError(
+                    "vol-regime classification requires >= n_classes valid "
+                    "forward_realized_vol_10d targets on the train slice; "
+                    f"got {len(train_forward_vols)} valid rows for "
+                    f"n_classes={n_classes_active}."
+                )
+            active_model_config = dataclasses.replace(
+                active_model_config, vol_regime_quantiles=fitted_quantiles
+            )
+        else:
+            fitted_quantiles = ()
         # Fit the close-scale on the training partition only; never on
         # the val or test rows. The walk-forward protocol forbids
         # fitting any scaler over held-out events.
@@ -500,6 +613,8 @@ def train_model(
             train_groups,
             fallback_text_in_dim=fallback_text_in_dim,
             close_scale=None,
+            output_mode=active_output_mode,
+            vol_regime_quantiles=fitted_quantiles,
         )
         # Fit the rich-feature RobustScaler on the TRAIN tensor only;
         # no-op for legacy 6-feature tensors so the regression contract
@@ -512,12 +627,16 @@ def train_model(
             val_groups,
             fallback_text_in_dim=fallback_text_in_dim,
             close_scale=close_scale,
+            output_mode=active_output_mode,
+            vol_regime_quantiles=fitted_quantiles,
         )
         val_x = apply_rich_feature_scaler_tensor(val_x, rich_feature_scaler)
         test_x, test_y, _test_scale, test_text_emb, test_text_missing = _build_partition_tensors(
             test_groups,
             fallback_text_in_dim=fallback_text_in_dim,
             close_scale=close_scale,
+            output_mode=active_output_mode,
+            vol_regime_quantiles=fitted_quantiles,
         )
         test_x = apply_rich_feature_scaler_tensor(test_x, rich_feature_scaler)
         sequence_groups_for_summary = train_groups + val_groups + test_groups
@@ -731,7 +850,17 @@ def train_model(
     work_model.train()
     optimizer = torch.optim.AdamW(work_model.parameters(), lr=learning_rate, weight_decay=float(weight_decay))
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3)
-    loss_fn = nn.SmoothL1Loss(beta=0.02)
+    # Phase 9 V2 (#195) loss dispatch. ``output_mode=="classification"``
+    # swaps the regression-side SmoothL1 (close, vol) loss for the
+    # CrossEntropy loss the vol-regime classifier needs. The model's
+    # forward path emits raw logits in classification mode so
+    # CrossEntropyLoss can apply log_softmax internally.
+    _active_output_mode = str(getattr(work_model, "output_mode", "regression"))
+    loss_fn: nn.Module
+    if _active_output_mode == "classification":
+        loss_fn = nn.CrossEntropyLoss()
+    else:
+        loss_fn = nn.SmoothL1Loss(beta=0.02)
 
     active_arch = str(getattr(active_model_config, "architecture", "lstm") or "lstm")
     effective_compile, effective_amp = _resolve_compile_amp_flags(

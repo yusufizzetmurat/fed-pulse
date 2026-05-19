@@ -820,6 +820,41 @@ def _volatility_shift(
     return _std(post_rets) - _std(pre_rets)
 
 
+def _forward_realized_vol(
+    series: _CloseSeries,
+    as_of: _dt.date,
+    *,
+    window: int = 10,
+) -> float | None:
+    """Realised volatility of log returns over the next ``window`` trading days.
+
+    Target for the Phase 9 V2 vol-regime classifier (#195). 10 trading
+    days is the default to keep the window clean of the FOMC blackout
+    period (~10 trading days) and the next scheduled meeting. Returns
+    ``None`` when the event sits within ``window`` days of the end of
+    the price series (no forward window available).
+
+    Computed as ``std(log_return(close[t:t+window]))`` with sample std
+    (ddof=1). The first log-return uses ``close[t]`` -- i.e. the close
+    on the event date -- as the denominator so the window does NOT
+    include the as-of bar itself.
+    """
+
+    on_or_after = series.index_on_or_after(as_of)
+    if on_or_after + window > len(series):
+        return None
+    # close[on_or_after-1] is the bar immediately before the event;
+    # close[on_or_after:on_or_after+window] is the t+1..t+window window.
+    # log returns of (t, t+1, ..., t+window) give ``window`` values.
+    closes = series.close[on_or_after - 1 : on_or_after + window]
+    rets = _log_returns(closes)
+    if len(rets) < 2:
+        return None
+    n = len(rets)
+    mean = sum(rets) / n
+    return (sum((v - mean) ** 2 for v in rets) / (n - 1)) ** 0.5
+
+
 # ---------------------------------------------------------------------------
 # Concurrent macro release calendar (real BLS / ISM / FRED-derived dates)
 # ---------------------------------------------------------------------------
@@ -1084,6 +1119,11 @@ def _build_event_rows(
         bench_targets = _realized_returns(bench_series, as_of_date, horizons) or {}
 
     vol_shift = _volatility_shift(asset_series, as_of_date)
+    # Phase 9 V2 (#195) target: realised volatility over the next 10
+    # trading days. Class labels (calm / normal / high) are NOT
+    # assigned here -- the per-fold quantile cutoffs are computed at
+    # training time on the train slice to avoid look-ahead leakage.
+    forward_vol_10d = _forward_realized_vol(asset_series, as_of_date, window=10)
     concurrent_macro = _has_concurrent_macro_release(
         event_date,
         asset_series,
@@ -1153,6 +1193,9 @@ def _build_event_rows(
                 "beta": float(beta),
                 "direction_t1d": int(direction_t1d),
                 "volatility_shift": float(vol_shift) if vol_shift is not None else None,
+                "forward_realized_vol_10d": (
+                    float(forward_vol_10d) if forward_vol_10d is not None else None
+                ),
                 "concurrent_macro_release": bool(concurrent_macro),
                 "intra_meeting_stance_shift": float(
                     intra_meeting_shift["intra_meeting_stance_shift"]
@@ -1243,6 +1286,7 @@ COLUMN_ORDER = (
     "beta",
     "direction_t1d",
     "volatility_shift",
+    "forward_realized_vol_10d",
     "concurrent_macro_release",
     "intra_meeting_stance_shift",
     "intra_meeting_certainty_shift",

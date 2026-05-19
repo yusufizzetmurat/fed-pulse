@@ -275,6 +275,35 @@ def _parse_args() -> argparse.Namespace:
         use_mp_surprise=True,
         use_multi_axis=True,
     )
+    # Phase 9 V2 (#195) classification dispatch. Default stays
+    # ``regression`` so the existing ablation grid + determinism
+    # regression test reproduce the same close / vol RMSE numbers.
+    # ``--output-mode classification`` swaps the (close, vol) regression
+    # target for a per-fold ``vol_regime_10d`` class index; the per-fold
+    # quantile cutoffs are fitted on the train slice only and persist
+    # onto the saved checkpoint via ``ModelConfig.vol_regime_quantiles``.
+    parser.add_argument(
+        "--output-mode",
+        type=str,
+        choices=("regression", "classification"),
+        default="regression",
+        help=(
+            "Forecaster head dispatch. ``regression`` keeps the legacy "
+            "(close, vol) SmoothL1 path; ``classification`` swaps in a "
+            "CrossEntropy head over the ``forward_realized_vol_10d`` "
+            "target with per-fold quantile cutoffs."
+        ),
+    )
+    parser.add_argument(
+        "--vol-regime-classes",
+        type=int,
+        default=3,
+        help=(
+            "Number of vol-regime classes (default 3: calm / normal / "
+            "high). Cutoffs are interior quantiles fitted on the train "
+            "slice of each walk-forward fold."
+        ),
+    )
     # Text-embedding path. ``--text-encoder=none`` keeps the no-text
     # path. ``--no-text-embeddings`` is the symmetric per-family flag
     # that mirrors PR #173's per-family ablation pattern (model input
@@ -663,6 +692,8 @@ def _resolve_text_embedding_dim(args: argparse.Namespace) -> int:
 
 
 def _build_model_config(args: argparse.Namespace) -> ModelConfig:
+    output_mode = str(getattr(args, "output_mode", "regression") or "regression")
+    n_classes = int(getattr(args, "vol_regime_classes", 3) or 3)
     return ModelConfig(
         input_size=_resolved_input_size(args),
         hidden_size=args.hidden_size,
@@ -673,6 +704,8 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         credibility_features=bool(args.credibility_features),
         text_embedding_dim=_resolve_text_embedding_dim(args),
         text_adapter_dim=_resolved_text_adapter_dim(args),
+        output_mode=output_mode,
+        n_classes=n_classes,
     )
 
 
@@ -877,6 +910,8 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                             credibility_features=bool(args.credibility_features),
                             text_embedding_dim=int(text_embedding_dim) if text_adapter_dim > 0 else 0,
                             text_adapter_dim=text_adapter_dim,
+                            output_mode=str(getattr(args, "output_mode", "regression") or "regression"),
+                            n_classes=int(getattr(args, "vol_regime_classes", 3) or 3),
                         ),
                         "learning_rate": float(hp["learning_rate"]),
                         "epochs": int(hp["epochs"]),
@@ -942,6 +977,8 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                     credibility_features=bool(args.credibility_features),
                     text_embedding_dim=int(text_embedding_dim) if int(text_adapter_dim) > 0 else 0,
                     text_adapter_dim=int(text_adapter_dim),
+                    output_mode=str(getattr(args, "output_mode", "regression") or "regression"),
+                    n_classes=int(getattr(args, "vol_regime_classes", 3) or 3),
                 ),
                 "learning_rate": float(learning_rate),
                 "epochs": int(epochs),
