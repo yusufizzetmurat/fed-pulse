@@ -247,6 +247,26 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-length", type=int, default=256)
     parser.add_argument("--owner", default="unknown")
     parser.add_argument("--artifact-root", default=str(DEFAULT_ARTIFACT_ROOT))
+    # Phase C (#228) cross-bank auxiliary supervision. ``off`` (default)
+    # keeps the legacy ``include_zero_weight=False`` filter so the
+    # supervised pool stays strictly FOMC. ``on`` admits cross-bank rows
+    # at their nominal stance label as full-weight training rows
+    # (sample_weight forced to 1.0). ``multitask_alpha`` is reserved for
+    # the head-side multi-task implementation (PR follow-up); for now it
+    # routes the same row inclusion path as ``on`` so the data-side flag
+    # plumbing can be exercised end-to-end before the model head lands.
+    parser.add_argument(
+        "--cross-bank-supervision",
+        choices=("off", "on", "multitask_alpha"),
+        default="off",
+        help=(
+            "Cross-bank stance rows in supervised training. ``off`` "
+            "(default) drops every sample_weight==0 row from the train "
+            "loss. ``on`` includes them as full-weight rows. "
+            "``multitask_alpha`` is reserved for the multi-task head "
+            "follow-up; today it routes the same row inclusion as ``on``."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -257,7 +277,26 @@ def run_one(args: argparse.Namespace, *, artifact_dir: Path | None = None) -> di
     if not package_dir.exists():
         raise SystemExit(f"Training package not found: {package_dir}")
 
-    rows = _load_registry_rows(package_dir)
+    cross_bank_mode = str(getattr(args, "cross_bank_supervision", "off") or "off")
+    include_zero_weight = cross_bank_mode != "off"
+    rows = _load_registry_rows(package_dir, include_zero_weight=include_zero_weight)
+    if include_zero_weight:
+        # Phase C: cross-bank rows enter the loss head as full-weight
+        # training rows (matches the supervised FOMC weighting). The
+        # head-side multi-task alpha branch is gated by a separate flag
+        # on the trainer in a follow-up PR.
+        rows = [
+            EvalRow(
+                record_id=row.record_id,
+                text=row.text,
+                label=row.label,
+                source=row.source,
+                event_date=row.event_date,
+                provenance=row.provenance,
+                sample_weight=1.0 if row.sample_weight == 0.0 else row.sample_weight,
+            )
+            for row in rows
+        ]
     if not rows:
         raise SystemExit("Empty registry.")
 
