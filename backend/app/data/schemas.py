@@ -251,44 +251,57 @@ IngestedDocSchema = DataFrameSchema(
 # ---------------------------------------------------------------------------
 
 
+def _axes_stance_ok(value: Any) -> bool:
+    return value is None or value in _ALLOWED_STANCE
+
+
+def _axes_factor_ok(value: Any) -> bool:
+    """``factor`` stays numeric (GSS factor decomposition)."""
+    if value is None:
+        return True
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _axes_certainty_ok(value: Any) -> bool:
+    """Audit Tier 1.8: ``certainty`` may carry either a regression
+    value (per data/schema/labels.yaml) or a string label
+    (gtfintechlab's ``certain`` / ``uncertain`` category)."""
+    if value is None:
+        return True
+    try:
+        float(value)
+        return True
+    except (TypeError, ValueError):
+        return isinstance(value, str)
+
+
+def _axes_time_ok(value: Any) -> bool:
+    """``time`` is the gtfintechlab-derived horizon label
+    (``forward looking`` / ``not forward looking``); string-only."""
+    return value is None or isinstance(value, str)
+
+
+def _axes_topic_ok(value: Any) -> bool:
+    return value is None or isinstance(value, str)
+
+
 def _axes_dict_ok(series: pd.Series) -> pd.Series:
     def _ok(value: Any) -> bool:
         if value is None:
             return True
         if not isinstance(value, dict):
             return False
-        stance = value.get("stance")
-        if stance is not None and stance not in _ALLOWED_STANCE:
-            return False
-        # ``factor`` stays numeric (GSS factor decomposition).
-        factor = value.get("factor")
-        if factor is not None:
-            try:
-                float(factor)
-            except (TypeError, ValueError):
-                return False
-        # Audit Tier 1.8: ``certainty`` may carry either a regression
-        # value (per data/schema/labels.yaml) or a string label
-        # (gtfintechlab's ``certain`` / ``uncertain`` category). The
-        # validator accepts both shapes; downstream consumers (event
-        # builder's Option-A multi-axis slot) inspect the type and
-        # route accordingly.
-        certainty = value.get("certainty")
-        if certainty is not None:
-            try:
-                float(certainty)
-            except (TypeError, ValueError):
-                if not isinstance(certainty, str):
-                    return False
-        # ``time`` is the new gtfintechlab-derived horizon label
-        # ("forward looking" / "not forward looking"). String-only.
-        time_label = value.get("time")
-        if time_label is not None and not isinstance(time_label, str):
-            return False
-        topic = value.get("topic")
-        if topic is not None and not isinstance(topic, str):
-            return False
-        return True
+        return (
+            _axes_stance_ok(value.get("stance"))
+            and _axes_factor_ok(value.get("factor"))
+            and _axes_certainty_ok(value.get("certainty"))
+            and _axes_time_ok(value.get("time"))
+            and _axes_topic_ok(value.get("topic"))
+        )
 
     return series.map(_ok)
 
