@@ -951,7 +951,44 @@ def train_model(
         else _build_model(active_model_config, device=device_obj)
     )
     work_model.train()
-    optimizer = torch.optim.AdamW(work_model.parameters(), lr=learning_rate, weight_decay=float(weight_decay))
+    # AdamW best-practice param-group split (BERT-era convention).
+    # Weight decay applies only to ``weight`` tensors; biases,
+    # LayerNorm parameters, positional encodings, and 1-D normalisation
+    # weights are exempted. Applying WD to LayerNorm cripples the
+    # model's ability to shift distributions across regime shifts, and
+    # WD on biases is mathematically meaningless. Falls back to a
+    # single group when ``weight_decay=0`` so the param-group plumbing
+    # does not perturb the byte-identity regression contract on the
+    # legacy regression path.
+    wd_value = float(weight_decay)
+    if wd_value > 0.0:
+        decay_params: list[torch.nn.Parameter] = []
+        no_decay_params: list[torch.nn.Parameter] = []
+        for name, param in work_model.named_parameters():
+            if not param.requires_grad:
+                continue
+            # Skip biases, layer-norm / batch-norm weights+biases, and
+            # positional-encoding lookup tables. ``param.ndim <= 1``
+            # is the standard "is this a vector parameter" gate that
+            # catches biases + LN.weight + LN.bias + embedding norms
+            # without enumerating module types.
+            if name.endswith(".bias") or param.ndim <= 1 or "norm" in name.lower() or "pos" in name.lower():
+                no_decay_params.append(param)
+            else:
+                decay_params.append(param)
+        optimizer = torch.optim.AdamW(
+            [
+                {"params": decay_params, "weight_decay": wd_value},
+                {"params": no_decay_params, "weight_decay": 0.0},
+            ],
+            lr=learning_rate,
+        )
+    else:
+        optimizer = torch.optim.AdamW(
+            work_model.parameters(),
+            lr=learning_rate,
+            weight_decay=0.0,
+        )
     # Phase B (#227) LR-schedule selector. ``plateau`` keeps the legacy
     # ReduceLROnPlateau path locked by ``tests/regression/test_forecaster_determinism.py``.
     # ``cosine_warmup`` swaps in OneCycleLR (warmup -> cosine -> tail)
@@ -1097,7 +1134,28 @@ def train_model(
         if schedule_steps_per_epoch is None:
             scheduler.step(eval_metrics.loss)
 
-        if best_val_metrics is None or eval_metrics.loss + 1e-6 < best_val_metrics.loss:
+        # Early-stop signal. Classification mode tracks macro-F1
+        # (higher = better) because CE loss can spike from logit
+        # over-confidence while macro-F1 keeps improving on noisy
+        # targets like forward 10-day realised vol. Regression mode
+        # keeps the legacy combined-RMSE / loss path so the
+        # tests/regression/test_forecaster_determinism.py byte-identity
+        # lock at +/-1e-4 stays green.
+        if _active_output_mode == "classification":
+            current_macro_f1 = float(eval_metrics.regime_f1_macro or 0.0)
+            best_macro_f1 = float(
+                getattr(best_val_metrics, "regime_f1_macro", 0.0) or 0.0
+            ) if best_val_metrics is not None else -1.0
+            improved = (
+                best_val_metrics is None
+                or current_macro_f1 > best_macro_f1 + 1e-6
+            )
+        else:
+            improved = (
+                best_val_metrics is None
+                or eval_metrics.loss + 1e-6 < best_val_metrics.loss
+            )
+        if improved:
             best_val_metrics = eval_metrics
             _copy_state_inplace(best_state, work_model.state_dict())
             best_epoch = completed_epochs
