@@ -307,6 +307,26 @@ def _evaluate_model(
     is_classification = str(getattr(model, "output_mode", "regression")) == "classification"
     total_loss_sum = torch.zeros((), dtype=torch.float64, device=device)
     total_items = torch.zeros((), dtype=torch.int64, device=device)
+    # Weighted CE bookkeeping. When ``loss_fn`` is
+    # ``CrossEntropyLoss(weight=w, reduction='mean')`` the per-batch
+    # loss is ``sum_i(w[y_i] * l_i) / sum_i(w[y_i])`` -- NOT divided by
+    # batch_size. Multiplying the batch-mean loss by batch_size to get
+    # the running total (the legacy regression-path arithmetic) over-
+    # or under-weighs the val loss whenever the in-batch class mix
+    # diverges from the corpus mean. The fix: accumulate
+    # ``loss * weight_sum_in_batch`` against ``weight_total`` and
+    # divide at the end. Falls back to ``batch_size`` when ``loss_fn``
+    # has no ``weight`` attribute or weights are uniform, so the
+    # regression byte-identity regression contract stays green.
+    ce_weight: torch.Tensor | None = None
+    weight_attr = getattr(loss_fn, "weight", None)
+    if (
+        is_classification
+        and isinstance(weight_attr, torch.Tensor)
+        and weight_attr.numel() > 0
+    ):
+        ce_weight = weight_attr.to(device=device, dtype=torch.float64)
+    total_weight_sum = torch.zeros((), dtype=torch.float64, device=device)
     close_squared_error = torch.zeros((), dtype=torch.float64, device=device)
     volatility_squared_error = torch.zeros((), dtype=torch.float64, device=device)
     # Per-event arrays for the directional view. Empty until Phase 9
@@ -352,7 +372,14 @@ def _evaluate_model(
                     kwargs["text_embedding_missing"] = batch_text_missing
             predictions = model(batch_x, **kwargs)
             loss = loss_fn(predictions, batch_y)
-            total_loss_sum += loss.detach().to(torch.float64) * batch_size
+            if ce_weight is not None:
+                batch_weight_sum = ce_weight.index_select(
+                    0, batch_y.detach().to(device=device, dtype=torch.long)
+                ).sum()
+                total_loss_sum += loss.detach().to(torch.float64) * batch_weight_sum
+                total_weight_sum += batch_weight_sum
+            else:
+                total_loss_sum += loss.detach().to(torch.float64) * batch_size
             total_items += batch_size
             if is_classification:
                 pred_class_chunks.append(
@@ -390,6 +417,11 @@ def _evaluate_model(
         )
 
     total_loss_value = float(total_loss_sum.item())
+    # Weighted CE: the mean is ``sum_b (loss_b * weight_sum_b) / total_weight_sum``,
+    # not ``sum_b (loss_b * batch_size) / total_batch_size``. Falls back
+    # to the per-item count when no class weights were supplied.
+    total_weight_value = float(total_weight_sum.item()) if ce_weight is not None else 0.0
+    loss_divisor = total_weight_value if (ce_weight is not None and total_weight_value > 0.0) else float(total_items_int)
 
     if is_classification:
         # Classification partition: surface accuracy + macro-F1 on the
@@ -413,7 +445,7 @@ def _evaluate_model(
             if pred_classes.numel()
             else 0.0
         )
-        regime_loss = total_loss_value / total_items_int
+        regime_loss = total_loss_value / loss_divisor
 
         class_scores_list: list[list[float]] | None = None
         if class_scores_tensor is not None and class_scores_tensor.numel():
@@ -474,7 +506,7 @@ def _evaluate_model(
         )
 
     return EvaluationMetrics(
-        loss=total_loss_value / total_items_int,
+        loss=total_loss_value / loss_divisor,
         close_rmse=math.sqrt(close_value / total_items_int),
         volatility_rmse=math.sqrt(volatility_value / total_items_int),
         combined_rmse=math.sqrt(combined_squared_error / (total_items_int * 2)),
@@ -919,7 +951,44 @@ def train_model(
         else _build_model(active_model_config, device=device_obj)
     )
     work_model.train()
-    optimizer = torch.optim.AdamW(work_model.parameters(), lr=learning_rate, weight_decay=float(weight_decay))
+    # AdamW best-practice param-group split (BERT-era convention).
+    # Weight decay applies only to ``weight`` tensors; biases,
+    # LayerNorm parameters, positional encodings, and 1-D normalisation
+    # weights are exempted. Applying WD to LayerNorm cripples the
+    # model's ability to shift distributions across regime shifts, and
+    # WD on biases is mathematically meaningless. Falls back to a
+    # single group when ``weight_decay=0`` so the param-group plumbing
+    # does not perturb the byte-identity regression contract on the
+    # legacy regression path.
+    wd_value = float(weight_decay)
+    if wd_value > 0.0:
+        decay_params: list[torch.nn.Parameter] = []
+        no_decay_params: list[torch.nn.Parameter] = []
+        for name, param in work_model.named_parameters():
+            if not param.requires_grad:
+                continue
+            # Skip biases, layer-norm / batch-norm weights+biases, and
+            # positional-encoding lookup tables. ``param.ndim <= 1``
+            # is the standard "is this a vector parameter" gate that
+            # catches biases + LN.weight + LN.bias + embedding norms
+            # without enumerating module types.
+            if name.endswith(".bias") or param.ndim <= 1 or "norm" in name.lower() or "pos" in name.lower():
+                no_decay_params.append(param)
+            else:
+                decay_params.append(param)
+        optimizer = torch.optim.AdamW(
+            [
+                {"params": decay_params, "weight_decay": wd_value},
+                {"params": no_decay_params, "weight_decay": 0.0},
+            ],
+            lr=learning_rate,
+        )
+    else:
+        optimizer = torch.optim.AdamW(
+            work_model.parameters(),
+            lr=learning_rate,
+            weight_decay=0.0,
+        )
     # Phase B (#227) LR-schedule selector. ``plateau`` keeps the legacy
     # ReduceLROnPlateau path locked by ``tests/regression/test_forecaster_determinism.py``.
     # ``cosine_warmup`` swaps in OneCycleLR (warmup -> cosine -> tail)
@@ -1065,7 +1134,28 @@ def train_model(
         if schedule_steps_per_epoch is None:
             scheduler.step(eval_metrics.loss)
 
-        if best_val_metrics is None or eval_metrics.loss + 1e-6 < best_val_metrics.loss:
+        # Early-stop signal. Classification mode tracks macro-F1
+        # (higher = better) because CE loss can spike from logit
+        # over-confidence while macro-F1 keeps improving on noisy
+        # targets like forward 10-day realised vol. Regression mode
+        # keeps the legacy combined-RMSE / loss path so the
+        # tests/regression/test_forecaster_determinism.py byte-identity
+        # lock at +/-1e-4 stays green.
+        if _active_output_mode == "classification":
+            current_macro_f1 = float(eval_metrics.regime_f1_macro or 0.0)
+            best_macro_f1 = float(
+                getattr(best_val_metrics, "regime_f1_macro", 0.0) or 0.0
+            ) if best_val_metrics is not None else -1.0
+            improved = (
+                best_val_metrics is None
+                or current_macro_f1 > best_macro_f1 + 1e-6
+            )
+        else:
+            improved = (
+                best_val_metrics is None
+                or eval_metrics.loss + 1e-6 < best_val_metrics.loss
+            )
+        if improved:
             best_val_metrics = eval_metrics
             _copy_state_inplace(best_state, work_model.state_dict())
             best_epoch = completed_epochs
