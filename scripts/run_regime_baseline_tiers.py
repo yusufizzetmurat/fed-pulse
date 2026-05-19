@@ -16,9 +16,17 @@ market-only floor:
                                   pooled text embeddings from the
                                   configured encoder (default
                                   finbert_fed_adjacent).
-    tier4_market_rich_nlp_llm -- Tier-3 plus the B1 (#212) catalogue
-                                  one-hot LLM-features block + missing
-                                  flag. The headline B1 comparison cell.
+    tier4_market_rich_nlp_llm -- Full stack: tier-3 plus the B1 (#212)
+                                  catalogue one-hot LLM-features block.
+                                  Tells us whether the full v2 stack
+                                  beats tier 2/3 on the held-out folds.
+    tier5_market_rich_llm     -- Clean B1 ablation: tier-2 rich + LLM
+                                  features only (no NLP embeddings).
+                                  Isolates the LLM-features lift from
+                                  any NLP-channel interaction. This is
+                                  the headline cell for the B1 claim
+                                  when Tier 3 is roughly null over
+                                  Tier 2 (the empirical case as of A5).
 
 Each tier reuses the same architecture / fold / seed grid so the only
 moving variable between tiers is the input-feature family. The harness
@@ -53,7 +61,7 @@ _DEFAULT_REPORT_ROOT = Path("data/artifacts/regime_baseline_tiers")
 
 def _build_common_args(args: argparse.Namespace) -> list[str]:
     """Tier-invariant flags. Architecture, seeds, folds, and the
-    classification dispatch all stay constant across the four tiers."""
+    classification dispatch all stay constant across the five tiers."""
 
     return [
         "--training-package-id",
@@ -128,6 +136,16 @@ def _tier_args(
             args.nlp_text_encoder,
             "--text-adapter-dims",
             *[str(d) for d in args.text_adapter_dims],
+            "--report-path",
+            str(report_path),
+        ]
+    if tier == "tier5_market_rich_llm":
+        return [
+            *common,
+            "--rich-features",
+            "--use-llm-features",
+            "--text-encoder",
+            "none",
             "--report-path",
             str(report_path),
         ]
@@ -208,14 +226,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "tier2_market_rich",
             "tier3_market_rich_nlp",
             "tier4_market_rich_nlp_llm",
+            "tier5_market_rich_llm",
         ),
         default=(
             "tier1_market_only",
             "tier2_market_rich",
             "tier3_market_rich_nlp",
             "tier4_market_rich_nlp_llm",
+            "tier5_market_rich_llm",
         ),
-        help="Subset of tiers to run. Default: all four.",
+        help="Subset of tiers to run. Default: all five.",
     )
     parser.add_argument(
         "--dry-run",
