@@ -91,6 +91,17 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             embedding_adapter_dim=int(raw.get("embedding_adapter_dim", 128)),
             credibility_features=bool(raw.get("credibility_features", False)),
             architecture=str(raw.get("architecture", "lstm")),
+            # Phase 9 V2 (#195) classification-mode fields. Defaults
+            # match the regression path so pre-Phase-9 checkpoints
+            # rehydrate byte-identical.
+            output_mode=str(raw.get("output_mode", "regression")),
+            n_classes=int(raw.get("n_classes", 3)),
+            vol_regime_quantiles=tuple(
+                float(v) for v in (raw.get("vol_regime_quantiles") or ())
+            ),
+            vol_regime_target=str(
+                raw.get("vol_regime_target", "forward_realized_vol_10d")
+            ),
         )
     return ModelConfig()
 
