@@ -242,11 +242,39 @@ def main() -> int:
         provenance = _provenance_for_row(row)
         row["provenance"] = provenance
         row["sample_weight"] = sample_weight_for(provenance) if mapped else 0.0
+        # Audit Tier 1.8: ``axes`` was constructed by reading flat
+        # ``axis_factor`` / ``axis_certainty`` / ``axis_topic`` columns
+        # that no upstream source actually emits, so the dict was
+        # ``{stance: <mapped>, factor: None, certainty: None, topic: None}``
+        # on every row even when the upstream had the data. The
+        # gtfintechlab and Op-Fed ingesters park their per-axis labels in
+        # ``multi_axis_extras`` (gtfintechlab_time_label,
+        # gtfintechlab_certain_label, op_fed_stance_nli, gss_target_factor,
+        # gss_path_factor, ...). Lift those into ``axes`` so the
+        # downstream event-row builder, multi-axis slot, and any future
+        # per-topic stance head actually see them. The flat ``axis_*``
+        # path stays as a fallback for sources that one day emit them.
+        extras = row.get("multi_axis_extras") or {}
+        if not isinstance(extras, dict):
+            extras = {}
+        factor_value = _coerce_optional_float(
+            row.get("axis_factor")
+            if row.get("axis_factor") is not None
+            else extras.get("gss_target_factor")
+        )
+        certainty_value = _coerce_optional_str(
+            row.get("axis_certainty")
+            if row.get("axis_certainty") is not None
+            else extras.get("gtfintechlab_certain_label")
+        )
+        time_value = _coerce_optional_str(extras.get("gtfintechlab_time_label"))
+        topic_value = _coerce_optional_str(row.get("axis_topic"))
         row["axes"] = {
             "stance": mapped,
-            "factor": _coerce_optional_float(row.get("axis_factor")),
-            "certainty": _coerce_optional_float(row.get("axis_certainty")),
-            "topic": _coerce_optional_str(row.get("axis_topic")),
+            "factor": factor_value,
+            "certainty": certainty_value,
+            "time": time_value,
+            "topic": topic_value,
         }
 
         if not raw_label:

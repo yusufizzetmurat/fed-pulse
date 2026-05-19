@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
 import warnings
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -228,6 +230,26 @@ def main() -> int:
 
     print(f"Quality-passed registry written to {output_path}")
     print(f"Reports written to {report_dir}")
+
+    # Audit Tier 1.5: previous behaviour wrote leakage_report.json with
+    # ``status: fail`` and still returned 0, so an unattended pipeline
+    # would emit a quality-passed registry over a contaminated dataset
+    # without surfacing the failure. Exit non-zero on a failed leakage
+    # gate. ``FED_PULSE_LEAKAGE_GATE=off`` is the explicit opt-out for
+    # the rare case where the caller knowingly accepts the contamination.
+    if leakage.get("status") == "fail":
+        if os.environ.get("FED_PULSE_LEAKAGE_GATE", "on").lower() == "off":
+            print(
+                "WARNING: leakage gate disabled via FED_PULSE_LEAKAGE_GATE=off; "
+                "quality-passed registry written despite status=fail",
+                file=sys.stderr,
+            )
+            return 0
+        print(
+            f"ERROR: leakage gate failed -- see {report_dir / 'leakage_report.json'}",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

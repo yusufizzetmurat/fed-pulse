@@ -45,14 +45,14 @@ def _read_checkpoint_payload(checkpoint_path: Path, device: torch.device) -> dic
     if not (isinstance(payload, dict) and "model_state_dict" in payload):
         payload = {"model_state_dict": payload}
 
-    saved_input_size = _checkpoint_input_size(payload)
-    if saved_input_size is not None and saved_input_size != FEATURE_SIZE:
-        print(
-            f"[forecaster] ignoring checkpoint {checkpoint_path}: input_size={saved_input_size} "
-            f"incompatible with current FEATURE_SIZE={FEATURE_SIZE}",
-            file=sys.stderr,
-        )
-        return None
+    # Audit Tier 0.2: previous behaviour silently dropped any checkpoint
+    # whose ``input_size`` did not match the legacy ``FEATURE_SIZE = 6``
+    # constant. That rejected every rich-feature (``input_size=35``)
+    # checkpoint and bootstrap-trained from scratch in the API path
+    # without surfacing the swap. The model factory honours the saved
+    # ``input_size`` via ``ModelConfig.from_dict`` so the caller can
+    # build the correctly-sized model from the payload itself; the
+    # legacy-constant gate was the wrong sentinel in the wrong place.
     return payload
 
 

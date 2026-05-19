@@ -66,6 +66,18 @@ def _parse_args() -> argparse.Namespace:
             "can let a model learn the source instead of the stance."
         ),
     )
+    parser.add_argument(
+        "--force-overwrite",
+        action="store_true",
+        help=(
+            "Allow overwriting an existing training-package directory. "
+            "Default behaviour (audit Tier 1.10) refuses to overwrite so "
+            "a published package cannot be silently replaced -- the "
+            "benchmark policy in docs/benchmark-policy.md says "
+            "'checkpoints behind a published version are not replaced "
+            "silently' and the same applies at the dataset layer."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -248,6 +260,17 @@ def main() -> int:
     )
     package_dir = processed_root / training_package_id
     quality_out_dir = package_dir / "quality_reports"
+    # Audit Tier 1.10: refuse to overwrite an existing package directory
+    # unless --force-overwrite is set. The previous mkdir(exist_ok=True)
+    # silently replaced every parquet + manifest in place, which the
+    # benchmark policy explicitly forbids at the dataset layer.
+    if package_dir.exists() and not args.force_overwrite:
+        existing = sorted(p.name for p in package_dir.iterdir())
+        raise SystemExit(
+            f"Training package already exists at {package_dir} (contents: "
+            f"{existing}). Pass --force-overwrite to replace, or pick a "
+            "different --training-package-id."
+        )
     package_dir.mkdir(parents=True, exist_ok=True)
     quality_out_dir.mkdir(parents=True, exist_ok=True)
 
