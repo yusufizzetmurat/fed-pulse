@@ -28,7 +28,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push
 
 help:
 	@echo "Targets:"
@@ -322,6 +322,17 @@ regime-ensemble-aggregate:
 	docker compose run --rm backend \
 		python -m app.evaluation.ensemble_aggregator \
 		--arch-sweep-dir "$(ARCH_SWEEP_DIR)"
+
+# Phase B (#227) capacity push -- random-search across hidden / schedule
+# / weight-decay at the Tier 5 surface (rich + LLM, no NLP). LR_SCHEDULES
+# defaults to both options so the cosine_warmup branch lands alongside
+# the legacy plateau path.
+regime-capacity-push:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose --profile "$(FORECASTER_COMPOSE_PROFILE)" run --rm "$(FORECASTER_COMPOSE_SERVICE)" \
+		python scripts/run_regime_capacity_push.py \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		--report-root /data/artifacts/regime_capacity_push
 
 # Single-architecture training with --credibility-features ON. Used for
 # isolated credibility-vs-baseline comparisons; defaults to ARCHITECTURE=lstm

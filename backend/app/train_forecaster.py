@@ -409,6 +409,40 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.set_defaults(use_text_embeddings=True)
+    # Phase B (#227) LR schedule + sequence-length knobs.
+    parser.add_argument(
+        "--lr-schedule",
+        choices=("plateau", "cosine_warmup"),
+        default="plateau",
+        help=(
+            "LR schedule. ``plateau`` (default) is the legacy ReduceLROnPlateau "
+            "path locked by the determinism regression. ``cosine_warmup`` "
+            "builds a OneCycleLR (warmup -> cosine -> tail) over the epoch "
+            "budget."
+        ),
+    )
+    parser.add_argument(
+        "--sequence-length",
+        type=int,
+        default=0,
+        help=(
+            "Sliding-window length per training row. ``0`` (default) means "
+            "use the module-level ``SEQUENCE_LENGTH`` constant (20). Override "
+            "to 40, 60, ... for the capacity push at longer sequences."
+        ),
+    )
+    parser.add_argument(
+        "--lr-schedules",
+        nargs="+",
+        choices=("plateau", "cosine_warmup"),
+        help="Sweep-mode grid for LR schedule.",
+    )
+    parser.add_argument(
+        "--sequence-lengths",
+        nargs="+",
+        type=int,
+        help="Sweep-mode grid for sequence length. Overrides --sequence-length.",
+    )
     parser.add_argument(
         "--sweep",
         action="store_true",
@@ -728,6 +762,8 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         text_adapter_dim=_resolved_text_adapter_dim(args),
         output_mode=output_mode,
         n_classes=n_classes,
+        lr_schedule=str(getattr(args, "lr_schedule", "plateau") or "plateau"),
+        sequence_length=int(getattr(args, "sequence_length", 0) or 0),
     )
 
 
@@ -808,6 +844,18 @@ def _build_hp_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
         )
     else:
         text_adapter_dims = [0]
+    # Phase B (#227): new sweep axes for LR-schedule and sequence-length.
+    # Defaults collapse to a single value so legacy callers that do not
+    # pass --lr-schedules / --sequence-lengths reproduce the pre-PR grid
+    # byte-identical.
+    lr_schedules = (
+        getattr(args, "lr_schedules", None)
+        or [getattr(args, "lr_schedule", "plateau")]
+    )
+    sequence_lengths = (
+        getattr(args, "sequence_lengths", None)
+        or [getattr(args, "sequence_length", 0)]
+    )
     hp_grid: list[dict[str, Any]] = []
     for (
         hidden_size,
@@ -817,6 +865,8 @@ def _build_hp_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
         epochs,
         weight_decay,
         text_adapter_dim,
+        lr_schedule,
+        sequence_length,
     ) in itertools.product(
         hidden_sizes,
         num_layers_options,
@@ -825,6 +875,8 @@ def _build_hp_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
         epochs_options,
         weight_decays,
         text_adapter_dims,
+        lr_schedules,
+        sequence_lengths,
     ):
         hp_grid.append(
             {
@@ -835,6 +887,8 @@ def _build_hp_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
                 "epochs": int(epochs),
                 "weight_decay": float(weight_decay),
                 "text_adapter_dim": int(text_adapter_dim),
+                "lr_schedule": str(lr_schedule),
+                "sequence_length": int(sequence_length),
             }
         )
     return hp_grid
@@ -965,6 +1019,18 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
         )
     else:
         text_adapter_dims = [0]
+    # Phase B (#227): cross the LR-schedule + sequence-length grids
+    # alongside the existing axes. Both default to a single value so
+    # legacy callers that don't pass the new grids reproduce the
+    # pre-PR cartesian product byte-identical.
+    lr_schedules = (
+        getattr(args, "lr_schedules", None)
+        or [getattr(args, "lr_schedule", "plateau")]
+    )
+    sequence_lengths = (
+        getattr(args, "sequence_lengths", None)
+        or [getattr(args, "sequence_length", 0)]
+    )
     candidates = []
     for (
         architecture,
@@ -975,6 +1041,8 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
         epochs,
         weight_decay,
         text_adapter_dim,
+        lr_schedule,
+        sequence_length,
         seed,
     ) in itertools.product(
         architectures,
@@ -985,6 +1053,8 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
         epochs_options,
         weight_decays,
         text_adapter_dims,
+        lr_schedules,
+        sequence_lengths,
         seeds,
     ):
         for fold_id in fold_ids:
@@ -1001,6 +1071,8 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                     text_adapter_dim=int(text_adapter_dim),
                     output_mode=str(getattr(args, "output_mode", "regression") or "regression"),
                     n_classes=int(getattr(args, "vol_regime_classes", 3) or 3),
+                    lr_schedule=str(lr_schedule),
+                    sequence_length=int(sequence_length),
                 ),
                 "learning_rate": float(learning_rate),
                 "epochs": int(epochs),
@@ -1122,6 +1194,9 @@ def _run_single_training(
     #   to the legacy 80/20 internal split. Kept callable so the
     #   regression-test fixture path keeps the byte-identity contract.
     # - neither set: data-dir JSON / JSONL / CSV scan, also legacy.
+    # Phase B (#227): the schedule choice rides on the model config so a
+    # resumed checkpoint reuses the same schedule the original run used.
+    lr_schedule_choice = str(getattr(model_config, "lr_schedule", "plateau") or "plateau")
     if walk_forward_split is not None:
         result = train_model(
             train_sequence_groups=walk_forward_split.train,
@@ -1146,6 +1221,7 @@ def _run_single_training(
             grad_clip_norm=grad_clip_norm,
             use_compile=use_compile,
             use_amp=use_amp,
+            lr_schedule=lr_schedule_choice,
         )
     elif sequence_groups:
         result = _train_model_with_groups(
@@ -1167,6 +1243,7 @@ def _run_single_training(
             grad_clip_norm=grad_clip_norm,
             use_compile=use_compile,
             use_amp=use_amp,
+            lr_schedule=lr_schedule_choice,
         )
     else:
         result = train_model(
@@ -1188,6 +1265,7 @@ def _run_single_training(
             grad_clip_norm=grad_clip_norm,
             use_compile=use_compile,
             use_amp=use_amp,
+            lr_schedule=lr_schedule_choice,
         )
     return result.summary
 
@@ -1212,6 +1290,7 @@ def _train_model_with_groups(
     grad_clip_norm: float = 0.0,
     use_compile: bool = True,
     use_amp: bool = True,
+    lr_schedule: str = "plateau",
 ) -> Any:
     """Invoke ``train_model`` against pre-loaded sequence groups.
 
@@ -1242,6 +1321,7 @@ def _train_model_with_groups(
         grad_clip_norm=grad_clip_norm,
         use_compile=use_compile,
         use_amp=use_amp,
+        lr_schedule=lr_schedule,
     )
 
 

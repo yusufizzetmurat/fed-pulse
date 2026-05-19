@@ -585,6 +585,7 @@ def train_model(
     grad_clip_norm: float = 0.0,
     use_compile: bool = True,
     use_amp: bool = True,
+    lr_schedule: str = "plateau",
 ) -> TrainingResult:
     if seed is not None:
         enable_deterministic_mode(seed)
@@ -898,7 +899,36 @@ def train_model(
     )
     work_model.train()
     optimizer = torch.optim.AdamW(work_model.parameters(), lr=learning_rate, weight_decay=float(weight_decay))
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3)
+    # Phase B (#227) LR-schedule selector. ``plateau`` keeps the legacy
+    # ReduceLROnPlateau path locked by ``tests/regression/test_forecaster_determinism.py``.
+    # ``cosine_warmup`` swaps in OneCycleLR (warmup -> cosine -> tail)
+    # over the configured epoch budget. ``schedule_steps_per_epoch``
+    # holds the per-iter step count for the OneCycleLR branch so the
+    # scheduler advances once per optimizer step.
+    schedule_choice = str(lr_schedule).lower()
+    schedule_steps_per_epoch: int | None = None
+    scheduler: Any
+    if schedule_choice == "cosine_warmup":
+        steps_per_epoch = max(1, len(train_loader))
+        schedule_steps_per_epoch = steps_per_epoch
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=learning_rate,
+            epochs=epochs,
+            steps_per_epoch=steps_per_epoch,
+            pct_start=0.1,
+            anneal_strategy="cos",
+            div_factor=10.0,
+            final_div_factor=100.0,
+        )
+    elif schedule_choice == "plateau":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=0.5, patience=3
+        )
+    else:
+        raise ValueError(
+            f"unsupported lr_schedule={lr_schedule!r}; choose plateau or cosine_warmup"
+        )
     # Phase 9 V2 (#195) loss dispatch. ``output_mode=="classification"``
     # swaps the regression-side SmoothL1 (close, vol) loss for the
     # CrossEntropy loss the vol-regime classifier needs. The model's
@@ -998,6 +1028,10 @@ def train_model(
                 if apply_grad_clip:
                     nn.utils.clip_grad_norm_(work_model.parameters(), max_norm=clip_norm_value)
                 optimizer.step()
+            # OneCycleLR advances per-iter; ReduceLROnPlateau advances
+            # once per epoch on the val metric (block after the eval).
+            if schedule_steps_per_epoch is not None:
+                scheduler.step()
 
         completed_epochs = epoch_index + 1
         eval_metrics = _evaluate_model(
@@ -1007,7 +1041,8 @@ def train_model(
             loss_fn,
             credibility_buffer=val_credibility_buffer,
         )
-        scheduler.step(eval_metrics.loss)
+        if schedule_steps_per_epoch is None:
+            scheduler.step(eval_metrics.loss)
 
         if best_val_metrics is None or eval_metrics.loss + 1e-6 < best_val_metrics.loss:
             best_val_metrics = eval_metrics
