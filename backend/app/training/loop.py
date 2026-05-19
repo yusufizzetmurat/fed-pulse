@@ -274,6 +274,8 @@ def _evaluate_model(
     device: torch.device,
     loss_fn: nn.Module,
     credibility_buffer: torch.Tensor | None = None,
+    *,
+    record_row_predictions: bool = False,
 ) -> EvaluationMetrics:
     """Evaluate ``model`` on ``loader`` and return aggregate metrics.
 
@@ -415,6 +417,17 @@ def _evaluate_model(
             class_scores=class_scores_list,
         )
 
+        predictions_payload: list[int] | None = None
+        targets_payload: list[int] | None = None
+        scores_payload: list[list[float]] | None = None
+        if record_row_predictions:
+            predictions_payload = [int(x) for x in pred_classes.tolist()]
+            targets_payload = [int(x) for x in true_classes.tolist()]
+            if class_scores_list is not None:
+                scores_payload = [
+                    [float(p) for p in row] for row in class_scores_list
+                ]
+
         return EvaluationMetrics(
             loss=regime_loss,
             close_rmse=float("inf"),
@@ -424,6 +437,9 @@ def _evaluate_model(
             regime_f1_macro=float(breakdown.macro_f1),
             regime_loss=regime_loss,
             classification_breakdown=breakdown.to_dict(),
+            predictions=predictions_payload,
+            targets=targets_payload,
+            class_scores=scores_payload,
         )
 
     close_value = float(close_squared_error.item())
@@ -1056,6 +1072,7 @@ def train_model(
             device_obj,
             loss_fn,
             credibility_buffer=test_credibility_buffer,
+            record_row_predictions=True,
         )
     else:
         test_metrics = best_val_metrics

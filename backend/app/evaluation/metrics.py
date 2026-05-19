@@ -38,6 +38,15 @@ class EvaluationMetrics:
     # ``EvaluationMetrics.to_dict()`` keeps round-tripping cleanly.
     # ``None`` on regression-only runs so the legacy contract holds.
     classification_breakdown: dict[str, Any] | None = None
+    # Phase A (#226) row-level test-partition surface. Populated only on
+    # the test partition (val/train stay None so the per-trial JSON does
+    # not balloon with the train-window predictions). Lets the pooled-
+    # fold aggregator pool across folds and the ensemble aggregator
+    # average logits / softmax probabilities across architectures.
+    # ``None`` everywhere except classification-mode test-partition eval.
+    predictions: list[int] | None = None
+    targets: list[int] | None = None
+    class_scores: list[list[float]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
