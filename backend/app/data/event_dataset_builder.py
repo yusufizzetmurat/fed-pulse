@@ -158,6 +158,13 @@ DEFAULT_ASSET = "^GSPC"
 DEFAULT_BENCHMARK = "^GSPC"
 DEFAULT_HORIZONS = (1, 5, 10, 30)
 PRIOR_WINDOW_DAYS = 20
+# A2 (#207) realised-vol horizons beyond the default 5-day window. The
+# 20d horizon captures the canonical "one month" of trading days and
+# the 60d horizon catches the slow-moving regime component (Engle &
+# Rangel, 2008; Christoffersen, 2012). Both fit the historical
+# vol-regime literature; together with the existing 5d window they
+# give the model access to short / medium / long horizons.
+EXTRA_VOL_WINDOWS: tuple[int, ...] = (20, 60)
 MARKET_MODEL_WINDOW_DAYS = 252
 VOL_WINDOW_DAYS = 10
 ROLLING_VOL_DAYS = 5
@@ -289,6 +296,13 @@ class _PriorBar:
     volume: float
     vol_5d: float
     cum_return_20d: float
+    # A2 (#207): additional realised-vol horizons. Computed as the
+    # sample standard deviation of log returns over the trailing N
+    # trading days anchored at this bar (right-inclusive). Default
+    # 0.0 keeps any legacy bar-builder path that doesn't compute
+    # these working without crashing the schema.
+    vol_20d: float = 0.0
+    vol_60d: float = 0.0
 
 
 @dataclass
@@ -656,6 +670,12 @@ def _build_prior_window(
         return None
     if start_idx - vol_window < 0:
         return None
+    # A2 (#207) backstop: we also compute trailing 20d / 60d vol per
+    # bar. Each requires N+1 prior closes from the bar itself; the
+    # earliest bar (start_idx) must therefore have at least
+    # ``max(EXTRA_VOL_WINDOWS)`` log returns behind it. When the
+    # series is too short we emit 0.0 for the affected horizon rather
+    # than dropping the event entirely.
 
     log_rets_all = _log_returns(series.close[: last_idx + 1])
     # log_rets_all[i] corresponds to close[i+1]. Rolling std at close-index j
@@ -673,6 +693,18 @@ def _build_prior_window(
         mean = sum(chunk) / vol_window
         var = sum((x - mean) ** 2 for x in chunk) / (vol_window - 1)
         vol = var**0.5
+        # A2 (#207) extra realised-vol horizons. We re-use the same
+        # log-return slice machinery; insufficient history -> 0.0 for
+        # that horizon only.
+        extra_vols: dict[int, float] = {}
+        for w in EXTRA_VOL_WINDOWS:
+            if i - w < 0 or len(log_rets_all[i - w : i]) < w:
+                extra_vols[w] = 0.0
+                continue
+            w_chunk = log_rets_all[i - w : i]
+            w_mean = sum(w_chunk) / w
+            w_var = sum((x - w_mean) ** 2 for x in w_chunk) / (w - 1)
+            extra_vols[w] = w_var**0.5
         cum_return = (series.close[i] - base_close) / base_close if base_close > 0 else 0.0
         bars.append(
             _PriorBar(
@@ -681,6 +713,8 @@ def _build_prior_window(
                 volume=series.volume[i],
                 vol_5d=vol,
                 cum_return_20d=cum_return,
+                vol_20d=extra_vols.get(20, 0.0),
+                vol_60d=extra_vols.get(60, 0.0),
             )
         )
     # Enforce no look-ahead: last prior bar must be < as_of
@@ -1025,6 +1059,8 @@ def _prior_window_sha(bars: Sequence[_PriorBar]) -> str:
                     f"{b.close:.10f}",
                     f"{b.volume:.4f}",
                     f"{b.vol_5d:.10f}",
+                    f"{b.vol_20d:.10f}",
+                    f"{b.vol_60d:.10f}",
                     f"{b.cum_return_20d:.10f}",
                 ]
             )
@@ -1039,6 +1075,8 @@ def _bars_to_json(bars: Sequence[_PriorBar]) -> str:
             "close": round(b.close, 10),
             "volume": round(b.volume, 4),
             "vol_5d": round(b.vol_5d, 10),
+            "vol_20d": round(b.vol_20d, 10),
+            "vol_60d": round(b.vol_60d, 10),
             "cum_return_20d": round(b.cum_return_20d, 10),
         }
         for b in bars

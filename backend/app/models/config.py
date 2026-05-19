@@ -51,11 +51,19 @@ RICH_CREDIBILITY_DIM = 4
 RICH_LINGUISTIC_DIM = 15
 RICH_MP_SURPRISE_DIM = 4
 RICH_MULTI_AXIS_DIM = 6
+# A2 (#207): additional realised-vol horizons (20d, 60d). The existing
+# market slice already carries vol_5d as ``market_volatility``; this
+# extra slice extends the vol-autocorrelation surface so the model can
+# anchor against longer realised-vol windows, which the literature
+# consistently identifies as the strongest single predictor of forward
+# vol regime.
+RICH_REALIZED_VOL_DIM = 2
 RICH_EXTRA_FEATURE_SIZE = (
     RICH_CREDIBILITY_DIM
     + RICH_LINGUISTIC_DIM
     + RICH_MP_SURPRISE_DIM
     + RICH_MULTI_AXIS_DIM
+    + RICH_REALIZED_VOL_DIM
 )
 RICH_FEATURE_SIZE = FEATURE_SIZE + RICH_EXTRA_FEATURE_SIZE
 
@@ -79,6 +87,11 @@ RICH_MP_SURPRISE_SLICE = slice(
 RICH_MULTI_AXIS_SLICE = slice(
     RICH_MP_SURPRISE_SLICE.stop,
     RICH_MP_SURPRISE_SLICE.stop + RICH_MULTI_AXIS_DIM,
+)
+# A2 (#207) realised-vol horizons slice (positions [35:37]).
+RICH_REALIZED_VOL_SLICE = slice(
+    RICH_MULTI_AXIS_SLICE.stop,
+    RICH_MULTI_AXIS_SLICE.stop + RICH_REALIZED_VOL_DIM,
 )
 
 # Text-embedding adapter dim search axis. The forecaster sweep iterates
@@ -365,6 +378,12 @@ class FeatureVector:
     time_label_forward: float = 0.0
     certain_label_certain: float = 0.0
     stance_missing: float = 1.0
+    # A2 (#207) realised-vol autoregressive horizons. Default 0.0 so
+    # FeatureVectors built without rich-payload flow stay byte-identical
+    # on the as_list (6-feature) path. Populated by the events.parquet
+    # loader on the rich-feature path from per-bar prior_bars_json.
+    realized_vol_20d: float = 0.0
+    realized_vol_60d: float = 0.0
     rich_payload: bool = False
     # Phase 9 V2 (#195) classification target. The forward 10-trading-day
     # realised volatility lives on the target row (the last vector in
@@ -463,7 +482,11 @@ class FeatureVector:
             float(self.certain_label_certain),
             float(self.stance_missing),
         ]
-        return market + credibility + linguistic + mp_surprise + multi_axis
+        realized_vol = [
+            float(self.realized_vol_20d),
+            float(self.realized_vol_60d),
+        ]
+        return market + credibility + linguistic + mp_surprise + multi_axis + realized_vol
 
 
 def build_lookback_sequence(vectors: Iterable[FeatureVector], length: int = SEQUENCE_LENGTH) -> list[FeatureVector]:

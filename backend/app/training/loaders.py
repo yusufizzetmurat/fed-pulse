@@ -415,18 +415,24 @@ def _bars_to_feature_vectors(
             continue
         close_value = float(bar.get("close", 0.0))
         volatility_value = float(bar.get("vol_5d", 0.0))
+        # A2 (#207) per-bar realised-vol horizons. Older events.parquet
+        # vintages predating PR #218+ won't have these keys; .get() with
+        # default 0.0 keeps the deser tolerant.
+        vol_20d_value = float(bar.get("vol_20d", 0.0))
+        vol_60d_value = float(bar.get("vol_60d", 0.0))
         elapsed_time = float((bar_date - event_date).days)
-        vectors.append(
-            FeatureVector.from_market_state(
-                date=date_value,
-                sentiment_score=sentiment_score,
-                market_close=close_value,
-                market_volatility=volatility_value,
-                previous_close=previous_close,
-                previous_volatility=previous_volatility,
-                elapsed_time=elapsed_time,
-            )
+        fv = FeatureVector.from_market_state(
+            date=date_value,
+            sentiment_score=sentiment_score,
+            market_close=close_value,
+            market_volatility=volatility_value,
+            previous_close=previous_close,
+            previous_volatility=previous_volatility,
+            elapsed_time=elapsed_time,
         )
+        fv.realized_vol_20d = vol_20d_value
+        fv.realized_vol_60d = vol_60d_value
+        vectors.append(fv)
         previous_close = close_value
         previous_volatility = volatility_value
     return vectors
