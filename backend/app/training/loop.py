@@ -731,7 +731,16 @@ def train_model(
     work_model.train()
     optimizer = torch.optim.AdamW(work_model.parameters(), lr=learning_rate, weight_decay=float(weight_decay))
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3)
-    loss_fn = nn.SmoothL1Loss(beta=0.02)
+    # Phase 9 V2 (#195) loss dispatch. ``output_mode=="classification"``
+    # swaps the regression-side SmoothL1 (close, vol) loss for the
+    # CrossEntropy loss the vol-regime classifier needs. The model's
+    # forward path emits raw logits in classification mode so
+    # CrossEntropyLoss can apply log_softmax internally.
+    _active_output_mode = str(getattr(work_model, "output_mode", "regression"))
+    if _active_output_mode == "classification":
+        loss_fn = nn.CrossEntropyLoss()
+    else:
+        loss_fn = nn.SmoothL1Loss(beta=0.02)
 
     active_arch = str(getattr(active_model_config, "architecture", "lstm") or "lstm")
     effective_compile, effective_amp = _resolve_compile_amp_flags(
