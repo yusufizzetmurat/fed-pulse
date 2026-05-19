@@ -625,6 +625,10 @@ def train_model(
         )
         if active_output_mode == "classification":
             n_classes_active = int(getattr(active_model_config, "n_classes", 3) or 3)
+            # mypy gets too clever if we let the first assignment in
+            # the if/else fall through as ``tuple[()]``; pre-declare
+            # the wider type once so both branches share it.
+            fitted_class_weights: tuple[float, ...] = ()
             if active_target_axis == "direction_t1d":
                 # A6 (#211) direction target -- already-discrete labels,
                 # no quantile fit needed. Cutoffs stay empty so the
