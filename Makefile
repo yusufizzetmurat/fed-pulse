@@ -28,7 +28,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers
 
 help:
 	@echo "Targets:"
@@ -65,6 +65,7 @@ help:
 	@echo "  make forecaster-sweep-baseline - 6-arch x 5-seed forecaster sweep, legacy 6-feature input"
 	@echo "  make forecaster-sweep-shuffled-control - Memorisation-control row: same architectures + seeds, median HP, --shuffle-targets-control on"
 	@echo "  make forecaster-sweep-aggregate - Aggregate sweep trials into per-arch CIs"
+	@echo "  make regime-baseline-tiers     - Phase 9 V2 3-tier regime classifier (Market / +Rich / +Rich+NLP)"
 	@echo "  make forecaster-credibility-train - Single training run with credibility features on"
 
 dev: dev-cpu
@@ -273,6 +274,22 @@ forecaster-sweep-aggregate:
 	docker compose run --rm backend \
 		python -m app.evaluation.forecaster_sweep_aggregator \
 		--artifact-dir "/data/artifacts/forecaster_sweep/$(TRAINING_PACKAGE_ID)"
+
+# Phase 9 V2 (#195) 3-tier vol-regime classification baseline harness.
+# Runs Market-Only, Market+Rich, and Market+Rich+NLP-Embeddings as
+# separate classification sweeps so the marginal lift of each input
+# family on the regime-classification axis is measurable. Per-tier
+# JSON lands under
+# data/artifacts/regime_baseline_tiers/$(TRAINING_PACKAGE_ID)/<tier>/.
+# Override NLP_TEXT_ENCODER to swap the tier-3 encoder.
+NLP_TEXT_ENCODER ?= finbert_fed_adjacent
+regime-baseline-tiers:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose --profile "$(FORECASTER_COMPOSE_PROFILE)" run --rm "$(FORECASTER_COMPOSE_SERVICE)" \
+		python scripts/run_regime_baseline_tiers.py \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		--nlp-text-encoder "$(NLP_TEXT_ENCODER)" \
+		--report-root /data/artifacts/regime_baseline_tiers
 
 # Single-architecture training with --credibility-features ON. Used for
 # isolated credibility-vs-baseline comparisons; defaults to ARCHITECTURE=lstm
