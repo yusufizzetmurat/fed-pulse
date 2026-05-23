@@ -22,30 +22,12 @@ export function resolveApiBaseUrl(): string {
   return raw;
 }
 
-export type AnalyzeResponse =
-  | { mode: "result"; result: AnalyzeResult }
-  | { mode: "queued"; job: TrainJobState };
-
 export async function postAnalyze(
   baseUrl: string,
   request: AnalyzeRequest
-): Promise<AnalyzeResponse> {
+): Promise<AnalyzeResult> {
   const response = await axios.post(`${baseUrl}/analyze`, request);
-  const data = response.data || {};
-  if (request.forecast_mode === "real_train") {
-    const jobId = (data as { job_id?: string }).job_id;
-    if (!jobId) throw new Error("Real Train did not return a job id.");
-    return {
-      mode: "queued",
-      job: {
-        job_id: jobId,
-        status: (data as { status?: TrainJobState["status"] }).status || "queued",
-        message: (data as { message?: string }).message || "Real Train queued.",
-        error: null,
-      },
-    };
-  }
-  return { mode: "result", result: data as AnalyzeResult };
+  return (response.data || {}) as AnalyzeResult;
 }
 
 export async function fetchTrainJob(baseUrl: string, jobId: string): Promise<TrainJobState> {

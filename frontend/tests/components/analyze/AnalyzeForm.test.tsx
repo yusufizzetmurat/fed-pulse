@@ -9,7 +9,6 @@ function baseRequest(): AnalyzeRequest {
     text: "Recent indicators…",
     date: "2024-09-18",
     symbol: "^GSPC",
-    forecast_mode: "fast",
     horizon: "3d",
     include_realized: false,
   };
@@ -43,15 +42,15 @@ describe("AnalyzeForm", () => {
     expect(onSubmit).toHaveBeenCalled();
   });
 
-  it("shows real-train submit label while loading", () => {
+  it("disables the submit button while loading", () => {
     render(
       <AnalyzeForm
-        value={{ ...baseRequest(), forecast_mode: "real_train" }}
+        value={baseRequest()}
         onChange={vi.fn()}
         onSubmit={vi.fn()}
         loading
       />
     );
-    expect(screen.getByRole("button", { name: /running real train/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /running analysis/i })).toBeDisabled();
   });
 });

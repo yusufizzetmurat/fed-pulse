@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { HORIZON_OPTIONS, SYMBOL_OPTIONS } from "@/lib/analyze/constants";
-import type { AnalyzeRequest, ForecastMode, Horizon } from "@/lib/analyze/types";
+import type { AnalyzeRequest, Horizon } from "@/lib/analyze/types";
 
 interface AnalyzeFormProps {
   value: AnalyzeRequest;
@@ -22,18 +22,8 @@ interface AnalyzeFormProps {
   loading: boolean;
 }
 
-const MODE_OPTIONS: Array<{ value: ForecastMode; label: string; description: string }> = [
-  { value: "fast", label: "Fast", description: "Checkpoint inference, low latency." },
-  { value: "quick_train", label: "Quick Train", description: "Short bounded adaptation before inference." },
-  { value: "real_train", label: "Real Train", description: "Async 252-day fine-tune, polled to completion." },
-];
-
 export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormProps) {
-  const submitLabel = loading
-    ? value.forecast_mode === "real_train"
-      ? "Running Real Train…"
-      : "Running analysis…"
-    : "Analyze";
+  const submitLabel = loading ? "Running analysis…" : "Analyze";
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -57,7 +47,7 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
             onChange={(text) => patch({ text })}
           />
 
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-2">
               <Label htmlFor="date">Document date</Label>
               <Input
@@ -83,28 +73,6 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="mode">Forecast mode</Label>
-              <Select
-                value={value.forecast_mode}
-                onValueChange={(next) => patch({ forecast_mode: next as ForecastMode })}
-              >
-                <SelectTrigger id="mode">
-                  <SelectValue placeholder="Mode" />
-                </SelectTrigger>
-                <SelectContent>
-                  {MODE_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                {MODE_OPTIONS.find((m) => m.value === value.forecast_mode)?.description}
-              </p>
             </div>
 
             <div className="space-y-2">
@@ -147,9 +115,6 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
             <Button type="submit" disabled={loading}>
               {submitLabel}
             </Button>
-            <p className="text-xs text-muted-foreground">
-              Real Train returns a job id and polls every {2}s.
-            </p>
           </div>
         </form>
       </CardContent>

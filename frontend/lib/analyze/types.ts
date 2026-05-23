@@ -6,7 +6,10 @@ export interface AnalyzeRequest {
   text: string;
   date: string;
   symbol: SymbolValue;
-  forecast_mode: ForecastMode;
+  // forecast_mode is retired from the frontend (#265). Field is optional
+  // so older history rows still type-check; new requests omit it and the
+  // backend defaults to "fast".
+  forecast_mode?: ForecastMode;
   horizon: Horizon;
   include_realized: boolean;
   include_xai?: boolean;
