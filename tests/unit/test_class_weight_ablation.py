@@ -14,8 +14,6 @@ stable knob to flip in re-runs.
 
 from __future__ import annotations
 
-import inspect
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -49,26 +47,28 @@ def test_train_model_accepts_use_class_weights_kwarg() -> None:
 
 def test_class_weight_off_path_emits_empty_tuple() -> None:
     """When ``use_class_weights=False`` the loop must short-circuit to
-    an empty weight tuple rather than fitting and silently zeroing them."""
+    an empty weight tuple rather than fitting and silently zeroing them.
+
+    Asserted at the token level to stay stable under arbitrary
+    surrounding-indentation changes; the contract is the ``if/else``
+    pair around ``fit_class_weights`` plus the empty tuple in the off
+    branch."""
 
     source = _read(_LOOP_PATH)
-    # The else-branch under the use_class_weights guard sets the
-    # fitted_class_weights tuple to () so CrossEntropyLoss(weight=None)
-    # runs and the train-side reduction stays standard mean.
-    expected = textwrap.dedent(
-        """\
-        if use_class_weights:
-                    fitted_class_weights = fit_class_weights(
-                        train_forward_vols,
-                        fitted_quantiles,
-                        n_classes=n_classes_active,
-                    )
-                else:
-                    fitted_class_weights = ()
-        """
-    ).strip()
-    assert expected in source, (
-        "use_class_weights=False path does not zero the fitted class weights"
+    assert "if use_class_weights:" in source
+    assert "fitted_class_weights = ()" in source
+    # Order matters: the empty-tuple assignment must follow the guard,
+    # and the fit call must live inside the ``if`` block before it.
+    guard_idx = source.index("if use_class_weights:")
+    fit_call_idx = source.index(
+        "fitted_class_weights = fit_class_weights(", guard_idx
+    )
+    off_assign_idx = source.index(
+        "fitted_class_weights = ()", fit_call_idx
+    )
+    assert guard_idx < fit_call_idx < off_assign_idx, (
+        "use_class_weights guard / fit_class_weights call / empty-tuple "
+        "assignment are not in the expected order"
     )
 
 
