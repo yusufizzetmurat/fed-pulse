@@ -615,7 +615,7 @@ def run_bucket_streams(
 
     streams: list["torch.cuda.Stream | None"] = []
     for _ in range(len(bucket_cells)):
-        streams.append(torch.cuda.Stream(device=device))
+        streams.append(torch.cuda.Stream(device=device))  # type: ignore[no-untyped-call]
 
     results: list[dict[str, Any] | None] = [None] * len(bucket_cells)
     errors: list[Exception | None] = [None] * len(bucket_cells)

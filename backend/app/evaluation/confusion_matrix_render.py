@@ -40,7 +40,7 @@ def _text_color_for(bg: tuple[int, int, int]) -> tuple[int, int, int]:
     return (255, 255, 255) if luma < 140 else (20, 20, 20)
 
 
-def _load_font(size: int) -> ImageFont.ImageFont:
+def _load_font(size: int) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
     """Try a small list of bundled DejaVu fallbacks, then PIL default."""
 
     candidates = [

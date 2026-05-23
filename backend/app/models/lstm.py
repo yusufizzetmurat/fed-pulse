@@ -349,7 +349,7 @@ class ForecasterModel(nn.Module):
         # regression path keeps the existing softplus-on-volatility
         # post-processing (unconstrained close + non-negative vol).
         if self.output_mode == "classification":
-            return raw
+            return raw  # type: ignore[no-any-return]
         close = raw[:, 0:1]
         volatility = F.softplus(raw[:, 1:2])
         return torch.cat((close, volatility), dim=1)

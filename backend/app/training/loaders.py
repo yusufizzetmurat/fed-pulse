@@ -1332,6 +1332,7 @@ def _load_package_sequences_with_metadata(
                 registry_for_lookup = None
         else:
             registry_for_lookup = None
+        assert text_encoder is not None  # narrowed by use_text_path
         embedding_lookup, embedding_event_dates = _read_chunk_embedding_lookup(
             text_encoder,
             cache_dir=cache_dir,
@@ -1918,6 +1919,7 @@ def load_training_sequences_from_package(
                 registry_for_lookup = None
         else:
             registry_for_lookup = None
+        assert text_encoder is not None  # narrowed by use_text_path
         embedding_lookup, embedding_event_dates = _read_chunk_embedding_lookup(
             text_encoder,
             cache_dir=cache_dir,
