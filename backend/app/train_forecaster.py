@@ -663,6 +663,20 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.set_defaults(use_amp=True)
+    parser.add_argument(
+        "--no-class-weights",
+        dest="use_class_weights",
+        action="store_false",
+        help=(
+            "Skip the A1 (#206) per-fold inverse-frequency class "
+            "weighting in classification mode. Default off-flag is on, "
+            "so ``CrossEntropyLoss(weight=…)`` fires with weights fit "
+            "on the train slice. Round 2c (#234) ablation toggles this "
+            "to measure whether the weighting actually shifts macro-F1 "
+            "now that PR #233 fixed the val-loss arithmetic."
+        ),
+    )
+    parser.set_defaults(use_class_weights=True)
     args = parser.parse_args()
     # Emit DeprecationWarning when the legacy --validation-split alias is
     # used. argparse silently maps it onto validation_fraction, so callers
@@ -1185,6 +1199,7 @@ def _run_single_training(
     grad_clip_norm: float = 0.0,
     use_compile: bool = True,
     use_amp: bool = True,
+    use_class_weights: bool = True,
 ) -> TrainingRunSummary:
     # Three input paths, in precedence order:
     #
@@ -1224,6 +1239,7 @@ def _run_single_training(
             use_compile=use_compile,
             use_amp=use_amp,
             lr_schedule=lr_schedule_choice,
+            use_class_weights=use_class_weights,
         )
     elif sequence_groups:
         result = _train_model_with_groups(
@@ -1246,6 +1262,7 @@ def _run_single_training(
             use_compile=use_compile,
             use_amp=use_amp,
             lr_schedule=lr_schedule_choice,
+            use_class_weights=use_class_weights,
         )
     else:
         result = train_model(
@@ -1268,6 +1285,7 @@ def _run_single_training(
             use_compile=use_compile,
             use_amp=use_amp,
             lr_schedule=lr_schedule_choice,
+            use_class_weights=use_class_weights,
         )
     return result.summary
 
@@ -1293,6 +1311,7 @@ def _train_model_with_groups(
     use_compile: bool = True,
     use_amp: bool = True,
     lr_schedule: str = "plateau",
+    use_class_weights: bool = True,
 ) -> Any:
     """Invoke ``train_model`` against pre-loaded sequence groups.
 
@@ -1324,6 +1343,7 @@ def _train_model_with_groups(
         use_compile=use_compile,
         use_amp=use_amp,
         lr_schedule=lr_schedule,
+        use_class_weights=use_class_weights,
     )
 
 
@@ -1361,6 +1381,7 @@ def _worker_run_cell(payload: dict[str, Any]) -> dict[str, Any]:
         grad_clip_norm=float(payload.get("grad_clip_norm", 0.0)),
         use_compile=bool(payload.get("use_compile", True)),
         use_amp=bool(payload.get("use_amp", True)),
+        use_class_weights=bool(payload.get("use_class_weights", True)),
     )
     return {
         "trial_index": int(payload["trial_index"]),
@@ -1410,6 +1431,7 @@ def _build_worker_payload(
         "grad_clip_norm": float(getattr(args, "grad_clip_norm", 0.0)),
         "use_compile": bool(getattr(args, "use_compile", True)),
         "use_amp": bool(getattr(args, "use_amp", True)),
+        "use_class_weights": bool(getattr(args, "use_class_weights", True)),
     }
 
 
@@ -1597,6 +1619,7 @@ def _run_sweep(
                     grad_clip_norm=float(getattr(args, "grad_clip_norm", 0.0)),
                     use_compile=bool(getattr(args, "use_compile", True)),
                     use_amp=bool(getattr(args, "use_amp", True)),
+                    use_class_weights=bool(getattr(args, "use_class_weights", True)),
                 )
             record: dict[str, Any] = {
                 "trial_index": int(trial_index),
@@ -1760,6 +1783,7 @@ def _run_sweep(
                 grad_clip_norm=float(getattr(args, "grad_clip_norm", 0.0)),
                 use_compile=bool(getattr(args, "use_compile", True)),
                 use_amp=bool(getattr(args, "use_amp", True)),
+                use_class_weights=bool(getattr(args, "use_class_weights", True)),
             )
             summaries.append(summary)
             record = {
@@ -1857,6 +1881,7 @@ def _run_sweep(
         grad_clip_norm=float(getattr(args, "grad_clip_norm", 0.0)),
         use_compile=bool(getattr(args, "use_compile", True)),
         use_amp=bool(getattr(args, "use_amp", True)),
+        use_class_weights=bool(getattr(args, "use_class_weights", True)),
     )
     for trial in trial_records:
         trial["selected"] = trial["trial_index"] == best_trial_index
@@ -2146,6 +2171,7 @@ def main() -> int:
         grad_clip_norm=float(getattr(args, "grad_clip_norm", 0.0)),
         use_compile=bool(getattr(args, "use_compile", True)),
         use_amp=bool(getattr(args, "use_amp", True)),
+        use_class_weights=bool(getattr(args, "use_class_weights", True)),
     )
     metrics = summary.metrics
     if metrics is not None:
