@@ -51,9 +51,19 @@ def test_no_server_errors(case: schemathesis.Case) -> None:
     through to crash the handler — that is the bug class this fuzz
     targets. Endpoints with a documented client-fault 5xx (see
     ``_EXPECTED_5XX_BY_PATH``) are exempt on that specific status.
+
+    ``httpx.InvalidURL`` is treated as a pass: schemathesis sometimes
+    generates control characters httpx refuses to put into a URL.
+    That is a client-side rejection before any request reaches the
+    server, so the API surface is not at fault.
     """
 
-    response = case.call()
+    import httpx
+
+    try:
+        response = case.call()
+    except httpx.InvalidURL:
+        return
     if response.status_code < 500:
         return
     allowed = _EXPECTED_5XX_BY_PATH.get(case.path, set())

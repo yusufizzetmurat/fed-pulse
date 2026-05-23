@@ -23,7 +23,7 @@ Schema (one row per event x kind x horizon x asset):
 
 - ``event_date``                ISO date (string)
 - ``event_kind``                One of ``{statement, minutes, speech,
-                                 testimony, press_conference}``
+                                 testimony, press_conference, macro_release}``
 - ``document_id``               sha256(source|event_date|event_kind)[:16]
 - ``text_hash``                 sha256 of the concatenated document text
 - ``source``                    Registry source (preferred order documented
@@ -36,8 +36,11 @@ Schema (one row per event x kind x horizon x asset):
                                  (2pm ET = 19:00 UTC during US standard time
                                  -- we use the wall-clock 19:00Z throughout
                                  so the dataset is reproducible regardless
-                                 of DST), and ``T14:00:00Z`` for speeches
-                                 (typical morning ET delivery).
+                                 of DST), ``T14:00:00Z`` for speeches
+                                 (typical morning ET delivery), and
+                                 ``T13:00:00Z`` for macro-release events
+                                 (BLS CPI / NFP 8:30 ET slot, rounded to
+                                 stay clear of DST hand-waving).
 - ``text``                      Raw concatenated document text
 - ``token_count``               Whitespace-token count of ``text`` (used as
                                  a coarse truncation budget upstream)

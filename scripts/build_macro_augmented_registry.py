@@ -1,28 +1,35 @@
 """Augment an existing supervised registry with macro-release event rows.
 
 Variant A of the macro-event augmentation experiment (#239 follow-up):
-fetch CPI + NFP release dates from FRED's release calendar, append them
-as supervised event rows with ``text=""`` and a neutral placeholder
-stance label, and write the augmented JSONL to a new path. The
-training-package builder downstream consumes the augmented JSONL with
-its existing ``--input`` flag, so no pipeline changes are required.
+fetch CPI + NFP release dates from FRED's release calendar and add
+them as supervised event rows with a short fixed-length placeholder
+text and a neutral stance label. The augmented JSONL goes to a new
+path; the training-package builder downstream consumes it via its
+existing ``--input`` flag, so no pipeline-orchestrator changes are
+required.
 
-Why text="": the goal here is to give the model more rows on which the
-macro features (VIX term slope, yield-curve slope, realised-vol
-horizons, cross-asset closes) map to a vol-regime target. The text
-channel emits the missing flag on these rows, so the FinBERT path
-contributes a zero vector — the recurrent core learns from richer
-training data without confusing the language model.
+Why the placeholder text is short and fixed: the goal is to give the
+model more rows on which the macro features (VIX term slope, yield-
+curve slope, realised-vol horizons, cross-asset closes) map to a vol-
+regime target, **without** the FinBERT path firing on the new rows.
+The embedding cache builder skips any text below
+``MIN_TEXT_CHARS = 64`` (see ``backend/app/data/embedding_cache.py``),
+so the placeholder is sized to land safely under that threshold —
+the text channel emits the missing flag on macro rows and FinBERT
+contributes a zero vector. The pandera NormalizedDocSchema still
+requires a non-empty ``text`` column, so we cannot drop it entirely.
 
-Output JSONL is byte-identical to the existing registry for the
-FOMC rows and appends ~1300 new ``fred_macro_releases`` rows. Run
+The output preserves every base row verbatim, adds the macro rows,
+and sorts the result by ``(event_date, record_id)`` so the train/val/
+test splits the package builder derives downstream stay deterministic
+and reproducible. Run::
 
     python scripts/build_macro_augmented_registry.py \\
         --base-package-id tp_v2_sprint1_2026_05_15_sentiment_market_core_v1.0_epv1_v1.0 \\
         --output /data/interim/macro_augmented_registry.jsonl
 
-then feed the result into ``app.data.build_training_package`` with the
-new dataset_version / feature_version pair.
+then feed the result into ``app.data.build_training_package`` with
+the new dataset_version / feature_version pair.
 """
 
 from __future__ import annotations
@@ -61,8 +68,15 @@ RELEASE_IDS: dict[str, dict[str, str]] = {
     },
 }
 
-_EMPTY_TEXT_HASH = hashlib.sha256(b"").hexdigest()
 _FRED_RELEASE_DATES_URL = "https://api.stlouisfed.org/fred/release/dates"
+# Short fixed-length placeholders so the text length stays well below
+# the embedding cache builder's MIN_TEXT_CHARS (64) gate. A longer
+# label string could accidentally cross the threshold and pull macro
+# rows into the FinBERT cache — the opposite of Variant A's intent.
+_PLACEHOLDER_BY_RELEASE: dict[str, str] = {
+    "cpi": "macro release: cpi",
+    "nfp": "macro release: nfp",
+}
 
 
 def _fetch_release_dates(release_id: str, api_key: str) -> list[str]:
@@ -104,15 +118,13 @@ def _macro_row(*, release_key: str, release_date: str, ingested_at: str) -> dict
     record_id = hashlib.sha256(
         f"{info['release_id']}|{release_date}".encode("utf-8")
     ).hexdigest()[:16]
-    # Structured placeholder text. The supervised pipeline's pandera
-    # schema rejects empty strings, so we emit a short marker that
-    # describes the event but carries no stance signal. FinBERT will
-    # embed this into a roughly-constant vector per release type; the
-    # text channel is effectively dormant on these rows and the macro
-    # features carry the prediction. (Variant A as planned: the
-    # placeholder text is structured data dressed up, not natural
-    # language content.)
-    placeholder_text = f"{info['label']} release on {release_date}."
+    # Short fixed-length placeholder per release type. NormalizedDocSchema
+    # rejects empty ``text``; this marker is the smallest non-empty
+    # string that still describes the row's source. The constant length
+    # stays below the embedding cache's MIN_TEXT_CHARS (64) so the
+    # FinBERT cache builder skips these rows and the loader emits the
+    # text-missing flag on every macro bar.
+    placeholder_text = _PLACEHOLDER_BY_RELEASE[release_key]
     text_hash = hashlib.sha256(placeholder_text.encode("utf-8")).hexdigest()
     return {
         "record_id": record_id,
@@ -202,7 +214,11 @@ def main(argv: list[str] | None = None) -> int:
         "--data-dir",
         type=Path,
         default=DATA_DIR,
-        help="Root of the processed/ tree (default: $DATA_DIR / /data).",
+        help=(
+            "Root of the data tree containing the processed/ subdirectory. "
+            "Defaults to app.config.DATA_DIR (the bind-mounted /data inside "
+            "the container; <repo>/data on the host)."
+        ),
     )
     args = parser.parse_args(argv)
 
