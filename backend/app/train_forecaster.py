@@ -410,6 +410,20 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.set_defaults(use_text_embeddings=True)
+    parser.add_argument(
+        "--no-time-decay",
+        dest="use_time_decay",
+        action="store_false",
+        help=(
+            "Disable the elapsed-time decay path "
+            "(``TimeDecayAttention``). Default off-flag is on, so the "
+            "decay multiplies the sentiment channel by "
+            "``exp(-lambda * |elapsed|)``. Round 4 (#243) ablation "
+            "flips this to measure whether the mechanism still earns "
+            "its complexity on the post-embargo baseline."
+        ),
+    )
+    parser.set_defaults(use_time_decay=True)
     # Phase B (#227) LR schedule + sequence-length knobs.
     parser.add_argument(
         "--lr-schedule",
@@ -766,6 +780,7 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         n_classes=n_classes,
         lr_schedule=str(getattr(args, "lr_schedule", "plateau") or "plateau"),
         sequence_length=int(getattr(args, "sequence_length", 0) or 0),
+        use_time_decay=bool(getattr(args, "use_time_decay", True)),
     )
 
 
@@ -990,6 +1005,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                             text_adapter_dim=text_adapter_dim,
                             output_mode=str(getattr(args, "output_mode", "regression") or "regression"),
                             n_classes=int(getattr(args, "vol_regime_classes", 3) or 3),
+                            use_time_decay=bool(getattr(args, "use_time_decay", True)),
                         ),
                         "learning_rate": float(hp["learning_rate"]),
                         "epochs": int(hp["epochs"]),
@@ -1075,6 +1091,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                     n_classes=int(getattr(args, "vol_regime_classes", 3) or 3),
                     lr_schedule=str(lr_schedule),
                     sequence_length=int(sequence_length),
+                    use_time_decay=bool(getattr(args, "use_time_decay", True)),
                 ),
                 "learning_rate": float(learning_rate),
                 "epochs": int(epochs),
