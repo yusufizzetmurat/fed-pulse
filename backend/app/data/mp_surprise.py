@@ -837,6 +837,7 @@ def build_mp_surprises(
     fred_responses: Mapping[str, FredSeriesResponse],
     fomc_calendar: Sequence[FomcMeetingRecord] | None = None,
     spx_close_by_date: Mapping[_dt.date, float] | None = None,
+    spx_intraday_returns: Mapping[str, float] | None = None,
     fomc_calendar_path: Path | str | None = None,
     methodology: str = METHODOLOGY_OIS_PROXY,
 ) -> BuildArtifacts:
@@ -979,13 +980,22 @@ def build_mp_surprises(
 
     # ---- Pass 3: fed-info factor regression on SPX returns ----
     spx_lookup = spx_close_by_date or {}
+    intraday_lookup = dict(spx_intraday_returns or {})
     levels_for_fit: list[float] = []
     spx_for_fit: list[float] = []
     spx_returns_per_meeting: dict[_dt.date, tuple[float | None, str]] = {}
     for m in meetings:
         ed = m.meeting_date
         lvl = per_meeting_delta_level[ed]
-        ret, source = _spx_return_on(ed, spx_lookup)
+        # Prefer the Alpha Vantage intraday ±30 min return when the
+        # backfill cache covers the event. Falls through to the daily
+        # close-to-close proxy when intraday is missing.
+        intraday_value = intraday_lookup.get(ed.isoformat())
+        if intraday_value is not None:
+            ret: float | None = float(intraday_value)
+            source = "alphavantage_intraday_30min"
+        else:
+            ret, source = _spx_return_on(ed, spx_lookup)
         spx_returns_per_meeting[ed] = (ret, source)
         if lvl is None or ret is None:
             continue
