@@ -1406,6 +1406,30 @@ def train_model(
             close_scale=close_scale,
             rich_feature_scaler=rich_feature_scaler,
         )
+        if encoder_lora_bundle is not None:
+            # Round 5 (#244) sidecar: write only the LoRA adapter state
+            # (not the base encoder weights) so a future audit / resume
+            # path can rebuild the wrapped encoder by re-loading the
+            # registry-pinned base + the adapter delta. ``peft`` exposes
+            # ``get_peft_model_state_dict`` for this exact use; the
+            # lazy import keeps the helper module agnostic when peft
+            # is absent (which only happens on a ``encoder_lora=False``
+            # run, so the branch never fires).
+            try:
+                from peft import get_peft_model_state_dict  # type: ignore
+            except ImportError:  # pragma: no cover - defensive
+                get_peft_model_state_dict = None  # type: ignore[assignment]
+            if get_peft_model_state_dict is not None:
+                adapter_path = Path(str(checkpoint_target) + ".lora_adapter.pt")
+                adapter_state = get_peft_model_state_dict(encoder_lora_bundle.encoder)
+                torch.save(
+                    {
+                        "encoder_alias": encoder_lora_bundle.encoder_alias,
+                        "out_dim": encoder_lora_bundle.out_dim,
+                        "adapter_state": adapter_state,
+                    },
+                    adapter_path,
+                )
         # Lazy-import the services facade so subsequent inference picks up the
         # freshly trained weights without a process restart. Doing this at the
         # module top would create a circular (services.forecaster -> training.loop -> services.forecaster).
