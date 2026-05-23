@@ -1,0 +1,7 @@
+{
+  "p50_seconds": 0.6,
+  "p95_seconds": 0.8,
+  "warmup_calls": 2,
+  "timed_calls": 8,
+  "_note": "Hand-tuned ceiling, not a sharp measurement. Local docker measured ~0.37s p50; the baseline carries headroom for CI runner variance. Regenerate via `python tests/contract/test_perf_regression.py --regen` after an intentional perf change."
+}
