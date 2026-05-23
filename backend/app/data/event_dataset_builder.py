@@ -193,6 +193,11 @@ CONCURRENT_MACRO_TRADING_DAY_RADIUS = 2
 # replace these constants and re-build.
 FOMC_AS_OF_TIME = "T19:00:00Z"
 SPEECH_AS_OF_TIME = "T14:00:00Z"
+# BLS macroeconomic releases (CPI, Employment Situation) drop at 8:30 ET
+# (= 12:30 UTC under EST, 13:30 UTC under EDT). The placeholder rounds to
+# 13:00 UTC to stay clear of DST hand-waving; intraday alignment will
+# replace this if the announcement-window target ever lands.
+MACRO_AS_OF_TIME = "T13:00:00Z"
 
 # Map registry document_type values (raw, mixed-case) onto the canonical
 # event_kind taxonomy. Anything not listed is dropped silently and counted
@@ -207,6 +212,14 @@ _EVENT_KIND_MAP: dict[str, str] = {
     "congressional_testimony": "testimony",
     "chair_speech": "speech",
     "governor_speech": "speech",
+    # Macro-release augmentation (variant A of the macro-event experiment).
+    # The supervised target is forward-realised vol regime computed from
+    # market data; the text channel emits the missing flag because the
+    # placeholder text is not loaded into the embedding cache. The
+    # canonical kind is ``macro_release`` so downstream consumers can
+    # branch on it without parsing the source string.
+    "macro_release_cpi": "macro_release",
+    "macro_release_nfp": "macro_release",
 }
 
 # Speech-like kinds use the speech time placeholder; everything else uses
@@ -258,6 +271,7 @@ _SOURCE_PREFERENCE: tuple[str, ...] = (
     "hf_fomc_communication",
     "kaggle_fed_statements_minutes",
     "gss_factor",
+    "fred_macro_releases",
 )
 
 
@@ -1209,10 +1223,13 @@ def _as_of_for_event(event_date: str, event_kind: str) -> str:
     """Apply the placeholder announcement time.
 
     FOMC kinds (statement, minutes, press_conference, testimony) use the
-    2pm ET / 19:00 UTC placeholder; speech kinds use 14:00 UTC. Documented
-    in the module docstring.
+    2pm ET / 19:00 UTC placeholder; speech kinds use 14:00 UTC; macro
+    releases (CPI, NFP) use the 8:30 ET BLS slot rounded to 13:00 UTC.
+    Documented in the module docstring.
     """
 
+    if event_kind == "macro_release":
+        return f"{event_date}{MACRO_AS_OF_TIME}"
     if event_kind in _SPEECH_KINDS:
         return f"{event_date}{SPEECH_AS_OF_TIME}"
     return f"{event_date}{FOMC_AS_OF_TIME}"
