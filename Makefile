@@ -468,6 +468,24 @@ finbert-fed-adjacent-pretrain-bert-control:
 		PRETRAIN_OUT_NAME=bert_base_fed_adjacent \
 		$(if $(SUBSTRATE),SUBSTRATE=$(SUBSTRATE),)
 
+# Round 3 (#242) corpus ablation: strict FOMC-only continued-pretrain.
+# Loads only fomc_statements.json + fomc_minutes.json (~48 docs, ~240k
+# tokens), bypassing BIS entirely. Pair with finbert-bis-only-pretrain
+# for the 3-way ablation against the legacy mixed substrate.
+finbert-fomc-only-pretrain:
+	$(MAKE) finbert-fed-adjacent-pretrain \
+		SUBSTRATE=fomc \
+		PRETRAIN_OUT_NAME=finbert_fomc_only
+
+# Round 3 (#242) corpus ablation: strict BIS-only continued-pretrain.
+# Drops the legacy local Fed-adjacent JSON corpus so the encoder learns
+# only from samchain/BIS_speeches_97_23_MLM. Pair with the FOMC-only
+# variant above to compare narrow-but-on-target against broad-but-mixed.
+finbert-bis-only-pretrain:
+	$(MAKE) finbert-fed-adjacent-pretrain \
+		SUBSTRATE=bis \
+		PRETRAIN_OUT_NAME=finbert_bis_only
+
 finbert-fed-adjacent-pretrain-smoke:
 	docker compose run --rm backend \
 		python -m app.data.continued_pretraining \
