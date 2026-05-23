@@ -76,6 +76,95 @@ def test_bis_pair_stream_filters_empty_and_respects_max_rows(monkeypatch) -> Non
     assert rows[2]["sequenceB"] == ""
 
 
+def test_iter_fomc_pairs_reads_only_minutes_and_statements(tmp_path: Path) -> None:
+    """The strict FOMC-only substrate must read only ``fomc_minutes.json``
+    and ``fomc_statements.json`` even when other JSON files sit alongside."""
+
+    (tmp_path / "fomc_minutes.json").write_text(
+        json.dumps([{"text": "Minutes paragraph."}]),
+        encoding="utf-8",
+    )
+    (tmp_path / "fomc_statements.json").write_text(
+        json.dumps([{"text": "Statement paragraph."}]),
+        encoding="utf-8",
+    )
+    # Decoys: these must NOT be picked up by the strict substrate.
+    (tmp_path / "chair_speeches.json").write_text(
+        json.dumps([{"text": "Decoy speech."}]),
+        encoding="utf-8",
+    )
+    (tmp_path / "beige_book.json").write_text(
+        json.dumps([{"text": "Decoy beige book."}]),
+        encoding="utf-8",
+    )
+
+    pairs = cpt._iter_fomc_pairs(tmp_path)
+    assert len(pairs) == 2
+    bodies = {p["sequenceA"] for p in pairs}
+    assert bodies == {"Minutes paragraph.", "Statement paragraph."}
+    # Decoys must not have made it in.
+    assert "Decoy speech." not in bodies
+    assert "Decoy beige book." not in bodies
+
+
+def test_collect_pairs_substrate_fomc_strips_bis_and_local(tmp_path: Path) -> None:
+    """``--substrate fomc`` is strict: no BIS network call, no broader
+    local corpus, only the two FOMC JSON files."""
+
+    (tmp_path / "fomc_statements.json").write_text(
+        json.dumps([{"text": "FOMC statement body."}]),
+        encoding="utf-8",
+    )
+    (tmp_path / "fomc_minutes.json").write_text(
+        json.dumps([{"text": "FOMC minutes body."}]),
+        encoding="utf-8",
+    )
+    # Even though chair_speeches is in --corpus-files (legacy default),
+    # the fomc substrate must skip it.
+    (tmp_path / "chair_speeches.json").write_text(
+        json.dumps([{"text": "Decoy chair speech."}]),
+        encoding="utf-8",
+    )
+    args = cpt._parse_args(
+        [
+            "--substrate",
+            "fomc",
+            "--data-dir",
+            str(tmp_path),
+        ]
+    )
+    pairs = cpt._collect_pairs(args)
+    bodies = {p["sequenceA"] for p in pairs}
+    assert bodies == {"FOMC statement body.", "FOMC minutes body."}
+    assert "Decoy chair speech." not in bodies
+
+
+def test_collect_pairs_substrate_fomc_respects_max_rows(tmp_path: Path) -> None:
+    """``--max-rows`` clamps the strict FOMC pool just like the local
+    substrate does."""
+
+    (tmp_path / "fomc_minutes.json").write_text(
+        json.dumps([{"text": f"Minutes {i}."} for i in range(5)]),
+        encoding="utf-8",
+    )
+    (tmp_path / "fomc_statements.json").write_text(
+        json.dumps([{"text": f"Stmt {i}."} for i in range(5)]),
+        encoding="utf-8",
+    )
+    args = cpt._parse_args(
+        [
+            "--substrate",
+            "fomc",
+            "--data-dir",
+            str(tmp_path),
+            "--max-rows",
+            "3",
+        ]
+    )
+    pairs = cpt._collect_pairs(args)
+    assert len(pairs) == 3
+
+
 def test_collect_pairs_substrate_local(monkeypatch, tmp_path: Path) -> None:
     (tmp_path / "chair_speeches.json").write_text(
         json.dumps([{"text": "Local speech text."}]),
