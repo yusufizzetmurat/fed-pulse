@@ -134,7 +134,7 @@ class TextMultiAxisClassifier(nn.Module):
         # Last hidden state shape: (B, T, H). [CLS] is at position 0
         # for the BERT / FinBERT family the classifier targets.
         pooled = outputs.last_hidden_state[:, 0, :]
-        return self.head(pooled)
+        return self.head(pooled)  # type: ignore[no-any-return]
 
     def metadata(self) -> dict[str, Any]:
         """Round-trippable provenance for checkpoint payloads."""
