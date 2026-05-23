@@ -112,6 +112,21 @@ def _tier_args(
     """Return the tier-specific flag overlay on top of the common args."""
 
     common = _build_common_args(args)
+    if tier == "tier0_text_only":
+        # Unimodal text-only row: NLP embeddings alone, no market features.
+        # Pairs with tier1 (market-only) to bracket the multimodal tiers
+        # — if a multimodal tier does not clear max(tier0, tier1), it has
+        # not earned its complexity.
+        return [
+            *common,
+            "--no-rich-features",
+            "--text-encoder",
+            args.nlp_text_encoder,
+            "--text-adapter-dims",
+            *[str(d) for d in args.text_adapter_dims],
+            "--report-path",
+            str(report_path),
+        ]
     if tier == "tier1_market_only":
         return [
             *common,
@@ -259,6 +274,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--tiers",
         nargs="+",
         choices=(
+            "tier0_text_only",
             "tier1_market_only",
             "tier2_market_rich",
             "tier3_market_rich_nlp",
@@ -268,6 +284,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "tier7_market_rich_nlp_xbank_llm",
         ),
         default=(
+            "tier0_text_only",
             "tier1_market_only",
             "tier2_market_rich",
             "tier3_market_rich_nlp",
@@ -276,7 +293,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "tier6_market_rich_nlp_xbank",
             "tier7_market_rich_nlp_xbank_llm",
         ),
-        help="Subset of tiers to run. Default: all seven.",
+        help="Subset of tiers to run. Default: all eight.",
     )
     parser.add_argument(
         "--dry-run",
