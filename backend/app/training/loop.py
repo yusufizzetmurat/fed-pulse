@@ -1415,8 +1415,10 @@ def train_model(
             # lazy import keeps the helper module agnostic when peft
             # is absent (which only happens on a ``encoder_lora=False``
             # run, so the branch never fires).
+            get_peft_model_state_dict: Any = None
             try:
-                from peft import get_peft_model_state_dict
+                from peft import get_peft_model_state_dict as _peft_state_dict
+                get_peft_model_state_dict = _peft_state_dict
             except ImportError:  # pragma: no cover - defensive
                 get_peft_model_state_dict = None
             if get_peft_model_state_dict is not None:
