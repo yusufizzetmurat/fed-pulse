@@ -60,3 +60,26 @@ def test_registry_path_resolves_relative_to_module() -> None:
     assert MODEL_REGISTRY_PATH.name == "registry.yaml"
     assert MODEL_REGISTRY_PATH.exists()
     assert isinstance(MODEL_REGISTRY_PATH, Path)
+
+
+def test_round3_corpus_ablation_placeholders_are_registered_but_unpinned() -> None:
+    """The Round 3 (#242) FOMC-only and BIS-only encoders ship as
+    placeholders so the bake-off CLI knows the aliases exist; the empty
+    revision keeps ``encoder_ref`` flagging them as 'unpinned local'
+    until the first GPU run fills in a real checkpoint path."""
+
+    from app.models.registry import encoder_ref, is_pinned, load_registry
+
+    load_registry.cache_clear()
+    for alias in ("finbert_fomc_only", "finbert_bis_only"):
+        ref = encoder_ref(alias)
+        assert ref is not None, f"{alias!r} missing from registry"
+        assert ref.repo.startswith("local/"), (
+            f"{alias!r} should advertise a local path until pretraining lands"
+        )
+        assert ref.revision == "", (
+            f"{alias!r} revision should be empty until first pretrain run pins it"
+        )
+        assert not is_pinned(alias), (
+            f"is_pinned should be False for the placeholder alias {alias!r}"
+        )

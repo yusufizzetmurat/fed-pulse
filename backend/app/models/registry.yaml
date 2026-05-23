@@ -123,6 +123,33 @@ encoders:
       bake-off pairs the two checkpoints so we can isolate the contribution of
       the FinBERT prior versus the BIS substrate alone.
 
+  finbert_fomc_only:
+    repo: local/finbert-fomc-only
+    revision: ""
+    gated: false
+    task: masked_lm
+    description: |
+      Round 3 (#242) corpus-ablation sibling of ``finbert_fed_adjacent``.
+      Continued-pretrained on FOMC statements + minutes ONLY (~48 docs,
+      ~240k tokens), bypassing BIS speeches and the broader Fed-adjacent
+      JSON corpus. Produced by ``make finbert-fomc-only-pretrain``. The
+      revision stays empty until the first GPU run lands a checkpoint;
+      ``encoder_ref`` treats this as "unpinned local" and the bake-off
+      CLI will refuse to load it until the path + revision are filled in.
+
+  finbert_bis_only:
+    repo: local/finbert-bis-only
+    revision: ""
+    gated: false
+    task: masked_lm
+    description: |
+      Round 3 (#242) corpus-ablation sibling of ``finbert_fed_adjacent``.
+      Continued-pretrained on samchain/BIS_speeches_97_23_MLM ONLY,
+      dropping the legacy local Fed-adjacent auxiliary JSONs. Produced
+      by ``make finbert-bis-only-pretrain``. Revision empty until the
+      first GPU run lands a checkpoint; same unpinned-local guard as
+      ``finbert_fomc_only`` applies.
+
   finbert_fed_adjacent_xbank:
     repo: /data/artifacts/phase3/finetune_batch_20260519T190604Z/finbert_fed_adjacent_s11/hf_checkpoints
     revision: "20260519T190604Z_s11"
