@@ -115,12 +115,14 @@ RICH_REALIZED_VOL_SLICE = slice(
     RICH_MULTI_AXIS_SLICE.stop,
     RICH_MULTI_AXIS_SLICE.stop + RICH_REALIZED_VOL_DIM,
 )
-# A3 (#208) cross-asset slice (positions [37:41]).
+# A3 (#208) cross-asset slice (positions [37:45] after Path B Chunk 1:
+# VIX, DXY, TNX, gold, VIX3M, IRX, vix_term_slope, yield_curve_slope_10y_3m).
 RICH_CROSS_ASSET_SLICE = slice(
     RICH_REALIZED_VOL_SLICE.stop,
     RICH_REALIZED_VOL_SLICE.stop + RICH_CROSS_ASSET_DIM,
 )
-# B1 (#212) LLM-as-features slice (positions [41:76] one-hot + 76 flag).
+# B1 (#212) LLM-as-features slice (positions [45:80] one-hot + 80 flag
+# after Path B Chunk 1 widened cross-asset by 4).
 RICH_LLM_FEATURE_SLICE = slice(
     RICH_CROSS_ASSET_SLICE.stop,
     RICH_CROSS_ASSET_SLICE.stop + RICH_LLM_FEATURE_DIM,

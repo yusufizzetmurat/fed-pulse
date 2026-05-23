@@ -785,6 +785,14 @@ def _build_prior_window(
         # (the join-day default) so the rich-feature block stays
         # numerically clean on pre-2002 bars where VIX3M does not exist
         # and the loader's per-fold scaler does not see NaN.
+        #
+        # Unit contract: ^TNX and ^IRX both come from Yahoo Finance and
+        # both are quoted as percent yields on the same scale (e.g.
+        # TNX ~= 4.20 means 4.20% on the 10Y, IRX ~= 5.10 means 5.10%
+        # on the 13-week T-bill). The subtraction is therefore the
+        # 10Y-3M slope in percentage points; an inversion shows up as
+        # a negative number. VIX3M / VIX is a unitless ratio so the
+        # log-slope is also unitless.
         vix_term_slope_val = (
             math.log(vix3m_close_val / vix_close_val)
             if vix3m_close_val > 0.0 and vix_close_val > 0.0

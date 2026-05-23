@@ -1,7 +1,7 @@
 """Path B Chunk 1: VIX term slope + yield-curve slope per-bar emission.
 
 The slopes are computed in
-:func:`app.data.event_dataset_builder.build_prior_window` from the
+:func:`app.data.event_dataset_builder._build_prior_window` from the
 joined cross-asset row. These tests pin the formula and the
 zero-default behaviour on missing inputs without exercising the full
 yfinance fetch path.
