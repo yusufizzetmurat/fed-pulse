@@ -9,25 +9,20 @@ import { ErrorBadges } from "@/components/analyze/ErrorBadges";
 import { ForecastChart } from "@/components/analyze/ForecastChart";
 import { MarketContext } from "@/components/analyze/MarketContext";
 import { PredictionCards } from "@/components/analyze/PredictionCards";
-import { RealTrainStatus } from "@/components/analyze/RealTrainStatus";
 import { SentimentCard } from "@/components/analyze/SentimentCard";
 import { WatchlistChips } from "@/components/analyze/WatchlistChips";
 import { Header } from "@/components/shell/header";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetchTrainJob, postAnalyze, resolveApiBaseUrl } from "@/lib/analyze/api";
-import {
-  DEFAULT_TEXT,
-  REAL_TRAIN_POLL_INTERVAL_MS,
-  REAL_TRAIN_POLL_MAX,
-} from "@/lib/analyze/constants";
+import { postAnalyze, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { DEFAULT_TEXT } from "@/lib/analyze/constants";
 import {
   buildCloseSeries,
   buildVolatilitySeries,
   computeErrorMetrics,
 } from "@/lib/analyze/derive";
 import { bandLabel } from "@/lib/analyze/format";
-import type { AnalyzeRequest, AnalyzeResult, TrainJobState } from "@/lib/analyze/types";
+import type { AnalyzeRequest, AnalyzeResult } from "@/lib/analyze/types";
 
 // Lazy-load fixture-driven panels so the fixture module never ships to the
 // default analyze bundle. Only loaded when the toggle is on or when the API
@@ -42,32 +37,16 @@ function defaultRequest(): AnalyzeRequest {
     text: DEFAULT_TEXT,
     date: new Date().toISOString().slice(0, 10),
     symbol: "^GSPC",
-    forecast_mode: "fast",
     horizon: "3d",
     include_realized: false,
     include_xai: true,
   };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function trainJobMessage(state: TrainJobState): string {
-  if (state.message) return state.message;
-  if (state.status === "running") {
-    return "Real Train running on 252-day history…";
-  }
-  if (state.status === "queued") return "Real Train queued…";
-  if (state.status === "succeeded") return "Real Train completed. Rendering results.";
-  return "";
-}
-
 export default function AnalyzePage() {
   const router = useRouter();
   const [request, setRequest] = React.useState<AnalyzeRequest>(defaultRequest);
   const [result, setResult] = React.useState<AnalyzeResult | null>(null);
-  const [trainJob, setTrainJob] = React.useState<TrainJobState | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [previewV2, setPreviewV2] = React.useState(false);
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
@@ -110,33 +89,10 @@ export default function AnalyzePage() {
 
   const handleSubmit = async () => {
     setLoading(true);
-    setTrainJob(null);
     try {
-      const response = await postAnalyze(apiBaseUrl, request);
-      if (response.mode === "result") {
-        setResult(response.result);
-        toast.success("Forecast ready");
-        return;
-      }
-
-      setResult(null);
-      setTrainJob(response.job);
-      toast.info("Real Train queued — polling for completion");
-
-      for (let i = 0; i < REAL_TRAIN_POLL_MAX; i += 1) {
-        await sleep(REAL_TRAIN_POLL_INTERVAL_MS);
-        const next = await fetchTrainJob(apiBaseUrl, response.job.job_id);
-        setTrainJob({ ...next, message: trainJobMessage(next) });
-        if (next.status === "succeeded") {
-          setResult(next.result ?? null);
-          toast.success("Real Train completed");
-          return;
-        }
-        if (next.status === "failed") {
-          throw new Error(next.error || "Real Train job failed.");
-        }
-      }
-      throw new Error("Real Train timed out while waiting for completion.");
+      const result = await postAnalyze(apiBaseUrl, request);
+      setResult(result);
+      toast.success("Forecast ready");
     } catch (err) {
       setResult(null);
       const message =
@@ -197,7 +153,6 @@ export default function AnalyzePage() {
             onSelect={(symbol) => setRequest((value) => ({ ...value, symbol }))}
           />
 
-          {trainJob ? <RealTrainStatus job={trainJob} /> : null}
 
           {loading && !result ? (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
