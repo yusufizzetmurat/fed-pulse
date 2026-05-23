@@ -562,13 +562,22 @@ def _append_event_day_target(
 
 
 def _resolve_training_package_dir(training_package_id: str) -> Path:
-    """Resolve ``<id>`` to ``<DATA_DIR>/processed/<id>/``."""
+    """Resolve ``<id>`` to ``<DATA_DIR>/processed/<id>/``.
+
+    Also verifies the manifest sidecar (``dataset_metadata.sha256``)
+    when present. A mismatch raises ``ManifestShaMismatch``; a missing
+    sidecar emits a warning so the package surfaces for backfill but
+    the load proceeds.
+    """
 
     package_dir = DATA_DIR / "processed" / training_package_id
     if not package_dir.exists():
         raise FileNotFoundError(
             f"Training package directory not found: {package_dir}"
         )
+    from app.data.manifest_sha import verify_manifest_sha
+
+    verify_manifest_sha(package_dir)
     return package_dir
 
 

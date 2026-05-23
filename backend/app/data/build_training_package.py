@@ -369,7 +369,14 @@ def main() -> int:
     }
     (package_dir / "dataset_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
+    # Immutability sidecar (docs/benchmark-policy.md). A later load
+    # whose manifest disagrees with this hash raises so a silent
+    # replacement cannot reach a published run.
+    from app.data.manifest_sha import write_manifest_sha
+
+    sha = write_manifest_sha(package_dir)
     print(f"Training package created: {package_dir}")
+    print(f"Manifest sha256: {sha}")
     return 0
 
 
