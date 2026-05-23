@@ -4,6 +4,7 @@ import copy
 import dataclasses
 import logging
 import math
+import warnings
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -59,6 +60,42 @@ def _resolve_device(device: str | torch.device | None = None) -> torch.device:
     if device is not None:
         return torch.device(device)
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def _resolve_validation_fraction(
+    validation_fraction: float | None,
+    validation_split: float | None,
+) -> float:
+    """Coalesce the canonical and legacy validation-fraction kwargs.
+
+    The internal codepath has historically called the val/train split
+    knob ``validation_split``; the CLI has used ``--validation-fraction``
+    since the v2 refactor. Issue #181 collapses the two onto the
+    canonical name everywhere. Callers passing ``validation_split=``
+    keep working but get a single ``DeprecationWarning`` per call so
+    the rename can finish in a future PR without breaking downstream
+    smoke tests in-flight.
+    """
+
+    if validation_fraction is not None and validation_split is not None:
+        raise TypeError(
+            "received both ``validation_fraction`` and ``validation_split``. "
+            "Pass only ``validation_fraction``; ``validation_split`` is the "
+            "deprecated alias."
+        )
+    if validation_split is not None:
+        warnings.warn(
+            "``validation_split`` is deprecated; use ``validation_fraction``. "
+            "The val partition is a chronological prefix of the training "
+            "slice, not a sklearn-style random split, and the new name "
+            "reflects that.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return float(validation_split)
+    if validation_fraction is None:
+        return float(DEFAULT_VALIDATION_SPLIT)
+    return float(validation_fraction)
 
 
 from typing import overload
@@ -675,7 +712,8 @@ def train_model(
     epochs: int = DEFAULT_EPOCHS,
     batch_size: int = DEFAULT_BATCH_SIZE,
     learning_rate: float = DEFAULT_LEARNING_RATE,
-    validation_split: float = DEFAULT_VALIDATION_SPLIT,
+    validation_fraction: float | None = None,
+    validation_split: float | None = None,
     early_stopping_patience: int = DEFAULT_EARLY_STOPPING_PATIENCE,
     checkpoint_path: str | Path | None = None,
     save_checkpoint: bool = True,
@@ -691,6 +729,16 @@ def train_model(
     lr_schedule: str = "plateau",
     use_class_weights: bool = True,
 ) -> TrainingResult:
+    # ``validation_split`` is the legacy kwarg name; ``validation_fraction``
+    # is the canonical one across the CLI, the training loop, and the
+    # downstream consumers. Both are accepted on this signature so the
+    # public API does not break callers that still pass the old name;
+    # the deprecation warning fires only when the legacy kwarg is the
+    # one being used (positional ambiguity is impossible because both
+    # are keyword-only). See issue #181 for the broader rename pass.
+    validation_split = _resolve_validation_fraction(
+        validation_fraction, validation_split
+    )
     if seed is not None:
         enable_deterministic_mode(seed)
     device_obj = _resolve_device(device)
@@ -1449,16 +1497,20 @@ def bootstrap_checkpoint(
     epochs: int = 80,
     batch_size: int = 64,
     learning_rate: float = 3e-4,
-    validation_split: float = 0.2,
+    validation_fraction: float | None = None,
+    validation_split: float | None = None,
     early_stopping_patience: int = 10,
     checkpoint_path: str | Path = BEST_MODEL_PATH,
 ) -> TrainingResult:
+    resolved_fraction = _resolve_validation_fraction(
+        validation_fraction, validation_split
+    )
     return train_model(
         vectors=vectors,
         epochs=epochs,
         batch_size=batch_size,
         learning_rate=learning_rate,
-        validation_split=validation_split,
+        validation_fraction=resolved_fraction,
         early_stopping_patience=early_stopping_patience,
         checkpoint_path=checkpoint_path,
         save_checkpoint=True,

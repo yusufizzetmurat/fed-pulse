@@ -369,7 +369,7 @@ def _run_real_train_job_body(job_id: str, payload: AnalyzeRequest) -> None:
             epochs=120,
             batch_size=64,
             learning_rate=3e-4,
-            validation_split=0.2,
+            validation_fraction=0.2,
             early_stopping_patience=12,
         )
         result = _build_analyze_response(payload, mode="real_train", history_length=REAL_TRAIN_HISTORY_LENGTH)

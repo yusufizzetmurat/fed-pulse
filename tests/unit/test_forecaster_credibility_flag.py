@@ -65,7 +65,7 @@ def _train_rmse(
         epochs=4,
         batch_size=8,
         learning_rate=1e-3,
-        validation_split=0.25,
+        validation_fraction=0.25,
         early_stopping_patience=2,
         save_checkpoint=False,
         checkpoint_path=checkpoint,

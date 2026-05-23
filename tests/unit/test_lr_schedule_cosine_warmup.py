@@ -80,7 +80,7 @@ def test_unknown_lr_schedule_raises() -> None:
             epochs=1,
             batch_size=4,
             learning_rate=1e-3,
-            validation_split=0.2,
+            validation_fraction=0.2,
             early_stopping_patience=5,
             checkpoint_path=None,
             save_checkpoint=False,

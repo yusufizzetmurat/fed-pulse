@@ -336,7 +336,7 @@ def forecast_quantitative_series(
             epochs=18,
             batch_size=32,
             learning_rate=5e-4,
-            validation_split=0.25,
+            validation_fraction=0.25,
             early_stopping_patience=4,
             save_checkpoint=False,
         )

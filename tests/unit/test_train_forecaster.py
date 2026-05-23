@@ -206,7 +206,7 @@ def test_train_model_with_pre_split_skips_internal_validation_split():
             epochs=2,
             batch_size=4,
             learning_rate=1e-3,
-            validation_split=0.25,
+            validation_fraction=0.25,
             early_stopping_patience=2,
             save_checkpoint=False,
             device="cpu",
