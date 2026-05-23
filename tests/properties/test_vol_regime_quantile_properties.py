@@ -14,9 +14,12 @@ from __future__ import annotations
 from typing import Sequence
 
 import pytest
-from hypothesis import given, settings, strategies as st
 
-from app.training.loaders import fit_vol_regime_quantiles, vol_regime_class_for
+pytest.importorskip("hypothesis")
+
+from hypothesis import given, settings, strategies as st  # noqa: E402
+
+from app.training.loaders import fit_vol_regime_quantiles, vol_regime_class_for  # noqa: E402
 
 
 def _positive_vols(min_size: int) -> st.SearchStrategy[list[float]]:
