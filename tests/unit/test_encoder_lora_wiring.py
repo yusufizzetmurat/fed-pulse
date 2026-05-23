@@ -53,13 +53,19 @@ def test_feature_vector_carries_raw_text_field() -> None:
 
 def test_factory_pops_encoder_lora_before_forecaster_model() -> None:
     """``ForecasterModel`` does not accept ``encoder_lora`` as a kwarg
-    -- the factory strips it before constructing the model. Without
-    this guard, every walk-forward run on ``encoder_lora`` propagating
-    through ModelConfig.to_dict() crashes immediately."""
+    -- the factory strips it before constructing the model. The value
+    is then stamped onto the built module so
+    ``ModelConfig.from_model`` reads it back faithfully when the run
+    summary is serialised (otherwise every Round 5 LoRA cell's
+    persisted metadata lies about whether LoRA was active)."""
 
     source = _read("backend/app/models/factory.py")
-    assert "kwargs.pop(\"encoder_lora\", None)" in source, (
+    assert "kwargs.pop(\"encoder_lora\"" in source, (
         "factory does not pop encoder_lora before ForecasterModel(**kwargs)"
+    )
+    assert "model.encoder_lora =" in source, (
+        "factory pops encoder_lora but does not re-stamp it on the model; "
+        "from_model() will read back False"
     )
 
 
