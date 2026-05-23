@@ -49,6 +49,24 @@ def _payload(*, code: str, detail: Any, run_id: str | None) -> dict[str, Any]:
     return {"code": code, "detail": detail, "run_id": run_id}
 
 
+def _json_safe(value: Any) -> Any:
+    """Recursively coerce pydantic v2's error payloads into JSON-safe shapes.
+
+    ``RequestValidationError.errors()`` can embed the raw ``Exception``
+    object under ``ctx.error`` (pydantic v2 behaviour), which the
+    default JSON encoder cannot serialise. Stringify any leftover
+    non-trivial types so the JSONResponse never raises mid-handler.
+    """
+
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
 def register_error_handlers(app: FastAPI) -> None:
     """Map known exception classes to structured `{code, detail, run_id}`
     payloads. Bare `Exception` falls through to a 500 with the message
@@ -59,10 +77,11 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def _validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
         run_id = _resolve_run_id(request)
-        log.warning("validation_error", path=request.url.path, errors=exc.errors())
+        errors = _json_safe(exc.errors())
+        log.warning("validation_error", path=request.url.path, errors=errors)
         return JSONResponse(
             status_code=422,
-            content=_payload(code="validation_error", detail=exc.errors(), run_id=run_id),
+            content=_payload(code="validation_error", detail=errors, run_id=run_id),
         )
 
     @app.exception_handler(StarletteHTTPException)
