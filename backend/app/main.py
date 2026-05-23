@@ -311,12 +311,19 @@ def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
 def _record_history(request: AnalyzeRequest, response: dict[str, Any]) -> None:
     # Persistence must not break /analyze; log so silent failures (disk full,
     # missing table, etc.) still show up in uvicorn output.
+    request_payload = request.model_dump()
+    # ``forecast_mode`` was retired from AnalyzeRequest in #265 but the
+    # analysis_runs.forecast_mode DB column stayed for the legacy
+    # history-list rendering. New rows would otherwise land with empty
+    # strings — stamp the only runtime mode that still exists so the
+    # /history listing keeps a non-empty value per row.
+    request_payload.setdefault("forecast_mode", "fast")
     try:
         with session_scope() as session:
             persist_analysis_run(
                 session,
                 payload=response,
-                request=request.model_dump(),
+                request=request_payload,
                 response=response,
             )
     except Exception:

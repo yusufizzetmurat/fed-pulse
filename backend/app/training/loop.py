@@ -833,6 +833,16 @@ def train_model(
                 )
             encoder_lora_bundle = build_lora_encoder(str(text_encoder))
             encoder_lora_bundle.encoder.to(device_obj)
+            # Stdout breadcrumb so a grep of the run log can confirm
+            # LoRA actually activated on this cell — the persisted
+            # summary only records the post-train state and the model
+            # factory previously dropped the flag (see PR fixing the
+            # encoder_lora persistence bug).
+            print(
+                f"[train_model] encoder_lora active: alias={text_encoder} "
+                f"out_dim={encoder_lora_bundle.out_dim}",
+                flush=True,
+            )
         # Fit the close-scale on the training partition only; never on
         # the val or test rows. The walk-forward protocol forbids
         # fitting any scaler over held-out events.

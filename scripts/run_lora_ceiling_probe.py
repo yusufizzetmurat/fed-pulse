@@ -30,7 +30,7 @@ from typing import Any
 
 
 _DEFAULT_PACKAGE_ID = "tp_v2_sprint1_2026_05_15_sentiment_market_core_v1.0_epv1_v1.0"
-_DEFAULT_ARCH_SWEEP_ROOT = Path("data/artifacts/regime_arch_sweep")
+_DEFAULT_ARCH_SWEEP_ROOT = Path("data/artifacts/regime_arch_sweep_chunk1")
 _DEFAULT_OUTPUT_ROOT = Path("data/artifacts/encoder_lora_ceiling_probe")
 _DEFAULT_SEED = 97
 _DEFAULT_FOLDS: tuple[str, ...] = (
