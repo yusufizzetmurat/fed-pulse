@@ -68,7 +68,9 @@ jobs:
         env:
           PYTHONPATH: backend
         run: |
-          pytest tests/unit tests/properties tests/contract tests/regression -q --maxfail=5
+          pytest tests/unit tests/properties tests/contract tests/regression \
+            -q --maxfail=5 \
+            --cov=app --cov-report=term --cov-fail-under=65
 
   frontend:
     runs-on: ubuntu-latest
