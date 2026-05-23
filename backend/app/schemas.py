@@ -153,6 +153,73 @@ class CredibilityResponse(BaseModel):
     months_since_reversal: int
 
 
+class MultiAxisStanceCard(BaseModel):
+    """Stance prediction from the multi-task head."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    label: str = Field(..., description="hawkish | dovish | neutral")
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    distribution: dict[str, float] = Field(
+        default_factory=dict,
+        description="Per-class softmax probability over hawkish/dovish/neutral.",
+    )
+
+
+class MultiAxisFactorCard(BaseModel):
+    """Forward-guidance factor regression in [-1, 1].
+
+    Positive values lean hawkish, negative values lean dovish. Sourced
+    from the multi-task head's tanh-bounded regression branch.
+    Confidence reflects training-time coverage and is left to the
+    caller to calibrate; absent supervision, the field is None.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    value: float = Field(..., ge=-1.0, le=1.0)
+    confidence: float = Field(..., ge=0.0, le=1.0)
+
+
+class MultiAxisCertaintyCard(BaseModel):
+    """Certainty prediction from the multi-task head."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    label: str = Field(..., description="certain | uncertain | neutral")
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    distribution: dict[str, float] = Field(default_factory=dict)
+
+
+class MultiAxisTopicCard(BaseModel):
+    """Topic prediction from the multi-task head."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    label: str = Field(..., description="macro | forward_guidance | market_reaction | other")
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    distribution: dict[str, float] = Field(default_factory=dict)
+
+
+class MultiAxisBlock(BaseModel):
+    """Multi-task head per-axis predictions surfaced on /analyze (#78).
+
+    The four axes mirror the multi-task head's four output branches.
+    Stance reuses the canonical 3-class classifier (also exposed on
+    the legacy ``sentiment`` field for back-compat); the other three
+    branches are populated for the first time with this block. Axes
+    whose checkpoint was trained on very few labels are flagged as
+    low-confidence; the frontend renders a muted card in that case.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    stance: MultiAxisStanceCard
+    factor: MultiAxisFactorCard | None = None
+    certainty: MultiAxisCertaintyCard | None = None
+    topic: MultiAxisTopicCard | None = None
+
+
 class AnalyzeResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
@@ -163,6 +230,7 @@ class AnalyzeResponse(BaseModel):
     series: ForecastSeriesResponse
     xai: XaiResponse | None = None
     credibility: CredibilityResponse | None = None
+    multi_axis: MultiAxisBlock | None = None
 
 
 class HistoryEntry(BaseModel):

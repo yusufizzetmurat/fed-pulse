@@ -100,9 +100,15 @@ export function describeStanceShift(shift: CompareDelta["stanceShift"]): string 
   }
 }
 
-// Certainty axis ranks "decisive" highest and "tentative" lowest so the
-// shift label tracks confidence movement, not lexical similarity.
+// Certainty axis ranks "certain" highest and "uncertain" lowest so the
+// shift label tracks confidence movement, not lexical similarity. The
+// legacy fixture labels ("decisive" / "measured" / "tentative") are
+// kept here for back-compat with persisted history entries written
+// before the canonical relabel landed.
 const _CERTAINTY_RANK: Record<string, number> = {
+  certain: 2,
+  neutral: 1,
+  uncertain: 0,
   decisive: 2,
   measured: 1,
   tentative: 0,
@@ -154,8 +160,8 @@ export function computeMultiAxisDelta(
       ? ma.certainty.confidence - mb.certainty.confidence
       : null;
 
-  const topicA = ma?.topic?.primary ?? null;
-  const topicB = mb?.topic?.primary ?? null;
+  const topicA = ma?.topic?.label ?? ma?.topic?.primary ?? null;
+  const topicB = mb?.topic?.label ?? mb?.topic?.primary ?? null;
   const topicChanged =
     topicA != null && topicB != null ? topicA !== topicB : null;
 
