@@ -23,6 +23,7 @@ from app.models.config import (
     SEQUENCE_LENGTH,
 )
 from app.models.dlinear import DLinear
+from app.models.multi_task_head import MultiTaskHead
 from app.models.tcn import TemporalConvNet
 from app.models.transformer import SmallTransformer
 
@@ -228,23 +229,35 @@ class ForecasterModel(nn.Module):
         else:
             self.recurrent_attention = None
         # Phase 9 V2 (#195) head dispatch. ``regression`` keeps the
-        # 2-output (close, vol) shape; ``classification`` switches the
-        # final linear to emit ``n_classes`` logits for CrossEntropy.
-        # The intermediate LayerNorm + Linear(hidden, head_hidden) +
-        # GELU + Dropout stack is shared across modes so the
-        # representation capacity stays comparable.
+        # 2-output (close, vol) shape; ``classification`` switches to
+        # the multi-task head (#78) which emits four branches: stance
+        # (the 3-class headline target), factor (scalar [-1, 1]),
+        # certainty (3-class), and topic (4-class). The shared
+        # pre-classifier stem mirrors the legacy LayerNorm + Linear +
+        # GELU + Dropout stack so per-branch capacity matches the
+        # baseline. Multi-task replaces single-head as the canonical
+        # classification path (state_dict shape break documented in
+        # ADR-0010); checkpoints trained on the legacy single head do
+        # not load here, and cold-start /analyze retrains from scratch.
         self.output_mode = output_mode
         self.n_classes = int(n_classes)
         self.vol_regime_quantiles = tuple(float(v) for v in vol_regime_quantiles or ())
         self.vol_regime_target = str(vol_regime_target or "forward_realized_vol_10d")
-        head_out = self.n_classes if output_mode == "classification" else 2
-        self.head = nn.Sequential(
-            nn.LayerNorm(hidden_size),
-            nn.Linear(hidden_size, head_hidden_size),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(head_hidden_size, head_out),
-        )
+        if output_mode == "classification":
+            self.head: nn.Module = MultiTaskHead(
+                hidden_size=hidden_size,
+                head_hidden_size=head_hidden_size,
+                dropout=dropout,
+                stance_classes=self.n_classes,
+            )
+        else:
+            self.head = nn.Sequential(
+                nn.LayerNorm(hidden_size),
+                nn.Linear(hidden_size, head_hidden_size),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(head_hidden_size, 2),
+            )
 
     def forward(
         self,
@@ -342,17 +355,117 @@ class ForecasterModel(nn.Module):
             pooled_step = output.mean(dim=1)
         else:
             pooled_step = output[:, -1, :]
-        raw = self.head(pooled_step)
-        # Phase 9 V2 (#195) dispatch. Classification mode returns the
-        # raw class logits ``(batch, n_classes)`` so the training-loop
-        # CrossEntropyLoss path can apply ``log_softmax`` itself. The
-        # regression path keeps the existing softplus-on-volatility
-        # post-processing (unconstrained close + non-negative vol).
+        # Phase 9 V2 (#195) + multi-task head (#78) dispatch.
+        # Classification mode calls the MultiTaskHead which emits a
+        # dict of per-axis logits; the stance branch is the canonical
+        # 3-class output the training-loop CrossEntropyLoss reads, the
+        # other three branches are stashed on ``self._last_multi_task``
+        # for the multi-task loss + the /analyze response serialiser
+        # to read. Regression mode keeps the existing 2-output
+        # (close, vol) head and softplus post-processing.
         if self.output_mode == "classification":
-            return raw  # type: ignore[no-any-return]
+            multi_task = self.head(pooled_step)
+            self._last_multi_task = {
+                key: tensor.detach() for key, tensor in multi_task.items()
+            }
+            return multi_task["stance"]  # type: ignore[no-any-return]
+        raw = self.head(pooled_step)
         close = raw[:, 0:1]
         volatility = F.softplus(raw[:, 1:2])
         return torch.cat((close, volatility), dim=1)
+
+    def forward_multi_task(
+        self,
+        x: torch.Tensor,
+        chunks: torch.Tensor | None = None,
+        elapsed_days: torch.Tensor | None = None,
+        chunk_mask: torch.Tensor | None = None,
+        credibility: torch.Tensor | None = None,
+        text_embedding: torch.Tensor | None = None,
+        text_embedding_missing: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        """Run the forward pass and return the full multi-task dict.
+
+        Classification mode only; raises ``RuntimeError`` on a model
+        configured for regression. Used by the multi-task training
+        loss (which needs gradient-tracked logits for all four
+        branches) and by the inference path (which serialises every
+        branch into the ``/analyze`` response). The main
+        :meth:`forward` returns only the stance logits so existing
+        CrossEntropy callers stay byte-compatible.
+        """
+
+        if self.output_mode != "classification":
+            raise RuntimeError(
+                "forward_multi_task requires output_mode='classification'"
+            )
+        # Mirror the body of forward() up to the pooled-step but emit
+        # the multi-task dict instead of the stance-only tensor.
+        if self.use_time_decay:
+            x = self.time_decay(x)
+        _uses_pooler = self.use_chunk_attention or self.use_llm_embeddings
+        if _uses_pooler:
+            if self.chunk_pooler is None or self.chunk_projection is None:
+                raise RuntimeError("chunk_pooler not initialised but pooler variant is active")
+            if chunks is None or elapsed_days is None:
+                variant = "use_chunk_attention" if self.use_chunk_attention else "use_llm_embeddings"
+                raise ValueError(
+                    f"ForecasterModel requires chunks/elapsed_days when {variant}=True"
+                )
+            pooled, _, _ = self.chunk_pooler(chunks, elapsed_days, mask=chunk_mask)
+            projected = self.chunk_projection(pooled)
+            if projected.dim() == 1:
+                projected = projected.unsqueeze(0)
+            seq_len = x.shape[1]
+            broadcast = projected.unsqueeze(1).expand(-1, seq_len, -1)
+            x = torch.cat([x, broadcast], dim=-1)
+        if self.credibility_features:
+            if credibility is None:
+                raise ValueError(
+                    "ForecasterModel requires `credibility` tensor when credibility_features=True"
+                )
+            if credibility.dim() == 1:
+                credibility = credibility.unsqueeze(0)
+            seq_len = x.shape[1]
+            broadcast = credibility.unsqueeze(1).expand(-1, seq_len, -1)
+            x = torch.cat([x, broadcast], dim=-1)
+        if self._text_path_active:
+            if self.text_adapter is None or text_embedding is None:
+                raise RuntimeError("text path active but inputs missing")
+            if text_embedding.dim() == 1:
+                text_embedding = text_embedding.unsqueeze(0)
+            projected = self.text_adapter(text_embedding)
+            if text_embedding_missing is None:
+                missing_column = torch.zeros(
+                    (projected.shape[0], 1),
+                    dtype=projected.dtype,
+                    device=projected.device,
+                )
+            else:
+                missing_column = text_embedding_missing
+                if missing_column.dim() == 1:
+                    missing_column = missing_column.unsqueeze(-1)
+                missing_column = missing_column.to(
+                    dtype=projected.dtype, device=projected.device
+                )
+            keep_mask = (1.0 - missing_column).clamp_(min=0.0, max=1.0)
+            projected = projected * keep_mask
+            text_slot = torch.cat([projected, missing_column], dim=-1)
+            seq_len = x.shape[1]
+            broadcast = text_slot.unsqueeze(1).expand(-1, seq_len, -1)
+            x = torch.cat([x, broadcast], dim=-1)
+        output, _ = self.lstm(x)
+        if self.uses_attention_pool:
+            if self.recurrent_attention is None:
+                raise RuntimeError(
+                    "recurrent_attention not initialised but lstm_attn variant is active"
+                )
+            pooled_step, _ = self.recurrent_attention(output)
+        elif self.uses_mean_pool:
+            pooled_step = output.mean(dim=1)
+        else:
+            pooled_step = output[:, -1, :]
+        return self.head(pooled_step)  # type: ignore[no-any-return]
 
     def attention_diagnostics(
         self,

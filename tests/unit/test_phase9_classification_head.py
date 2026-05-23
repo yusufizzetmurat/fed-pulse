@@ -40,13 +40,18 @@ def test_regression_volatility_stays_non_negative() -> None:
 
 @pytest.mark.parametrize("n_classes", [2, 3, 5])
 def test_classification_head_emits_n_class_logits(n_classes: int) -> None:
+    """The multi-task head (#78) replaced the single classification
+    Sequential. The stance branch carries the canonical 3-class
+    (configurable) target the training loop reads via the model's
+    primary forward output."""
+
     cfg = ModelConfig(
         architecture="lstm", output_mode="classification", n_classes=n_classes
     )
     model = build_forecaster(cfg)
     assert model.output_mode == "classification"
     assert model.n_classes == n_classes
-    assert model.head[-1].out_features == n_classes
+    assert model.head.stance.out_features == n_classes
     x = torch.randn(4, 5, 6)
     out = model(x)
     assert out.shape == (4, n_classes)

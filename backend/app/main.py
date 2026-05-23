@@ -252,11 +252,49 @@ def _build_analyze_response(
         "market": market,
         "model": forecast["model"],
         "series": forecast["series"],
+        "multi_axis": _build_multi_axis_block(sentiment),
     }
     if getattr(payload, "include_xai", False):
         attributions = attribute_text(payload.text)
         response["xai"] = xai_to_response(attributions)
     return response
+
+
+def _build_multi_axis_block(sentiment: dict[str, Any]) -> dict[str, Any] | None:
+    """Build the multi-axis card block from the available text signals (#78).
+
+    Stance card reuses the existing text classifier output (hawkish /
+    dovish / neutral with per-class probability). The factor /
+    certainty / topic cards are left at ``None`` for now — the
+    multi-task text classifier that will populate them is staged
+    infrastructure (see ``MultiTaskHead`` / ``MultiTaskLoss`` in the
+    models / training packages) and lands in a follow-up. The frontend
+    renders ``None`` cards with a "not available" affordance so users
+    see honest absence rather than a placeholder value.
+    """
+
+    label_raw = str(sentiment.get("label", "")).strip().lower()
+    canonical_labels = ("hawkish", "dovish", "neutral")
+    label = label_raw if label_raw in canonical_labels else "neutral"
+
+    distribution: dict[str, float] = {key: 0.0 for key in canonical_labels}
+    for entry in sentiment.get("raw", []) or []:
+        raw_label = str(entry.get("label", "")).strip().lower()
+        if raw_label in distribution:
+            distribution[raw_label] = float(entry.get("score", 0.0) or 0.0)
+    confidence = float(sentiment.get("score", distribution.get(label, 0.0)) or 0.0)
+    confidence = max(0.0, min(1.0, confidence))
+
+    return {
+        "stance": {
+            "label": label,
+            "confidence": confidence,
+            "distribution": distribution,
+        },
+        "factor": None,
+        "certainty": None,
+        "topic": None,
+    }
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)

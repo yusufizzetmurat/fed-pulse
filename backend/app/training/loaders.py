@@ -19,6 +19,9 @@ from app.models.config import (
     DEFAULT_TEXT_ADAPTER_DIM,
     DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
     FEATURE_SIZE,
+    MULTI_TASK_CERTAINTY_LABELS,
+    MULTI_TASK_STANCE_LABELS,
+    MULTI_TASK_TOPIC_LABELS,
     RICH_FEATURE_SIZE,
     RICH_LINGUISTIC_DIM,
     RichFeatureScalerParams,
@@ -1041,6 +1044,77 @@ def _attach_rich_features(
         time_label_forward = certain_label_certain = 0.0
         stance_missing = 0.0
 
+    # Multi-task head (#78) per-axis training targets. Independent of
+    # ``use_multi_axis`` (which controls the rich-feature INPUT block);
+    # targets are always lifted off the event row when present so the
+    # masked loss can contribute on every supervised row that carries a
+    # label. Missing labels leave the target at its default and the
+    # mask flag at False; the loss reads the flag to skip that axis on
+    # that row.
+    target_stance_str = (
+        str(event_row.get("axis_stance")).strip().lower()
+        if isinstance(event_row.get("axis_stance"), str)
+        and str(event_row.get("axis_stance")).strip()
+        else None
+    )
+    target_stance_idx = -1
+    target_stance_present = False
+    if target_stance_str in MULTI_TASK_STANCE_LABELS:
+        target_stance_idx = MULTI_TASK_STANCE_LABELS.index(target_stance_str)
+        target_stance_present = True
+
+    target_factor_value = _coerce_finite_float(event_row.get("axis_factor"))
+    if target_factor_value is None:
+        target_factor = 0.0
+        target_factor_present = False
+    else:
+        target_factor = max(min(float(target_factor_value), 1.0), -1.0)
+        target_factor_present = True
+
+    # Certainty: prefer the categorical ``axis_certain_label`` (string)
+    # from gtfintechlab rows; fall back to the numeric ``axis_certainty``
+    # (float in [0, 1]) binned into 3 classes when only the float is
+    # populated. Tertiles fit the {certain, uncertain, neutral} taxonomy.
+    target_certainty_idx = -1
+    target_certainty_present = False
+    certainty_str_raw = event_row.get("axis_certain_label")
+    certainty_str = (
+        str(certainty_str_raw).strip().lower()
+        if isinstance(certainty_str_raw, str) and str(certainty_str_raw).strip()
+        else None
+    )
+    if certainty_str in MULTI_TASK_CERTAINTY_LABELS:
+        target_certainty_idx = MULTI_TASK_CERTAINTY_LABELS.index(certainty_str)
+        target_certainty_present = True
+    else:
+        certainty_float = _coerce_finite_float(event_row.get("axis_certainty"))
+        if certainty_float is not None:
+            if certainty_float >= 0.66:
+                target_certainty_idx = MULTI_TASK_CERTAINTY_LABELS.index("certain")
+            elif certainty_float <= 0.33:
+                target_certainty_idx = MULTI_TASK_CERTAINTY_LABELS.index("uncertain")
+            else:
+                target_certainty_idx = MULTI_TASK_CERTAINTY_LABELS.index("neutral")
+            target_certainty_present = True
+
+    target_topic_idx = -1
+    target_topic_present = False
+    topic_raw = event_row.get("axis_topic")
+    topic_str = (
+        str(topic_raw).strip().lower()
+        if isinstance(topic_raw, str) and str(topic_raw).strip()
+        else None
+    )
+    if topic_str is not None:
+        for canonical in MULTI_TASK_TOPIC_LABELS[:-1]:
+            if canonical in topic_str:
+                target_topic_idx = MULTI_TASK_TOPIC_LABELS.index(canonical)
+                target_topic_present = True
+                break
+        if not target_topic_present:
+            target_topic_idx = MULTI_TASK_TOPIC_LABELS.index("other")
+            target_topic_present = True
+
     for vector in vectors:
         vector.credibility_drift_score = cred_drift
         vector.credibility_realized_vs_stated_gap = cred_realized
@@ -1057,6 +1131,14 @@ def _attach_rich_features(
         vector.time_label_forward = time_label_forward
         vector.certain_label_certain = certain_label_certain
         vector.stance_missing = stance_missing
+        vector.target_stance_idx = target_stance_idx
+        vector.target_stance_present = target_stance_present
+        vector.target_factor = target_factor
+        vector.target_factor_present = target_factor_present
+        vector.target_certainty_idx = target_certainty_idx
+        vector.target_certainty_present = target_certainty_present
+        vector.target_topic_idx = target_topic_idx
+        vector.target_topic_present = target_topic_present
         vector.rich_payload = True
 
 
@@ -2428,6 +2510,81 @@ def _build_training_tensors(
     else:
         y = torch.tensor(targets, dtype=torch.float32)
     return x, y, fitted_scale
+
+
+def _build_multi_task_target_tensors(
+    sequence_groups: Sequence[Sequence[FeatureVector]],
+    *,
+    vol_regime_quantiles: Sequence[float],
+) -> dict[str, torch.Tensor] | None:
+    """Materialise per-axis targets aligned with ``_build_training_tensors``.
+
+    Returns a dict of 8 1-D tensors: 4 target tensors (stance / factor /
+    certainty / topic) and 4 corresponding mask tensors. Row alignment
+    matches the classification rows ``_build_training_tensors`` emits —
+    same filter (drop rows whose ``forward_realized_vol_10d`` is missing
+    so ``vol_regime_class_for`` returns -1), same iteration order. Mask
+    tensors are True iff the underlying axis label was populated on the
+    target-row event; False rows do not contribute to that axis's loss.
+
+    Returns ``None`` when no rows survive the filter (matches the
+    None / None return contract of ``_build_training_tensors``).
+    """
+
+    stance_targets: list[int] = []
+    stance_masks: list[bool] = []
+    factor_targets: list[float] = []
+    factor_masks: list[bool] = []
+    certainty_targets: list[int] = []
+    certainty_masks: list[bool] = []
+    topic_targets: list[int] = []
+    topic_masks: list[bool] = []
+
+    for sequence_group in sequence_groups:
+        if len(sequence_group) < SEQUENCE_LENGTH + 1:
+            continue
+        for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
+            target_row = sequence_group[idx]
+            cls_idx = vol_regime_class_for(
+                getattr(target_row, "forward_realized_vol_10d", None),
+                vol_regime_quantiles,
+            )
+            if cls_idx < 0:
+                continue
+            stance_idx = int(getattr(target_row, "target_stance_idx", -1) or 0)
+            stance_present = bool(getattr(target_row, "target_stance_present", False))
+            stance_targets.append(max(stance_idx, 0))
+            stance_masks.append(stance_present)
+
+            factor_val = float(getattr(target_row, "target_factor", 0.0) or 0.0)
+            factor_present = bool(getattr(target_row, "target_factor_present", False))
+            factor_targets.append(factor_val)
+            factor_masks.append(factor_present)
+
+            certainty_idx = int(getattr(target_row, "target_certainty_idx", -1) or 0)
+            certainty_present = bool(
+                getattr(target_row, "target_certainty_present", False)
+            )
+            certainty_targets.append(max(certainty_idx, 0))
+            certainty_masks.append(certainty_present)
+
+            topic_idx = int(getattr(target_row, "target_topic_idx", -1) or 0)
+            topic_present = bool(getattr(target_row, "target_topic_present", False))
+            topic_targets.append(max(topic_idx, 0))
+            topic_masks.append(topic_present)
+
+    if not stance_targets:
+        return None
+    return {
+        "stance": torch.tensor(stance_targets, dtype=torch.long),
+        "stance_mask": torch.tensor(stance_masks, dtype=torch.bool),
+        "factor": torch.tensor(factor_targets, dtype=torch.float32),
+        "factor_mask": torch.tensor(factor_masks, dtype=torch.bool),
+        "certainty": torch.tensor(certainty_targets, dtype=torch.long),
+        "certainty_mask": torch.tensor(certainty_masks, dtype=torch.bool),
+        "topic": torch.tensor(topic_targets, dtype=torch.long),
+        "topic_mask": torch.tensor(topic_masks, dtype=torch.bool),
+    }
 
 
 def _build_text_embedding_tensors(

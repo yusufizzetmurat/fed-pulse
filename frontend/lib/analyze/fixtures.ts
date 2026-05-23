@@ -16,13 +16,16 @@ export const SAMPLE_MULTI_AXIS: MultiAxisResponse = {
     range: [0.14, 0.49],
   },
   certainty: {
-    label: "decisive",
+    label: "certain",
     confidence: 0.68,
+    distribution: { certain: 0.68, uncertain: 0.18, neutral: 0.14 },
   },
   topic: {
-    primary: "inflation_persistence",
+    label: "macro",
+    primary: "macro",
     confidence: 0.58,
-    secondary: ["labor_market_tightness", "growth_path"],
+    secondary: ["forward_guidance", "market_reaction"],
+    distribution: { macro: 0.58, forward_guidance: 0.27, market_reaction: 0.1, other: 0.05 },
   },
 };
 

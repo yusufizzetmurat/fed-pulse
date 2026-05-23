@@ -132,6 +132,25 @@ RICH_LLM_FEATURE_MISSING_SLICE = slice(
     RICH_LLM_FEATURE_SLICE.stop + RICH_LLM_FEATURE_MISSING_DIM,
 )
 
+# Multi-task head (#78) axis cardinalities and canonical label maps.
+# The multi-task head emits four branches; the cardinalities are pinned
+# here so the loader, the model factory, and the inference path agree on
+# the shape. Adding a topic label would require bumping
+# MULTI_TASK_TOPIC_LABELS in lockstep with the loader's topic-string
+# normaliser; the four buckets below cover the only topic-string
+# families that show up on gtfintechlab + scraped Fed rows.
+MULTI_TASK_STANCE_CLASSES = 3
+MULTI_TASK_CERTAINTY_CLASSES = 3
+MULTI_TASK_TOPIC_CLASSES = 4
+MULTI_TASK_STANCE_LABELS: tuple[str, ...] = ("hawkish", "dovish", "neutral")
+MULTI_TASK_CERTAINTY_LABELS: tuple[str, ...] = ("certain", "uncertain", "neutral")
+MULTI_TASK_TOPIC_LABELS: tuple[str, ...] = (
+    "macro",
+    "forward_guidance",
+    "market_reaction",
+    "other",
+)
+
 # Text-embedding adapter dim search axis. The forecaster sweep iterates
 # over these values so the diminishing-returns curve across {32, 64, 128}
 # shows up in the aggregator table. The default mirrors the small-data
@@ -509,6 +528,25 @@ class FeatureVector:
     # across the prior-window. Stays empty on every static-cache path
     # so the legacy embedding pipeline is byte-identical.
     raw_text: str = ""
+    # Multi-task head (#78) per-axis training targets. Populated by the
+    # loader on the target-row bar (last index of each supervised
+    # sequence); the lookback bars carry the defaults. ``target_*_present``
+    # is the per-axis mask the loss reads to decide whether the row
+    # contributes to that axis's loss. Indices use the canonical
+    # mappings: stance {hawkish: 0, dovish: 1, neutral: 2}, certainty
+    # {certain: 0, uncertain: 1, neutral: 2}, topic {macro: 0,
+    # forward_guidance: 1, market_reaction: 2, other: 3}. Factor is a
+    # signed scalar in [-1, 1] (no idx). When a label is absent the
+    # target field stays at its default and the mask is False, so the
+    # masked loss contributes zero for that axis on that row.
+    target_stance_idx: int = -1
+    target_stance_present: bool = False
+    target_factor: float = 0.0
+    target_factor_present: bool = False
+    target_certainty_idx: int = -1
+    target_certainty_present: bool = False
+    target_topic_idx: int = -1
+    target_topic_present: bool = False
 
     @classmethod
     def from_market_state(

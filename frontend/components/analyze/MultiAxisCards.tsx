@@ -121,12 +121,13 @@ function CertaintyCard({ certainty }: { certainty: NonNullable<MultiAxisResponse
 }
 
 function TopicCard({ topic }: { topic: NonNullable<MultiAxisResponse["topic"]> }) {
+  const display = (topic.label ?? topic.primary ?? "other").toString();
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardDescription>Topic</CardDescription>
         <CardTitle className="text-xl capitalize">
-          {topic.primary.replace(/_/g, " ")}
+          {display.replace(/_/g, " ")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
