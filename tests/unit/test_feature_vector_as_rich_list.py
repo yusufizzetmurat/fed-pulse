@@ -94,8 +94,9 @@ def test_realized_vol_slice_default_is_zero() -> None:
 
 
 def test_cross_asset_slice_emits_at_documented_positions() -> None:
-    """A3 (#208) cross-asset close levels land at positions [37:41]
-    in the order VIX, DXY, TNX, gold."""
+    """Cross-asset close levels + Chunk 1 (VIX term structure + 10Y-3M
+    yield slope) land at positions [37:45] in the order VIX, DXY, TNX,
+    gold, VIX3M, IRX, vix_term_slope, yield_curve_slope_10y_3m."""
 
     from app.models.config import RICH_CROSS_ASSET_SLICE
 
@@ -104,17 +105,30 @@ def test_cross_asset_slice_emits_at_documented_positions() -> None:
         dxy_close=104.5,
         tnx_close=4.21,
         gold_close=1942.0,
+        vix3m_close=23.7,
+        irx_close=5.15,
+        vix_term_slope=0.061,
+        yield_curve_slope_10y_3m=-0.94,
     )
-    assert fv.as_rich_list()[RICH_CROSS_ASSET_SLICE] == [22.3, 104.5, 4.21, 1942.0]
+    assert fv.as_rich_list()[RICH_CROSS_ASSET_SLICE] == [
+        22.3,
+        104.5,
+        4.21,
+        1942.0,
+        23.7,
+        5.15,
+        0.061,
+        -0.94,
+    ]
 
 
 def test_cross_asset_slice_default_is_zero() -> None:
-    """Legacy / pre-A3 FeatureVectors carry 0.0 across all 4 axes."""
+    """Legacy / pre-Chunk-1 FeatureVectors carry 0.0 across all 8 axes."""
 
     from app.models.config import RICH_CROSS_ASSET_SLICE
 
     fv = _base_vector()
-    assert fv.as_rich_list()[RICH_CROSS_ASSET_SLICE] == [0.0, 0.0, 0.0, 0.0]
+    assert fv.as_rich_list()[RICH_CROSS_ASSET_SLICE] == [0.0] * 8
 
 
 def test_llm_features_slice_default_is_missing_flag_one() -> None:

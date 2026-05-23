@@ -427,6 +427,13 @@ def _bars_to_feature_vectors(
         dxy_close_value = float(bar.get("dxy_close", 0.0))
         tnx_close_value = float(bar.get("tnx_close", 0.0))
         gold_close_value = float(bar.get("gold_close", 0.0))
+        # Path B Chunk 1 (vol-regime macro features). Missing keys on
+        # pre-widen events.parquet default to 0.0 — same back-compat
+        # contract as the A3 cross-asset bundle.
+        vix3m_close_value = float(bar.get("vix3m_close", 0.0))
+        irx_close_value = float(bar.get("irx_close", 0.0))
+        vix_term_slope_value = float(bar.get("vix_term_slope", 0.0))
+        yield_curve_slope_value = float(bar.get("yield_curve_slope_10y_3m", 0.0))
         elapsed_time = float((bar_date - event_date).days)
         fv = FeatureVector.from_market_state(
             date=date_value,
@@ -443,6 +450,10 @@ def _bars_to_feature_vectors(
         fv.dxy_close = dxy_close_value
         fv.tnx_close = tnx_close_value
         fv.gold_close = gold_close_value
+        fv.vix3m_close = vix3m_close_value
+        fv.irx_close = irx_close_value
+        fv.vix_term_slope = vix_term_slope_value
+        fv.yield_curve_slope_10y_3m = yield_curve_slope_value
         vectors.append(fv)
         previous_close = close_value
         previous_volatility = volatility_value

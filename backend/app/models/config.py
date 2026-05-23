@@ -62,7 +62,15 @@ RICH_REALIZED_VOL_DIM = 2
 # gold). Each is a single float per bar. VIX is the market's own
 # forward-vol forecast; the others capture risk-on/risk-off (DXY),
 # the rates-pricing layer (TNX), and flight-to-safety (gold).
-RICH_CROSS_ASSET_DIM = 4
+# Path B Chunk 1 (#239 follow-up): widened from 4 (VIX, DXY, TNX, gold)
+# to 8 by adding the 3M VIX term-structure series, the 13-week T-bill
+# yield, plus two derived stationary slopes (VIX term slope, 10Y-3M
+# yield-curve slope). These are the macro features the vol-forecasting
+# literature consistently relies on; the raw levels alone were not
+# sufficient. Bumps RICH_FEATURE_SIZE by 4 (the four new dims); old
+# checkpoints carrying the pre-widen size become incompatible and the
+# next sweep refits both the model and the per-fold RobustScaler.
+RICH_CROSS_ASSET_DIM = 8
 # B1 (#212) LLM-as-features one-hot block. 10 catalogue features with
 # {4, 4, 5, 4, 4, 4, 2, 2, 3, 3} levels = 35 one-hot dimensions plus
 # one ``llm_features_missing`` flag for events where the extraction
@@ -107,12 +115,14 @@ RICH_REALIZED_VOL_SLICE = slice(
     RICH_MULTI_AXIS_SLICE.stop,
     RICH_MULTI_AXIS_SLICE.stop + RICH_REALIZED_VOL_DIM,
 )
-# A3 (#208) cross-asset slice (positions [37:41]).
+# A3 (#208) cross-asset slice (positions [37:45] after Path B Chunk 1:
+# VIX, DXY, TNX, gold, VIX3M, IRX, vix_term_slope, yield_curve_slope_10y_3m).
 RICH_CROSS_ASSET_SLICE = slice(
     RICH_REALIZED_VOL_SLICE.stop,
     RICH_REALIZED_VOL_SLICE.stop + RICH_CROSS_ASSET_DIM,
 )
-# B1 (#212) LLM-as-features slice (positions [41:76] one-hot + 76 flag).
+# B1 (#212) LLM-as-features slice (positions [45:80] one-hot + 80 flag
+# after Path B Chunk 1 widened cross-asset by 4).
 RICH_LLM_FEATURE_SLICE = slice(
     RICH_CROSS_ASSET_SLICE.stop,
     RICH_CROSS_ASSET_SLICE.stop + RICH_LLM_FEATURE_DIM,
@@ -455,6 +465,14 @@ class FeatureVector:
     dxy_close: float = 0.0
     tnx_close: float = 0.0
     gold_close: float = 0.0
+    # Path B Chunk 1: VIX term structure + short-end yield + the two
+    # derived stationary slopes. Same back-compat contract as the
+    # original four — missing fields on pre-widen events.parquet
+    # default to 0.0 in the loader.
+    vix3m_close: float = 0.0
+    irx_close: float = 0.0
+    vix_term_slope: float = 0.0
+    yield_curve_slope_10y_3m: float = 0.0
     # B1 (#212) LLM-as-features one-hot block. 35-dim list mirroring
     # the catalogue order; each per-feature slot is a one-hot over the
     # feature's allowed levels. Default ``None`` keeps the regression /
@@ -578,6 +596,10 @@ class FeatureVector:
             float(self.dxy_close),
             float(self.tnx_close),
             float(self.gold_close),
+            float(self.vix3m_close),
+            float(self.irx_close),
+            float(self.vix_term_slope),
+            float(self.yield_curve_slope_10y_3m),
         ]
         # B1 (#212) LLM-as-features block. When ``llm_features`` is
         # ``None`` (legacy path or extraction not yet attached) the

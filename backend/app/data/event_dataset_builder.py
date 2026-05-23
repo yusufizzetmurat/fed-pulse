@@ -173,6 +173,15 @@ CROSS_ASSET_SYMBOLS: tuple[tuple[str, str], ...] = (
     ("DX-Y.NYB", "dxy_close"),
     ("^TNX", "tnx_close"),
     ("GC=F", "gold_close"),
+    # Chunk 1 of Path B (#239 / Round 1 follow-up): VIX term structure
+    # + short-end yield. ``^VIX3M`` is the 3-month CBOE volatility
+    # index; the ratio against the 30-day ^VIX is the textbook
+    # vol-regime warning signal (backwardation = stressed). ``^IRX``
+    # is the 13-week T-bill yield (×100); combined with ^TNX it pins
+    # the 10Y–3M yield-curve slope, which the vol-forecasting
+    # literature consistently uses as a regime predictor.
+    ("^VIX3M", "vix3m_close"),
+    ("^IRX", "irx_close"),
 )
 MARKET_MODEL_WINDOW_DAYS = 252
 VOL_WINDOW_DAYS = 10
@@ -321,6 +330,16 @@ class _PriorBar:
     dxy_close: float = 0.0
     tnx_close: float = 0.0
     gold_close: float = 0.0
+    # Path B Chunk 1: VIX term structure + short-end yield. Raw closes
+    # for the new series; the per-bar emission below computes the two
+    # derived slopes (``vix_term_slope``, ``yield_curve_slope_10y_3m``)
+    # so the model sees both the levels and the stationary spreads.
+    # Series with no observation default to 0.0 — same back-compat
+    # contract as the original four cross-asset axes.
+    vix3m_close: float = 0.0
+    irx_close: float = 0.0
+    vix_term_slope: float = 0.0
+    yield_curve_slope_10y_3m: float = 0.0
 
 
 @dataclass
@@ -758,6 +777,32 @@ def _build_prior_window(
             if cross_asset_lookup is not None
             else {}
         )
+        vix_close_val = float(cross_asset_row.get("vix_close", 0.0))
+        tnx_close_val = float(cross_asset_row.get("tnx_close", 0.0))
+        vix3m_close_val = float(cross_asset_row.get("vix3m_close", 0.0))
+        irx_close_val = float(cross_asset_row.get("irx_close", 0.0))
+        # Derived slopes. Both go to 0.0 when either input is missing
+        # (the join-day default) so the rich-feature block stays
+        # numerically clean on pre-2002 bars where VIX3M does not exist
+        # and the loader's per-fold scaler does not see NaN.
+        #
+        # Unit contract: ^TNX and ^IRX both come from Yahoo Finance and
+        # both are quoted as percent yields on the same scale (e.g.
+        # TNX ~= 4.20 means 4.20% on the 10Y, IRX ~= 5.10 means 5.10%
+        # on the 13-week T-bill). The subtraction is therefore the
+        # 10Y-3M slope in percentage points; an inversion shows up as
+        # a negative number. VIX3M / VIX is a unitless ratio so the
+        # log-slope is also unitless.
+        vix_term_slope_val = (
+            math.log(vix3m_close_val / vix_close_val)
+            if vix3m_close_val > 0.0 and vix_close_val > 0.0
+            else 0.0
+        )
+        yield_curve_slope_val = (
+            tnx_close_val - irx_close_val
+            if tnx_close_val > 0.0 and irx_close_val > 0.0
+            else 0.0
+        )
         bars.append(
             _PriorBar(
                 date=bar_date,
@@ -767,10 +812,14 @@ def _build_prior_window(
                 cum_return_20d=cum_return,
                 vol_20d=extra_vols.get(20, 0.0),
                 vol_60d=extra_vols.get(60, 0.0),
-                vix_close=float(cross_asset_row.get("vix_close", 0.0)),
+                vix_close=vix_close_val,
                 dxy_close=float(cross_asset_row.get("dxy_close", 0.0)),
-                tnx_close=float(cross_asset_row.get("tnx_close", 0.0)),
+                tnx_close=tnx_close_val,
                 gold_close=float(cross_asset_row.get("gold_close", 0.0)),
+                vix3m_close=vix3m_close_val,
+                irx_close=irx_close_val,
+                vix_term_slope=vix_term_slope_val,
+                yield_curve_slope_10y_3m=yield_curve_slope_val,
             )
         )
     # Enforce no look-ahead: last prior bar must be < as_of
@@ -1122,6 +1171,10 @@ def _prior_window_sha(bars: Sequence[_PriorBar]) -> str:
                     f"{b.dxy_close:.6f}",
                     f"{b.tnx_close:.6f}",
                     f"{b.gold_close:.6f}",
+                    f"{b.vix3m_close:.6f}",
+                    f"{b.irx_close:.6f}",
+                    f"{b.vix_term_slope:.6f}",
+                    f"{b.yield_curve_slope_10y_3m:.6f}",
                 ]
             )
         )
@@ -1142,6 +1195,10 @@ def _bars_to_json(bars: Sequence[_PriorBar]) -> str:
             "dxy_close": round(b.dxy_close, 6),
             "tnx_close": round(b.tnx_close, 6),
             "gold_close": round(b.gold_close, 6),
+            "vix3m_close": round(b.vix3m_close, 6),
+            "irx_close": round(b.irx_close, 6),
+            "vix_term_slope": round(b.vix_term_slope, 6),
+            "yield_curve_slope_10y_3m": round(b.yield_curve_slope_10y_3m, 6),
         }
         for b in bars
     ]
