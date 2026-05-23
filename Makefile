@@ -306,6 +306,17 @@ regime-arch-sweep:
 		$(if $(NLP_TEXT_ENCODER),--text-encoder "$(NLP_TEXT_ENCODER)",) \
 		--report-root /data/artifacts/regime_arch_sweep
 
+# GARCH(1,1) classical-finance reference baseline. Fits per fold on
+# SPX log-returns up to train_end, forecasts 10-day forward conditional
+# vol, bins via train-slice quantile cutoffs, reports pooled macro-F1
+# with a moving-block bootstrap CI under
+# data/artifacts/garch_baseline/$(TRAINING_PACKAGE_ID)/.
+garch-baseline:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose run --rm backend \
+		python scripts/garch_baseline.py \
+		--training-package-id "$(TRAINING_PACKAGE_ID)"
+
 # Pooled-fold macro-F1 with bootstrap CIs across every per-fold trial in
 # INPUT_DIR. INPUT_DIR is recursively walked for
 # forecaster_sweep_results.json files.
