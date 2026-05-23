@@ -502,8 +502,8 @@ def _render_row_line(row: ArchitectureRow, rank: int, coverage_pct: int) -> str:
     n = len(row.combined_rmse_values)
     c = row.close_rmse_ci
     v = row.volatility_rmse_ci
-    train_ci = row.train_rmse_ci
-    val_ci = row.val_rmse_ci
+    train_ci = row.train_rmse_ci if row.train_rmse_ci is not None else row.combined_rmse_ci
+    val_ci = row.val_rmse_ci if row.val_rmse_ci is not None else row.combined_rmse_ci
     test_ci = row.test_rmse_ci if row.test_rmse_ci is not None else row.combined_rmse_ci
     gap_text = f"{row.test_train_gap:+.3f}"
     if row.gap_flag == "high":

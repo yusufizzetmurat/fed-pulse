@@ -41,14 +41,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install ".[dev]"
-      - name: mypy on strictly-typed modules
+      - name: mypy --strict on typed modules
         working-directory: backend
         run: |
-          mypy --ignore-missing-imports --no-strict-optional \
+          mypy --strict --ignore-missing-imports \
             --follow-imports=silent \
             app/config.py app/determinism.py app/schemas.py \
             app/data/sources app/data/label_schemas.py \
-            app/training app/models
+            app/training app/models app/services app/evaluation
 
   pytest:
     runs-on: ubuntu-latest

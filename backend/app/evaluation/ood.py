@@ -193,7 +193,7 @@ def _narrow_aggregation(value: object) -> EnergyAggregation:
     """
 
     if value in ("mean", "max", "median"):
-        return value  # type: ignore[return-value]
+        return value
     raise ValueError(f"unknown OOD aggregation: {value!r}")
 
 

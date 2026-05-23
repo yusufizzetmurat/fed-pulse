@@ -93,10 +93,10 @@ def fit_temperature(
         optimiser.zero_grad()
         T = torch.exp(log_T).clamp(min=_T_FLOOR)
         loss = F.cross_entropy(logits / T, targets)
-        loss.backward()
+        loss.backward()  # type: ignore[no-untyped-call]
         return loss
 
-    optimiser.step(_closure)
+    optimiser.step(_closure)  # type: ignore[no-untyped-call]
     return float(torch.exp(log_T).detach().clamp(min=_T_FLOOR).item())
 
 
@@ -245,7 +245,7 @@ _MARGIN_PX = 72
 _TITLE_PX = 36
 
 
-def _load_font(size: int) -> ImageFont.ImageFont:
+def _load_font(size: int) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
     candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
