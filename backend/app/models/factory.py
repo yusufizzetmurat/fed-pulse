@@ -66,7 +66,10 @@ def build_forecaster(config: ModelConfig | dict[str, Any]) -> ForecasterModel:
     # ``encoder_lora=False`` even on an active LoRA cell.
     encoder_lora_flag = bool(kwargs.pop("encoder_lora", False))
     model = ForecasterModel(model_type=architecture, **kwargs)
-    model.encoder_lora = encoder_lora_flag
+    # mypy reads ``nn.Module`` attribute writes as ``Tensor | Module``;
+    # the LoRA flag is a plain bool stashed for ``from_model`` to read
+    # back, so suppress the noise rather than register a fake buffer.
+    model.encoder_lora = encoder_lora_flag  # type: ignore[assignment]
     return model
 
 
