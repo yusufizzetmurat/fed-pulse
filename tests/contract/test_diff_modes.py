@@ -45,27 +45,29 @@ _BASE_PAYLOAD = {
 
 @pytest.fixture(scope="module")
 def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
-    """TestClient with the checkpoint path redirected to a tmp dir.
+    """TestClient with the model singleton redirected to an empty path.
 
     The repo's local ``backend/models/forecaster_best.pt`` is whatever
     the most recent training run produced — its head shape may not
-    match the current ``ForecasterModel`` definition. Pointing
-    ``BEST_MODEL_PATH`` at an empty tmp dir forces the bootstrap
-    cold-start path on first request, so the test sees a freshly
-    fitted checkpoint that matches the in-process model.
+    match the current ``ForecasterModel`` definition. Rebinding
+    ``BEST_MODEL_PATH`` inside ``app.services.forecaster`` (and
+    resetting the cached singleton) sends the next ``_get_model()``
+    call to a non-existent file; the loader falls through to a
+    default-init model rather than raising on a head-shape mismatch.
+
+    This does NOT trigger the cold-start bootstrap path — that branch
+    keys off ``checkpoint_exists()`` whose default arg is bound at
+    import time and is not reached from here. A fresh-init model is
+    sufficient for shape-invariant contract tests; the goal is a
+    deterministic, crash-free inference path, not a fitted forecast.
     """
 
-    from app.models import config as model_config
     from app.services import forecaster as forecaster_module
 
     fresh_dir = tmp_path_factory.mktemp("forecaster_models")
     fresh_path = fresh_dir / "forecaster_best.pt"
 
-    # Patch both the module constant and the live re-imports in
-    # services.forecaster + main, then reset the singleton so the
-    # next inference call has nothing cached from a prior run.
-    original = model_config.BEST_MODEL_PATH
-    model_config.BEST_MODEL_PATH = fresh_path
+    original = forecaster_module.BEST_MODEL_PATH
     forecaster_module.BEST_MODEL_PATH = fresh_path
     forecaster_module._model = None
     forecaster_module._model_artifact_metadata = None
@@ -73,16 +75,27 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
     try:
         yield TestClient(app)
     finally:
-        model_config.BEST_MODEL_PATH = original
         forecaster_module.BEST_MODEL_PATH = original
         forecaster_module._model = None
         forecaster_module._model_artifact_metadata = None
 
 
-def _is_finite(value: Any) -> bool:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return math.isfinite(value)
-    return True
+@pytest.fixture(scope="module")
+def responses(client: TestClient) -> dict[str, dict[str, Any]]:
+    """Call /analyze once per sync mode and cache the response.
+
+    Each invariant assertion below reads from this cache instead of
+    re-POSTing — ``quick_train`` runs the adaptation training on every
+    call, so a per-test post-and-train would multiply CI time and add
+    flake surface.
+    """
+
+    cached: dict[str, dict[str, Any]] = {}
+    for mode in ("fast", "quick_train"):
+        response = client.post("/analyze", json={**_BASE_PAYLOAD, "forecast_mode": mode})
+        assert response.status_code == 200, response.text
+        cached[mode] = response.json()
+    return cached
 
 
 def _walk_check_finite(payload: Any, path: str = "$") -> list[str]:
@@ -101,23 +114,20 @@ def _walk_check_finite(payload: Any, path: str = "$") -> list[str]:
 
 
 @pytest.mark.parametrize("mode", ["fast", "quick_train"])
-def test_sync_mode_volatility_is_non_negative(client: TestClient, mode: str) -> None:
-    response = client.post("/analyze", json={**_BASE_PAYLOAD, "forecast_mode": mode})
-    assert response.status_code == 200, response.text
-    body = response.json()
-
+def test_sync_mode_volatility_is_non_negative(
+    responses: dict[str, dict[str, Any]], mode: str
+) -> None:
+    body = responses[mode]
     assert body["prediction"]["volatility"] >= 0.0
     for value in body["series"]["forecast_volatility"]:
         assert value >= 0.0
 
 
 @pytest.mark.parametrize("mode", ["fast", "quick_train"])
-def test_sync_mode_band_width_is_non_decreasing(client: TestClient, mode: str) -> None:
-    response = client.post("/analyze", json={**_BASE_PAYLOAD, "forecast_mode": mode})
-    assert response.status_code == 200, response.text
-    body = response.json()
-
-    series = body["series"]
+def test_sync_mode_band_width_is_non_decreasing(
+    responses: dict[str, dict[str, Any]], mode: str
+) -> None:
+    series = responses[mode]["series"]
     widths = [
         upper - lower
         for upper, lower in zip(
@@ -134,12 +144,10 @@ def test_sync_mode_band_width_is_non_decreasing(client: TestClient, mode: str) -
 
 
 @pytest.mark.parametrize("mode", ["fast", "quick_train"])
-def test_sync_mode_response_has_no_nan(client: TestClient, mode: str) -> None:
-    response = client.post("/analyze", json={**_BASE_PAYLOAD, "forecast_mode": mode})
-    assert response.status_code == 200, response.text
-    body = response.json()
-
-    bad_paths = _walk_check_finite(body)
+def test_sync_mode_response_has_no_nan(
+    responses: dict[str, dict[str, Any]], mode: str
+) -> None:
+    bad_paths = _walk_check_finite(responses[mode])
     assert not bad_paths, (
         f"{mode}: response contains non-finite float at: {bad_paths[:5]}"
     )
