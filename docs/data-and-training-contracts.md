@@ -257,9 +257,19 @@ One row per FOMC meeting from 2010-01-01 to today, with:
 - `pre_event_curve`, `post_event_curve` — JSON lists of
   `(months_ahead, implied_rate)` at {1, 3, 6, 12, 24}-month points
 - `fed_info_factor` — residual of `mp_surprise_level` regressed on the
-  same-day SPX return (Cieslak-Vissing-Jorgensen 2021-style
-  decomposition; documented `daily_window_proxy` flag because intraday
-  ±30 min SPX data is out of scope)
+  SPX return around each announcement (Cieslak-Vissing-Jorgensen
+  2021-style decomposition). The `fed_info_factor_source` column
+  records which SPX series the row used:
+  - `alphavantage_intraday_30min` — ±30 min SPY return from
+    `app.data.alphavantage_spx`, cache at
+    `data/external/alphavantage/spx_intraday_fomc_days.parquet`. This
+    is the CVJ-faithful measurement when available.
+  - `daily_window_proxy` — close-to-close return over the
+    `[t-1, t+1]` window from the FRED-licensed daily SPX. Used as a
+    fallback when the intraday cache does not cover the event date.
+  - `unavailable` — neither source had coverage; the row stamps
+    `fed_info_factor = None` so it is distinguishable from a real-
+    but-tiny residual.
 - `is_intermeeting` — true for unscheduled / emergency actions
   (2020-03-03 and 2020-03-15 in the bundled calendar)
 - `methodology` — `ois_proxy` (Treasury-yield proxy via DGS1MO /
