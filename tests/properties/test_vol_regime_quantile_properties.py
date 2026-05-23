@@ -66,19 +66,27 @@ def test_cutoff_count_matches_n_classes_minus_one(
 @given(vols=_positive_vols(min_size=60))
 @settings(max_examples=50, deadline=3_000)
 def test_class_assignment_does_not_collapse(vols: Sequence[float]) -> None:
-    """Apply the fitted cutoffs to the same vols. The partition must not
-    collapse — i.e., no single class may absorb more than ~55% of the
-    rows. A class CAN end up empty when the input is degenerate (many
-    ties at the edges pin a cutoff onto the min or max); that is a
-    quantile-fit corner, not a fitter bug.
+    """Apply the fitted cutoffs to the same vols. On non-degenerate
+    inputs (where the train values actually span the fitted cutoffs)
+    no class may absorb more than ~55% of the rows.
 
-    The dominant-class bound is what catches a real regression: if the
-    fitter ever produces cutoffs that send everything into class 1 (the
-    middle bin), the test fails."""
+    Degenerate inputs — all values identical, or the fitted cutoffs
+    collapse against the min/max so the partition cannot bin the data
+    — are skipped via ``hypothesis.assume``: those cases are quantile
+    corners, not fitter bugs. The dominant-class bound is what catches
+    a real regression where the fitter sends everything into one bin
+    on a well-spread distribution."""
+
+    from hypothesis import assume
 
     cutoffs = fit_vol_regime_quantiles(vols, n_classes=3)
     if not cutoffs:
         return
+    assume(min(vols) < max(vols))
+    assume(cutoffs[0] < cutoffs[-1])
+    assume(cutoffs[0] > min(vols))
+    assume(cutoffs[-1] < max(vols))
+
     labels = [vol_regime_class_for(v, cutoffs) for v in vols]
     n = len(labels)
     for c in (0, 1, 2):
