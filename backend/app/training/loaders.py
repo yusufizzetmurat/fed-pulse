@@ -1245,6 +1245,7 @@ def _load_package_sequences_with_metadata(
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
     use_text_embeddings: bool = True,
     text_embedding_cache_dir: Path | str | None = None,
+    encoder_lora: bool = False,
 ) -> list[tuple[list[FeatureVector], str, str]]:
     """Materialise every event in a training package as a sequence triple.
 
@@ -1478,6 +1479,19 @@ def _load_package_sequences_with_metadata(
             for vector in vectors:
                 vector.text_embedding_pooled = list(pooled_list)
                 vector.text_embedding_missing = missing_flag
+        if encoder_lora:
+            # Round 5 (#244) per-event raw text for in-loop LoRA
+            # tokenisation. Only the target-row bar (last in the
+            # sequence after ``_append_event_day_target``) carries the
+            # text -- the lookback bars do not need it since the
+            # tokeniser reads ``sequence[-1].raw_text`` per sequence.
+            # The text comes from the event's own ``text`` column,
+            # not from the prior-4 statement pool, so the LoRA path
+            # learns gradients w.r.t. the event's actual content
+            # (statement / minutes / press conference / scrape).
+            row_text = str(row.get("text", "") or "").strip()
+            if vectors:
+                vectors[-1].raw_text = row_text
         results.append((vectors, row_text_hash, event_date_str[:10]))
     return results
 
@@ -1499,6 +1513,7 @@ def load_walk_forward_split(
     use_text_embeddings: bool = True,
     text_embedding_cache_dir: Path | str | None = None,
     embargo_days: int = 0,
+    encoder_lora: bool = False,
 ) -> WalkForwardSplit:
     """Return the (train, val, test) sequence partitions for one fold.
 
@@ -1572,6 +1587,7 @@ def load_walk_forward_split(
         text_pool_lambda_inv_days=text_pool_lambda_inv_days,
         use_text_embeddings=use_text_embeddings,
         text_embedding_cache_dir=text_embedding_cache_dir,
+        encoder_lora=encoder_lora,
     )
 
     train: list[list[FeatureVector]] = []

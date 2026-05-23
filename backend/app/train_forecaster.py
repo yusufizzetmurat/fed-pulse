@@ -424,6 +424,22 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.set_defaults(use_time_decay=True)
+    parser.add_argument(
+        "--encoder-lora",
+        dest="encoder_lora",
+        action="store_true",
+        help=(
+            "Round 5 (#244) ceiling probe: pull the configured "
+            "``--text-encoder`` checkpoint into the training loop, "
+            "wrap with PEFT LoRA (r=8, alpha=16, dropout=0.1, target "
+            "modules {query, value}), and run the forward per batch "
+            "so the regime loss flows gradients into the encoder. "
+            "Default off keeps the parquet-cached embedding path. "
+            "Only supported on the walk-forward path with a registered "
+            "encoder alias (revision must be pinned)."
+        ),
+    )
+    parser.set_defaults(encoder_lora=False)
     # Phase B (#227) LR schedule + sequence-length knobs.
     parser.add_argument(
         "--lr-schedule",
@@ -811,6 +827,7 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         lr_schedule=str(getattr(args, "lr_schedule", "plateau") or "plateau"),
         sequence_length=int(getattr(args, "sequence_length", 0) or 0),
         use_time_decay=bool(getattr(args, "use_time_decay", True)),
+        encoder_lora=bool(getattr(args, "encoder_lora", False)),
     )
 
 
@@ -1036,6 +1053,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                             output_mode=str(getattr(args, "output_mode", "regression") or "regression"),
                             n_classes=int(getattr(args, "vol_regime_classes", 3) or 3),
                             use_time_decay=bool(getattr(args, "use_time_decay", True)),
+                            encoder_lora=bool(getattr(args, "encoder_lora", False)),
                         ),
                         "learning_rate": float(hp["learning_rate"]),
                         "epochs": int(hp["epochs"]),
@@ -1122,6 +1140,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                     lr_schedule=str(lr_schedule),
                     sequence_length=int(sequence_length),
                     use_time_decay=bool(getattr(args, "use_time_decay", True)),
+                    encoder_lora=bool(getattr(args, "encoder_lora", False)),
                 ),
                 "learning_rate": float(learning_rate),
                 "epochs": int(epochs),

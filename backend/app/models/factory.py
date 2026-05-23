@@ -55,6 +55,13 @@ def build_forecaster(config: ModelConfig | dict[str, Any]) -> ForecasterModel:
     # construction (the training loop reads them from the config).
     kwargs.pop("lr_schedule", None)
     kwargs.pop("sequence_length", None)
+    # Round 5 (#244) LoRA toggle is a training-loop concern; the
+    # ``ForecasterModel`` consumes its text input from a per-batch
+    # tensor regardless of whether the encoder ran statically (parquet
+    # cache) or per-batch (LoRA-wrapped tower). Strip the flag here so
+    # ModelConfig can persist it onto the checkpoint without forcing
+    # the model constructor to know about it.
+    kwargs.pop("encoder_lora", None)
     return ForecasterModel(model_type=architecture, **kwargs)
 
 
