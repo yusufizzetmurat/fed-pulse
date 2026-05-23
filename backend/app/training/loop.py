@@ -79,9 +79,9 @@ def _resolve_validation_fraction(
 
     if validation_fraction is not None and validation_split is not None:
         raise TypeError(
-            "train_model received both ``validation_fraction`` and "
-            "``validation_split``. Pass only ``validation_fraction``; "
-            "``validation_split`` is the deprecated alias."
+            "received both ``validation_fraction`` and ``validation_split``. "
+            "Pass only ``validation_fraction``; ``validation_split`` is the "
+            "deprecated alias."
         )
     if validation_split is not None:
         warnings.warn(
