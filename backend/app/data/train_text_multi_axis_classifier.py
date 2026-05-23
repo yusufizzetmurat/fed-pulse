@@ -90,6 +90,56 @@ def _coerce_float(value: Any) -> float | None:
     return out
 
 
+def _stance_target(row: dict[str, Any]) -> tuple[int, bool]:
+    raw = row.get("axis_stance")
+    if isinstance(raw, str) and raw.strip().lower() in MULTI_TASK_STANCE_LABELS:
+        return MULTI_TASK_STANCE_LABELS.index(raw.strip().lower()), True
+    return 0, False
+
+
+def _factor_target(row: dict[str, Any]) -> tuple[float, bool]:
+    value = _coerce_float(row.get("axis_factor"))
+    if value is None:
+        return 0.0, False
+    return max(min(value, 1.0), -1.0), True
+
+
+def _certainty_target(row: dict[str, Any]) -> tuple[int, bool]:
+    raw = row.get("axis_certain_label")
+    if isinstance(raw, str) and raw.strip().lower() in MULTI_TASK_CERTAINTY_LABELS:
+        return MULTI_TASK_CERTAINTY_LABELS.index(raw.strip().lower()), True
+    float_val = _coerce_float(row.get("axis_certainty"))
+    if float_val is None:
+        return 0, False
+    if float_val >= 0.66:
+        return MULTI_TASK_CERTAINTY_LABELS.index("certain"), True
+    if float_val <= 0.33:
+        return MULTI_TASK_CERTAINTY_LABELS.index("uncertain"), True
+    return MULTI_TASK_CERTAINTY_LABELS.index("neutral"), True
+
+
+# Explicit aliases for upstream topic values that do not contain a
+# canonical substring. "economic_indicator" comes off the macro-release
+# augmentation (CPI / NFP rows) and is the macro topic by construction.
+_TOPIC_ALIASES: dict[str, str] = {
+    "economic_indicator": "macro",
+    "rate_decision": "forward_guidance",
+}
+
+
+def _topic_target(row: dict[str, Any]) -> tuple[int, bool]:
+    raw = row.get("axis_topic")
+    if not isinstance(raw, str) or not raw.strip():
+        return 0, False
+    topic_str = raw.strip().lower()
+    if topic_str in _TOPIC_ALIASES:
+        return MULTI_TASK_TOPIC_LABELS.index(_TOPIC_ALIASES[topic_str]), True
+    for canonical in MULTI_TASK_TOPIC_LABELS[:-1]:
+        if canonical in topic_str:
+            return MULTI_TASK_TOPIC_LABELS.index(canonical), True
+    return MULTI_TASK_TOPIC_LABELS.index("other"), True
+
+
 def _row_targets(row: dict[str, Any]) -> tuple[dict[str, float | int], dict[str, bool]]:
     """Map one events.parquet row to per-axis targets + masks.
 
@@ -98,69 +148,24 @@ def _row_targets(row: dict[str, Any]) -> tuple[dict[str, float | int], dict[str,
     consumes the same canonical label mappings the forecaster does.
     """
 
-    targets: dict[str, float | int] = {
-        "stance": 0,
-        "factor": 0.0,
-        "certainty": 0,
-        "topic": 0,
-    }
-    masks: dict[str, bool] = {
-        "stance": False,
-        "factor": False,
-        "certainty": False,
-        "topic": False,
-    }
-
-    stance_raw = row.get("axis_stance")
-    if isinstance(stance_raw, str) and stance_raw.strip().lower() in MULTI_TASK_STANCE_LABELS:
-        targets["stance"] = MULTI_TASK_STANCE_LABELS.index(stance_raw.strip().lower())
-        masks["stance"] = True
-
-    factor_val = _coerce_float(row.get("axis_factor"))
-    if factor_val is not None:
-        targets["factor"] = max(min(factor_val, 1.0), -1.0)
-        masks["factor"] = True
-
-    cert_raw = row.get("axis_certain_label")
-    if isinstance(cert_raw, str) and cert_raw.strip().lower() in MULTI_TASK_CERTAINTY_LABELS:
-        targets["certainty"] = MULTI_TASK_CERTAINTY_LABELS.index(cert_raw.strip().lower())
-        masks["certainty"] = True
-    else:
-        cert_float = _coerce_float(row.get("axis_certainty"))
-        if cert_float is not None:
-            if cert_float >= 0.66:
-                targets["certainty"] = MULTI_TASK_CERTAINTY_LABELS.index("certain")
-            elif cert_float <= 0.33:
-                targets["certainty"] = MULTI_TASK_CERTAINTY_LABELS.index("uncertain")
-            else:
-                targets["certainty"] = MULTI_TASK_CERTAINTY_LABELS.index("neutral")
-            masks["certainty"] = True
-
-    topic_raw = row.get("axis_topic")
-    if isinstance(topic_raw, str) and topic_raw.strip():
-        topic_str = topic_raw.strip().lower()
-        # Explicit aliases for upstream values that do not contain a
-        # canonical substring. "economic_indicator" comes off the
-        # macro-release augmentation (CPI / NFP rows) and is the
-        # macro topic by construction.
-        topic_aliases = {
-            "economic_indicator": "macro",
-            "rate_decision": "forward_guidance",
-        }
-        if topic_str in topic_aliases:
-            targets["topic"] = MULTI_TASK_TOPIC_LABELS.index(topic_aliases[topic_str])
-            masks["topic"] = True
-        else:
-            for canonical in MULTI_TASK_TOPIC_LABELS[:-1]:
-                if canonical in topic_str:
-                    targets["topic"] = MULTI_TASK_TOPIC_LABELS.index(canonical)
-                    masks["topic"] = True
-                    break
-            if not masks["topic"]:
-                targets["topic"] = MULTI_TASK_TOPIC_LABELS.index("other")
-                masks["topic"] = True
-
-    return targets, masks
+    stance_idx, stance_present = _stance_target(row)
+    factor_value, factor_present = _factor_target(row)
+    certainty_idx, certainty_present = _certainty_target(row)
+    topic_idx, topic_present = _topic_target(row)
+    return (
+        {
+            "stance": stance_idx,
+            "factor": factor_value,
+            "certainty": certainty_idx,
+            "topic": topic_idx,
+        },
+        {
+            "stance": stance_present,
+            "factor": factor_present,
+            "certainty": certainty_present,
+            "topic": topic_present,
+        },
+    )
 
 
 def _load_supervised_rows(events_parquet: Path) -> list[_AxisRow]:
