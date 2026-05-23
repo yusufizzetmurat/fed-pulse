@@ -306,6 +306,18 @@ regime-arch-sweep:
 		$(if $(NLP_TEXT_ENCODER),--text-encoder "$(NLP_TEXT_ENCODER)",) \
 		--report-root /data/artifacts/regime_arch_sweep
 
+# Round 5 (#244) LoRA + in-loop FinBERT ceiling probe. Reads the
+# best architecture + HP cell from the post-correction
+# regime_arch_sweep, then trains one cell (seed 97 x 4 folds) with
+# the encoder pulled into the loop and wrapped in PEFT LoRA.
+# Output lands at data/artifacts/encoder_lora_ceiling_probe/<pkg>/.
+lora-ceiling-probe:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose --profile "$(FORECASTER_COMPOSE_PROFILE)" run --rm "$(FORECASTER_COMPOSE_SERVICE)" \
+		python scripts/run_lora_ceiling_probe.py \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		$(if $(LORA_ARCHITECTURE),--architecture "$(LORA_ARCHITECTURE)",)
+
 # GARCH(1,1) classical-finance reference baseline. Fits per fold on
 # SPX log-returns up to train_end, forecasts 10-day forward conditional
 # vol, bins via train-slice quantile cutoffs, reports pooled macro-F1
