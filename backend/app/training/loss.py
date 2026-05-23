@@ -78,13 +78,16 @@ class MultiTaskLoss(nn.Module):
         self.factor_smooth_l1_beta = float(factor_smooth_l1_beta)
 
     def _stance_weight_or_none(self) -> torch.Tensor | None:
-        return self._stance_weight if self._stance_weight.numel() > 0 else None
+        buf = self.get_buffer("_stance_weight")
+        return buf if buf.numel() > 0 else None
 
     def _certainty_weight_or_none(self) -> torch.Tensor | None:
-        return self._certainty_weight if self._certainty_weight.numel() > 0 else None
+        buf = self.get_buffer("_certainty_weight")
+        return buf if buf.numel() > 0 else None
 
     def _topic_weight_or_none(self) -> torch.Tensor | None:
-        return self._topic_weight if self._topic_weight.numel() > 0 else None
+        buf = self.get_buffer("_topic_weight")
+        return buf if buf.numel() > 0 else None
 
     def forward(
         self,
