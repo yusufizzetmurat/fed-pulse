@@ -648,7 +648,7 @@ def get_history(
     stance: str | None = Query(default=None),
     document_date: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=2_147_483_647),
     session: Session = Depends(get_session),
 ) -> HistoryList:
     rows, total = list_runs(
@@ -822,7 +822,7 @@ async def _redis_train_jobs_snapshot(pool: ArqRedis) -> list[dict[str, Any]]:
 async def list_train_jobs(
     status: str | None = Query(default=None, description="Filter by status: queued/running/succeeded/failed."),
     limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=2_147_483_647),
 ) -> TrainJobsListResponse:
     """List real_train jobs from the arq-backed Redis queue.
 
