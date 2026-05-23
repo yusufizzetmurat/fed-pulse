@@ -1416,9 +1416,9 @@ def train_model(
             # is absent (which only happens on a ``encoder_lora=False``
             # run, so the branch never fires).
             try:
-                from peft import get_peft_model_state_dict  # type: ignore
+                from peft import get_peft_model_state_dict
             except ImportError:  # pragma: no cover - defensive
-                get_peft_model_state_dict = None  # type: ignore[assignment]
+                get_peft_model_state_dict = None
             if get_peft_model_state_dict is not None:
                 adapter_path = Path(str(checkpoint_target) + ".lora_adapter.pt")
                 adapter_state = get_peft_model_state_dict(encoder_lora_bundle.encoder)
