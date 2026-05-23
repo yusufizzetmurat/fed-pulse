@@ -639,6 +639,7 @@ def train_model(
     use_compile: bool = True,
     use_amp: bool = True,
     lr_schedule: str = "plateau",
+    use_class_weights: bool = True,
 ) -> TrainingResult:
     if seed is not None:
         enable_deterministic_mode(seed)
@@ -701,11 +702,18 @@ def train_model(
             # of least resistance is no longer "predict the majority
             # prior". Train-only fit; val + test see the same weights
             # but only at loss computation, not in their own slices.
-            fitted_class_weights = fit_class_weights(
-                train_forward_vols,
-                fitted_quantiles,
-                n_classes=n_classes_active,
-            )
+            # Round 2c (#234) ablation: ``use_class_weights=False``
+            # skips the fit and leaves the weight tuple empty, so the
+            # downstream ``CrossEntropyLoss(weight=None)`` path runs
+            # for direct A1-on-vs-A1-off comparison.
+            if use_class_weights:
+                fitted_class_weights = fit_class_weights(
+                    train_forward_vols,
+                    fitted_quantiles,
+                    n_classes=n_classes_active,
+                )
+            else:
+                fitted_class_weights = ()
         else:
             fitted_quantiles = ()
             fitted_class_weights = ()
