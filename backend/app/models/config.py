@@ -233,6 +233,14 @@ class ModelConfig:
     # The CLI surfaces this as ``--sequence-length`` for the capacity
     # push at hidden=512 / seq=60.
     sequence_length: int = 0
+    # Round 4 (#243) elapsed-time decay toggle. ``True`` keeps the
+    # ``TimeDecayAttention`` path (the advisor-mandated mechanism that
+    # multiplies the sentiment channel by ``exp(-lambda * |elapsed|)``);
+    # ``False`` swaps it for a no-op pass-through so the ablation can
+    # measure whether the mechanism actually earns its complexity on
+    # the post-embargo baseline. Default ``True`` preserves the legacy
+    # forward path byte-identical.
+    use_time_decay: bool = True
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -263,6 +271,7 @@ class ModelConfig:
             ),
             lr_schedule=str(getattr(model, "lr_schedule", "plateau") or "plateau"),
             sequence_length=int(getattr(model, "sequence_length", 0) or 0),
+            use_time_decay=bool(getattr(model, "use_time_decay", True)),
         )
 
     def to_dict(self) -> dict[str, Any]:
