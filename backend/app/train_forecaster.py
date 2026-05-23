@@ -606,6 +606,22 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--embargo-days",
+        type=int,
+        default=20,
+        help=(
+            "Purge buffer between adjacent walk-forward partitions "
+            "(López de Prado, Advances in Financial ML, ch. 7). Drops "
+            "val rows whose event date sits within this many calendar "
+            "days of the fold's train_end, and test rows within this "
+            "many days of val_end. The default 20 covers a 10-day "
+            "forward target while leaving headroom; the strict no-overlap "
+            "threshold for SEQUENCE_LENGTH=20 + 10d horizon is 30 days. "
+            "Pass 0 to opt out (reproduces the pre-2026-05-23 leaky "
+            "baseline). Honoured on the walk-forward path only."
+        ),
+    )
+    parser.add_argument(
         "--target-mode",
         choices=("event_study", "realized_return"),
         default="event_study",
@@ -1995,6 +2011,7 @@ def main() -> int:
                     text_adapter_dim=int(args.text_adapter_dim),
                     text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
                     use_text_embeddings=bool(args.use_text_embeddings),
+                    embargo_days=int(args.embargo_days),
                 )
                 walk_forward_splits[fold_id] = split
                 print(
@@ -2031,6 +2048,9 @@ def main() -> int:
                 text_adapter_dim=int(args.text_adapter_dim),
                 text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
                 use_text_embeddings=bool(args.use_text_embeddings),
+                # Single-fold uses split_tag, not manifest dates -- embargo
+                # passes through but the loader will no-op on this path.
+                embargo_days=int(args.embargo_days),
             )
             walk_forward_splits = {"_single_fold": split}
             print(

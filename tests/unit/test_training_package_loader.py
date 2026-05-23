@@ -1463,3 +1463,182 @@ def test_walk_forward_split_back_compat_wrapper_emits_deprecation(
     # Synthesised realized_date was the same date as event_date in the
     # fixture, so the appended target frame uses each event's own date.
     assert target_dates == ["2020-01-15", "2020-02-15"]
+
+
+# ---------------------------------------------------------------------------
+# Walk-forward embargo tests
+#
+# The walk-forward path builds (train, val, test) partitions off the
+# fold manifest's chronological boundaries. A 10-day forward target
+# combined with a SEQUENCE_LENGTH=20 input window can leak bars across
+# the train/val boundary when two events sit close in calendar time
+# (a FOMC statement and its release of the minutes, for instance).
+# The ``embargo_days`` parameter drops val rows whose event date is
+# within N calendar days of ``train_end`` and test rows within N days
+# of ``val_end``. The tests below pin the embargo arithmetic so the
+# leakage fix cannot silently regress.
+# ---------------------------------------------------------------------------
+
+
+_EMBARGO_PACKAGE_ID = "tp_unit_walk_forward_embargo_v0"
+
+
+@pytest.fixture
+def walk_forward_embargo_package_dir(tmp_path: Path, monkeypatch) -> Path:
+    """Materialise a package with deliberately close train/val/test events.
+
+    The fold's ``train_end`` sits at 2020-01-31. Val window spans
+    February; one val event sits 5 days after train_end (inside any
+    embargo > 5), a second sits 25 days after. Test window spans
+    March, mirroring the same 5-vs-25-day split around ``val_end``
+    (2020-02-29). With this layout, embargo_days=10 drops one val and
+    one test row; embargo_days=20 still drops one of each; embargo_days
+    >=30 wipes the test partition and the loader raises.
+    """
+
+    package_dir = tmp_path / "processed" / _EMBARGO_PACKAGE_ID
+    package_dir.mkdir(parents=True)
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+
+    events = [
+        _wf_event_row(event_date="2020-01-05", text_hash="hash_t1", base_close=4400.0),
+        _wf_event_row(event_date="2020-01-25", text_hash="hash_t2", base_close=4410.0),
+        _wf_event_row(event_date="2020-02-05", text_hash="hash_v_near", base_close=4420.0),
+        _wf_event_row(event_date="2020-02-25", text_hash="hash_v_far", base_close=4425.0),
+        _wf_event_row(event_date="2020-03-05", text_hash="hash_te_near", base_close=4430.0),
+        _wf_event_row(event_date="2020-03-25", text_hash="hash_te_far", base_close=4435.0),
+    ]
+    pd.DataFrame(events).to_parquet(package_dir / "events.parquet", index=False)
+
+    splits = [
+        {"text_hash": "hash_t1", "split_tag": "train"},
+        {"text_hash": "hash_t2", "split_tag": "train"},
+        {"text_hash": "hash_v_near", "split_tag": "val"},
+        {"text_hash": "hash_v_far", "split_tag": "val"},
+        {"text_hash": "hash_te_near", "split_tag": "test"},
+        {"text_hash": "hash_te_far", "split_tag": "test"},
+    ]
+    pd.DataFrame(splits).to_parquet(
+        package_dir / "splits_train_val_test.parquet", index=False
+    )
+
+    manifest = {
+        "evaluation_protocol": "evaluation_protocol_v1",
+        "folds": [
+            {
+                "fold_id": "wf_fold_1",
+                "train_start": "2020-01-01",
+                "train_end": "2020-01-31",
+                "val_start": "2020-02-01",
+                "val_end": "2020-02-29",
+                "test_start": "2020-03-01",
+                "test_end": "2020-03-31",
+            },
+        ],
+    }
+    (package_dir / "fold_manifest_expanding_walk_forward.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    return package_dir
+
+
+def test_walk_forward_embargo_zero_preserves_all_partitions(
+    walk_forward_embargo_package_dir: Path,
+) -> None:
+    """``embargo_days=0`` reproduces the pre-fix leaky baseline."""
+
+    split = loaders.load_walk_forward_split(
+        _EMBARGO_PACKAGE_ID,
+        fold_id="wf_fold_1",
+        rich_features=False,
+        embargo_days=0,
+    )
+    assert split.train_event_dates == ["2020-01-05", "2020-01-25"]
+    assert split.val_event_dates == ["2020-02-05", "2020-02-25"]
+    assert split.test_event_dates == ["2020-03-05", "2020-03-25"]
+
+
+def test_walk_forward_embargo_default_drops_near_boundary_rows(
+    walk_forward_embargo_package_dir: Path,
+) -> None:
+    """``embargo_days=20`` drops val rows within 20 days of train_end,
+    and test rows within 20 days of val_end."""
+
+    split = loaders.load_walk_forward_split(
+        _EMBARGO_PACKAGE_ID,
+        fold_id="wf_fold_1",
+        rich_features=False,
+        embargo_days=20,
+    )
+    # train_end=2020-01-31. Val event 2020-02-05 is 5 days away
+    # (< 20) -> dropped; val event 2020-02-25 is 25 days away -> kept.
+    assert split.val_event_dates == ["2020-02-25"]
+    # val_end=2020-02-29. Test event 2020-03-05 is 5 days away -> dropped;
+    # test event 2020-03-25 is 25 days away -> kept.
+    assert split.test_event_dates == ["2020-03-25"]
+    # Train partition is unaffected; embargo only purges val and test.
+    assert split.train_event_dates == ["2020-01-05", "2020-01-25"]
+
+
+def test_walk_forward_embargo_strict_threshold_empties_test_partition(
+    walk_forward_embargo_package_dir: Path,
+) -> None:
+    """A 30-day embargo drops both test events; loader must refuse to
+    silently train on a no-held-out-events partition."""
+
+    with pytest.raises(ValueError, match="empty test partition"):
+        loaders.load_walk_forward_split(
+            _EMBARGO_PACKAGE_ID,
+            fold_id="wf_fold_1",
+            rich_features=False,
+            embargo_days=30,
+        )
+
+
+def test_walk_forward_embargo_requires_train_end_in_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Non-zero embargo against a manifest missing ``train_end`` must
+    raise loudly rather than silently degrade to zero embargo."""
+
+    package_id = "tp_unit_embargo_missing_train_end"
+    package_dir = tmp_path / "processed" / package_id
+    package_dir.mkdir(parents=True)
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+
+    events = [
+        _wf_event_row(event_date="2020-01-15", text_hash="hash_t", base_close=4400.0),
+        _wf_event_row(event_date="2020-02-15", text_hash="hash_v", base_close=4410.0),
+        _wf_event_row(event_date="2020-03-15", text_hash="hash_te", base_close=4420.0),
+    ]
+    pd.DataFrame(events).to_parquet(package_dir / "events.parquet", index=False)
+    pd.DataFrame(
+        [
+            {"text_hash": "hash_t", "split_tag": "train"},
+            {"text_hash": "hash_v", "split_tag": "val"},
+            {"text_hash": "hash_te", "split_tag": "test"},
+        ]
+    ).to_parquet(package_dir / "splits_train_val_test.parquet", index=False)
+
+    manifest = {
+        "folds": [
+            {
+                "fold_id": "wf_fold_1",
+                # train_end deliberately omitted to exercise the
+                # non-zero embargo guard.
+                "train_start": "2020-01-01",
+                "val_start": "2020-02-01",
+                "val_end": "2020-02-29",
+                "test_start": "2020-03-01",
+                "test_end": "2020-03-31",
+            }
+        ],
+    }
+    (package_dir / "fold_manifest_expanding_walk_forward.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="train_end"):
+        loaders.load_walk_forward_split(
+            package_id, fold_id="wf_fold_1", embargo_days=20, rich_features=False
+        )
