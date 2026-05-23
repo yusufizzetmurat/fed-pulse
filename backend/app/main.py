@@ -87,6 +87,21 @@ async def _lifespan(app: FastAPI):
         warmup_classifier()
     except Exception:  # pragma: no cover — never let model warmup block startup
         get_logger("fed_pulse").warning("classifier_warmup_failed", exc_info=True)
+    # Pre-load the multi-axis classifier when a checkpoint is present.
+    # The service returns None on missing / malformed checkpoints, so
+    # this is a no-op until the trainer ships a real model.
+    try:
+        from app.services.multi_axis_classifier import (
+            checkpoint_exists as multi_axis_checkpoint_exists,
+            get_classifier as get_multi_axis_classifier,
+        )
+
+        if multi_axis_checkpoint_exists():
+            get_multi_axis_classifier()
+    except Exception:  # pragma: no cover — never let warmup block startup
+        get_logger("fed_pulse").warning(
+            "multi_axis_classifier_warmup_failed", exc_info=True
+        )
     get_logger("fed_pulse").info("startup", service="fomc-api")
     try:
         yield
@@ -252,7 +267,7 @@ def _build_analyze_response(
         "market": market,
         "model": forecast["model"],
         "series": forecast["series"],
-        "multi_axis": _build_multi_axis_block(sentiment),
+        "multi_axis": _build_multi_axis_block(payload.text, sentiment),
     }
     if getattr(payload, "include_xai", False):
         attributions = attribute_text(payload.text)
@@ -260,18 +275,39 @@ def _build_analyze_response(
     return response
 
 
-def _build_multi_axis_block(sentiment: dict[str, Any]) -> dict[str, Any] | None:
+def _build_multi_axis_block(
+    text: str, sentiment: dict[str, Any]
+) -> dict[str, Any] | None:
     """Build the multi-axis card block from the available text signals (#78).
 
-    Stance card reuses the existing text classifier output (hawkish /
-    dovish / neutral with per-class probability). The factor /
-    certainty / topic cards are left at ``None`` for now — the
-    multi-task text classifier that will populate them is staged
-    infrastructure (see ``MultiTaskHead`` / ``MultiTaskLoss`` in the
-    models / training packages) and lands in a follow-up. The frontend
-    renders ``None`` cards with a "not available" affordance so users
-    see honest absence rather than a placeholder value.
+    Two paths:
+
+    1. **Trained multi-axis classifier present.** Run the
+       ``TextMultiAxisClassifier`` checkpoint via
+       ``app.services.multi_axis_classifier.score_text``; populate all
+       four cards (stance / factor / certainty / topic) from the
+       per-axis predictions.
+
+    2. **No checkpoint.** Fall back to populating the stance card from
+       the existing sentiment classifier output and leave the other
+       three axes at ``None``. The frontend renders ``None`` cards as
+       absent so the user sees honest absence rather than a
+       placeholder value.
     """
+
+    try:
+        from app.services.multi_axis_classifier import score_text as multi_axis_score
+    except Exception:  # pragma: no cover — import-time failures fall through
+        multi_axis_score = None  # type: ignore[assignment]
+
+    if multi_axis_score is not None:
+        try:
+            classifier_block = multi_axis_score(text)
+        except Exception:  # pragma: no cover — never let the classifier crash /analyze
+            logger.warning("multi_axis_classifier_failed", exc_info=True)
+            classifier_block = None
+        if classifier_block is not None:
+            return classifier_block
 
     label_raw = str(sentiment.get("label", "")).strip().lower()
     canonical_labels = ("hawkish", "dovish", "neutral")
