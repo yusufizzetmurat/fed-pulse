@@ -117,7 +117,7 @@ def test_train_model_persists_fitted_close_scale_in_checkpoint(tmp_path: Path) -
         epochs=2,
         batch_size=4,
         learning_rate=1e-3,
-        validation_split=0.2,
+        validation_fraction=0.2,
         early_stopping_patience=2,
         save_checkpoint=True,
         checkpoint_path=checkpoint,
