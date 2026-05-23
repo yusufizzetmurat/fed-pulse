@@ -285,6 +285,7 @@ def _evaluate_model(
     credibility_buffer: torch.Tensor | None = None,
     *,
     record_row_predictions: bool = False,
+    encoder_lora_bundle: Any = None,
 ) -> EvaluationMetrics:
     """Evaluate ``model`` on ``loader`` and return aggregate metrics.
 
@@ -304,6 +305,8 @@ def _evaluate_model(
     """
 
     model.eval()
+    if encoder_lora_bundle is not None:
+        encoder_lora_bundle.encoder.eval()
     is_classification = str(getattr(model, "output_mode", "regression")) == "classification"
     total_loss_sum = torch.zeros((), dtype=torch.float64, device=device)
     total_items = torch.zeros((), dtype=torch.int64, device=device)
@@ -363,13 +366,36 @@ def _evaluate_model(
             if batch_text is not None and use_text_path:
                 if batch_text.device != device:
                     batch_text = batch_text.to(device, non_blocking=non_blocking)
-                kwargs["text_embedding"] = batch_text
-                if batch_text_missing is not None:
-                    if batch_text_missing.device != device:
+                if encoder_lora_bundle is not None:
+                    # Round 5 (#244): batch_text + batch_text_missing
+                    # carry (input_ids, attention_mask) in LoRA mode.
+                    # Run the LoRA-wrapped encoder over the tokens to
+                    # materialise the pooled embedding the downstream
+                    # text-adapter projection consumes. ``no_grad`` is
+                    # active in this eval helper; train-loop forward
+                    # has the same logic without the grad guard.
+                    from app.training.encoder_lora import encode_batch_pooled
+
+                    if batch_text_missing is not None and batch_text_missing.device != device:
                         batch_text_missing = batch_text_missing.to(
                             device, non_blocking=non_blocking
                         )
-                    kwargs["text_embedding_missing"] = batch_text_missing
+                    pooled, lora_missing = encode_batch_pooled(
+                        encoder_lora_bundle,
+                        batch_text,
+                        batch_text_missing if batch_text_missing is not None
+                        else torch.ones_like(batch_text, dtype=torch.long),
+                    )
+                    kwargs["text_embedding"] = pooled
+                    kwargs["text_embedding_missing"] = lora_missing
+                else:
+                    kwargs["text_embedding"] = batch_text
+                    if batch_text_missing is not None:
+                        if batch_text_missing.device != device:
+                            batch_text_missing = batch_text_missing.to(
+                                device, non_blocking=non_blocking
+                            )
+                        kwargs["text_embedding_missing"] = batch_text_missing
             predictions = model(batch_x, **kwargs)
             loss = loss_fn(predictions, batch_y)
             if ce_weight is not None:
@@ -523,6 +549,8 @@ def _build_partition_tensors(
     close_scale: float | None = None,
     output_mode: str = "regression",
     vol_regime_quantiles: Sequence[float] = (),
+    lora_bundle: Any = None,
+    lora_max_tokens: int = 0,
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
@@ -543,6 +571,14 @@ def _build_partition_tensors(
     has a null ``forward_realized_vol_10d`` are dropped from BOTH the
     x/y tensors and the text-embedding tensors so the row alignment
     invariant holds.
+
+    Round 5 (#244) LoRA branch: when ``lora_bundle`` is supplied (a
+    :class:`app.training.encoder_lora.LoraEncoderBundle`), the last
+    two return slots carry ``(input_ids, attention_mask)`` long
+    tensors (shape ``(N, lora_max_tokens)``) instead of the
+    pooled-embedding pair. The train step detects LoRA mode by
+    inspecting the dtype + running the bundle's encoder over the
+    tokens per batch to materialise gradient-tracked pooled vectors.
     """
 
     if output_mode == "classification":
@@ -584,6 +620,20 @@ def _build_partition_tensors(
             "_build_partition_tensors produced an empty partition; "
             "every walk-forward fold must carry at least one event."
         )
+    if lora_bundle is not None:
+        # Round 5 (#244): tokenise each sequence's target-row text once
+        # and return (input_ids, attention_mask) in the text slots.
+        # The training step runs the LoRA-wrapped encoder over these
+        # tokens per batch to compute a gradient-tracked pooled vector.
+        from app.training.encoder_lora import tokenize_sequence_texts
+
+        max_tokens = int(lora_max_tokens) if int(lora_max_tokens) > 0 else 256
+        input_ids, attention_mask = tokenize_sequence_texts(
+            active_groups,
+            lora_bundle.tokenizer,
+            max_tokens=max_tokens,
+        )
+        return x, y, scale, input_ids, attention_mask
     text_emb, text_missing, _ = _build_text_embedding_tensors(
         active_groups, fallback_in_dim=fallback_text_in_dim
     )
@@ -717,6 +767,24 @@ def train_model(
         else:
             fitted_quantiles = ()
             fitted_class_weights = ()
+        # Round 5 (#244) LoRA bundle. Built ONCE before any partition
+        # tensor materialisation so the tokeniser is shared across
+        # train / val / test. When ``encoder_lora`` is off (default)
+        # the bundle stays ``None`` and the static-cache path runs.
+        encoder_lora_active = bool(
+            getattr(active_model_config, "encoder_lora", False)
+        )
+        encoder_lora_bundle: Any = None
+        if encoder_lora_active:
+            from app.training.encoder_lora import build_lora_encoder
+
+            if not text_encoder or str(text_encoder) == "none":
+                raise ValueError(
+                    "encoder_lora=True requires text_encoder to be set to a "
+                    "registered alias (got 'none' / empty)"
+                )
+            encoder_lora_bundle = build_lora_encoder(str(text_encoder))
+            encoder_lora_bundle.encoder.to(device_obj)
         # Fit the close-scale on the training partition only; never on
         # the val or test rows. The walk-forward protocol forbids
         # fitting any scaler over held-out events.
@@ -726,6 +794,7 @@ def train_model(
             close_scale=None,
             output_mode=active_output_mode,
             vol_regime_quantiles=fitted_quantiles,
+            lora_bundle=encoder_lora_bundle,
         )
         # Fit the rich-feature RobustScaler on the TRAIN tensor only;
         # no-op for legacy 6-feature tensors so the regression contract
@@ -740,6 +809,7 @@ def train_model(
             close_scale=close_scale,
             output_mode=active_output_mode,
             vol_regime_quantiles=fitted_quantiles,
+            lora_bundle=encoder_lora_bundle,
         )
         val_x = apply_rich_feature_scaler_tensor(val_x, rich_feature_scaler)
         test_x, test_y, _test_scale, test_text_emb, test_text_missing = _build_partition_tensors(
@@ -748,10 +818,22 @@ def train_model(
             close_scale=close_scale,
             output_mode=active_output_mode,
             vol_regime_quantiles=fitted_quantiles,
+            lora_bundle=encoder_lora_bundle,
         )
         test_x = apply_rich_feature_scaler_tensor(test_x, rich_feature_scaler)
         sequence_groups_for_summary = train_groups + val_groups + test_groups
     else:
+        # Legacy single-list path: no LoRA support. encoder_lora must
+        # be off in this branch -- the per-batch encoder forward needs
+        # the walk-forward partition tensor builder to emit token
+        # tensors, which the legacy path bypasses entirely.
+        encoder_lora_bundle = None
+        if bool(getattr(active_model_config, "encoder_lora", False)):
+            raise ValueError(
+                "encoder_lora=True is only supported on the walk-forward "
+                "training-package path; the legacy single-list ``data_dir`` "
+                "branch does not produce the token tensors LoRA needs"
+            )
         if sequence_groups is not None:
             active_sequence_groups: list[list[FeatureVector]] = [list(group) for group in sequence_groups]
         else:
@@ -969,10 +1051,30 @@ def train_model(
     # does not perturb the byte-identity regression contract on the
     # legacy regression path.
     wd_value = float(weight_decay)
+    # Round 5 (#244): build a unified param iterator that yields both
+    # the forecaster's parameters AND (when LoRA is on) the encoder
+    # adapter parameters. The base encoder is frozen by
+    # ``build_lora_encoder``, so the ``requires_grad`` filter below
+    # picks up exactly the adapter layers without the rest of the
+    # encoder leaking in.
+    def _trainable_named_parameters() -> Any:
+        seen: set[int] = set()
+        for name, param in work_model.named_parameters():
+            if id(param) in seen:
+                continue
+            seen.add(id(param))
+            yield f"forecaster.{name}", param
+        if encoder_lora_bundle is not None:
+            for name, param in encoder_lora_bundle.encoder.named_parameters():
+                if id(param) in seen:
+                    continue
+                seen.add(id(param))
+                yield f"encoder_lora.{name}", param
+
     if wd_value > 0.0:
         decay_params: list[torch.nn.Parameter] = []
         no_decay_params: list[torch.nn.Parameter] = []
-        for name, param in work_model.named_parameters():
+        for name, param in _trainable_named_parameters():
             if not param.requires_grad:
                 continue
             # Skip biases, layer-norm / batch-norm weights+biases, and
@@ -993,7 +1095,7 @@ def train_model(
         )
     else:
         optimizer = torch.optim.AdamW(
-            work_model.parameters(),
+            [param for _name, param in _trainable_named_parameters() if param.requires_grad],
             lr=learning_rate,
             weight_decay=0.0,
         )
@@ -1092,6 +1194,8 @@ def train_model(
 
     for epoch_index in range(epochs):
         work_model.train()
+        if encoder_lora_bundle is not None:
+            encoder_lora_bundle.encoder.train()
         for batch in train_loader:
             batch_x, batch_y, batch_text, batch_text_missing = _unpack_batch(batch)
             # Tensors are already on the target device; the .to() calls
@@ -1105,9 +1209,26 @@ def train_model(
             if credibility is not None:
                 kwargs["credibility"] = credibility
             if batch_text is not None and use_text_path:
-                kwargs["text_embedding"] = batch_text
-                if batch_text_missing is not None:
-                    kwargs["text_embedding_missing"] = batch_text_missing
+                if encoder_lora_bundle is not None:
+                    # Round 5 (#244): convert batch tokens to pooled
+                    # embedding via the LoRA-wrapped encoder so the
+                    # regime loss backpropagates into the adapter.
+                    from app.training.encoder_lora import encode_batch_pooled
+
+                    attention_mask_tensor = (
+                        batch_text_missing
+                        if batch_text_missing is not None
+                        else torch.ones_like(batch_text, dtype=torch.long)
+                    )
+                    pooled, lora_missing = encode_batch_pooled(
+                        encoder_lora_bundle, batch_text, attention_mask_tensor
+                    )
+                    kwargs["text_embedding"] = pooled
+                    kwargs["text_embedding_missing"] = lora_missing
+                else:
+                    kwargs["text_embedding"] = batch_text
+                    if batch_text_missing is not None:
+                        kwargs["text_embedding_missing"] = batch_text_missing
             if effective_amp:
                 with torch.cuda.amp.autocast():
                     predictions = forward_model(batch_x, **kwargs)
@@ -1138,6 +1259,7 @@ def train_model(
             device_obj,
             loss_fn,
             credibility_buffer=val_credibility_buffer,
+            encoder_lora_bundle=encoder_lora_bundle,
         )
         if schedule_steps_per_epoch is None:
             scheduler.step(eval_metrics.loss)
@@ -1201,6 +1323,7 @@ def train_model(
         device_obj,
         loss_fn,
         credibility_buffer=train_credibility_buffer,
+        encoder_lora_bundle=encoder_lora_bundle,
     )
 
     # Final-state held-out test evaluation. On the walk-forward path
@@ -1227,6 +1350,7 @@ def train_model(
             loss_fn,
             credibility_buffer=test_credibility_buffer,
             record_row_predictions=True,
+            encoder_lora_bundle=encoder_lora_bundle,
         )
     else:
         test_metrics = best_val_metrics

@@ -241,6 +241,16 @@ class ModelConfig:
     # the post-embargo baseline. Default ``True`` preserves the legacy
     # forward path byte-identical.
     use_time_decay: bool = True
+    # Round 5 (#244) LoRA ceiling probe. ``False`` (default) reads
+    # pooled text embeddings from the parquet cache -- the static path
+    # the rest of the pipeline depends on. ``True`` pulls the encoder
+    # named by ``text_encoder`` into ``train_model``, wraps it with
+    # PEFT LoRA, and runs the forward per batch so the regime loss
+    # flows gradients into the encoder. Per-event raw text is loaded
+    # from events.parquet at load time, tokenised once, then re-encoded
+    # per batch through the LoRA-wrapped tower. Scoped to a single
+    # arch x seed cell -- not a default replacement.
+    encoder_lora: bool = False
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -272,6 +282,7 @@ class ModelConfig:
             lr_schedule=str(getattr(model, "lr_schedule", "plateau") or "plateau"),
             sequence_length=int(getattr(model, "sequence_length", 0) or 0),
             use_time_decay=bool(getattr(model, "use_time_decay", True)),
+            encoder_lora=bool(getattr(model, "encoder_lora", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -471,6 +482,15 @@ class FeatureVector:
     # ``TextEmbeddingAdapter`` so the scalar slice stays at 35 dims.
     text_embedding_pooled: list[float] = field(default_factory=list)
     text_embedding_missing: float = 1.0
+    # Round 5 (#244) LoRA path raw text. Populated by the loader on the
+    # target-row bar of each sequence only when ``encoder_lora=True`` is
+    # threaded into the package-loading call. The other 20 lookback
+    # bars in the sequence carry the default empty string; the
+    # tokeniser in the LoRA training step reads from
+    # ``sequence[-1].raw_text`` so memory does not duplicate the text
+    # across the prior-window. Stays empty on every static-cache path
+    # so the legacy embedding pipeline is byte-identical.
+    raw_text: str = ""
 
     @classmethod
     def from_market_state(
