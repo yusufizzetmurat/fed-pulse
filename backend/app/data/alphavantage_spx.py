@@ -347,7 +347,7 @@ def backfill_fomc_days(
     cache_dir.mkdir(parents=True, exist_ok=True)
     parquet_path = cache_dir / INTRADAY_PARQUET
 
-    date_list = sorted({d for d in fomc_dates})
+    date_list = sorted(set(fomc_dates))
     if not date_list:
         raise ValueError("backfill_fomc_days called with an empty fomc_dates iterable")
     months = _months_covering(date_list)
