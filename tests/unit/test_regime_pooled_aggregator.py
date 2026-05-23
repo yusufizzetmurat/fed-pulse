@@ -240,3 +240,61 @@ def test_cli_writes_json_and_markdown(tmp_path: Path) -> None:
     assert rc == 0
     assert (tmp_path / "pooled_test_macro_f1.json").exists()
     assert (tmp_path / "pooled_test_macro_f1.md").exists()
+
+
+def test_classification_sweep_defaults_to_macro_f1_selection() -> None:
+    """When the sweep JSON's ``selection_metric`` is ``combined_rmse``
+    but the trials carry ``output_mode == "classification"`` on their
+    model_config, the aggregator must override to ``macro_f1`` for
+    cell selection. The trainer writes ``combined_rmse`` as the
+    selection metric regardless of output mode and every classification
+    trial reports ``inf`` for combined_rmse, so honoring that field
+    collapses the per-cell ranking to an arbitrary order."""
+
+    def _classification_trial(*, fold_id: str, hp: int, macro: float) -> dict[str, object]:
+        # 3 classes, 10 predictions, mostly correct so macro_f1 ~ ``macro``.
+        n_right = int(round(macro * 10))
+        preds = [0] * n_right + [1] * (10 - n_right)
+        targets = [0] * 10
+        return {
+            "architecture": "gru",
+            "fold_id": fold_id,
+            "seed": 11,
+            "hp_combo_id": hp,
+            "summary": {
+                "model_config": {
+                    "hidden_size": 64,
+                    "num_layers": 2,
+                    "dropout": 0.2,
+                    "output_mode": "classification",
+                },
+                "learning_rate": 1e-3,
+                "weight_decay": 1e-4,
+                "test_metrics": {
+                    "predictions": preds,
+                    "targets": targets,
+                    "combined_rmse": float("inf"),
+                    "classification_breakdown": {
+                        "macro_f1": _compute_macro(preds, targets),
+                    },
+                },
+            },
+        }
+
+    blob = {
+        "trials": [
+            _classification_trial(fold_id="wf_fold_1", hp=0, macro=0.3),
+            _classification_trial(fold_id="wf_fold_2", hp=0, macro=0.3),
+            _classification_trial(fold_id="wf_fold_1", hp=1, macro=0.8),
+            _classification_trial(fold_id="wf_fold_2", hp=1, macro=0.8),
+        ],
+        "selection_metric": "combined_rmse",
+    }
+    rows = aggregate([blob], n_classes=3, n_resamples=20)
+    assert len(rows) == 1
+    row = rows[0]
+    # Without the classification override the per-cell selector would
+    # tie-break on inf combined_rmse and could pick HP 0 (macro_f1 ~
+    # 0.3). With the override, HP 1 (macro_f1 ~ 0.8) wins.
+    assert row.hp_combo_id == "1"
+    assert row.breakdown.macro_f1 > 0.5

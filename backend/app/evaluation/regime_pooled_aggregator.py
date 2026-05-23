@@ -287,6 +287,7 @@ def aggregate(  # noqa: C901, PLR0913
 
     cells: dict[tuple[str, str | None], list[Mapping[str, object]]] = defaultdict(list)
     inferred_metric = "macro_f1"
+    classification_detected = False
     for blob in sweep_jsons:
         trials = blob.get("trials", [])
         metric = blob.get("selection_metric")
@@ -298,6 +299,30 @@ def aggregate(  # noqa: C901, PLR0913
             if not isinstance(trial, Mapping):
                 continue
             cells[_cell_key(trial)].append(trial)
+            # Detect classification mode off the per-trial model_config
+            # so the default selection metric on a classification sweep
+            # is ``macro_f1`` rather than the meaningless ``combined_rmse``
+            # the trainer writes at the top level. Sweep JSONs do not
+            # surface ``output_mode`` at the top so we peek at the first
+            # trial that exposes it.
+            if not classification_detected:
+                summary = _trial_summary(trial)
+                cfg = summary.get("model_config") if isinstance(summary, Mapping) else None
+                if (
+                    isinstance(cfg, Mapping)
+                    and str(cfg.get("output_mode", "")).lower() == "classification"
+                ):
+                    classification_detected = True
+
+    # Classification sweeps' top-level ``selection_metric`` is almost
+    # always ``combined_rmse`` (the trainer writes the same field
+    # regardless of output mode). That metric is undefined under
+    # classification — every trial reports inf for it, so the
+    # per-cell selection collapses to whichever cell pandas iterates
+    # first. Override to macro-F1 once we know the sweep is
+    # classification-typed.
+    if selection_metric is None and classification_detected:
+        inferred_metric = "macro_f1"
 
     selection = selection_metric or inferred_metric
     best_by_arch = _select_best_cell(cells, selection)
