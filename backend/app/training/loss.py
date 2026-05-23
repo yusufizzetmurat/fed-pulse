@@ -46,7 +46,7 @@ class MultiTaskLoss(nn.Module):
     — None gives uniform weighting on that axis.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 — per-axis class weights + lambdas surface as named kwargs by design
         self,
         *,
         stance_weight: torch.Tensor | None = None,
