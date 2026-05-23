@@ -72,6 +72,10 @@ _ALLOWED_EVENT_KIND = {
     "speech",
     "testimony",
     "press_conference",
+    # Macro-release augmentation (CPI, NFP) — non-FOMC supervised
+    # events that share the same forward-realised-vol target so the
+    # vol-regime classifier sees more macro-context training rows.
+    "macro_release",
 }
 _ALLOWED_DIRECTION = {-1, 0, 1}
 _ALLOWED_HORIZON = {1, 5, 10, 30}
