@@ -61,7 +61,6 @@ _PAYLOAD = {
     "date": "2024-01-31",
     "symbol": "SPY",
     "horizon": "5d",
-    "forecast_mode": "fast",
     "include_realized": False,
 }
 

@@ -92,7 +92,6 @@ def test_analyze_persists_a_history_row_visible_via_get_history(monkeypatch):
             "text": "Recent indicators…",
             "date": "2026-03-15",
             "symbol": "^GSPC",
-            "forecast_mode": "fast",
             "horizon": "3d",
             "include_realized": False,
         },

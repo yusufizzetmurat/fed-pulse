@@ -1,9 +1,8 @@
-"""Tests for /research/artifacts and /train-jobs (multi-page expansion #150)."""
+"""Tests for /research/artifacts."""
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -16,21 +15,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import app.main as main_mod  # noqa: E402
 from app.services import research_artifacts  # noqa: E402
-
-
-@pytest.fixture(autouse=True)
-def _reset_train_jobs(monkeypatch):
-    """Each test starts with an empty in-memory train-jobs map and the
-    arq Redis pool disabled so the legacy in-memory path is exercised."""
-
-    monkeypatch.setenv("FED_PULSE_DISABLE_REDIS_POOL", "1")
-    if getattr(main_mod.app.state, "redis_pool", None) is not None:
-        main_mod.app.state.redis_pool = None
-    with main_mod._train_jobs_lock:
-        main_mod._train_jobs.clear()
-    yield
-    with main_mod._train_jobs_lock:
-        main_mod._train_jobs.clear()
 
 
 @pytest.fixture
@@ -157,35 +141,6 @@ def test_research_artifacts_accepts_matrix_shape(client, monkeypatch, tmp_path):
     cells = {(c["source"], c["target"]): c["metric"] for c in transfer["cells"]}
     assert cells[("fed", "fed")] == 0.63
     assert cells[("ecb", "ecb")] == 0.58
-
-
-def test_train_jobs_listing_filters_and_pagination(client):
-    now = datetime.now(timezone.utc).isoformat()
-    jobs = [
-        {"job_id": "a", "status": "running", "symbol": "^GSPC", "created_at": now},
-        {"job_id": "b", "status": "queued", "symbol": "^GSPC", "created_at": now},
-        {"job_id": "c", "status": "succeeded", "symbol": "QQQ", "created_at": now},
-        {"job_id": "d", "status": "failed", "symbol": "^GSPC", "created_at": now, "error": "boom"},
-    ]
-    with main_mod._train_jobs_lock:
-        for job in jobs:
-            main_mod._train_jobs[job["job_id"]] = job
-
-    response = client.get("/train-jobs")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["total"] == 4
-    # Running first, then queued, failed, succeeded -- per _TRAIN_JOB_SORT_RANK.
-    assert [item["job_id"] for item in body["items"]] == ["a", "b", "d", "c"]
-
-    filtered = client.get("/train-jobs", params={"status": "failed"}).json()
-    assert filtered["total"] == 1
-    assert filtered["items"][0]["error"] == "boom"
-
-    paged = client.get("/train-jobs", params={"limit": 2, "offset": 1}).json()
-    assert paged["limit"] == 2
-    assert paged["offset"] == 1
-    assert len(paged["items"]) == 2
 
 
 def test_research_artifacts_section_skips_dotfiles(tmp_path):

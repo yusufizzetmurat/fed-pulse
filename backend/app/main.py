@@ -1,23 +1,16 @@
 import io
 import json
 import logging
-import os
-import threading
-import uuid
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import Any
 
 import httpx
-from arq import constants as arq_constants
-from arq.connections import ArqRedis, create_pool
-from arq.jobs import Job as ArqJob, JobStatus
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
-from app.audit import append_audit_entry
 from app.config import DATA_DIR
 from app.db import (
     delete_run,
@@ -28,7 +21,7 @@ from app.db import (
     persist_analysis_run,
     session_scope,
 )
-from app.logging import bind_run_id, clear_run_id, configure_logging, get_logger
+from app.logging import configure_logging, get_logger
 from app.middleware.errors import RunIdMiddleware, register_error_handlers
 from app.schemas import (
     AnalyzeRequest,
@@ -43,10 +36,6 @@ from app.schemas import (
     HistoryRealizedResponse,
     NextFomcForecastResponse,
     ResearchArtifactsResponse,
-    TrainJobAcceptedResponse,
-    TrainJobStatusResponse,
-    TrainJobSummary,
-    TrainJobsListResponse,
 )
 from app.evaluation.xai import attribute_text, to_response as xai_to_response
 from app.services.document_parser import (
@@ -77,9 +66,13 @@ from app.services.market_data import (
     fetch_realized_forward,
 )
 from app.services.sentiment import analyze_text
-from app.worker import REAL_TRAIN_HISTORY_LENGTH, get_redis_settings
 
 logger = logging.getLogger(__name__)
+
+# 252 trading days ≈ one year of context. Used as the cold-start
+# bootstrap history when /analyze fires against a host that has no
+# checkpoint on disk yet (first run after a fresh clone).
+COLD_START_HISTORY_LENGTH = 252
 
 
 @asynccontextmanager
@@ -94,78 +87,14 @@ async def _lifespan(app: FastAPI):
         warmup_classifier()
     except Exception:  # pragma: no cover — never let model warmup block startup
         get_logger("fed_pulse").warning("classifier_warmup_failed", exc_info=True)
-    # Bring up an arq Redis pool so /analyze can enqueue real_train jobs
-    # into a durable queue. A missing or unreachable Redis is not fatal:
-    # the endpoint falls back to the in-process daemon thread so dev
-    # boxes without docker compose still work. ``FED_PULSE_DISABLE_REDIS_POOL``
-    # is a test-only escape hatch that skips the connect attempt entirely
-    # (the default arq retry loop is otherwise long enough to slow the
-    # test suite noticeably). The prefix isolates the flag from any
-    # generic ``DISABLE_REDIS_POOL`` value an external tool or host
-    # environment might export.
-    pool: ArqRedis | None = None
-    if os.environ.get("FED_PULSE_DISABLE_REDIS_POOL", "").strip().lower() not in {"1", "true", "yes"}:
-        try:
-            pool = await create_pool(get_redis_settings())
-            # Force a round-trip so an unreachable Redis fails fast instead of
-            # the first /analyze call discovering it the hard way.
-            await pool.ping()
-            get_logger("fed_pulse").info("arq_pool_ready", service="fomc-api")
-        except Exception:
-            get_logger("fed_pulse").warning(
-                "arq_pool_unavailable",
-                service="fomc-api",
-                exc_info=True,
-            )
-            if pool is not None:  # pragma: no cover — partial init unwinds
-                try:
-                    await pool.close(close_connection_pool=True)
-                except Exception:
-                    pass
-            pool = None
-    app.state.redis_pool = pool
     get_logger("fed_pulse").info("startup", service="fomc-api")
     try:
         yield
     finally:
-        if pool is not None:
-            try:
-                await pool.close(close_connection_pool=True)
-            except Exception:  # pragma: no cover
-                get_logger("fed_pulse").warning("arq_pool_close_failed", exc_info=True)
         get_logger("fed_pulse").info("shutdown", service="fomc-api")
 
 
 app = FastAPI(title="FOMC Sentiment API", version="0.1.0", lifespan=_lifespan)
-
-# In-memory fallback only. The primary store is Redis via arq; this dict is
-# read/written only when ``app.state.redis_pool`` is None (dev environments
-# without a Redis container). It keeps the surface backwards-compatible
-# with the pre-#103 daemon-thread path.
-_train_jobs: dict[str, dict[str, Any]] = {}
-_train_jobs_lock = threading.Lock()
-
-
-def _redis_pool() -> ArqRedis | None:
-    """Return the arq pool stashed on ``app.state`` during lifespan, if any.
-
-    ``app.state.redis_pool`` may be either an ``ArqRedis`` instance (the
-    production path — lifespan creates the pool once and the same object
-    serves every request) or a zero-arg callable that returns a fresh
-    ``ArqRedis`` (the test path — needed because ``TestClient`` runs
-    each request in its own anyio portal with a private event loop, so
-    a pool constructed in the test thread's loop would fail with
-    ``RuntimeError: Queue is bound to a different event loop`` when
-    consumed inside the request handler). The callable form lets tests
-    construct a fresh pool inside the request loop on demand.
-    """
-
-    pool = getattr(app.state, "redis_pool", None)
-    if pool is None:
-        return None
-    if callable(pool) and not isinstance(pool, ArqRedis):
-        return pool()
-    return pool
 
 app.add_middleware(RunIdMiddleware)
 app.add_middleware(
@@ -278,18 +207,6 @@ def get_document_by_date(date: str, kind: str = "auto"):
     )
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _set_job_state(job_id: str, **patch: Any) -> None:
-    with _train_jobs_lock:
-        state = _train_jobs.get(job_id)
-        if state is None:
-            return
-        state.update(patch)
-
-
 def _build_analyze_response(
     payload: AnalyzeRequest,
     *,
@@ -342,139 +259,19 @@ def _build_analyze_response(
     return response
 
 
-def _run_real_train_job(job_id: str, payload: AnalyzeRequest) -> None:
-    # Bind run_id on the daemon thread so checkpoint/audit hooks downstream
-    # tag every log line and audit row with the same id as the API caller.
-    bind_run_id(job_id)
-    try:
-        _set_job_state(job_id, status="running", started_at=_utc_now_iso())
-        _run_real_train_job_body(job_id, payload)
-    finally:
-        clear_run_id()
-
-
-def _run_real_train_job_body(job_id: str, payload: AnalyzeRequest) -> None:
-    try:
-        sentiment = analyze_text(payload.text)
-        market_history = fetch_market_history(
-            target_date=payload.date,
-            symbol=payload.symbol,
-            history_length=REAL_TRAIN_HISTORY_LENGTH,
-        )
-        history_vectors = build_feature_vectors(market_history, sentiment_score=float(sentiment["score"]), document_date=payload.date)
-
-        # Real Train intentionally runs a stronger checkpoint update over 252-day context.
-        bootstrap_checkpoint(
-            vectors=history_vectors,
-            epochs=120,
-            batch_size=64,
-            learning_rate=3e-4,
-            validation_fraction=0.2,
-            early_stopping_patience=12,
-        )
-        result = _build_analyze_response(payload, mode="real_train", history_length=REAL_TRAIN_HISTORY_LENGTH)
-        _record_history(payload, result)
-        _set_job_state(
-            job_id,
-            status="succeeded",
-            result=result,
-            finished_at=_utc_now_iso(),
-        )
-        try:
-            append_audit_entry(
-                "real_train_completed",
-                run_id=job_id,
-                metadata={"symbol": payload.symbol, "date": payload.date},
-            )
-        except Exception:  # pragma: no cover
-            get_logger("fed_pulse").warning("audit_write_failed", run_id=job_id)
-    except Exception as exc:  # pragma: no cover
-        _set_job_state(
-            job_id,
-            status="failed",
-            error=f"Real train job failed: {exc}",
-            finished_at=_utc_now_iso(),
-        )
-        try:
-            append_audit_entry(
-                "real_train_failed",
-                run_id=job_id,
-                metadata={"symbol": payload.symbol, "date": payload.date, "error": str(exc)},
-            )
-        except Exception:
-            get_logger("fed_pulse").warning("audit_write_failed", run_id=job_id)
-
-
-async def _enqueue_real_train(payload: AnalyzeRequest) -> dict[str, Any]:
-    """Enqueue a Real-Train job through the arq Redis pool when available,
-    falling back to the legacy in-process daemon thread otherwise.
-
-    The fallback path keeps dev environments without a Redis container
-    working and preserves the pre-#103 response shape so the existing
-    frontend polling loop is unaffected.
-    """
-
-    job_id = str(uuid.uuid4())
-    pool = _redis_pool()
-    if pool is not None:
-        await pool.enqueue_job(
-            "real_train_task",
-            payload.model_dump(),
-            _job_id=job_id,
-        )
-        return {
-            "status": "queued",
-            "job_id": job_id,
-            "message": "Real Train started with 252-day history. Poll /train-jobs/{job_id} for progress.",
-        }
-
-    # Fallback: in-process daemon thread + in-memory job map. Same response
-    # shape as the Redis path so callers cannot tell the two apart.
-    job_state: dict[str, Any] = {
-        "job_id": job_id,
-        "status": "queued",
-        "error": None,
-        "started_at": None,
-        "finished_at": None,
-        "result": None,
-        "created_at": _utc_now_iso(),
-        "history_length": REAL_TRAIN_HISTORY_LENGTH,
-        "symbol": payload.symbol,
-        "date": payload.date,
-    }
-    with _train_jobs_lock:
-        _train_jobs[job_id] = job_state
-    thread = threading.Thread(
-        target=_run_real_train_job, args=(job_id, payload), daemon=True
-    )
-    thread.start()
-    return {
-        "status": "queued",
-        "job_id": job_id,
-        "message": "Real Train started with 252-day history. Poll /train-jobs/{job_id} for progress.",
-    }
-
-
-@app.post("/analyze", response_model=AnalyzeResponse | TrainJobAcceptedResponse)
+@app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(payload: AnalyzeRequest):
     """Async handler — heavy sync work (transformers, yfinance, torch) runs in
     the thread pool so the event loop stays responsive under load."""
 
     try:
-        mode = payload.forecast_mode.strip().lower()
-        if mode not in {"fast", "quick_train", "real_train"}:
-            raise ValueError("forecast_mode must be 'fast', 'quick_train', or 'real_train'")
-
-        if mode == "real_train":
-            return await _enqueue_real_train(payload)
-
-        history_length = 30
-        if mode == "fast" and not checkpoint_exists():
-            # Bootstrap a first checkpoint so fast-mode inference is not random on cold start.
+        if not checkpoint_exists():
+            # Cold-start bootstrap: a fresh clone has no checkpoint on disk yet,
+            # so seed one against a 252-day window before the first inference.
             await run_in_threadpool(_bootstrap_cold_start, payload)
 
         response = await run_in_threadpool(
-            _build_analyze_response, payload, mode=mode, history_length=history_length
+            _build_analyze_response, payload, mode="fast", history_length=30
         )
         await run_in_threadpool(_record_history, payload, response)
         return response
@@ -485,17 +282,17 @@ async def analyze(payload: AnalyzeRequest):
 
 
 def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
-    """Run the one-shot bootstrap training when the checkpoint is missing.
+    """Seed an initial checkpoint when the model file is missing.
 
-    Synchronous — invoked via `run_in_threadpool` from the async handler so the
-    long-running fit doesn't block the event loop.
+    Synchronous — invoked via ``run_in_threadpool`` from the async
+    handler so the long-running fit does not block the event loop.
     """
 
     warmup_sentiment = analyze_text(payload.text)
     warmup_history = fetch_market_history(
         target_date=payload.date,
         symbol=payload.symbol,
-        history_length=REAL_TRAIN_HISTORY_LENGTH,
+        history_length=COLD_START_HISTORY_LENGTH,
     )
     warmup_vectors = build_feature_vectors(
         warmup_history,
@@ -509,116 +306,6 @@ def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
         learning_rate=4e-4,
         early_stopping_patience=8,
     )
-
-
-def _iso_or_none(ts: Any) -> str | None:
-    """Best-effort ISO-8601 stringifier for arq's datetime fields."""
-
-    if ts is None:
-        return None
-    if isinstance(ts, datetime):
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        return ts.isoformat()
-    return str(ts)
-
-
-def _payload_from_args(info: Any) -> dict[str, Any]:
-    """Pull the AnalyzeRequest payload out of an arq job def/result."""
-
-    if info is None:
-        return {}
-    args = getattr(info, "args", None) or ()
-    if args and isinstance(args[0], dict):
-        return args[0]
-    kwargs = getattr(info, "kwargs", None) or {}
-    payload = kwargs.get("payload")
-    return payload if isinstance(payload, dict) else {}
-
-
-async def _state_from_redis_job(pool: ArqRedis, job_id: str) -> dict[str, Any] | None:
-    """Read job state from Redis and shape it like the legacy ``_train_jobs``
-    dict so the response models do not need to change."""
-
-    job = ArqJob(job_id, pool)
-    status = await job.status()
-    if status == JobStatus.not_found:
-        return None
-    info = await job.info()
-    # Skip jobs from other arq task functions so the dashboard listing
-    # stays scoped to real_train. A future arq task on the same Redis
-    # instance would otherwise leak into /train-jobs with no symbol /
-    # date / history_length payload and break the response shape.
-    if info is not None and getattr(info, "function", None) not in (None, "real_train_task"):
-        return None
-    payload = _payload_from_args(info)
-    state: dict[str, Any] = {
-        "job_id": job_id,
-        "status": "queued",
-        "error": None,
-        "started_at": None,
-        "finished_at": None,
-        "result": None,
-        "created_at": _iso_or_none(getattr(info, "enqueue_time", None)),
-        "history_length": REAL_TRAIN_HISTORY_LENGTH,
-        "symbol": payload.get("symbol"),
-        "date": payload.get("date"),
-    }
-    if status == JobStatus.in_progress:
-        state["status"] = "running"
-        result_info = await job.result_info()
-        if result_info is not None:
-            state["started_at"] = _iso_or_none(result_info.start_time)
-        return state
-    if status == JobStatus.complete:
-        result_info = await job.result_info()
-        if result_info is None:
-            state["status"] = "succeeded"
-            return state
-        state["started_at"] = _iso_or_none(result_info.start_time)
-        state["finished_at"] = _iso_or_none(result_info.finish_time)
-        if result_info.success:
-            state["status"] = "succeeded"
-            state["result"] = result_info.result if isinstance(result_info.result, dict) else None
-        else:
-            state["status"] = "failed"
-            err = result_info.result
-            state["error"] = (
-                f"Real train job failed: {err}" if err is not None else "Real train job failed"
-            )
-        return state
-    # queued / deferred share the same surface state from the API's view.
-    return state
-
-
-async def _list_redis_job_ids(pool: ArqRedis) -> list[str]:
-    """Enumerate every job arq knows about: queued/in-progress (``arq:job:*``)
-    plus completed (``arq:result:*``). Both prefixes are stripped to recover
-    the bare job id."""
-
-    seen: set[str] = set()
-    for prefix in (arq_constants.job_key_prefix, arq_constants.result_key_prefix):
-        match = f"{prefix}*"
-        async for key in pool.scan_iter(match=match):
-            key_str = key.decode() if isinstance(key, bytes) else key
-            seen.add(key_str[len(prefix):])
-    return sorted(seen)
-
-
-@app.get("/train-jobs/{job_id}", response_model=TrainJobStatusResponse)
-async def get_train_job(job_id: str):
-    pool = _redis_pool()
-    if pool is not None:
-        state = await _state_from_redis_job(pool, job_id)
-        if state is not None:
-            return state
-        # Fall through to the in-memory map -- a daemon-thread job submitted
-        # while Redis was down still has to be reachable.
-    with _train_jobs_lock:
-        state = _train_jobs.get(job_id)
-        if state is None:
-            raise HTTPException(status_code=404, detail=f"Train job not found: {job_id}")
-        return dict(state)
 
 
 def _record_history(request: AnalyzeRequest, response: dict[str, Any]) -> None:
@@ -775,89 +462,6 @@ async def parse_document(
             detail=f"Unsupported content type {content_type or 'unknown'} (expected PDF or DOCX)",
         )
     return DocumentParseResponse(**parsed.to_dict())
-
-
-# ---------------------------------------------------------------------------
-# Train-jobs listing (multi-page expansion #150)
-# ---------------------------------------------------------------------------
-
-_TRAIN_JOB_SORT_RANK: dict[str, int] = {
-    "running": 0,
-    "queued": 1,
-    "failed": 2,
-    "succeeded": 3,
-}
-
-
-def _train_job_sort_key(state: dict[str, Any]) -> tuple[int, str]:
-    status = str(state.get("status") or "queued").lower()
-    rank = _TRAIN_JOB_SORT_RANK.get(status, 99)
-    # Within a status bucket sort newest-first by created_at; the
-    # fallback empty string keeps the ordering deterministic.
-    created = str(state.get("created_at") or "")
-    return (rank, _invert_iso(created))
-
-
-def _invert_iso(value: str) -> str:
-    """Cheap descending-sort key for ISO timestamps."""
-
-    return "".join(chr(255 - ord(c)) if ord(c) < 255 else c for c in value)
-
-
-async def _redis_train_jobs_snapshot(pool: ArqRedis) -> list[dict[str, Any]]:
-    """Materialise every arq-tracked real_train job into the legacy state
-    shape so :func:`_train_job_sort_key` and the response model can ingest
-    them without branching on the storage backend."""
-
-    job_ids = await _list_redis_job_ids(pool)
-    states: list[dict[str, Any]] = []
-    for jid in job_ids:
-        state = await _state_from_redis_job(pool, jid)
-        if state is not None:
-            states.append(state)
-    return states
-
-
-@app.get("/train-jobs", response_model=TrainJobsListResponse)
-async def list_train_jobs(
-    status: str | None = Query(default=None, description="Filter by status: queued/running/succeeded/failed."),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0, le=2_147_483_647),
-) -> TrainJobsListResponse:
-    """List real_train jobs from the arq-backed Redis queue.
-
-    Falls back to the in-memory ``_train_jobs`` dict when Redis is
-    unreachable -- dev environments without a worker container still
-    surface daemon-thread jobs through the dashboard.
-    """
-
-    pool = _redis_pool()
-    if pool is not None:
-        snapshot = await _redis_train_jobs_snapshot(pool)
-    else:
-        with _train_jobs_lock:
-            snapshot = [dict(state) for state in _train_jobs.values()]
-    if status:
-        wanted = status.strip().lower()
-        snapshot = [s for s in snapshot if str(s.get("status") or "").lower() == wanted]
-    snapshot.sort(key=_train_job_sort_key)
-    total = len(snapshot)
-    sliced = snapshot[offset : offset + limit]
-    items = [
-        TrainJobSummary(
-            job_id=str(state.get("job_id")),
-            status=str(state.get("status") or "queued"),
-            symbol=state.get("symbol"),
-            date=state.get("date"),
-            created_at=state.get("created_at"),
-            started_at=state.get("started_at"),
-            finished_at=state.get("finished_at"),
-            history_length=state.get("history_length"),
-            error=state.get("error"),
-        )
-        for state in sliced
-    ]
-    return TrainJobsListResponse(items=items, total=total, limit=limit, offset=offset)
 
 
 # ---------------------------------------------------------------------------
