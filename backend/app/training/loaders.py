@@ -1498,6 +1498,7 @@ def load_walk_forward_split(
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
     use_text_embeddings: bool = True,
     text_embedding_cache_dir: Path | str | None = None,
+    embargo_days: int = 0,
 ) -> WalkForwardSplit:
     """Return the (train, val, test) sequence partitions for one fold.
 
@@ -1522,6 +1523,24 @@ def load_walk_forward_split(
     consumed by the training loop for early stopping. Both paths
     preserve the prior-bars + rich-feature + text-embedding attachment
     logic; only the partition step changes.
+
+    ``embargo_days`` inserts a purged buffer between adjacent partitions
+    (López de Prado, *Advances in Financial ML*, ch. 7). With a
+    10-bar forward target and a ``SEQUENCE_LENGTH``-bar input window,
+    consecutive event rows can share bars across the train/val
+    boundary: train_event_T's 10-day forward target spans bars
+    [T+1, T+10] and val_event_V's input window spans bars
+    [V - SEQUENCE_LENGTH + 1, V], so the two windows overlap whenever
+    V - T <= SEQUENCE_LENGTH + 10 - 1 calendar bars. Setting
+    ``embargo_days`` drops val rows whose event date sits within
+    ``embargo_days`` calendar days of the fold's ``train_end``, and
+    test rows within ``embargo_days`` of ``val_end``. The function
+    default is ``0`` (back-compat); ``app.train_forecaster`` and
+    other production callers pass a non-zero value via their
+    ``--embargo-days`` CLI flag. ``embargo_days`` is currently honoured
+    only on the multi-fold walk-forward path (single-fold partitions
+    are split-tag-driven and have no manifest dates to anchor the
+    embargo against).
 
     Raises ``ValueError`` when the chosen partition produces an empty
     test list: a sweep that silently runs on no held-out events is the
@@ -1582,6 +1601,7 @@ def load_walk_forward_split(
                 continue
     else:
         protocol = "walk-forward"
+        train_end_str = fold_window.get("train_end", "")
         val_start = fold_window.get("val_start", "")
         val_end = fold_window.get("val_end", "")
         test_start = fold_window.get("test_start", "")
@@ -1591,6 +1611,20 @@ def load_walk_forward_split(
                 f"fold {fold_id!r} manifest entry missing one of "
                 "val_start/val_end/test_start/test_end"
             )
+        embargo_active = int(embargo_days) > 0
+        if embargo_active and not train_end_str:
+            raise ValueError(
+                f"fold {fold_id!r} manifest entry is missing ``train_end``; "
+                "cannot apply a non-zero embargo without an anchored "
+                "train-boundary date"
+            )
+        train_end_dt = (
+            datetime.date.fromisoformat(train_end_str) if embargo_active else None
+        )
+        val_end_dt = (
+            datetime.date.fromisoformat(val_end) if embargo_active else None
+        )
+        embargo = datetime.timedelta(days=int(embargo_days))
         for sequence, _text_hash, event_date_str in items:
             # Expanding-window contract: any event chronologically
             # before the val window belongs to the training partition,
@@ -1599,9 +1633,21 @@ def load_walk_forward_split(
                 train.append(sequence)
                 train_dates.append(event_date_str)
             elif val_start <= event_date_str <= val_end:
+                if embargo_active and train_end_dt is not None:
+                    ed = datetime.date.fromisoformat(event_date_str)
+                    if (ed - train_end_dt) < embargo:
+                        # Purged: too close to train_end. Drops the
+                        # row to break the train-target / val-input
+                        # bar-window overlap; see docstring for the
+                        # exact arithmetic.
+                        continue
                 val.append(sequence)
                 val_dates.append(event_date_str)
             elif test_start <= event_date_str <= test_end:
+                if embargo_active and val_end_dt is not None:
+                    ed = datetime.date.fromisoformat(event_date_str)
+                    if (ed - val_end_dt) < embargo:
+                        continue
                 test.append(sequence)
                 test_dates.append(event_date_str)
             else:
