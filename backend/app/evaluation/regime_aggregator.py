@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Iterable, Mapping
 
@@ -24,6 +24,15 @@ class RegimeRow:
     mean: float
     std: float | None
     n: int
+    # Raw per-seed values backing this row. Carries forward into the
+    # bootstrap CI helper without forcing the aggregator to recompute
+    # from upstream artefacts. ``ci_lo`` / ``ci_hi`` are populated when
+    # at least two samples are present; rows with a single sample
+    # (smoke runs, single-seed cells) carry ``None`` so callers can
+    # surface "n/a" in the table.
+    samples: tuple[float, ...] = ()
+    ci_lo: float | None = None
+    ci_hi: float | None = None
 
 
 def _to_date(value: str) -> date:
@@ -35,7 +44,23 @@ def aggregate_by_regime(
     *,
     regime_windows: Iterable[tuple[str, str, str]] = REGIME_WINDOWS,
     metric_keys: Iterable[str] = ("combined_rmse", "close_rmse", "volatility_rmse", "directional_accuracy"),
+    bootstrap_block_size: int = 1,
+    bootstrap_resamples: int = 1000,
+    bootstrap_coverage: float = 0.95,
+    bootstrap_seed: int = 11,
 ) -> list[RegimeRow]:
+    """Return one row per (regime, fold, variant, metric).
+
+    Each row carries the per-seed samples it was built from plus a
+    moving-block bootstrap CI on the row mean. Bootstrap defaults to
+    block size 1 because the per-seed list is a small sample of
+    independent runs, not a time series; pass a larger block when the
+    samples are autocorrelated (e.g. a per-day series fed into this
+    helper).
+    """
+
+    from app.evaluation.bootstrap import block_bootstrap_ci
+
     out: list[RegimeRow] = []
     holdout_list = list(holdouts)
     if not holdout_list:
@@ -63,6 +88,18 @@ def aggregate_by_regime(
                     metric = variant_payload.get(metric_key)
                     if not isinstance(metric, dict):
                         continue
+                    samples = tuple(_iter_samples(metric.get("per_seed")))
+                    ci_lo: float | None = None
+                    ci_hi: float | None = None
+                    if len(samples) > 1:
+                        ci = block_bootstrap_ci(
+                            list(samples),
+                            block_size=int(bootstrap_block_size),
+                            n_resamples=int(bootstrap_resamples),
+                            coverage=float(bootstrap_coverage),
+                            seed=int(bootstrap_seed),
+                        )
+                        ci_lo, ci_hi = float(ci.lo), float(ci.hi)
                     out.append(
                         RegimeRow(
                             regime=regime_name,
@@ -72,9 +109,34 @@ def aggregate_by_regime(
                             mean=float(metric.get("mean", float("nan"))),
                             std=_coerce_optional_float(metric.get("std")),
                             n=int(metric.get("count", 0)),
+                            samples=samples,
+                            ci_lo=ci_lo,
+                            ci_hi=ci_hi,
                         )
                     )
     return out
+
+
+def _iter_samples(per_seed: Any) -> Iterable[float]:
+    """Extract numeric per-seed values from the metric block.
+
+    Tolerates both ``{seed: value}`` and ``{seed: {"value": x}}`` shapes
+    so older aggregate.json layouts keep working. Non-finite or
+    unparseable entries are dropped so the bootstrap input stays a
+    clean numeric list.
+    """
+
+    if not isinstance(per_seed, Mapping):
+        return
+    for _seed, raw in per_seed.items():
+        value: float | None
+        if isinstance(raw, Mapping):
+            value = _coerce_optional_float(raw.get("value"))
+        else:
+            value = _coerce_optional_float(raw)
+        if value is None:
+            continue
+        yield value
 
 
 def _coerce_optional_float(value: Any) -> float | None:
