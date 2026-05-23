@@ -92,14 +92,14 @@ def build_lora_encoder(
     """
 
     try:
-        from transformers import AutoModel, AutoTokenizer  # type: ignore
+        from transformers import AutoModel, AutoTokenizer
     except ImportError as exc:  # pragma: no cover - defensive
         raise ImportError(
             "transformers is required for the encoder_lora path; "
             "install via the backend pyproject.toml dependency block."
         ) from exc
     try:
-        from peft import LoraConfig, get_peft_model  # type: ignore
+        from peft import LoraConfig, get_peft_model
     except ImportError as exc:  # pragma: no cover - defensive
         raise ImportError(
             "peft is required for the encoder_lora path; "
