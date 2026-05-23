@@ -41,7 +41,17 @@ DEFAULT_LOCAL_CORPUS_FILES: tuple[str, ...] = (
     "beige_book.json",
     "regional_research.json",
 )
-_VALID_SUBSTRATES = ("bis", "local", "both")
+# Round 3 (#242) strict FOMC-only substrate: minutes + statements only.
+# Strips the BIS / Fed-adjacent broader text from the pretraining mix so
+# the ablation row can measure whether the broader substrate actually
+# helps downstream macro-F1 versus a smaller-but-strictly-on-target pool.
+# ~48 documents / ~240k tokens after chunking; expect underperformance
+# vs BIS-only but the row anchors the lower bound.
+DEFAULT_FOMC_CORPUS_FILES: tuple[str, ...] = (
+    "fomc_statements.json",
+    "fomc_minutes.json",
+)
+_VALID_SUBSTRATES = ("bis", "local", "fomc", "both")
 
 
 def _iter_local_pairs(data_dir: Path, files: Iterable[str]) -> list[dict[str, Any]]:
@@ -66,6 +76,20 @@ def _iter_local_pairs(data_dir: Path, files: Iterable[str]) -> list[dict[str, An
                 # NSP label is fixed at 0 so the model treats it as non-paired.
                 pairs.append({"sequenceA": text, "sequenceB": "", "next_sentence_label": 0})
     return pairs
+
+
+def _iter_fomc_pairs(data_dir: Path) -> list[dict[str, Any]]:
+    """Build NSP pairs from the on-disk FOMC statements + minutes JSON.
+
+    The strict FOMC-only substrate strips every non-FOMC document from
+    the pretraining mix so the ablation row can isolate whether the
+    BIS / Fed-adjacent broader corpus actually helps downstream
+    classification. The same degenerate-pair convention as
+    ``_iter_local_pairs`` is used so the downstream chunker + collator
+    paths stay identical.
+    """
+
+    return _iter_local_pairs(data_dir, DEFAULT_FOMC_CORPUS_FILES)
 
 
 def _bis_pair_stream(
@@ -258,7 +282,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--substrate",
         choices=_VALID_SUBSTRATES,
         default="bis",
-        help="bis (default; samchain/BIS_speeches_97_23_MLM), local (legacy JSON corpus), or both.",
+        help=(
+            "bis (default; samchain/BIS_speeches_97_23_MLM), local (legacy "
+            "Fed-adjacent JSON corpus), fomc (strict FOMC-only — minutes + "
+            "statements; Round 3 / #242 ablation), or both (local + BIS)."
+        ),
     )
     parser.add_argument(
         "--bis-dataset-id",
@@ -311,6 +339,18 @@ def _collect_pairs(args: argparse.Namespace) -> list[dict[str, Any]]:
     from --substrate bis.
     """
     pairs: list[dict[str, Any]] = []
+
+    if args.substrate == "fomc":
+        # Strict FOMC-only mode (Round 3 / #242 ablation). Reads only
+        # ``fomc_statements.json`` + ``fomc_minutes.json``; bypasses BIS
+        # and the broader local corpus entirely. ``--max-rows`` clamps
+        # the resulting pool (same as the legacy local branch).
+        fomc_dir = Path(args.auxiliary_local_dir) if args.auxiliary_local_dir else Path(args.data_dir)
+        fomc_pairs = _iter_fomc_pairs(fomc_dir)
+        if args.max_rows and len(fomc_pairs) > args.max_rows:
+            fomc_pairs = fomc_pairs[: args.max_rows]
+        pairs.extend(fomc_pairs)
+        return pairs
 
     if args.substrate in {"local", "both"}:
         local_dir = Path(args.auxiliary_local_dir) if args.auxiliary_local_dir else Path(args.data_dir)
