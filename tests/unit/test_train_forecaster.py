@@ -24,7 +24,7 @@ def _summary(
         epochs_completed=12,
         batch_size=16,
         learning_rate=learning_rate,
-        validation_fraction=0.2,
+        validation_split=0.2,
         early_stopping_patience=4,
         sequence_groups=1,
         total_windows=24,
