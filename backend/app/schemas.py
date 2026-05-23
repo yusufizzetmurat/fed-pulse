@@ -16,7 +16,6 @@ class AnalyzeRequest(BaseModel):
     date: str = Field(..., description="Document date in ISO format: YYYY-MM-DD")
     symbol: str = Field("^GSPC", description="Market ticker, e.g. ^GSPC or DX-Y.NYB")
     horizon: str = Field("3d", description="Forecast horizon label")
-    forecast_mode: str = Field("fast", description="Forecast mode: fast, quick_train, or real_train")
     include_realized: bool = Field(
         False,
         description="When true and date is in the past, include realized forward series overlay.",
@@ -166,25 +165,6 @@ class AnalyzeResponse(BaseModel):
     credibility: CredibilityResponse | None = None
 
 
-class TrainJobAcceptedResponse(BaseModel):
-    model_config = _FORBID_FROZEN_CONFIG
-
-    status: str = "queued"
-    job_id: str
-    message: str
-
-
-class TrainJobStatusResponse(BaseModel):
-    model_config = _FORBID_FROZEN_CONFIG
-
-    job_id: str
-    status: str
-    error: str | None = None
-    started_at: str | None = None
-    finished_at: str | None = None
-    result: AnalyzeResponse | None = None
-
-
 class HistoryEntry(BaseModel):
     id: str
     created_at: str
@@ -311,36 +291,6 @@ class ResearchArtifactsResponse(BaseModel):
     sections: dict[str, list[ArtifactFile]]
     encoder_bakeoff: EncoderBakeoffSection
     cross_bank_transfer: CrossBankTransferSection
-
-
-class TrainJobSummary(BaseModel):
-    """Subset of train-job state safe for listing.
-
-    Same fields :data:`_train_jobs` exposes through ``/train-jobs/{id}``
-    but stripped of the full ``result`` payload so the list response
-    stays cheap. The detail endpoint still returns the full state.
-    """
-
-    model_config = _FORBID_FROZEN_CONFIG
-
-    job_id: str
-    status: str
-    symbol: str | None = None
-    date: str | None = None
-    created_at: str | None = None
-    started_at: str | None = None
-    finished_at: str | None = None
-    history_length: int | None = None
-    error: str | None = None
-
-
-class TrainJobsListResponse(BaseModel):
-    model_config = _FORBID_FROZEN_CONFIG
-
-    items: list[TrainJobSummary]
-    total: int
-    limit: int
-    offset: int
 
 
 class NextFomcMeetingPrediction(BaseModel):

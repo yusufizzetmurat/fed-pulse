@@ -328,22 +328,13 @@ def forecast_quantitative_series(
     if not vectors:
         vectors = [FeatureVector(date="", sentiment_score=0.0, market_close=0.0, market_volatility=0.0)]
 
-    base_model = _get_model()
-    training_result = (
-        train_model(
-            base_model=base_model,
-            vectors=vectors,
-            epochs=18,
-            batch_size=32,
-            learning_rate=5e-4,
-            validation_fraction=0.25,
-            early_stopping_patience=4,
-            save_checkpoint=False,
-        )
-        if forecast_mode == "quick_train"
-        else None
-    )
-    model = training_result.model if training_result is not None else base_model
+    # ``forecast_mode`` is kept as a parameter (default ``"fast"``) for
+    # back-compat with persisted history rows; the runtime path is
+    # always the cached checkpoint now. The quick_train adaptation
+    # branch was retired in #265 along with the rest of the runtime
+    # adaptation surface.
+    model = _get_model()
+    training_result = None
 
     history_vectors = vectors[-30:]
     history_timestamps = [item.date for item in history_vectors]

@@ -76,7 +76,6 @@ def test_analyze_contract_e2e_with_real_forecaster(monkeypatch):
             "date": "2026-03-15",
             "symbol": "^GSPC",
             "horizon": "3d",
-            "forecast_mode": "fast",
             "include_realized": False,
         },
     )

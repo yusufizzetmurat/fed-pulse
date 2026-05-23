@@ -15,7 +15,6 @@ def _valid_request_payload() -> dict:
         "date": "2024-09-18",
         "symbol": "^GSPC",
         "horizon": "3d",
-        "forecast_mode": "fast",
         "include_realized": False,
     }
 

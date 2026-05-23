@@ -155,17 +155,6 @@ def test_forecast_quantitative_series_fast_shape():
     assert "volatility_scale" in out["series"]
 
 
-def test_forecast_quantitative_series_quick_train_shape():
-    out = forecast_quantitative_series(_sample_vectors(32), forecast_mode="quick_train", horizon="5d")
-    assert out["prediction"]["horizon"] == "5d"
-    assert out["model"]["runtime_mode"] == "quick_train"
-    assert out["model"]["adaptation_epochs_completed"] is not None
-    assert len(out["series"]["forecast_close"]) == 5
-    assert len(out["series"]["forecast_volatility"]) == 5
-    assert len(out["series"]["forecast_close_lower"]) == 5
-    assert len(out["series"]["forecast_close_upper"]) == 5
-    assert len(out["series"]["forecast_volatility_lower"]) == 5
-    assert len(out["series"]["forecast_volatility_upper"]) == 5
 
 
 def test_train_model_reports_model_config_and_metrics():

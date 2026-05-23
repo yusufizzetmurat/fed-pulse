@@ -1,15 +1,4 @@
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: swe599-redis
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-
   backend:
     build:
       context: ./backend
@@ -28,10 +17,6 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      redis:
-        condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   backend-gpu:
@@ -53,10 +38,6 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      redis:
-        condition: service_healthy
     deploy:
       resources:
         reservations:
@@ -65,58 +46,6 @@ services:
               count: all
               capabilities: [gpu]
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-
-  worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: swe599-worker
-    volumes:
-      - ./backend:/app
-      - ./tests:/app/tests:ro
-      - ./scripts:/app/scripts:ro
-      - ./data:/data
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      - PYTHONUNBUFFERED=1
-      - PYTHONPATH=/app
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      redis:
-        condition: service_healthy
-    command: arq app.worker.WorkerSettings
-
-  worker-gpu:
-    profiles: ["gpu"]
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: swe599-worker-gpu
-    volumes:
-      - ./backend:/app
-      - ./tests:/app/tests:ro
-      - ./scripts:/app/scripts:ro
-      - ./data:/data
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      - PYTHONUNBUFFERED=1
-      - PYTHONPATH=/app
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      redis:
-        condition: service_healthy
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    command: arq app.worker.WorkerSettings
 
   frontend:
     build:
