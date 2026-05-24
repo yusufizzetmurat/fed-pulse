@@ -28,21 +28,25 @@ import {
 import { DEFAULT_TEXT } from "@/lib/analyze/constants";
 import { toStance } from "@/lib/analyze/format";
 import type { AnalyzeRequest, AnalyzeResult, HistoryEntry, Horizon } from "@/lib/analyze/types";
-import { HORIZON_VALUES as HORIZON_VALUE_LIST, loadWorkspacePrefs } from "@/lib/workspace-prefs";
+import {
+  DEFAULT_HORIZON,
+  DEFAULT_SYMBOL,
+  HORIZON_VALUES as HORIZON_VALUE_LIST,
+  loadWorkspacePrefs,
+} from "@/lib/workspace-prefs";
 import { LegacyForecastCard } from "@/components/analyze/LegacyForecastCard";
 
 const HORIZON_VALUES = new Set<Horizon>(HORIZON_VALUE_LIST);
 
+// Initial request used by both SSR and the client's first paint. localStorage
+// prefs are applied after mount inside the component (see usePrefHydration)
+// so SSR + client agree and React does not log a hydration mismatch.
 function defaultRequest(): AnalyzeRequest {
-  // Read the per-browser default symbol / horizon set on the /settings
-  // page. The helper is SSR-safe and returns the hardcoded fallbacks
-  // when window is undefined, so the initial server render is stable.
-  const prefs = loadWorkspacePrefs();
   return {
     text: DEFAULT_TEXT,
     date: new Date().toISOString().slice(0, 10),
-    symbol: prefs.defaultSymbol,
-    horizon: prefs.defaultHorizon,
+    symbol: DEFAULT_SYMBOL,
+    horizon: DEFAULT_HORIZON,
     include_realized: false,
     include_xai: true,
   };
@@ -77,6 +81,20 @@ export default function WorkspacePage() {
   const [loading, setLoading] = React.useState(false);
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
   const [historyEntries, setHistoryEntries] = React.useState<RegimeHistoryEntry[]>([]);
+
+  // Apply saved workspace prefs (default symbol / horizon) after mount.
+  // Doing this in an effect rather than the initial state preserves the
+  // SSR ↔ hydration agreement; otherwise a user with non-default prefs
+  // gets a hydration mismatch warning on first paint.
+  React.useEffect(() => {
+    const prefs = loadWorkspacePrefs();
+    setRequest((prev) => {
+      if (prev.symbol === prefs.defaultSymbol && prev.horizon === prefs.defaultHorizon) {
+        return prev;
+      }
+      return { ...prev, symbol: prefs.defaultSymbol, horizon: prefs.defaultHorizon };
+    });
+  }, []);
 
   // Calendar / cross-page deep links land here with ?date=&symbol=&horizon=&kind=.
   React.useEffect(() => {
@@ -321,6 +339,7 @@ export default function WorkspacePage() {
                 <LegacyForecastCard
                   prediction={result.prediction}
                   market={result.market}
+                  documentDate={request.date}
                 />
               ) : (
                 <EmptyState

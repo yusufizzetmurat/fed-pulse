@@ -9,6 +9,7 @@ import type { AnalyzeResult, MarketResponse, PredictionResponse } from "@/lib/an
 interface LegacyForecastCardProps {
   prediction: PredictionResponse;
   market?: MarketResponse;
+  documentDate?: string;
 }
 
 function formatPrice(value: number | null | undefined): string {
@@ -35,7 +36,11 @@ function formatPercentDelta(value: number | null | undefined): string {
  * model-driven. Clearly framed as a legacy view so reviewers do not
  * confuse a point forecast with the calibrated regime headline.
  */
-export function LegacyForecastCard({ prediction, market }: LegacyForecastCardProps) {
+export function LegacyForecastCard({
+  prediction,
+  market,
+  documentDate,
+}: LegacyForecastCardProps) {
   const close = prediction.close;
   const vol = prediction.volatility;
   const spot = market?.close ?? null;
@@ -44,6 +49,16 @@ export function LegacyForecastCard({ prediction, market }: LegacyForecastCardPro
       ? ((close - spot) / spot) * 100
       : null;
   const horizonLabel = prediction.horizon ?? "—";
+  // spot is the snapshot close on the request date, not today. Surface
+  // the as-of date in the caption so a user running a historical
+  // analysis doesn't read the delta against today's live price.
+  const spotAsOf = market?.date_used ?? documentDate ?? null;
+  const spotCaption =
+    spot != null
+      ? spotAsOf
+        ? `Spot ${formatPrice(spot)} · as-of ${spotAsOf}`
+        : `Spot ${formatPrice(spot)}`
+      : "no spot reference";
 
   return (
     <Card>
@@ -75,7 +90,7 @@ export function LegacyForecastCard({ prediction, market }: LegacyForecastCardPro
             delta={closeDeltaPct}
             deltaFormatter={(v) => formatPercentDelta(v)}
             tone={closeDeltaPct == null ? "neutral" : closeDeltaPct > 0 ? "up" : "down"}
-            caption={spot != null ? `Spot ${formatPrice(spot)}` : "no spot reference"}
+            caption={spotCaption}
           />
           <KpiTile
             label={`Predicted volatility · ${horizonLabel}`}
