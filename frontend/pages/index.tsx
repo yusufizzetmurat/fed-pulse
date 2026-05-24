@@ -184,9 +184,18 @@ export default function WorkspacePage() {
     }
   };
 
+  // Monotonic id for counterfactual requests. The user can strike /
+  // unstrike sentences faster than /analyze can respond; without this
+  // guard a slower earlier response could land after a newer one and
+  // paint stale state. We snapshot the seq before the await and only
+  // commit when the response still matches the most recent issued id.
+  const counterfactualSeqRef = React.useRef(0);
+
   const runCounterfactual = React.useCallback(
     async (mask: Set<number>) => {
       if (!baselineResult) return;
+      counterfactualSeqRef.current += 1;
+      const ticket = counterfactualSeqRef.current;
       setCounterfactualLoading(true);
       try {
         const indices = Array.from(mask).sort((a, b) => a - b);
@@ -194,15 +203,20 @@ export default function WorkspacePage() {
           ...request,
           mask_sentence_indices: indices,
         });
-        setResult(next);
+        if (ticket === counterfactualSeqRef.current) {
+          setResult(next);
+        }
       } catch (err) {
+        if (ticket !== counterfactualSeqRef.current) return;
         const message =
           (err as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
           (err as Error).message ||
           "Counterfactual request failed.";
         toast.error(message);
       } finally {
-        setCounterfactualLoading(false);
+        if (ticket === counterfactualSeqRef.current) {
+          setCounterfactualLoading(false);
+        }
       }
     },
     [apiBaseUrl, baselineResult, request],
