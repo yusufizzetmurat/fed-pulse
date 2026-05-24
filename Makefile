@@ -47,6 +47,8 @@ help:
 	@echo "  make data-prep        - Run capability-first data preparation pipeline"
 	@echo "  make train-smoke      - Run Phase 3 single-seed smoke execution"
 	@echo "  make train-batch      - Run Phase 3 full official batch execution"
+	@echo "  make train-text-multi-axis-classifier TRAINING_PACKAGE_ID=<id>"
+	@echo "                         - Fine-tune the FinBERT-FedAdjacent + MultiTaskHead text classifier the /analyze cards read"
 	@echo "  make changelog        - Regenerate CHANGELOG.md from Conventional Commits via git-cliff"
 	@echo "  make audit-python     - Run pip-audit on the backend deps (mirrors CI)"
 	@echo "  make audit-npm        - Run npm audit on the frontend deps (mirrors CI)"
