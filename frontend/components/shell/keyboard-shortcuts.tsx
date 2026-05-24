@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { CommandPalette } from "@/components/shell/command-palette";
 import {
   Dialog,
   DialogContent,
@@ -26,10 +27,15 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
     ],
   },
   {
-    title: "Appearance",
+    title: "Command palette",
     items: [
-      { keys: ["t"], description: "Toggle light / dark theme" },
+      { keys: ["⌘ K"], description: "Open palette (jump-to-page, FOMC date, symbol)" },
+      { keys: ["Ctrl K"], description: "Same as ⌘ K on non-Mac keyboards" },
     ],
+  },
+  {
+    title: "Appearance",
+    items: [{ keys: ["t"], description: "Toggle light / dark theme" }],
   },
   {
     title: "Help",
@@ -66,38 +72,41 @@ function Kbd({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Mounts global keyboard shortcuts. Pressing `?` opens a dialog listing the
- * available bindings. Escape (handled by Radix) closes it. Two-key `g + x`
- * sequences route between top-level pages without going through the nav.
- *
- * Typing into inputs, textareas, or contenteditable nodes is ignored so the
- * shortcuts never fight a real keystroke.
+ * Mounts global keyboard shortcuts. `?` opens the bindings panel, `Cmd/Ctrl K`
+ * opens the command palette, and two-key `g + x` sequences route between
+ * top-level pages without going through the nav. Typing into inputs / textareas
+ * is ignored so the shortcuts never fight a real keystroke.
  */
 export function KeyboardShortcuts() {
-  const [open, setOpen] = React.useState(false);
+  const [helpOpen, setHelpOpen] = React.useState(false);
+  const [paletteOpen, setPaletteOpen] = React.useState(false);
   const gPendingRef = React.useRef<number | null>(null);
 
   React.useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      const isCmd = event.metaKey || event.ctrlKey;
+      if (isCmd && !event.altKey && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((value) => !value);
+        return;
+      }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (isTypingTarget(event.target)) return;
 
       if (event.key === "?" || (event.key === "/" && event.shiftKey)) {
         event.preventDefault();
-        setOpen((value) => !value);
+        setHelpOpen((value) => !value);
         return;
       }
 
-      if (event.key === "Escape" && open) {
-        setOpen(false);
+      if (event.key === "Escape" && helpOpen) {
+        setHelpOpen(false);
         return;
       }
 
       if (event.key === "t" && !event.shiftKey) {
-        // Theme toggle is handled by the ThemeToggle button click. We dispatch
-        // a click on the visible theme toggle so behaviour stays in one place.
         const toggle = document.querySelector<HTMLButtonElement>(
-          'button[aria-label$="theme"]'
+          'button[aria-label$="theme"]',
         );
         if (toggle) {
           event.preventDefault();
@@ -127,53 +136,56 @@ export function KeyboardShortcuts() {
       window.removeEventListener("keydown", handleKeyDown);
       if (gPendingRef.current) window.clearTimeout(gPendingRef.current);
     };
-  }, [open]);
+  }, [helpOpen]);
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent aria-describedby="keyboard-shortcuts-description">
-        <DialogHeader>
-          <DialogTitle>Keyboard shortcuts</DialogTitle>
-          <DialogDescription id="keyboard-shortcuts-description">
-            Press <Kbd>?</Kbd> any time to reopen this panel. Shortcuts are ignored
-            while typing into a text field.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4">
-          {SHORTCUT_GROUPS.map((group) => (
-            <section key={group.title} aria-labelledby={`shortcut-group-${group.title}`}>
-              <h2
-                id={`shortcut-group-${group.title}`}
-                className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-              >
-                {group.title}
-              </h2>
-              <ul className="space-y-1.5 text-sm">
-                {group.items.map((item) => (
-                  <li
-                    key={item.description}
-                    className="flex items-center justify-between gap-3"
-                  >
-                    <span className="text-foreground">{item.description}</span>
-                    <span className="flex items-center gap-1">
-                      {item.keys.map((key, idx) => (
-                        <React.Fragment key={`${item.description}-${idx}`}>
-                          <Kbd>{key}</Kbd>
-                          {idx < item.keys.length - 1 ? (
-                            <span className="text-muted-foreground" aria-hidden="true">
-                              then
-                            </span>
-                          ) : null}
-                        </React.Fragment>
-                      ))}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
-      </DialogContent>
-    </Dialog>
+    <>
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
+        <DialogContent aria-describedby="keyboard-shortcuts-description">
+          <DialogHeader>
+            <DialogTitle>Keyboard shortcuts</DialogTitle>
+            <DialogDescription id="keyboard-shortcuts-description">
+              Press <Kbd>?</Kbd> any time to reopen this panel. Shortcuts are ignored while typing
+              into a text field.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {SHORTCUT_GROUPS.map((group) => (
+              <section key={group.title} aria-labelledby={`shortcut-group-${group.title}`}>
+                <h2
+                  id={`shortcut-group-${group.title}`}
+                  className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                >
+                  {group.title}
+                </h2>
+                <ul className="space-y-1.5 text-sm">
+                  {group.items.map((item) => (
+                    <li
+                      key={item.description}
+                      className="flex items-center justify-between gap-3"
+                    >
+                      <span className="text-foreground">{item.description}</span>
+                      <span className="flex items-center gap-1">
+                        {item.keys.map((key, idx) => (
+                          <React.Fragment key={`${item.description}-${idx}`}>
+                            <Kbd>{key}</Kbd>
+                            {idx < item.keys.length - 1 ? (
+                              <span className="text-muted-foreground" aria-hidden="true">
+                                then
+                              </span>
+                            ) : null}
+                          </React.Fragment>
+                        ))}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

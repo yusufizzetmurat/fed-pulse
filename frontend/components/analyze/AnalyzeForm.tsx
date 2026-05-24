@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { AssetPicker } from "@/components/analyze/AssetPicker";
 import { DocumentIngestionTabs } from "@/components/analyze/DocumentIngestionTabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { HORIZON_OPTIONS, SYMBOL_OPTIONS } from "@/lib/analyze/constants";
+import { HORIZON_OPTIONS } from "@/lib/analyze/constants";
 import type { AnalyzeRequest, Horizon } from "@/lib/analyze/types";
 
 interface AnalyzeFormProps {
@@ -61,18 +62,11 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
 
             <div className="space-y-2">
               <Label htmlFor="symbol">Asset</Label>
-              <Select value={value.symbol} onValueChange={(next) => patch({ symbol: next })}>
-                <SelectTrigger id="symbol">
-                  <SelectValue placeholder="Pick a benchmark" />
-                </SelectTrigger>
-                <SelectContent>
-                  {SYMBOL_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <AssetPicker
+                id="symbol"
+                value={value.symbol}
+                onChange={(next) => patch({ symbol: next })}
+              />
             </div>
 
             <div className="space-y-2">
