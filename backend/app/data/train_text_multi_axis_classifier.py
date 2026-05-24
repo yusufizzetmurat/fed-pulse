@@ -188,6 +188,206 @@ def _load_supervised_rows(events_parquet: Path) -> list[_AxisRow]:
     return rows
 
 
+# Dataset IDs are pinned here in iteration order (FOMC first so
+# ``--gtfintechlab-fed-only`` short-circuits cleanly); revisions are
+# read off the canonical ``_DATASET_REVISIONS`` map in
+# ``app.data.ingest_sources`` at load time so the SHAs do not drift
+# between ingestion and training.
+_GTFINTECHLAB_DATASET_IDS: tuple[str, ...] = (
+    "gtfintechlab/federal_reserve_system",
+    "gtfintechlab/european_central_bank",
+    "gtfintechlab/bank_of_japan",
+    "gtfintechlab/bank_of_england",
+    "gtfintechlab/bank_of_canada",
+    "gtfintechlab/reserve_bank_of_australia",
+)
+
+
+def _gtfintechlab_row_to_axis_row(item: dict[str, Any]) -> _AxisRow | None:
+    """Map a single gtfintechlab sentence-level row to ``_AxisRow``.
+
+    The gtfintechlab schema is uniform across all six bank datasets:
+    ``{sentences, stance_label, time_label, certain_label, year}``.
+    The trainer currently maps stance and certainty into the
+    classifier's heads; ``time_label`` is not yet plumbed (#235
+    follow-up). Rows whose stance is ``irrelevant`` (or any non-
+    canonical value) are kept but their stance mask stays False so
+    the loss does not train on them — they still contribute
+    certainty supervision when that axis is populated.
+    """
+
+    text = str(item.get("sentences") or "").strip()
+    if not text:
+        return None
+
+    targets: dict[str, float | int] = {
+        "stance": 0,
+        "factor": 0.0,
+        "certainty": 0,
+        "topic": 0,
+    }
+    masks: dict[str, bool] = {
+        "stance": False,
+        "factor": False,
+        "certainty": False,
+        "topic": False,
+    }
+
+    stance_raw = str(item.get("stance_label") or "").strip().lower()
+    if stance_raw in MULTI_TASK_STANCE_LABELS:
+        targets["stance"] = MULTI_TASK_STANCE_LABELS.index(stance_raw)
+        masks["stance"] = True
+
+    certain_raw = str(item.get("certain_label") or "").strip().lower()
+    if certain_raw in MULTI_TASK_CERTAINTY_LABELS:
+        targets["certainty"] = MULTI_TASK_CERTAINTY_LABELS.index(certain_raw)
+        masks["certainty"] = True
+
+    # The gtfintechlab corpus does not carry a topic taxonomy and the
+    # factor axis is exclusive to the gss_factor source. The classifier
+    # learns those branches only from rows that DO carry the label
+    # (mask=True); on this dataset both stay at False so the masked
+    # loss contributes nothing for them. The branches still emit
+    # predictions at inference, which the frontend can choose to
+    # render as low-confidence.
+    if not any(masks.values()):
+        return None
+    return _AxisRow(text=text, targets=targets, masks=masks)
+
+
+def _gtfintechlab_datasets_module() -> Any:
+    """Import the ``datasets`` package lazily so the trainer module
+    stays cheap to import on hosts without the HF stack installed."""
+
+    try:
+        from datasets import (  # type: ignore
+            get_dataset_config_names,
+            get_dataset_split_names,
+            load_dataset,
+        )
+    except Exception as exc:  # pragma: no cover
+        raise SystemExit(
+            "datasets package is required for the gtfintechlab loader. "
+            "Install dependencies first."
+        ) from exc
+    return type(
+        "_HFDatasetsModule",
+        (),
+        {
+            "get_dataset_config_names": staticmethod(get_dataset_config_names),
+            "get_dataset_split_names": staticmethod(get_dataset_split_names),
+            "load_dataset": staticmethod(load_dataset),
+        },
+    )
+
+
+def _gtfintechlab_split_rows(
+    hf_mod: Any,
+    *,
+    dataset_id: str,
+    config: str,
+    split: str,
+    revision: str,
+) -> list[_AxisRow]:
+    """Materialise one ``(dataset, config, split)`` triple's rows.
+
+    Any HF / network failure is caught and logged; the caller treats
+    a returned empty list as "skip this slice" so a single bad split
+    cannot abort the rest of the 18-slice walk.
+    """
+
+    try:
+        ds = hf_mod.load_dataset(dataset_id, config, split=split, revision=revision)
+    except Exception:
+        _logger.exception(
+            "gtfintechlab_split_load_failed dataset=%s config=%s split=%s",
+            dataset_id,
+            config,
+            split,
+        )
+        return []
+    out: list[_AxisRow] = []
+    for record in ds:
+        row = _gtfintechlab_row_to_axis_row(dict(record))
+        if row is not None:
+            out.append(row)
+    return out
+
+
+def _gtfintechlab_dataset_rows(
+    hf_mod: Any, *, dataset_id: str, revision: str
+) -> list[_AxisRow]:
+    """Walk every (config, split) under one gtfintechlab dataset."""
+
+    try:
+        configs = list(hf_mod.get_dataset_config_names(dataset_id, revision=revision))
+    except Exception:
+        _logger.exception("gtfintechlab_configs_failed dataset=%s", dataset_id)
+        return []
+    rows: list[_AxisRow] = []
+    for config in configs:
+        try:
+            splits = list(
+                hf_mod.get_dataset_split_names(dataset_id, config, revision=revision)
+            )
+        except Exception:
+            _logger.exception(
+                "gtfintechlab_splits_failed dataset=%s config=%s",
+                dataset_id,
+                config,
+            )
+            continue
+        for split in splits:
+            rows.extend(
+                _gtfintechlab_split_rows(
+                    hf_mod,
+                    dataset_id=dataset_id,
+                    config=config,
+                    split=split,
+                    revision=revision,
+                )
+            )
+    return rows
+
+
+def _load_gtfintechlab_rows(*, fed_only: bool = False) -> list[_AxisRow]:
+    """Pull supervised sentence-level rows from the gtfintechlab HF datasets.
+
+    Iterates every (config, split) under each dataset to materialise
+    the full 18 000-row corpus (1 000 sentences × 3 configs × 6 banks).
+    With ``fed_only=True`` the loader restricts to the
+    ``federal_reserve_system`` subset (~3 000 rows) for FOMC-specific
+    fine-tuning at the cost of a smaller, more imbalanced training pool.
+    """
+
+    hf_mod = _gtfintechlab_datasets_module()
+
+    # Pull the pinned revisions from the canonical map in
+    # ``app.data.ingest_sources``; that file is the single source of
+    # truth for every dataset SHA the project consumes, so the
+    # training side stays aligned with the ingestion side.
+    from app.data.ingest_sources import _dataset_revision
+
+    dataset_ids = _GTFINTECHLAB_DATASET_IDS[:1] if fed_only else _GTFINTECHLAB_DATASET_IDS
+    rows: list[_AxisRow] = []
+    for dataset_id in dataset_ids:
+        revision = _dataset_revision(dataset_id)
+        if revision is None:
+            _logger.warning(
+                "gtfintechlab_revision_missing dataset=%s (skipping)", dataset_id
+            )
+            continue
+        rows.extend(
+            _gtfintechlab_dataset_rows(
+                hf_mod, dataset_id=dataset_id, revision=revision
+            )
+        )
+    _logger.info(
+        "loaded_gtfintechlab_rows total=%d fed_only=%s", len(rows), fed_only
+    )
+    return rows
+
+
 def _fit_class_weights(
     indices: list[int],
     n_classes: int,
@@ -408,6 +608,15 @@ def _save_checkpoint(
             "batch_size": args.batch_size,
             "val_fraction": args.val_fraction,
             "max_length": args.max_length,
+            # Data-selection flags so the checkpoint payload records
+            # which corpus the model was trained on. Without these,
+            # a gtfintechlab-trained checkpoint looks identical on
+            # disk to an events_parquet-trained one, blocking
+            # reproducibility audits.
+            "data_source": getattr(args, "data_source", "events_parquet"),
+            "gtfintechlab_fed_only": bool(
+                getattr(args, "gtfintechlab_fed_only", False)
+            ),
         },
         "saved_at_utc": datetime.now(timezone.utc).isoformat(),
     }
@@ -420,11 +629,23 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     _set_all_seeds(args.seed)
 
-    package_dir = DATA_DIR / "processed" / args.training_package_id
-    events_path = package_dir / "events.parquet"
-    rows = _load_supervised_rows(events_path)
-    if not rows:
-        raise SystemExit(f"No supervised rows with axis labels in {events_path}")
+    if args.data_source == "gtfintechlab_hf":
+        rows = _load_gtfintechlab_rows(fed_only=args.gtfintechlab_fed_only)
+        if not rows:
+            raise SystemExit(
+                "gtfintechlab loader returned zero rows; check network access + "
+                "datasets package install."
+            )
+    else:
+        if not args.training_package_id:
+            raise SystemExit(
+                "--training-package-id is required when --data-source=events_parquet"
+            )
+        package_dir = DATA_DIR / "processed" / args.training_package_id
+        events_path = package_dir / "events.parquet"
+        rows = _load_supervised_rows(events_path)
+        if not rows:
+            raise SystemExit(f"No supervised rows with axis labels in {events_path}")
     _logger.info("loaded_supervised_rows count=%d", len(rows))
 
     rng = random.Random(args.seed)
@@ -530,7 +751,34 @@ def main(argv: list[str] | None = None) -> int:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--training-package-id", required=True)
+    parser.add_argument(
+        "--data-source",
+        choices=("events_parquet", "gtfintechlab_hf"),
+        default="gtfintechlab_hf",
+        help=(
+            "Source of the supervised rows. ``gtfintechlab_hf`` (default) pulls "
+            "balanced sentence-level rows from the 6 gtfintechlab central-bank "
+            "datasets on HuggingFace (~18 000 rows, ~5 k each stance class). "
+            "``events_parquet`` reads from the supplied training package's "
+            "events.parquet — useful for FOMC-specific fine-tuning but suffers "
+            "from heavy class imbalance (92 % neutral on the current pool)."
+        ),
+    )
+    parser.add_argument(
+        "--gtfintechlab-fed-only",
+        action="store_true",
+        help=(
+            "Restrict the gtfintechlab loader to the federal_reserve_system "
+            "subset (~3 000 rows) instead of all 6 banks."
+        ),
+    )
+    parser.add_argument(
+        "--training-package-id",
+        default="",
+        help=(
+            "Required when --data-source=events_parquet; ignored otherwise."
+        ),
+    )
     parser.add_argument("--encoder-alias", default=DEFAULT_ENCODER_ALIAS)
     parser.add_argument(
         "--output-checkpoint",
