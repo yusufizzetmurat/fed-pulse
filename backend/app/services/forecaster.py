@@ -169,6 +169,20 @@ def _build_inference_tensor(
 
 
 def _predict_next_point(model: ForecasterModel, sequence: list[FeatureVector]) -> tuple[float, float]:
+    # Classification-mode checkpoints emit ``(B, n_classes)`` logits
+    # from ``forward()`` (the stance branch under the MultiTaskHead);
+    # reading ``out[0]`` and ``out[1]`` as ``(close, vol)`` would
+    # surface logits in the response. Until /analyze splits the
+    # regression series from the regime classification card (filed as
+    # a follow-up to #216), echo the most recent bar's market state as
+    # a degenerate forecast so the response stays valid. The new
+    # ``RegimeClassificationCard`` is the correct surface for
+    # classification checkpoints.
+    if str(getattr(model, "output_mode", "regression")) == "classification":
+        last = sequence[-1] if sequence else None
+        last_close = float(getattr(last, "market_close", 0.0)) if last else 0.0
+        last_vol = float(getattr(last, "market_volatility", 0.0)) if last else 0.0
+        return last_close, last_vol
     device = next(model.parameters()).device
     x = _build_inference_tensor(sequence, model, device)
     kwargs: dict[str, torch.Tensor] = {}
@@ -191,6 +205,75 @@ def _predict_next_point(model: ForecasterModel, sequence: list[FeatureVector]) -
     return pred_close, pred_vol
 
 
+@torch.no_grad()
+def build_regime_classification_card(
+    sequence: list[FeatureVector],
+) -> dict[str, Any] | None:
+    """Run the classifier on the inference window and emit the calibrated card.
+
+    Returns ``None`` whenever any of the prerequisites is missing — the
+    active checkpoint is not in classification mode, the conformal
+    sidecar is absent, or the sidecar carries no
+    ``softmax_quantile``. The /analyze handler then leaves
+    ``regime_classification`` at ``None`` on the response.
+
+    When all three are in place: build the inference tensor from the
+    last ``SEQUENCE_LENGTH`` bars, run the model forward, softmax the
+    logits, build the APS prediction set via the calibrated threshold,
+    and emit a serialisable card dict matching the
+    :class:`RegimeClassificationCard` schema.
+    """
+
+    model = _get_model()
+    if str(getattr(model, "output_mode", "regression")) != "classification":
+        return None
+    manifest = _conformal_manifest_for(BEST_MODEL_PATH)
+    if manifest is None or getattr(manifest, "softmax_quantile", None) is None:
+        return None
+
+    from app.evaluation.conformal import (
+        format_class_set_label,
+        predict_conformal_set,
+    )
+
+    device = next(model.parameters()).device
+    window = build_lookback_sequence(sequence)
+    x = _build_inference_tensor(window, model, device)
+    kwargs: dict[str, torch.Tensor] = {}
+    if getattr(model, "credibility_features", False):
+        kwargs["credibility"] = torch.zeros(
+            (1, int(getattr(model, "credibility_dim", 4))),
+            dtype=torch.float32,
+            device=device,
+        )
+    logits = model(x, **kwargs)
+    if logits.dim() != 2:
+        return None
+    probs_tensor = torch.softmax(logits, dim=-1).squeeze(0)
+    probs = [float(p) for p in probs_tensor.tolist()]
+    n_classes = len(probs)
+    labels: tuple[str, ...] = VOL_REGIME_CLASS_LABELS
+    if n_classes != len(labels):
+        # Defensive: a 5-class quantile run would emit 5 probs but our
+        # label tuple is 3-wide. Pad with f"class_{i}" so the response
+        # still serialises rather than indexing past the tuple.
+        labels = tuple(
+            labels[i] if i < len(labels) else f"class_{i}" for i in range(n_classes)
+        )
+    threshold = float(manifest.softmax_quantile)
+    set_indices = predict_conformal_set(probs, threshold)
+    set_labels = [labels[i] for i in set_indices]
+    argmax_idx = max(range(n_classes), key=lambda i: probs[i])
+    return {
+        "predicted_set": set_labels,
+        "set_label": format_class_set_label(set_indices, labels),
+        "set_size": len(set_indices),
+        "coverage": float(manifest.nominal_coverage),
+        "distribution": {labels[i]: probs[i] for i in range(n_classes)},
+        "argmax_class": labels[argmax_idx],
+    }
+
+
 def _parse_horizon_steps(horizon: str) -> int:
     if horizon.endswith("d") and horizon[:-1].isdigit():
         return max(1, int(horizon[:-1]))
@@ -208,6 +291,13 @@ def _sample_std(values: Iterable[float]) -> float:
     mean = sum(items) / len(items)
     variance = sum((value - mean) ** 2 for value in items) / (len(items) - 1)
     return math.sqrt(max(variance, 0.0))
+
+
+# Canonical vol-regime class labels (#216). Index ordering matches the
+# per-fold quantile bins: 0 = lowest tertile (calm), 1 = middle (normal),
+# 2 = highest (high). Used by the conformal prediction-set card on
+# /analyze to render the set as ``"{normal, high}"`` instead of indices.
+VOL_REGIME_CLASS_LABELS: tuple[str, ...] = ("calm", "normal", "high")
 
 
 def _conformal_manifest_for(checkpoint_path: Path | None) -> Any:
@@ -235,7 +325,17 @@ def _build_confidence_bands(
     *,
     conformal_manifest: Any = None,
 ) -> tuple[list[float], list[float], list[float], list[float]]:
-    if conformal_manifest is not None:
+    # A non-None manifest with both residual quantiles at 0 is the
+    # marker for a classification-only sidecar (saved by the training
+    # loop when only the APS softmax_quantile is fit on the val
+    # partition). Treat that case as "no regression bands available"
+    # and fall through to the gaussian-z heuristic so the close/vol
+    # series does not emit zero-width bands.
+    has_residual_bands = conformal_manifest is not None and (
+        float(getattr(conformal_manifest, "residual_quantile_close", 0.0)) > 0.0
+        or float(getattr(conformal_manifest, "residual_quantile_volatility", 0.0)) > 0.0
+    )
+    if has_residual_bands:
         from app.evaluation.conformal import apply_conformal_bands
 
         return apply_conformal_bands(
@@ -420,16 +520,36 @@ def forecast_quantitative_series(
             "forecast_volatility_upper": forecast_vol_upper,
             "forecast_confidence_level": (
                 float(conformal_manifest.nominal_coverage)
-                if conformal_manifest is not None
+                if (
+                    conformal_manifest is not None
+                    and float(
+                        getattr(conformal_manifest, "residual_quantile_close", 0.0)
+                    )
+                    > 0.0
+                )
                 else FORECAST_CONFIDENCE_LEVEL
             ),
             "volatility_scale": vol_scale,
             "forecast_band_source": (
-                "conformal" if conformal_manifest is not None else "gaussian_z"
+                "conformal"
+                if (
+                    conformal_manifest is not None
+                    and float(
+                        getattr(conformal_manifest, "residual_quantile_close", 0.0)
+                    )
+                    > 0.0
+                )
+                else "gaussian_z"
             ),
             "conformal_coverage": (
                 float(conformal_manifest.nominal_coverage)
-                if conformal_manifest is not None
+                if (
+                    conformal_manifest is not None
+                    and float(
+                        getattr(conformal_manifest, "residual_quantile_close", 0.0)
+                    )
+                    > 0.0
+                )
                 else None
             ),
         },

@@ -6,6 +6,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+# Default nominal coverage 0.80 (alpha=0.20) matches the regression-head
+# default. Picked so the prediction set is informative on a 3-class
+# target — at alpha=0.05 the set frequently covers all three classes
+# on borderline rows, which is correct but uninformative for a decision
+# support surface.
+DEFAULT_CLASSIFICATION_ALPHA = 0.2
+
 
 @dataclass(frozen=True)
 class ConformalManifest:
@@ -15,6 +22,12 @@ class ConformalManifest:
     measured on the calibration fold for the close head; the volatility head
     uses its own quantile. `nominal_coverage` is `1 - alpha`. Apply at
     inference time as `[y_hat - q, y_hat + q]` for symmetric two-sided bands.
+
+    For classification-mode checkpoints, ``softmax_quantile`` carries the
+    APS threshold (Romano et al. 2020) fitted on the same calibration
+    partition using ``1 - softmax[y_true]`` as the non-conformity score.
+    Pre-#216 manifests without the field load with ``softmax_quantile=None``
+    and the inference path falls back to uncalibrated max-softmax confidence.
     """
 
     alpha: float
@@ -23,6 +36,7 @@ class ConformalManifest:
     residual_quantile_volatility: float
     calibration_n: int
     notes: str | None = None
+    softmax_quantile: float | None = None
 
     def to_dict(self) -> dict[str, float | int | str | None]:
         return {
@@ -32,6 +46,7 @@ class ConformalManifest:
             "residual_quantile_volatility": self.residual_quantile_volatility,
             "calibration_n": self.calibration_n,
             "notes": self.notes,
+            "softmax_quantile": self.softmax_quantile,
         }
 
 
@@ -119,6 +134,109 @@ def apply_conformal_bands(
     return close_lower, close_upper, vol_lower, vol_upper
 
 
+def calibrate_classification_conformal(
+    *,
+    softmax_scores: Sequence[Sequence[float]],
+    true_classes: Sequence[int],
+    alpha: float = DEFAULT_CLASSIFICATION_ALPHA,
+) -> float:
+    """Fit the APS threshold (Romano et al. 2020) on a calibration partition.
+
+    The non-conformity score for row i is ``1 - softmax[i, true_classes[i]]``
+    — high score when the model is uncertain about the truth, low when it
+    is confident on the right class. The threshold is the (1 - alpha)
+    finite-sample-corrected quantile of those scores via the same Lei-
+    Wasserman rank formula the regression helper uses.
+
+    Inputs must align: ``len(softmax_scores) == len(true_classes)``. Rows
+    whose softmax does not include the true class index (e.g. truncated /
+    malformed) are dropped silently after a length sanity check.
+    """
+
+    if len(softmax_scores) != len(true_classes):
+        raise ValueError(
+            f"softmax_scores ({len(softmax_scores)}) and true_classes "
+            f"({len(true_classes)}) must align in length."
+        )
+    if not (0.0 < alpha < 1.0):
+        raise ValueError(f"alpha must lie in (0, 1); got {alpha!r}.")
+    nonconformity: list[float] = []
+    for row, true_idx in zip(softmax_scores, true_classes):
+        idx = int(true_idx)
+        if idx < 0 or idx >= len(row):
+            continue
+        prob = float(row[idx])
+        if not math.isfinite(prob):
+            continue
+        nonconformity.append(1.0 - prob)
+    if not nonconformity:
+        raise ValueError("Calibration softmax set is empty after filtering.")
+    return split_conformal_quantile(nonconformity, alpha)
+
+
+def predict_conformal_set(
+    softmax_probs: Sequence[float],
+    threshold: float,
+) -> list[int]:
+    """Build the APS prediction set for one row's softmax distribution.
+
+    Includes every class ``j`` whose ``1 - softmax[j] <= threshold``,
+    i.e. ``softmax[j] >= 1 - threshold``. When no class clears the
+    threshold (pathological row), falls back to ``[argmax]`` rather
+    than emitting an empty set — the empty-set case is mathematically
+    valid under APS but useless as a decision-support surface, and
+    the fallback keeps the marginal coverage guarantee asymptotically
+    valid because the row contributes a singleton instead of zero.
+    """
+
+    if not softmax_probs:
+        return []
+    keep = float(1.0 - threshold)
+    included = [i for i, p in enumerate(softmax_probs) if float(p) >= keep]
+    if included:
+        return included
+    argmax_idx = max(range(len(softmax_probs)), key=lambda i: float(softmax_probs[i]))
+    return [argmax_idx]
+
+
+def empirical_classification_coverage(
+    predicted_sets: Sequence[Sequence[int]],
+    true_classes: Sequence[int],
+) -> float:
+    """Fraction of rows where ``true_classes[i] in predicted_sets[i]``."""
+
+    if len(predicted_sets) != len(true_classes):
+        raise ValueError(
+            f"predicted_sets ({len(predicted_sets)}) and true_classes "
+            f"({len(true_classes)}) must align in length."
+        )
+    if not predicted_sets:
+        return float("nan")
+    inside = sum(
+        1 for s, y in zip(predicted_sets, true_classes) if int(y) in {int(x) for x in s}
+    )
+    return inside / len(predicted_sets)
+
+
+def format_class_set_label(
+    predicted_set: Sequence[int],
+    class_names: Sequence[str],
+) -> str:
+    """Emit ``"{normal, high}"``-style label for the UI card.
+
+    Renders class indices through ``class_names`` and wraps in braces.
+    Empty input → ``"{}"``. Unknown indices fall through as ``"?"`` so
+    a stale manifest still produces a readable string rather than
+    raising in the response serializer.
+    """
+
+    labels = [
+        str(class_names[i]) if 0 <= int(i) < len(class_names) else "?"
+        for i in predicted_set
+    ]
+    return "{" + ", ".join(labels) + "}"
+
+
 def empirical_coverage(
     *,
     predictions: Sequence[float],
@@ -139,28 +257,70 @@ def empirical_coverage(
 
 
 def load_manifest(path: Path | str) -> ConformalManifest:
+    """Read a JSON manifest. Residual quantile fields default to 0.0
+    when absent (classification-only manifests written by
+    ``save_manifest`` drop them); the inference loader treats a 0.0
+    residual quantile as "no regression bands available" and falls
+    back to gaussian-z.
+    """
+
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Conformal manifest not found: {path}")
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, Mapping):
         raise ValueError(f"Conformal manifest must be a JSON object: {path}")
+    softmax_quantile_raw = payload.get("softmax_quantile")
     return ConformalManifest(
         alpha=float(payload["alpha"]),
         nominal_coverage=float(payload["nominal_coverage"]),
-        residual_quantile_close=float(payload["residual_quantile_close"]),
-        residual_quantile_volatility=float(payload["residual_quantile_volatility"]),
+        residual_quantile_close=float(payload.get("residual_quantile_close", 0.0)),
+        residual_quantile_volatility=float(
+            payload.get("residual_quantile_volatility", 0.0)
+        ),
         calibration_n=int(payload["calibration_n"]),
         notes=payload.get("notes"),
+        softmax_quantile=(
+            float(softmax_quantile_raw) if softmax_quantile_raw is not None else None
+        ),
     )
 
 
 def save_manifest(manifest: ConformalManifest, path: Path | str) -> Path:
+    """Persist a manifest atomically via temp file + ``Path.replace``.
+
+    The temp-and-rename pattern means a mid-write process crash leaves
+    the original sidecar intact rather than producing a half-written
+    JSON the inference loader would later fail on. Same destination
+    path on success; the temp file is unlinked even on failure.
+    """
+
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = manifest.to_dict()
+    # Drop residual_quantile_* fields entirely when both are zero so a
+    # classification-only manifest is not mistaken for a regression
+    # band manifest at inference time (the inference loader treats
+    # any non-None manifest as conformal, so leaving the zeros in
+    # would produce zero-width prediction bands).
+    if (
+        payload.get("residual_quantile_close") == 0.0
+        and payload.get("residual_quantile_volatility") == 0.0
+    ):
+        payload.pop("residual_quantile_close", None)
+        payload.pop("residual_quantile_volatility", None)
     payload = {k: v for k, v in payload.items() if v is not None}
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp_path = path.with_name(path.name + ".tmp")
+    try:
+        tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp_path.replace(path)
+    except Exception:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
     return path
 
 
