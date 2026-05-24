@@ -209,9 +209,12 @@ function multiAxisSummary(multiAxis: MultiAxisResponse): string {
   return parts.join(" · ") || "axes absent";
 }
 
-export function PipelineTrace(props: PipelineTraceProps) {
+export function PipelineTrace({ result, inputText }: PipelineTraceProps) {
   const [openKey, setOpenKey] = React.useState<string>("regime");
-  const steps = React.useMemo(() => buildSteps(props), [props]);
+  const steps = React.useMemo(
+    () => buildSteps({ result, inputText }),
+    [result, inputText],
+  );
 
   return (
     <Card>

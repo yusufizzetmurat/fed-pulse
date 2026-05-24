@@ -107,19 +107,26 @@ export default function WorkspacePage() {
 
   // Small slice of past runs for the realized-vs-predicted strip. Detail
   // is fetched lazily for each surfaced row so the strip can read the
-  // regime argmax off the persisted payload.
+  // regime argmax off the persisted payload. An AbortController scoped to
+  // the effect cancels every in-flight request on symbol change or unmount,
+  // so rapid asset switches don't leave a dozen XHRs racing each other.
   React.useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
+    const { signal } = controller;
     (async () => {
       try {
-        const list = await fetchHistory(apiBaseUrl, { symbol: request.symbol, limit: 12 });
-        if (cancelled) return;
+        const list = await fetchHistory(
+          apiBaseUrl,
+          { symbol: request.symbol, limit: 12 },
+          signal,
+        );
+        if (signal.aborted) return;
         const items = list.items.slice(0, 12);
         const entries: RegimeHistoryEntry[] = await Promise.all(
           items.map(async (entry) => {
             let payload: AnalyzeResult | null = null;
             try {
-              const detail = await fetchHistoryRun(apiBaseUrl, entry.id);
+              const detail = await fetchHistoryRun(apiBaseUrl, entry.id, signal);
               payload = (detail.payload || null) as AnalyzeResult | null;
             } catch {
               // Detail fetch is best-effort; the strip still renders the stance fallback.
@@ -132,16 +139,16 @@ export default function WorkspacePage() {
             };
           }),
         );
-        if (!cancelled) {
+        if (!signal.aborted) {
           // Newest first → reverse so the strip reads left-to-right chronologically.
           setHistoryEntries(entries.reverse());
         }
       } catch {
-        // History pull is best-effort.
+        // History pull is best-effort; aborted requests land here too.
       }
     })();
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [apiBaseUrl, request.symbol]);
 

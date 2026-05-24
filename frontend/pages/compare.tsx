@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { compare, fetchHistory, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { fetchHistory, fetchHistoryRun, resolveApiBaseUrl } from "@/lib/analyze/api";
 import {
   computeCompareDelta,
   computeMultiAxisDelta,
@@ -323,11 +323,8 @@ export default function ComparePage() {
     };
   }, [apiBaseUrl]);
 
-  // We load each slot independently rather than going through compare() so
-  // selecting a single run still renders that side of the page while the
-  // other slot is empty. compare() is exposed for callers that want both
-  // detail records eagerly (e.g. CSV export); the page reaches for it on
-  // export, not on render.
+  // Each slot loads independently so picking a single run still renders
+  // that side while the other slot is empty.
   React.useEffect(() => {
     let cancelled = false;
     if (!aId) {
@@ -335,8 +332,8 @@ export default function ComparePage() {
       return;
     }
     setLoadingA(true);
-    compare(apiBaseUrl, aId, aId)
-      .then(({ a: detail }) => {
+    fetchHistoryRun(apiBaseUrl, aId)
+      .then((detail) => {
         if (!cancelled) setDetailA(detail);
       })
       .catch((err) => {
@@ -357,8 +354,8 @@ export default function ComparePage() {
       return;
     }
     setLoadingB(true);
-    compare(apiBaseUrl, bId, bId)
-      .then(({ a: detail }) => {
+    fetchHistoryRun(apiBaseUrl, bId)
+      .then((detail) => {
         if (!cancelled) setDetailB(detail);
       })
       .catch((err) => {

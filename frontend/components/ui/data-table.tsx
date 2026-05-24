@@ -47,8 +47,12 @@ export function DataTable<T>({
   const sortedRows = React.useMemo(() => {
     if (!sortKey) return rows;
     const column = columns.find((c) => c.key === sortKey);
-    if (!column?.sortable) return rows;
-    const extractor = column.sortValue ?? ((row: T) => column.render(row, 0) as any);
+    // Sorting requires an explicit sortValue extractor — `render` returns
+    // React nodes that would coerce to "[object Object]" and silently
+    // no-op the sort. Columns without sortValue stay unsorted even when
+    // marked sortable.
+    if (!column?.sortable || !column.sortValue) return rows;
+    const extractor = column.sortValue;
     const direction = sortDir === "asc" ? 1 : -1;
     return [...rows].sort((a, b) => {
       const av = extractor(a);
@@ -95,10 +99,19 @@ export function DataTable<T>({
                   : sortDir === "asc"
                   ? ChevronUp
                   : ChevronDown;
+              const ariaSort: "ascending" | "descending" | "none" | undefined =
+                col.sortable
+                  ? sortKey === col.key
+                    ? sortDir === "asc"
+                      ? "ascending"
+                      : "descending"
+                    : "none"
+                  : undefined;
               return (
                 <th
                   key={col.key}
                   scope="col"
+                  aria-sort={ariaSort}
                   className={cn("px-3 py-2 font-medium", align)}
                   style={col.width ? { width: col.width } : undefined}
                 >

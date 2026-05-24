@@ -38,17 +38,19 @@ export async function fetchTrainJob(baseUrl: string, jobId: string): Promise<Tra
 
 export async function fetchHistory(
   baseUrl: string,
-  query: HistoryQuery = {}
+  query: HistoryQuery = {},
+  signal?: AbortSignal,
 ): Promise<HistoryList> {
-  const response = await axios.get(`${baseUrl}/history`, { params: query });
+  const response = await axios.get(`${baseUrl}/history`, { params: query, signal });
   return response.data as HistoryList;
 }
 
 export async function fetchHistoryRun(
   baseUrl: string,
-  runId: string
+  runId: string,
+  signal?: AbortSignal,
 ): Promise<HistoryDetail> {
-  const response = await axios.get(`${baseUrl}/history/${runId}`);
+  const response = await axios.get(`${baseUrl}/history/${runId}`, { signal });
   return response.data as HistoryDetail;
 }
 

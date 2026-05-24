@@ -29,8 +29,10 @@ const TONE_TEXT: Record<KpiTone, string> = {
 };
 
 function defaultDeltaFormatter(value: number): string {
-  const sign = value > 0 ? "+" : value < 0 ? "" : "";
-  return `${sign}${value.toFixed(2)}`;
+  // toFixed already emits the leading "-" for negatives; only positives
+  // need an explicit "+" so the chip shows direction at a glance.
+  const text = value.toFixed(2);
+  return value > 0 ? `+${text}` : text;
 }
 
 export function KpiTile({

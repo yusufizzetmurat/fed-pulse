@@ -144,7 +144,7 @@ export function RegimeHeadline({
                     {(value * 100).toFixed(1)}%
                   </span>
                 </div>
-                <Progress value={value * 100} indicatorClassName={regimeBarClass(key)} />
+                <Progress value={value} indicatorClassName={regimeBarClass(key)} />
               </div>
             );
           })}
