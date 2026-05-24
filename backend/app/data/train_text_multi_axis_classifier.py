@@ -255,15 +255,9 @@ def _gtfintechlab_row_to_axis_row(item: dict[str, Any]) -> _AxisRow | None:
     return _AxisRow(text=text, targets=targets, masks=masks)
 
 
-def _load_gtfintechlab_rows(*, fed_only: bool = False) -> list[_AxisRow]:
-    """Pull supervised sentence-level rows from the gtfintechlab HF datasets.
-
-    Iterates every (config, split) under each dataset to materialise
-    the full 18 000-row corpus (1 000 sentences × 3 configs × 6 banks).
-    With ``fed_only=True`` the loader restricts to the
-    ``federal_reserve_system`` subset (~3 000 rows) for FOMC-specific
-    fine-tuning at the cost of a smaller, more imbalanced training pool.
-    """
+def _gtfintechlab_datasets_module() -> Any:
+    """Import the ``datasets`` package lazily so the trainer module
+    stays cheap to import on hosts without the HF stack installed."""
 
     try:
         from datasets import (  # type: ignore
@@ -276,6 +270,97 @@ def _load_gtfintechlab_rows(*, fed_only: bool = False) -> list[_AxisRow]:
             "datasets package is required for the gtfintechlab loader. "
             "Install dependencies first."
         ) from exc
+    return type(
+        "_HFDatasetsModule",
+        (),
+        {
+            "get_dataset_config_names": staticmethod(get_dataset_config_names),
+            "get_dataset_split_names": staticmethod(get_dataset_split_names),
+            "load_dataset": staticmethod(load_dataset),
+        },
+    )
+
+
+def _gtfintechlab_split_rows(
+    hf_mod: Any,
+    *,
+    dataset_id: str,
+    config: str,
+    split: str,
+    revision: str,
+) -> list[_AxisRow]:
+    """Materialise one ``(dataset, config, split)`` triple's rows.
+
+    Any HF / network failure is caught and logged; the caller treats
+    a returned empty list as "skip this slice" so a single bad split
+    cannot abort the rest of the 18-slice walk.
+    """
+
+    try:
+        ds = hf_mod.load_dataset(dataset_id, config, split=split, revision=revision)
+    except Exception:
+        _logger.exception(
+            "gtfintechlab_split_load_failed dataset=%s config=%s split=%s",
+            dataset_id,
+            config,
+            split,
+        )
+        return []
+    out: list[_AxisRow] = []
+    for record in ds:
+        row = _gtfintechlab_row_to_axis_row(dict(record))
+        if row is not None:
+            out.append(row)
+    return out
+
+
+def _gtfintechlab_dataset_rows(
+    hf_mod: Any, *, dataset_id: str, revision: str
+) -> list[_AxisRow]:
+    """Walk every (config, split) under one gtfintechlab dataset."""
+
+    try:
+        configs = list(hf_mod.get_dataset_config_names(dataset_id, revision=revision))
+    except Exception:
+        _logger.exception("gtfintechlab_configs_failed dataset=%s", dataset_id)
+        return []
+    rows: list[_AxisRow] = []
+    for config in configs:
+        try:
+            splits = list(
+                hf_mod.get_dataset_split_names(dataset_id, config, revision=revision)
+            )
+        except Exception:
+            _logger.exception(
+                "gtfintechlab_splits_failed dataset=%s config=%s",
+                dataset_id,
+                config,
+            )
+            continue
+        for split in splits:
+            rows.extend(
+                _gtfintechlab_split_rows(
+                    hf_mod,
+                    dataset_id=dataset_id,
+                    config=config,
+                    split=split,
+                    revision=revision,
+                )
+            )
+    return rows
+
+
+def _load_gtfintechlab_rows(*, fed_only: bool = False) -> list[_AxisRow]:
+    """Pull supervised sentence-level rows from the gtfintechlab HF datasets.
+
+    Iterates every (config, split) under each dataset to materialise
+    the full 18 000-row corpus (1 000 sentences × 3 configs × 6 banks).
+    With ``fed_only=True`` the loader restricts to the
+    ``federal_reserve_system`` subset (~3 000 rows) for FOMC-specific
+    fine-tuning at the cost of a smaller, more imbalanced training pool.
+    """
+
+    hf_mod = _gtfintechlab_datasets_module()
 
     # Pull the pinned revisions from the canonical map in
     # ``app.data.ingest_sources``; that file is the single source of
@@ -292,42 +377,11 @@ def _load_gtfintechlab_rows(*, fed_only: bool = False) -> list[_AxisRow]:
                 "gtfintechlab_revision_missing dataset=%s (skipping)", dataset_id
             )
             continue
-        try:
-            configs = list(
-                get_dataset_config_names(dataset_id, revision=revision)
+        rows.extend(
+            _gtfintechlab_dataset_rows(
+                hf_mod, dataset_id=dataset_id, revision=revision
             )
-        except Exception:
-            _logger.exception("gtfintechlab_configs_failed dataset=%s", dataset_id)
-            continue
-        for config in configs:
-            try:
-                splits = list(
-                    get_dataset_split_names(dataset_id, config, revision=revision)
-                )
-            except Exception:
-                _logger.exception(
-                    "gtfintechlab_splits_failed dataset=%s config=%s",
-                    dataset_id,
-                    config,
-                )
-                continue
-            for split in splits:
-                try:
-                    ds = load_dataset(
-                        dataset_id, config, split=split, revision=revision
-                    )
-                except Exception:
-                    _logger.exception(
-                        "gtfintechlab_split_load_failed dataset=%s config=%s split=%s",
-                        dataset_id,
-                        config,
-                        split,
-                    )
-                    continue
-                for record in ds:
-                    row = _gtfintechlab_row_to_axis_row(dict(record))
-                    if row is not None:
-                        rows.append(row)
+        )
     _logger.info(
         "loaded_gtfintechlab_rows total=%d fed_only=%s", len(rows), fed_only
     )
