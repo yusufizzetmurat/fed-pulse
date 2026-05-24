@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeCompareDelta,
   computeMultiAxisDelta,
+  computeRegimeDelta,
   describeStanceShift,
 } from "@/lib/analyze/compare";
 import type { HistoryDetail } from "@/lib/analyze/types";
@@ -13,39 +14,69 @@ function makeDetail(overrides: Partial<HistoryDetail> & { payload?: Record<strin
     created_at: "2024-09-18T12:00:00Z",
     symbol: "^GSPC",
     document_date: "2024-09-18",
-    horizon: "3d",
+    horizon: "10d",
     forecast_mode: "fast",
     stance: "hawkish",
     sentiment_score: 0.8,
-    predicted_close: 5000,
-    current_close: 4900,
-    predicted_volatility: 0.012,
+    predicted_close: null,
+    current_close: null,
+    predicted_volatility: null,
     payload: {},
     ...overrides,
   };
 }
 
 describe("computeCompareDelta", () => {
-  it("computes close, vol, and stance deltas from payload predictions", () => {
+  it("computes regime, stance, and credibility deltas", () => {
     const a = makeDetail({
       payload: {
-        prediction: { close: 5500, volatility: 0.012 },
         sentiment: { label: "hawkish", score: 0.82 },
+        regime_classification: {
+          argmax_class: "high",
+          predicted_set: ["normal", "high"],
+          set_size: 2,
+          coverage: 0.8,
+          distribution: { calm: 0.1, normal: 0.3, high: 0.6 },
+          set_label: "{normal, high}",
+        },
+        credibility: {
+          drift_score: 0.42,
+          realized_vs_stated_gap: 0.12,
+          market_implied_gap: 0,
+          months_since_reversal: 9,
+        },
       },
     });
     const b = makeDetail({
       payload: {
-        prediction: { close: 5400, volatility: 0.018 },
         sentiment: { label: "dovish", score: 0.71 },
+        regime_classification: {
+          argmax_class: "normal",
+          predicted_set: ["calm", "normal"],
+          set_size: 2,
+          coverage: 0.8,
+          distribution: { calm: 0.45, normal: 0.5, high: 0.05 },
+          set_label: "{calm, normal}",
+        },
+        credibility: {
+          drift_score: 0.28,
+          realized_vs_stated_gap: -0.04,
+          market_implied_gap: 0,
+          months_since_reversal: 4,
+        },
       },
       stance: "dovish",
     });
     const delta = computeCompareDelta(a, b);
-    expect(delta.closeAbsolute).toBeCloseTo(100, 5);
-    expect(delta.closePercent).toBeCloseTo((100 / 5400) * 100, 5);
-    expect(delta.volatilityAbsolute).toBeCloseTo(-0.006, 5);
+    expect(delta.regime.argmaxA).toBe("high");
+    expect(delta.regime.argmaxB).toBe("normal");
+    expect(delta.regime.argmaxChanged).toBe(true);
+    expect(delta.regime.setAddedToA).toContain("high");
+    expect(delta.regime.setDroppedFromA).toContain("calm");
     expect(delta.stanceShift).toBe("more_hawkish");
     expect(delta.scoreDelta).toBeCloseTo(0.11, 5);
+    expect(delta.driftDelta).toBeCloseTo(0.14, 5);
+    expect(delta.realizedGapDelta).toBeCloseTo(0.16, 5);
   });
 
   it("falls back to history-row stance when payload sentiment is absent", () => {
@@ -53,14 +84,8 @@ describe("computeCompareDelta", () => {
     const b = makeDetail({ stance: "hawkish", payload: {} });
     const delta = computeCompareDelta(a, b);
     expect(delta.stanceShift).toBe("more_dovish");
-  });
-
-  it("emits null deltas when prediction fields are missing", () => {
-    const empty = makeDetail({ payload: {} });
-    const delta = computeCompareDelta(empty, empty);
-    expect(delta.closeAbsolute).toBe(null);
-    expect(delta.closePercent).toBe(null);
-    expect(delta.volatilityAbsolute).toBe(null);
+    expect(delta.regime.argmaxA).toBe(null);
+    expect(delta.regime.argmaxChanged).toBe(null);
   });
 
   it("describes stance shifts in human-readable form", () => {
@@ -68,6 +93,41 @@ describe("computeCompareDelta", () => {
     expect(describeStanceShift("more_dovish")).toMatch(/dovish/i);
     expect(describeStanceShift("unchanged")).toMatch(/unchanged/i);
     expect(describeStanceShift("unknown")).toMatch(/unknown/i);
+  });
+});
+
+describe("computeRegimeDelta", () => {
+  it("reports argmax probability delta when both sides share the argmax", () => {
+    const a = makeDetail({
+      payload: {
+        regime_classification: {
+          argmax_class: "high",
+          predicted_set: ["high"],
+          set_size: 1,
+          coverage: 0.8,
+          distribution: { calm: 0.1, normal: 0.2, high: 0.7 },
+          set_label: "{high}",
+        },
+      },
+    });
+    const b = makeDetail({
+      payload: {
+        regime_classification: {
+          argmax_class: "high",
+          predicted_set: ["normal", "high"],
+          set_size: 2,
+          coverage: 0.8,
+          distribution: { calm: 0.05, normal: 0.4, high: 0.55 },
+          set_label: "{normal, high}",
+        },
+      },
+    });
+    const delta = computeRegimeDelta(a, b);
+    expect(delta.argmaxChanged).toBe(false);
+    expect(delta.argmaxProbDelta).toBeCloseTo(0.15, 5);
+    expect(delta.setSizeA).toBe(1);
+    expect(delta.setSizeB).toBe(2);
+    expect(delta.setDroppedFromA).toContain("normal");
   });
 });
 
