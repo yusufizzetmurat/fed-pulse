@@ -58,34 +58,42 @@ export function StatusBar({
   const checkpointLoaded = result?.model?.checkpoint_loaded;
   const runtimeMode = result?.model?.runtime_mode;
 
+  // Tri-state: loading (running) > result present (checkpoint loaded /
+  // no checkpoint based on diagnostics) > no result yet (awaiting).
+  // Before this branch the third case rendered as "no checkpoint",
+  // which read like an error on initial page load.
+  const hasResult = Boolean(result);
+  let stateLabel: string;
+  let stateTone: string;
+  if (loading) {
+    stateLabel = "running";
+    stateTone = "animate-pulse text-hawkish";
+  } else if (!hasResult) {
+    stateLabel = "awaiting analysis";
+    stateTone = "text-muted-foreground";
+  } else if (checkpointLoaded) {
+    stateLabel = "checkpoint loaded";
+    stateTone = "text-up";
+  } else {
+    stateLabel = "no checkpoint";
+    stateTone = "text-down";
+  }
+
   return (
     <div
       role="status"
       aria-live="polite"
       className={cn(
-        "statusbar-surface flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border px-4 py-1.5 text-[11px] text-muted-foreground",
+        "statusbar-surface flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border px-4 py-2 text-xs text-muted-foreground",
         className,
       )}
     >
       <div className="flex items-center gap-1.5">
         <CircleDot
-          className={cn(
-            "h-2 w-2 fill-current",
-            loading
-              ? "animate-pulse text-hawkish"
-              : checkpointLoaded
-              ? "text-up"
-              : "text-muted-foreground",
-          )}
+          className={cn("h-2 w-2 fill-current", stateTone)}
           aria-hidden="true"
         />
-        <span>
-          {loading
-            ? "running"
-            : checkpointLoaded
-            ? "checkpoint loaded"
-            : "no checkpoint"}
-        </span>
+        <span>{stateLabel}</span>
       </div>
       {symbol ? (
         <div className="flex items-center gap-1.5">

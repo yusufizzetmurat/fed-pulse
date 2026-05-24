@@ -56,14 +56,16 @@ export function KpiTile({
     <Card className={cn("h-full", className)}>
       <CardContent className="space-y-2 p-4">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {label}
+          </p>
           {icon ? <span className="text-muted-foreground">{icon}</span> : null}
         </div>
         <div className="flex items-baseline justify-between gap-2">
           <div
             className={cn(
               "numeric font-semibold",
-              emphasis === "large" ? "text-3xl" : "text-xl",
+              emphasis === "large" ? "text-4xl" : "text-2xl",
             )}
           >
             {value}
@@ -71,11 +73,11 @@ export function KpiTile({
           {delta != null && Number.isFinite(delta) ? (
             <div
               className={cn(
-                "numeric flex items-center gap-0.5 text-xs",
+                "numeric flex items-center gap-0.5 text-sm",
                 TONE_TEXT[inferredTone],
               )}
             >
-              <DeltaIcon className="h-3 w-3" aria-hidden="true" />
+              <DeltaIcon className="h-3.5 w-3.5" aria-hidden="true" />
               {deltaFormatter(delta)}
             </div>
           ) : null}
@@ -84,12 +86,10 @@ export function KpiTile({
           <Sparkline
             values={sparkline}
             tone={sparklineTone ?? (inferredTone === "warn" ? "neutral" : inferredTone)}
-            height={28}
+            height={32}
           />
         ) : null}
-        {caption ? (
-          <p className="text-[11px] text-muted-foreground">{caption}</p>
-        ) : null}
+        {caption ? <p className="text-xs text-muted-foreground">{caption}</p> : null}
       </CardContent>
     </Card>
   );

@@ -313,12 +313,20 @@ export default function WorkspacePage() {
                 />
               ) : (
                 <EmptyState
-                  title="Regime classifier disabled"
+                  title="Calibrated regime card not in this build"
                   description={
-                    <p>
-                      The current backend checkpoint is regression-mode or lacks a conformal sidecar with{" "}
-                      <code>softmax_quantile</code>. Multi-axis, XAI, and credibility still surface below.
-                    </p>
+                    <div className="space-y-2">
+                      <p>
+                        The deployed forecaster is regression-mode — it predicts close and volatility numerically
+                        but does not bucket them into a calibrated{" "}
+                        <span className="numeric">calm / normal / high</span> set. The classification head and its
+                        conformal sidecar (<code>softmax_quantile</code>) ship as part of #216 / Round 1.
+                      </p>
+                      <p className="text-muted-foreground">
+                        Every other workspace surface below — multi-axis breakdown, sentence attribution,
+                        credibility KPIs, pipeline trace, history strip — is live against the current checkpoint.
+                      </p>
+                    </div>
                   }
                 />
               )}
