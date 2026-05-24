@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 import dataclasses
 import logging
@@ -299,27 +300,94 @@ def _maybe_compile_model(
         return model
 
 
-def _unpack_batch(batch: Any) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
-    """Decode a DataLoader batch into (x, y, text_embedding, text_missing).
+_MULTI_TASK_AUX_KEYS: tuple[str, ...] = (
+    "factor",
+    "factor_mask",
+    "certainty",
+    "certainty_mask",
+    "topic",
+    "topic_mask",
+)
 
-    Two batch shapes are tolerated:
 
-    - ``(batch_x, batch_y)`` -- legacy two-tensor batch, used on the
-      pre-PR-#176 path. ``text_embedding`` and ``text_embedding_missing``
-      are ``None``.
-    - ``(batch_x, batch_y, batch_text_embedding, batch_text_missing)``
-      -- four-tensor batch emitted when the text-embedding path is
-      active. The model forward picks the extras up by name.
+def _make_partition_dataset(
+    x: torch.Tensor,
+    y: torch.Tensor,
+    text_emb: torch.Tensor | None,
+    text_missing: torch.Tensor | None,
+    mt_aux: dict[str, torch.Tensor] | None,
+) -> TensorDataset:
+    """Pack one partition's tensors into a TensorDataset using a fixed contract.
+
+    Four supported arities, in order:
+
+    - 2: ``(x, y)``
+    - 4: ``(x, y, text_emb, text_missing)``
+    - 8: ``(x, y, factor, factor_mask, certainty, certainty_mask, topic, topic_mask)``
+    - 10: text + multi-task combined
+
+    The multi-task aux ordering is fixed by :data:`_MULTI_TASK_AUX_KEYS` so
+    :func:`_unpack_batch` can recover the tensors positionally. The
+    ``stance`` axis (a.k.a. the primary vol-regime target) is not packed
+    here — it lives in ``y`` and the train step rebuilds the
+    ``stance_mask`` (all True) at the batch boundary. This drops the
+    text-side ``stance`` field from ``_build_multi_task_target_tensors``
+    because the model's stance head is already booked for the
+    vol-regime classification target.
     """
 
-    if len(batch) == 4:
-        batch_x, batch_y, batch_text, batch_text_missing = batch
-        return batch_x, batch_y, batch_text, batch_text_missing
-    if len(batch) == 2:
+    tensors: list[torch.Tensor] = [x, y]
+    if text_emb is not None and text_missing is not None:
+        tensors.extend([text_emb, text_missing])
+    if mt_aux is not None:
+        for key in _MULTI_TASK_AUX_KEYS:
+            if key not in mt_aux:
+                raise ValueError(
+                    f"multi-task aux dict is missing required key {key!r}; "
+                    f"got keys: {sorted(mt_aux)}"
+                )
+            tensors.append(mt_aux[key])
+    return TensorDataset(*tensors)
+
+
+def _unpack_batch(
+    batch: Any,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    dict[str, torch.Tensor] | None,
+]:
+    """Decode a DataLoader batch into ``(x, y, text, text_missing, mt_aux)``.
+
+    Four batch shapes are tolerated; see :func:`_make_partition_dataset`
+    for the arity-to-contents map. ``mt_aux`` is a 6-key dict (factor,
+    factor_mask, certainty, certainty_mask, topic, topic_mask) when the
+    multi-task path is active and ``None`` otherwise.
+    """
+
+    arity = len(batch)
+    if arity == 2:
         batch_x, batch_y = batch
-        return batch_x, batch_y, None, None
+        return batch_x, batch_y, None, None, None
+    if arity == 4:
+        batch_x, batch_y, batch_text, batch_text_missing = batch
+        return batch_x, batch_y, batch_text, batch_text_missing, None
+    if arity == 8:
+        batch_x = batch[0]
+        batch_y = batch[1]
+        mt_aux = {key: batch[2 + idx] for idx, key in enumerate(_MULTI_TASK_AUX_KEYS)}
+        return batch_x, batch_y, None, None, mt_aux
+    if arity == 10:
+        batch_x = batch[0]
+        batch_y = batch[1]
+        batch_text = batch[2]
+        batch_text_missing = batch[3]
+        mt_aux = {key: batch[4 + idx] for idx, key in enumerate(_MULTI_TASK_AUX_KEYS)}
+        return batch_x, batch_y, batch_text, batch_text_missing, mt_aux
     raise ValueError(
-        f"unexpected batch arity from DataLoader: {len(batch)} (want 2 or 4)"
+        f"unexpected batch arity from DataLoader: {arity} (want 2, 4, 8 or 10)"
     )
 
 
@@ -524,6 +592,37 @@ def _fit_axis_class_weights_from_mask(
     )
 
 
+def _run_train_forward_multi_task(
+    forward_model: nn.Module,
+    batch_x: torch.Tensor,
+    kwargs: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    """Run ``forward_multi_task`` on the underlying model.
+
+    Unwraps DDP (``.module``) and ``torch.compile`` (``._orig_mod``)
+    wrappers so the call lands on the real
+    :meth:`ForecasterModel.forward_multi_task` (returns a
+    gradient-tracked dict of per-axis logits). Compiled wrappers do
+    not expose ``module`` — without the ``_orig_mod`` fallback the
+    multi-task forward would silently run in eager mode even when
+    ``--use-compile`` is on.
+    """
+
+    if hasattr(forward_model, "module"):
+        underlying = forward_model.module
+    else:
+        underlying = getattr(forward_model, "_orig_mod", forward_model)
+    forward_multi = getattr(underlying, "forward_multi_task", None)
+    if forward_multi is None:
+        raise RuntimeError(
+            "multi_task_loss=True requires a model exposing "
+            "forward_multi_task (built with output_mode='classification' "
+            "+ MultiTaskHead); check the factory dispatch."
+        )
+    out: dict[str, torch.Tensor] = forward_multi(batch_x, **kwargs)
+    return out
+
+
 def _run_train_forward_and_align(
     forward_model: nn.Module,
     batch_x: torch.Tensor,
@@ -642,7 +741,7 @@ def _evaluate_model(
     non_blocking = device.type == "cuda"
     with torch.no_grad():
         for batch in loader:
-            batch_x, batch_y, batch_text, batch_text_missing = _unpack_batch(batch)
+            batch_x, batch_y, batch_text, batch_text_missing, _mt_aux = _unpack_batch(batch)
             if batch_x.device != device:
                 batch_x = batch_x.to(device, non_blocking=non_blocking)
             if batch_y.device != device:
@@ -881,6 +980,13 @@ def _build_partition_tensors(
     pooled-embedding pair. The train step detects LoRA mode by
     inspecting the dtype + running the bundle's encoder over the
     tokens per batch to materialise gradient-tracked pooled vectors.
+
+    Multi-task aux tensors (#273) are NOT returned by this function —
+    the caller computes them separately via
+    :func:`_build_partition_multi_task_tensors` on the same partition
+    groups so the 5-tuple contract here stays stable for every
+    existing caller (scripts/calibrate_regime_classifier.py,
+    tests/unit/test_phase9_partition_tensors.py, etc.).
     """
 
     if output_mode == "classification":
@@ -1028,6 +1134,16 @@ def train_model(
     )
     active_protocol = protocol or ("walk-forward" if walk_forward_path else "legacy-80-20")
     fallback_text_in_dim = int(getattr(active_model_config, "text_embedding_dim", 0) or 0)
+    # Multi-task aux tensors (#273) — populated by the walk-forward branch
+    # when ``multi_task_loss=True``; the legacy 80/20 branch leaves these
+    # at None so the regression contract on the determinism test stays
+    # byte-identical.
+    train_mt_aux: dict[str, torch.Tensor] | None = None
+    val_mt_aux: dict[str, torch.Tensor] | None = None
+    test_mt_aux: dict[str, torch.Tensor] | None = None
+    multi_task_loss_active = bool(
+        getattr(active_model_config, "multi_task_loss", False)
+    )
 
     if walk_forward_path:
         train_groups: list[list[FeatureVector]] = [list(group) for group in train_sequence_groups or []]
@@ -1111,6 +1227,11 @@ def train_model(
         # Fit the close-scale on the training partition only; never on
         # the val or test rows. The walk-forward protocol forbids
         # fitting any scaler over held-out events.
+        if multi_task_loss_active and active_output_mode != "classification":
+            raise ValueError(
+                "multi_task_loss=True requires output_mode='classification'; "
+                f"got output_mode={active_output_mode!r}"
+            )
         train_x, train_y, close_scale, train_text_emb, train_text_missing = _build_partition_tensors(
             train_groups,
             fallback_text_in_dim=fallback_text_in_dim,
@@ -1119,6 +1240,16 @@ def train_model(
             vol_regime_quantiles=fitted_quantiles,
             lora_bundle=encoder_lora_bundle,
         )
+        # Multi-task aux tensors (#273) — sibling call so the partition
+        # tensorisation contract on _build_partition_tensors stays a
+        # stable 5-tuple for the calibrate script + the determinism test.
+        # The aux builder filters rows by the same vol_regime_class_for
+        # predicate _build_training_tensors applies in classification
+        # mode, so the row order aligns with train_x / train_y.
+        if multi_task_loss_active:
+            train_mt_aux = _build_partition_multi_task_tensors(
+                train_groups, vol_regime_quantiles=fitted_quantiles
+            )
         # Fit the rich-feature RobustScaler on the TRAIN tensor only;
         # no-op for legacy 6-feature tensors so the regression contract
         # at tests/regression/test_forecaster_determinism.py stays
@@ -1134,6 +1265,10 @@ def train_model(
             vol_regime_quantiles=fitted_quantiles,
             lora_bundle=encoder_lora_bundle,
         )
+        if multi_task_loss_active:
+            val_mt_aux = _build_partition_multi_task_tensors(
+                val_groups, vol_regime_quantiles=fitted_quantiles
+            )
         val_x = apply_rich_feature_scaler_tensor(val_x, rich_feature_scaler)
         test_x, test_y, _test_scale, test_text_emb, test_text_missing = _build_partition_tensors(
             test_groups,
@@ -1143,6 +1278,10 @@ def train_model(
             vol_regime_quantiles=fitted_quantiles,
             lora_bundle=encoder_lora_bundle,
         )
+        if multi_task_loss_active:
+            test_mt_aux = _build_partition_multi_task_tensors(
+                test_groups, vol_regime_quantiles=fitted_quantiles
+            )
         test_x = apply_rich_feature_scaler_tensor(test_x, rich_feature_scaler)
         sequence_groups_for_summary = train_groups + val_groups + test_groups
     else:
@@ -1156,6 +1295,12 @@ def train_model(
                 "encoder_lora=True is only supported on the walk-forward "
                 "training-package path; the legacy single-list ``data_dir`` "
                 "branch does not produce the token tensors LoRA needs"
+            )
+        if multi_task_loss_active:
+            raise ValueError(
+                "multi_task_loss=True is only supported on the walk-forward "
+                "training-package path; the legacy single-list ``data_dir`` "
+                "branch does not materialise the per-axis target tensors"
             )
         if sequence_groups is not None:
             active_sequence_groups: list[list[FeatureVector]] = [list(group) for group in sequence_groups]
@@ -1302,16 +1447,29 @@ def train_model(
     test_y = _move_to_device(test_y, device_obj)
     test_text_emb = _move_to_device(test_text_emb, device_obj)
     test_text_missing = _move_to_device(test_text_missing, device_obj)
+    # Move the multi-task aux tensors to device so the per-batch step
+    # can index them with the same shuffled order the DataLoader yields.
+    if train_mt_aux is not None:
+        train_mt_aux = {
+            key: _move_to_device(tensor, device_obj) for key, tensor in train_mt_aux.items()
+        }
+    if val_mt_aux is not None:
+        val_mt_aux = {
+            key: _move_to_device(tensor, device_obj) for key, tensor in val_mt_aux.items()
+        }
+    if test_mt_aux is not None:
+        test_mt_aux = {
+            key: _move_to_device(tensor, device_obj) for key, tensor in test_mt_aux.items()
+        }
     # Tensors now live on the target device, so DataLoader pinning is
     # neither needed nor supported (PyTorch raises on pinning a CUDA
     # tensor). The original pin-memory comment about deprecation
     # warnings still applies on CPU device.
     pin_memory = False
     loader_generator = make_generator(seed) if seed is not None else None
-    if train_text_emb is not None and train_text_missing is not None:
-        train_dataset = TensorDataset(train_x, train_y, train_text_emb, train_text_missing)
-    else:
-        train_dataset = TensorDataset(train_x, train_y)
+    train_dataset = _make_partition_dataset(
+        train_x, train_y, train_text_emb, train_text_missing, train_mt_aux
+    )
 
     # Early-stopping val loader: when the walk-forward branch supplied
     # an empty val partition (rare, edge-case folds), reuse the train
@@ -1323,22 +1481,22 @@ def train_model(
         val_y_used = train_y
         val_text_emb_used = train_text_emb
         val_text_missing_used = train_text_missing
+        val_mt_aux_used = train_mt_aux
     else:
         val_x_used = val_x
         val_y_used = val_y
         val_text_emb_used = val_text_emb
         val_text_missing_used = val_text_missing
+        val_mt_aux_used = val_mt_aux
 
-    if val_text_emb_used is not None and val_text_missing_used is not None:
-        val_dataset = TensorDataset(val_x_used, val_y_used, val_text_emb_used, val_text_missing_used)
-    else:
-        val_dataset = TensorDataset(val_x_used, val_y_used)
+    val_dataset = _make_partition_dataset(
+        val_x_used, val_y_used, val_text_emb_used, val_text_missing_used, val_mt_aux_used
+    )
 
     if test_x is not None and test_y is not None and len(test_x) > 0:
-        if test_text_emb is not None and test_text_missing is not None:
-            test_dataset = TensorDataset(test_x, test_y, test_text_emb, test_text_missing)
-        else:
-            test_dataset = TensorDataset(test_x, test_y)
+        test_dataset = _make_partition_dataset(
+            test_x, test_y, test_text_emb, test_text_missing, test_mt_aux
+        )
     else:
         test_dataset = None
 
@@ -1474,6 +1632,61 @@ def train_model(
     else:
         loss_fn = nn.SmoothL1Loss(beta=0.02)
 
+    # Multi-task auxiliary loss (#273). Constructed once before the
+    # epoch loop when ``multi_task_loss=True``: fits per-axis class
+    # weights from the train partition's mask-aware label distribution
+    # so each axis is weighted independently, then wraps everything in
+    # the canonical :class:`MultiTaskLoss` module with the configured
+    # lambdas. The stance branch reuses ``class_weight_tensor`` (the
+    # vol-regime class weights) so the primary head's gradient stays
+    # identical to the single-task path on rows where only stance is
+    # supervised.
+    multi_task_loss_fn: nn.Module | None = None
+    if multi_task_loss_active and _active_output_mode == "classification":
+        from app.models.config import (
+            MULTI_TASK_CERTAINTY_CLASSES,
+            MULTI_TASK_TOPIC_CLASSES,
+        )
+        from app.training.loss import MultiTaskLoss
+
+        # Per-axis class counts pinned in app.models.config; the head
+        # uses these exact constants so the fitted class-weight tensors
+        # match the logit shape.
+        n_certainty_classes = int(MULTI_TASK_CERTAINTY_CLASSES)
+        n_topic_classes = int(MULTI_TASK_TOPIC_CLASSES)
+        if train_mt_aux is None:
+            raise RuntimeError(
+                "multi_task_loss_active=True but train_mt_aux is None; "
+                "the partition builder did not materialise the aux tensors."
+            )
+        certainty_weight = _fit_axis_class_weights_from_mask(
+            train_mt_aux["certainty"],
+            train_mt_aux["certainty_mask"],
+            n_certainty_classes,
+        ).to(device_obj)
+        topic_weight = _fit_axis_class_weights_from_mask(
+            train_mt_aux["topic"],
+            train_mt_aux["topic_mask"],
+            n_topic_classes,
+        ).to(device_obj)
+        multi_task_loss_fn = MultiTaskLoss(
+            stance_weight=class_weight_tensor,  # vol-regime weights
+            certainty_weight=certainty_weight,
+            topic_weight=topic_weight,
+            lambda_stance=float(getattr(active_model_config, "multi_task_lambda_stance", 1.0)),
+            lambda_factor=float(getattr(active_model_config, "multi_task_lambda_factor", 0.3)),
+            lambda_certainty=float(getattr(active_model_config, "multi_task_lambda_certainty", 0.3)),
+            lambda_topic=float(getattr(active_model_config, "multi_task_lambda_topic", 0.3)),
+        ).to(device_obj)
+        print(
+            "[train_model] multi_task_loss active: "
+            f"lambda_stance={multi_task_loss_fn.lambda_stance} "
+            f"lambda_factor={multi_task_loss_fn.lambda_factor} "
+            f"lambda_certainty={multi_task_loss_fn.lambda_certainty} "
+            f"lambda_topic={multi_task_loss_fn.lambda_topic}",
+            flush=True,
+        )
+
     # InfoNCE alignment loss for the gated_infonce fusion mode (#235).
     # The training step calls ``forward_with_modality_outputs`` on the
     # multi-modal model to recover the per-modality projections, then
@@ -1486,6 +1699,11 @@ def train_model(
         str(getattr(active_model_config, "fusion_mode", "concat") or "concat")
         == "gated_infonce"
     )
+    if multimodal_active and multi_task_loss_active:
+        raise ValueError(
+            "multi_task_loss + gated_infonce in the same cell is not yet "
+            "supported (#273 follow-up). Disable one to proceed."
+        )
     if multimodal_active:
         from app.training.info_nce_loss import InfoNCELoss
 
@@ -1544,7 +1762,7 @@ def train_model(
         if encoder_lora_bundle is not None:
             encoder_lora_bundle.encoder.train()
         for batch in train_loader:
-            batch_x, batch_y, batch_text, batch_text_missing = _unpack_batch(batch)
+            batch_x, batch_y, batch_text, batch_text_missing, batch_mt_aux = _unpack_batch(batch)
             # Tensors are already on the target device; the .to() calls
             # below were the hot kernel-launch source the perf rewrite
             # eliminates.
@@ -1576,8 +1794,47 @@ def train_model(
                     kwargs["text_embedding"] = batch_text
                     if batch_text_missing is not None:
                         kwargs["text_embedding_missing"] = batch_text_missing
-            if effective_amp:
-                with torch.cuda.amp.autocast():
+
+            # Single computation path. The AMP gate wraps only the
+            # forward + loss; backward + clip + step run outside autocast
+            # (the gradient scaler handles the dtype transitions). Multi-
+            # task loss (#273) builds the per-axis logits dict from
+            # ``forward_multi_task`` and uses :class:`MultiTaskLoss`;
+            # the single-task path keeps the legacy CE / SmoothL1 + the
+            # optional InfoNCE alignment term.
+            amp_ctx: Any = (
+                torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+            )
+            if multi_task_loss_fn is not None and batch_mt_aux is None:
+                raise RuntimeError(
+                    "multi_task_loss_fn is active but the DataLoader yielded "
+                    "a batch without the aux tensors. This usually means the "
+                    "TensorDataset for this partition was built without the "
+                    "multi-task aux block — check the partition build path."
+                )
+            with amp_ctx:
+                if multi_task_loss_fn is not None:
+                    assert batch_mt_aux is not None  # the guard above narrows this
+                    logits_dict = _run_train_forward_multi_task(
+                        forward_model, batch_x, kwargs
+                    )
+                    stance_mask = torch.ones(
+                        (batch_x.size(0),), dtype=torch.bool, device=batch_x.device
+                    )
+                    mt_targets = {
+                        "stance": batch_y,
+                        "factor": batch_mt_aux["factor"],
+                        "certainty": batch_mt_aux["certainty"],
+                        "topic": batch_mt_aux["topic"],
+                    }
+                    mt_masks = {
+                        "stance_mask": stance_mask,
+                        "factor_mask": batch_mt_aux["factor_mask"],
+                        "certainty_mask": batch_mt_aux["certainty_mask"],
+                        "topic_mask": batch_mt_aux["topic_mask"],
+                    }
+                    loss, _ = multi_task_loss_fn(logits_dict, mt_targets, mt_masks)
+                else:
                     predictions, align_loss = _run_train_forward_and_align(
                         forward_model,
                         batch_x,
@@ -1588,6 +1845,7 @@ def train_model(
                     loss = loss_fn(predictions, batch_y)
                     if align_loss is not None and infonce_lambda > 0.0:
                         loss = loss + infonce_lambda * align_loss
+            if effective_amp:
                 assert scaler is not None
                 scaler.scale(loss).backward()
                 if apply_grad_clip:
@@ -1596,16 +1854,6 @@ def train_model(
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                predictions, align_loss = _run_train_forward_and_align(
-                    forward_model,
-                    batch_x,
-                    kwargs,
-                    info_nce_loss_fn=info_nce_loss_fn,
-                    multimodal_active=multimodal_active,
-                )
-                loss = loss_fn(predictions, batch_y)
-                if align_loss is not None and infonce_lambda > 0.0:
-                    loss = loss + infonce_lambda * align_loss
                 loss.backward()
                 if apply_grad_clip:
                     nn.utils.clip_grad_norm_(work_model.parameters(), max_norm=clip_norm_value)

@@ -95,26 +95,14 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
             </div>
           </div>
 
-          <div className="flex items-center justify-between gap-4 rounded-md border border-dashed border-border bg-muted/30 px-4 py-3">
-            <label htmlFor="realized" className="flex items-center gap-2 text-sm">
-              <input
-                id="realized"
-                type="checkbox"
-                checked={value.include_realized}
-                onChange={(event) => patch({ include_realized: event.target.checked })}
-                className="h-4 w-4 rounded border-border bg-background"
-              />
-              Overlay realized observations (past dates)
-            </label>
-            <p className="hidden text-xs text-muted-foreground sm:block">
-              Used to compute MAPE / RMSE vs the forecast.
-            </p>
-          </div>
-
           <div className="flex flex-wrap items-center gap-3">
             <Button type="submit" disabled={loading}>
               {submitLabel}
             </Button>
+            <p className="text-xs text-muted-foreground">
+              Runs the calibrated vol-regime classifier and the supporting multi-axis, XAI, and
+              credibility heads against the FOMC excerpt.
+            </p>
           </div>
         </form>
       </CardContent>

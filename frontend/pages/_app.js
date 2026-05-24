@@ -1,5 +1,4 @@
 import "../styles/globals.css";
-import "../styles/legacy-dashboard.css";
 
 import * as React from "react";
 import Head from "next/head";
