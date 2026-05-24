@@ -4,7 +4,6 @@ import { useRouter } from "next/router";
 import { ArrowDownRight, ArrowRight, ArrowUpRight, GitCompare } from "lucide-react";
 import { toast } from "sonner";
 
-import { ForecastChart } from "@/components/analyze/ForecastChart";
 import { MultiAxisCards } from "@/components/analyze/MultiAxisCards";
 import { Header } from "@/components/shell/header";
 import { Badge } from "@/components/ui/badge";
@@ -26,10 +25,9 @@ import {
   type CompareDelta,
   type MultiAxisDelta,
 } from "@/lib/analyze/compare";
-import { buildCloseSeries, buildVolatilitySeries } from "@/lib/analyze/derive";
 import { downloadCompareCsv } from "@/lib/export/compare-export";
 import { downloadComparePdf } from "@/lib/export/pdf";
-import { bandLabel, formatPrice, stanceLabel, toStance } from "@/lib/analyze/format";
+import { stanceLabel, toStance } from "@/lib/analyze/format";
 import type { AnalyzeResult, HistoryDetail, HistoryEntry } from "@/lib/analyze/types";
 
 const SLOT_LABELS = { a: "Run A", b: "Run B" } as const;
@@ -117,16 +115,6 @@ function RunSlotCard({
               <dt className="text-muted-foreground">Sentiment score</dt>
               <dd className="text-right font-mono">
                 {detail.sentiment_score != null ? detail.sentiment_score.toFixed(3) : "—"}
-              </dd>
-              <dt className="text-muted-foreground">Predicted close</dt>
-              <dd className="text-right font-mono">{formatPrice(detail.predicted_close ?? null)}</dd>
-              <dt className="text-muted-foreground">Spot close</dt>
-              <dd className="text-right font-mono">{formatPrice(detail.current_close ?? null)}</dd>
-              <dt className="text-muted-foreground">Predicted volatility</dt>
-              <dd className="text-right font-mono">
-                {detail.predicted_volatility != null
-                  ? detail.predicted_volatility.toFixed(4)
-                  : "—"}
               </dd>
             </dl>
             {detail.text_excerpt ? (
@@ -269,91 +257,6 @@ function MultiAxisSideBySide({
   );
 }
 
-function ForecastsSideBySide({
-  detailA,
-  detailB,
-}: {
-  detailA: HistoryDetail;
-  detailB: HistoryDetail;
-}) {
-  const ra = (detailA.payload || {}) as AnalyzeResult;
-  const rb = (detailB.payload || {}) as AnalyzeResult;
-  const closeA = buildCloseSeries(ra);
-  const closeB = buildCloseSeries(rb);
-  const volA = buildVolatilitySeries(ra);
-  const volB = buildVolatilitySeries(rb);
-  const splitA = ra.series?.timestamps?.[ra.series.timestamps.length - 1];
-  const splitB = rb.series?.timestamps?.[rb.series.timestamps.length - 1];
-  const confLvlA = Math.round(Number(ra.series?.forecast_confidence_level || 0.8) * 100);
-  const confLvlB = Math.round(Number(rb.series?.forecast_confidence_level || 0.8) * 100);
-  const labelA = bandLabel(confLvlA, ra.series?.forecast_band_source);
-  const labelB = bandLabel(confLvlB, rb.series?.forecast_band_source);
-  const hasCloseA = Boolean(ra.series?.forecast_close_lower?.length);
-  const hasCloseB = Boolean(rb.series?.forecast_close_lower?.length);
-  const hasVolA = Boolean(ra.series?.forecast_volatility_lower?.length);
-  const hasVolB = Boolean(rb.series?.forecast_volatility_lower?.length);
-  const realizedA = Boolean(ra.series?.realized_timestamps?.length);
-  const realizedB = Boolean(rb.series?.realized_timestamps?.length);
-  const volScaleA = ra.series?.volatility_scale || { suggested_ymin: 0.0, suggested_ymax: 1.0 };
-  const volScaleB = rb.series?.volatility_scale || { suggested_ymin: 0.0, suggested_ymax: 1.0 };
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-4 xl:grid-cols-2">
-        <ForecastChart
-          title="Run A · close forecast"
-          description={`Forecast line and ${labelA} over the horizon.`}
-          data={closeA}
-          kind="close"
-          splitTimestamp={splitA}
-          includeRealized={realizedA}
-          hasConfidence={hasCloseA}
-          confidenceLabel={labelA}
-        />
-        <ForecastChart
-          title="Run B · close forecast"
-          description={`Forecast line and ${labelB} over the horizon.`}
-          data={closeB}
-          kind="close"
-          splitTimestamp={splitB}
-          includeRealized={realizedB}
-          hasConfidence={hasCloseB}
-          confidenceLabel={labelB}
-        />
-      </div>
-      <div className="grid gap-4 xl:grid-cols-2">
-        <ForecastChart
-          title="Run A · volatility forecast"
-          description={`Forecast line and ${labelA} over the horizon.`}
-          data={volA}
-          kind="volatility"
-          splitTimestamp={splitA}
-          includeRealized={realizedA}
-          hasConfidence={hasVolA}
-          confidenceLabel={labelA}
-          yDomain={[
-            Number(volScaleA.suggested_ymin ?? 0),
-            Number(volScaleA.suggested_ymax ?? 1),
-          ]}
-        />
-        <ForecastChart
-          title="Run B · volatility forecast"
-          description={`Forecast line and ${labelB} over the horizon.`}
-          data={volB}
-          kind="volatility"
-          splitTimestamp={splitB}
-          includeRealized={realizedB}
-          hasConfidence={hasVolB}
-          confidenceLabel={labelB}
-          yDomain={[
-            Number(volScaleB.suggested_ymin ?? 0),
-            Number(volScaleB.suggested_ymax ?? 1),
-          ]}
-        />
-      </div>
-    </div>
-  );
-}
-
 function DeltaSummary({ delta }: { delta: CompareDelta }) {
   return (
     <Card>
@@ -365,28 +268,7 @@ function DeltaSummary({ delta }: { delta: CompareDelta }) {
         <CardDescription>{describeStanceShift(delta.stanceShift)}</CardDescription>
       </CardHeader>
       <CardContent>
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
-          <div>
-            <dt className="text-xs uppercase tracking-wide text-muted-foreground">Close</dt>
-            <dd className={`flex items-center gap-1 font-mono ${deltaColorClass(delta.closeAbsolute)}`}>
-              <DeltaIcon value={delta.closeAbsolute} />
-              {formatDelta(delta.closeAbsolute)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase tracking-wide text-muted-foreground">Close %</dt>
-            <dd className={`flex items-center gap-1 font-mono ${deltaColorClass(delta.closePercent)}`}>
-              <DeltaIcon value={delta.closePercent} />
-              {formatDelta(delta.closePercent)}%
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase tracking-wide text-muted-foreground">Volatility</dt>
-            <dd className={`flex items-center gap-1 font-mono ${deltaColorClass(delta.volatilityAbsolute)}`}>
-              <DeltaIcon value={delta.volatilityAbsolute} />
-              {formatDelta(delta.volatilityAbsolute, 4)}
-            </dd>
-          </div>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
           <div>
             <dt className="text-xs uppercase tracking-wide text-muted-foreground">Sentiment score</dt>
             <dd className={`flex items-center gap-1 font-mono ${deltaColorClass(delta.scoreDelta)}`}>
@@ -395,6 +277,10 @@ function DeltaSummary({ delta }: { delta: CompareDelta }) {
             </dd>
           </div>
         </dl>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Regime + multi-axis deltas land in a follow-up — this view is interim while the compare page
+          is realigned to the vol-regime classifier.
+        </p>
       </CardContent>
     </Card>
   );
@@ -578,7 +464,6 @@ export default function ComparePage() {
           {detailA && detailB ? (
             <>
               <MultiAxisSideBySide detailA={detailA} detailB={detailB} />
-              <ForecastsSideBySide detailA={detailA} detailB={detailB} />
               <div className="flex justify-end gap-2">
                 <Button variant="outline" size="sm" onClick={handleExportCsv}>
                   Export CSV

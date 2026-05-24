@@ -6,11 +6,6 @@ import dynamic from "next/dynamic";
 import { ArrowLeft, Download, GitCompare } from "lucide-react";
 import { toast } from "sonner";
 
-import { ErrorBadges } from "@/components/analyze/ErrorBadges";
-import { ForecastChart } from "@/components/analyze/ForecastChart";
-import { MarketContext } from "@/components/analyze/MarketContext";
-import { PredictionCards } from "@/components/analyze/PredictionCards";
-import { SentimentCard } from "@/components/analyze/SentimentCard";
 import { Header } from "@/components/shell/header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,12 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { fetchHistoryRun, resolveApiBaseUrl } from "@/lib/analyze/api";
 import { downloadRunCsv } from "@/lib/export/run-export";
 import { downloadRunPdf } from "@/lib/export/pdf";
-import {
-  buildCloseSeries,
-  buildVolatilitySeries,
-  computeErrorMetrics,
-} from "@/lib/analyze/derive";
-import { bandLabel, stanceLabel, toStance } from "@/lib/analyze/format";
+import { stanceLabel, toStance } from "@/lib/analyze/format";
 import type { AnalyzeResult, HistoryDetail } from "@/lib/analyze/types";
 
 const PreviewPanels = dynamic(() => import("@/components/analyze/PreviewPanels"), {
@@ -80,15 +70,6 @@ export default function HistoryDetailPage() {
   }, [apiBaseUrl, router.isReady, runId]);
 
   const result = React.useMemo(() => detailToResult(detail), [detail]);
-  const closeSeries = React.useMemo(() => buildCloseSeries(result), [result]);
-  const volatilitySeries = React.useMemo(() => buildVolatilitySeries(result), [result]);
-  const errorMetrics = React.useMemo(() => computeErrorMetrics(result), [result]);
-  const splitTimestamp = result?.series?.timestamps?.[result.series.timestamps.length - 1];
-  const confidenceLevel = Math.round(Number(result?.series?.forecast_confidence_level || 0.8) * 100);
-  const confidenceLabel = bandLabel(confidenceLevel, result?.series?.forecast_band_source);
-  const hasCloseConfidence = Boolean(result?.series?.forecast_close_lower?.length);
-  const hasVolConfidence = Boolean(result?.series?.forecast_volatility_lower?.length);
-  const volScale = result?.series?.volatility_scale || { suggested_ymin: 0.0, suggested_ymax: 1.0 };
   const stance = detail ? toStance(detail.stance) : "unknown";
 
   return (
@@ -112,8 +93,17 @@ export default function HistoryDetailPage() {
                   <span>{detail.document_date}</span>
                   <Badge variant="outline">{detail.symbol}</Badge>
                   <Badge variant="outline">{detail.horizon}</Badge>
-                  <Badge variant="outline" className="capitalize">{detail.forecast_mode}</Badge>
-                  <Badge variant={stance === "hawkish" ? "hawkish" : stance === "dovish" ? "dovish" : stance === "neutral" ? "neutral" : "outline"}>
+                  <Badge
+                    variant={
+                      stance === "hawkish"
+                        ? "hawkish"
+                        : stance === "dovish"
+                        ? "dovish"
+                        : stance === "neutral"
+                        ? "neutral"
+                        : "outline"
+                    }
+                  >
                     {stanceLabel(stance)}
                   </Badge>
                 </h1>
@@ -173,54 +163,26 @@ export default function HistoryDetailPage() {
             </Card>
           ) : detail && result ? (
             <>
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                <SentimentCard sentiment={result.sentiment} />
-                <div className="md:col-span-2 xl:col-span-2">
-                  <PredictionCards result={result} />
-                </div>
-              </div>
+              {result.regime_classification ? (
+                <PreviewPanels slot="regime" regimeClassification={result.regime_classification} />
+              ) : null}
 
-              {result.multi_axis ? <PreviewPanels slot="cards" multiAxis={result.multi_axis} /> : null}
-
-              <ErrorBadges result={result} metrics={errorMetrics} />
-
-              <div className="grid gap-4 xl:grid-cols-2">
-                <ForecastChart
-                  title="Close forecast"
-                  description={`Forecast line and ${confidenceLabel} over the requested horizon.`}
-                  data={closeSeries}
-                  kind="close"
-                  splitTimestamp={splitTimestamp}
-                  includeRealized={Boolean(result.series?.realized_timestamps?.length)}
-                  hasConfidence={hasCloseConfidence}
-                  confidenceLabel={confidenceLabel}
-                />
-                <ForecastChart
-                  title="Volatility forecast"
-                  description={`Forecast line and ${confidenceLabel} over the requested horizon.`}
-                  data={volatilitySeries}
-                  kind="volatility"
-                  splitTimestamp={splitTimestamp}
-                  includeRealized={Boolean(result.series?.realized_timestamps?.length)}
-                  hasConfidence={hasVolConfidence}
-                  confidenceLabel={confidenceLabel}
-                  yDomain={[
-                    Number(volScale.suggested_ymin ?? 0),
-                    Number(volScale.suggested_ymax ?? 1),
-                  ]}
-                />
-              </div>
+              {result.multi_axis ? (
+                <PreviewPanels slot="cards" multiAxis={result.multi_axis} />
+              ) : null}
 
               {result.xai ? <PreviewPanels slot="xai" xai={result.xai} /> : null}
-              {result.credibility ? <PreviewPanels slot="credibility" credibility={result.credibility} /> : null}
-
-              <MarketContext result={result} />
+              {result.credibility ? (
+                <PreviewPanels slot="credibility" credibility={result.credibility} />
+              ) : null}
 
               {detail.text_excerpt ? (
                 <Card>
                   <CardHeader>
                     <CardTitle>Submitted text</CardTitle>
-                    <CardDescription>First {detail.text_excerpt.length} characters of the analysed document.</CardDescription>
+                    <CardDescription>
+                      First {detail.text_excerpt.length} characters of the analysed document.
+                    </CardDescription>
                   </CardHeader>
                   <CardContent>
                     <p className="whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 font-mono text-xs leading-relaxed">
