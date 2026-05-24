@@ -471,7 +471,7 @@ class _MultiAxisDataset(Dataset):
         }
 
 
-def _collate(batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
+def _collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
     out: dict[str, torch.Tensor] = {}
     out["input_ids"] = torch.stack([item["input_ids"] for item in batch])
     out["attention_mask"] = torch.stack([item["attention_mask"] for item in batch])
@@ -499,6 +499,10 @@ def _collate(batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
     out["mask_topic"] = torch.tensor(
         [item["mask_topic"] for item in batch], dtype=torch.bool
     )
+    # ``source`` is a per-row str the per-bank eval reads; the rest of
+    # the batch is torch.Tensor. The mixed-type return signature is
+    # documented on _collate's annotation so the type hint matches
+    # the actual payload.
     out["source"] = [str(item.get("source", "")) for item in batch]
     return out
 
@@ -579,7 +583,7 @@ def _evaluate_per_bank(
     model: TextMultiAxisClassifier,
     loader: DataLoader,
     device: torch.device,
-) -> dict[str, dict[str, dict[str, float]]]:
+) -> dict[str, dict[str, dict[str, float | int]]]:
     """Per-source per-axis macro-F1 breakdown on the eval partition (D, #209).
 
     Returns ``{source: {axis: {macro_f1, n}}}`` where ``source`` is the
@@ -596,16 +600,13 @@ def _evaluate_per_bank(
 
     model.eval()
     per_source_axis: dict[str, dict[str, list[tuple[int, int]]]] = {}
+    classification_axes: tuple[str, ...] = ("stance", "certainty", "topic")
     for batch in loader:
         input_ids = batch["input_ids"].to(device)
         attn = batch["attention_mask"].to(device)
         logits = model(input_ids=input_ids, attention_mask=attn)
         sources = batch["source"]
-        for axis_name, n_classes in (
-            ("stance", MULTI_TASK_STANCE_CLASSES),
-            ("certainty", MULTI_TASK_CERTAINTY_CLASSES),
-            ("topic", MULTI_TASK_TOPIC_CLASSES),
-        ):
+        for axis_name in classification_axes:
             mask = batch[f"mask_{axis_name}"]
             targets = batch[f"target_{axis_name}"]
             preds = logits[axis_name].argmax(dim=-1).detach().to("cpu")
@@ -622,7 +623,7 @@ def _evaluate_per_bank(
         "certainty": MULTI_TASK_CERTAINTY_CLASSES,
         "topic": MULTI_TASK_TOPIC_CLASSES,
     }
-    out: dict[str, dict[str, dict[str, float]]] = {}
+    out: dict[str, dict[str, dict[str, float | int]]] = {}
     for source, axis_bucket in per_source_axis.items():
         out[source] = {}
         for axis_name, rows in axis_bucket.items():
@@ -848,19 +849,34 @@ def main(argv: list[str] | None = None) -> int:
 
     _logger.info("training_complete best_val_loss=%.4f", best_val_loss)
 
-    # Per-bank breakdown on the val partition (D, 2026-05-24). Lands
-    # next to the canonical checkpoint as
-    # ``<checkpoint_stem>.per_bank_metrics.json`` so wiki §6.9 can
-    # quote per-source macro-F1 without re-running the eval.
+    # Per-bank breakdown on the val partition (D, 2026-05-24). Reload
+    # the best-epoch weights before scoring so the numbers next to the
+    # canonical checkpoint match the checkpoint itself (the in-memory
+    # ``model`` carries the last-epoch weights, which can differ from
+    # the best-epoch checkpoint when early-stopping kicked in).
+    checkpoint_path = Path(args.output_checkpoint)
+    if checkpoint_path.exists():
+        try:
+            best_payload = torch.load(
+                checkpoint_path, map_location=device, weights_only=False
+            )
+            best_state = best_payload.get("model_state_dict")
+            if best_state:
+                model.load_state_dict(best_state)
+        except Exception:  # pragma: no cover — defensive
+            _logger.warning("best_checkpoint_reload_failed", exc_info=True)
     try:
         per_bank = _evaluate_per_bank(model, val_loader, device)
     except Exception:  # pragma: no cover — defensive
         _logger.warning("per_bank_eval_failed", exc_info=True)
         per_bank = None
     if per_bank:
-        per_bank_path = Path(
-            str(Path(args.output_checkpoint).with_suffix(""))
-            + ".per_bank_metrics.json"
+        # ``with_name(stem + ".per_bank_metrics.json")`` works whether
+        # or not the user-supplied checkpoint path carries an
+        # extension; ``with_suffix("")`` raises ValueError on
+        # suffix-less paths.
+        per_bank_path = checkpoint_path.with_name(
+            checkpoint_path.stem + ".per_bank_metrics.json"
         )
         per_bank_path.parent.mkdir(parents=True, exist_ok=True)
         import json as _json
