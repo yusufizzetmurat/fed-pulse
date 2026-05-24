@@ -132,6 +132,45 @@ def test_history_realized_endpoint_404_for_missing_run(client):
     assert response.status_code == 404
 
 
+def test_history_realized_batch_returns_items_and_missing(client, monkeypatch):
+    session_iter = db_module.get_session()
+    sess = next(session_iter)
+    try:
+        run_a = _seed(sess, document_date="2024-09-18")
+        run_b = _seed(sess, document_date="2024-11-06", symbol="^NDX")
+    finally:
+        sess.close()
+
+    monkeypatch.setattr(
+        main_mod,
+        "fetch_realized_forward",
+        lambda **_: [
+            {"date": "2024-09-19", "close": 5602.0, "volatility_5d": 0.011},
+        ],
+    )
+
+    response = client.get(
+        "/history-realized",
+        params={"ids": f"{run_a.id},{run_b.id},does-not-exist"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body["items"].keys()) == {run_a.id, run_b.id}
+    assert body["missing"] == ["does-not-exist"]
+    assert body["items"][run_a.id]["timestamps"] == ["2024-09-19"]
+
+
+def test_history_realized_batch_rejects_empty_ids(client):
+    response = client.get("/history-realized", params={"ids": ""})
+    assert response.status_code == 422
+
+
+def test_history_realized_batch_rejects_oversize_id_list(client):
+    too_many = ",".join(f"id-{n}" for n in range(51))
+    response = client.get("/history-realized", params={"ids": too_many})
+    assert response.status_code == 422
+
+
 def test_fomc_calendar_endpoint_returns_past_and_upcoming(client):
     response = client.get("/fomc/calendar", params={"as_of": "2024-09-18"})
     assert response.status_code == 200

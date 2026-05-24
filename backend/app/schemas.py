@@ -318,6 +318,15 @@ class HistoryRealizedResponse(BaseModel):
     realized_regime: str | None = None
 
 
+class HistoryRealizedBatchResponse(BaseModel):
+    """Batched realized payloads keyed by run_id. Missing runs (deleted,
+    yfinance failure) come back under ``missing`` so the caller can render
+    a partial result instead of failing the whole page."""
+
+    items: dict[str, HistoryRealizedResponse]
+    missing: list[str]
+
+
 class SymbolDescriptor(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 

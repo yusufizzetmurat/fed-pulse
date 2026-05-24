@@ -34,6 +34,7 @@ from app.schemas import (
     HistoryDetail,
     HistoryEntry,
     HistoryList,
+    HistoryRealizedBatchResponse,
     HistoryRealizedResponse,
     NextFomcForecastResponse,
     ResearchArtifactsResponse,
@@ -645,22 +646,13 @@ def delete_history_run(run_id: str, session: Session = Depends(get_session)) -> 
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
 
 
-@app.get("/history/{run_id}/realized", response_model=HistoryRealizedResponse)
-def get_history_run_realized(
-    run_id: str, session: Session = Depends(get_session)
-) -> HistoryRealizedResponse:
-    row = get_run(session, run_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+def _build_realized_payload(row) -> HistoryRealizedResponse:
     steps = parse_horizon_steps(row.horizon)
-    try:
-        realized = fetch_realized_forward(
-            target_date=row.document_date,
-            symbol=row.symbol,
-            steps=steps,
-        )
-    except Exception as exc:  # pragma: no cover — yfinance failures bubble as 502
-        raise HTTPException(status_code=502, detail=f"Market lookup failed: {exc}") from exc
+    realized = fetch_realized_forward(
+        target_date=row.document_date,
+        symbol=row.symbol,
+        steps=steps,
+    )
     return HistoryRealizedResponse(
         run_id=row.id,
         symbol=row.symbol,
@@ -673,6 +665,54 @@ def get_history_run_realized(
             float(realized[-1]["volatility_5d"]) if realized else None
         ),
     )
+
+
+@app.get("/history/{run_id}/realized", response_model=HistoryRealizedResponse)
+def get_history_run_realized(
+    run_id: str, session: Session = Depends(get_session)
+) -> HistoryRealizedResponse:
+    row = get_run(session, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    try:
+        return _build_realized_payload(row)
+    except Exception as exc:  # pragma: no cover — yfinance failures bubble as 502
+        raise HTTPException(status_code=502, detail=f"Market lookup failed: {exc}") from exc
+
+
+@app.get("/history-realized", response_model=HistoryRealizedBatchResponse)
+def get_history_realized_batch(
+    ids: str = Query(..., description="Comma-separated run IDs (max 50)"),
+    session: Session = Depends(get_session),
+) -> HistoryRealizedBatchResponse:
+    """Batch the per-row realized fetch the /history list page used to do
+    one row at a time. ``ids`` is the comma-joined run-id list; deleted
+    rows and yfinance failures land under ``missing`` so a single broken
+    row does not nuke the table render."""
+
+    id_list = [chunk.strip() for chunk in ids.split(",") if chunk.strip()]
+    if not id_list:
+        raise HTTPException(
+            status_code=422, detail="ids must contain at least one run id"
+        )
+    if len(id_list) > 50:
+        raise HTTPException(
+            status_code=422,
+            detail=f"ids must contain at most 50 run ids; got {len(id_list)}",
+        )
+
+    items: dict[str, HistoryRealizedResponse] = {}
+    missing: list[str] = []
+    for run_id in id_list:
+        row = get_run(session, run_id)
+        if row is None:
+            missing.append(run_id)
+            continue
+        try:
+            items[run_id] = _build_realized_payload(row)
+        except Exception:  # pragma: no cover — partial failures degrade silently
+            missing.append(run_id)
+    return HistoryRealizedBatchResponse(items=items, missing=missing)
 
 
 @app.get("/fomc/calendar", response_model=FomcCalendarResponse)
