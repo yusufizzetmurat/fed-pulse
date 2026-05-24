@@ -19,30 +19,21 @@ vi.mock("next/head", () => ({
 }));
 
 const fetchHistoryMock = vi.fn();
-const fetchHistoryRealizedMock = vi.fn();
+const fetchHistoryRealizedBatchMock = vi.fn();
 const deleteHistoryRunMock = vi.fn();
 
 vi.mock("@/lib/analyze/api", () => ({
   resolveApiBaseUrl: () => "http://localhost:8000",
   fetchHistory: (...args: unknown[]) => fetchHistoryMock(...args),
-  fetchHistoryRealized: (...args: unknown[]) => fetchHistoryRealizedMock(...args),
+  fetchHistoryRealizedBatch: (...args: unknown[]) => fetchHistoryRealizedBatchMock(...args),
   deleteHistoryRun: (...args: unknown[]) => deleteHistoryRunMock(...args),
 }));
 
 describe("HistoryPage", () => {
   beforeEach(() => {
     fetchHistoryMock.mockReset();
-    fetchHistoryRealizedMock.mockReset();
-    fetchHistoryRealizedMock.mockResolvedValue({
-      run_id: "stub",
-      symbol: "^GSPC",
-      document_date: "2026-01-01",
-      horizon: "10d",
-      timestamps: [],
-      close: [],
-      volatility: [],
-      realized_regime: null,
-    });
+    fetchHistoryRealizedBatchMock.mockReset();
+    fetchHistoryRealizedBatchMock.mockResolvedValue({ items: {}, missing: [] });
     deleteHistoryRunMock.mockReset();
   });
 
@@ -90,5 +81,56 @@ describe("HistoryPage", () => {
     await waitFor(() =>
       expect(screen.getByText(/no runs match these filters/i)).toBeInTheDocument(),
     );
+  });
+
+  it("fires exactly one batched realized request after loading the row list", async () => {
+    fetchHistoryMock.mockResolvedValue({
+      total: 2,
+      limit: 20,
+      offset: 0,
+      items: [
+        {
+          id: "abc",
+          created_at: "2024-09-18T12:00:00Z",
+          symbol: "^GSPC",
+          document_date: "2024-09-18",
+          horizon: "10d",
+          forecast_mode: "fast",
+          stance: "hawkish",
+        },
+        {
+          id: "def",
+          created_at: "2024-11-06T12:00:00Z",
+          symbol: "^NDX",
+          document_date: "2024-11-06",
+          horizon: "10d",
+          forecast_mode: "fast",
+          stance: "dovish",
+        },
+      ],
+    });
+    fetchHistoryRealizedBatchMock.mockResolvedValue({
+      items: {
+        abc: {
+          run_id: "abc",
+          symbol: "^GSPC",
+          document_date: "2024-09-18",
+          horizon: "10d",
+          timestamps: ["2024-09-20"],
+          close: [5050.0],
+          volatility: [0.011],
+          realized_regime: "normal",
+        },
+      },
+      missing: ["def"],
+    });
+
+    const { default: HistoryPage } = await import("@/pages/history");
+    render(<HistoryPage />);
+    await waitFor(() =>
+      expect(fetchHistoryRealizedBatchMock).toHaveBeenCalledTimes(1),
+    );
+    const [, ids] = fetchHistoryRealizedBatchMock.mock.calls[0];
+    expect(ids).toEqual(["abc", "def"]);
   });
 });

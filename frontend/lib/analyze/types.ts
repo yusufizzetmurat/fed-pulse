@@ -92,6 +92,51 @@ export interface HistoryRealizedResponse {
   realized_regime?: string | null;
 }
 
+export interface HistoryRealizedBatchResponse {
+  items: Record<string, HistoryRealizedResponse>;
+  missing: string[];
+}
+
+export interface EvaluationCoverageResponse {
+  nominal: number | null;
+  empirical: number | null;
+  sample_size: number;
+  runs_total: number;
+  computed_at: string;
+}
+
+export interface ClassificationBreakdownClass {
+  class_id: number;
+  precision: number;
+  recall: number;
+  f1: number;
+  support: number;
+  roc_auc?: number | null;
+  pr_auc?: number | null;
+}
+
+export interface ClassificationBreakdownSource {
+  relative_path: string;
+  training_package_id?: string | null;
+  checkpoint_path?: string | null;
+  modified_at: string;
+}
+
+export interface ClassificationBreakdownResponse {
+  available: boolean;
+  confusion_matrix?: number[][] | null;
+  per_class?: ClassificationBreakdownClass[] | null;
+  macro_f1?: number | null;
+  macro_precision?: number | null;
+  macro_recall?: number | null;
+  macro_roc_auc?: number | null;
+  macro_pr_auc?: number | null;
+  weighted_f1?: number | null;
+  n_classes?: number | null;
+  class_labels?: string[] | null;
+  source?: ClassificationBreakdownSource | null;
+}
+
 export type StanceAxis = "hawkish" | "dovish" | "neutral";
 export type CertaintyAxis = "certain" | "uncertain" | "neutral";
 export type TopicAxis = "macro" | "forward_guidance" | "market_reaction" | "other";
