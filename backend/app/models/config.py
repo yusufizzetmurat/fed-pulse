@@ -292,6 +292,18 @@ class ModelConfig:
     infonce_lambda: float = 0.1
     infonce_temperature: float = 0.07
     infonce_latent_dim: int = 64
+    # #273 follow-up to the multi-task head (#272). When True, the
+    # training loop swaps the single-axis CrossEntropy for
+    # :class:`app.training.loss.MultiTaskLoss`, which folds per-axis
+    # CE / SmoothL1 terms onto stance / factor / certainty / topic
+    # with per-axis class weights and a per-row availability mask.
+    # Default False keeps the byte-identity regression contract on
+    # every existing classification run (stance-only training).
+    multi_task_loss: bool = False
+    multi_task_lambda_stance: float = 1.0
+    multi_task_lambda_factor: float = 0.3
+    multi_task_lambda_certainty: float = 0.3
+    multi_task_lambda_topic: float = 0.3
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -328,6 +340,11 @@ class ModelConfig:
             infonce_lambda=float(getattr(model, "infonce_lambda", 0.1)),
             infonce_temperature=float(getattr(model, "infonce_temperature", 0.07)),
             infonce_latent_dim=int(getattr(model, "infonce_latent_dim", 64)),
+            multi_task_loss=bool(getattr(model, "multi_task_loss", False)),
+            multi_task_lambda_stance=float(getattr(model, "multi_task_lambda_stance", 1.0)),
+            multi_task_lambda_factor=float(getattr(model, "multi_task_lambda_factor", 0.3)),
+            multi_task_lambda_certainty=float(getattr(model, "multi_task_lambda_certainty", 0.3)),
+            multi_task_lambda_topic=float(getattr(model, "multi_task_lambda_topic", 0.3)),
         )
 
     def to_dict(self) -> dict[str, Any]:

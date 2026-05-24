@@ -474,6 +474,45 @@ def _parse_args() -> argparse.Namespace:
         default=64,
         help="Shared latent dim for the modality projections in the gated fusion.",
     )
+    # #273 — joint multi-task loss on the four MultiTaskHead branches.
+    # Default off so single-axis CrossEntropy stays the byte-identity
+    # path on every existing classification run.
+    parser.add_argument(
+        "--multi-task-loss",
+        dest="multi_task_loss",
+        action="store_true",
+        help=(
+            "Train classification with MultiTaskLoss over stance / factor / "
+            "certainty / topic instead of single-axis CrossEntropy. "
+            "Per-axis class weights fit on the train slice; per-row mask "
+            "drops axes whose label is absent on a given row."
+        ),
+    )
+    parser.set_defaults(multi_task_loss=False)
+    parser.add_argument(
+        "--multi-task-lambda-stance",
+        type=float,
+        default=1.0,
+        help="Loss weight on the stance branch when --multi-task-loss is on.",
+    )
+    parser.add_argument(
+        "--multi-task-lambda-factor",
+        type=float,
+        default=0.3,
+        help="Loss weight on the factor regression branch.",
+    )
+    parser.add_argument(
+        "--multi-task-lambda-certainty",
+        type=float,
+        default=0.3,
+        help="Loss weight on the certainty branch.",
+    )
+    parser.add_argument(
+        "--multi-task-lambda-topic",
+        type=float,
+        default=0.3,
+        help="Loss weight on the topic branch.",
+    )
     # Phase B (#227) LR schedule + sequence-length knobs.
     parser.add_argument(
         "--lr-schedule",
@@ -866,6 +905,11 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         infonce_lambda=float(getattr(args, "infonce_lambda", 0.1)),
         infonce_temperature=float(getattr(args, "infonce_temperature", 0.07)),
         infonce_latent_dim=int(getattr(args, "infonce_latent_dim", 64)),
+        multi_task_loss=bool(getattr(args, "multi_task_loss", False)),
+        multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
+        multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
+        multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
+        multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
     )
 
 
@@ -1096,6 +1140,11 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                             infonce_lambda=float(getattr(args, "infonce_lambda", 0.1)),
                             infonce_temperature=float(getattr(args, "infonce_temperature", 0.07)),
                             infonce_latent_dim=int(getattr(args, "infonce_latent_dim", 64)),
+                            multi_task_loss=bool(getattr(args, "multi_task_loss", False)),
+                            multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
+                            multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
+                            multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
+                            multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
                         ),
                         "learning_rate": float(hp["learning_rate"]),
                         "epochs": int(hp["epochs"]),
@@ -1187,6 +1236,11 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                     infonce_lambda=float(getattr(args, "infonce_lambda", 0.1)),
                     infonce_temperature=float(getattr(args, "infonce_temperature", 0.07)),
                     infonce_latent_dim=int(getattr(args, "infonce_latent_dim", 64)),
+                    multi_task_loss=bool(getattr(args, "multi_task_loss", False)),
+                    multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
+                    multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
+                    multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
+                    multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
                 ),
                 "learning_rate": float(learning_rate),
                 "epochs": int(epochs),

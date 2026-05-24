@@ -459,6 +459,71 @@ def _summarise_gate(
     }
 
 
+def _build_partition_multi_task_tensors(
+    sequence_groups: "Sequence[Sequence[FeatureVector]]",
+    *,
+    vol_regime_quantiles: "Sequence[float]",
+) -> dict[str, torch.Tensor] | None:
+    """Materialise per-partition multi-task target + mask tensors (#273).
+
+    Thin wrapper around
+    :func:`app.training.loaders._build_multi_task_target_tensors` that
+    matches the partition-tensor naming convention in this module.
+    Used by the train loop to attach the 8 multi-task tensors
+    (4 targets + 4 masks) to each partition's TensorDataset when
+    ``multi_task_loss=True`` is set on the active ModelConfig.
+
+    Returns ``None`` when the partition has no usable supervised rows.
+    The underlying helper drops rows whose ``forward_realized_vol_10d``
+    is missing — same row-filter the classification-mode
+    ``_build_training_tensors`` applies, so the multi-task tensors
+    stay row-aligned with ``y``.
+    """
+
+    from app.training.loaders import _build_multi_task_target_tensors
+
+    return _build_multi_task_target_tensors(
+        sequence_groups, vol_regime_quantiles=vol_regime_quantiles
+    )
+
+
+def _fit_axis_class_weights_from_mask(
+    target_idx: torch.Tensor,
+    mask: torch.Tensor,
+    n_classes: int,
+    *,
+    smoothing: float = 1.0,
+) -> torch.Tensor:
+    """Inverse-frequency class weights fit on masked rows of one axis (#273).
+
+    Mirrors :func:`app.training.loaders.fit_class_weights` for the
+    multi-task path: each axis (stance, certainty, topic) computes its
+    own class weights using only the rows where the axis mask is True.
+    Smoothing keeps an empty class from blowing the weight up; the
+    weights are normalised so they sum to ``n_classes``.
+
+    Returns a length-``n_classes`` tensor (uniform 1.0 fallback when
+    no rows are masked) so :class:`MultiTaskLoss` can construct a
+    well-defined :class:`torch.nn.CrossEntropyLoss` for that axis.
+    """
+
+    if mask.numel() == 0 or not bool(mask.any().item()):
+        return torch.ones(n_classes, dtype=torch.float32)
+    masked = target_idx[mask].detach().to("cpu").long()
+    counts = [0] * n_classes
+    for v in masked.tolist():
+        idx = int(v)
+        if 0 <= idx < n_classes:
+            counts[idx] += 1
+    if sum(counts) == 0:
+        return torch.ones(n_classes, dtype=torch.float32)
+    raw = [1.0 / (c + smoothing) for c in counts]
+    total = sum(raw)
+    return torch.tensor(
+        [(w / total) * n_classes for w in raw], dtype=torch.float32
+    )
+
+
 def _run_train_forward_and_align(
     forward_model: nn.Module,
     batch_x: torch.Tensor,
