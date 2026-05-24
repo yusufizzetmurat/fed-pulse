@@ -374,9 +374,18 @@ def _maybe_write_classification_conformal_manifest(
     if sidecar.exists():
         try:
             existing = load_manifest(sidecar)
+            # Overwrite alpha + nominal_coverage with the classification
+            # calibration values rather than keeping the existing
+            # regression-side alpha (which can differ from
+            # DEFAULT_CLASSIFICATION_ALPHA on a sidecar calibrated at a
+            # different coverage target). The softmax_quantile fitted
+            # in this run is paired with DEFAULT_CLASSIFICATION_ALPHA,
+            # so the manifest as a whole must report that pair to keep
+            # the inference path's coverage claim consistent with the
+            # calibrated threshold.
             manifest = ConformalManifest(
-                alpha=existing.alpha,
-                nominal_coverage=existing.nominal_coverage,
+                alpha=DEFAULT_CLASSIFICATION_ALPHA,
+                nominal_coverage=1.0 - DEFAULT_CLASSIFICATION_ALPHA,
                 residual_quantile_close=existing.residual_quantile_close,
                 residual_quantile_volatility=existing.residual_quantile_volatility,
                 calibration_n=existing.calibration_n,

@@ -42,12 +42,8 @@ def test_writes_sidecar_when_class_scores_and_targets_present() -> None:
     produce a sidecar containing ``softmax_quantile``."""
 
     n = 200
-    class_scores = [[0.7 if i % 3 == 0 else 0.15, 0.15, 0.7 if i % 3 == 1 else 0.15] for i in range(n)]
-    # Re-normalise so each row sums to 1
-    class_scores = [[v / sum(row) for v in row] + [1.0 - sum(v / sum(row) for v in row)] for row in class_scores]
-    # Simplify: clean 3-class softmax
-    class_scores = []
-    targets = []
+    class_scores: list[list[float]] = []
+    targets: list[int] = []
     for i in range(n):
         y = i % 3
         targets.append(y)

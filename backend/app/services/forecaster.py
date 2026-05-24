@@ -169,6 +169,20 @@ def _build_inference_tensor(
 
 
 def _predict_next_point(model: ForecasterModel, sequence: list[FeatureVector]) -> tuple[float, float]:
+    # Classification-mode checkpoints emit ``(B, n_classes)`` logits
+    # from ``forward()`` (the stance branch under the MultiTaskHead);
+    # reading ``out[0]`` and ``out[1]`` as ``(close, vol)`` would
+    # surface logits in the response. Until /analyze splits the
+    # regression series from the regime classification card (filed as
+    # a follow-up to #216), echo the most recent bar's market state as
+    # a degenerate forecast so the response stays valid. The new
+    # ``RegimeClassificationCard`` is the correct surface for
+    # classification checkpoints.
+    if str(getattr(model, "output_mode", "regression")) == "classification":
+        last = sequence[-1] if sequence else None
+        last_close = float(getattr(last, "market_close", 0.0)) if last else 0.0
+        last_vol = float(getattr(last, "market_volatility", 0.0)) if last else 0.0
+        return last_close, last_vol
     device = next(model.parameters()).device
     x = _build_inference_tensor(sequence, model, device)
     kwargs: dict[str, torch.Tensor] = {}
@@ -311,7 +325,17 @@ def _build_confidence_bands(
     *,
     conformal_manifest: Any = None,
 ) -> tuple[list[float], list[float], list[float], list[float]]:
-    if conformal_manifest is not None:
+    # A non-None manifest with both residual quantiles at 0 is the
+    # marker for a classification-only sidecar (saved by the training
+    # loop when only the APS softmax_quantile is fit on the val
+    # partition). Treat that case as "no regression bands available"
+    # and fall through to the gaussian-z heuristic so the close/vol
+    # series does not emit zero-width bands.
+    has_residual_bands = conformal_manifest is not None and (
+        float(getattr(conformal_manifest, "residual_quantile_close", 0.0)) > 0.0
+        or float(getattr(conformal_manifest, "residual_quantile_volatility", 0.0)) > 0.0
+    )
+    if has_residual_bands:
         from app.evaluation.conformal import apply_conformal_bands
 
         return apply_conformal_bands(
@@ -496,16 +520,36 @@ def forecast_quantitative_series(
             "forecast_volatility_upper": forecast_vol_upper,
             "forecast_confidence_level": (
                 float(conformal_manifest.nominal_coverage)
-                if conformal_manifest is not None
+                if (
+                    conformal_manifest is not None
+                    and float(
+                        getattr(conformal_manifest, "residual_quantile_close", 0.0)
+                    )
+                    > 0.0
+                )
                 else FORECAST_CONFIDENCE_LEVEL
             ),
             "volatility_scale": vol_scale,
             "forecast_band_source": (
-                "conformal" if conformal_manifest is not None else "gaussian_z"
+                "conformal"
+                if (
+                    conformal_manifest is not None
+                    and float(
+                        getattr(conformal_manifest, "residual_quantile_close", 0.0)
+                    )
+                    > 0.0
+                )
+                else "gaussian_z"
             ),
             "conformal_coverage": (
                 float(conformal_manifest.nominal_coverage)
-                if conformal_manifest is not None
+                if (
+                    conformal_manifest is not None
+                    and float(
+                        getattr(conformal_manifest, "residual_quantile_close", 0.0)
+                    )
+                    > 0.0
+                )
                 else None
             ),
         },

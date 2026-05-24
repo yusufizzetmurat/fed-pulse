@@ -257,6 +257,13 @@ def empirical_coverage(
 
 
 def load_manifest(path: Path | str) -> ConformalManifest:
+    """Read a JSON manifest. Residual quantile fields default to 0.0
+    when absent (classification-only manifests written by
+    ``save_manifest`` drop them); the inference loader treats a 0.0
+    residual quantile as "no regression bands available" and falls
+    back to gaussian-z.
+    """
+
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Conformal manifest not found: {path}")
@@ -267,8 +274,10 @@ def load_manifest(path: Path | str) -> ConformalManifest:
     return ConformalManifest(
         alpha=float(payload["alpha"]),
         nominal_coverage=float(payload["nominal_coverage"]),
-        residual_quantile_close=float(payload["residual_quantile_close"]),
-        residual_quantile_volatility=float(payload["residual_quantile_volatility"]),
+        residual_quantile_close=float(payload.get("residual_quantile_close", 0.0)),
+        residual_quantile_volatility=float(
+            payload.get("residual_quantile_volatility", 0.0)
+        ),
         calibration_n=int(payload["calibration_n"]),
         notes=payload.get("notes"),
         softmax_quantile=(
@@ -278,11 +287,40 @@ def load_manifest(path: Path | str) -> ConformalManifest:
 
 
 def save_manifest(manifest: ConformalManifest, path: Path | str) -> Path:
+    """Persist a manifest atomically via temp file + ``Path.replace``.
+
+    The temp-and-rename pattern means a mid-write process crash leaves
+    the original sidecar intact rather than producing a half-written
+    JSON the inference loader would later fail on. Same destination
+    path on success; the temp file is unlinked even on failure.
+    """
+
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = manifest.to_dict()
+    # Drop residual_quantile_* fields entirely when both are zero so a
+    # classification-only manifest is not mistaken for a regression
+    # band manifest at inference time (the inference loader treats
+    # any non-None manifest as conformal, so leaving the zeros in
+    # would produce zero-width prediction bands).
+    if (
+        payload.get("residual_quantile_close") == 0.0
+        and payload.get("residual_quantile_volatility") == 0.0
+    ):
+        payload.pop("residual_quantile_close", None)
+        payload.pop("residual_quantile_volatility", None)
     payload = {k: v for k, v in payload.items() if v is not None}
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp_path = path.with_name(path.name + ".tmp")
+    try:
+        tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp_path.replace(path)
+    except Exception:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
     return path
 
 
