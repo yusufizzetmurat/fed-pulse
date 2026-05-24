@@ -24,8 +24,9 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { KpiTile } from "@/components/ui/kpi-tile";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  fetchClassificationBreakdown,
   fetchHistory,
-  fetchHistoryRealized,
+  fetchHistoryRealizedBatch,
   fetchHistoryRun,
   resolveApiBaseUrl,
 } from "@/lib/analyze/api";
@@ -35,7 +36,11 @@ import {
   buildRunRegimeRecord,
   type RunRegimeRecord,
 } from "@/lib/analyze/performance";
-import type { HistoryEntry } from "@/lib/analyze/types";
+import type {
+  ClassificationBreakdownResponse,
+  HistoryEntry,
+  HistoryRealizedBatchResponse,
+} from "@/lib/analyze/types";
 
 const HISTORY_LIMIT = 100;
 
@@ -61,6 +66,7 @@ export default function PerformancePage() {
   const [rows, setRows] = React.useState<RunRegimeRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [totalRuns, setTotalRuns] = React.useState(0);
+  const [breakdown, setBreakdown] = React.useState<ClassificationBreakdownResponse | null>(null);
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -68,23 +74,37 @@ export default function PerformancePage() {
     setLoading(true);
     (async () => {
       try {
-        const list = await fetchHistory(apiBaseUrl, { limit: HISTORY_LIMIT }, signal);
+        const [list, breakdownResponse] = await Promise.all([
+          fetchHistory(apiBaseUrl, { limit: HISTORY_LIMIT }, signal),
+          fetchClassificationBreakdown(apiBaseUrl, signal).catch(() => null),
+        ]);
         if (signal.aborted) return;
         setTotalRuns(list.total);
-        const records = await Promise.all(
-          list.items.map(async (entry: HistoryEntry) => {
-            const [realized, detail] = await Promise.all([
-              fetchHistoryRealized(apiBaseUrl, entry.id, signal).catch(() => null),
+        setBreakdown(breakdownResponse);
+        // Realized labels fetched in one batched round trip; per-row
+        // history-detail (payload) still needs a fan-out because the
+        // persisted predicted_set list isn't carried on the summary.
+        const ids = list.items.map((entry) => entry.id);
+        const emptyBatch: HistoryRealizedBatchResponse = { items: {}, missing: ids };
+        const [batch, detailResults] = await Promise.all([
+          fetchHistoryRealizedBatch(apiBaseUrl, ids, signal).catch(() => emptyBatch),
+          Promise.all(
+            list.items.map((entry) =>
               fetchHistoryRun(apiBaseUrl, entry.id, signal).catch(() => null),
-            ]);
-            return buildRunRegimeRecord({
-              entry,
-              realized,
-              payload: (detail?.payload || null) as Record<string, unknown> | null,
-            });
-          }),
-        );
-        if (!signal.aborted) setRows(records);
+            ),
+          ),
+        ]);
+        if (signal.aborted) return;
+        const records = list.items.map((entry: HistoryEntry, idx) => {
+          const realized = batch.items[entry.id] ?? null;
+          const detail = detailResults[idx];
+          return buildRunRegimeRecord({
+            entry,
+            realized,
+            payload: (detail?.payload || null) as Record<string, unknown> | null,
+          });
+        });
+        setRows(records);
       } catch (err) {
         if (!signal.aborted) {
           toast.error((err as Error).message || "Failed to load performance data.");
@@ -97,6 +117,11 @@ export default function PerformancePage() {
   }, [apiBaseUrl]);
 
   const aggregate = React.useMemo(() => aggregateRegimePerformance(rows), [rows]);
+  const breakdownAvailable = breakdown?.available === true;
+  const headlineMacroF1 = breakdownAvailable
+    ? breakdown?.macro_f1 ?? null
+    : aggregate.macroF1;
+  const headlineMacroRocAuc = breakdownAvailable ? breakdown?.macro_roc_auc ?? null : null;
 
   const symbolColumns: DataTableColumn<(typeof aggregate.bySymbol)[number]>[] = React.useMemo(
     () => [
@@ -279,21 +304,31 @@ export default function PerformancePage() {
             />
             <KpiTile
               label="Macro-F1"
-              value={<span className="numeric">{formatScore(aggregate.macroF1)}</span>}
+              value={<span className="numeric">{formatScore(headlineMacroF1)}</span>}
               caption={
-                aggregate.macroF1 != null
-                  ? "unweighted mean of per-class F1"
+                breakdownAvailable
+                  ? "from training eval artifact"
+                  : aggregate.macroF1 != null
+                  ? "client aggregation across history"
                   : aggregate.resolved > 0
                   ? "needs resolved runs in every regime class"
                   : "needs resolved runs"
               }
-              tone={aggregate.macroF1 != null && aggregate.macroF1 >= 0.4 ? "up" : "neutral"}
+              tone={headlineMacroF1 != null && headlineMacroF1 >= 0.4 ? "up" : "neutral"}
             />
             <KpiTile
               label="Empirical coverage"
               value={<span className="numeric">{formatPercent(aggregate.empiricalCoverage)}</span>}
               caption="realised regime inside the predicted set"
             />
+            {headlineMacroRocAuc != null ? (
+              <KpiTile
+                label="Macro ROC-AUC"
+                value={<span className="numeric">{formatScore(headlineMacroRocAuc)}</span>}
+                caption="one-vs-rest, training eval"
+                tone={headlineMacroRocAuc >= 0.6 ? "up" : "neutral"}
+              />
+            ) : null}
           </div>
 
           {loading ? (
@@ -318,8 +353,9 @@ export default function PerformancePage() {
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base">Per-class metrics</CardTitle>
                   <CardDescription>
-                    Precision / recall / F1 for each calibrated class. Support is the count of
-                    resolved runs whose realised regime matched the truth row.
+                    {breakdownAvailable
+                      ? "From the training-time classification breakdown — precision, recall, F1, ROC-AUC, PR-AUC."
+                      : "Computed client-side from resolved history runs. Will switch to the training eval artifact when one is published."}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
@@ -331,35 +367,82 @@ export default function PerformancePage() {
                         <th className="px-4 py-2 text-right">Precision</th>
                         <th className="px-4 py-2 text-right">Recall</th>
                         <th className="px-4 py-2 text-right">F1</th>
+                        {breakdownAvailable ? (
+                          <>
+                            <th className="px-4 py-2 text-right">ROC-AUC</th>
+                            <th className="px-4 py-2 text-right">PR-AUC</th>
+                          </>
+                        ) : null}
                       </tr>
                     </thead>
                     <tbody>
-                      {aggregate.perClass.map((entry) => (
-                        <tr key={entry.klass} className="border-b border-border last:border-0">
-                          <td className="px-4 py-2 capitalize">{entry.klass}</td>
-                          <td className="numeric px-4 py-2 text-right">{entry.support}</td>
-                          <td className="numeric px-4 py-2 text-right">
-                            {formatScore(entry.precision)}
-                          </td>
-                          <td className="numeric px-4 py-2 text-right">{formatScore(entry.recall)}</td>
-                          <td className="numeric px-4 py-2 text-right">{formatScore(entry.f1)}</td>
-                        </tr>
-                      ))}
+                      {breakdownAvailable && breakdown?.per_class
+                        ? breakdown.per_class.map((row, idx) => {
+                            const label = breakdown.class_labels?.[row.class_id] ?? REGIME_CLASSES[row.class_id] ?? `class ${row.class_id}`;
+                            return (
+                              <tr key={`${row.class_id}-${idx}`} className="border-b border-border last:border-0">
+                                <td className="px-4 py-2 capitalize">{label}</td>
+                                <td className="numeric px-4 py-2 text-right">{row.support}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScore(row.precision)}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScore(row.recall)}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScore(row.f1)}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScore(row.roc_auc ?? null)}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScore(row.pr_auc ?? null)}</td>
+                              </tr>
+                            );
+                          })
+                        : aggregate.perClass.map((entry) => (
+                            <tr key={entry.klass} className="border-b border-border last:border-0">
+                              <td className="px-4 py-2 capitalize">{entry.klass}</td>
+                              <td className="numeric px-4 py-2 text-right">{entry.support}</td>
+                              <td className="numeric px-4 py-2 text-right">{formatScore(entry.precision)}</td>
+                              <td className="numeric px-4 py-2 text-right">{formatScore(entry.recall)}</td>
+                              <td className="numeric px-4 py-2 text-right">{formatScore(entry.f1)}</td>
+                            </tr>
+                          ))}
                     </tbody>
                   </table>
                 </CardContent>
+                {breakdownAvailable && breakdown?.source ? (
+                  <div className="border-t border-border bg-muted/20 px-4 py-2 text-[10px] text-muted-foreground">
+                    Source: {breakdown.source.relative_path}
+                    {breakdown.source.training_package_id
+                      ? ` · ${breakdown.source.training_package_id}`
+                      : ""}
+                    {" · "}
+                    {new Date(breakdown.source.modified_at).toLocaleString(undefined, {
+                      dateStyle: "short",
+                      timeStyle: "short",
+                    })}
+                  </div>
+                ) : null}
               </Card>
 
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base">Confusion matrix</CardTitle>
                   <CardDescription>
-                    Rows are the realised regime, columns are the predicted argmax. Counts are
-                    coloured by row share so misclassifications stand out at a glance.
+                    {breakdownAvailable
+                      ? "From the training-time classification breakdown — rows are the true class, columns the predicted argmax."
+                      : "Computed client-side from resolved runs — rows are realised regime, columns are predicted argmax."}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <ConfusionMatrix rows={aggregate.confusion} classes={REGIME_CLASSES} />
+                  {breakdownAvailable && breakdown?.confusion_matrix
+                    ? (() => {
+                        const labels = breakdown.class_labels?.length
+                          ? breakdown.class_labels
+                          : REGIME_CLASSES;
+                        const matrixRows = breakdown.confusion_matrix.map((counts, idx) => ({
+                          truth: labels[idx] ?? `class ${idx}`,
+                          counts: Object.fromEntries(
+                            counts.map((value, j) => [labels[j] ?? `class ${j}`, value]),
+                          ),
+                          total: counts.reduce((acc, n) => acc + n, 0),
+                        }));
+                        return <ConfusionMatrix rows={matrixRows} classes={labels} />;
+                      })()
+                    : <ConfusionMatrix rows={aggregate.confusion} classes={REGIME_CLASSES} />}
                 </CardContent>
               </Card>
 
