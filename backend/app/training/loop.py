@@ -323,6 +323,95 @@ def _unpack_batch(batch: Any) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor 
     )
 
 
+def _maybe_write_classification_conformal_manifest(
+    best_val_metrics: "EvaluationMetrics | None",
+    checkpoint_target: Path,
+) -> None:
+    """Fit the APS threshold + persist a conformal sidecar on classification runs.
+
+    Reads ``class_scores`` (per-row softmax) and ``targets`` (true class
+    indices) off ``best_val_metrics`` — both are already collected by
+    ``_evaluate_model`` on classification mode and ride on the
+    EvaluationMetrics dataclass. When either is missing (regression-only
+    runs, or a val partition that did not record row-level predictions)
+    the helper is a no-op so the legacy regression path stays byte-
+    identical.
+
+    When a prior regression-side manifest already exists at the same
+    sibling path, the function merges the new ``softmax_quantile`` into
+    that file instead of overwriting it — a future joint regression +
+    classification checkpoint can carry both quantiles in one manifest.
+    """
+
+    if best_val_metrics is None:
+        return
+    class_scores = getattr(best_val_metrics, "class_scores", None)
+    targets = getattr(best_val_metrics, "targets", None)
+    if class_scores is None or targets is None or not class_scores or not targets:
+        return
+    if len(class_scores) != len(targets):
+        return
+
+    from app.evaluation.conformal import (
+        DEFAULT_CLASSIFICATION_ALPHA,
+        ConformalManifest,
+        calibrate_classification_conformal,
+        load_manifest,
+        save_manifest,
+    )
+
+    try:
+        softmax_q = calibrate_classification_conformal(
+            softmax_scores=class_scores,
+            true_classes=targets,
+            alpha=DEFAULT_CLASSIFICATION_ALPHA,
+        )
+    except ValueError as exc:
+        print(f"[conformal] classification calibration skipped: {exc}", flush=True)
+        return
+
+    sidecar = Path(str(checkpoint_target.with_suffix("")) + ".conformal.json")
+    if sidecar.exists():
+        try:
+            existing = load_manifest(sidecar)
+            manifest = ConformalManifest(
+                alpha=existing.alpha,
+                nominal_coverage=existing.nominal_coverage,
+                residual_quantile_close=existing.residual_quantile_close,
+                residual_quantile_volatility=existing.residual_quantile_volatility,
+                calibration_n=existing.calibration_n,
+                notes=existing.notes,
+                softmax_quantile=softmax_q,
+            )
+        except Exception:
+            # Stale / unreadable sidecar — overwrite with a classification-only
+            # manifest. The regression bands fall back to gaussian_z on the
+            # inference path when the residual_quantile fields are zero.
+            manifest = ConformalManifest(
+                alpha=DEFAULT_CLASSIFICATION_ALPHA,
+                nominal_coverage=1.0 - DEFAULT_CLASSIFICATION_ALPHA,
+                residual_quantile_close=0.0,
+                residual_quantile_volatility=0.0,
+                calibration_n=len(class_scores),
+                softmax_quantile=softmax_q,
+            )
+    else:
+        manifest = ConformalManifest(
+            alpha=DEFAULT_CLASSIFICATION_ALPHA,
+            nominal_coverage=1.0 - DEFAULT_CLASSIFICATION_ALPHA,
+            residual_quantile_close=0.0,
+            residual_quantile_volatility=0.0,
+            calibration_n=len(class_scores),
+            softmax_quantile=softmax_q,
+        )
+    save_manifest(manifest, sidecar)
+    print(
+        f"[conformal] calibrated softmax_quantile={softmax_q:.4f} "
+        f"on n={len(class_scores)} val rows -> {sidecar.name}",
+        flush=True,
+    )
+
+
 def _summarise_gate(
     gate_chunks: list[torch.Tensor],
     true_classes: torch.Tensor,
@@ -1605,6 +1694,15 @@ def train_model(
             summary,
             close_scale=close_scale,
             rich_feature_scaler=rich_feature_scaler,
+        )
+        # Conformal calibration sidecar (#216). Classification-mode runs
+        # write a manifest with the APS softmax_quantile fitted on the
+        # held-out val partition's per-row softmax scores at the best
+        # epoch. The /analyze inference path reads the manifest via
+        # ``app.services.forecaster._conformal_manifest_for`` to build
+        # calibrated prediction sets.
+        _maybe_write_classification_conformal_manifest(
+            best_val_metrics, checkpoint_target
         )
         if encoder_lora_bundle is not None:
             # Round 5 (#244) sidecar: write only the LoRA adapter state

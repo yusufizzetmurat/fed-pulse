@@ -149,6 +149,15 @@ export interface CredibilityResponse {
   months_since_reversal?: number;
 }
 
+export interface RegimeClassificationResponse {
+  predicted_set: string[];
+  set_label: string;
+  set_size: number;
+  coverage: number;
+  distribution: Record<string, number>;
+  argmax_class: string;
+}
+
 export interface AnalyzeResult {
   sentiment?: SentimentResponse;
   prediction?: PredictionResponse;
@@ -156,6 +165,7 @@ export interface AnalyzeResult {
   model?: ModelDiagnosticsResponse;
   series?: SeriesResponse;
   multi_axis?: MultiAxisResponse;
+  regime_classification?: RegimeClassificationResponse | null;
   xai?: XaiResponse;
   credibility?: CredibilityResponse;
 }

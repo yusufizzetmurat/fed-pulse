@@ -175,6 +175,13 @@ export default function AnalyzePage() {
                 <PreviewPanels slot="cards" multiAxis={result.multi_axis} />
               ) : null}
 
+              {result.regime_classification ? (
+                <PreviewPanels
+                  slot="regime"
+                  regimeClassification={result.regime_classification}
+                />
+              ) : null}
+
               <ErrorBadges result={result} metrics={errorMetrics} />
 
               <div className="grid gap-4 xl:grid-cols-2">

@@ -55,6 +55,7 @@ from app.services.research_artifacts import (
 from app.services.forecaster import (
     bootstrap_checkpoint,
     build_feature_vectors,
+    build_regime_classification_card,
     checkpoint_exists,
     forecast_quantitative_series,
     parse_horizon_steps,
@@ -268,11 +269,27 @@ def _build_analyze_response(
         "model": forecast["model"],
         "series": forecast["series"],
         "multi_axis": _build_multi_axis_block(payload.text, sentiment),
+        "regime_classification": _safe_regime_classification(history_vectors),
     }
     if getattr(payload, "include_xai", False):
         attributions = attribute_text(payload.text)
         response["xai"] = xai_to_response(attributions)
     return response
+
+
+def _safe_regime_classification(history_vectors: list[Any]) -> dict[str, Any] | None:
+    """Wrap ``build_regime_classification_card`` so a failure never breaks /analyze.
+
+    The card is opt-in by checkpoint flavour and manifest presence; any
+    exception inside the inference + calibrated-set path degrades to
+    ``None`` rather than 500ing the whole response.
+    """
+
+    try:
+        return build_regime_classification_card(history_vectors)
+    except Exception:  # pragma: no cover — defensive, see #216 follow-up
+        logger.warning("regime_classification_card_failed", exc_info=True)
+        return None
 
 
 def _build_multi_axis_block(

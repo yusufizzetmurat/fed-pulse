@@ -220,6 +220,32 @@ class MultiAxisBlock(BaseModel):
     topic: MultiAxisTopicCard | None = None
 
 
+class RegimeClassificationCard(BaseModel):
+    """Calibrated prediction-set output from the vol-regime classifier (#216).
+
+    Surfaces the conformal APS set on the /analyze response. ``predicted_set``
+    holds the class labels the calibrated threshold admits at the
+    ``coverage`` level; ``set_label`` is the UI-friendly bracketed string;
+    ``distribution`` is the raw per-class softmax for the inference row so
+    the frontend can render a bar chart alongside the set chips.
+
+    Populated only when the active checkpoint is classification-mode AND
+    a sibling ``.conformal.json`` manifest with ``softmax_quantile`` exists.
+    Pre-#216 regression-only checkpoints leave the field as ``None`` on
+    the response and the legacy uncalibrated max-softmax stays on the
+    ``sentiment`` block.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    predicted_set: list[str]
+    set_label: str
+    set_size: int
+    coverage: float
+    distribution: dict[str, float]
+    argmax_class: str
+
+
 class AnalyzeResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
@@ -231,6 +257,7 @@ class AnalyzeResponse(BaseModel):
     xai: XaiResponse | None = None
     credibility: CredibilityResponse | None = None
     multi_axis: MultiAxisBlock | None = None
+    regime_classification: RegimeClassificationCard | None = None
 
 
 class HistoryEntry(BaseModel):
