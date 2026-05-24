@@ -53,20 +53,23 @@ done
 
 echo "[overnight] all seeds complete; picking best by val loss"
 
-# Pull the best_val_loss off each per-seed checkpoint payload and copy
-# the winner to the canonical slot the /analyze service reads. Falls
-# back to seed 97 if none of the checkpoints carry a metrics entry.
-docker compose --profile gpu run --rm backend-gpu python - <<'PY'
+# Pull the per-seed val loss off each checkpoint payload (key:
+# ``metrics['val_loss']``, written by the trainer's ``_save_checkpoint``)
+# and copy the winner to the canonical slot the /analyze service
+# reads. CANDIDATES is derived from the SEEDS env / default above so
+# the two stay in lockstep — adding a seed to SEEDS automatically
+# picks it up here.
+seeds_csv=$(IFS=,; echo "${SEEDS[*]}")
+docker compose --profile gpu run --rm -e SEEDS_CSV="$seeds_csv" backend-gpu python - <<'PY'
+import os
 import shutil
 from pathlib import Path
 
 import torch
 
-CANDIDATES = [
-    ("/app/models/text_multi_axis_seed97.pt", 97),
-    ("/app/models/text_multi_axis_seed11.pt", 11),
-    ("/app/models/text_multi_axis_seed47.pt", 47),
-]
+seeds_csv = os.environ.get("SEEDS_CSV", "")
+seeds = [int(s.strip()) for s in seeds_csv.split(",") if s.strip()]
+CANDIDATES = [(f"/app/models/text_multi_axis_seed{seed}.pt", seed) for seed in seeds]
 CANONICAL = Path("/app/models/text_multi_axis_best.pt")
 
 best_seed = None

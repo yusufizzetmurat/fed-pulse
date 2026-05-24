@@ -188,31 +188,18 @@ def _load_supervised_rows(events_parquet: Path) -> list[_AxisRow]:
     return rows
 
 
-_GTFINTECHLAB_DATASETS: tuple[tuple[str, str], ...] = (
-    (
-        "gtfintechlab/federal_reserve_system",
-        "de0b1e8cb3a0fcfa601eec97d49d5c6f883804a1",
-    ),
-    (
-        "gtfintechlab/european_central_bank",
-        "867cee85784ce569826e0104797b6e017205867b",
-    ),
-    (
-        "gtfintechlab/bank_of_japan",
-        "1885e21cf1c33c4aea19a824ba40eac886c7a122",
-    ),
-    (
-        "gtfintechlab/bank_of_england",
-        "de1123cf9d747dbb3e0c2224467f501692d5a310",
-    ),
-    (
-        "gtfintechlab/bank_of_canada",
-        "ab15ea2271bfa3208874a5517afc439640fd9200",
-    ),
-    (
-        "gtfintechlab/reserve_bank_of_australia",
-        "7a91206b56f2841b2586e409feade2518284894b",
-    ),
+# Dataset IDs are pinned here in iteration order (FOMC first so
+# ``--gtfintechlab-fed-only`` short-circuits cleanly); revisions are
+# read off the canonical ``_DATASET_REVISIONS`` map in
+# ``app.data.ingest_sources`` at load time so the SHAs do not drift
+# between ingestion and training.
+_GTFINTECHLAB_DATASET_IDS: tuple[str, ...] = (
+    "gtfintechlab/federal_reserve_system",
+    "gtfintechlab/european_central_bank",
+    "gtfintechlab/bank_of_japan",
+    "gtfintechlab/bank_of_england",
+    "gtfintechlab/bank_of_canada",
+    "gtfintechlab/reserve_bank_of_australia",
 )
 
 
@@ -221,10 +208,12 @@ def _gtfintechlab_row_to_axis_row(item: dict[str, Any]) -> _AxisRow | None:
 
     The gtfintechlab schema is uniform across all six bank datasets:
     ``{sentences, stance_label, time_label, certain_label, year}``.
-    Rows whose stance is ``irrelevant`` (or any non-canonical value)
-    are kept but their stance mask stays False so the loss does not
-    train on them — they still contribute to time / certainty
-    supervision when those axes are populated.
+    The trainer currently maps stance and certainty into the
+    classifier's heads; ``time_label`` is not yet plumbed (#235
+    follow-up). Rows whose stance is ``irrelevant`` (or any non-
+    canonical value) are kept but their stance mask stays False so
+    the loss does not train on them — they still contribute
+    certainty supervision when that axis is populated.
     """
 
     text = str(item.get("sentences") or "").strip()
@@ -288,11 +277,21 @@ def _load_gtfintechlab_rows(*, fed_only: bool = False) -> list[_AxisRow]:
             "Install dependencies first."
         ) from exc
 
-    datasets = (
-        _GTFINTECHLAB_DATASETS[:1] if fed_only else _GTFINTECHLAB_DATASETS
-    )
+    # Pull the pinned revisions from the canonical map in
+    # ``app.data.ingest_sources``; that file is the single source of
+    # truth for every dataset SHA the project consumes, so the
+    # training side stays aligned with the ingestion side.
+    from app.data.ingest_sources import _dataset_revision
+
+    dataset_ids = _GTFINTECHLAB_DATASET_IDS[:1] if fed_only else _GTFINTECHLAB_DATASET_IDS
     rows: list[_AxisRow] = []
-    for dataset_id, revision in datasets:
+    for dataset_id in dataset_ids:
+        revision = _dataset_revision(dataset_id)
+        if revision is None:
+            _logger.warning(
+                "gtfintechlab_revision_missing dataset=%s (skipping)", dataset_id
+            )
+            continue
         try:
             configs = list(
                 get_dataset_config_names(dataset_id, revision=revision)
@@ -555,6 +554,15 @@ def _save_checkpoint(
             "batch_size": args.batch_size,
             "val_fraction": args.val_fraction,
             "max_length": args.max_length,
+            # Data-selection flags so the checkpoint payload records
+            # which corpus the model was trained on. Without these,
+            # a gtfintechlab-trained checkpoint looks identical on
+            # disk to an events_parquet-trained one, blocking
+            # reproducibility audits.
+            "data_source": getattr(args, "data_source", "events_parquet"),
+            "gtfintechlab_fed_only": bool(
+                getattr(args, "gtfintechlab_fed_only", False)
+            ),
         },
         "saved_at_utc": datetime.now(timezone.utc).isoformat(),
     }
