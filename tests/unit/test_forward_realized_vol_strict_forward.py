@@ -97,7 +97,8 @@ def test_forward_realized_vol_returns_none_at_end_of_series() -> None:
     """A bar within ``window`` days of the end has no full forward window."""
 
     pre_bars = 30
-    # Only 5 strictly-forward bars available after `t`; window=10 -> None.
+    # ``t`` lands at index ``pre_bars``; only 4 strictly-forward bars exist
+    # after it (indices pre_bars+1 .. pre_bars+4). window=10 -> guard fires.
     closes = [100.0] * pre_bars + [100.0] * 5
     series = _series_with_constructed_returns(closes)
     as_of = series.dates[pre_bars]
