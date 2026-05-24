@@ -1,10 +1,8 @@
-// Per-run CSV export emitted from the history detail page.
+// Per-run CSV export — flat field/value rows for the regime workspace.
 //
-// Schema is deliberately flat — one row per metric. The reader is expected
-// to be Excel / Sheets / pandas; we do not emit nested objects (forecast
-// series, attribution arrays). For the forecast series the caller can drop
-// down to `buildForecastSeriesCsv` and emit it as a second download if a
-// user asks for the chart data.
+// One row per emitted metric so the file opens cleanly in Excel / pandas
+// without nested structures. Regime + multi-axis + credibility + XAI
+// summary rows replace the legacy close-price prediction surface.
 
 import type { AnalyzeResult, HistoryDetail } from "@/lib/analyze/types";
 import { downloadCsvBlob, toCsv, type CsvRow } from "./csv";
@@ -18,21 +16,16 @@ export interface RunSummaryCsv {
   csv: string;
 }
 
-// Header row first, then one (field, value) row per metric the dashboard
-// surfaces. Fields are added even when the underlying value is null so the
-// schema is stable across runs (you can diff two CSVs and trust the row
-// order matches).
 export function buildRunSummaryRows(detail: HistoryDetail): CsvRow[] {
   const result = _result(detail);
   const sentiment = result.sentiment || {};
-  const prediction = result.prediction || {};
-  const market = result.market || {};
   const model = result.model || {};
   const stance = result.multi_axis?.stance;
   const factor = result.multi_axis?.factor;
   const certainty = result.multi_axis?.certainty;
   const topic = result.multi_axis?.topic;
   const credibility = result.credibility;
+  const regime = result.regime_classification;
 
   return [
     ["field", "value"],
@@ -41,83 +34,63 @@ export function buildRunSummaryRows(detail: HistoryDetail): CsvRow[] {
     ["symbol", detail.symbol],
     ["document_date", detail.document_date],
     ["horizon", detail.horizon],
-    ["forecast_mode", detail.forecast_mode],
+    ["model.encoder_key", (model as { encoder_key?: string | null }).encoder_key ?? null],
+    ["model.checkpoint_loaded", model.checkpoint_loaded ?? null],
+    ["model.runtime_mode", model.runtime_mode ?? null],
     ["sentiment.label", sentiment.label ?? null],
     ["sentiment.score", sentiment.score ?? null],
     ["sentiment.ood_energy", sentiment.ood_energy ?? null],
     ["sentiment.is_in_distribution", sentiment.is_in_distribution ?? null],
-    ["prediction.close", prediction.close ?? null],
-    ["prediction.volatility", prediction.volatility ?? null],
-    ["prediction.horizon", prediction.horizon ?? null],
-    ["market.symbol", market.symbol ?? null],
-    ["market.requested_date", market.requested_date ?? null],
-    ["market.date_used", market.date_used ?? null],
-    ["market.close", market.close ?? null],
-    ["market.volatility_5d", market.volatility_5d ?? null],
-    ["model.checkpoint_loaded", model.checkpoint_loaded ?? null],
-    ["model.runtime_mode", model.runtime_mode ?? null],
-    ["model.combined_rmse", model.combined_rmse ?? null],
+    ["regime.argmax", regime?.argmax_class ?? null],
+    ["regime.set", regime?.predicted_set?.join("|") ?? null],
+    ["regime.set_label", regime?.set_label ?? null],
+    ["regime.set_size", regime?.set_size ?? null],
+    ["regime.coverage", regime?.coverage ?? null],
+    [
+      "regime.argmax_probability",
+      regime?.argmax_class && regime?.distribution
+        ? regime.distribution[regime.argmax_class] ?? null
+        : null,
+    ],
     ["multi_axis.stance.label", stance?.label ?? null],
     ["multi_axis.stance.confidence", stance?.confidence ?? null],
     ["multi_axis.factor.value", factor?.value ?? null],
     ["multi_axis.factor.confidence", factor?.confidence ?? null],
     ["multi_axis.certainty.label", certainty?.label ?? null],
     ["multi_axis.certainty.confidence", certainty?.confidence ?? null],
-    ["multi_axis.topic.primary", topic?.primary ?? null],
+    ["multi_axis.topic.primary", topic?.label ?? topic?.primary ?? null],
     ["multi_axis.topic.confidence", topic?.confidence ?? null],
     ["credibility.drift_score", credibility?.drift_score ?? null],
     ["credibility.realized_vs_stated_gap", credibility?.realized_vs_stated_gap ?? null],
     ["credibility.market_implied_gap", credibility?.market_implied_gap ?? null],
     ["credibility.months_since_reversal", credibility?.months_since_reversal ?? null],
-    ["series.forecast_band_source", result.series?.forecast_band_source ?? null],
-    ["series.forecast_confidence_level", result.series?.forecast_confidence_level ?? null],
-    ["series.conformal_coverage", result.series?.conformal_coverage ?? null],
   ];
 }
 
-// One row per forecast timestep with the close/volatility forecast plus
-// upper/lower band edges (if present). Empty when the run has no series
-// payload (older history rows).
-export function buildForecastSeriesRows(detail: HistoryDetail): CsvRow[] {
-  const series = _result(detail).series;
-  if (!series || !series.forecast_timestamps?.length) return [];
-  const rows: CsvRow[] = [
-    [
-      "timestamp",
-      "forecast_close",
-      "forecast_close_lower",
-      "forecast_close_upper",
-      "forecast_volatility",
-      "forecast_volatility_lower",
-      "forecast_volatility_upper",
-    ],
-  ];
-  series.forecast_timestamps.forEach((ts, i) => {
-    rows.push([
-      ts,
-      series.forecast_close?.[i] ?? null,
-      series.forecast_close_lower?.[i] ?? null,
-      series.forecast_close_upper?.[i] ?? null,
-      series.forecast_volatility?.[i] ?? null,
-      series.forecast_volatility_lower?.[i] ?? null,
-      series.forecast_volatility_upper?.[i] ?? null,
-    ]);
+export function buildXaiSentencesRows(detail: HistoryDetail): CsvRow[] {
+  const xai = _result(detail).xai;
+  if (!xai?.sentences?.length) return [];
+  const rows: CsvRow[] = [["sentence_index", "score", "top_tokens", "text"]];
+  xai.sentences.forEach((sentence, idx) => {
+    const topTokens = (sentence.topTokens ?? [])
+      .map((token) => `${token.token}:${token.weight.toFixed(3)}`)
+      .join(" ");
+    rows.push([idx, sentence.score, topTokens, sentence.text]);
   });
   return rows;
 }
 
 export function buildRunSummaryCsv(detail: HistoryDetail): RunSummaryCsv {
   const summary = buildRunSummaryRows(detail);
-  const series = buildForecastSeriesRows(detail);
-  // We emit a single CSV file with two sections separated by a blank row
-  // so the user gets the whole run in one click. The two sections share
-  // different schemas, but Excel / pandas both handle this with a single
-  // blank-row sniff.
+  const xai = buildXaiSentencesRows(detail);
+  // Single CSV with two sections separated by a blank row so the reader
+  // gets the whole run in one click. Excel and pandas both handle the
+  // blank-row sniff cleanly.
   const blocks: string[] = [toCsv(summary)];
-  if (series.length > 0) {
+  if (xai.length > 0) {
     blocks.push("");
-    blocks.push("forecast_series");
-    blocks.push(toCsv(series));
+    blocks.push("xai_sentences");
+    blocks.push(toCsv(xai));
   }
   return {
     filename: `fed-pulse-run-${detail.symbol.replace(/[^A-Za-z0-9_-]/g, "_")}-${detail.document_date}-${detail.id.slice(0, 8)}.csv`,
