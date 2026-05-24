@@ -196,9 +196,13 @@ export interface XaiResponse {
 export interface CredibilityResponse {
   drift_score: number;
   drift_trend?: number[];
-  realized_vs_stated_gap?: number;
-  market_implied_gap?: number;
-  months_since_reversal?: number;
+  // Backend emits null when the gap can't be computed yet (missing
+  // realized series, missing DFF cache). The KPI tile reads `== null`
+  // so the runtime path tolerates undefined too — the union here just
+  // makes the type honest about both possibilities.
+  realized_vs_stated_gap?: number | null;
+  market_implied_gap?: number | null;
+  months_since_reversal?: number | null;
 }
 
 export interface RegimeClassificationResponse {
