@@ -74,6 +74,18 @@ _SCHEDULE: tuple[FomcMeeting, ...] = (
     _m((2026, 9, 15), 1),
     _m((2026, 10, 27), 1),
     _m((2026, 12, 8), 1),
+    # 2027 schedule per federalreserve.gov/monetarypolicy/fomccalendars.htm.
+    # Two-day meetings; statement releases on day two; minutes default to
+    # ~21 days after the meeting start. Each date is tentative until
+    # confirmed at the meeting immediately preceding it.
+    _m((2027, 1, 26), 1),
+    _m((2027, 3, 16), 1),
+    _m((2027, 4, 27), 1),
+    _m((2027, 6, 8), 1),
+    _m((2027, 7, 27), 1),
+    _m((2027, 9, 14), 1),
+    _m((2027, 10, 26), 1),
+    _m((2027, 12, 7), 1),
 )
 
 
