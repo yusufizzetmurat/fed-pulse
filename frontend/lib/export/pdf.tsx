@@ -300,22 +300,32 @@ function CompareDocument({ a, b }: { a: HistoryDetail; b: HistoryDetail }) {
       maxis.topicChanged == null ? "—" : maxis.topicChanged ? "changed" : "unchanged",
     ],
     [
-      "prediction.close",
-      fmtNumber(ra.prediction?.close, 4),
-      fmtNumber(rb.prediction?.close, 4),
-      fmtSigned(delta.closeAbsolute, 4),
+      "regime.argmax",
+      ra.regime_classification?.argmax_class ?? "—",
+      rb.regime_classification?.argmax_class ?? "—",
+      delta.regime.argmaxChanged == null
+        ? "—"
+        : delta.regime.argmaxChanged
+        ? "changed"
+        : "same",
     ],
     [
-      "prediction.close_percent",
-      "—",
-      "—",
-      delta.closePercent == null ? "—" : fmtPercent(delta.closePercent, 3),
+      "regime.set_size",
+      ra.regime_classification?.set_size != null
+        ? String(ra.regime_classification.set_size)
+        : "—",
+      rb.regime_classification?.set_size != null
+        ? String(rb.regime_classification.set_size)
+        : "—",
+      delta.regime.setSizeA != null && delta.regime.setSizeB != null
+        ? fmtSigned(delta.regime.setSizeA - delta.regime.setSizeB, 0)
+        : "—",
     ],
     [
-      "prediction.volatility",
-      fmtNumber(ra.prediction?.volatility, 6),
-      fmtNumber(rb.prediction?.volatility, 6),
-      fmtSigned(delta.volatilityAbsolute, 6),
+      "credibility.drift_score",
+      fmtNumber(ra.credibility?.drift_score, 3),
+      fmtNumber(rb.credibility?.drift_score, 3),
+      fmtSigned(delta.driftDelta, 3),
     ],
     [
       "sentiment.score",

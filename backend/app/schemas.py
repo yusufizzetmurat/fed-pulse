@@ -24,6 +24,14 @@ class AnalyzeRequest(BaseModel):
         False,
         description="When true, return per-sentence + per-token XAI attribution alongside the forecast.",
     )
+    mask_sentence_indices: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Counterfactual: 0-based indices of sentences to drop from the "
+            "text before running the pipeline. Sentences are split using the "
+            "same tokenizer that produces xai.sentences. Empty list = no mask."
+        ),
+    )
 
 
 class SentimentResponse(BaseModel):
@@ -92,6 +100,10 @@ class ModelDiagnosticsResponse(BaseModel):
     adaptation_combined_rmse: float | None = None
     decay_rate: float | None = None
     chunk_attention: ChunkAttentionDiagnostics | None = None
+    # Encoder alias backing the multi-axis classifier (e.g.
+    # "finbert_fed_adjacent"). None when no multi-axis checkpoint is loaded;
+    # surfaced for the workspace status bar and pipeline trace.
+    encoder_key: str | None = None
 
 
 class ForecastSeriesResponse(BaseModel):
@@ -273,6 +285,11 @@ class HistoryEntry(BaseModel):
     current_close: float | None = None
     predicted_volatility: float | None = None
     text_excerpt: str | None = None
+    # Regime summary extracted from the persisted payload. None when the row
+    # came from a regression-mode checkpoint or pre-dated the regime head.
+    argmax_regime: str | None = None
+    argmax_probability: float | None = None
+    regime_set_size: int | None = None
 
 
 class HistoryDetail(HistoryEntry):
@@ -294,6 +311,57 @@ class HistoryRealizedResponse(BaseModel):
     timestamps: list[str]
     close: list[float]
     volatility: list[float]
+    # Realized regime label derived from the post-event 10d-forward vol
+    # path, bucketed against the classifier's trained quantile cutoffs
+    # when those cutoffs are accessible. None when the cutoffs are not
+    # available on this host (regression-only checkpoint, cold start).
+    realized_regime: str | None = None
+
+
+class SymbolDescriptor(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbol: str
+    name: str
+    category: str
+    default_horizon: str
+
+
+class SymbolListResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbols: list[SymbolDescriptor]
+
+
+class SettingsCheckpoint(BaseModel):
+    """One file under ``backend/models/`` surfaced on the settings page.
+
+    Inventory only; nothing here mutates the running singleton. ``role``
+    is inferred from the filename (forecaster / multi_axis / lora /
+    calibration) and ``is_active`` flags the file the active service is
+    currently loaded from. The diagnostic fields (output_mode,
+    encoder_alias, conformal_sidecar_present) only populate on the
+    active forecaster + active multi-axis entries.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    filename: str
+    relative_path: str
+    role: str
+    size_bytes: int
+    modified_at: str
+    is_active: bool = False
+    output_mode: str | None = None
+    encoder_alias: str | None = None
+    conformal_sidecar_present: bool | None = None
+
+
+class SettingsCheckpointsResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    models_dir: str
+    checkpoints: list[SettingsCheckpoint]
 
 
 class FomcMeetingResponse(BaseModel):

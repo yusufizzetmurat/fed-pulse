@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { MultiAxisCards } from "@/components/analyze/MultiAxisCards";
 import { Header } from "@/components/shell/header";
+import { StatusBar } from "@/components/shell/status-bar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,7 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { compare, fetchHistory, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { fetchHistory, fetchHistoryRun, resolveApiBaseUrl } from "@/lib/analyze/api";
 import {
   computeCompareDelta,
   computeMultiAxisDelta,
@@ -257,30 +258,97 @@ function MultiAxisSideBySide({
   );
 }
 
+function regimeBadgeVariant(label: string | null): "hawkish" | "dovish" | "neutral" | "outline" {
+  if (label === "calm") return "dovish";
+  if (label === "high") return "hawkish";
+  if (label === "normal") return "neutral";
+  return "outline";
+}
+
 function DeltaSummary({ delta }: { delta: CompareDelta }) {
+  const regime = delta.regime;
+  const argmaxLine =
+    regime.argmaxA && regime.argmaxB ? (
+      regime.argmaxChanged ? (
+        <span className="flex items-center gap-2">
+          <Badge variant={regimeBadgeVariant(regime.argmaxB)} className="capitalize">
+            {regime.argmaxB}
+          </Badge>
+          <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+          <Badge variant={regimeBadgeVariant(regime.argmaxA)} className="capitalize">
+            {regime.argmaxA}
+          </Badge>
+        </span>
+      ) : (
+        <span className="flex items-center gap-2">
+          <Badge variant={regimeBadgeVariant(regime.argmaxA)} className="capitalize">
+            {regime.argmaxA}
+          </Badge>
+          <span className={`numeric ${deltaColorClass(regime.argmaxProbDelta)}`}>
+            {regime.argmaxProbDelta != null
+              ? `${regime.argmaxProbDelta >= 0 ? "+" : ""}${(regime.argmaxProbDelta * 100).toFixed(1)}pp`
+              : "—"}
+          </span>
+        </span>
+      )
+    ) : (
+      <span className="text-muted-foreground">regime absent on at least one side</span>
+    );
+
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
           <GitCompare className="h-4 w-4 text-primary" />
           Δ A − B
         </CardTitle>
         <CardDescription>{describeStanceShift(delta.stanceShift)}</CardDescription>
       </CardHeader>
       <CardContent>
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+        <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
           <div>
-            <dt className="text-xs uppercase tracking-wide text-muted-foreground">Sentiment score</dt>
-            <dd className={`flex items-center gap-1 font-mono ${deltaColorClass(delta.scoreDelta)}`}>
-              <DeltaIcon value={delta.scoreDelta} />
-              {formatDelta(delta.scoreDelta, 3)}
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Regime</dt>
+            <dd className="mt-1 flex items-center gap-1">{argmaxLine}</dd>
+          </div>
+          <div>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Set size</dt>
+            <dd className="numeric mt-1">
+              {regime.setSizeA ?? "—"} vs {regime.setSizeB ?? "—"}
+            </dd>
+            {regime.setAddedToA.length || regime.setDroppedFromA.length ? (
+              <dd className="mt-1 flex flex-wrap gap-1 text-[11px] text-muted-foreground">
+                {regime.setAddedToA.map((label) => (
+                  <Badge key={`added-${label}`} variant="dovish" className="text-[10px] capitalize">
+                    +{label}
+                  </Badge>
+                ))}
+                {regime.setDroppedFromA.map((label) => (
+                  <Badge key={`dropped-${label}`} variant="hawkish" className="text-[10px] capitalize">
+                    −{label}
+                  </Badge>
+                ))}
+              </dd>
+            ) : null}
+          </div>
+          <div>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Drift score</dt>
+            <dd
+              className={`numeric mt-1 flex items-center gap-1 ${deltaColorClass(delta.driftDelta)}`}
+            >
+              <DeltaIcon value={delta.driftDelta} />
+              {formatDelta(delta.driftDelta, 3)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Realized-vs-stated</dt>
+            <dd
+              className={`numeric mt-1 flex items-center gap-1 ${deltaColorClass(delta.realizedGapDelta)}`}
+            >
+              <DeltaIcon value={delta.realizedGapDelta} />
+              {formatDelta(delta.realizedGapDelta, 3)}
             </dd>
           </div>
         </dl>
-        <p className="mt-3 text-xs text-muted-foreground">
-          Regime + multi-axis deltas land in a follow-up — this view is interim while the compare page
-          is realigned to the vol-regime classifier.
-        </p>
       </CardContent>
     </Card>
   );
@@ -323,11 +391,8 @@ export default function ComparePage() {
     };
   }, [apiBaseUrl]);
 
-  // We load each slot independently rather than going through compare() so
-  // selecting a single run still renders that side of the page while the
-  // other slot is empty. compare() is exposed for callers that want both
-  // detail records eagerly (e.g. CSV export); the page reaches for it on
-  // export, not on render.
+  // Each slot loads independently so picking a single run still renders
+  // that side while the other slot is empty.
   React.useEffect(() => {
     let cancelled = false;
     if (!aId) {
@@ -335,8 +400,8 @@ export default function ComparePage() {
       return;
     }
     setLoadingA(true);
-    compare(apiBaseUrl, aId, aId)
-      .then(({ a: detail }) => {
+    fetchHistoryRun(apiBaseUrl, aId)
+      .then((detail) => {
         if (!cancelled) setDetailA(detail);
       })
       .catch((err) => {
@@ -357,8 +422,8 @@ export default function ComparePage() {
       return;
     }
     setLoadingB(true);
-    compare(apiBaseUrl, bId, bId)
-      .then(({ a: detail }) => {
+    fetchHistoryRun(apiBaseUrl, bId)
+      .then((detail) => {
         if (!cancelled) setDetailB(detail);
       })
       .catch((err) => {
@@ -418,6 +483,7 @@ export default function ComparePage() {
       </Head>
       <div className="min-h-screen bg-background text-foreground">
         <Header />
+        <StatusBar />
         <main id="main-content" tabIndex={-1} className="container space-y-6 py-8 focus:outline-none">
           <div className="space-y-2">
             <h1 className="text-3xl font-semibold tracking-tight">Compare runs</h1>

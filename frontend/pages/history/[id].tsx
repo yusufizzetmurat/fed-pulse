@@ -7,6 +7,7 @@ import { ArrowLeft, Download, GitCompare } from "lucide-react";
 import { toast } from "sonner";
 
 import { Header } from "@/components/shell/header";
+import { StatusBar } from "@/components/shell/status-bar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -79,6 +80,11 @@ export default function HistoryDetailPage() {
       </Head>
       <div className="min-h-screen bg-background text-foreground">
         <Header />
+        <StatusBar
+          symbol={detail?.symbol}
+          documentDate={detail?.document_date}
+          result={result}
+        />
         <main id="main-content" tabIndex={-1} className="container space-y-6 py-8 focus:outline-none">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">

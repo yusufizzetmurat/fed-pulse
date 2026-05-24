@@ -2,23 +2,32 @@ import type {
   AnalyzeResult,
   HistoryDetail,
   MultiAxisResponse,
+  RegimeClassificationResponse,
   Stance,
   StanceAxis,
 } from "./types";
 
-export interface CompareDelta {
-  closeAbsolute: number | null;
-  closePercent: number | null;
-  volatilityAbsolute: number | null;
-  stanceShift: "more_hawkish" | "more_dovish" | "unchanged" | "unknown";
-  scoreDelta: number | null;
+export interface RegimeDelta {
+  argmaxA: string | null;
+  argmaxB: string | null;
+  argmaxChanged: boolean | null;
+  // Probability delta for the shared argmax. Null when the argmax
+  // changes or when either side lacks a regime card.
+  argmaxProbDelta: number | null;
+  setAddedToA: string[];
+  setDroppedFromA: string[];
+  setSizeA: number | null;
+  setSizeB: number | null;
 }
 
-// Per-axis deltas for the multi-axis schema (stance / factor / certainty /
-// topic). Each delta is A − B; null means at least one side is missing the
-// axis. Stance delta is the same hawkish=+1 / neutral=0 / dovish=−1 ranking
-// the headline `stanceShift` uses, but kept as a numeric value so the UI can
-// render the magnitude alongside the direction.
+export interface CompareDelta {
+  regime: RegimeDelta;
+  stanceShift: "more_hawkish" | "more_dovish" | "unchanged" | "unknown";
+  scoreDelta: number | null;
+  driftDelta: number | null;
+  realizedGapDelta: number | null;
+}
+
 export interface MultiAxisDelta {
   stanceRankDelta: number | null;
   stanceConfidenceDelta: number | null;
@@ -50,14 +59,46 @@ function stanceRank(value: Stance | string | undefined): number | null {
   }
 }
 
+function regimeOf(detail: HistoryDetail): RegimeClassificationResponse | null {
+  return asResult(detail).regime_classification ?? null;
+}
+
+function diffSets(a: string[], b: string[]): { added: string[]; dropped: string[] } {
+  const aSet = new Set(a);
+  const bSet = new Set(b);
+  return {
+    added: a.filter((label) => !bSet.has(label)),
+    dropped: b.filter((label) => !aSet.has(label)),
+  };
+}
+
+export function computeRegimeDelta(a: HistoryDetail, b: HistoryDetail): RegimeDelta {
+  const ra = regimeOf(a);
+  const rb = regimeOf(b);
+  const argmaxA = ra?.argmax_class ?? null;
+  const argmaxB = rb?.argmax_class ?? null;
+  const argmaxChanged = argmaxA == null || argmaxB == null ? null : argmaxA !== argmaxB;
+  const argmaxProbDelta =
+    argmaxA != null && argmaxA === argmaxB && ra && rb
+      ? (ra.distribution[argmaxA] ?? 0) - (rb.distribution[argmaxA] ?? 0)
+      : null;
+  const { added, dropped } = diffSets(ra?.predicted_set ?? [], rb?.predicted_set ?? []);
+  return {
+    argmaxA,
+    argmaxB,
+    argmaxChanged,
+    argmaxProbDelta,
+    setAddedToA: added,
+    setDroppedFromA: dropped,
+    setSizeA: ra?.set_size ?? null,
+    setSizeB: rb?.set_size ?? null,
+  };
+}
+
 export function computeCompareDelta(a: HistoryDetail, b: HistoryDetail): CompareDelta {
   const ra = asResult(a);
   const rb = asResult(b);
 
-  const closeA = ra.prediction?.close ?? null;
-  const closeB = rb.prediction?.close ?? null;
-  const volA = ra.prediction?.volatility ?? null;
-  const volB = rb.prediction?.volatility ?? null;
   const stanceA = stanceRank((ra.sentiment?.label ?? a.stance) as string | undefined);
   const stanceB = stanceRank((rb.sentiment?.label ?? b.stance) as string | undefined);
   const scoreA = ra.sentiment?.score ?? a.sentiment_score ?? null;
@@ -70,20 +111,20 @@ export function computeCompareDelta(a: HistoryDetail, b: HistoryDetail): Compare
     else stanceShift = "unchanged";
   }
 
-  const closeAbsolute = closeA != null && closeB != null ? closeA - closeB : null;
-  const closePercent =
-    closeAbsolute != null && closeB != null && closeB !== 0
-      ? (closeAbsolute / closeB) * 100
-      : null;
-  const volatilityAbsolute = volA != null && volB != null ? volA - volB : null;
   const scoreDelta = scoreA != null && scoreB != null ? scoreA - scoreB : null;
+  const driftA = ra.credibility?.drift_score ?? null;
+  const driftB = rb.credibility?.drift_score ?? null;
+  const driftDelta = driftA != null && driftB != null ? driftA - driftB : null;
+  const gapA = ra.credibility?.realized_vs_stated_gap ?? null;
+  const gapB = rb.credibility?.realized_vs_stated_gap ?? null;
+  const realizedGapDelta = gapA != null && gapB != null ? gapA - gapB : null;
 
   return {
-    closeAbsolute,
-    closePercent,
-    volatilityAbsolute,
+    regime: computeRegimeDelta(a, b),
     stanceShift,
     scoreDelta,
+    driftDelta,
+    realizedGapDelta,
   };
 }
 
@@ -100,11 +141,9 @@ export function describeStanceShift(shift: CompareDelta["stanceShift"]): string 
   }
 }
 
-// Certainty axis ranks "certain" highest and "uncertain" lowest so the
-// shift label tracks confidence movement, not lexical similarity. The
-// legacy fixture labels ("decisive" / "measured" / "tentative") are
-// kept here for back-compat with persisted history entries written
-// before the canonical relabel landed.
+// Certainty axis ranks "certain" highest and "uncertain" lowest. Legacy
+// fixture labels (decisive / measured / tentative) are kept for back-compat
+// with persisted history entries written before the canonical relabel.
 const _CERTAINTY_RANK: Record<string, number> = {
   certain: 2,
   neutral: 1,

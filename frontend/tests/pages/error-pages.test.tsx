@@ -5,6 +5,15 @@ vi.mock("next/head", () => ({
   default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+vi.mock("next/router", () => ({
+  useRouter: () => ({
+    isReady: true,
+    asPath: "/",
+    query: {},
+    push: vi.fn(),
+  }),
+}));
+
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: any) => (
     <a href={typeof href === "string" ? href : "#"} {...rest}>

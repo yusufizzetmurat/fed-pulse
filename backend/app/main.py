@@ -2,7 +2,8 @@ import io
 import json
 import logging
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -36,8 +37,12 @@ from app.schemas import (
     HistoryRealizedResponse,
     NextFomcForecastResponse,
     ResearchArtifactsResponse,
+    SettingsCheckpoint,
+    SettingsCheckpointsResponse,
+    SymbolDescriptor,
+    SymbolListResponse,
 )
-from app.evaluation.xai import attribute_text, to_response as xai_to_response
+from app.evaluation.xai import attribute_text, split_sentences, to_response as xai_to_response
 from app.services.document_parser import (
     parse_docx_stream,
     parse_paste,
@@ -54,6 +59,7 @@ from app.services.research_artifacts import (
 )
 from app.services.forecaster import (
     bootstrap_checkpoint,
+    bucket_realized_regime,
     build_feature_vectors,
     build_regime_classification_card,
     checkpoint_exists,
@@ -126,6 +132,139 @@ register_error_handlers(app)
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+_SYMBOLS_FALLBACK: list[dict[str, str]] = [
+    {"symbol": "^GSPC", "name": "S&P 500", "category": "Equity index", "default_horizon": "10d"},
+]
+
+
+def _checkpoint_role(name: str) -> str:
+    """Cheap filename-based role inference for the settings inventory."""
+
+    lower = name.lower()
+    if "multi_axis" in lower:
+        return "multi_axis"
+    if "lora" in lower:
+        return "lora_adapter"
+    if "calibration" in lower:
+        return "calibration"
+    if "forecaster" in lower:
+        return "forecaster"
+    return "other"
+
+
+@app.get("/settings/checkpoints", response_model=SettingsCheckpointsResponse)
+def list_settings_checkpoints() -> SettingsCheckpointsResponse:
+    """Read-only inventory of model files under ``backend/models/``.
+
+    Surfaces filename, size, mtime, inferred role, and an ``is_active``
+    flag pointing at the file each live service is currently loaded
+    from. Diagnostic fields (``output_mode``, ``encoder_alias``,
+    ``conformal_sidecar_present``) only populate on the active
+    forecaster and multi-axis entries — everything else stays None so
+    the response stays serialisable on a fresh checkout.
+    """
+
+    from app.models.config import MODELS_DIR
+    from app.services.forecaster import BEST_MODEL_PATH
+
+    items: list[SettingsCheckpoint] = []
+    if not MODELS_DIR.exists():
+        return SettingsCheckpointsResponse(models_dir=str(MODELS_DIR), checkpoints=items)
+
+    active_forecaster = BEST_MODEL_PATH.resolve()
+    active_forecaster_meta: dict[str, Any] = {}
+    try:
+        from app.services.forecaster import _get_model, _model_artifact_metadata  # type: ignore
+
+        model = _get_model()
+        active_forecaster_meta = {
+            "output_mode": str(getattr(model, "output_mode", "regression") or "regression"),
+        }
+        encoder = (_model_artifact_metadata or {}).get("encoder_key")
+        if isinstance(encoder, str):
+            active_forecaster_meta["encoder_alias"] = encoder
+    except Exception:  # pragma: no cover — diagnostics never block inventory
+        logger.warning("settings_checkpoints_forecaster_probe_failed", exc_info=True)
+
+    active_multi_axis: Path | None = None
+    active_multi_axis_alias: str | None = None
+    try:
+        from app.services.multi_axis_classifier import (
+            _resolve_checkpoint_path as multi_axis_path,
+            get_loaded_encoder_alias,
+        )
+
+        active_multi_axis = multi_axis_path().resolve()
+        active_multi_axis_alias = get_loaded_encoder_alias()
+    except Exception:  # pragma: no cover
+        logger.warning("settings_checkpoints_multi_axis_probe_failed", exc_info=True)
+
+    for entry in sorted(MODELS_DIR.glob("*.pt"), key=lambda p: p.name):
+        try:
+            stat = entry.stat()
+        except OSError:
+            continue
+        resolved = entry.resolve()
+        role = _checkpoint_role(entry.name)
+        is_active_forecaster = role == "forecaster" and resolved == active_forecaster
+        is_active_multi_axis = role == "multi_axis" and active_multi_axis is not None and resolved == active_multi_axis
+        sidecar_present: bool | None = None
+        if role == "forecaster":
+            sidecar_present = entry.with_suffix(".conformal.json").exists()
+        items.append(
+            SettingsCheckpoint(
+                filename=entry.name,
+                relative_path=str(entry.relative_to(MODELS_DIR)),
+                role=role,
+                size_bytes=int(stat.st_size),
+                modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                is_active=is_active_forecaster or is_active_multi_axis,
+                output_mode=active_forecaster_meta.get("output_mode") if is_active_forecaster else None,
+                encoder_alias=(
+                    active_forecaster_meta.get("encoder_alias")
+                    if is_active_forecaster
+                    else active_multi_axis_alias if is_active_multi_axis else None
+                ),
+                conformal_sidecar_present=sidecar_present,
+            )
+        )
+
+    return SettingsCheckpointsResponse(models_dir=str(MODELS_DIR), checkpoints=items)
+
+
+@app.get("/symbols", response_model=SymbolListResponse)
+def list_symbols() -> SymbolListResponse:
+    """Symbol universe the workspace asset picker reads.
+
+    Loads ``backend/app/data/symbols.json`` from the package directory
+    (resolved relative to this module so the path works regardless of
+    the Compose volume layout). Falls back to a single S&P 500 entry so
+    the endpoint never 500s on a fresh checkout where the data file is
+    missing.
+    """
+
+    package_path = Path(__file__).parent / "data" / "symbols.json"
+    data_dir_path = DATA_DIR / "symbols.json"
+    candidates = [package_path]
+    if data_dir_path != package_path:
+        candidates.append(data_dir_path)
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            entries = payload.get("symbols") if isinstance(payload, dict) else None
+            if isinstance(entries, list):
+                items = [SymbolDescriptor(**entry) for entry in entries]
+                return SymbolListResponse(symbols=items)
+        except Exception:
+            logger.warning("symbols_load_failed path=%s", path, exc_info=True)
+            continue
+    return SymbolListResponse(
+        symbols=[SymbolDescriptor(**entry) for entry in _SYMBOLS_FALLBACK]
+    )
 
 
 @app.get("/documents")
@@ -350,6 +489,37 @@ def _build_multi_axis_block(
     }
 
 
+def _apply_sentence_mask(text: str, mask: list[int]) -> str:
+    """Drop the masked sentence indices and rejoin the remainder.
+
+    Indices reference the same tokenization that produces ``xai.sentences``.
+    Out-of-range / duplicate indices are silently ignored; striking every
+    sentence falls back to the original text so the classifier still has
+    something to score.
+    """
+
+    if not mask:
+        return text
+    sentences = split_sentences(text)
+    if not sentences:
+        return text
+    masked: set[int] = set()
+    for raw in mask:
+        try:
+            idx = int(raw)
+        except (TypeError, ValueError):
+            # Defensive: schema typing already guarantees ints, but a
+            # test harness or future caller passing non-numeric values
+            # should be ignored per the docstring rather than 500'ing.
+            continue
+        if 0 <= idx < len(sentences):
+            masked.add(idx)
+    if not masked:
+        return text
+    kept = [sent for idx, sent in enumerate(sentences) if idx not in masked]
+    return " ".join(kept).strip() or text
+
+
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(payload: AnalyzeRequest):
     """Async handler — heavy sync work (transformers, yfinance, torch) runs in
@@ -361,10 +531,22 @@ async def analyze(payload: AnalyzeRequest):
             # so seed one against a 252-day window before the first inference.
             await run_in_threadpool(_bootstrap_cold_start, payload)
 
-        response = await run_in_threadpool(
-            _build_analyze_response, payload, mode="fast", history_length=30
+        masked_text = _apply_sentence_mask(payload.text, payload.mask_sentence_indices)
+        run_payload = (
+            payload.model_copy(update={"text": masked_text})
+            if masked_text != payload.text
+            else payload
         )
-        await run_in_threadpool(_record_history, payload, response)
+
+        response = await run_in_threadpool(
+            _build_analyze_response, run_payload, mode="fast", history_length=30
+        )
+        # Counterfactual runs (any non-empty mask) are synthetic — the
+        # workspace fires one per sentence-strike and the user does not
+        # expect each click to land in the persistent history. Skip
+        # persistence so the history list only carries baseline runs.
+        if not payload.mask_sentence_indices:
+            await run_in_threadpool(_record_history, run_payload, response)
         return response
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -487,6 +669,9 @@ def get_history_run_realized(
         timestamps=[str(point["date"]) for point in realized],
         close=[float(point["close"]) for point in realized],
         volatility=[float(point["volatility_5d"]) for point in realized],
+        realized_regime=bucket_realized_regime(
+            float(realized[-1]["volatility_5d"]) if realized else None
+        ),
     )
 
 

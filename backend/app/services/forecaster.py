@@ -300,6 +300,48 @@ def _sample_std(values: Iterable[float]) -> float:
 VOL_REGIME_CLASS_LABELS: tuple[str, ...] = ("calm", "normal", "high")
 
 
+def get_vol_regime_quantiles() -> tuple[float, ...]:
+    """Expose the active checkpoint's regime quantile cutoffs.
+
+    Returns () when the loaded model is regression-only or when the
+    cutoffs were never fit (e.g. cold-start bootstrap).
+    """
+
+    try:
+        model = _get_model()
+    except Exception:
+        return ()
+    return tuple(getattr(model, "vol_regime_quantiles", ()) or ())
+
+
+def bucket_realized_regime(realized_vol: float | None) -> str | None:
+    """Map a realised forward-vol value to a calm / normal / high label.
+
+    Uses the loaded checkpoint's train-only quantile cutoffs (see
+    :func:`app.training.loaders.fit_vol_regime_quantiles`). Returns None
+    when the input is missing or when the active model carries no
+    cutoffs (regression-only or fresh cold-start). Boundaries match the
+    training-time definition: ``v < q[0]`` -> first class, ``v >= q[-1]``
+    -> last class, intermediate v -> middle classes in order.
+    """
+
+    if realized_vol is None:
+        return None
+    try:
+        value = float(realized_vol)
+    except (TypeError, ValueError):
+        return None
+    if value != value:  # NaN guard
+        return None
+    cutoffs = get_vol_regime_quantiles()
+    if not cutoffs or len(cutoffs) + 1 != len(VOL_REGIME_CLASS_LABELS):
+        return None
+    for idx, cutoff in enumerate(cutoffs):
+        if value < cutoff:
+            return VOL_REGIME_CLASS_LABELS[idx]
+    return VOL_REGIME_CLASS_LABELS[-1]
+
+
 def _conformal_manifest_for(checkpoint_path: Path | None) -> Any:
     if checkpoint_path is None:
         return None
@@ -416,7 +458,25 @@ def get_model_artifact_metadata(
                 ),
             }
         )
+    base_metadata.setdefault("encoder_key", _resolve_encoder_key())
     return base_metadata
+
+
+def _resolve_encoder_key() -> str | None:
+    """Best-effort fetch of the multi-axis classifier encoder alias.
+
+    Inner import so a missing optional dependency in the classifier
+    service cannot break the forecaster's diagnostics path.
+    """
+
+    try:
+        from app.services.multi_axis_classifier import get_loaded_encoder_alias
+    except Exception:  # pragma: no cover — defensive
+        return None
+    try:
+        return get_loaded_encoder_alias()
+    except Exception:  # pragma: no cover — defensive
+        return None
 
 
 def forecast_quantitative_series(

@@ -8,16 +8,16 @@ function makeDetail(
 ): HistoryDetail {
   return {
     id: "fixture-id-aaa",
-    created_at: "2024-09-18T12:00:00Z",
+    created_at: "2026-05-24T12:00:00Z",
     symbol: "^GSPC",
-    document_date: "2024-09-18",
-    horizon: "3d",
+    document_date: "2026-05-01",
+    horizon: "10d",
     forecast_mode: "fast",
     stance: "hawkish",
     sentiment_score: 0.82,
-    predicted_close: 5500,
-    current_close: 5400,
-    predicted_volatility: 0.012,
+    predicted_close: null,
+    current_close: null,
+    predicted_volatility: null,
     payload: {},
     ...overrides,
   };
@@ -28,7 +28,6 @@ describe("buildCompareRows", () => {
     const a = makeDetail({
       id: "fixture-id-aaa",
       payload: {
-        prediction: { close: 5500, volatility: 0.012 },
         sentiment: { label: "hawkish", score: 0.82 },
         multi_axis: {
           stance: { label: "hawkish", confidence: 0.9 },
@@ -36,19 +35,46 @@ describe("buildCompareRows", () => {
           certainty: { label: "decisive", confidence: 0.75 },
           topic: { primary: "inflation", confidence: 0.6 },
         },
+        regime_classification: {
+          argmax_class: "high",
+          predicted_set: ["normal", "high"],
+          set_size: 2,
+          coverage: 0.8,
+          distribution: { calm: 0.1, normal: 0.3, high: 0.6 },
+          set_label: "{normal, high}",
+        },
+        credibility: {
+          drift_score: 0.42,
+          realized_vs_stated_gap: 0.12,
+          market_implied_gap: 0,
+          months_since_reversal: 9,
+        },
       },
     });
     const b = makeDetail({
       id: "fixture-id-bbb",
       stance: "dovish",
       payload: {
-        prediction: { close: 5400, volatility: 0.018 },
         sentiment: { label: "dovish", score: 0.71 },
         multi_axis: {
           stance: { label: "dovish", confidence: 0.8 },
           factor: { value: -0.1, confidence: 0.25 },
           certainty: { label: "tentative", confidence: 0.55 },
           topic: { primary: "growth", confidence: 0.62 },
+        },
+        regime_classification: {
+          argmax_class: "normal",
+          predicted_set: ["calm", "normal"],
+          set_size: 2,
+          coverage: 0.8,
+          distribution: { calm: 0.45, normal: 0.5, high: 0.05 },
+          set_label: "{calm, normal}",
+        },
+        credibility: {
+          drift_score: 0.28,
+          realized_vs_stated_gap: -0.04,
+          market_implied_gap: 0,
+          months_since_reversal: 4,
         },
       },
     });
@@ -59,8 +85,10 @@ describe("buildCompareRows", () => {
     for (const row of rows.slice(1)) {
       asObject[String(row[0])] = [row[1], row[2], row[3]];
     }
-    expect(asObject["prediction.close"]?.[2]).toBeCloseTo(100, 5);
-    expect(asObject["prediction.volatility"]?.[2]).toBeCloseTo(-0.006, 5);
+    expect(asObject["regime.argmax"]).toEqual(["high", "normal", "changed"]);
+    expect(asObject["regime.set"]?.[0]).toBe("normal|high");
+    expect(asObject["regime.set"]?.[1]).toBe("calm|normal");
+    expect(asObject["credibility.drift_score"]?.[2] as number).toBeCloseTo(0.14, 5);
     expect(asObject["multi_axis.stance.label"]).toEqual(["hawkish", "dovish", 2]);
     expect(asObject["multi_axis.topic.primary"]?.[2]).toBe("changed");
     expect(asObject["stance.shift"]?.[2]).toBe("more_hawkish");

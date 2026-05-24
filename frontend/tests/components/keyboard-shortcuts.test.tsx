@@ -18,7 +18,7 @@ describe("KeyboardShortcuts", () => {
     expect(dialog).toBeInTheDocument();
     expect(screen.getByText(/Keyboard shortcuts/i)).toBeInTheDocument();
     expect(screen.getByText(/Toggle light \/ dark theme/i)).toBeInTheDocument();
-    expect(screen.getByText(/Go to Analyze/i)).toBeInTheDocument();
+    expect(screen.getByText(/Go to Workspace/i)).toBeInTheDocument();
   });
 
   it("closes the dialog on Escape", async () => {
@@ -47,7 +47,7 @@ describe("KeyboardShortcuts", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("dispatches the nav target when `g` is followed by `a`", async () => {
+  it("dispatches the nav target when `g` is followed by `h`", async () => {
     const { KeyboardShortcuts } = await import("@/components/shell/keyboard-shortcuts");
     const assign = vi.fn();
     Object.defineProperty(window, "location", {
@@ -57,10 +57,10 @@ describe("KeyboardShortcuts", () => {
     render(<KeyboardShortcuts />);
 
     fireEvent.keyDown(window, { key: "g" });
-    fireEvent.keyDown(window, { key: "a" });
+    fireEvent.keyDown(window, { key: "h" });
 
     expect(assign).toHaveBeenCalledTimes(1);
-    expect(assign).toHaveBeenCalledWith("/analyze");
+    expect(assign).toHaveBeenCalledWith("/history");
   });
 
   it("does not dispatch nav when the `g` window has expired", async () => {
@@ -76,7 +76,7 @@ describe("KeyboardShortcuts", () => {
     fireEvent.keyDown(window, { key: "g" });
     // Advance past the 1200 ms g-sequence window before the nav key.
     vi.advanceTimersByTime(1500);
-    fireEvent.keyDown(window, { key: "a" });
+    fireEvent.keyDown(window, { key: "h" });
 
     expect(assign).not.toHaveBeenCalled();
     vi.useRealTimers();

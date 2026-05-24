@@ -9,6 +9,8 @@ import type {
   HistoryRealizedResponse,
   NextFomcForecastResponse,
   ResearchArtifactsResponse,
+  SettingsCheckpointsResponse,
+  SymbolListResponse,
   TrainJobState,
   TrainJobSummary,
   TrainJobsListResponse,
@@ -38,17 +40,19 @@ export async function fetchTrainJob(baseUrl: string, jobId: string): Promise<Tra
 
 export async function fetchHistory(
   baseUrl: string,
-  query: HistoryQuery = {}
+  query: HistoryQuery = {},
+  signal?: AbortSignal,
 ): Promise<HistoryList> {
-  const response = await axios.get(`${baseUrl}/history`, { params: query });
+  const response = await axios.get(`${baseUrl}/history`, { params: query, signal });
   return response.data as HistoryList;
 }
 
 export async function fetchHistoryRun(
   baseUrl: string,
-  runId: string
+  runId: string,
+  signal?: AbortSignal,
 ): Promise<HistoryDetail> {
-  const response = await axios.get(`${baseUrl}/history/${runId}`);
+  const response = await axios.get(`${baseUrl}/history/${runId}`, { signal });
   return response.data as HistoryDetail;
 }
 
@@ -58,9 +62,10 @@ export async function deleteHistoryRun(baseUrl: string, runId: string): Promise<
 
 export async function fetchHistoryRealized(
   baseUrl: string,
-  runId: string
+  runId: string,
+  signal?: AbortSignal,
 ): Promise<HistoryRealizedResponse> {
-  const response = await axios.get(`${baseUrl}/history/${runId}/realized`);
+  const response = await axios.get(`${baseUrl}/history/${runId}/realized`, { signal });
   return response.data as HistoryRealizedResponse;
 }
 
@@ -80,11 +85,28 @@ export async function compare(
   return { a, b };
 }
 
+export async function fetchSymbols(
+  baseUrl: string,
+  signal?: AbortSignal,
+): Promise<SymbolListResponse> {
+  const response = await axios.get(`${baseUrl}/symbols`, { signal });
+  return response.data as SymbolListResponse;
+}
+
+export async function fetchSettingsCheckpoints(
+  baseUrl: string,
+  signal?: AbortSignal,
+): Promise<SettingsCheckpointsResponse> {
+  const response = await axios.get(`${baseUrl}/settings/checkpoints`, { signal });
+  return response.data as SettingsCheckpointsResponse;
+}
+
 export async function fetchFomcCalendar(
   baseUrl: string,
-  params?: { upcoming_limit?: number; past_limit?: number; as_of?: string }
+  params?: { upcoming_limit?: number; past_limit?: number; as_of?: string },
+  signal?: AbortSignal,
 ): Promise<FomcCalendarResponse> {
-  const response = await axios.get(`${baseUrl}/fomc/calendar`, { params });
+  const response = await axios.get(`${baseUrl}/fomc/calendar`, { params, signal });
   return response.data as FomcCalendarResponse;
 }
 

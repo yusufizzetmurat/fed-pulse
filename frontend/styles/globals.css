@@ -34,9 +34,9 @@
     --chart-4: 156 60% 40%;
     --chart-5: 346 84% 56%;
     --radius: 0.5rem;
-    --row-sm: 28px;
-    --row-md: 36px;
-    --row-lg: 44px;
+    --row-sm: 34px;
+    --row-md: 42px;
+    --row-lg: 50px;
     --statusbar-bg: 215 28% 96% / 0.75;
     --font-sans: "Inter", "system-ui";
     --font-mono: "JetBrains Mono", "ui-monospace";
@@ -79,6 +79,14 @@
     @apply border-border;
   }
 
+  /* Lift the base font from the browser default 16px (which compounds
+   * down to ~13px on text-sm). 15px keeps the dense terminal feel
+   * intact while making the body / muted text actually readable on a
+   * 1440-wide laptop. */
+  html {
+    font-size: 15px;
+  }
+
   body {
     @apply bg-background text-foreground font-sans antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
@@ -89,13 +97,13 @@
   }
 
   h1 {
-    @apply text-2xl font-semibold tracking-tight;
+    @apply text-3xl font-semibold tracking-tight;
   }
   h2 {
-    @apply text-lg font-semibold tracking-tight;
+    @apply text-xl font-semibold tracking-tight;
   }
   h3 {
-    @apply text-base font-semibold tracking-tight;
+    @apply text-lg font-semibold tracking-tight;
   }
 }
 

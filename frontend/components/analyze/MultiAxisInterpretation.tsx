@@ -4,11 +4,7 @@ import { Compass, Gauge, Layers, Target } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { KpiTile } from "@/components/ui/kpi-tile";
 import { stanceLabel } from "@/lib/analyze/format";
-import type {
-  MultiAxisResponse,
-  MultiAxisStance,
-  StanceAxis,
-} from "@/lib/analyze/types";
+import type { MultiAxisResponse, MultiAxisStance } from "@/lib/analyze/types";
 
 interface MultiAxisInterpretationProps {
   multiAxis: MultiAxisResponse;
@@ -18,13 +14,6 @@ interface MultiAxisInterpretationProps {
     factor?: Array<number | null>;
     certainty?: Array<number | null>;
   };
-}
-
-function stanceToScalar(label: StanceAxis | string | undefined): number | null {
-  if (label === "hawkish") return 1;
-  if (label === "neutral") return 0;
-  if (label === "dovish") return -1;
-  return null;
 }
 
 function StanceTile({ stance, history }: { stance: MultiAxisStance; history?: Array<number | null> }) {
@@ -139,5 +128,3 @@ export function MultiAxisInterpretation({
     </div>
   );
 }
-
-export { stanceToScalar };

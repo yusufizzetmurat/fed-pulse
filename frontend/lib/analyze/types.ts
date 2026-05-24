@@ -13,6 +13,9 @@ export interface AnalyzeRequest {
   horizon: Horizon;
   include_realized: boolean;
   include_xai?: boolean;
+  // Counterfactual: 0-based indices of sentences to drop from the text
+  // before running the pipeline. Empty / omitted = no mask.
+  mask_sentence_indices?: number[];
 }
 
 export interface SentimentResponse {
@@ -53,6 +56,9 @@ export interface ModelDiagnosticsResponse {
   checkpoint_loaded?: boolean;
   runtime_mode?: string;
   chunk_attention?: ChunkAttentionResponse | null;
+  // Encoder alias backing the multi-axis classifier (e.g.
+  // "finbert_fed_adjacent"). Absent when no multi-axis checkpoint is loaded.
+  encoder_key?: string | null;
 }
 
 export interface SeriesResponse {
@@ -83,6 +89,7 @@ export interface HistoryRealizedResponse {
   timestamps: string[];
   close: number[];
   volatility: number[];
+  realized_regime?: string | null;
 }
 
 export type StanceAxis = "hawkish" | "dovish" | "neutral";
@@ -193,10 +200,41 @@ export interface HistoryEntry {
   current_close?: number | null;
   predicted_volatility?: number | null;
   text_excerpt?: string | null;
+  argmax_regime?: string | null;
+  argmax_probability?: number | null;
+  regime_set_size?: number | null;
 }
 
 export interface HistoryDetail extends HistoryEntry {
   payload: Record<string, unknown>;
+}
+
+export interface SymbolDescriptor {
+  symbol: string;
+  name: string;
+  category: string;
+  default_horizon: string;
+}
+
+export interface SymbolListResponse {
+  symbols: SymbolDescriptor[];
+}
+
+export interface SettingsCheckpoint {
+  filename: string;
+  relative_path: string;
+  role: string;
+  size_bytes: number;
+  modified_at: string;
+  is_active: boolean;
+  output_mode?: string | null;
+  encoder_alias?: string | null;
+  conformal_sidecar_present?: boolean | null;
+}
+
+export interface SettingsCheckpointsResponse {
+  models_dir: string;
+  checkpoints: SettingsCheckpoint[];
 }
 
 export interface HistoryList {

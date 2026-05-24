@@ -27,3 +27,24 @@ def test_meeting_serialises_to_iso_dict():
     assert payload["meeting_date"] == meeting.meeting_date.isoformat()
     assert payload["meeting_type"] in {"scheduled", "unscheduled"}
     assert payload["statement_release_date"] is not None
+
+
+def test_2027_meetings_are_present():
+    # Schedule per federalreserve.gov/monetarypolicy/fomccalendars.htm —
+    # tentative until the immediately-preceding meeting confirms each date.
+    expected = {
+        date(2027, 1, 26),
+        date(2027, 3, 16),
+        date(2027, 4, 27),
+        date(2027, 6, 8),
+        date(2027, 7, 27),
+        date(2027, 9, 14),
+        date(2027, 10, 26),
+        date(2027, 12, 7),
+    }
+    schedule_2027 = {
+        meeting.meeting_date
+        for meeting in list_all_meetings()
+        if meeting.meeting_date.year == 2027
+    }
+    assert schedule_2027 == expected

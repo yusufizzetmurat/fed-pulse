@@ -5,6 +5,7 @@ import { ChevronRight, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Header } from "@/components/shell/header";
+import { StatusBar } from "@/components/shell/status-bar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +15,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -27,9 +30,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   deleteHistoryRun,
   fetchHistory,
+  fetchHistoryRealized,
   resolveApiBaseUrl,
 } from "@/lib/analyze/api";
-import { formatPrice, stanceLabel, toStance } from "@/lib/analyze/format";
+import { stanceLabel, toStance } from "@/lib/analyze/format";
 import type { HistoryEntry, HistoryQuery } from "@/lib/analyze/types";
 
 const STANCE_OPTIONS = [
@@ -39,45 +43,238 @@ const STANCE_OPTIONS = [
   { value: "dovish", label: "Dovish" },
 ];
 
+const REGIME_OPTIONS = [
+  { value: "any", label: "Any regime" },
+  { value: "calm", label: "Calm" },
+  { value: "normal", label: "Normal" },
+  { value: "high", label: "High" },
+];
+
 const HORIZON_OPTIONS = ["any", "1d", "3d", "5d", "10d"];
+
+function regimeVariant(label: string | null | undefined): "hawkish" | "dovish" | "neutral" | "outline" {
+  if (label === "calm") return "dovish";
+  if (label === "high") return "hawkish";
+  if (label === "normal") return "neutral";
+  return "outline";
+}
+
+interface RowWithRealized extends HistoryEntry {
+  realized_regime?: string | null;
+}
 
 export default function HistoryPage() {
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
-  const [items, setItems] = React.useState<HistoryEntry[]>([]);
+  const [items, setItems] = React.useState<RowWithRealized[]>([]);
   const [total, setTotal] = React.useState(0);
   const [loading, setLoading] = React.useState(false);
-  const [filters, setFilters] = React.useState<HistoryQuery>({ limit: 20, offset: 0 });
+  const [filters, setFilters] = React.useState<HistoryQuery>({ limit: 50, offset: 0 });
+  const [regimeFilter, setRegimeFilter] = React.useState<string>("any");
 
-  const reload = React.useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await fetchHistory(apiBaseUrl, filters);
-      setItems(result.items);
-      setTotal(result.total);
-    } catch (err) {
-      const message = (err as Error).message || "Failed to load history.";
-      toast.error(message);
-    } finally {
-      setLoading(false);
-    }
-  }, [apiBaseUrl, filters]);
+  // Bump this version to force a refetch (e.g. after a delete) without
+  // rebuilding the filters object. The effect owns the AbortController
+  // so cleanup actually runs when React tears it down — an async
+  // useCallback cannot hand the cleanup back to React.
+  const [reloadVersion, setReloadVersion] = React.useState(0);
+  const reload = React.useCallback(() => {
+    setReloadVersion((value) => value + 1);
+  }, []);
 
   React.useEffect(() => {
-    reload();
-  }, [reload]);
+    const controller = new AbortController();
+    const { signal } = controller;
+    setLoading(true);
+    (async () => {
+      try {
+        const result = await fetchHistory(apiBaseUrl, filters, signal);
+        if (signal.aborted) return;
+        setItems(result.items.map((row) => ({ ...row, realized_regime: null })));
+        setTotal(result.total);
+        // Per-row realized fetches share the same signal so a filter
+        // change cancels them before stale writes hit setItems.
+        result.items.forEach(async (row) => {
+          try {
+            const realized = await fetchHistoryRealized(apiBaseUrl, row.id, signal);
+            if (signal.aborted) return;
+            setItems((prev) =>
+              prev.map((entry) =>
+                entry.id === row.id
+                  ? { ...entry, realized_regime: realized.realized_regime ?? null }
+                  : entry,
+              ),
+            );
+          } catch {
+            // Realized fetch is best-effort; aborted requests land here too.
+          }
+        });
+      } catch (err) {
+        if (!signal.aborted) {
+          toast.error((err as Error).message || "Failed to load history.");
+        }
+      } finally {
+        if (!signal.aborted) setLoading(false);
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl, filters, reloadVersion]);
 
-  const handleDelete = async (id: string) => {
-    try {
-      await deleteHistoryRun(apiBaseUrl, id);
-      toast.success("Run deleted");
-      await reload();
-    } catch (err) {
-      toast.error((err as Error).message || "Delete failed");
-    }
-  };
+  const handleDelete = React.useCallback(
+    async (id: string) => {
+      try {
+        await deleteHistoryRun(apiBaseUrl, id);
+        toast.success("Run deleted");
+        reload();
+      } catch (err) {
+        toast.error((err as Error).message || "Delete failed");
+      }
+    },
+    [apiBaseUrl, reload],
+  );
 
   const patchFilter = (delta: Partial<HistoryQuery>) =>
     setFilters((value) => ({ ...value, offset: 0, ...delta }));
+
+  const visibleRows = React.useMemo(() => {
+    if (regimeFilter === "any") return items;
+    return items.filter((row) => row.argmax_regime === regimeFilter);
+  }, [items, regimeFilter]);
+
+  const columns = React.useMemo<DataTableColumn<RowWithRealized>[]>(
+    () => [
+      {
+        key: "document_date",
+        header: "Date",
+        align: "left",
+        numeric: true,
+        sortable: true,
+        sortValue: (row) => row.document_date,
+        render: (row) => row.document_date,
+      },
+      {
+        key: "symbol",
+        header: "Symbol",
+        align: "left",
+        sortable: true,
+        sortValue: (row) => row.symbol,
+        render: (row) => row.symbol,
+      },
+      {
+        key: "horizon",
+        header: "H",
+        align: "left",
+        render: (row) => <span className="text-muted-foreground">{row.horizon}</span>,
+      },
+      {
+        key: "stance",
+        header: "Stance",
+        render: (row) => {
+          const stance = toStance(row.stance);
+          const variant =
+            stance === "hawkish"
+              ? "hawkish"
+              : stance === "dovish"
+              ? "dovish"
+              : stance === "neutral"
+              ? "neutral"
+              : "outline";
+          return (
+            <Badge variant={variant} className="text-[10px]">
+              {stanceLabel(stance)}
+            </Badge>
+          );
+        },
+      },
+      {
+        key: "argmax_regime",
+        header: "Regime",
+        render: (row) =>
+          row.argmax_regime ? (
+            <Badge variant={regimeVariant(row.argmax_regime)} className="text-[10px] capitalize">
+              {row.argmax_regime}
+            </Badge>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          ),
+      },
+      {
+        key: "argmax_probability",
+        header: "P(argmax)",
+        align: "right",
+        numeric: true,
+        sortable: true,
+        sortValue: (row) => row.argmax_probability ?? -1,
+        render: (row) =>
+          row.argmax_probability != null
+            ? `${(row.argmax_probability * 100).toFixed(1)}%`
+            : "—",
+      },
+      {
+        key: "regime_set_size",
+        header: "Set",
+        align: "right",
+        numeric: true,
+        sortable: true,
+        sortValue: (row) => row.regime_set_size ?? -1,
+        render: (row) => (row.regime_set_size != null ? row.regime_set_size.toString() : "—"),
+      },
+      {
+        key: "realized_regime",
+        header: "Realized",
+        render: (row) =>
+          row.realized_regime ? (
+            <Badge variant={regimeVariant(row.realized_regime)} className="text-[10px] capitalize">
+              {row.realized_regime}
+            </Badge>
+          ) : (
+            <span className="text-muted-foreground">pending</span>
+          ),
+      },
+      {
+        key: "hit",
+        header: "Hit",
+        align: "center",
+        render: (row) => {
+          if (!row.argmax_regime || !row.realized_regime) {
+            return <span className="text-muted-foreground">—</span>;
+          }
+          const hit = row.argmax_regime === row.realized_regime;
+          return (
+            <Badge variant={hit ? "dovish" : "hawkish"} className="text-[10px]">
+              {hit ? "hit" : "miss"}
+            </Badge>
+          );
+        },
+      },
+      {
+        key: "actions",
+        header: <span className="sr-only">Actions</span>,
+        align: "right",
+        render: (row) => (
+          <div
+            className="flex items-center justify-end gap-0.5"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <Button asChild variant="ghost" size="icon" aria-label={`Open run on ${row.document_date}`}>
+              <Link href={`/history/${row.id}`}>
+                <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+              </Link>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={`Delete run on ${row.document_date}`}
+              onClick={() => handleDelete(row.id)}
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    [handleDelete],
+  );
 
   return (
     <>
@@ -86,30 +283,32 @@ export default function HistoryPage() {
       </Head>
       <div className="min-h-screen bg-background text-foreground">
         <Header />
-        <main id="main-content" tabIndex={-1} className="container space-y-6 py-8 focus:outline-none">
-          <div className="space-y-2">
-            <h1 className="text-3xl font-semibold tracking-tight">History</h1>
-            <p className="max-w-2xl text-muted-foreground">
-              Past analyses. Filter by asset, horizon, or stance; click an entry to drill in.
+        <StatusBar />
+        <main id="main-content" tabIndex={-1} className="container space-y-5 py-6 focus:outline-none">
+          <div className="space-y-1">
+            <h1 className="text-2xl font-semibold tracking-tight">History</h1>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Past regime predictions. Realized regime is bucketed from the post-event 10d-forward vol path
+              against the classifier&apos;s trained quantile cutoffs.
             </p>
           </div>
 
           <Card>
-            <CardHeader>
-              <CardTitle>Filters</CardTitle>
-              <CardDescription>{total} total run{total === 1 ? "" : "s"}</CardDescription>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Filters</CardTitle>
+              <CardDescription>
+                {total} total run{total === 1 ? "" : "s"}
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-3 md:grid-cols-4">
+              <div className="grid gap-3 md:grid-cols-5">
                 <div className="space-y-1">
                   <Label htmlFor="filter-symbol">Symbol</Label>
                   <Input
                     id="filter-symbol"
                     placeholder="e.g. ^GSPC"
                     value={filters.symbol ?? ""}
-                    onChange={(event) =>
-                      patchFilter({ symbol: event.target.value || undefined })
-                    }
+                    onChange={(event) => patchFilter({ symbol: event.target.value || undefined })}
                   />
                 </div>
                 <div className="space-y-1">
@@ -153,6 +352,21 @@ export default function HistoryPage() {
                   </Select>
                 </div>
                 <div className="space-y-1">
+                  <Label htmlFor="filter-regime">Regime</Label>
+                  <Select value={regimeFilter} onValueChange={setRegimeFilter}>
+                    <SelectTrigger id="filter-regime">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {REGIME_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
                   <Label htmlFor="filter-date">Document date</Label>
                   <Input
                     id="filter-date"
@@ -169,82 +383,29 @@ export default function HistoryPage() {
 
           {loading ? (
             <div className="space-y-2">
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
             </div>
-          ) : items.length === 0 ? (
-            <Card>
-              <CardContent className="py-10 text-center text-muted-foreground">
-                No runs yet — submit an analysis to populate the history.
-              </CardContent>
-            </Card>
+          ) : visibleRows.length === 0 ? (
+            <EmptyState
+              title="No runs match these filters"
+              description="Submit an analysis from the Workspace to populate the history, or relax the filters."
+              action={
+                <Button asChild size="sm" variant="outline">
+                  <Link href="/">Open Workspace</Link>
+                </Button>
+              }
+            />
           ) : (
             <Card>
               <CardContent className="p-0">
-                <table className="w-full text-sm">
-                  <thead className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
-                    <tr>
-                      <th className="px-4 py-2 text-left">Date</th>
-                      <th className="px-4 py-2 text-left">Symbol</th>
-                      <th className="px-4 py-2 text-left">Horizon</th>
-                      <th className="px-4 py-2 text-left">Stance</th>
-                      <th className="px-4 py-2 text-right">Predicted close</th>
-                      <th className="px-4 py-2 text-right">Spot</th>
-                      <th className="px-4 py-2" aria-label="actions" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((row) => {
-                      const stance = toStance(row.stance);
-                      const stanceVariant =
-                        stance === "hawkish"
-                          ? "hawkish"
-                          : stance === "dovish"
-                          ? "dovish"
-                          : stance === "neutral"
-                          ? "neutral"
-                          : "outline";
-                      return (
-                        <tr key={row.id} className="border-b border-border last:border-0 hover:bg-muted/40">
-                          <td className="px-4 py-2 font-mono text-xs">
-                            <Link href={`/history/${row.id}`} className="hover:underline">
-                              {row.document_date}
-                            </Link>
-                          </td>
-                          <td className="px-4 py-2 font-medium">{row.symbol}</td>
-                          <td className="px-4 py-2 text-muted-foreground">{row.horizon}</td>
-                          <td className="px-4 py-2">
-                            <Badge variant={stanceVariant}>{stanceLabel(stance)}</Badge>
-                          </td>
-                          <td className="px-4 py-2 text-right font-mono">
-                            {formatPrice(row.predicted_close ?? null)}
-                          </td>
-                          <td className="px-4 py-2 text-right font-mono text-muted-foreground">
-                            {formatPrice(row.current_close ?? null)}
-                          </td>
-                          <td className="px-4 py-2 text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <Button asChild variant="ghost" size="icon" aria-label={`Open run on ${row.document_date}`}>
-                                <Link href={`/history/${row.id}`}>
-                                  <ChevronRight className="h-4 w-4" aria-hidden="true" />
-                                </Link>
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label={`Delete run on ${row.document_date}`}
-                                onClick={() => handleDelete(row.id)}
-                              >
-                                <Trash2 className="h-4 w-4" aria-hidden="true" />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                <DataTable
+                  rows={visibleRows}
+                  columns={columns}
+                  rowKey={(row) => row.id}
+                  rowHref={(row) => `/history/${row.id}`}
+                />
               </CardContent>
             </Card>
           )}

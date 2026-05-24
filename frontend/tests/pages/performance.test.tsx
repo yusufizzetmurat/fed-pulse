@@ -20,99 +20,147 @@ vi.mock("next/head", () => ({
 
 const fetchHistoryMock = vi.fn();
 const fetchHistoryRealizedMock = vi.fn();
+const fetchHistoryRunMock = vi.fn();
 
 vi.mock("@/lib/analyze/api", () => ({
   resolveApiBaseUrl: () => "http://localhost:8000",
   fetchHistory: (...args: unknown[]) => fetchHistoryMock(...args),
   fetchHistoryRealized: (...args: unknown[]) => fetchHistoryRealizedMock(...args),
+  fetchHistoryRun: (...args: unknown[]) => fetchHistoryRunMock(...args),
 }));
 
 const SAMPLE_ROWS = [
   {
     id: "run-1",
-    created_at: "2024-09-18T12:00:00Z",
+    created_at: "2026-01-27T20:00:00Z",
     symbol: "^GSPC",
-    document_date: "2024-09-18",
-    horizon: "3d",
+    document_date: "2026-01-27",
+    horizon: "10d",
     forecast_mode: "fast",
     stance: "hawkish",
     sentiment_score: 0.7,
-    predicted_close: 5500,
-    current_close: 5400,
-    predicted_volatility: 0.012,
+    predicted_close: null,
+    current_close: null,
+    predicted_volatility: null,
     text_excerpt: null,
+    argmax_regime: "high",
+    argmax_probability: 0.62,
+    regime_set_size: 2,
   },
   {
     id: "run-2",
-    created_at: "2024-11-06T12:00:00Z",
+    created_at: "2026-03-17T20:00:00Z",
     symbol: "^GSPC",
-    document_date: "2024-11-06",
-    horizon: "3d",
+    document_date: "2026-03-17",
+    horizon: "10d",
     forecast_mode: "fast",
     stance: "dovish",
     sentiment_score: 0.32,
-    predicted_close: 5800,
-    current_close: 5850,
-    predicted_volatility: 0.015,
+    predicted_close: null,
+    current_close: null,
+    predicted_volatility: null,
     text_excerpt: null,
+    argmax_regime: "calm",
+    argmax_probability: 0.55,
+    regime_set_size: 1,
   },
 ];
+
+function realizedPayload(runId: string, regime: string | null) {
+  return {
+    run_id: runId,
+    symbol: "^GSPC",
+    document_date: "2026-01-27",
+    horizon: "10d",
+    timestamps: [],
+    close: [],
+    volatility: [],
+    realized_regime: regime,
+  };
+}
+
+function detailPayload(runId: string, set: string[]) {
+  return {
+    id: runId,
+    created_at: "2026-01-27T20:00:00Z",
+    symbol: "^GSPC",
+    document_date: "2026-01-27",
+    horizon: "10d",
+    forecast_mode: "fast",
+    stance: "hawkish",
+    payload: {
+      regime_classification: { predicted_set: set },
+    },
+  };
+}
 
 describe("PerformancePage", () => {
   beforeEach(() => {
     fetchHistoryMock.mockReset();
     fetchHistoryRealizedMock.mockReset();
+    fetchHistoryRunMock.mockReset();
   });
 
   it("renders empty-state when history is empty", async () => {
-    fetchHistoryMock.mockResolvedValue({ total: 0, limit: 50, offset: 0, items: [] });
+    fetchHistoryMock.mockResolvedValue({ total: 0, limit: 100, offset: 0, items: [] });
     const { default: PerformancePage } = await import("@/pages/performance");
     render(<PerformancePage />);
     await waitFor(() =>
-      expect(screen.getByText(/submit analyses on the Analyze page/i)).toBeInTheDocument()
+      expect(screen.getByText(/no runs in history/i)).toBeInTheDocument(),
     );
   });
 
-  it("renders aggregate hit-rate and run-level rows when realized data resolves", async () => {
-    fetchHistoryMock.mockResolvedValue({ total: 2, limit: 50, offset: 0, items: SAMPLE_ROWS });
+  it("renders the regime KPI tiles and per-class table when realized data resolves", async () => {
+    fetchHistoryMock.mockResolvedValue({
+      total: 2,
+      limit: 100,
+      offset: 0,
+      items: SAMPLE_ROWS,
+    });
     fetchHistoryRealizedMock
-      .mockResolvedValueOnce({
-        run_id: "run-1",
-        symbol: "^GSPC",
-        document_date: "2024-09-18",
-        horizon: "3d",
-        timestamps: ["2024-09-19", "2024-09-20", "2024-09-23"],
-        close: [5520, 5540, 5560],
-        volatility: [0.011, 0.012, 0.013],
-      })
-      .mockResolvedValueOnce({
-        run_id: "run-2",
-        symbol: "^GSPC",
-        document_date: "2024-11-06",
-        horizon: "3d",
-        timestamps: ["2024-11-07", "2024-11-08", "2024-11-11"],
-        close: [5780, 5760, 5790],
-        volatility: [0.014, 0.015, 0.014],
-      });
+      .mockResolvedValueOnce(realizedPayload("run-1", "high"))
+      .mockResolvedValueOnce(realizedPayload("run-2", "normal"));
+    fetchHistoryRunMock
+      .mockResolvedValueOnce(detailPayload("run-1", ["high", "normal"]))
+      .mockResolvedValueOnce(detailPayload("run-2", ["calm"]));
 
     const { default: PerformancePage } = await import("@/pages/performance");
     render(<PerformancePage />);
 
-    await waitFor(() => expect(fetchHistoryRealizedMock).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText(/Directional hit rate/i)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(fetchHistoryRealizedMock).toHaveBeenCalledTimes(2),
+    );
+
+    // Several of these labels appear in more than one place (the page
+    // intro paragraph mentions them and the KPI tiles + card titles
+    // repeat them). getAllByText with a count guard avoids the
+    // ambiguous-match error while still asserting presence.
+    await waitFor(() =>
+      expect(screen.getAllByText(/Argmax accuracy/i).length).toBeGreaterThan(0),
+    );
+    expect(screen.getAllByText(/Empirical coverage/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Confusion matrix/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Per-class metrics/i)).toBeInTheDocument();
     expect(screen.getByText(/Per-asset breakdown/i)).toBeInTheDocument();
     expect(screen.getByText(/Run-level detail/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/^\^GSPC$/).length).toBeGreaterThanOrEqual(2);
   });
 
   it("still renders the table when one realized fetch fails", async () => {
-    fetchHistoryMock.mockResolvedValue({ total: 1, limit: 50, offset: 0, items: [SAMPLE_ROWS[0]] });
+    fetchHistoryMock.mockResolvedValue({
+      total: 1,
+      limit: 100,
+      offset: 0,
+      items: [SAMPLE_ROWS[0]],
+    });
     fetchHistoryRealizedMock.mockRejectedValue(new Error("Market lookup failed"));
+    fetchHistoryRunMock.mockResolvedValueOnce(detailPayload("run-1", ["high"]));
 
     const { default: PerformancePage } = await import("@/pages/performance");
     render(<PerformancePage />);
 
-    await waitFor(() => expect(fetchHistoryRealizedMock).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(fetchHistoryRealizedMock).toHaveBeenCalledTimes(1),
+    );
     expect(await screen.findByText(/Run-level detail/i)).toBeInTheDocument();
   });
 });

@@ -47,22 +47,40 @@ export function buildCompareRows(a: HistoryDetail, b: HistoryDetail): CsvRow[] {
     delta.scoreDelta,
   ));
   rows.push(_row(
-    "prediction.close",
-    ra.prediction?.close ?? null,
-    rb.prediction?.close ?? null,
-    delta.closeAbsolute,
+    "regime.argmax",
+    ra.regime_classification?.argmax_class ?? null,
+    rb.regime_classification?.argmax_class ?? null,
+    delta.regime.argmaxChanged == null
+      ? ""
+      : delta.regime.argmaxChanged
+      ? "changed"
+      : "same",
   ));
   rows.push(_row(
-    "prediction.close_percent",
-    null,
-    null,
-    delta.closePercent,
+    "regime.set",
+    ra.regime_classification?.predicted_set?.join("|") ?? null,
+    rb.regime_classification?.predicted_set?.join("|") ?? null,
+    delta.regime.setAddedToA.length || delta.regime.setDroppedFromA.length
+      ? `+${delta.regime.setAddedToA.join("|")} -${delta.regime.setDroppedFromA.join("|")}`
+      : "",
   ));
   rows.push(_row(
-    "prediction.volatility",
-    ra.prediction?.volatility ?? null,
-    rb.prediction?.volatility ?? null,
-    delta.volatilityAbsolute,
+    "regime.argmax_probability",
+    ra.regime_classification?.distribution?.[ra.regime_classification.argmax_class] ?? null,
+    rb.regime_classification?.distribution?.[rb.regime_classification.argmax_class] ?? null,
+    delta.regime.argmaxProbDelta,
+  ));
+  rows.push(_row(
+    "credibility.drift_score",
+    ra.credibility?.drift_score ?? null,
+    rb.credibility?.drift_score ?? null,
+    delta.driftDelta,
+  ));
+  rows.push(_row(
+    "credibility.realized_vs_stated_gap",
+    ra.credibility?.realized_vs_stated_gap ?? null,
+    rb.credibility?.realized_vs_stated_gap ?? null,
+    delta.realizedGapDelta,
   ));
   rows.push(_row(
     "stance.shift",

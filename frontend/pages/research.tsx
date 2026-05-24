@@ -3,7 +3,11 @@ import Head from "next/head";
 import { FlaskConical } from "lucide-react";
 import { toast } from "sonner";
 
+import { DecisionsLink } from "@/components/research/DecisionsLink";
+import { DesignSystemTab } from "@/components/research/DesignSystemTab";
+import { JobsLink } from "@/components/research/JobsLink";
 import { Header } from "@/components/shell/header";
+import { StatusBar } from "@/components/shell/status-bar";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -269,16 +273,16 @@ export default function ResearchPage() {
       </Head>
       <div className="min-h-screen bg-background text-foreground">
         <Header />
-        <main id="main-content" tabIndex={-1} className="container space-y-6 py-8 focus:outline-none">
-          <div className="space-y-2">
-            <h1 className="flex items-center gap-2 text-3xl font-semibold tracking-tight">
-              <FlaskConical className="h-7 w-7 text-primary" />
-              Research
+        <StatusBar />
+        <main id="main-content" tabIndex={-1} className="container space-y-5 py-6 focus:outline-none">
+          <div className="space-y-1">
+            <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+              <FlaskConical className="h-6 w-6 text-primary" />
+              Research console
             </h1>
-            <p className="max-w-2xl text-muted-foreground">
-              Bake-off macro-F1 across encoders, cross-central-bank transfer matrix, and the raw
-              artefact tree. Pulls from <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">data/artifacts/</code>
-              on the backend.
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Bake-off macro-F1, cross-CB transfer matrix, next-FOMC ordinal forecast, training
+              jobs, design-system primitives, and the raw artefact tree.
             </p>
           </div>
 
@@ -290,9 +294,12 @@ export default function ResearchPage() {
             </div>
           ) : data ? (
             <Tabs defaultValue="bakeoff" className="w-full">
-              <TabsList className="grid w-full max-w-md grid-cols-3">
+              <TabsList className="flex w-full flex-wrap justify-start">
                 <TabsTrigger value="bakeoff">Bake-off</TabsTrigger>
                 <TabsTrigger value="transfer">Transfer</TabsTrigger>
+                <TabsTrigger value="decisions">Decisions</TabsTrigger>
+                <TabsTrigger value="jobs">Jobs</TabsTrigger>
+                <TabsTrigger value="design">Design system</TabsTrigger>
                 <TabsTrigger value="files">Files</TabsTrigger>
               </TabsList>
               <TabsContent value="bakeoff" className="space-y-3">
@@ -318,6 +325,15 @@ export default function ResearchPage() {
                     ))}
                   </div>
                 ) : null}
+              </TabsContent>
+              <TabsContent value="decisions">
+                <DecisionsLink />
+              </TabsContent>
+              <TabsContent value="jobs">
+                <JobsLink />
+              </TabsContent>
+              <TabsContent value="design">
+                <DesignSystemTab />
               </TabsContent>
               <TabsContent value="files">
                 <ArtifactsExplorer sections={data.sections} />
