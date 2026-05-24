@@ -280,7 +280,13 @@ export default function PerformancePage() {
             <KpiTile
               label="Macro-F1"
               value={<span className="numeric">{formatScore(aggregate.macroF1)}</span>}
-              caption="unweighted mean of per-class F1"
+              caption={
+                aggregate.macroF1 != null
+                  ? "unweighted mean of per-class F1"
+                  : aggregate.resolved > 0
+                  ? "needs resolved runs in every regime class"
+                  : "needs resolved runs"
+              }
               tone={aggregate.macroF1 != null && aggregate.macroF1 >= 0.4 ? "up" : "neutral"}
             />
             <KpiTile

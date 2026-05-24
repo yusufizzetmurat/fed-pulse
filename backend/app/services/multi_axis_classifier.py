@@ -138,10 +138,13 @@ def get_loaded_encoder_alias() -> str | None:
 
     Used by /analyze diagnostics to surface ``model.encoder_key`` so the
     workspace status bar and pipeline trace can show which encoder is
-    live without poking at the file system.
+    live without poking at the file system. The lock matches the
+    consistency model used by ``get_classifier`` and ``reset_classifier``
+    so a concurrent reload window cannot read a stale state.
     """
 
-    state = _state
+    with _state_lock:
+        state = _state
     if state is None:
         return None
     return state.encoder_alias

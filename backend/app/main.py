@@ -3,6 +3,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -140,15 +141,18 @@ _SYMBOLS_FALLBACK: list[dict[str, str]] = [
 def list_symbols() -> SymbolListResponse:
     """Symbol universe the workspace asset picker reads.
 
-    Loads ``backend/app/data/symbols.json`` (sits next to the FOMC caches),
-    falling back to a single S&P 500 entry so the endpoint never 500s on a
-    fresh checkout.
+    Loads ``backend/app/data/symbols.json`` from the package directory
+    (resolved relative to this module so the path works regardless of
+    the Compose volume layout). Falls back to a single S&P 500 entry so
+    the endpoint never 500s on a fresh checkout where the data file is
+    missing.
     """
 
-    candidates = [DATA_DIR / "symbols.json"]
-    backend_root = DATA_DIR.parent / "backend" / "app" / "data" / "symbols.json"
-    if backend_root not in candidates:
-        candidates.append(backend_root)
+    package_path = Path(__file__).parent / "data" / "symbols.json"
+    data_dir_path = DATA_DIR / "symbols.json"
+    candidates = [package_path]
+    if data_dir_path != package_path:
+        candidates.append(data_dir_path)
     for path in candidates:
         if not path.exists():
             continue
@@ -402,7 +406,17 @@ def _apply_sentence_mask(text: str, mask: list[int]) -> str:
     sentences = split_sentences(text)
     if not sentences:
         return text
-    masked = {int(i) for i in mask if 0 <= int(i) < len(sentences)}
+    masked: set[int] = set()
+    for raw in mask:
+        try:
+            idx = int(raw)
+        except (TypeError, ValueError):
+            # Defensive: schema typing already guarantees ints, but a
+            # test harness or future caller passing non-numeric values
+            # should be ignored per the docstring rather than 500'ing.
+            continue
+        if 0 <= idx < len(sentences):
+            masked.add(idx)
     if not masked:
         return text
     kept = [sent for idx, sent in enumerate(sentences) if idx not in masked]

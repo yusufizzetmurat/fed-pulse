@@ -71,50 +71,61 @@ export default function HistoryPage() {
   const [filters, setFilters] = React.useState<HistoryQuery>({ limit: 50, offset: 0 });
   const [regimeFilter, setRegimeFilter] = React.useState<string>("any");
 
-  const reload = React.useCallback(async () => {
-    setLoading(true);
-    const controller = new AbortController();
-    try {
-      const result = await fetchHistory(apiBaseUrl, filters, controller.signal);
-      setItems(result.items.map((row) => ({ ...row, realized_regime: null })));
-      setTotal(result.total);
-      // Resolve realized regime per row in the background. The signal
-      // cancels in-flight realized fetches if the filter set changes
-      // before they complete.
-      result.items.forEach(async (row) => {
-        try {
-          const realized = await fetchHistoryRealized(apiBaseUrl, row.id, controller.signal);
-          setItems((prev) =>
-            prev.map((entry) =>
-              entry.id === row.id
-                ? { ...entry, realized_regime: realized.realized_regime ?? null }
-                : entry,
-            ),
-          );
-        } catch {
-          // Realized fetch is best-effort; the row keeps realized=null.
-        }
-      });
-    } catch (err) {
-      if (!controller.signal.aborted) {
-        toast.error((err as Error).message || "Failed to load history.");
-      }
-    } finally {
-      setLoading(false);
-    }
-    return () => controller.abort();
-  }, [apiBaseUrl, filters]);
+  // Bump this version to force a refetch (e.g. after a delete) without
+  // rebuilding the filters object. The effect owns the AbortController
+  // so cleanup actually runs when React tears it down — an async
+  // useCallback cannot hand the cleanup back to React.
+  const [reloadVersion, setReloadVersion] = React.useState(0);
+  const reload = React.useCallback(() => {
+    setReloadVersion((value) => value + 1);
+  }, []);
 
   React.useEffect(() => {
-    reload();
-  }, [reload]);
+    const controller = new AbortController();
+    const { signal } = controller;
+    setLoading(true);
+    (async () => {
+      try {
+        const result = await fetchHistory(apiBaseUrl, filters, signal);
+        if (signal.aborted) return;
+        setItems(result.items.map((row) => ({ ...row, realized_regime: null })));
+        setTotal(result.total);
+        // Per-row realized fetches share the same signal so a filter
+        // change cancels them before stale writes hit setItems.
+        result.items.forEach(async (row) => {
+          try {
+            const realized = await fetchHistoryRealized(apiBaseUrl, row.id, signal);
+            if (signal.aborted) return;
+            setItems((prev) =>
+              prev.map((entry) =>
+                entry.id === row.id
+                  ? { ...entry, realized_regime: realized.realized_regime ?? null }
+                  : entry,
+              ),
+            );
+          } catch {
+            // Realized fetch is best-effort; aborted requests land here too.
+          }
+        });
+      } catch (err) {
+        if (!signal.aborted) {
+          toast.error((err as Error).message || "Failed to load history.");
+        }
+      } finally {
+        if (!signal.aborted) setLoading(false);
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl, filters, reloadVersion]);
 
   const handleDelete = React.useCallback(
     async (id: string) => {
       try {
         await deleteHistoryRun(apiBaseUrl, id);
         toast.success("Run deleted");
-        await reload();
+        reload();
       } catch (err) {
         toast.error((err as Error).message || "Delete failed");
       }
