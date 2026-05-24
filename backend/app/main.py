@@ -2,7 +2,7 @@ import io
 import json
 import logging
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +37,8 @@ from app.schemas import (
     HistoryRealizedResponse,
     NextFomcForecastResponse,
     ResearchArtifactsResponse,
+    SettingsCheckpoint,
+    SettingsCheckpointsResponse,
     SymbolDescriptor,
     SymbolListResponse,
 )
@@ -135,6 +137,101 @@ def health_check():
 _SYMBOLS_FALLBACK: list[dict[str, str]] = [
     {"symbol": "^GSPC", "name": "S&P 500", "category": "Equity index", "default_horizon": "10d"},
 ]
+
+
+def _checkpoint_role(name: str) -> str:
+    """Cheap filename-based role inference for the settings inventory."""
+
+    lower = name.lower()
+    if "multi_axis" in lower:
+        return "multi_axis"
+    if "lora" in lower:
+        return "lora_adapter"
+    if "calibration" in lower:
+        return "calibration"
+    if "forecaster" in lower:
+        return "forecaster"
+    return "other"
+
+
+@app.get("/settings/checkpoints", response_model=SettingsCheckpointsResponse)
+def list_settings_checkpoints() -> SettingsCheckpointsResponse:
+    """Read-only inventory of model files under ``backend/models/``.
+
+    Surfaces filename, size, mtime, inferred role, and an ``is_active``
+    flag pointing at the file each live service is currently loaded
+    from. Diagnostic fields (``output_mode``, ``encoder_alias``,
+    ``conformal_sidecar_present``) only populate on the active
+    forecaster and multi-axis entries — everything else stays None so
+    the response stays serialisable on a fresh checkout.
+    """
+
+    from app.models.config import MODELS_DIR
+    from app.services.forecaster import BEST_MODEL_PATH
+
+    items: list[SettingsCheckpoint] = []
+    if not MODELS_DIR.exists():
+        return SettingsCheckpointsResponse(models_dir=str(MODELS_DIR), checkpoints=items)
+
+    active_forecaster = BEST_MODEL_PATH.resolve()
+    active_forecaster_meta: dict[str, Any] = {}
+    try:
+        from app.services.forecaster import _get_model, _model_artifact_metadata  # type: ignore
+
+        model = _get_model()
+        active_forecaster_meta = {
+            "output_mode": str(getattr(model, "output_mode", "regression") or "regression"),
+        }
+        encoder = (_model_artifact_metadata or {}).get("encoder_key")
+        if isinstance(encoder, str):
+            active_forecaster_meta["encoder_alias"] = encoder
+    except Exception:  # pragma: no cover — diagnostics never block inventory
+        logger.warning("settings_checkpoints_forecaster_probe_failed", exc_info=True)
+
+    active_multi_axis: Path | None = None
+    active_multi_axis_alias: str | None = None
+    try:
+        from app.services.multi_axis_classifier import (
+            _resolve_checkpoint_path as multi_axis_path,
+            get_loaded_encoder_alias,
+        )
+
+        active_multi_axis = multi_axis_path().resolve()
+        active_multi_axis_alias = get_loaded_encoder_alias()
+    except Exception:  # pragma: no cover
+        logger.warning("settings_checkpoints_multi_axis_probe_failed", exc_info=True)
+
+    for entry in sorted(MODELS_DIR.glob("*.pt"), key=lambda p: p.name):
+        try:
+            stat = entry.stat()
+        except OSError:
+            continue
+        resolved = entry.resolve()
+        role = _checkpoint_role(entry.name)
+        is_active_forecaster = role == "forecaster" and resolved == active_forecaster
+        is_active_multi_axis = role == "multi_axis" and active_multi_axis is not None and resolved == active_multi_axis
+        sidecar_present: bool | None = None
+        if role == "forecaster":
+            sidecar_present = entry.with_suffix(".conformal.json").exists()
+        items.append(
+            SettingsCheckpoint(
+                filename=entry.name,
+                relative_path=str(entry.relative_to(MODELS_DIR)),
+                role=role,
+                size_bytes=int(stat.st_size),
+                modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                is_active=is_active_forecaster or is_active_multi_axis,
+                output_mode=active_forecaster_meta.get("output_mode") if is_active_forecaster else None,
+                encoder_alias=(
+                    active_forecaster_meta.get("encoder_alias")
+                    if is_active_forecaster
+                    else active_multi_axis_alias if is_active_multi_axis else None
+                ),
+                conformal_sidecar_present=sidecar_present,
+            )
+        )
+
+    return SettingsCheckpointsResponse(models_dir=str(MODELS_DIR), checkpoints=items)
 
 
 @app.get("/symbols", response_model=SymbolListResponse)

@@ -28,15 +28,21 @@ import {
 import { DEFAULT_TEXT } from "@/lib/analyze/constants";
 import { toStance } from "@/lib/analyze/format";
 import type { AnalyzeRequest, AnalyzeResult, HistoryEntry, Horizon } from "@/lib/analyze/types";
+import { HORIZON_VALUES as HORIZON_VALUE_LIST, loadWorkspacePrefs } from "@/lib/workspace-prefs";
+import { LegacyForecastCard } from "@/components/analyze/LegacyForecastCard";
 
-const HORIZON_VALUES = new Set<Horizon>(["1d", "3d", "5d", "10d"]);
+const HORIZON_VALUES = new Set<Horizon>(HORIZON_VALUE_LIST);
 
 function defaultRequest(): AnalyzeRequest {
+  // Read the per-browser default symbol / horizon set on the /settings
+  // page. The helper is SSR-safe and returns the hardcoded fallbacks
+  // when window is undefined, so the initial server render is stable.
+  const prefs = loadWorkspacePrefs();
   return {
     text: DEFAULT_TEXT,
     date: new Date().toISOString().slice(0, 10),
-    symbol: "^GSPC",
-    horizon: "10d",
+    symbol: prefs.defaultSymbol,
+    horizon: prefs.defaultHorizon,
     include_realized: false,
     include_xai: true,
   };
@@ -310,6 +316,11 @@ export default function WorkspacePage() {
                   symbol={request.symbol}
                   documentDate={request.date}
                   history={regimeHistorySpark}
+                />
+              ) : result.prediction?.close != null ? (
+                <LegacyForecastCard
+                  prediction={result.prediction}
+                  market={result.market}
                 />
               ) : (
                 <EmptyState

@@ -333,6 +333,37 @@ class SymbolListResponse(BaseModel):
     symbols: list[SymbolDescriptor]
 
 
+class SettingsCheckpoint(BaseModel):
+    """One file under ``backend/models/`` surfaced on the settings page.
+
+    Inventory only; nothing here mutates the running singleton. ``role``
+    is inferred from the filename (forecaster / multi_axis / lora /
+    calibration) and ``is_active`` flags the file the active service is
+    currently loaded from. The diagnostic fields (output_mode,
+    encoder_alias, conformal_sidecar_present) only populate on the
+    active forecaster + active multi-axis entries.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    filename: str
+    relative_path: str
+    role: str
+    size_bytes: int
+    modified_at: str
+    is_active: bool = False
+    output_mode: str | None = None
+    encoder_alias: str | None = None
+    conformal_sidecar_present: bool | None = None
+
+
+class SettingsCheckpointsResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    models_dir: str
+    checkpoints: list[SettingsCheckpoint]
+
+
 class FomcMeetingResponse(BaseModel):
     meeting_date: str
     meeting_type: str

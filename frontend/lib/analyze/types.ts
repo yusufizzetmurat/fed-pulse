@@ -220,6 +220,23 @@ export interface SymbolListResponse {
   symbols: SymbolDescriptor[];
 }
 
+export interface SettingsCheckpoint {
+  filename: string;
+  relative_path: string;
+  role: string;
+  size_bytes: number;
+  modified_at: string;
+  is_active: boolean;
+  output_mode?: string | null;
+  encoder_alias?: string | null;
+  conformal_sidecar_present?: boolean | null;
+}
+
+export interface SettingsCheckpointsResponse {
+  models_dir: string;
+  checkpoints: SettingsCheckpoint[];
+}
+
 export interface HistoryList {
   items: HistoryEntry[];
   total: number;

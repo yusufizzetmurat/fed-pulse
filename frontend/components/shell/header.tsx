@@ -9,6 +9,7 @@ import {
   Github,
   History as HistoryIcon,
   LineChart,
+  Settings as SettingsIcon,
 } from "lucide-react";
 
 import { SkipLink } from "@/components/shell/skip-link";
@@ -90,6 +91,16 @@ export function Header() {
               >
                 <Github className="h-3.5 w-3.5" aria-hidden="true" />
                 Repo
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant={isActive(currentPath, "/settings") ? "secondary" : "ghost"}
+              size="icon"
+              className="h-7 w-7"
+            >
+              <Link href="/settings" aria-label="Open settings">
+                <SettingsIcon className="h-3.5 w-3.5" aria-hidden="true" />
               </Link>
             </Button>
             <ThemeToggle />

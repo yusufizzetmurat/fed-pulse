@@ -9,6 +9,7 @@ import type {
   HistoryRealizedResponse,
   NextFomcForecastResponse,
   ResearchArtifactsResponse,
+  SettingsCheckpointsResponse,
   SymbolListResponse,
   TrainJobState,
   TrainJobSummary,
@@ -90,6 +91,14 @@ export async function fetchSymbols(
 ): Promise<SymbolListResponse> {
   const response = await axios.get(`${baseUrl}/symbols`, { signal });
   return response.data as SymbolListResponse;
+}
+
+export async function fetchSettingsCheckpoints(
+  baseUrl: string,
+  signal?: AbortSignal,
+): Promise<SettingsCheckpointsResponse> {
+  const response = await axios.get(`${baseUrl}/settings/checkpoints`, { signal });
+  return response.data as SettingsCheckpointsResponse;
 }
 
 export async function fetchFomcCalendar(
