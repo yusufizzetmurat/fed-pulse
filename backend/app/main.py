@@ -164,7 +164,7 @@ def list_symbols() -> SymbolListResponse:
                 return SymbolListResponse(symbols=items)
         except Exception:
             logger.warning("symbols_load_failed path=%s", path, exc_info=True)
-            break
+            continue
     return SymbolListResponse(
         symbols=[SymbolDescriptor(**entry) for entry in _SYMBOLS_FALLBACK]
     )
@@ -444,7 +444,12 @@ async def analyze(payload: AnalyzeRequest):
         response = await run_in_threadpool(
             _build_analyze_response, run_payload, mode="fast", history_length=30
         )
-        await run_in_threadpool(_record_history, run_payload, response)
+        # Counterfactual runs (any non-empty mask) are synthetic — the
+        # workspace fires one per sentence-strike and the user does not
+        # expect each click to land in the persistent history. Skip
+        # persistence so the history list only carries baseline runs.
+        if not payload.mask_sentence_indices:
+            await run_in_threadpool(_record_history, run_payload, response)
         return response
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

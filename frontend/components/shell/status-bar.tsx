@@ -37,7 +37,7 @@ export function StatusBar({
 
   React.useEffect(() => {
     const controller = new AbortController();
-    fetchFomcCalendar(apiBaseUrl, { upcoming_limit: 1, past_limit: 0 })
+    fetchFomcCalendar(apiBaseUrl, { upcoming_limit: 1, past_limit: 0 }, controller.signal)
       .then((response) => {
         if (controller.signal.aborted) return;
         const next = response.upcoming?.[0];

@@ -94,9 +94,10 @@ export async function fetchSymbols(
 
 export async function fetchFomcCalendar(
   baseUrl: string,
-  params?: { upcoming_limit?: number; past_limit?: number; as_of?: string }
+  params?: { upcoming_limit?: number; past_limit?: number; as_of?: string },
+  signal?: AbortSignal,
 ): Promise<FomcCalendarResponse> {
-  const response = await axios.get(`${baseUrl}/fomc/calendar`, { params });
+  const response = await axios.get(`${baseUrl}/fomc/calendar`, { params, signal });
   return response.data as FomcCalendarResponse;
 }
 

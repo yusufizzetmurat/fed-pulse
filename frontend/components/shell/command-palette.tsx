@@ -54,7 +54,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   React.useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
-    fetchFomcCalendar(apiBaseUrl, { upcoming_limit: 6, past_limit: 6 })
+    fetchFomcCalendar(apiBaseUrl, { upcoming_limit: 6, past_limit: 6 }, controller.signal)
       .then((response) => {
         if (controller.signal.aborted) return;
         const today = Date.now();

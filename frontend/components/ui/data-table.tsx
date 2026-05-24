@@ -1,4 +1,5 @@
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/router";
 import { ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
 
@@ -156,39 +157,46 @@ export function DataTable<T>({
                 window.location.assign(href);
               });
             };
-            const handleRowKeyDown = (event: React.KeyboardEvent<HTMLTableRowElement>) => {
-              if (!interactive) return;
-              if (event.key !== "Enter" && event.key !== " ") return;
-              if (event.defaultPrevented) return;
-              event.preventDefault();
-              if (onRowClick) {
-                onRowClick(row);
-              } else if (href) {
-                router.push(href).catch(() => window.location.assign(href));
-              }
-            };
             return (
+              // Whole-row click is a mouse convenience; the keyboard /
+              // screen-reader path is the Link injected into the first
+              // cell below when rowHref is set. role="link" on <tr> is
+              // not valid ARIA, so the row keeps its implicit row
+              // semantics and we lean on the inner anchor for nav.
               <tr
                 key={key}
                 className={cn(
                   DENSITY_HEIGHT[density],
                   "border-b border-border last:border-0",
-                  interactive && "cursor-pointer hover:bg-muted/40 focus-visible:bg-muted/40",
+                  interactive && "cursor-pointer hover:bg-muted/40 focus-within:bg-muted/40",
                   rowClassName,
                 )}
-                role={interactive ? "link" : undefined}
-                tabIndex={interactive ? 0 : undefined}
-                aria-label={interactive && href ? `Open ${href}` : undefined}
                 onClick={interactive ? handleRowClick : undefined}
-                onKeyDown={interactive ? handleRowKeyDown : undefined}
               >
-                {columns.map((col) => {
+                {columns.map((col, colIndex) => {
                   const align =
                     col.align === "right"
                       ? "text-right"
                       : col.align === "center"
                       ? "text-center"
                       : "text-left";
+                  const inner = col.render(row, rowIndex);
+                  // The first column is the conventional row title in
+                  // every table on this branch; wrap it in a Next Link
+                  // when rowHref is set so the row has a real anchor
+                  // for keyboard tab and screen-reader semantics.
+                  const cellContent =
+                    href && colIndex === 0 ? (
+                      <Link
+                        href={href}
+                        className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        {inner}
+                      </Link>
+                    ) : (
+                      inner
+                    );
                   return (
                     <td
                       key={col.key}
@@ -198,7 +206,7 @@ export function DataTable<T>({
                         col.numeric && "numeric whitespace-nowrap",
                       )}
                     >
-                      {col.render(row, rowIndex)}
+                      {cellContent}
                     </td>
                   );
                 })}
