@@ -63,7 +63,7 @@ def build_forecaster(
                 "fusion_mode='gated_infonce' requires text_embedding_dim > 0; "
                 "set --text-encoder so the loader emits pooled embeddings."
             )
-        model = MultiModalForecasterModel(
+        multimodal = MultiModalForecasterModel(
             market_input_size=int(resolved.input_size),
             text_embedding_dim=text_dim,
             latent_dim=int(resolved.infonce_latent_dim),
@@ -77,12 +77,11 @@ def build_forecaster(
         # Stash the InfoNCE hyperparameters on the module so
         # ``ModelConfig.from_model`` round-trips them and the training
         # loop can read them without an extra config plumbing pass.
-        model.fusion_mode = "gated_infonce"  # type: ignore[assignment]
-        model.infonce_lambda = float(resolved.infonce_lambda)  # type: ignore[assignment]
-        model.infonce_temperature = float(resolved.infonce_temperature)  # type: ignore[assignment]
-        model.infonce_latent_dim = int(resolved.infonce_latent_dim)  # type: ignore[assignment]
-        model.text_embedding_dim = text_dim  # type: ignore[assignment]
-        return model
+        multimodal.fusion_mode = "gated_infonce"  # type: ignore[assignment]
+        multimodal.infonce_lambda = float(resolved.infonce_lambda)  # type: ignore[assignment]
+        multimodal.infonce_temperature = float(resolved.infonce_temperature)  # type: ignore[assignment]
+        multimodal.infonce_latent_dim = int(resolved.infonce_latent_dim)  # type: ignore[assignment]
+        return multimodal
 
     kwargs = resolved.to_dict()
     kwargs.pop("architecture", None)

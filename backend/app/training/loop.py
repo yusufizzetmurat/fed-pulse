@@ -32,6 +32,7 @@ from app.models.config import (
     ModelConfig,
 )
 from app.models.lstm import ForecasterModel
+from app.models.multimodal_forecaster import MultiModalForecasterModel
 from app.training.loaders import (
     _build_text_embedding_tensors,
     _build_training_tensors,
@@ -144,7 +145,7 @@ def _build_model(
     model_config: ModelConfig | dict[str, Any] | None = None,
     *,
     device: torch.device | None = None,
-) -> ForecasterModel:
+) -> "ForecasterModel | MultiModalForecasterModel":
     # Local import keeps ``app.models.factory`` cold until training fires,
     # which keeps the FastAPI singleton import path narrow.
     from app.models.factory import build_forecaster
@@ -333,12 +334,13 @@ def _run_train_forward_and_align(
 
     if multimodal_active and info_nce_loss_fn is not None:
         underlying = forward_model.module if hasattr(forward_model, "module") else forward_model
-        if not hasattr(underlying, "forward_with_modality_outputs"):
+        forward_with_modality = getattr(underlying, "forward_with_modality_outputs", None)
+        if forward_with_modality is None:
             raise RuntimeError(
                 "multimodal_active=True but the wrapped model does not expose "
                 "forward_with_modality_outputs; check the factory dispatch."
             )
-        out = underlying.forward_with_modality_outputs(batch_x, **kwargs)
+        out = forward_with_modality(batch_x, **kwargs)
         align_loss = info_nce_loss_fn(out["r_t"], out["t_t"])
         return out["logits"], align_loss
     return forward_model(batch_x, **kwargs), None

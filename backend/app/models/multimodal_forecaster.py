@@ -98,9 +98,10 @@ class MultiModalForecasterModel(nn.Module):
         )
         self.uses_attention_pool = self.architecture in _ATTENTION_POOL_MODELS
         self.uses_mean_pool = self.architecture in _MEAN_POOL_MODELS
-        if self.uses_attention_pool:
-            from app.models.attention import RecurrentSequenceAttention
+        from app.models.attention import RecurrentSequenceAttention
 
+        self.recurrent_attention: RecurrentSequenceAttention | None
+        if self.uses_attention_pool:
             self.recurrent_attention = RecurrentSequenceAttention(
                 hidden_size=self.hidden_size
             )
@@ -126,7 +127,7 @@ class MultiModalForecasterModel(nn.Module):
         if self.architecture == "dlinear":
             # DLinear emits the pooled state directly; no per-step
             # sequence to attend over.
-            return self.recurrent_core(x)
+            return self.recurrent_core(x)  # type: ignore[no-any-return]
         output, _ = self.recurrent_core(x)
         if self.uses_attention_pool:
             if self.recurrent_attention is None:
@@ -134,10 +135,10 @@ class MultiModalForecasterModel(nn.Module):
                     "recurrent_attention not initialised but lstm_attn variant is active"
                 )
             pooled, _ = self.recurrent_attention(output)
-            return pooled
+            return pooled  # type: ignore[no-any-return]
         if self.uses_mean_pool:
-            return output.mean(dim=1)
-        return output[:, -1, :]
+            return output.mean(dim=1)  # type: ignore[no-any-return]
+        return output[:, -1, :]  # type: ignore[no-any-return]
 
     @staticmethod
     def _zero_out_missing_text(
