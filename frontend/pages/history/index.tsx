@@ -5,6 +5,7 @@ import { ChevronRight, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Header } from "@/components/shell/header";
+import { StatusBar } from "@/components/shell/status-bar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -86,6 +87,7 @@ export default function HistoryPage() {
       </Head>
       <div className="min-h-screen bg-background text-foreground">
         <Header />
+        <StatusBar />
         <main id="main-content" tabIndex={-1} className="container space-y-6 py-8 focus:outline-none">
           <div className="space-y-2">
             <h1 className="text-3xl font-semibold tracking-tight">History</h1>

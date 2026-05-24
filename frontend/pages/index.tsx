@@ -15,6 +15,7 @@ import {
 } from "@/components/analyze/RegimeHistoryStrip";
 import { WatchlistChips } from "@/components/analyze/WatchlistChips";
 import { Header } from "@/components/shell/header";
+import { StatusBar } from "@/components/shell/status-bar";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -199,6 +200,12 @@ export default function WorkspacePage() {
       </Head>
       <div className="min-h-screen bg-background text-foreground">
         <Header />
+        <StatusBar
+          result={result}
+          loading={loading}
+          symbol={request.symbol}
+          documentDate={request.date}
+        />
         <main id="main-content" tabIndex={-1} className="container space-y-5 py-6 focus:outline-none">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div className="space-y-1">

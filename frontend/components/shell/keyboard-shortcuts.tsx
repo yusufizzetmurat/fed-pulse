@@ -17,11 +17,12 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     title: "Navigation",
     items: [
-      { keys: ["g", "a"], description: "Go to Analyze" },
+      { keys: ["g", "w"], description: "Go to Workspace" },
       { keys: ["g", "h"], description: "Go to History" },
-      { keys: ["g", "d"], description: "Go to Decisions" },
       { keys: ["g", "c"], description: "Go to Compare" },
+      { keys: ["g", "k"], description: "Go to Calendar" },
       { keys: ["g", "p"], description: "Go to Performance" },
+      { keys: ["g", "r"], description: "Go to Research" },
     ],
   },
   {
@@ -40,11 +41,12 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
 ];
 
 const NAV_KEYS: Record<string, string> = {
-  a: "/analyze",
+  w: "/",
   h: "/history",
-  d: "/decisions",
   c: "/compare",
+  k: "/calendar",
   p: "/performance",
+  r: "/research",
 };
 
 function isTypingTarget(target: EventTarget | null): boolean {
