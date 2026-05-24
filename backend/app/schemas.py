@@ -327,6 +327,24 @@ class HistoryRealizedBatchResponse(BaseModel):
     missing: list[str]
 
 
+class EvaluationCoverageResponse(BaseModel):
+    """Empirical conformal coverage aggregated across recent history runs.
+
+    ``nominal`` is the conformal target the active model was calibrated
+    to (read off the most-recent run that carries
+    ``series.forecast_confidence_level``). ``empirical`` is the fraction
+    of runs whose realized regime label fell inside the predicted set.
+    Both are None when no qualifying runs exist."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    nominal: float | None = None
+    empirical: float | None = None
+    sample_size: int
+    runs_total: int
+    computed_at: str
+
+
 class SymbolDescriptor(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 

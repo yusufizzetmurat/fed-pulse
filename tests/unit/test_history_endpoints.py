@@ -171,6 +171,97 @@ def test_history_realized_batch_rejects_oversize_id_list(client):
     assert response.status_code == 422
 
 
+def _seed_with_regime(sess, *, predicted_set, document_date="2024-09-18", symbol="^GSPC"):
+    return db_module.persist_analysis_run(
+        sess,
+        payload={
+            "sentiment": {"label": "HAWKISH", "score": 0.7, "raw": []},
+            "prediction": {"close": 5050.0, "volatility": 0.012, "horizon": "10d"},
+            "regime_classification": {
+                "predicted_set": predicted_set,
+                "set_label": "|".join(predicted_set),
+                "set_size": len(predicted_set),
+                "coverage": 0.8,
+                "distribution": {"calm": 0.2, "normal": 0.5, "high": 0.3},
+                "argmax_class": "normal",
+            },
+            "series": {"forecast_confidence_level": 0.8},
+        },
+        request={
+            "text": "Recent indicators…",
+            "date": document_date,
+            "symbol": symbol,
+            "horizon": "10d",
+            "forecast_mode": "fast",
+            "include_realized": False,
+        },
+        response={
+            "sentiment": {"label": "HAWKISH", "score": 0.7, "raw": []},
+            "prediction": {"close": 5050.0, "volatility": 0.012, "horizon": "10d"},
+            "regime_classification": {
+                "predicted_set": predicted_set,
+                "set_label": "|".join(predicted_set),
+                "set_size": len(predicted_set),
+                "coverage": 0.8,
+                "distribution": {"calm": 0.2, "normal": 0.5, "high": 0.3},
+                "argmax_class": "normal",
+            },
+            "series": {"forecast_confidence_level": 0.8},
+            "market": {
+                "symbol": symbol,
+                "requested_date": document_date,
+                "date_used": document_date,
+                "lookback_days": 5,
+                "close": 5000.0,
+                "volatility_5d": 0.011,
+            },
+            "model": {},
+        },
+    )
+
+
+def test_evaluation_coverage_aggregates_hits_and_misses(client, monkeypatch):
+    main_mod._reset_coverage_cache()
+
+    session_iter = db_module.get_session()
+    sess = next(session_iter)
+    try:
+        _seed_with_regime(sess, predicted_set=["calm", "normal"], document_date="2024-09-18")
+        _seed_with_regime(sess, predicted_set=["normal"], document_date="2024-11-06")
+        _seed_with_regime(sess, predicted_set=["high"], document_date="2024-12-18")
+    finally:
+        sess.close()
+
+    monkeypatch.setattr(
+        main_mod, "bucket_realized_regime", lambda *_args, **_kwargs: "normal"
+    )
+    monkeypatch.setattr(
+        main_mod,
+        "fetch_realized_forward",
+        lambda **_: [{"date": "x", "close": 1.0, "volatility_5d": 0.01}],
+    )
+
+    response = client.get("/evaluation/coverage", params={"lookback_runs": 10})
+    assert response.status_code == 200
+    body = response.json()
+    # 3 runs, 2 contain "normal" in their predicted_set → empirical 2/3
+    assert body["sample_size"] == 3
+    assert body["runs_total"] == 3
+    assert body["empirical"] == pytest.approx(2 / 3)
+    assert body["nominal"] == pytest.approx(0.8)
+
+
+def test_evaluation_coverage_returns_zero_sample_when_no_predicted_set(client):
+    main_mod._reset_coverage_cache()
+    response = client.get("/evaluation/coverage")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sample_size"] == 0
+    assert body["runs_total"] == 0
+    assert body["empirical"] is None
+    assert body["nominal"] is None
+
+
 def test_fomc_calendar_endpoint_returns_past_and_upcoming(client):
     response = client.get("/fomc/calendar", params={"as_of": "2024-09-18"})
     assert response.status_code == 200

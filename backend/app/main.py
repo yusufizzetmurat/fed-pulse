@@ -1,6 +1,7 @@
 import io
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.config import DATA_DIR
 from app.db import (
+    AnalysisRun,
     delete_run,
     get_engine,
     get_run,
@@ -30,6 +32,7 @@ from app.schemas import (
     ArtifactFile,
     DocumentParseResponse,
     DocumentParseUrlRequest,
+    EvaluationCoverageResponse,
     FomcCalendarResponse,
     HistoryDetail,
     HistoryEntry,
@@ -713,6 +716,80 @@ def get_history_realized_batch(
         except Exception:  # pragma: no cover — partial failures degrade silently
             missing.append(run_id)
     return HistoryRealizedBatchResponse(items=items, missing=missing)
+
+
+# In-memory cache for /evaluation/coverage. Aggregation walks up to
+# ``lookback_runs`` history rows and triggers one yfinance call per row,
+# so refresh latency is on the order of 10-30s in the worst case. A
+# 5-minute TTL keeps the workspace headline chip responsive without
+# pinning a worker on every page load. Cleared by the test fixture.
+_COVERAGE_CACHE_TTL_SECONDS = 5 * 60
+_coverage_cache: dict[str, tuple[float, "EvaluationCoverageResponse"]] = {}
+
+
+def _reset_coverage_cache() -> None:
+    _coverage_cache.clear()
+
+
+@app.get("/evaluation/coverage", response_model=EvaluationCoverageResponse)
+def evaluation_coverage(
+    symbol: str | None = Query(default=None),
+    lookback_runs: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(get_session),
+) -> EvaluationCoverageResponse:
+    """Aggregate empirical conformal coverage across recent history runs.
+
+    Empirical = fraction of runs where the realized regime label fell
+    inside that run's predicted set. Nominal is the conformal target the
+    active model was calibrated to (read off the most-recent run that
+    carries ``series.forecast_confidence_level``). Rows without a
+    ``regime_classification.predicted_set`` or without a fetchable
+    realized regime are skipped. Results cached for 5 minutes."""
+
+    cache_key = f"{symbol or '*'}:{lookback_runs}"
+    cached = _coverage_cache.get(cache_key)
+    now = time.monotonic()
+    if cached and now - cached[0] < _COVERAGE_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    query = session.query(AnalysisRun).order_by(AnalysisRun.created_at.desc())
+    if symbol:
+        query = query.filter(AnalysisRun.symbol == symbol)
+    rows = query.limit(lookback_runs).all()
+
+    nominal: float | None = None
+    inside = 0
+    sample_size = 0
+    for row in rows:
+        payload = row.payload if isinstance(row.payload, dict) else {}
+        regime = payload.get("regime_classification") or {}
+        predicted_set = regime.get("predicted_set")
+        if not isinstance(predicted_set, list) or not predicted_set:
+            continue
+        if nominal is None:
+            series = payload.get("series") or {}
+            level = series.get("forecast_confidence_level")
+            if isinstance(level, int | float):
+                nominal = float(level)
+        try:
+            realized = _build_realized_payload(row)
+        except Exception:  # pragma: no cover — yfinance failures skip the row
+            continue
+        if realized.realized_regime is None:
+            continue
+        sample_size += 1
+        if realized.realized_regime in predicted_set:
+            inside += 1
+
+    response = EvaluationCoverageResponse(
+        nominal=nominal,
+        empirical=(inside / sample_size) if sample_size else None,
+        sample_size=sample_size,
+        runs_total=len(rows),
+        computed_at=datetime.now(timezone.utc).isoformat(),
+    )
+    _coverage_cache[cache_key] = (now, response)
+    return response
 
 
 @app.get("/fomc/calendar", response_model=FomcCalendarResponse)
