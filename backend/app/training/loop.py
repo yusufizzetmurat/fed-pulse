@@ -619,7 +619,8 @@ def _run_train_forward_multi_task(
             "forward_multi_task (built with output_mode='classification' "
             "+ MultiTaskHead); check the factory dispatch."
         )
-    return forward_multi(batch_x, **kwargs)
+    out: dict[str, torch.Tensor] = forward_multi(batch_x, **kwargs)
+    return out
 
 
 def _run_train_forward_and_align(
