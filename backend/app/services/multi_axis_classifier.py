@@ -48,6 +48,7 @@ class _ClassifierState:
     tokenizer: Any
     device: torch.device
     max_length: int
+    encoder_alias: str
 
 
 def _resolve_checkpoint_path() -> Path:
@@ -124,8 +125,26 @@ def _load_state() -> _ClassifierState | None:
         (payload.get("training_args") or {}).get("max_length") or DEFAULT_MAX_LENGTH
     )
     return _ClassifierState(
-        model=model, tokenizer=tokenizer, device=device, max_length=max_length
+        model=model,
+        tokenizer=tokenizer,
+        device=device,
+        max_length=max_length,
+        encoder_alias=encoder_alias,
     )
+
+
+def get_loaded_encoder_alias() -> str | None:
+    """Encoder alias backing the loaded classifier, or None when absent.
+
+    Used by /analyze diagnostics to surface ``model.encoder_key`` so the
+    workspace status bar and pipeline trace can show which encoder is
+    live without poking at the file system.
+    """
+
+    state = _state
+    if state is None:
+        return None
+    return state.encoder_alias
 
 
 def get_classifier() -> _ClassifierState | None:

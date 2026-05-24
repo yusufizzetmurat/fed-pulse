@@ -1,0 +1,31 @@
+{
+  "symbols": [
+    {"symbol": "^GSPC", "name": "S&P 500", "category": "Equity index", "default_horizon": "10d"},
+    {"symbol": "^NDX", "name": "Nasdaq 100", "category": "Equity index", "default_horizon": "10d"},
+    {"symbol": "^DJI", "name": "Dow Jones", "category": "Equity index", "default_horizon": "10d"},
+    {"symbol": "^RUT", "name": "Russell 2000", "category": "Equity index", "default_horizon": "10d"},
+    {"symbol": "^VIX", "name": "VIX", "category": "Volatility", "default_horizon": "10d"},
+    {"symbol": "DX-Y.NYB", "name": "US Dollar Index", "category": "FX", "default_horizon": "10d"},
+    {"symbol": "EURUSD=X", "name": "EUR / USD", "category": "FX", "default_horizon": "10d"},
+    {"symbol": "USDJPY=X", "name": "USD / JPY", "category": "FX", "default_horizon": "10d"},
+    {"symbol": "GBPUSD=X", "name": "GBP / USD", "category": "FX", "default_horizon": "10d"},
+    {"symbol": "AUDUSD=X", "name": "AUD / USD", "category": "FX", "default_horizon": "10d"},
+    {"symbol": "GC=F", "name": "Gold (CME)", "category": "Commodity", "default_horizon": "10d"},
+    {"symbol": "SI=F", "name": "Silver (CME)", "category": "Commodity", "default_horizon": "10d"},
+    {"symbol": "CL=F", "name": "WTI crude", "category": "Commodity", "default_horizon": "10d"},
+    {"symbol": "HG=F", "name": "Copper (CME)", "category": "Commodity", "default_horizon": "10d"},
+    {"symbol": "NG=F", "name": "Natural gas", "category": "Commodity", "default_horizon": "10d"},
+    {"symbol": "^TNX", "name": "10Y Treasury yield", "category": "Rates", "default_horizon": "10d"},
+    {"symbol": "^FVX", "name": "5Y Treasury yield", "category": "Rates", "default_horizon": "10d"},
+    {"symbol": "^TYX", "name": "30Y Treasury yield", "category": "Rates", "default_horizon": "10d"},
+    {"symbol": "^IRX", "name": "13W T-Bill", "category": "Rates", "default_horizon": "10d"},
+    {"symbol": "ZN=F", "name": "10Y T-Note future", "category": "Rates", "default_horizon": "10d"},
+    {"symbol": "BTC-USD", "name": "Bitcoin / USD", "category": "Crypto", "default_horizon": "10d"},
+    {"symbol": "ETH-USD", "name": "Ether / USD", "category": "Crypto", "default_horizon": "10d"},
+    {"symbol": "XLF", "name": "Financials sector ETF", "category": "Sector ETF", "default_horizon": "10d"},
+    {"symbol": "XLE", "name": "Energy sector ETF", "category": "Sector ETF", "default_horizon": "10d"},
+    {"symbol": "XLK", "name": "Technology sector ETF", "category": "Sector ETF", "default_horizon": "10d"},
+    {"symbol": "EFA", "name": "MSCI EAFE ETF", "category": "International ETF", "default_horizon": "10d"},
+    {"symbol": "EEM", "name": "MSCI Emerging Markets ETF", "category": "International ETF", "default_horizon": "10d"}
+  ]
+}

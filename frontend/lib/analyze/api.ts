@@ -9,6 +9,7 @@ import type {
   HistoryRealizedResponse,
   NextFomcForecastResponse,
   ResearchArtifactsResponse,
+  SymbolListResponse,
   TrainJobState,
   TrainJobSummary,
   TrainJobsListResponse,
@@ -80,6 +81,14 @@ export async function compare(
     fetchHistoryRun(baseUrl, runIdB),
   ]);
   return { a, b };
+}
+
+export async function fetchSymbols(
+  baseUrl: string,
+  signal?: AbortSignal,
+): Promise<SymbolListResponse> {
+  const response = await axios.get(`${baseUrl}/symbols`, { signal });
+  return response.data as SymbolListResponse;
 }
 
 export async function fetchFomcCalendar(

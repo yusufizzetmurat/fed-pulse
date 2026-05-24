@@ -24,6 +24,14 @@ class AnalyzeRequest(BaseModel):
         False,
         description="When true, return per-sentence + per-token XAI attribution alongside the forecast.",
     )
+    mask_sentence_indices: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Counterfactual: 0-based indices of sentences to drop from the "
+            "text before running the pipeline. Sentences are split using the "
+            "same tokenizer that produces xai.sentences. Empty list = no mask."
+        ),
+    )
 
 
 class SentimentResponse(BaseModel):
@@ -92,6 +100,10 @@ class ModelDiagnosticsResponse(BaseModel):
     adaptation_combined_rmse: float | None = None
     decay_rate: float | None = None
     chunk_attention: ChunkAttentionDiagnostics | None = None
+    # Encoder alias backing the multi-axis classifier (e.g.
+    # "finbert_fed_adjacent"). None when no multi-axis checkpoint is loaded;
+    # surfaced for the workspace status bar and pipeline trace.
+    encoder_key: str | None = None
 
 
 class ForecastSeriesResponse(BaseModel):
@@ -273,6 +285,11 @@ class HistoryEntry(BaseModel):
     current_close: float | None = None
     predicted_volatility: float | None = None
     text_excerpt: str | None = None
+    # Regime summary extracted from the persisted payload. None when the row
+    # came from a regression-mode checkpoint or pre-dated the regime head.
+    argmax_regime: str | None = None
+    argmax_probability: float | None = None
+    regime_set_size: int | None = None
 
 
 class HistoryDetail(HistoryEntry):
@@ -294,6 +311,26 @@ class HistoryRealizedResponse(BaseModel):
     timestamps: list[str]
     close: list[float]
     volatility: list[float]
+    # Realized regime label derived from the post-event 10d-forward vol
+    # path, bucketed against the classifier's trained quantile cutoffs
+    # when those cutoffs are accessible. None when the cutoffs are not
+    # available on this host (regression-only checkpoint, cold start).
+    realized_regime: str | None = None
+
+
+class SymbolDescriptor(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbol: str
+    name: str
+    category: str
+    default_horizon: str
+
+
+class SymbolListResponse(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbols: list[SymbolDescriptor]
 
 
 class FomcMeetingResponse(BaseModel):

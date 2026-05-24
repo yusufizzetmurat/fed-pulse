@@ -36,8 +36,10 @@ from app.schemas import (
     HistoryRealizedResponse,
     NextFomcForecastResponse,
     ResearchArtifactsResponse,
+    SymbolDescriptor,
+    SymbolListResponse,
 )
-from app.evaluation.xai import attribute_text, to_response as xai_to_response
+from app.evaluation.xai import attribute_text, split_sentences, to_response as xai_to_response
 from app.services.document_parser import (
     parse_docx_stream,
     parse_paste,
@@ -54,6 +56,7 @@ from app.services.research_artifacts import (
 )
 from app.services.forecaster import (
     bootstrap_checkpoint,
+    bucket_realized_regime,
     build_feature_vectors,
     build_regime_classification_card,
     checkpoint_exists,
@@ -126,6 +129,41 @@ register_error_handlers(app)
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+_SYMBOLS_FALLBACK: list[dict[str, str]] = [
+    {"symbol": "^GSPC", "name": "S&P 500", "category": "Equity index", "default_horizon": "10d"},
+]
+
+
+@app.get("/symbols", response_model=SymbolListResponse)
+def list_symbols() -> SymbolListResponse:
+    """Symbol universe the workspace asset picker reads.
+
+    Loads ``backend/app/data/symbols.json`` (sits next to the FOMC caches),
+    falling back to a single S&P 500 entry so the endpoint never 500s on a
+    fresh checkout.
+    """
+
+    candidates = [DATA_DIR / "symbols.json"]
+    backend_root = DATA_DIR.parent / "backend" / "app" / "data" / "symbols.json"
+    if backend_root not in candidates:
+        candidates.append(backend_root)
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            entries = payload.get("symbols") if isinstance(payload, dict) else None
+            if isinstance(entries, list):
+                items = [SymbolDescriptor(**entry) for entry in entries]
+                return SymbolListResponse(symbols=items)
+        except Exception:
+            logger.warning("symbols_load_failed path=%s", path, exc_info=True)
+            break
+    return SymbolListResponse(
+        symbols=[SymbolDescriptor(**entry) for entry in _SYMBOLS_FALLBACK]
+    )
 
 
 @app.get("/documents")
@@ -350,6 +388,27 @@ def _build_multi_axis_block(
     }
 
 
+def _apply_sentence_mask(text: str, mask: list[int]) -> str:
+    """Drop the masked sentence indices and rejoin the remainder.
+
+    Indices reference the same tokenization that produces ``xai.sentences``.
+    Out-of-range / duplicate indices are silently ignored; striking every
+    sentence falls back to the original text so the classifier still has
+    something to score.
+    """
+
+    if not mask:
+        return text
+    sentences = split_sentences(text)
+    if not sentences:
+        return text
+    masked = {int(i) for i in mask if 0 <= int(i) < len(sentences)}
+    if not masked:
+        return text
+    kept = [sent for idx, sent in enumerate(sentences) if idx not in masked]
+    return " ".join(kept).strip() or text
+
+
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(payload: AnalyzeRequest):
     """Async handler — heavy sync work (transformers, yfinance, torch) runs in
@@ -361,10 +420,17 @@ async def analyze(payload: AnalyzeRequest):
             # so seed one against a 252-day window before the first inference.
             await run_in_threadpool(_bootstrap_cold_start, payload)
 
-        response = await run_in_threadpool(
-            _build_analyze_response, payload, mode="fast", history_length=30
+        masked_text = _apply_sentence_mask(payload.text, payload.mask_sentence_indices)
+        run_payload = (
+            payload.model_copy(update={"text": masked_text})
+            if masked_text != payload.text
+            else payload
         )
-        await run_in_threadpool(_record_history, payload, response)
+
+        response = await run_in_threadpool(
+            _build_analyze_response, run_payload, mode="fast", history_length=30
+        )
+        await run_in_threadpool(_record_history, run_payload, response)
         return response
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -487,6 +553,9 @@ def get_history_run_realized(
         timestamps=[str(point["date"]) for point in realized],
         close=[float(point["close"]) for point in realized],
         volatility=[float(point["volatility_5d"]) for point in realized],
+        realized_regime=bucket_realized_regime(
+            float(realized[-1]["volatility_5d"]) if realized else None
+        ),
     )
 
 

@@ -49,6 +49,7 @@ class AnalysisRun(Base):
     __table_args__ = (Index("ix_analysis_runs_created_symbol", "created_at", "symbol"),)
 
     def to_summary(self) -> dict[str, Any]:
+        regime = _extract_regime_summary(self.payload)
         return {
             "id": self.id,
             "created_at": _isoformat(self.created_at),
@@ -62,12 +63,44 @@ class AnalysisRun(Base):
             "current_close": self.current_close,
             "predicted_volatility": self.predicted_volatility,
             "text_excerpt": self.text_excerpt,
+            "argmax_regime": regime["argmax"],
+            "argmax_probability": regime["probability"],
+            "regime_set_size": regime["set_size"],
         }
 
     def to_detail(self) -> dict[str, Any]:
         summary = self.to_summary()
         summary["payload"] = self.payload
         return summary
+
+
+def _extract_regime_summary(payload: Any) -> dict[str, Any]:
+    """Pull regime argmax / probability / set size off a persisted run.
+
+    History rows stash the full /analyze response under ``payload``; the
+    regime card lives at ``payload.regime_classification`` and is
+    optional (None when the active checkpoint is regression-mode). Each
+    field degrades to None on missing / malformed payloads rather than
+    raising so history-list rendering is never blocked by a stale row.
+    """
+
+    default = {"argmax": None, "probability": None, "set_size": None}
+    if not isinstance(payload, dict):
+        return default
+    regime = payload.get("regime_classification")
+    if not isinstance(regime, dict):
+        return default
+    argmax = regime.get("argmax_class") if isinstance(regime.get("argmax_class"), str) else None
+    distribution = regime.get("distribution") or {}
+    probability: float | None = None
+    if argmax and isinstance(distribution, dict):
+        raw = distribution.get(argmax)
+        if isinstance(raw, (int, float)):
+            probability = float(raw)
+    set_size = regime.get("set_size")
+    if not isinstance(set_size, int):
+        set_size = None
+    return {"argmax": argmax, "probability": probability, "set_size": set_size}
 
 
 def _isoformat(value: datetime | None) -> str | None:
