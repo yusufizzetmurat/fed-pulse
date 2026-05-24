@@ -954,16 +954,30 @@ def _volatility_shift(
     *,
     window: int = VOL_WINDOW_DAYS,
 ) -> float | None:
+    """Post-event vol minus pre-event vol around an as-of bar.
+
+    Both windows are computed from log returns with sample std (ddof=1).
+    The pre-window covers returns on days ``t-window .. t-1`` (strictly
+    before the event) and the post-window covers returns on days
+    ``t+1 .. t+window`` (strictly after the event), where ``t`` is the
+    first bar on or after ``as_of``. ``close[t]`` participates only as
+    the denominator of the post-window's first return, never as a
+    numerator, so the announcement-day close-to-close move does not
+    enter either window. Matches the strict-forward convention used by
+    ``_forward_realized_vol``.
+    """
+
     base_idx = series.index_strictly_before(as_of)
     if base_idx < window:
         return None
     on_or_after = series.index_on_or_after(as_of)
-    if on_or_after + window > len(series):
+    if on_or_after + window >= len(series):
         return None
     pre_closes = series.close[base_idx - window : base_idx + 1]
     pre_rets = _log_returns(pre_closes)
-    post_closes = series.close[on_or_after - 1 : on_or_after + window]
-    # post_closes spans (t-1, t, t+1, ..., t+window-1) -> window returns
+    post_closes = series.close[on_or_after : on_or_after + window + 1]
+    # post_closes spans (t, t+1, ..., t+window) -> window strict-forward
+    # returns log(close[t+1]/close[t]) ... log(close[t+window]/close[t+window-1]).
     post_rets = _log_returns(post_closes)
     if len(pre_rets) < 2 or len(post_rets) < 2:
         return None
@@ -982,7 +996,7 @@ def _forward_realized_vol(
     *,
     window: int = 10,
 ) -> float | None:
-    """Realised volatility of log returns over the next ``window`` trading days.
+    """Realised volatility of log returns over the *strictly* next ``window`` trading days.
 
     Target for the Phase 9 V2 vol-regime classifier (#195). 10 trading
     days is the default to keep the window clean of the FOMC blackout
@@ -990,19 +1004,34 @@ def _forward_realized_vol(
     ``None`` when the event sits within ``window`` days of the end of
     the price series (no forward window available).
 
-    Computed as ``std(log_return(close[t:t+window]))`` with sample std
-    (ddof=1). The first log-return uses ``close[t]`` -- i.e. the close
-    on the event date -- as the denominator so the window does NOT
-    include the as-of bar itself.
+    Computed as ``std(log_return(close[t+1 .. t+window]))`` with sample
+    std (ddof=1), where ``t`` is the index of the event bar (first close
+    on or after ``as_of``). The returns produced are
+    ``log(close[t+1]/close[t])`` through
+    ``log(close[t+window]/close[t+window-1])`` — strictly post-event.
+    ``close[t]`` participates only as the denominator of the first
+    return, never as a numerator, so the announcement-day close-to-close
+    move (``log(close[t]/close[t-1])``) does not enter the target. This
+    keeps the target disjoint from any feature derived from ``close[t]``
+    (notably ``FeatureVector.market_close`` at the as-of bar) and the
+    classification contract clean of look-ahead.
+
+    A previous convention used the slice
+    ``close[t-1 .. t+window-1]``, which folded
+    ``log(close[t]/close[t-1])`` (the announcement-day reaction) into
+    the target as the first return. That created a mechanical overlap
+    with the day-``t`` close feature on the input side. The current
+    slice ``close[t .. t+window]`` is the strict-forward replacement.
     """
 
     on_or_after = series.index_on_or_after(as_of)
-    if on_or_after + window > len(series):
+    # Need ``window`` strictly-forward returns: indices
+    # ``on_or_after, on_or_after+1, ..., on_or_after+window`` must
+    # all be in range, so ``on_or_after + window`` must be a valid
+    # index (i.e. ``< len(series)``).
+    if on_or_after + window >= len(series):
         return None
-    # close[on_or_after-1] is the bar immediately before the event;
-    # close[on_or_after:on_or_after+window] is the t+1..t+window window.
-    # log returns of (t, t+1, ..., t+window) give ``window`` values.
-    closes = series.close[on_or_after - 1 : on_or_after + window]
+    closes = series.close[on_or_after : on_or_after + window + 1]
     rets = _log_returns(closes)
     if len(rets) < 2:
         return None

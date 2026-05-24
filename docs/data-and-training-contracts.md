@@ -147,7 +147,17 @@ Required columns (full schema in module docstring):
     strictly before `as_of_ts`.
   - `direction_t1d` — sign of the t+1d realized return (-1, 0, +1).
 - `volatility_shift` — post-event 10d realized vol minus pre-event 10d
-  realized vol (log returns; sample std).
+  realized vol (log returns; sample std). Both windows are strict-flank:
+  the pre-window covers returns on days `t-10..t-1` and the post-window
+  covers returns on days `t+1..t+10`, where `t` is the first trading bar
+  on or after the event. `close[t]` participates only as the denominator
+  of the post-window's first return, never as a numerator, so the
+  announcement-day close-to-close move does not enter either flank.
+- `forward_realized_vol_10d` — strict-forward 10-day realised vol over
+  `t+1..t+10`, sample std of log returns (ddof=1). This is the target
+  column for the Phase 9 V2 vol-regime classifier (#195). Per-fold
+  quantile cutoffs map this continuous value to a 3-class label at
+  training time (train-slice fit only; never on val / test).
 - `concurrent_macro_release` — boolean. True when a major US macro
   release (CPI, NFP, ISM) falls within ±2 trading days. Flagged only;
   no event is dropped on this basis. The calendar is loaded from
