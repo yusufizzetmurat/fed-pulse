@@ -95,7 +95,7 @@ def _extract_regime_summary(payload: Any) -> dict[str, Any]:
     probability: float | None = None
     if argmax and isinstance(distribution, dict):
         raw = distribution.get(argmax)
-        if isinstance(raw, (int, float)):
+        if isinstance(raw, int | float):
             probability = float(raw)
     set_size = regime.get("set_size")
     if not isinstance(set_size, int):
