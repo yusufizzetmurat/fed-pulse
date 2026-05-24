@@ -1,6 +1,5 @@
 import * as React from "react";
 import Head from "next/head";
-import dynamic from "next/dynamic";
 import { useRouter } from "next/router";
 import { toast } from "sonner";
 
@@ -13,6 +12,7 @@ import {
   RegimeHistoryStrip,
   type RegimeHistoryEntry,
 } from "@/components/analyze/RegimeHistoryStrip";
+import { SentenceStrikeXaiPanel } from "@/components/analyze/SentenceStrikeXaiPanel";
 import { WatchlistChips } from "@/components/analyze/WatchlistChips";
 import { Header } from "@/components/shell/header";
 import { StatusBar } from "@/components/shell/status-bar";
@@ -30,11 +30,6 @@ import { toStance } from "@/lib/analyze/format";
 import type { AnalyzeRequest, AnalyzeResult, HistoryEntry, Horizon } from "@/lib/analyze/types";
 
 const HORIZON_VALUES = new Set<Horizon>(["1d", "3d", "5d", "10d"]);
-
-const XaiPanel = dynamic(
-  () => import("@/components/analyze/XaiPanel").then((m) => m.XaiPanel),
-  { ssr: false, loading: () => null },
-);
 
 function defaultRequest(): AnalyzeRequest {
   return {
@@ -70,6 +65,9 @@ export default function WorkspacePage() {
   const router = useRouter();
   const [request, setRequest] = React.useState<AnalyzeRequest>(defaultRequest);
   const [result, setResult] = React.useState<AnalyzeResult | null>(null);
+  const [baselineResult, setBaselineResult] = React.useState<AnalyzeResult | null>(null);
+  const [struck, setStruck] = React.useState<Set<number>>(() => new Set());
+  const [counterfactualLoading, setCounterfactualLoading] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
   const [historyEntries, setHistoryEntries] = React.useState<RegimeHistoryEntry[]>([]);
@@ -167,12 +165,15 @@ export default function WorkspacePage() {
 
   const handleSubmit = async () => {
     setLoading(true);
+    setStruck(new Set());
     try {
-      const next = await postAnalyze(apiBaseUrl, request);
+      const next = await postAnalyze(apiBaseUrl, { ...request, mask_sentence_indices: [] });
       setResult(next);
+      setBaselineResult(next);
       toast.success("Analysis complete");
     } catch (err) {
       setResult(null);
+      setBaselineResult(null);
       const message =
         (err as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
         (err as Error).message ||
@@ -182,6 +183,43 @@ export default function WorkspacePage() {
       setLoading(false);
     }
   };
+
+  const runCounterfactual = React.useCallback(
+    async (mask: Set<number>) => {
+      if (!baselineResult) return;
+      setCounterfactualLoading(true);
+      try {
+        const indices = Array.from(mask).sort((a, b) => a - b);
+        const next = await postAnalyze(apiBaseUrl, {
+          ...request,
+          mask_sentence_indices: indices,
+        });
+        setResult(next);
+      } catch (err) {
+        const message =
+          (err as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
+          (err as Error).message ||
+          "Counterfactual request failed.";
+        toast.error(message);
+      } finally {
+        setCounterfactualLoading(false);
+      }
+    },
+    [apiBaseUrl, baselineResult, request],
+  );
+
+  const handleStruckChange = React.useCallback(
+    (next: Set<number>) => {
+      setStruck(next);
+      // Empty mask restores the baseline rather than firing an empty-mask round trip.
+      if (next.size === 0) {
+        setResult(baselineResult);
+        return;
+      }
+      runCounterfactual(next);
+    },
+    [baselineResult, runCounterfactual],
+  );
 
   const regimeHistorySpark = React.useMemo(
     () =>
@@ -202,7 +240,7 @@ export default function WorkspacePage() {
         <Header />
         <StatusBar
           result={result}
-          loading={loading}
+          loading={loading || counterfactualLoading}
           symbol={request.symbol}
           documentDate={request.date}
         />
@@ -292,7 +330,16 @@ export default function WorkspacePage() {
                 )}
               </div>
 
-              {result.xai ? <XaiPanel xai={result.xai} /> : null}
+              {result.xai ? (
+                <SentenceStrikeXaiPanel
+                  xai={result.xai}
+                  struck={struck}
+                  onMaskChange={handleStruckChange}
+                  baselineResult={baselineResult}
+                  currentResult={result}
+                  loading={counterfactualLoading}
+                />
+              ) : null}
 
               <PipelineTrace result={result} inputText={request.text} />
 
