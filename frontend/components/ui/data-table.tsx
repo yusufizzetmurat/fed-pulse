@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useRouter } from "next/router";
 import { ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -41,6 +42,7 @@ export function DataTable<T>({
   onRowClick,
   className,
 }: DataTableProps<T>) {
+  const router = useRouter();
   const [sortKey, setSortKey] = React.useState<string | null>(null);
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
 
@@ -135,18 +137,50 @@ export function DataTable<T>({
         <tbody>
           {sortedRows.map((row, rowIndex) => {
             const key = rowKey(row, rowIndex);
-            const href = rowHref?.(row);
+            const href = rowHref?.(row) ?? null;
             const interactive = Boolean(href) || Boolean(onRowClick);
+            const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>) => {
+              if (onRowClick) {
+                onRowClick(row);
+                return;
+              }
+              if (!href) return;
+              // Modifier-aware: cmd/ctrl/middle-click should still open in a
+              // new tab, matching the existing inline <Link> behaviour on
+              // legacy table cells.
+              if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.button === 1) {
+                return;
+              }
+              router.push(href).catch(() => {
+                /* router.push failures are rare; fallback to a full nav. */
+                window.location.assign(href);
+              });
+            };
+            const handleRowKeyDown = (event: React.KeyboardEvent<HTMLTableRowElement>) => {
+              if (!interactive) return;
+              if (event.key !== "Enter" && event.key !== " ") return;
+              if (event.defaultPrevented) return;
+              event.preventDefault();
+              if (onRowClick) {
+                onRowClick(row);
+              } else if (href) {
+                router.push(href).catch(() => window.location.assign(href));
+              }
+            };
             return (
               <tr
                 key={key}
                 className={cn(
                   DENSITY_HEIGHT[density],
                   "border-b border-border last:border-0",
-                  interactive && "cursor-pointer hover:bg-muted/40",
+                  interactive && "cursor-pointer hover:bg-muted/40 focus-visible:bg-muted/40",
                   rowClassName,
                 )}
-                onClick={onRowClick ? () => onRowClick(row) : undefined}
+                role={interactive ? "link" : undefined}
+                tabIndex={interactive ? 0 : undefined}
+                aria-label={interactive && href ? `Open ${href}` : undefined}
+                onClick={interactive ? handleRowClick : undefined}
+                onKeyDown={interactive ? handleRowKeyDown : undefined}
               >
                 {columns.map((col) => {
                   const align =

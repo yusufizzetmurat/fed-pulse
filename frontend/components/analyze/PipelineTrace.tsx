@@ -42,7 +42,7 @@ function buildSteps({
     key: "ingest",
     title: "Ingest",
     icon: <FileInput className="h-3.5 w-3.5" />,
-    summary: `${countWords(inputText)} tokens · ${inputText.length} chars · ${xaiSentences} sentences`,
+    summary: `${countWords(inputText)} words · ${inputText.length} chars · ${xaiSentences} sentences`,
     body: (
       <dl className="grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
         <dt className="text-muted-foreground">Character count</dt>

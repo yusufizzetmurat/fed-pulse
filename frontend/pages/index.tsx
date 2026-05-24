@@ -25,7 +25,10 @@ import {
   resolveApiBaseUrl,
 } from "@/lib/analyze/api";
 import { DEFAULT_TEXT } from "@/lib/analyze/constants";
-import type { AnalyzeRequest, AnalyzeResult, HistoryEntry } from "@/lib/analyze/types";
+import { toStance } from "@/lib/analyze/format";
+import type { AnalyzeRequest, AnalyzeResult, HistoryEntry, Horizon } from "@/lib/analyze/types";
+
+const HORIZON_VALUES = new Set<Horizon>(["1d", "3d", "5d", "10d"]);
 
 const XaiPanel = dynamic(
   () => import("@/components/analyze/XaiPanel").then((m) => m.XaiPanel),
@@ -46,12 +49,20 @@ function defaultRequest(): AnalyzeRequest {
 function takeArgmaxRegime(entry: HistoryEntry, detailPayload: AnalyzeResult | null): string | null {
   const regime = detailPayload?.regime_classification;
   if (regime?.argmax_class) return regime.argmax_class;
-  // Older history rows may not carry the regime field; surface stance as the last-resort tag
-  // so the strip is not blank on legacy data.
-  if (entry.stance === "hawkish") return "high";
-  if (entry.stance === "dovish") return "calm";
-  if (entry.stance === "neutral") return "normal";
+  // Older history rows may not carry the regime field; surface stance as the
+  // last-resort tag so the strip is not blank on legacy data. Normalise
+  // through toStance() first so uppercase / LABEL_n rows resolve too.
+  const stance = toStance(entry.stance);
+  if (stance === "hawkish") return "high";
+  if (stance === "dovish") return "calm";
+  if (stance === "neutral") return "normal";
   return null;
+}
+
+function parseHorizonParam(value: unknown): Horizon | null {
+  return typeof value === "string" && HORIZON_VALUES.has(value as Horizon)
+    ? (value as Horizon)
+    : null;
 }
 
 export default function WorkspacePage() {
@@ -75,8 +86,9 @@ export default function WorkspacePage() {
     if (typeof querySymbol === "string" && querySymbol) {
       setRequest((prev) => ({ ...prev, symbol: querySymbol }));
     }
-    if (typeof queryHorizon === "string" && queryHorizon) {
-      setRequest((prev) => ({ ...prev, horizon: queryHorizon as AnalyzeRequest["horizon"] }));
+    const validHorizon = parseHorizonParam(queryHorizon);
+    if (validHorizon) {
+      setRequest((prev) => ({ ...prev, horizon: validHorizon }));
     }
     if (typeof queryDate !== "string" || !queryDate || typeof queryKind !== "string" || !queryKind) {
       return;
