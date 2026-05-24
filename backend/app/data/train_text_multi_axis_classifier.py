@@ -849,12 +849,30 @@ def main(argv: list[str] | None = None) -> int:
 
     _logger.info("training_complete best_val_loss=%.4f", best_val_loss)
 
-    # Per-bank breakdown on the val partition (D, 2026-05-24). Reload
-    # the best-epoch weights before scoring so the numbers next to the
-    # canonical checkpoint match the checkpoint itself (the in-memory
-    # ``model`` carries the last-epoch weights, which can differ from
-    # the best-epoch checkpoint when early-stopping kicked in).
-    checkpoint_path = Path(args.output_checkpoint)
+    _write_per_bank_breakdown(
+        model=model,
+        checkpoint_path=Path(args.output_checkpoint),
+        val_loader=val_loader,
+        device=device,
+    )
+
+    return 0
+
+
+def _write_per_bank_breakdown(
+    *,
+    model: TextMultiAxisClassifier,
+    checkpoint_path: Path,
+    val_loader: DataLoader,
+    device: torch.device,
+) -> None:
+    """Reload the best-epoch weights and write per-bank metrics next to the checkpoint.
+
+    The in-memory ``model`` carries the last-epoch weights, which can differ
+    from the best-epoch checkpoint when early-stopping triggered, so the
+    per-bank table next to the checkpoint must come from the persisted state.
+    """
+
     if checkpoint_path.exists():
         try:
             best_payload = torch.load(
@@ -869,22 +887,20 @@ def main(argv: list[str] | None = None) -> int:
         per_bank = _evaluate_per_bank(model, val_loader, device)
     except Exception:  # pragma: no cover — defensive
         _logger.warning("per_bank_eval_failed", exc_info=True)
-        per_bank = None
-    if per_bank:
-        # ``with_name(stem + ".per_bank_metrics.json")`` works whether
-        # or not the user-supplied checkpoint path carries an
-        # extension; ``with_suffix("")`` raises ValueError on
-        # suffix-less paths.
-        per_bank_path = checkpoint_path.with_name(
-            checkpoint_path.stem + ".per_bank_metrics.json"
-        )
-        per_bank_path.parent.mkdir(parents=True, exist_ok=True)
-        import json as _json
+        return
+    if not per_bank:
+        return
+    # ``with_name(stem + ".per_bank_metrics.json")`` works whether or not the
+    # user-supplied checkpoint path carries an extension; ``with_suffix("")``
+    # raises ValueError on suffix-less paths.
+    per_bank_path = checkpoint_path.with_name(
+        checkpoint_path.stem + ".per_bank_metrics.json"
+    )
+    per_bank_path.parent.mkdir(parents=True, exist_ok=True)
+    import json as _json
 
-        per_bank_path.write_text(_json.dumps(per_bank, indent=2), encoding="utf-8")
-        _logger.info("per_bank_metrics_written path=%s", per_bank_path)
-
-    return 0
+    per_bank_path.write_text(_json.dumps(per_bank, indent=2), encoding="utf-8")
+    _logger.info("per_bank_metrics_written path=%s", per_bank_path)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
