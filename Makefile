@@ -6,6 +6,10 @@ TRAINING_PACKAGE_ID ?=
 OWNER ?= unknown
 SEED ?= 11
 ARCHITECTURE ?= lstm
+ENCODER_ALIAS ?= finbert_fed_adjacent
+EPOCHS ?= 4
+BATCH_SIZE ?= 16
+LEARNING_RATE ?= 2e-5
 
 TEACHER_CHECKPOINT ?= /data/artifacts/phase3/pilot_finetune_20260505T142652Z/hf_checkpoints
 PSEUDO_STRATEGY ?= chunk_vote
@@ -28,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier
 
 help:
 	@echo "Targets:"
@@ -71,19 +75,16 @@ help:
 dev: dev-cpu
 
 dev-cpu:
-	docker compose up -d --build redis backend worker frontend
+	docker compose up -d --build backend frontend
 
 dev-gpu:
-	docker compose --profile gpu up -d --build redis backend-gpu worker-gpu frontend
+	docker compose --profile gpu up -d --build backend-gpu frontend
 
 down:
 	docker compose --profile gpu down
 
 logs:
 	docker compose logs -f --tail=200
-
-worker-logs:
-	docker compose logs -f --tail=200 worker
 
 lock:
 	docker compose run --rm backend bash -c "pip install --quiet uv && uv pip compile --generate-hashes --output-file requirements.lock pyproject.toml"
@@ -123,6 +124,23 @@ train-batch:
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--mode full \
 		--owner "$(OWNER)"
+
+# Train the text-only multi-axis classifier (#78 follow-up). Reads
+# events.parquet from the supplied training package, fine-tunes
+# finbert_fed_adjacent + MultiTaskHead end-to-end on the supervised
+# axis rows, writes the best-epoch checkpoint to
+# ``backend/models/text_multi_axis_best.pt`` which the /analyze service
+# singleton picks up on next backend restart.
+train-text-multi-axis-classifier:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose --profile gpu run --rm backend-gpu \
+		python -m app.data.train_text_multi_axis_classifier \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		--encoder-alias "$(ENCODER_ALIAS)" \
+		--epochs $(EPOCHS) \
+		--seed $(SEED) \
+		--batch-size $(BATCH_SIZE) \
+		--learning-rate $(LEARNING_RATE)
 
 # Forecaster architecture sweep. The default target runs the
 # rich-feature path (35-dim per-bar input) across all eight registered
