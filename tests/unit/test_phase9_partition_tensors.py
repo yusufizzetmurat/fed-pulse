@@ -120,7 +120,7 @@ def test_partition_classification_keeps_text_rows_aligned_with_y() -> None:
         for vec in group:
             vec.text_embedding_pooled = [0.1, 0.2, 0.3, 0.4]
             vec.text_embedding_missing = 0.0
-    x, y, _, text_emb, text_missing, _mt_aux = _build_partition_tensors(
+    x, y, _, text_emb, text_missing = _build_partition_tensors(
         groups,
         fallback_text_in_dim=4,
         output_mode="classification",

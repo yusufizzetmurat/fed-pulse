@@ -952,14 +952,12 @@ def _build_partition_tensors(
     vol_regime_quantiles: Sequence[float] = (),
     lora_bundle: Any = None,
     lora_max_tokens: int = 0,
-    multi_task_loss: bool = False,
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
     float,
     torch.Tensor | None,
     torch.Tensor | None,
-    dict[str, torch.Tensor] | None,
 ]:
     """Tensorise one partition into (x, y, close_scale, text_emb, text_missing).
 
@@ -982,6 +980,13 @@ def _build_partition_tensors(
     pooled-embedding pair. The train step detects LoRA mode by
     inspecting the dtype + running the bundle's encoder over the
     tokens per batch to materialise gradient-tracked pooled vectors.
+
+    Multi-task aux tensors (#273) are NOT returned by this function —
+    the caller computes them separately via
+    :func:`_build_partition_multi_task_tensors` on the same partition
+    groups so the 5-tuple contract here stays stable for every
+    existing caller (scripts/calibrate_regime_classifier.py,
+    tests/unit/test_phase9_partition_tensors.py, etc.).
     """
 
     if output_mode == "classification":
@@ -1023,15 +1028,6 @@ def _build_partition_tensors(
             "_build_partition_tensors produced an empty partition; "
             "every walk-forward fold must carry at least one event."
         )
-    # Multi-task aux tensors (#273) — built on the same filtered groups
-    # so the row order aligns with x / y. Stays None when multi_task_loss
-    # is off so non-multi-task callers see no behaviour change.
-    mt_aux: dict[str, torch.Tensor] | None = None
-    if multi_task_loss and output_mode == "classification":
-        mt_aux = _build_partition_multi_task_tensors(
-            active_groups, vol_regime_quantiles=vol_regime_quantiles
-        )
-
     if lora_bundle is not None:
         # Round 5 (#244): tokenise each sequence's target-row text once
         # and return (input_ids, attention_mask) in the text slots.
@@ -1045,11 +1041,11 @@ def _build_partition_tensors(
             lora_bundle.tokenizer,
             max_tokens=max_tokens,
         )
-        return x, y, scale, input_ids, attention_mask, mt_aux
+        return x, y, scale, input_ids, attention_mask
     text_emb, text_missing, _ = _build_text_embedding_tensors(
         active_groups, fallback_in_dim=fallback_text_in_dim
     )
-    return x, y, scale, text_emb, text_missing, mt_aux
+    return x, y, scale, text_emb, text_missing
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1236,15 +1232,24 @@ def train_model(
                 "multi_task_loss=True requires output_mode='classification'; "
                 f"got output_mode={active_output_mode!r}"
             )
-        train_x, train_y, close_scale, train_text_emb, train_text_missing, train_mt_aux = _build_partition_tensors(
+        train_x, train_y, close_scale, train_text_emb, train_text_missing = _build_partition_tensors(
             train_groups,
             fallback_text_in_dim=fallback_text_in_dim,
             close_scale=None,
             output_mode=active_output_mode,
             vol_regime_quantiles=fitted_quantiles,
             lora_bundle=encoder_lora_bundle,
-            multi_task_loss=multi_task_loss_active,
         )
+        # Multi-task aux tensors (#273) — sibling call so the partition
+        # tensorisation contract on _build_partition_tensors stays a
+        # stable 5-tuple for the calibrate script + the determinism test.
+        # The aux builder filters rows by the same vol_regime_class_for
+        # predicate _build_training_tensors applies in classification
+        # mode, so the row order aligns with train_x / train_y.
+        if multi_task_loss_active:
+            train_mt_aux = _build_partition_multi_task_tensors(
+                train_groups, vol_regime_quantiles=fitted_quantiles
+            )
         # Fit the rich-feature RobustScaler on the TRAIN tensor only;
         # no-op for legacy 6-feature tensors so the regression contract
         # at tests/regression/test_forecaster_determinism.py stays
@@ -1252,25 +1257,31 @@ def train_model(
         # parameters so val + test see the train-time normalisation.
         rich_feature_scaler = fit_rich_feature_scaler_tensor(train_x)
         train_x = apply_rich_feature_scaler_tensor(train_x, rich_feature_scaler)
-        val_x, val_y, _val_scale, val_text_emb, val_text_missing, val_mt_aux = _build_partition_tensors(
+        val_x, val_y, _val_scale, val_text_emb, val_text_missing = _build_partition_tensors(
             val_groups,
             fallback_text_in_dim=fallback_text_in_dim,
             close_scale=close_scale,
             output_mode=active_output_mode,
             vol_regime_quantiles=fitted_quantiles,
             lora_bundle=encoder_lora_bundle,
-            multi_task_loss=multi_task_loss_active,
         )
+        if multi_task_loss_active:
+            val_mt_aux = _build_partition_multi_task_tensors(
+                val_groups, vol_regime_quantiles=fitted_quantiles
+            )
         val_x = apply_rich_feature_scaler_tensor(val_x, rich_feature_scaler)
-        test_x, test_y, _test_scale, test_text_emb, test_text_missing, test_mt_aux = _build_partition_tensors(
+        test_x, test_y, _test_scale, test_text_emb, test_text_missing = _build_partition_tensors(
             test_groups,
             fallback_text_in_dim=fallback_text_in_dim,
             close_scale=close_scale,
             output_mode=active_output_mode,
             vol_regime_quantiles=fitted_quantiles,
             lora_bundle=encoder_lora_bundle,
-            multi_task_loss=multi_task_loss_active,
         )
+        if multi_task_loss_active:
+            test_mt_aux = _build_partition_multi_task_tensors(
+                test_groups, vol_regime_quantiles=fitted_quantiles
+            )
         test_x = apply_rich_feature_scaler_tensor(test_x, rich_feature_scaler)
         sequence_groups_for_summary = train_groups + val_groups + test_groups
     else:
