@@ -24,9 +24,13 @@ BATCH_SIZE="${BATCH_SIZE:-16}"
 LEARNING_RATE="${LEARNING_RATE:-2e-5}"
 ENCODER_ALIAS="${ENCODER_ALIAS:-finbert_fed_adjacent}"
 
-LOG_DIR="$REPO_ROOT/data/artifacts/text_multi_axis_training/$(date -u +%Y%m%dT%H%M%SZ)"
+# Logs land under /tmp because backend/data/artifacts/ is root-owned
+# (Docker writes as root by default); the container itself still
+# writes checkpoints to /app/models which bind-mounts back to
+# backend/models on the host.
+LOG_DIR="${LOG_DIR:-/tmp/fed-pulse/text_multi_axis_training/$(date -u +%Y%m%dT%H%M%SZ)}"
 mkdir -p "$LOG_DIR"
-echo "[overnight] logs and per-seed checkpoints land under $LOG_DIR"
+echo "[overnight] logs land under $LOG_DIR; checkpoints under backend/models/"
 
 # Each seed writes its best-epoch checkpoint to a seed-specific path
 # inside backend/models/ so we can compare val loss after the run and
