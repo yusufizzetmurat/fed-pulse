@@ -145,7 +145,7 @@ def _build_model(
     model_config: ModelConfig | dict[str, Any] | None = None,
     *,
     device: torch.device | None = None,
-) -> "ForecasterModel | MultiModalForecasterModel":
+) -> ForecasterModel:
     # Local import keeps ``app.models.factory`` cold until training fires,
     # which keeps the FastAPI singleton import path narrow.
     from app.models.factory import build_forecaster
@@ -154,7 +154,15 @@ def _build_model(
     model = build_forecaster(resolved_config)
     if device is not None:
         model = model.to(device)
-    return model
+    # The factory may return MultiModalForecasterModel under
+    # ``fusion_mode=gated_infonce`` (#235). Downstream consumers
+    # (``_save_model_checkpoint``, ``_set_singleton_after_train``,
+    # ``app.services.forecaster._load_state_dict_loose``) only touch
+    # ``nn.Module`` APIs that both classes share, so the runtime
+    # contract holds even though the static return type narrows
+    # to ``ForecasterModel`` here. The narrower annotation keeps
+    # those callers' signatures unchanged.
+    return model  # type: ignore[return-value]
 
 
 def _zero_credibility(model: nn.Module, batch_size: int, device: torch.device) -> torch.Tensor | None:
