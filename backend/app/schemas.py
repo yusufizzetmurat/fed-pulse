@@ -345,6 +345,55 @@ class EvaluationCoverageResponse(BaseModel):
     computed_at: str
 
 
+class ClassificationBreakdownClass(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    class_id: int
+    precision: float
+    recall: float
+    f1: float
+    support: int
+    roc_auc: float | None = None
+    pr_auc: float | None = None
+
+
+class ClassificationBreakdownSource(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    relative_path: str
+    training_package_id: str | None = None
+    checkpoint_path: str | None = None
+    modified_at: str
+
+
+class ClassificationBreakdownResponse(BaseModel):
+    """The richer eval emitted by app/evaluation/classification_breakdown.py.
+
+    Surfaces the freshest ``best_trial.summary.metrics.classification_breakdown``
+    block written under ``data/artifacts/regime_*``. ``available`` is
+    false when no qualifying artifact exists — the UI then falls back to
+    its client-side aggregation across history rows."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    available: bool
+    confusion_matrix: list[list[int]] | None = None
+    per_class: list[ClassificationBreakdownClass] | None = None
+    macro_f1: float | None = None
+    macro_precision: float | None = None
+    macro_recall: float | None = None
+    macro_roc_auc: float | None = None
+    macro_pr_auc: float | None = None
+    weighted_f1: float | None = None
+    n_classes: int | None = None
+    # Frontend assumes the canonical {calm, normal, high} ordering for
+    # 3-class regime models. ``class_labels`` is filled when the source
+    # artifact carries it; otherwise the field is None and the UI uses
+    # its defaults.
+    class_labels: list[str] | None = None
+    source: ClassificationBreakdownSource | None = None
+
+
 class SymbolDescriptor(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 

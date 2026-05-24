@@ -262,6 +262,103 @@ def test_evaluation_coverage_returns_zero_sample_when_no_predicted_set(client):
     assert body["nominal"] is None
 
 
+def _write_breakdown_artifact(root, *, package_id="tp_fixture"):
+    import json
+    from pathlib import Path
+
+    artifact_dir = Path(root) / "artifacts" / "regime_baseline_tiers" / package_id
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "training_package_id": package_id,
+        "checkpoint_path": f"/app/models/forecaster_{package_id}.pt",
+        "best_trial": {
+            "summary": {
+                "metrics": {
+                    "classification_breakdown": {
+                        "confusion_matrix": [[10, 1, 2], [3, 12, 1], [1, 2, 8]],
+                        "per_class": [
+                            {
+                                "class_id": 0,
+                                "precision": 0.71,
+                                "recall": 0.77,
+                                "f1": 0.74,
+                                "support": 13,
+                                "roc_auc": 0.82,
+                                "pr_auc": 0.78,
+                            },
+                            {
+                                "class_id": 1,
+                                "precision": 0.80,
+                                "recall": 0.75,
+                                "f1": 0.77,
+                                "support": 16,
+                                "roc_auc": 0.85,
+                                "pr_auc": 0.80,
+                            },
+                            {
+                                "class_id": 2,
+                                "precision": 0.73,
+                                "recall": 0.73,
+                                "f1": 0.73,
+                                "support": 11,
+                                "roc_auc": 0.80,
+                                "pr_auc": 0.75,
+                            },
+                        ],
+                        "macro_f1": 0.75,
+                        "macro_precision": 0.75,
+                        "macro_recall": 0.75,
+                        "macro_roc_auc": 0.82,
+                        "macro_pr_auc": 0.78,
+                        "weighted_f1": 0.75,
+                        "n_classes": 3,
+                    },
+                },
+            },
+        },
+    }
+    path = artifact_dir / "forecaster_sweep_results.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_evaluation_classification_breakdown_reads_latest_artifact(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    _write_breakdown_artifact(tmp_path, package_id="tp_old")
+    # Newer artifact wins on mtime; touch to ensure mtime ordering.
+    import os
+    import time
+
+    time.sleep(0.05)
+    newer = _write_breakdown_artifact(tmp_path, package_id="tp_new")
+    os.utime(newer, None)
+
+    response = client.get("/evaluation/classification-breakdown")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert body["macro_f1"] == 0.75
+    assert body["n_classes"] == 3
+    assert len(body["per_class"]) == 3
+    assert body["per_class"][0]["class_id"] == 0
+    assert body["confusion_matrix"][0] == [10, 1, 2]
+    assert body["source"]["training_package_id"] == "tp_new"
+    assert body["source"]["relative_path"].endswith(".json")
+
+
+def test_evaluation_classification_breakdown_returns_unavailable_when_missing(
+    client, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    response = client.get("/evaluation/classification-breakdown")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is False
+    assert body["macro_f1"] is None
+    assert body["per_class"] is None
+    assert body["source"] is None
+
+
 def test_fomc_calendar_endpoint_returns_past_and_upcoming(client):
     response = client.get("/fomc/calendar", params={"as_of": "2024-09-18"})
     assert response.status_code == 200

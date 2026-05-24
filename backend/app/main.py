@@ -30,6 +30,9 @@ from app.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
     ArtifactFile,
+    ClassificationBreakdownClass,
+    ClassificationBreakdownResponse,
+    ClassificationBreakdownSource,
     DocumentParseResponse,
     DocumentParseUrlRequest,
     EvaluationCoverageResponse,
@@ -54,6 +57,7 @@ from app.services.document_parser import (
     parse_url,
 )
 from app.services.decision_forecast import load_next_fomc_artifacts
+from app.services.classification_breakdown_loader import load_latest as load_classification_breakdown
 from app.services.fomc_calendar import get_calendar
 from app.services.research_artifacts import (
     SECTIONS as RESEARCH_SECTIONS,
@@ -790,6 +794,41 @@ def evaluation_coverage(
     )
     _coverage_cache[cache_key] = (now, response)
     return response
+
+
+@app.get(
+    "/evaluation/classification-breakdown",
+    response_model=ClassificationBreakdownResponse,
+)
+def evaluation_classification_breakdown() -> ClassificationBreakdownResponse:
+    """Surface the freshest classification breakdown written by the
+    regime training scripts under ``data/artifacts/regime_*``. When no
+    qualifying artifact exists the response is ``available=False`` and
+    the /performance dashboard falls back to its client-side
+    aggregation."""
+
+    payload = load_classification_breakdown(DATA_DIR / "artifacts")
+    if payload is None:
+        return ClassificationBreakdownResponse(available=False)
+    return ClassificationBreakdownResponse(
+        available=True,
+        confusion_matrix=payload.confusion_matrix,
+        per_class=[ClassificationBreakdownClass(**row) for row in payload.per_class],
+        macro_f1=payload.macro_f1,
+        macro_precision=payload.macro_precision,
+        macro_recall=payload.macro_recall,
+        macro_roc_auc=payload.macro_roc_auc,
+        macro_pr_auc=payload.macro_pr_auc,
+        weighted_f1=payload.weighted_f1,
+        n_classes=payload.n_classes,
+        class_labels=payload.class_labels,
+        source=ClassificationBreakdownSource(
+            relative_path=payload.source_relative,
+            training_package_id=payload.training_package_id,
+            checkpoint_path=payload.checkpoint_path,
+            modified_at=payload.modified_at,
+        ),
+    )
 
 
 @app.get("/fomc/calendar", response_model=FomcCalendarResponse)
