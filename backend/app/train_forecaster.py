@@ -440,6 +440,40 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.set_defaults(encoder_lora=False)
+    # InfoNCE + gated fusion (#235). ``concat`` (default) is the legacy
+    # broadcast-text-into-LSTM-input path the determinism regression
+    # locks. ``gated_infonce`` dispatches the factory to
+    # ``MultiModalForecasterModel`` and the training loop adds the
+    # symmetric InfoNCE alignment loss between the modality projections
+    # on top of the classification loss.
+    parser.add_argument(
+        "--fusion-mode",
+        choices=("concat", "gated_infonce"),
+        default="concat",
+        help=(
+            "Multi-modal fusion strategy. ``concat`` (default) keeps the "
+            "legacy LSTM-input concat path. ``gated_infonce`` routes "
+            "through MultiModalForecasterModel + InfoNCE alignment loss."
+        ),
+    )
+    parser.add_argument(
+        "--infonce-lambda",
+        type=float,
+        default=0.1,
+        help="Weight on the InfoNCE alignment loss (gated_infonce only).",
+    )
+    parser.add_argument(
+        "--infonce-temperature",
+        type=float,
+        default=0.07,
+        help="Softmax temperature for the InfoNCE similarity matrix.",
+    )
+    parser.add_argument(
+        "--infonce-latent-dim",
+        type=int,
+        default=64,
+        help="Shared latent dim for the modality projections in the gated fusion.",
+    )
     # Phase B (#227) LR schedule + sequence-length knobs.
     parser.add_argument(
         "--lr-schedule",
@@ -828,6 +862,10 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         sequence_length=int(getattr(args, "sequence_length", 0) or 0),
         use_time_decay=bool(getattr(args, "use_time_decay", True)),
         encoder_lora=bool(getattr(args, "encoder_lora", False)),
+        fusion_mode=str(getattr(args, "fusion_mode", "concat") or "concat"),
+        infonce_lambda=float(getattr(args, "infonce_lambda", 0.1)),
+        infonce_temperature=float(getattr(args, "infonce_temperature", 0.07)),
+        infonce_latent_dim=int(getattr(args, "infonce_latent_dim", 64)),
     )
 
 

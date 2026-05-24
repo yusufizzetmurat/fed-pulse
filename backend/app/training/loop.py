@@ -314,6 +314,36 @@ def _unpack_batch(batch: Any) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor 
     )
 
 
+def _run_train_forward_and_align(
+    forward_model: nn.Module,
+    batch_x: torch.Tensor,
+    kwargs: dict[str, torch.Tensor],
+    *,
+    info_nce_loss_fn: nn.Module | None,
+    multimodal_active: bool,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Forward + (optional) InfoNCE alignment in one helper.
+
+    Returns ``(logits, align_loss_or_none)``. When ``multimodal_active``
+    is True, calls ``forward_with_modality_outputs`` on the wrapped
+    model and computes the InfoNCE term on ``(r_t, t_t)``; otherwise
+    runs the legacy single-output forward and returns ``None`` for
+    the alignment term so the caller can skip the addition.
+    """
+
+    if multimodal_active and info_nce_loss_fn is not None:
+        underlying = forward_model.module if hasattr(forward_model, "module") else forward_model
+        if not hasattr(underlying, "forward_with_modality_outputs"):
+            raise RuntimeError(
+                "multimodal_active=True but the wrapped model does not expose "
+                "forward_with_modality_outputs; check the factory dispatch."
+            )
+        out = underlying.forward_with_modality_outputs(batch_x, **kwargs)
+        align_loss = info_nce_loss_fn(out["r_t"], out["t_t"])
+        return out["logits"], align_loss
+    return forward_model(batch_x, **kwargs), None
+
+
 def _evaluate_model(
     model: nn.Module,
     loader: DataLoader[Any],
@@ -1209,6 +1239,30 @@ def train_model(
     else:
         loss_fn = nn.SmoothL1Loss(beta=0.02)
 
+    # InfoNCE alignment loss for the gated_infonce fusion mode (#235).
+    # The training step calls ``forward_with_modality_outputs`` on the
+    # multi-modal model to recover the per-modality projections, then
+    # adds ``lambda * info_nce(r_t, t_t)`` on top of the classification
+    # loss. The single-modality path leaves both ``info_nce_loss`` and
+    # ``infonce_lambda`` unset and skips the alignment term entirely.
+    info_nce_loss_fn: nn.Module | None = None
+    infonce_lambda = 0.0
+    multimodal_active = (
+        str(getattr(active_model_config, "fusion_mode", "concat") or "concat")
+        == "gated_infonce"
+    )
+    if multimodal_active:
+        from app.training.info_nce_loss import InfoNCELoss
+
+        temperature = float(getattr(active_model_config, "infonce_temperature", 0.07))
+        infonce_lambda = float(getattr(active_model_config, "infonce_lambda", 0.1))
+        info_nce_loss_fn = InfoNCELoss(temperature=temperature).to(device_obj)
+        print(
+            f"[train_model] gated_infonce active: lambda={infonce_lambda} "
+            f"temperature={temperature}",
+            flush=True,
+        )
+
     active_arch = str(getattr(active_model_config, "architecture", "lstm") or "lstm")
     effective_compile, effective_amp = _resolve_compile_amp_flags(
         work_model,
@@ -1289,8 +1343,16 @@ def train_model(
                         kwargs["text_embedding_missing"] = batch_text_missing
             if effective_amp:
                 with torch.cuda.amp.autocast():
-                    predictions = forward_model(batch_x, **kwargs)
+                    predictions, align_loss = _run_train_forward_and_align(
+                        forward_model,
+                        batch_x,
+                        kwargs,
+                        info_nce_loss_fn=info_nce_loss_fn,
+                        multimodal_active=multimodal_active,
+                    )
                     loss = loss_fn(predictions, batch_y)
+                    if align_loss is not None and infonce_lambda > 0.0:
+                        loss = loss + infonce_lambda * align_loss
                 assert scaler is not None
                 scaler.scale(loss).backward()
                 if apply_grad_clip:
@@ -1299,8 +1361,16 @@ def train_model(
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                predictions = forward_model(batch_x, **kwargs)
+                predictions, align_loss = _run_train_forward_and_align(
+                    forward_model,
+                    batch_x,
+                    kwargs,
+                    info_nce_loss_fn=info_nce_loss_fn,
+                    multimodal_active=multimodal_active,
+                )
                 loss = loss_fn(predictions, batch_y)
+                if align_loss is not None and infonce_lambda > 0.0:
+                    loss = loss + infonce_lambda * align_loss
                 loss.backward()
                 if apply_grad_clip:
                     nn.utils.clip_grad_norm_(work_model.parameters(), max_norm=clip_norm_value)
