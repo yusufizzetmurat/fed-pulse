@@ -123,11 +123,11 @@ export function RegimeHeadline({
             ) : null}
           </div>
         </div>
-        <CardTitle className="flex flex-wrap items-end gap-4">
-          <span className="numeric text-5xl font-semibold capitalize tracking-tight">
+        <CardTitle className="flex flex-wrap items-end gap-3 sm:gap-4">
+          <span className="numeric text-4xl font-semibold capitalize tracking-tight sm:text-5xl">
             {regime.argmax_class}
           </span>
-          <span className="numeric text-base text-muted-foreground">
+          <span className="numeric text-sm text-muted-foreground sm:text-base">
             argmax · {(argmaxProb * 100).toFixed(1)}%
           </span>
           <div className="flex flex-wrap items-center gap-1.5">

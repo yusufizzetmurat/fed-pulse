@@ -486,7 +486,7 @@ export default function ComparePage() {
         <StatusBar />
         <main id="main-content" tabIndex={-1} className="container space-y-6 py-8 focus:outline-none">
           <div className="space-y-2">
-            <h1 className="text-3xl font-semibold tracking-tight">Compare runs</h1>
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Compare runs</h1>
             <p className="max-w-2xl text-muted-foreground">
               Pick two past analyses and see the stance, prediction, and confidence deltas side by
               side. Selections are sticky in the URL — share the link to send a paired view.
