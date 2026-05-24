@@ -61,9 +61,10 @@ export async function deleteHistoryRun(baseUrl: string, runId: string): Promise<
 
 export async function fetchHistoryRealized(
   baseUrl: string,
-  runId: string
+  runId: string,
+  signal?: AbortSignal,
 ): Promise<HistoryRealizedResponse> {
-  const response = await axios.get(`${baseUrl}/history/${runId}/realized`);
+  const response = await axios.get(`${baseUrl}/history/${runId}/realized`, { signal });
   return response.data as HistoryRealizedResponse;
 }
 
