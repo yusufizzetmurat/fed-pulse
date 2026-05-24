@@ -12,6 +12,14 @@ vi.mock("@/components/shell/status-bar", () => ({
   StatusBar: () => null,
 }));
 
+// CommandPalette mounts inside KeyboardShortcuts and calls useRouter;
+// neither the shortcuts test nor the page tests provide a Next router
+// context. Stub it out here so the workspace + the shortcuts suite
+// don't blow up on `NextRouter was not mounted`.
+vi.mock("@/components/shell/command-palette", () => ({
+  CommandPalette: () => null,
+}));
+
 afterEach(() => {
   cleanup();
 });

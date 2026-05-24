@@ -19,17 +19,30 @@ vi.mock("next/head", () => ({
 }));
 
 const fetchHistoryMock = vi.fn();
+const fetchHistoryRealizedMock = vi.fn();
 const deleteHistoryRunMock = vi.fn();
 
 vi.mock("@/lib/analyze/api", () => ({
   resolveApiBaseUrl: () => "http://localhost:8000",
   fetchHistory: (...args: unknown[]) => fetchHistoryMock(...args),
+  fetchHistoryRealized: (...args: unknown[]) => fetchHistoryRealizedMock(...args),
   deleteHistoryRun: (...args: unknown[]) => deleteHistoryRunMock(...args),
 }));
 
 describe("HistoryPage", () => {
   beforeEach(() => {
     fetchHistoryMock.mockReset();
+    fetchHistoryRealizedMock.mockReset();
+    fetchHistoryRealizedMock.mockResolvedValue({
+      run_id: "stub",
+      symbol: "^GSPC",
+      document_date: "2026-01-01",
+      horizon: "10d",
+      timestamps: [],
+      close: [],
+      volatility: [],
+      realized_regime: null,
+    });
     deleteHistoryRunMock.mockReset();
   });
 
@@ -74,6 +87,8 @@ describe("HistoryPage", () => {
     fetchHistoryMock.mockResolvedValue({ total: 0, limit: 20, offset: 0, items: [] });
     const { default: HistoryPage } = await import("@/pages/history");
     render(<HistoryPage />);
-    await waitFor(() => expect(screen.getByText(/no runs yet/i)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(/no runs match these filters/i)).toBeInTheDocument(),
+    );
   });
 });
