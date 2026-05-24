@@ -131,8 +131,13 @@ describe("PerformancePage", () => {
       expect(fetchHistoryRealizedMock).toHaveBeenCalledTimes(2),
     );
 
-    expect(await screen.findByText(/Argmax accuracy/i)).toBeInTheDocument();
-    expect(screen.getByText(/Empirical coverage/i)).toBeInTheDocument();
+    // Argmax accuracy appears both as a KPI tile label and as a
+    // per-asset table column header. Asserting on the count avoids the
+    // ambiguous-match error.
+    await waitFor(() =>
+      expect(screen.getAllByText(/Argmax accuracy/i).length).toBeGreaterThan(0),
+    );
+    expect(screen.getAllByText(/Empirical coverage/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/Per-class metrics/i)).toBeInTheDocument();
     expect(screen.getByText(/Confusion matrix/i)).toBeInTheDocument();
     expect(screen.getByText(/Per-asset breakdown/i)).toBeInTheDocument();
