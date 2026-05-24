@@ -25,7 +25,10 @@ ARCHITECTURE="${2:-transformer}"
 TEXT_ENCODER="${TEXT_ENCODER:-finbert_fed_adjacent}"
 SEEDS="${SEEDS:-97}"
 FOLDS="${FOLDS:-wf_fold_1 wf_fold_2 wf_fold_3 wf_fold_4}"
-LAMBDAS=("${LAMBDA_LIST[@]:-0.05 0.1 0.3}")
+# LAMBDA_LIST is a space-separated env override (e.g. LAMBDA_LIST="0.1 0.2")
+# Default to the canonical three cells the lambda ablation table expects.
+LAMBDA_LIST="${LAMBDA_LIST:-0.05 0.1 0.3}"
+read -ra LAMBDAS <<< "$LAMBDA_LIST"
 
 # Locked HP cell. Use the Path B winning HP from §6.7
 # (transformer hidden=128, layers=2, dropout=0.1, lr=3e-4, wd=1e-4).
