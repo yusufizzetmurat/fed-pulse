@@ -315,6 +315,44 @@ def _unpack_batch(batch: Any) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor 
     )
 
 
+def _summarise_gate(
+    gate_chunks: list[torch.Tensor],
+    true_classes: torch.Tensor,
+    n_classes: int,
+) -> dict[str, Any] | None:
+    """Reduce per-batch gate tensors into a per-fold diagnostic dict.
+
+    Returns ``None`` when the eval pass collected no gate values
+    (legacy single-modal path). The summary carries the scalar mean
+    (>0.5 leans market, <0.5 leans text), per-class means so the
+    thesis appendix can say whether the gate shifts modality
+    reliance per regime, and the partition row count the summary
+    was averaged over.
+    """
+
+    if not gate_chunks:
+        return None
+    gate = torch.cat(gate_chunks, dim=0)  # (N, latent_dim)
+    n_rows = int(gate.size(0))
+    if n_rows == 0:
+        return None
+    overall_mean = float(gate.mean().item())
+    per_dim_mean: list[float] = [float(v) for v in gate.mean(dim=0).tolist()]
+    per_class_mean: list[float | None] = [None] * n_classes
+    if true_classes.numel() == n_rows:
+        for class_idx in range(n_classes):
+            mask = true_classes == class_idx
+            count = int(mask.sum().item())
+            if count > 0:
+                per_class_mean[class_idx] = float(gate[mask].mean().item())
+    return {
+        "mean": overall_mean,
+        "mean_per_class": per_class_mean,
+        "mean_per_dim": per_dim_mean,
+        "n_rows": n_rows,
+    }
+
+
 def _run_train_forward_and_align(
     forward_model: nn.Module,
     batch_x: torch.Tensor,
@@ -415,7 +453,21 @@ def _evaluate_model(
     pred_class_chunks: list[torch.Tensor] = []
     true_class_chunks: list[torch.Tensor] = []
     class_score_chunks: list[torch.Tensor] = []
-    use_text_path = bool(getattr(model, "_text_path_active", False))
+    # Gated InfoNCE fusion (#235) diagnostic. When the model exposes
+    # ``forward_with_modality_outputs`` the eval pass also captures
+    # the per-row gate tensor so the post-loop summariser can attach
+    # the gate distribution to the EvaluationMetrics. Empty on every
+    # legacy single-modal path.
+    multimodal_underlying = (
+        model.module if hasattr(model, "module") else model
+    )
+    multimodal_forward = getattr(
+        multimodal_underlying, "forward_with_modality_outputs", None
+    )
+    gate_chunks: list[torch.Tensor] = []
+    use_text_path = bool(getattr(model, "_text_path_active", False)) or (
+        multimodal_forward is not None
+    )
     non_blocking = device.type == "cuda"
     with torch.no_grad():
         for batch in loader:
@@ -465,7 +517,14 @@ def _evaluate_model(
                                 device, non_blocking=non_blocking
                             )
                         kwargs["text_embedding_missing"] = batch_text_missing
-            predictions = model(batch_x, **kwargs)
+            if multimodal_forward is not None:
+                modality_out = multimodal_forward(batch_x, **kwargs)
+                predictions = modality_out["logits"]
+                # Capture gate on CPU in float32 so the per-partition
+                # accumulator stays bounded across long val/test splits.
+                gate_chunks.append(modality_out["gate"].detach().to("cpu", torch.float32))
+            else:
+                predictions = model(batch_x, **kwargs)
             loss = loss_fn(predictions, batch_y)
             if ce_weight is not None:
                 batch_weight_sum = ce_weight.index_select(
@@ -564,6 +623,8 @@ def _evaluate_model(
                     [float(p) for p in row] for row in class_scores_list
                 ]
 
+        gate_summary = _summarise_gate(gate_chunks, true_classes, n_classes_eval)
+
         return EvaluationMetrics(
             loss=regime_loss,
             close_rmse=float("inf"),
@@ -576,6 +637,7 @@ def _evaluate_model(
             predictions=predictions_payload,
             targets=targets_payload,
             class_scores=scores_payload,
+            gate_summary=gate_summary,
         )
 
     close_value = float(close_squared_error.item())

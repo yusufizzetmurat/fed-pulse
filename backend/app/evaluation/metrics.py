@@ -47,6 +47,15 @@ class EvaluationMetrics:
     predictions: list[int] | None = None
     targets: list[int] | None = None
     class_scores: list[list[float]] | None = None
+    # Gated InfoNCE fusion (#235) diagnostic. Populated only when the
+    # model is a MultiModalForecasterModel; ``gate_summary['mean']``
+    # is the scalar mean gate value (>0.5 → market-leaning, <0.5 →
+    # text-leaning), ``gate_summary['mean_per_class']`` carries the
+    # class-conditional mean so the thesis appendix can say whether
+    # the gate shifts modality reliance per regime, and
+    # ``gate_summary['n_rows']`` is the eval-partition row count the
+    # summary was averaged over.
+    gate_summary: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
