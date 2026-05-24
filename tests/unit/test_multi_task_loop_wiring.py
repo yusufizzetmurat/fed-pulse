@@ -190,11 +190,23 @@ def test_multi_task_loss_active_rejects_gated_infonce_combo() -> None:
         )
 
 
-def _dummy_feature_vector(*, vol: float = 0.02, day: int = 1):
+def _dummy_feature_vector(
+    *,
+    vol: float = 0.02,
+    day: int = 1,
+    stance: int = -1,
+    stance_present: bool = False,
+    factor: float = 0.0,
+    factor_present: bool = False,
+    certainty: int = -1,
+    certainty_present: bool = False,
+    topic: int = -1,
+    topic_present: bool = False,
+):
     from app.models.config import FeatureVector
 
     return FeatureVector(
-        date=_dt.date(2025, 1, day),
+        date=_dt.date(2025, 1, 1) + _dt.timedelta(days=day - 1),
         sentiment_score=0.0,
         market_close=100.0,
         market_volatility=0.01,
@@ -202,4 +214,77 @@ def _dummy_feature_vector(*, vol: float = 0.02, day: int = 1):
         volatility_change=0.0,
         elapsed_time=0.0,
         forward_realized_vol_10d=vol,
+        target_stance_idx=stance,
+        target_stance_present=stance_present,
+        target_factor=factor,
+        target_factor_present=factor_present,
+        target_certainty_idx=certainty,
+        target_certainty_present=certainty_present,
+        target_topic_idx=topic,
+        target_topic_present=topic_present,
     )
+
+
+def test_multi_task_loss_actually_runs_one_training_step() -> None:
+    """Integration: run train_model with multi_task_loss=True for one epoch.
+
+    Confirms the multi-task forward + loss + backward path executes end-
+    to-end and does not silently fall back to the single-task CE. Uses
+    a tiny synthetic walk-forward fold so the test stays CPU-bound and
+    finishes in a few seconds.
+    """
+
+    import random
+
+    from app.models.config import ModelConfig
+    from app.training.loop import train_model
+
+    random.seed(11)
+    n = 40
+    # Vary forward_realized_vol_10d across rows so the per-fold quantile
+    # fit produces 3 distinct buckets; populate every aux axis with a
+    # valid label so the per-axis losses receive real gradient signal.
+    groups = [
+        [
+            _dummy_feature_vector(
+                day=i + 1,
+                vol=0.01 + 0.001 * i,
+                stance=i % 3,
+                stance_present=True,
+                factor=((i % 5) - 2) / 5.0,
+                factor_present=True,
+                certainty=i % 3,
+                certainty_present=True,
+                topic=i % 4,
+                topic_present=True,
+            )
+            for i in range(n)
+        ]
+    ]
+    config = ModelConfig(
+        output_mode="classification",
+        multi_task_loss=True,
+        n_classes=3,
+    )
+    result = train_model(
+        model_config=config,
+        train_sequence_groups=groups,
+        val_sequence_groups=groups,
+        test_sequence_groups=groups,
+        epochs=1,
+        batch_size=8,
+        seed=11,
+        save_checkpoint=False,
+        use_compile=False,
+        use_amp=False,
+    )
+    # The summary must record that an epoch actually completed; if the
+    # multi-task branch had silently raised, ``epochs_completed`` would
+    # stay at 0.
+    assert result.summary.epochs_completed == 1, (
+        "multi-task training step did not complete one full epoch — the "
+        "loss path or DataLoader wiring is broken."
+    )
+    # The model returned must be in classification mode (the head still
+    # has the 4 branches) so the aux gradient actually trained something.
+    assert getattr(result.model, "output_mode", None) == "classification"

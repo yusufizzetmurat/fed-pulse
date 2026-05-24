@@ -599,14 +599,19 @@ def _run_train_forward_multi_task(
 ) -> dict[str, torch.Tensor]:
     """Run ``forward_multi_task`` on the underlying model.
 
-    Unwraps torch.compile / DDP / similar wrappers so the call lands on
-    the real :meth:`ForecasterModel.forward_multi_task` (returns a
-    gradient-tracked dict of per-axis logits). Mirrors the wrapper-
-    unwrap done in :func:`_run_train_forward_and_align` for the
-    multimodal path so multi-task plays nicely with ``--use-compile``.
+    Unwraps DDP (``.module``) and ``torch.compile`` (``._orig_mod``)
+    wrappers so the call lands on the real
+    :meth:`ForecasterModel.forward_multi_task` (returns a
+    gradient-tracked dict of per-axis logits). Compiled wrappers do
+    not expose ``module`` — without the ``_orig_mod`` fallback the
+    multi-task forward would silently run in eager mode even when
+    ``--use-compile`` is on.
     """
 
-    underlying = forward_model.module if hasattr(forward_model, "module") else forward_model
+    if hasattr(forward_model, "module"):
+        underlying = forward_model.module
+    else:
+        underlying = getattr(forward_model, "_orig_mod", forward_model)
     forward_multi = getattr(underlying, "forward_multi_task", None)
     if forward_multi is None:
         raise RuntimeError(
@@ -1626,22 +1631,15 @@ def train_model(
     # supervised.
     multi_task_loss_fn: nn.Module | None = None
     if multi_task_loss_active and _active_output_mode == "classification":
-        from app.training.loss import MultiTaskLoss
-
-        # Per-axis weights from the train partition; uniform fallback when
-        # the helper saw no rows (empty mask edge case).
-        n_certainty_classes = int(getattr(work_model, "n_classes", 3) or 3)
-        n_topic_classes = int(
-            getattr(active_model_config, "n_classes", 3) or 3
-        )
-        # The actual per-axis class counts are pinned in app.models.config
-        # (MULTI_TASK_*_CLASSES). Pull them at runtime so the loss matches
-        # the head shape.
         from app.models.config import (
             MULTI_TASK_CERTAINTY_CLASSES,
             MULTI_TASK_TOPIC_CLASSES,
         )
+        from app.training.loss import MultiTaskLoss
 
+        # Per-axis class counts pinned in app.models.config; the head
+        # uses these exact constants so the fitted class-weight tensors
+        # match the logit shape.
         n_certainty_classes = int(MULTI_TASK_CERTAINTY_CLASSES)
         n_topic_classes = int(MULTI_TASK_TOPIC_CLASSES)
         if train_mt_aux is None:
@@ -1795,8 +1793,16 @@ def train_model(
             amp_ctx: Any = (
                 torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
             )
+            if multi_task_loss_fn is not None and batch_mt_aux is None:
+                raise RuntimeError(
+                    "multi_task_loss_fn is active but the DataLoader yielded "
+                    "a batch without the aux tensors. This usually means the "
+                    "TensorDataset for this partition was built without the "
+                    "multi-task aux block — check the partition build path."
+                )
             with amp_ctx:
-                if multi_task_loss_fn is not None and batch_mt_aux is not None:
+                if multi_task_loss_fn is not None:
+                    assert batch_mt_aux is not None  # the guard above narrows this
                     logits_dict = _run_train_forward_multi_task(
                         forward_model, batch_x, kwargs
                     )
