@@ -61,12 +61,16 @@ class _AxisRow:
 
     ``targets`` and ``masks`` are dicts keyed by axis name so the
     DataLoader collate path can stack them into batched tensors
-    without per-axis branching.
+    without per-axis branching. ``source`` carries the originating
+    corpus (e.g. ``"gtfintechlab/federal_reserve_system"``,
+    ``"events_parquet"``) so the eval pass can slice per-bank metrics
+    (D from the 2026-05-24 plan).
     """
 
     text: str
     targets: dict[str, float | int] = field(default_factory=dict)
     masks: dict[str, bool] = field(default_factory=dict)
+    source: str = ""
 
 
 def _set_all_seeds(seed: int) -> None:
@@ -184,7 +188,10 @@ def _load_supervised_rows(events_parquet: Path) -> list[_AxisRow]:
         targets, masks = _row_targets(record)
         if not any(masks.values()):
             continue
-        rows.append(_AxisRow(text=text, targets=targets, masks=masks))
+        source = str(record.get("source") or "events_parquet")
+        rows.append(
+            _AxisRow(text=text, targets=targets, masks=masks, source=source)
+        )
     return rows
 
 
@@ -203,7 +210,9 @@ _GTFINTECHLAB_DATASET_IDS: tuple[str, ...] = (
 )
 
 
-def _gtfintechlab_row_to_axis_row(item: dict[str, Any]) -> _AxisRow | None:
+def _gtfintechlab_row_to_axis_row(
+    item: dict[str, Any], *, source: str = "gtfintechlab"
+) -> _AxisRow | None:
     """Map a single gtfintechlab sentence-level row to ``_AxisRow``.
 
     The gtfintechlab schema is uniform across all six bank datasets:
@@ -252,7 +261,7 @@ def _gtfintechlab_row_to_axis_row(item: dict[str, Any]) -> _AxisRow | None:
     # render as low-confidence.
     if not any(masks.values()):
         return None
-    return _AxisRow(text=text, targets=targets, masks=masks)
+    return _AxisRow(text=text, targets=targets, masks=masks, source=source)
 
 
 def _gtfintechlab_datasets_module() -> Any:
@@ -308,7 +317,7 @@ def _gtfintechlab_split_rows(
         return []
     out: list[_AxisRow] = []
     for record in ds:
-        row = _gtfintechlab_row_to_axis_row(dict(record))
+        row = _gtfintechlab_row_to_axis_row(dict(record), source=dataset_id)
         if row is not None:
             out.append(row)
     return out
@@ -455,6 +464,10 @@ class _MultiAxisDataset(Dataset):
             "mask_factor": bool(row.masks["factor"]),
             "mask_certainty": bool(row.masks["certainty"]),
             "mask_topic": bool(row.masks["topic"]),
+            # Source bank label rides on every batch row so the eval
+            # pass can compute per-bank macro-F1 without re-loading
+            # the original rows. Collated as a list of strings.
+            "source": row.source,
         }
 
 
@@ -486,6 +499,7 @@ def _collate(batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
     out["mask_topic"] = torch.tensor(
         [item["mask_topic"] for item in batch], dtype=torch.bool
     )
+    out["source"] = [str(item.get("source", "")) for item in batch]
     return out
 
 
@@ -534,6 +548,93 @@ def _train_one_epoch(
 
 
 @torch.no_grad()
+def _macro_f1_from_arrays(
+    predictions: list[int], targets: list[int], n_classes: int
+) -> float:
+    """Plain unweighted macro-F1 over the supplied row-level arrays.
+
+    Avoids a heavy sklearn dependency on what is otherwise a small
+    inline computation. Empty inputs return ``0.0``. Per-class F1 is
+    ``0.0`` when both precision and recall vanish (a class never
+    appears in either predictions or targets).
+    """
+
+    if not predictions or not targets or len(predictions) != len(targets):
+        return 0.0
+    f1_sum = 0.0
+    for cls in range(n_classes):
+        tp = sum(1 for p, t in zip(predictions, targets) if p == cls and t == cls)
+        fp = sum(1 for p, t in zip(predictions, targets) if p == cls and t != cls)
+        fn = sum(1 for p, t in zip(predictions, targets) if p != cls and t == cls)
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        denom = precision + recall
+        f1 = 2 * precision * recall / denom if denom > 0 else 0.0
+        f1_sum += f1
+    return f1_sum / max(n_classes, 1)
+
+
+@torch.no_grad()
+def _evaluate_per_bank(
+    model: TextMultiAxisClassifier,
+    loader: DataLoader,
+    device: torch.device,
+) -> dict[str, dict[str, dict[str, float]]]:
+    """Per-source per-axis macro-F1 breakdown on the eval partition (D, #209).
+
+    Returns ``{source: {axis: {macro_f1, n}}}`` where ``source`` is the
+    originating corpus tag (e.g. ``"gtfintechlab/federal_reserve_system"``,
+    ``"events_parquet"``) and ``axis`` ∈ ``{stance, certainty, topic}``.
+    Factor is regression-typed and is omitted here; the parent
+    ``_evaluate`` already reports its SmoothL1 loss.
+
+    Rows whose axis mask is False on a given (source, axis) are
+    dropped before computing F1 — keeps the macro-F1 honest on the
+    sparse axes (factor / certainty / topic) where most rows from
+    most banks have nothing to score.
+    """
+
+    model.eval()
+    per_source_axis: dict[str, dict[str, list[tuple[int, int]]]] = {}
+    for batch in loader:
+        input_ids = batch["input_ids"].to(device)
+        attn = batch["attention_mask"].to(device)
+        logits = model(input_ids=input_ids, attention_mask=attn)
+        sources = batch["source"]
+        for axis_name, n_classes in (
+            ("stance", MULTI_TASK_STANCE_CLASSES),
+            ("certainty", MULTI_TASK_CERTAINTY_CLASSES),
+            ("topic", MULTI_TASK_TOPIC_CLASSES),
+        ):
+            mask = batch[f"mask_{axis_name}"]
+            targets = batch[f"target_{axis_name}"]
+            preds = logits[axis_name].argmax(dim=-1).detach().to("cpu")
+            for i in range(len(sources)):
+                if not bool(mask[i].item()):
+                    continue
+                source = str(sources[i])
+                bucket = per_source_axis.setdefault(source, {})
+                axis_bucket = bucket.setdefault(axis_name, [])
+                axis_bucket.append((int(preds[i].item()), int(targets[i].item())))
+
+    axis_n_classes = {
+        "stance": MULTI_TASK_STANCE_CLASSES,
+        "certainty": MULTI_TASK_CERTAINTY_CLASSES,
+        "topic": MULTI_TASK_TOPIC_CLASSES,
+    }
+    out: dict[str, dict[str, dict[str, float]]] = {}
+    for source, axis_bucket in per_source_axis.items():
+        out[source] = {}
+        for axis_name, rows in axis_bucket.items():
+            preds = [p for p, _t in rows]
+            tgts = [t for _p, t in rows]
+            out[source][axis_name] = {
+                "macro_f1": _macro_f1_from_arrays(preds, tgts, axis_n_classes[axis_name]),
+                "n": len(rows),
+            }
+    return out
+
+
 def _evaluate(
     model: TextMultiAxisClassifier,
     loader: DataLoader,
@@ -746,6 +847,27 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     _logger.info("training_complete best_val_loss=%.4f", best_val_loss)
+
+    # Per-bank breakdown on the val partition (D, 2026-05-24). Lands
+    # next to the canonical checkpoint as
+    # ``<checkpoint_stem>.per_bank_metrics.json`` so wiki §6.9 can
+    # quote per-source macro-F1 without re-running the eval.
+    try:
+        per_bank = _evaluate_per_bank(model, val_loader, device)
+    except Exception:  # pragma: no cover — defensive
+        _logger.warning("per_bank_eval_failed", exc_info=True)
+        per_bank = None
+    if per_bank:
+        per_bank_path = Path(
+            str(Path(args.output_checkpoint).with_suffix(""))
+            + ".per_bank_metrics.json"
+        )
+        per_bank_path.parent.mkdir(parents=True, exist_ok=True)
+        import json as _json
+
+        per_bank_path.write_text(_json.dumps(per_bank, indent=2), encoding="utf-8")
+        _logger.info("per_bank_metrics_written path=%s", per_bank_path)
+
     return 0
 
 

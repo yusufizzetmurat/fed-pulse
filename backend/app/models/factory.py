@@ -91,6 +91,16 @@ def build_forecaster(
     kwargs.pop("infonce_lambda", None)
     kwargs.pop("infonce_temperature", None)
     kwargs.pop("infonce_latent_dim", None)
+    # Multi-task loss (#273) is a training-loop concern; the existing
+    # MultiTaskHead is already wired on the ForecasterModel (since #272)
+    # in classification mode. These knobs stash on the built module so
+    # ``ModelConfig.from_model`` recovers them when the checkpoint is
+    # loaded for resume / inference.
+    multi_task_loss_flag = bool(kwargs.pop("multi_task_loss", False))
+    multi_task_lambda_stance = float(kwargs.pop("multi_task_lambda_stance", 1.0))
+    multi_task_lambda_factor = float(kwargs.pop("multi_task_lambda_factor", 0.3))
+    multi_task_lambda_certainty = float(kwargs.pop("multi_task_lambda_certainty", 0.3))
+    multi_task_lambda_topic = float(kwargs.pop("multi_task_lambda_topic", 0.3))
     # Phase 9 V2 (#195) fields all forwarded: ``output_mode`` /
     # ``n_classes`` drive the head shape; ``vol_regime_quantiles`` /
     # ``vol_regime_target`` ride on the module so the checkpoint
@@ -116,6 +126,11 @@ def build_forecaster(
     # the LoRA flag is a plain bool stashed for ``from_model`` to read
     # back, so suppress the noise rather than register a fake buffer.
     model.encoder_lora = encoder_lora_flag  # type: ignore[assignment]
+    model.multi_task_loss = multi_task_loss_flag  # type: ignore[assignment]
+    model.multi_task_lambda_stance = multi_task_lambda_stance  # type: ignore[assignment]
+    model.multi_task_lambda_factor = multi_task_lambda_factor  # type: ignore[assignment]
+    model.multi_task_lambda_certainty = multi_task_lambda_certainty  # type: ignore[assignment]
+    model.multi_task_lambda_topic = multi_task_lambda_topic  # type: ignore[assignment]
     return model
 
 
