@@ -280,6 +280,18 @@ class ModelConfig:
     # per batch through the LoRA-wrapped tower. Scoped to a single
     # arch x seed cell -- not a default replacement.
     encoder_lora: bool = False
+    # Multi-modal fusion (#235). ``concat`` (default) keeps the legacy
+    # ForecasterModel path where the text adapter output is
+    # broadcast-concatenated to every LSTM timestep. ``gated_infonce``
+    # routes the build through :class:`MultiModalForecasterModel`: the
+    # market features stream through the recurrent core untouched, the
+    # text embedding feeds the gated fusion directly, and the training
+    # loop adds an InfoNCE alignment loss on the two modality
+    # projections.
+    fusion_mode: str = "concat"
+    infonce_lambda: float = 0.1
+    infonce_temperature: float = 0.07
+    infonce_latent_dim: int = 64
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -312,6 +324,10 @@ class ModelConfig:
             sequence_length=int(getattr(model, "sequence_length", 0) or 0),
             use_time_decay=bool(getattr(model, "use_time_decay", True)),
             encoder_lora=bool(getattr(model, "encoder_lora", False)),
+            fusion_mode=str(getattr(model, "fusion_mode", "concat") or "concat"),
+            infonce_lambda=float(getattr(model, "infonce_lambda", 0.1)),
+            infonce_temperature=float(getattr(model, "infonce_temperature", 0.07)),
+            infonce_latent_dim=int(getattr(model, "infonce_latent_dim", 64)),
         )
 
     def to_dict(self) -> dict[str, Any]:
