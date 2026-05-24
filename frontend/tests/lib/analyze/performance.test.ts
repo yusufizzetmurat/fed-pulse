@@ -1,82 +1,124 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  aggregatePerformance,
-  computeRunPerformance,
+  REGIME_CLASSES,
+  aggregateRegimePerformance,
+  buildRunRegimeRecord,
 } from "@/lib/analyze/performance";
-import type { HistoryEntry } from "@/lib/analyze/types";
+import type { HistoryEntry, HistoryRealizedResponse } from "@/lib/analyze/types";
 
 function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
   return {
-    id: "run-1",
-    created_at: "2024-09-18T12:00:00Z",
-    symbol: "^GSPC",
-    document_date: "2024-09-18",
-    horizon: "3d",
+    id: overrides.id ?? "run-1",
+    created_at: "2026-05-24T12:00:00Z",
+    symbol: overrides.symbol ?? "^GSPC",
+    document_date: overrides.document_date ?? "2026-05-01",
+    horizon: overrides.horizon ?? "10d",
     forecast_mode: "fast",
-    stance: "hawkish",
-    sentiment_score: 0.7,
-    predicted_close: 5500,
-    current_close: 5400,
-    predicted_volatility: 0.012,
+    stance: "neutral",
+    sentiment_score: 0,
+    predicted_close: null,
+    current_close: null,
+    predicted_volatility: null,
     text_excerpt: null,
-    ...overrides,
+    argmax_regime: overrides.argmax_regime ?? "normal",
+    argmax_probability: overrides.argmax_probability ?? 0.5,
+    regime_set_size: overrides.regime_set_size ?? 2,
   };
 }
 
-describe("computeRunPerformance", () => {
-  it("marks direction correct when predicted and realized move the same way from spot", () => {
-    const result = computeRunPerformance(makeEntry(), 5520);
-    expect(result.direction_correct).toBe(true);
-    expect(result.absolute_error).toBeCloseTo(20, 5);
-    expect(result.percent_error).toBeCloseTo(20 / 5520, 5);
+function makeRealized(overrides: Partial<HistoryRealizedResponse> = {}): HistoryRealizedResponse {
+  return {
+    run_id: overrides.run_id ?? "run-1",
+    symbol: overrides.symbol ?? "^GSPC",
+    document_date: overrides.document_date ?? "2026-05-01",
+    horizon: overrides.horizon ?? "10d",
+    timestamps: [],
+    close: [],
+    volatility: [],
+    realized_regime: overrides.realized_regime ?? "normal",
+  };
+}
+
+describe("buildRunRegimeRecord", () => {
+  it("flags set-hit when the realised regime is inside the predicted set", () => {
+    const record = buildRunRegimeRecord({
+      entry: makeEntry({ argmax_regime: "normal" }),
+      realized: makeRealized({ realized_regime: "high" }),
+      payload: {
+        regime_classification: { predicted_set: ["normal", "high"] },
+      },
+    });
+    expect(record.setHit).toBe(true);
+    expect(record.argmax).toBe("normal");
+    expect(record.realized).toBe("high");
   });
 
-  it("marks direction incorrect when realized moves opposite to predicted", () => {
-    const result = computeRunPerformance(makeEntry(), 5380);
-    expect(result.direction_correct).toBe(false);
+  it("flags set-miss when the realised regime is outside the predicted set", () => {
+    const record = buildRunRegimeRecord({
+      entry: makeEntry({ argmax_regime: "normal" }),
+      realized: makeRealized({ realized_regime: "calm" }),
+      payload: {
+        regime_classification: { predicted_set: ["normal", "high"] },
+      },
+    });
+    expect(record.setHit).toBe(false);
   });
 
-  it("returns null fields when realized close is missing", () => {
-    const result = computeRunPerformance(makeEntry(), null);
-    expect(result.direction_correct).toBeNull();
-    expect(result.absolute_error).toBeNull();
-    expect(result.percent_error).toBeNull();
-  });
+  it("leaves setHit null when either side is missing", () => {
+    const noRealized = buildRunRegimeRecord({
+      entry: makeEntry({ argmax_regime: "normal" }),
+      realized: null,
+      payload: { regime_classification: { predicted_set: ["normal"] } },
+    });
+    expect(noRealized.setHit).toBe(null);
 
-  it("guards percent_error against a zero realized close", () => {
-    const result = computeRunPerformance(makeEntry(), 0);
-    expect(result.absolute_error).toBeCloseTo(5500, 5);
-    expect(result.percent_error).toBeNull();
+    const noPayload = buildRunRegimeRecord({
+      entry: makeEntry({ argmax_regime: "normal" }),
+      realized: makeRealized({ realized_regime: "high" }),
+      payload: null,
+    });
+    expect(noPayload.setHit).toBe(null);
   });
 });
 
-describe("aggregatePerformance", () => {
-  it("computes hit rate, MAPE, and per-symbol breakdown from resolved rows", () => {
+describe("aggregateRegimePerformance", () => {
+  it("computes argmax accuracy and empirical coverage from resolved runs", () => {
+    // Three predictions, all argmax=normal. Realised: normal, normal, high.
+    // Predicted sets: {calm,normal}, {normal,high}, {normal} respectively.
     const rows = [
-      computeRunPerformance(makeEntry({ id: "a", symbol: "^GSPC", predicted_close: 5500, current_close: 5400 }), 5520),
-      computeRunPerformance(makeEntry({ id: "b", symbol: "^GSPC", predicted_close: 5500, current_close: 5400 }), 5380),
-      computeRunPerformance(makeEntry({ id: "c", symbol: "^NDX", predicted_close: 18000, current_close: 17900 }), 18100),
-      computeRunPerformance(makeEntry({ id: "d", symbol: "^NDX", predicted_close: 18000, current_close: 17900 }), null),
+      buildRunRegimeRecord({
+        entry: makeEntry({ id: "a", argmax_regime: "normal" }),
+        realized: makeRealized({ run_id: "a", realized_regime: "normal" }),
+        payload: { regime_classification: { predicted_set: ["calm", "normal"] } },
+      }),
+      buildRunRegimeRecord({
+        entry: makeEntry({ id: "b", argmax_regime: "normal" }),
+        realized: makeRealized({ run_id: "b", realized_regime: "normal" }),
+        payload: { regime_classification: { predicted_set: ["normal", "high"] } },
+      }),
+      buildRunRegimeRecord({
+        entry: makeEntry({ id: "c", argmax_regime: "normal" }),
+        realized: makeRealized({ run_id: "c", realized_regime: "high" }),
+        payload: { regime_classification: { predicted_set: ["normal"] } },
+      }),
     ];
-    const agg = aggregatePerformance(rows);
-    expect(agg.total).toBe(4);
+    const agg = aggregateRegimePerformance(rows);
     expect(agg.resolved).toBe(3);
-    expect(agg.hitRate).toBeCloseTo(2 / 3, 5);
-    expect(agg.mape).not.toBeNull();
-    const gspc = agg.bySymbol.find((entry) => entry.symbol === "^GSPC");
-    const ndx = agg.bySymbol.find((entry) => entry.symbol === "^NDX");
-    expect(gspc?.resolved).toBe(2);
-    expect(gspc?.hitRate).toBeCloseTo(0.5, 5);
-    expect(ndx?.resolved).toBe(1);
-    expect(ndx?.hitRate).toBeCloseTo(1, 5);
+    expect(agg.argmaxAccuracy).toBeCloseTo(2 / 3, 5);
+    expect(agg.empiricalCoverage).toBeCloseTo(2 / 3, 5);
+    // Only the "normal" class has full P/R signal here; calm/high have
+    // zero TP and zero FP so their F1 is null and the macro fallback
+    // returns null rather than averaging over an incomplete set.
+    expect(agg.macroF1).toBe(null);
   });
 
-  it("returns null hit rate and MAPE when no rows resolve", () => {
-    const rows = [computeRunPerformance(makeEntry({ id: "a" }), null)];
-    const agg = aggregatePerformance(rows);
+  it("falls back to empty perClass entries when no runs resolve", () => {
+    const agg = aggregateRegimePerformance([]);
     expect(agg.resolved).toBe(0);
-    expect(agg.hitRate).toBeNull();
-    expect(agg.mape).toBeNull();
+    expect(agg.argmaxAccuracy).toBe(null);
+    expect(agg.empiricalCoverage).toBe(null);
+    expect(agg.macroF1).toBe(null);
+    expect(agg.perClass.map((entry) => entry.klass)).toEqual([...REGIME_CLASSES]);
   });
 });
