@@ -52,6 +52,13 @@ const config: Config = {
         hawkish: "hsl(var(--hawkish))",
         dovish: "hsl(var(--dovish))",
         neutral: "hsl(var(--neutral))",
+        up: "hsl(var(--up))",
+        down: "hsl(var(--down))",
+      },
+      height: {
+        "row-sm": "var(--row-sm)",
+        "row-md": "var(--row-md)",
+        "row-lg": "var(--row-lg)",
       },
       borderRadius: {
         lg: "var(--radius)",
