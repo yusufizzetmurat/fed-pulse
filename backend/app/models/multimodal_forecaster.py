@@ -82,12 +82,21 @@ class MultiModalForecasterModel(nn.Module):
         self.head_hidden_size = int(head_hidden_size)
         self.n_classes = int(n_classes)
         # Compatibility shims so generic code that reads attributes on
-        # the legacy ForecasterModel (e.g. ``model.output_mode``) does
-        # not blow up when handed a MultiModalForecasterModel.
+        # the legacy ForecasterModel (e.g. ``model.output_mode``,
+        # ``model._text_path_active``, ``model.model_type``) does not
+        # blow up when handed a MultiModalForecasterModel. The
+        # training loop reads ``_text_path_active`` to decide whether
+        # to pass ``text_embedding`` through to forward; the multi-
+        # modal model always needs the text input, so it must be True.
+        # ``model_type`` is what ``ModelConfig.from_model`` keys off
+        # when persisting the architecture, so without it every
+        # checkpoint summary would fall back to ``'lstm'``.
         self.output_mode = "classification"
         self.input_size = self.market_input_size
         self.initial_decay_rate = 0.0
         self.use_time_decay = False
+        self._text_path_active = True
+        self.model_type = architecture
 
         self.recurrent_core = self._build_recurrent_core(
             architecture=self.architecture,
@@ -122,12 +131,15 @@ class MultiModalForecasterModel(nn.Module):
         )
 
     def _pool_market(self, x: torch.Tensor) -> torch.Tensor:
-        """Run the recurrent core and pool to a per-sequence vector."""
+        """Run the recurrent core and pool to a per-sequence vector.
 
-        if self.architecture == "dlinear":
-            # DLinear emits the pooled state directly; no per-step
-            # sequence to attend over.
-            return self.recurrent_core(x)  # type: ignore[no-any-return]
+        DLinear, LSTM, GRU, TCN, Transformer, TFT, and Informer all
+        follow the same ``(B, T, hidden)`` output + scalar / state
+        second tuple contract via their respective forward methods,
+        so a single destructure + pool handles every architecture
+        without per-arch branching.
+        """
+
         output, _ = self.recurrent_core(x)
         if self.uses_attention_pool:
             if self.recurrent_attention is None:

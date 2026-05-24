@@ -3,10 +3,16 @@
 Kong et al. 2025 (M2VN) align a text representation with a market
 representation by treating the (text_t, market_t) pair as a positive
 example and every (text_t, market_t') with t != t' as a negative.
-The InfoNCE objective is the symmetric NT-Xent loss with a learned
+The InfoNCE objective is the symmetric NT-Xent loss with a fixed
 temperature: minimise the cross-entropy between row-wise similarities
 and the identity-permutation labels, then average the text→market
 and market→text directions so neither modality dominates.
+
+The temperature is a constructor argument, not a learned parameter.
+Our training batches are small (B=16) — far below the ~256+ batch
+sizes where a gradient-trained log-temperature converges stably (cf.
+CLIP) — so the constant-τ recipe avoids the temperature collapse
+modes that small-batch learned-τ runs are prone to.
 
 The loss assumes both inputs already live in a shared latent
 dimension (the projection heads in

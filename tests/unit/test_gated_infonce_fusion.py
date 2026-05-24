@@ -8,7 +8,9 @@ and the gate's per-row behaviour.
 
 from __future__ import annotations
 
-import torch
+import pytest
+
+torch = pytest.importorskip("torch")
 
 from app.models.gated_infonce_fusion import GatedInfoNCEFusion
 
@@ -58,16 +60,12 @@ def test_fusion_rejects_mismatched_market_dim() -> None:
     should never silently pass a tensor with a mismatched shape into
     the linear projection."""
 
-    import pytest
-
     fusion = GatedInfoNCEFusion(market_dim=64, text_dim=768, latent_dim=64)
     with pytest.raises(ValueError, match="market_pooled last-dim"):
         fusion(torch.randn(4, 32), torch.randn(4, 768))
 
 
 def test_fusion_rejects_batch_size_mismatch() -> None:
-    import pytest
-
     fusion = GatedInfoNCEFusion(market_dim=16, text_dim=32, latent_dim=8)
     with pytest.raises(ValueError, match="same length"):
         fusion(torch.randn(4, 16), torch.randn(5, 32))

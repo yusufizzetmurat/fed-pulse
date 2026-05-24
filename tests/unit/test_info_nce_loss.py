@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import math
 
-import torch
+import pytest
+
+torch = pytest.importorskip("torch")
 
 
 def test_info_nce_loss_is_low_when_paired_rows_align() -> None:
@@ -51,8 +53,6 @@ def test_info_nce_loss_handles_single_row_batch_without_nan() -> None:
 def test_info_nce_loss_rejects_temperature_zero_or_negative() -> None:
     from app.training.info_nce_loss import InfoNCELoss
 
-    import pytest
-
     with pytest.raises(ValueError):
         InfoNCELoss(temperature=0.0)
     with pytest.raises(ValueError):
@@ -61,8 +61,6 @@ def test_info_nce_loss_rejects_temperature_zero_or_negative() -> None:
 
 def test_info_nce_loss_rejects_mismatched_shapes() -> None:
     from app.training.info_nce_loss import InfoNCELoss
-
-    import pytest
 
     loss_fn = InfoNCELoss(temperature=0.07)
     with pytest.raises(ValueError):
