@@ -4,6 +4,7 @@ import { Highlighter, Loader2, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Sparkline } from "@/components/ui/sparkline";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type {
@@ -184,6 +185,74 @@ export function SentenceStrikeXaiPanel({
   const argmaxDiff = describeArgmaxDiff(baselineResult, currentResult);
   const stanceDelta = stanceConfidenceDelta(baselineResult, currentResult);
 
+  const baselineArgmax = baselineResult?.regime_classification?.argmax_class ?? null;
+  const baselineProb = baselineArgmax
+    ? baselineResult?.regime_classification?.distribution?.[baselineArgmax] ?? null
+    : null;
+  const currentProbForBaselineArgmax = baselineArgmax
+    ? currentResult?.regime_classification?.distribution?.[baselineArgmax] ?? null
+    : null;
+
+  // Cumulative probability for the *baseline argmax* class across every
+  // strike action. Index 0 is the un-struck baseline; subsequent points
+  // each correspond to one toggle. Resets to a single point when the
+  // strike set goes empty (Reset button) or when the baseline run
+  // changes (new analyze submit).
+  const [strikeHistory, setStrikeHistory] = React.useState<number[]>([]);
+  const lastRunIdentityRef = React.useRef<AnalyzeResult | null | undefined>(null);
+
+  React.useEffect(() => {
+    if (!interactive) {
+      // Read-only mode (e.g. /history detail render) — chart is meaningless.
+      if (strikeHistory.length !== 0) setStrikeHistory([]);
+      return;
+    }
+    if (struckSet.size === 0) {
+      if (baselineProb != null) {
+        if (strikeHistory.length !== 1 || strikeHistory[0] !== baselineProb) {
+          setStrikeHistory([baselineProb]);
+        }
+      } else if (strikeHistory.length !== 0) {
+        setStrikeHistory([]);
+      }
+      lastRunIdentityRef.current = currentResult;
+      return;
+    }
+    if (currentResult && currentResult !== lastRunIdentityRef.current) {
+      lastRunIdentityRef.current = currentResult;
+      if (currentProbForBaselineArgmax != null) {
+        setStrikeHistory((prev) => {
+          // Guard against double-append from React strict-mode double-effects.
+          if (
+            prev.length > 0 &&
+            prev[prev.length - 1] === currentProbForBaselineArgmax &&
+            prev.length === struckSet.size + 1
+          ) {
+            return prev;
+          }
+          return [...prev, currentProbForBaselineArgmax];
+        });
+      }
+    }
+  }, [
+    interactive,
+    struckSet.size,
+    baselineProb,
+    currentResult,
+    currentProbForBaselineArgmax,
+    strikeHistory,
+  ]);
+
+  const driftPoints = strikeHistory.length >= 2 ? strikeHistory : null;
+  const driftTone: "up" | "down" | "neutral" =
+    driftPoints && driftPoints.length >= 2
+      ? driftPoints[driftPoints.length - 1] > driftPoints[0]
+        ? "up"
+        : driftPoints[driftPoints.length - 1] < driftPoints[0]
+        ? "down"
+        : "neutral"
+      : "neutral";
+
   const handleToggle = React.useCallback(
     (index: number) => {
       if (!onMaskChange) return;
@@ -253,6 +322,33 @@ export function SentenceStrikeXaiPanel({
             : "Hover any sentence to see the five tokens with the largest attribution. "}
           {xai.method ? `Method: ${xai.method}.` : null}
         </CardDescription>
+        {driftPoints ? (
+          <div className="mt-3 rounded-md border border-border bg-muted/20 px-3 py-2">
+            <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
+              <span>
+                P({baselineArgmax ?? "argmax"}) across {driftPoints.length - 1} strike
+                {driftPoints.length - 1 === 1 ? "" : "s"}
+              </span>
+              <span className="numeric text-foreground">
+                {(driftPoints[0] * 100).toFixed(1)}% →{" "}
+                {(driftPoints[driftPoints.length - 1] * 100).toFixed(1)}%
+              </span>
+            </div>
+            <div className="mt-1.5">
+              <Sparkline
+                values={driftPoints}
+                tone={driftTone}
+                height={32}
+                formatTooltip={(value, label) =>
+                  `${label ?? ""} · ${(value * 100).toFixed(1)}%`
+                }
+                labels={driftPoints.map((_, idx) =>
+                  idx === 0 ? "baseline" : `+${idx} struck`,
+                )}
+              />
+            </div>
+          </div>
+        ) : null}
       </CardHeader>
       <CardContent>
         {isEmpty ? (
