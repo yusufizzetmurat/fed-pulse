@@ -703,3 +703,136 @@ def test_multi_run_per_fold_conformal_coverage_in_expected_range(
     for fold in result.per_fold:
         assert fold.coverage >= 0.8 - 1e-9
         assert fold.coverage <= 1.0 + 1e-9
+
+
+def test_ensemble_run_specs_cli_writes_outputs(tmp_path: Path) -> None:
+    """The YAML-driven CLI reads a manifest and emits the markdown +
+    JSON summary side-by-side."""
+
+    import yaml
+
+    from app.evaluation.ensemble_run_specs import main as run_specs_main
+
+    layout = [("wf_fold_1", 11)]
+    targets = [[0, 1, 2]]
+    preds_a = [[0, 1, 2]]
+    preds_b = [[2, 0, 1]]
+    scores_a = [[[0.8, 0.1, 0.1], [0.1, 0.8, 0.1], [0.1, 0.1, 0.8]]]
+    scores_b = [[[0.1, 0.1, 0.8], [0.8, 0.1, 0.1], [0.1, 0.8, 0.1]]]
+    run_a = _run_trials(
+        fold_seed_layout=layout,
+        per_trial_preds=preds_a,
+        per_trial_targets=targets,
+        per_trial_scores=scores_a,
+    )
+    run_b = _run_trials(
+        fold_seed_layout=layout,
+        per_trial_preds=preds_b,
+        per_trial_targets=targets,
+        per_trial_scores=scores_b,
+    )
+    sweep_dir = tmp_path / "sweeps"
+    path_a = _write_run_blob(sweep_dir / "run_a" / "forecaster_sweep_results.json", run_a)
+    path_b = _write_run_blob(sweep_dir / "run_b" / "forecaster_sweep_results.json", run_b)
+
+    manifest = {
+        "conformal_alpha": 0.2,
+        "redundancy_kappa_threshold": 0.85,
+        "n_classes": 3,
+        "runs": [
+            {
+                "run_id": "run_a",
+                "architecture": "lstm",
+                "encoder_alias": "none",
+                "seed": 11,
+                "results_path": str(path_a),
+            },
+            {
+                "run_id": "run_b",
+                "architecture": "tft",
+                "encoder_alias": "none",
+                "seed": 11,
+                "results_path": str(path_b),
+            },
+        ],
+    }
+    manifest_path = tmp_path / "phase5.yaml"
+    manifest_path.write_text(yaml.safe_dump(manifest))
+    output_dir = tmp_path / "out"
+    rc = run_specs_main(
+        [
+            "--run-spec-file",
+            str(manifest_path),
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+    assert rc == 0
+    json_path = output_dir / "ensemble_phase5_results.json"
+    md_path = output_dir / "ensemble_phase5_results.md"
+    assert json_path.exists()
+    assert md_path.exists()
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert "result" in payload
+    assert "run_specs" in payload
+    assert "kept_run_ids" in payload["result"]
+
+
+def test_ensemble_run_specs_cli_accepts_bare_list(tmp_path: Path) -> None:
+    """The CLI accepts a top-level list YAML for terse manifests."""
+
+    import yaml
+
+    from app.evaluation.ensemble_run_specs import main as run_specs_main
+
+    layout = [("wf_fold_1", 11)]
+    targets = [[0, 1, 2]]
+    preds_a = [[0, 1, 2]]
+    preds_b = [[2, 0, 1]]
+    scores_a = [[[0.8, 0.1, 0.1], [0.1, 0.8, 0.1], [0.1, 0.1, 0.8]]]
+    scores_b = [[[0.1, 0.1, 0.8], [0.8, 0.1, 0.1], [0.1, 0.8, 0.1]]]
+    run_a = _run_trials(
+        fold_seed_layout=layout,
+        per_trial_preds=preds_a,
+        per_trial_targets=targets,
+        per_trial_scores=scores_a,
+    )
+    run_b = _run_trials(
+        fold_seed_layout=layout,
+        per_trial_preds=preds_b,
+        per_trial_targets=targets,
+        per_trial_scores=scores_b,
+    )
+    sweep_dir = tmp_path / "sweeps"
+    path_a = _write_run_blob(sweep_dir / "run_a" / "forecaster_sweep_results.json", run_a)
+    path_b = _write_run_blob(sweep_dir / "run_b" / "forecaster_sweep_results.json", run_b)
+
+    manifest = [
+        {
+            "run_id": "run_a",
+            "architecture": "lstm",
+            "encoder_alias": "none",
+            "seed": 11,
+            "results_path": str(path_a),
+        },
+        {
+            "run_id": "run_b",
+            "architecture": "tft",
+            "encoder_alias": "none",
+            "seed": 11,
+            "results_path": str(path_b),
+        },
+    ]
+    manifest_path = tmp_path / "phase5_list.yaml"
+    manifest_path.write_text(yaml.safe_dump(manifest))
+    output_dir = tmp_path / "out"
+    rc = run_specs_main(
+        [
+            "--run-spec-file",
+            str(manifest_path),
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+    assert rc == 0
+    assert (output_dir / "ensemble_phase5_results.json").exists()

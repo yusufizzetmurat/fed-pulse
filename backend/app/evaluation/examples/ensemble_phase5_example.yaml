@@ -1,0 +1,50 @@
+# Phase 5 multi-run logit-average ensemble manifest (illustrative).
+#
+# Lists the surviving variants from Phases 1, 2, 4 plus the headline
+# transformer that the cross-bank work ladder stacks for the Phase 5
+# calibrated logit-average ensemble.
+#
+# This file is not executed by CI; it documents the YAML schema the
+# `app.evaluation.ensemble_run_specs` driver consumes. The paths under
+# `results_path` are placeholders — point at real sweep JSONs before
+# running.
+
+conformal_alpha: 0.2
+redundancy_kappa_threshold: 0.85
+n_classes: 3
+
+runs:
+  - run_id: rgm_transformer_seed11
+    architecture: transformer
+    encoder_alias: bert_base
+    seed: 11
+    results_path: artifacts/experiments/rgm_transformer_seed11/forecaster_sweep_results.json
+    weight: 1.0
+
+  - run_id: rgm_lstm_seed11
+    architecture: lstm
+    encoder_alias: none
+    seed: 11
+    results_path: artifacts/experiments/rgm_lstm_seed11/forecaster_sweep_results.json
+    weight: 1.0
+
+  - run_id: rgm_tft_seed11
+    architecture: tft
+    encoder_alias: none
+    seed: 11
+    results_path: artifacts/experiments/rgm_tft_seed11/forecaster_sweep_results.json
+    weight: 1.0
+
+  - run_id: rgm_transformer_finbert_seed11
+    architecture: transformer
+    encoder_alias: finbert
+    seed: 11
+    results_path: artifacts/experiments/rgm_transformer_finbert_seed11/forecaster_sweep_results.json
+    weight: 1.0
+
+  - run_id: rgm_transformer_fomc_roberta_seed11
+    architecture: transformer
+    encoder_alias: fomc_roberta
+    seed: 11
+    results_path: artifacts/experiments/rgm_transformer_fomc_roberta_seed11/forecaster_sweep_results.json
+    weight: 1.0
