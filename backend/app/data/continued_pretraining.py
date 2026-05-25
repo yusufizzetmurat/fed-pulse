@@ -89,9 +89,9 @@ _GTFINTECHLAB_XBANK_REVISIONS: dict[str, str] = {
 # ``_GTFINTECHLAB_XBANK_REVISIONS`` would otherwise silently fall back
 # to fetching HF Hub HEAD, breaking the reproducibility invariant the
 # DAPT manifest relies on.
-assert set(dataset_id for _, dataset_id in _GTFINTECHLAB_XBANK_DATASETS) == set(
-    _GTFINTECHLAB_XBANK_REVISIONS.keys()
-), (
+assert {
+    dataset_id for _, dataset_id in _GTFINTECHLAB_XBANK_DATASETS
+} == set(_GTFINTECHLAB_XBANK_REVISIONS.keys()), (
     "_GTFINTECHLAB_XBANK_DATASETS and _GTFINTECHLAB_XBANK_REVISIONS must "
     "list the same dataset ids; missing pin or stale entry detected."
 )

@@ -346,7 +346,7 @@ def _gtfintechlab_datasets_module() -> Any:
     )
 
 
-def _gtfintechlab_split_rows(
+def _gtfintechlab_split_rows(  # noqa: PLR0913 — keyword-only HF load coords plus cross-bank context; grouping would obscure call sites.
     hf_mod: Any,
     *,
     dataset_id: str,
@@ -388,7 +388,7 @@ def _gtfintechlab_split_rows(
     return out
 
 
-def _gtfintechlab_dataset_rows(
+def _gtfintechlab_dataset_rows(  # noqa: PLR0913 — same cross-bank context as _gtfintechlab_split_rows; grouping into a dataclass would obscure call sites.
     hf_mod: Any,
     *,
     dataset_id: str,
