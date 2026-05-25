@@ -134,7 +134,7 @@ def build_forecaster(
     # the LoRA flag is a plain bool stashed for ``from_model`` to read
     # back, so suppress the noise rather than register a fake buffer.
     model.encoder_lora = encoder_lora_flag  # type: ignore[assignment]
-    model.lora_curriculum_freeze_epoch = lora_curriculum_freeze_epoch_val  # type: ignore[assignment]
+    model.lora_curriculum_freeze_epoch = lora_curriculum_freeze_epoch_val
     model.multi_task_loss = multi_task_loss_flag  # type: ignore[assignment]
     model.multi_task_lambda_stance = multi_task_lambda_stance  # type: ignore[assignment]
     model.multi_task_lambda_factor = multi_task_lambda_factor  # type: ignore[assignment]
