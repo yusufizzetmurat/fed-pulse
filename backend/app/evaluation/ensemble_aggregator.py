@@ -42,6 +42,7 @@ import math
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Callable, Literal
 
 from app.evaluation.bootstrap import BootstrapCI
 from app.evaluation.classification_breakdown import (
@@ -57,6 +58,13 @@ from app.evaluation.regime_pooled_aggregator import (
 
 
 _STRATEGIES = ("mean_logit", "mean_softmax", "plurality_vote")
+
+# Phase 5 multi-run defaults. The redundancy guard threshold is the
+# Cohen-kappa above which two components are treated as duplicate
+# voters in the ensemble — keep it configurable rather than baked
+# into a magic-number constant.
+DEFAULT_REDUNDANCY_KAPPA_THRESHOLD = 0.85
+DEFAULT_CONFORMAL_ALPHA = 0.2
 
 
 @dataclasses.dataclass(frozen=True)
@@ -490,6 +498,550 @@ def main(argv: Sequence[str] | None = None) -> int:
     output_markdown.write_text(_render_markdown(result))
     print(f"[ensemble_aggregator] wrote {output_json} + {output_markdown}")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 multi-run logit-average ensemble (#5 of the cross-bank work
+# ladder). The single-run aggregator above selects one HP cell per
+# architecture from a single sweep JSON; the multi-run path below
+# pools across N distinct training runs (one run = one config x seed
+# x architecture combination), averages logits per (fold, trial),
+# and emits per-fold conformal prediction sets via the existing
+# conformal helpers.
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class RunSpec:
+    """One training-run participant in the Phase 5 multi-run ensemble.
+
+    ``run_id`` is the manifest id used to disambiguate runs in logs and
+    in the agreement-matrix output. ``architecture`` is the architecture
+    family (``"transformer"``, ``"lstm"``, ``"tft"``, ...). ``encoder_alias``
+    is the text-encoder family alias from ``backend/app/models/registry.yaml``
+    when relevant (e.g., ``"bert_base"``, ``"finbert"``); for runs without
+    a text encoder, set it to a stable placeholder like ``"none"``.
+    ``seed`` is the training-time random seed. ``weight`` is the logit-
+    average weight (default 1.0 = uniform); the aggregator normalises
+    weights to sum to one before averaging.
+
+    ``results_path`` is the absolute or relative path to the run's
+    ``forecaster_sweep_results.json`` (or equivalent) blob. The loader
+    uses the same JSON shape the single-run aggregator already consumes
+    so no new on-disk contract is introduced.
+    """
+
+    run_id: str
+    architecture: str
+    encoder_alias: str
+    seed: int
+    results_path: str
+    weight: float = 1.0
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "run_id": self.run_id,
+            "architecture": self.architecture,
+            "encoder_alias": self.encoder_alias,
+            "seed": self.seed,
+            "results_path": self.results_path,
+            "weight": self.weight,
+        }
+
+
+@dataclasses.dataclass(frozen=True)
+class MultiRunFoldResult:
+    """Per-fold result emitted by :func:`aggregate_multi_run_ensemble`.
+
+    ``coverage`` + ``avg_set_size`` come from the per-fold conformal
+    wrapper, applied to the averaged softmax probabilities.
+    """
+
+    fold_id: str
+    n_rows: int
+    breakdown: ClassificationBreakdown
+    coverage: float
+    avg_set_size: float
+    softmax_quantile: float
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "fold_id": self.fold_id,
+            "n_rows": self.n_rows,
+            "breakdown": self.breakdown.to_dict(),
+            "coverage": self.coverage,
+            "avg_set_size": self.avg_set_size,
+            "softmax_quantile": self.softmax_quantile,
+        }
+
+
+@dataclasses.dataclass(frozen=True)
+class MultiRunEnsembleResult:
+    """Top-level Phase 5 ensemble result.
+
+    ``kept_run_ids`` lists the run_ids that survived the redundancy
+    guard. ``dropped_run_ids`` lists the ones dropped + the run_id they
+    were redundant with. ``agreement`` is the pairwise Cohen-kappa
+    matrix across the kept components.
+    """
+
+    kept_run_ids: tuple[str, ...]
+    dropped_run_ids: tuple[tuple[str, str, float], ...]
+    agreement: dict[tuple[str, str], float]
+    per_fold: tuple[MultiRunFoldResult, ...]
+    pooled_breakdown: ClassificationBreakdown
+    calibration_strategy: str
+    conformal_alpha: float
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "kept_run_ids": list(self.kept_run_ids),
+            "dropped_run_ids": [
+                {"dropped": d, "redundant_with": k, "kappa": float(kappa)}
+                for d, k, kappa in self.dropped_run_ids
+            ],
+            "agreement": {
+                f"{a}|{b}": float(v) for (a, b), v in self.agreement.items()
+            },
+            "per_fold": [row.to_dict() for row in self.per_fold],
+            "pooled_breakdown": self.pooled_breakdown.to_dict(),
+            "calibration_strategy": self.calibration_strategy,
+            "conformal_alpha": self.conformal_alpha,
+        }
+
+
+def _load_run_trials(spec: RunSpec) -> list[Mapping[str, object]]:
+    """Read the run's sweep JSON and return its trial list.
+
+    Uses the same loader path as :func:`main` above so the multi-run
+    aggregator inherits the single-run aggregator's on-disk contract.
+    Trials without ``test_metrics.predictions`` / ``class_scores`` are
+    skipped silently — the multi-run logic asserts coverage downstream.
+    """
+
+    path = Path(spec.results_path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"run {spec.run_id!r} results not found at {path!s}"
+        )
+    blob = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(blob, Mapping):
+        raise ValueError(
+            f"run {spec.run_id!r} results blob is not a JSON object: {path!s}"
+        )
+    trials = blob.get("trials", [])
+    if not isinstance(trials, list):
+        raise ValueError(
+            f"run {spec.run_id!r} results blob has no 'trials' list: {path!s}"
+        )
+    out: list[Mapping[str, object]] = []
+    for trial in trials:
+        if isinstance(trial, Mapping):
+            out.append(trial)
+    return out
+
+
+def _trial_id(trial: Mapping[str, object]) -> tuple[str, int | None]:
+    """Stable identifier for a single trial. The multi-run aggregator
+    aligns trials across runs by ``(fold_id, seed)``; if seed is absent
+    it falls through to ``None`` so the layout-mismatch guard fires
+    fail-loud."""
+
+    fold = trial.get("fold_id")
+    seed = trial.get("seed")
+    fold_key = str(fold) if fold is not None else ""
+    seed_key = int(seed) if isinstance(seed, int) else None
+    return fold_key, seed_key
+
+
+def _softmax(logits: Sequence[float]) -> list[float]:
+    """Numerically stable softmax for a single row of logits."""
+
+    if not logits:
+        return []
+    m = max(float(x) for x in logits)
+    exps = [math.exp(float(x) - m) for x in logits]
+    total = sum(exps)
+    if total <= 0:
+        return [1.0 / len(logits)] * len(logits)
+    return [e / total for e in exps]
+
+
+def _row_logits(trial: Mapping[str, object]) -> list[list[float]] | None:
+    """Pull per-row class scores as logits.
+
+    The current training loop emits ``test_metrics.class_scores`` as
+    softmax probabilities; we convert to logits via ``log(max(eps, p))``
+    so the multi-run averaging is in log-space (equivalent to averaging
+    log-probabilities). This matches the ``mean_logit`` strategy in
+    the single-run aggregator above.
+    """
+
+    scores = _trial_class_scores(trial)
+    if scores is None:
+        return None
+    eps = 1e-12
+    return [[math.log(max(eps, float(p))) for p in row] for row in scores]
+
+
+def _cohen_kappa(preds_a: Sequence[int], preds_b: Sequence[int]) -> float:
+    """Cohen's kappa between two prediction sequences over the same rows.
+
+    Defined as ``(p_o - p_e) / (1 - p_e)`` where ``p_o`` is observed
+    agreement and ``p_e`` is the chance-agreement implied by each
+    rater's marginal class distribution. Returns 1.0 on identical
+    predictions; 0.0 when the chance-agreement saturates (i.e. both
+    raters always predict the same single class).
+    """
+
+    if len(preds_a) != len(preds_b):
+        raise ValueError(
+            f"preds_a length {len(preds_a)} != preds_b length {len(preds_b)}"
+        )
+    n = len(preds_a)
+    if n == 0:
+        return float("nan")
+    classes = sorted({int(x) for x in preds_a} | {int(x) for x in preds_b})
+    if len(classes) <= 1:
+        return 1.0 if all(int(a) == int(b) for a, b in zip(preds_a, preds_b)) else 0.0
+    agree = sum(1 for a, b in zip(preds_a, preds_b) if int(a) == int(b))
+    p_o = agree / n
+    marg_a = {c: 0 for c in classes}
+    marg_b = {c: 0 for c in classes}
+    for a, b in zip(preds_a, preds_b):
+        marg_a[int(a)] += 1
+        marg_b[int(b)] += 1
+    p_e = sum((marg_a[c] / n) * (marg_b[c] / n) for c in classes)
+    if abs(1.0 - p_e) < 1e-12:
+        return 1.0 if p_o >= 1.0 - 1e-12 else 0.0
+    return (p_o - p_e) / (1.0 - p_e)
+
+
+def _validate_run_layouts(
+    specs: Sequence[RunSpec],
+    trials_by_run: Mapping[str, Sequence[Mapping[str, object]]],
+) -> tuple[tuple[tuple[str, int | None], ...], dict[str, dict[tuple[str, int | None], Mapping[str, object]]]]:
+    """Confirm every run has the same ``(fold_id, seed)`` trial set.
+
+    Returns the canonical trial-id sequence (sorted, derived from the
+    first run) and a per-run lookup keyed by trial id. Raises
+    ``ValueError`` on any mismatch — fail-loud per the deliverables.
+    """
+
+    if not specs:
+        raise ValueError("multi-run ensemble requires at least one RunSpec")
+    canonical: list[tuple[str, int | None]] | None = None
+    lookup: dict[
+        str, dict[tuple[str, int | None], Mapping[str, object]]
+    ] = {}
+    for spec in specs:
+        trials = trials_by_run.get(spec.run_id, [])
+        per_run: dict[tuple[str, int | None], Mapping[str, object]] = {}
+        for trial in trials:
+            tid = _trial_id(trial)
+            per_run[tid] = trial
+        lookup[spec.run_id] = per_run
+        ids = sorted(per_run.keys())
+        if canonical is None:
+            canonical = ids
+        elif ids != canonical:
+            missing = sorted(set(canonical) - set(ids))
+            extra = sorted(set(ids) - set(canonical))
+            raise ValueError(
+                f"run {spec.run_id!r} fold/trial layout mismatch: "
+                f"missing={missing!r}, extra={extra!r}"
+            )
+    if canonical is None:
+        canonical = []
+    return tuple(canonical), lookup
+
+
+def _agreement_matrix(
+    run_ids: Sequence[str],
+    preds_by_run: Mapping[str, Sequence[int]],
+) -> dict[tuple[str, str], float]:
+    """Pairwise Cohen-kappa across run pairs.
+
+    Symmetric: the matrix records both ``(a, b)`` and ``(b, a)`` so
+    callers can drop either direction without re-checking ordering.
+    The diagonal carries 1.0.
+    """
+
+    out: dict[tuple[str, str], float] = {}
+    for i, a in enumerate(run_ids):
+        out[(a, a)] = 1.0
+        for b in run_ids[i + 1 :]:
+            kappa = _cohen_kappa(preds_by_run[a], preds_by_run[b])
+            out[(a, b)] = kappa
+            out[(b, a)] = kappa
+    return out
+
+
+def _drop_redundant_runs(
+    run_ids: Sequence[str],
+    agreement: Mapping[tuple[str, str], float],
+    *,
+    threshold: float,
+    log: Callable[[str], None],
+) -> tuple[tuple[str, ...], tuple[tuple[str, str, float], ...]]:
+    """Drop runs whose pairwise kappa with any kept run exceeds threshold.
+
+    Greedy left-to-right pass: the first run is always kept; each
+    subsequent run is dropped if any already-kept run has agreement
+    above the threshold. The dropped run is logged with the kept run
+    id it was redundant with and the kappa value.
+    """
+
+    kept: list[str] = []
+    dropped: list[tuple[str, str, float]] = []
+    for run_id in run_ids:
+        redundant_with: str | None = None
+        kappa_with: float = float("nan")
+        for k in kept:
+            kappa = float(agreement.get((run_id, k), 0.0))
+            if kappa > threshold:
+                redundant_with = k
+                kappa_with = kappa
+                break
+        if redundant_with is None:
+            kept.append(run_id)
+        else:
+            dropped.append((run_id, redundant_with, kappa_with))
+            log(
+                f"[ensemble_aggregator] dropping run {run_id!r} "
+                f"(kappa={kappa_with:.3f} with kept run "
+                f"{redundant_with!r} exceeds threshold {threshold:.3f})"
+            )
+    return tuple(kept), tuple(dropped)
+
+
+def aggregate_multi_run_ensemble(  # noqa: C901, PLR0913
+    run_specs: Sequence[RunSpec],
+    *,
+    ground_truth_loader: Callable[[RunSpec], list[Mapping[str, object]]] | None = None,
+    calibration_strategy: Literal["conformal_per_fold"] = "conformal_per_fold",
+    redundancy_kappa_threshold: float = DEFAULT_REDUNDANCY_KAPPA_THRESHOLD,
+    conformal_alpha: float = DEFAULT_CONFORMAL_ALPHA,
+    n_classes: int = 3,
+    log: Callable[[str], None] | None = None,
+) -> MultiRunEnsembleResult:
+    """Phase 5 calibrated logit-average ensemble across N training runs.
+
+    See module docstring + ``RunSpec`` for the input contract. The
+    aggregator:
+
+    1. Loads each run's per-fold per-trial logits via
+       ``ground_truth_loader`` (defaults to reading the spec's
+       ``results_path`` and parsing the standard sweep JSON).
+    2. Validates that all runs share the same ``(fold_id, seed)``
+       trial layout — raises ``ValueError`` on any mismatch.
+    3. Computes pairwise Cohen-kappa across runs and drops any run
+       whose agreement with an already-kept run exceeds
+       ``redundancy_kappa_threshold``.
+    4. Averages logits across the kept runs per (fold, trial) using
+       the spec weights (normalised to sum to one).
+    5. Fits a per-fold conformal threshold on the averaged softmax
+       probabilities and emits per-fold coverage + average set size.
+    6. Pools predictions across folds for a single headline macro-F1.
+
+    The conformal path reuses the per-fold APS calibration the
+    existing single-run wrapper applies, so the calibration carries
+    the same coverage guarantee as the headline classifier (modulo
+    the exchangeability assumption holding across the averaged-run
+    logits, which is the standard split-conformal claim).
+    """
+
+    if calibration_strategy != "conformal_per_fold":
+        raise ValueError(
+            f"unsupported calibration_strategy: {calibration_strategy!r}; "
+            "Phase 5 ships only the per-fold conformal path"
+        )
+    if not run_specs:
+        raise ValueError("aggregate_multi_run_ensemble requires >=1 RunSpec")
+
+    log_fn = log if log is not None else print
+
+    loader = ground_truth_loader if ground_truth_loader is not None else _load_run_trials
+    trials_by_run = {spec.run_id: list(loader(spec)) for spec in run_specs}
+
+    canonical_ids, lookup = _validate_run_layouts(run_specs, trials_by_run)
+    if not canonical_ids:
+        raise ValueError(
+            "multi-run ensemble received an empty trial layout — every "
+            "run has zero trials; nothing to aggregate"
+        )
+
+    # Step: assemble per-run argmax predictions so we can compute the
+    # pairwise agreement matrix before deciding who to keep.
+    preds_by_run: dict[str, list[int]] = {}
+    for spec in run_specs:
+        per_run = lookup[spec.run_id]
+        flat: list[int] = []
+        for tid in canonical_ids:
+            trial = per_run[tid]
+            rows = _test_predictions(trial)
+            if rows is None:
+                raise ValueError(
+                    f"run {spec.run_id!r} trial {tid!r} missing "
+                    "test_metrics.predictions/targets"
+                )
+            preds, _targets = rows
+            flat.extend(preds)
+        preds_by_run[spec.run_id] = flat
+
+    run_ids_in_order = [spec.run_id for spec in run_specs]
+    agreement = _agreement_matrix(run_ids_in_order, preds_by_run)
+    kept, dropped = _drop_redundant_runs(
+        run_ids_in_order,
+        agreement,
+        threshold=redundancy_kappa_threshold,
+        log=log_fn,
+    )
+
+    kept_set = set(kept)
+    kept_specs = [spec for spec in run_specs if spec.run_id in kept_set]
+
+    # Normalise weights across kept specs.
+    raw_weights = [float(spec.weight) for spec in kept_specs]
+    total_w = sum(raw_weights)
+    if total_w <= 0:
+        raise ValueError(
+            "kept runs have non-positive weight sum; cannot normalise"
+        )
+    weights = [w / total_w for w in raw_weights]
+
+    # Step: per-fold logit averaging + conformal calibration.
+    from app.evaluation.conformal import (
+        calibrate_classification_conformal,
+        empirical_classification_coverage,
+        predict_conformal_set,
+    )
+
+    per_fold_results: list[MultiRunFoldResult] = []
+    pooled_preds: list[int] = []
+    pooled_targets: list[int] = []
+
+    # Group canonical_ids by fold so the conformal calibration is per-
+    # fold by construction (the leak-guard requirement in the deliverables).
+    fold_buckets: dict[str, list[tuple[str, int | None]]] = defaultdict(list)
+    for tid in canonical_ids:
+        fold_buckets[tid[0]].append(tid)
+
+    for fold_id, fold_tids in sorted(fold_buckets.items()):
+        fold_preds: list[int] = []
+        fold_targets: list[int] = []
+        fold_softmax: list[list[float]] = []
+        for tid in fold_tids:
+            # Reference targets from the first kept spec; the layout
+            # validator already confirmed alignment across runs, but
+            # do a defensive equality check on targets per trial to
+            # catch row-ordering drift inside a single trial.
+            ref_rows = _test_predictions(lookup[kept_specs[0].run_id][tid])
+            if ref_rows is None:
+                raise ValueError(
+                    f"kept run {kept_specs[0].run_id!r} missing test_metrics "
+                    f"on trial {tid!r}"
+                )
+            _ref_preds, ref_targets = ref_rows
+            n_rows_trial = len(ref_targets)
+
+            # Per-row aggregated logits across kept runs.
+            avg_logits: list[list[float]] = [
+                [0.0] * n_classes for _ in range(n_rows_trial)
+            ]
+            for spec, w in zip(kept_specs, weights):
+                logits = _row_logits(lookup[spec.run_id][tid])
+                if logits is None:
+                    raise ValueError(
+                        f"run {spec.run_id!r} trial {tid!r} missing "
+                        "test_metrics.class_scores"
+                    )
+                if len(logits) != n_rows_trial:
+                    raise ValueError(
+                        f"run {spec.run_id!r} trial {tid!r} class_scores "
+                        f"length {len(logits)} != targets length {n_rows_trial}"
+                    )
+                _, ref_targets_b = _test_predictions(lookup[spec.run_id][tid])  # type: ignore[misc]
+                if ref_targets_b != ref_targets:
+                    raise ValueError(
+                        f"run {spec.run_id!r} trial {tid!r} target sequence "
+                        "differs from reference run; row ordering drifted"
+                    )
+                for i, row in enumerate(logits):
+                    if len(row) != n_classes:
+                        raise ValueError(
+                            f"run {spec.run_id!r} trial {tid!r} row {i} has "
+                            f"{len(row)} classes; expected {n_classes}"
+                        )
+                    for c in range(n_classes):
+                        avg_logits[i][c] += w * float(row[c])
+
+            # Softmax once at the end.
+            for row in avg_logits:
+                probs = _softmax(row)
+                fold_softmax.append(probs)
+                fold_preds.append(
+                    max(range(n_classes), key=lambda c: probs[c])
+                )
+            fold_targets.extend(int(y) for y in ref_targets)
+
+        # Per-fold conformal calibration on the averaged softmax. This
+        # is the leak-safe path: the averaged logits at fold F never
+        # touched fold F training, because each component trained on
+        # its own walk-forward partition; the conformal threshold is
+        # fit on the fold's own held-out scores rather than a global
+        # calibration tier.
+        try:
+            softmax_q = calibrate_classification_conformal(
+                softmax_scores=fold_softmax,
+                true_classes=fold_targets,
+                alpha=conformal_alpha,
+            )
+        except ValueError:
+            softmax_q = float("nan")
+        if math.isfinite(softmax_q):
+            sets = [predict_conformal_set(row, softmax_q) for row in fold_softmax]
+            coverage = empirical_classification_coverage(sets, fold_targets)
+            avg_set_size = (
+                sum(len(s) for s in sets) / len(sets) if sets else float("nan")
+            )
+        else:
+            coverage = float("nan")
+            avg_set_size = float("nan")
+
+        breakdown = compute_classification_breakdown(
+            predictions=fold_preds,
+            targets=fold_targets,
+            n_classes=n_classes,
+        )
+        per_fold_results.append(
+            MultiRunFoldResult(
+                fold_id=fold_id,
+                n_rows=len(fold_preds),
+                breakdown=breakdown,
+                coverage=float(coverage),
+                avg_set_size=float(avg_set_size),
+                softmax_quantile=float(softmax_q),
+            )
+        )
+        pooled_preds.extend(fold_preds)
+        pooled_targets.extend(fold_targets)
+
+    pooled_breakdown = compute_classification_breakdown(
+        predictions=pooled_preds,
+        targets=pooled_targets,
+        n_classes=n_classes,
+    )
+
+    return MultiRunEnsembleResult(
+        kept_run_ids=kept,
+        dropped_run_ids=dropped,
+        agreement=agreement,
+        per_fold=tuple(per_fold_results),
+        pooled_breakdown=pooled_breakdown,
+        calibration_strategy=calibration_strategy,
+        conformal_alpha=float(conformal_alpha),
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover
