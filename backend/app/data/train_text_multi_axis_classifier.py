@@ -64,13 +64,22 @@ class _AxisRow:
     without per-axis branching. ``source`` carries the originating
     corpus (e.g. ``"gtfintechlab/federal_reserve_system"``,
     ``"events_parquet"``) so the eval pass can slice per-bank metrics
-    (D from the 2026-05-24 plan).
+    (D from the 2026-05-24 plan). ``provenance`` mirrors the
+    registry's provenance bucket (e.g. ``"peer_reviewed"``,
+    ``"peer_reviewed_cross_bank"``) so the cross-bank supervision flag
+    can scope its mask + weight rewrites without re-deriving the
+    bucket from ``source``. ``stance_sample_weight`` is a per-row
+    multiplier on the stance branch's loss; it stays 1.0 for every
+    FOMC row and is scaled down for cross-bank rows under the
+    ``weighted`` arm of ``--cross-bank-supervision``.
     """
 
     text: str
     targets: dict[str, float | int] = field(default_factory=dict)
     masks: dict[str, bool] = field(default_factory=dict)
     source: str = ""
+    provenance: str = ""
+    stance_sample_weight: float = 1.0
 
 
 def _set_all_seeds(seed: int) -> None:
@@ -189,8 +198,22 @@ def _load_supervised_rows(events_parquet: Path) -> list[_AxisRow]:
         if not any(masks.values()):
             continue
         source = str(record.get("source") or "events_parquet")
+        # ``events.parquet`` does not carry ``provenance`` directly —
+        # the event builder collapses by (source, event_date, kind),
+        # dropping the per-row provenance column. Cross-bank rows do
+        # not reach this path today, so a constant "" is correct: the
+        # cross-bank supervision flag is a no-op for events_parquet
+        # by design and the per-axis sanity log will record zero
+        # cross-bank rows on this corpus.
         rows.append(
-            _AxisRow(text=text, targets=targets, masks=masks, source=source)
+            _AxisRow(
+                text=text,
+                targets=targets,
+                masks=masks,
+                source=source,
+                provenance="",
+                stance_sample_weight=1.0,
+            )
         )
     return rows
 
@@ -211,7 +234,12 @@ _GTFINTECHLAB_DATASET_IDS: tuple[str, ...] = (
 
 
 def _gtfintechlab_row_to_axis_row(
-    item: dict[str, Any], *, source: str = "gtfintechlab"
+    item: dict[str, Any],
+    *,
+    source: str = "gtfintechlab",
+    provenance: str = "",
+    cross_bank_mode: str = "off",
+    cross_bank_stance_weight: float = 1.0,
 ) -> _AxisRow | None:
     """Map a single gtfintechlab sentence-level row to ``_AxisRow``.
 
@@ -223,6 +251,12 @@ def _gtfintechlab_row_to_axis_row(
     canonical value) are kept but their stance mask stays False so
     the loss does not train on them — they still contribute
     certainty supervision when that axis is populated.
+
+    ``cross_bank_mode`` rewrites the per-row stance mask + weight for
+    rows whose ``provenance == "peer_reviewed_cross_bank"`` (see
+    ``--cross-bank-supervision`` on the CLI). The rewrite happens
+    here, at row materialisation, so every downstream layer reads the
+    corrected mask without further special-casing.
     """
 
     text = str(item.get("sentences") or "").strip()
@@ -259,9 +293,31 @@ def _gtfintechlab_row_to_axis_row(
     # loss contributes nothing for them. The branches still emit
     # predictions at inference, which the frontend can choose to
     # render as low-confidence.
+    stance_sample_weight = 1.0
+    if provenance == "peer_reviewed_cross_bank":
+        if cross_bank_mode == "stance_masked":
+            # Substitute-not-complement guard: drop the stance label
+            # so the head does not fit the cross-bank stance
+            # distribution. Other axes keep their natural per-row
+            # masks so the encoder still trains on the auxiliary
+            # signal.
+            masks["stance"] = False
+        elif cross_bank_mode == "weighted":
+            # Diagnostic A/B: keep the stance mask so the head sees
+            # the cross-bank labels, but scale the row's contribution
+            # to the stance loss down so it does not dominate the
+            # FOMC distribution.
+            stance_sample_weight = float(cross_bank_stance_weight)
     if not any(masks.values()):
         return None
-    return _AxisRow(text=text, targets=targets, masks=masks, source=source)
+    return _AxisRow(
+        text=text,
+        targets=targets,
+        masks=masks,
+        source=source,
+        provenance=provenance,
+        stance_sample_weight=stance_sample_weight,
+    )
 
 
 def _gtfintechlab_datasets_module() -> Any:
@@ -297,6 +353,9 @@ def _gtfintechlab_split_rows(
     config: str,
     split: str,
     revision: str,
+    provenance: str = "",
+    cross_bank_mode: str = "off",
+    cross_bank_stance_weight: float = 1.0,
 ) -> list[_AxisRow]:
     """Materialise one ``(dataset, config, split)`` triple's rows.
 
@@ -317,14 +376,26 @@ def _gtfintechlab_split_rows(
         return []
     out: list[_AxisRow] = []
     for record in ds:
-        row = _gtfintechlab_row_to_axis_row(dict(record), source=dataset_id)
+        row = _gtfintechlab_row_to_axis_row(
+            dict(record),
+            source=dataset_id,
+            provenance=provenance,
+            cross_bank_mode=cross_bank_mode,
+            cross_bank_stance_weight=cross_bank_stance_weight,
+        )
         if row is not None:
             out.append(row)
     return out
 
 
 def _gtfintechlab_dataset_rows(
-    hf_mod: Any, *, dataset_id: str, revision: str
+    hf_mod: Any,
+    *,
+    dataset_id: str,
+    revision: str,
+    provenance: str = "",
+    cross_bank_mode: str = "off",
+    cross_bank_stance_weight: float = 1.0,
 ) -> list[_AxisRow]:
     """Walk every (config, split) under one gtfintechlab dataset."""
 
@@ -354,12 +425,37 @@ def _gtfintechlab_dataset_rows(
                     config=config,
                     split=split,
                     revision=revision,
+                    provenance=provenance,
+                    cross_bank_mode=cross_bank_mode,
+                    cross_bank_stance_weight=cross_bank_stance_weight,
                 )
             )
     return rows
 
 
-def _load_gtfintechlab_rows(*, fed_only: bool = False) -> list[_AxisRow]:
+def _provenance_for_gtfintechlab_dataset(dataset_id: str) -> str:
+    """Bucket each gtfintechlab dataset into the registry's provenance vocab.
+
+    The FOMC dataset is part of the supervised pool (``peer_reviewed``,
+    sample_weight 1.0). The other five central-bank datasets enter
+    the cross-bank generalisation pool (``peer_reviewed_cross_bank``,
+    sample_weight 0.0). This mirrors the same bucketing
+    ``ingest_sources._iter_gtfintechlab_cross_bank_records`` writes
+    onto the registry so the trainer's view of provenance stays in
+    sync with the registry view.
+    """
+
+    if dataset_id == _GTFINTECHLAB_DATASET_IDS[0]:
+        return "peer_reviewed"
+    return "peer_reviewed_cross_bank"
+
+
+def _load_gtfintechlab_rows(
+    *,
+    fed_only: bool = False,
+    cross_bank_mode: str = "off",
+    cross_bank_stance_weight: float = 1.0,
+) -> list[_AxisRow]:
     """Pull supervised sentence-level rows from the gtfintechlab HF datasets.
 
     Iterates every (config, split) under each dataset to materialise
@@ -367,6 +463,17 @@ def _load_gtfintechlab_rows(*, fed_only: bool = False) -> list[_AxisRow]:
     With ``fed_only=True`` the loader restricts to the
     ``federal_reserve_system`` subset (~3 000 rows) for FOMC-specific
     fine-tuning at the cost of a smaller, more imbalanced training pool.
+
+    ``cross_bank_mode`` controls how rows from the five non-FOMC
+    central-bank datasets (provenance ``peer_reviewed_cross_bank``)
+    enter the supervised pool. ``off`` (default) drops them entirely
+    — the loader walks the FOMC dataset only, reproducing the
+    strict-FOMC training pool byte-identically. ``stance_masked``
+    admits them with their stance mask forced to False so the head
+    only fits the FOMC stance distribution while the encoder still
+    sees the cross-bank text. ``weighted`` admits them with the
+    natural stance label and downscales their stance loss
+    contribution by ``cross_bank_stance_weight``.
     """
 
     hf_mod = _gtfintechlab_datasets_module()
@@ -377,7 +484,10 @@ def _load_gtfintechlab_rows(*, fed_only: bool = False) -> list[_AxisRow]:
     # training side stays aligned with the ingestion side.
     from app.data.ingest_sources import _dataset_revision
 
-    dataset_ids = _GTFINTECHLAB_DATASET_IDS[:1] if fed_only else _GTFINTECHLAB_DATASET_IDS
+    if fed_only or cross_bank_mode == "off":
+        dataset_ids = _GTFINTECHLAB_DATASET_IDS[:1]
+    else:
+        dataset_ids = _GTFINTECHLAB_DATASET_IDS
     rows: list[_AxisRow] = []
     for dataset_id in dataset_ids:
         revision = _dataset_revision(dataset_id)
@@ -386,13 +496,22 @@ def _load_gtfintechlab_rows(*, fed_only: bool = False) -> list[_AxisRow]:
                 "gtfintechlab_revision_missing dataset=%s (skipping)", dataset_id
             )
             continue
+        provenance = _provenance_for_gtfintechlab_dataset(dataset_id)
         rows.extend(
             _gtfintechlab_dataset_rows(
-                hf_mod, dataset_id=dataset_id, revision=revision
+                hf_mod,
+                dataset_id=dataset_id,
+                revision=revision,
+                provenance=provenance,
+                cross_bank_mode=cross_bank_mode,
+                cross_bank_stance_weight=cross_bank_stance_weight,
             )
         )
     _logger.info(
-        "loaded_gtfintechlab_rows total=%d fed_only=%s", len(rows), fed_only
+        "loaded_gtfintechlab_rows total=%d fed_only=%s cross_bank_mode=%s",
+        len(rows),
+        fed_only,
+        cross_bank_mode,
     )
     return rows
 
@@ -468,6 +587,16 @@ class _MultiAxisDataset(Dataset):
             # pass can compute per-bank macro-F1 without re-loading
             # the original rows. Collated as a list of strings.
             "source": row.source,
+            # Provenance bucket from the registry (e.g.
+            # ``peer_reviewed``, ``peer_reviewed_cross_bank``). Used
+            # by the first-epoch sanity log to split per-axis row
+            # counts by corpus origin.
+            "provenance": row.provenance,
+            # Per-row multiplier on the stance branch's loss. Stays
+            # 1.0 for FOMC rows; the ``weighted`` cross-bank arm
+            # scales cross-bank rows down so they do not dominate
+            # the FOMC stance distribution.
+            "stance_sample_weight": float(row.stance_sample_weight),
         }
 
 
@@ -499,12 +628,52 @@ def _collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
     out["mask_topic"] = torch.tensor(
         [item["mask_topic"] for item in batch], dtype=torch.bool
     )
-    # ``source`` is a per-row str the per-bank eval reads; the rest of
-    # the batch is torch.Tensor. The mixed-type return signature is
+    # ``source`` and ``provenance`` are per-row strings (the per-bank
+    # eval and the first-epoch sanity log read them); the rest of the
+    # batch is torch.Tensor. The mixed-type return signature is
     # documented on _collate's annotation so the type hint matches
-    # the actual payload.
+    # the actual payload. ``stance_sample_weight`` is a per-row
+    # float32 vector consumed by the training loop when the
+    # ``weighted`` cross-bank arm is active; FOMC rows stay at 1.0.
     out["source"] = [str(item.get("source", "")) for item in batch]
+    out["provenance"] = [str(item.get("provenance", "")) for item in batch]
+    out["stance_sample_weight"] = torch.tensor(
+        [float(item.get("stance_sample_weight", 1.0)) for item in batch],
+        dtype=torch.float32,
+    )
     return out
+
+
+def _log_per_axis_provenance_breakdown(rows: list[_AxisRow]) -> None:
+    """One-shot sanity log of per-axis training-row counts by provenance.
+
+    Emitted once at the start of training so any regression that
+    leaks cross-bank rows into the stance head shows up as a
+    non-zero ``from_cross_bank`` column on the stance line. The log
+    matches the project's existing ``key=value key=value`` info-log
+    style so downstream parsers (and the wiki's training-summary
+    extractor) stay uniform.
+    """
+
+    axis_names: tuple[str, ...] = ("stance", "factor", "certainty", "topic")
+    for axis_name in axis_names:
+        from_fomc = 0
+        from_cross_bank = 0
+        for row in rows:
+            if not row.masks.get(axis_name, False):
+                continue
+            if row.provenance == "peer_reviewed_cross_bank":
+                from_cross_bank += 1
+            else:
+                from_fomc += 1
+        total = from_fomc + from_cross_bank
+        _logger.info(
+            "axis=%s rows_total=%d from_FOMC=%d from_cross_bank=%d",
+            axis_name,
+            total,
+            from_fomc,
+            from_cross_bank,
+        )
 
 
 def _train_one_epoch(
@@ -535,7 +704,16 @@ def _train_one_epoch(
             "certainty_mask": batch["mask_certainty"].to(device),
             "topic_mask": batch["mask_topic"].to(device),
         }
-        total, breakdown = loss_fn(logits, targets, masks)
+        stance_weight = batch.get("stance_sample_weight")
+        if stance_weight is not None:
+            stance_weight = stance_weight.to(device)
+        total, breakdown = _compute_weighted_total_loss(
+            loss_fn=loss_fn,
+            logits=logits,
+            targets=targets,
+            masks=masks,
+            stance_sample_weight=stance_weight,
+        )
         total.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
@@ -549,6 +727,57 @@ def _train_one_epoch(
     for axis_name, total in sum_axis.items():
         out[f"loss_{axis_name}"] = total / n_batches
     return out
+
+
+def _compute_weighted_total_loss(
+    *,
+    loss_fn: MultiTaskLoss,
+    logits: dict[str, torch.Tensor],
+    targets: dict[str, torch.Tensor],
+    masks: dict[str, torch.Tensor],
+    stance_sample_weight: torch.Tensor | None,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Apply per-row stance weighting on top of the masked multi-task loss.
+
+    The default ``MultiTaskLoss`` path is preserved when no per-row
+    weight vector is supplied OR when every weight is 1.0 (the only
+    state the FOMC-only pool ever produces). When the ``weighted``
+    arm of ``--cross-bank-supervision`` produces non-unit weights,
+    the stance branch is recomputed as a per-row weighted CE so
+    cross-bank rows scale their contribution down by
+    ``--cross-bank-stance-weight`` without changing any other axis.
+    The breakdown dict mirrors the standard ``MultiTaskLoss`` output
+    so the training-loop logger keeps the same per-axis trajectory.
+    """
+
+    total, breakdown = loss_fn(logits, targets, masks)
+    if stance_sample_weight is None:
+        return total, breakdown
+    if torch.all(stance_sample_weight == 1.0):
+        return total, breakdown
+    stance_mask = masks["stance_mask"]
+    if stance_mask.numel() == 0 or not stance_mask.any():
+        return total, breakdown
+    active_logits = logits["stance"][stance_mask]
+    active_target = targets["stance"][stance_mask]
+    active_weight = stance_sample_weight[stance_mask]
+    weight_buf = loss_fn.get_buffer("_stance_weight")
+    class_weight = weight_buf if weight_buf.numel() > 0 else None
+    per_row = torch.nn.functional.cross_entropy(
+        active_logits, active_target, weight=class_weight, reduction="none"
+    )
+    weight_total = active_weight.sum()
+    if float(weight_total.item()) <= 0.0:
+        return total, breakdown
+    stance_loss_weighted = (per_row * active_weight).sum() / weight_total
+    new_total = (
+        total
+        - loss_fn.lambda_stance * breakdown["stance"]
+        + loss_fn.lambda_stance * stance_loss_weighted
+    )
+    new_breakdown = dict(breakdown)
+    new_breakdown["stance"] = stance_loss_weighted.detach()
+    return new_total, new_breakdown
 
 
 @torch.no_grad()
@@ -719,6 +948,15 @@ def _save_checkpoint(
             "gtfintechlab_fed_only": bool(
                 getattr(args, "gtfintechlab_fed_only", False)
             ),
+            # Bundle A.1: record the cross-bank arm + weight so a
+            # checkpoint trained under ``stance_masked`` cannot be
+            # confused with one trained under ``weighted`` on disk.
+            "cross_bank_supervision": str(
+                getattr(args, "cross_bank_supervision", "off")
+            ),
+            "cross_bank_stance_weight": float(
+                getattr(args, "cross_bank_stance_weight", 0.25)
+            ),
         },
         "saved_at_utc": datetime.now(timezone.utc).isoformat(),
     }
@@ -732,7 +970,11 @@ def main(argv: list[str] | None = None) -> int:
     _set_all_seeds(args.seed)
 
     if args.data_source == "gtfintechlab_hf":
-        rows = _load_gtfintechlab_rows(fed_only=args.gtfintechlab_fed_only)
+        rows = _load_gtfintechlab_rows(
+            fed_only=args.gtfintechlab_fed_only,
+            cross_bank_mode=args.cross_bank_supervision,
+            cross_bank_stance_weight=args.cross_bank_stance_weight,
+        )
         if not rows:
             raise SystemExit(
                 "gtfintechlab loader returned zero rows; check network access + "
@@ -821,6 +1063,8 @@ def main(argv: list[str] | None = None) -> int:
         ],
         lr=args.learning_rate,
     )
+
+    _log_per_axis_provenance_breakdown(train_rows)
 
     best_val_loss = float("inf")
     best_metrics: dict[str, float] = {}
@@ -952,6 +1196,43 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--lambda-factor", type=float, default=0.3)
     parser.add_argument("--lambda-certainty", type=float, default=0.3)
     parser.add_argument("--lambda-topic", type=float, default=0.3)
+    # Bundle A.1: cross-bank auxiliary supervision flag on the
+    # text-encoder fine-tune. ``off`` (default) keeps the strict
+    # FOMC stance pool — cross-bank rows are excluded so the
+    # current FOMC headline reproduces byte-identically.
+    # ``stance_masked`` admits cross-bank rows but forces their
+    # stance mask to False so the head only fits the FOMC stance
+    # distribution while the encoder still trains on the
+    # cross-bank text + auxiliary (certainty / topic / factor /
+    # time) supervision. ``weighted`` admits them with the natural
+    # stance label and downscales their stance contribution by
+    # ``--cross-bank-stance-weight`` so the head can be A/B-tested
+    # against the masked arm to re-litigate the Phase C
+    # substitute-vs-complement prior (#231).
+    parser.add_argument(
+        "--cross-bank-supervision",
+        choices=("off", "stance_masked", "weighted"),
+        default="off",
+        help=(
+            "Cross-bank (peer_reviewed_cross_bank) row handling on the "
+            "encoder fine-tune. ``off`` (default) excludes them; "
+            "``stance_masked`` admits them with stance masked out so the "
+            "head stays on the FOMC stance distribution; ``weighted`` "
+            "admits them with their stance contribution scaled by "
+            "``--cross-bank-stance-weight``."
+        ),
+    )
+    parser.add_argument(
+        "--cross-bank-stance-weight",
+        type=float,
+        default=0.25,
+        help=(
+            "Per-row multiplier on the stance loss for cross-bank rows "
+            "under ``--cross-bank-supervision weighted``. FOMC rows stay "
+            "at 1.0; cross-bank rows scale down so they do not dominate "
+            "the FOMC distribution."
+        ),
+    )
     return parser.parse_args(argv)
 
 
