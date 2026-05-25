@@ -53,3 +53,24 @@ def load_schema(path: Path | None = None) -> dict[str, Any]:
 def sample_weight_for(provenance: str) -> float:
     weights = (load_schema().get("provenance") or {}).get("sample_weights") or {}
     return float(weights.get(provenance, 0.0))
+
+
+def auxiliary_axis_weight_for(provenance: str) -> float:
+    """Inclusion weight for auxiliary (non-stance) axes per provenance bucket.
+
+    ``sample_weight_for`` is the strict-FOMC gate on the stance head: it
+    returns 0.0 for ``peer_reviewed_cross_bank`` rows so they never
+    contribute to FOMC stance supervision. The auxiliary axes
+    (certainty / topic / factor / time) do not carry the same
+    FOMC-distribution concern — the cross-bank corpora are useful
+    encoder-side signal for those axes. This helper returns 1.0 for
+    ``peer_reviewed_cross_bank`` so the encoder fine-tune can route
+    those rows through the auxiliary heads even when their stance is
+    masked, and otherwise falls back to the provenance-keyed sample
+    weight so non-cross-bank buckets behave identically to the
+    existing gate.
+    """
+
+    if provenance == "peer_reviewed_cross_bank":
+        return 1.0
+    return sample_weight_for(provenance)
