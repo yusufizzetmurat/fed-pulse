@@ -78,6 +78,25 @@ DEFAULT_RANDOM_SEARCH_SEED = 42
 # the make target does not silently OOM the GPU mid-sweep.
 PARALLEL_WORKERS_VRAM_WARN_THRESHOLD = 8
 
+# Encoder aliases the forecaster CLI accepts. Kept at module scope so
+# tests and downstream callers can introspect the registered set
+# without re-parsing ``argparse``. Each alias must also exist in
+# ``backend/app/models/registry.yaml``.
+TEXT_ENCODER_CHOICES: tuple[str, ...] = (
+    "none",
+    "finbert",
+    "finbert_fomc",
+    "finbert_fed_adjacent",
+    "finbert_fed_adjacent_xbank",
+    "finbert_fed_adjacent_xbank_aux_stance_masked",
+    "finbert_fed_adjacent_xbank_aux_weighted",
+    "finbert_fed_adjacent_xbank_dapt",
+    "bert_base_fed_adjacent",
+    "bge_large_en_v15",
+    "nomic_embed_text_v15",
+    "voyage_finance_2",
+)
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -330,18 +349,9 @@ def _parse_args() -> argparse.Namespace:
     # path. ``--no-text-embeddings`` is the symmetric per-family flag
     # that mirrors PR #173's per-family ablation pattern (model input
     # shape stays constant; the embedding slot zeros out).
-    _TEXT_ENCODER_CHOICES = (
-        "none",
-        "finbert",
-        "finbert_fomc",
-        "finbert_fed_adjacent",
-        "finbert_fed_adjacent_xbank",
-        "bert_base_fed_adjacent",
-        "bge_large_en_v15",
-        "nomic_embed_text_v15",
-        "voyage_finance_2",
-    )
-    parser.add_argument(
+    _TEXT_ENCODER_CHOICES = TEXT_ENCODER_CHOICES
+    text_encoder_group = parser.add_mutually_exclusive_group()
+    text_encoder_group.add_argument(
         "--text-encoder",
         choices=_TEXT_ENCODER_CHOICES,
         default="none",
@@ -353,6 +363,20 @@ def _parse_args() -> argparse.Namespace:
             "softmax(-Delta t / lambda) weighted mean over the four "
             "most recent prior statements per event. Default 'none' "
             "keeps the rich-features-only path byte-identical."
+        ),
+    )
+    text_encoder_group.add_argument(
+        "--text-encoders",
+        nargs="+",
+        choices=_TEXT_ENCODER_CHOICES,
+        default=None,
+        help=(
+            "Plural form of ``--text-encoder``. When set, the sweep "
+            "treats the encoder as an additional cell dimension: every "
+            "HP combo x fold x seed cell is replayed for each listed "
+            "alias. Mutually exclusive with ``--text-encoder``. Used by "
+            "the Bundle A.2 arm A vs arm B smoke sweep so both encoders "
+            "share the same 8-worker GPU pool in a single sweep call."
         ),
     )
     parser.add_argument(
@@ -829,10 +853,35 @@ def _parse_args() -> argparse.Namespace:
 def _text_path_active(args: argparse.Namespace) -> bool:
     """Return True when the text-embedding path is wired for this run."""
 
-    encoder = str(getattr(args, "text_encoder", "none") or "none")
+    encoders = _resolved_encoder_axis(args)
+    has_real_encoder = any(e != "none" for e in encoders)
     use_text = bool(getattr(args, "use_text_embeddings", True))
     use_package_path = bool(getattr(args, "training_package_id", None))
-    return encoder != "none" and use_text and use_package_path
+    return has_real_encoder and use_text and use_package_path
+
+
+def _resolved_encoder_axis(args: argparse.Namespace) -> list[str]:
+    """Return the encoder dimension the sweep iterates over.
+
+    ``--text-encoders alias_a alias_b ...`` (plural) is the multi-encoder
+    knob: when set, the sweep treats the encoder as a sweep dimension
+    and every HP cell is replayed once per alias. The legacy
+    ``--text-encoder`` singular path collapses the axis to one entry so
+    pre-PR behaviour is byte-identical when callers do not opt in.
+    """
+
+    multi = getattr(args, "text_encoders", None)
+    if multi:
+        return [str(e) for e in multi]
+    single = str(getattr(args, "text_encoder", "none") or "none")
+    return [single]
+
+
+def _multi_encoder_axis_active(args: argparse.Namespace) -> bool:
+    """Return True when the sweep iterates over multiple text encoders."""
+
+    multi = getattr(args, "text_encoders", None)
+    return bool(multi) and len(list(multi)) > 0
 
 
 def _resolved_input_size(args: argparse.Namespace) -> int:
@@ -886,6 +935,9 @@ def _resolve_text_embedding_dim(args: argparse.Namespace) -> int:
         "finbert_fomc": 768,
         "finbert_fed_adjacent": 768,
         "finbert_fed_adjacent_xbank": 768,
+        "finbert_fed_adjacent_xbank_aux_stance_masked": 768,
+        "finbert_fed_adjacent_xbank_aux_weighted": 768,
+        "finbert_fed_adjacent_xbank_dapt": 768,
         "bert_base_fed_adjacent": 768,
         "bge_large_en_v15": 1024,
         "nomic_embed_text_v15": 768,
@@ -1119,6 +1171,13 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
     fold_ids = _resolved_fold_ids(args)
 
     use_random_search = bool(getattr(args, "random_search", False))
+    # Multi-encoder sweep: each candidate carries its own encoder so
+    # the per-cell trainer can swap loaders without re-running the
+    # outer sweep. When the plural ``--text-encoders`` flag is unset
+    # the axis collapses to a single entry and the legacy candidate
+    # record (no ``text_encoder`` key) is preserved byte-identical.
+    multi_encoder = _multi_encoder_axis_active(args)
+    encoder_axis = _resolved_encoder_axis(args) if multi_encoder else [None]
     text_embedding_dim = _resolve_text_embedding_dim(args)
 
     if use_random_search:
@@ -1137,42 +1196,45 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
             for hp_combo_id, hp in sampled_hp:
                 text_adapter_dim = int(hp["text_adapter_dim"])
                 for fold_id in fold_ids:
-                    candidate = {
-                        "model_config": ModelConfig(
-                            input_size=_resolved_input_size(args),
-                            hidden_size=hp["hidden_size"],
-                            num_layers=hp["num_layers"],
-                            dropout=hp["dropout"],
-                            head_hidden_size=args.head_hidden_size,
-                            architecture=str(architecture),
-                            credibility_features=bool(args.credibility_features),
-                            text_embedding_dim=int(text_embedding_dim) if text_adapter_dim > 0 else 0,
-                            text_adapter_dim=text_adapter_dim,
-                            output_mode=str(getattr(args, "output_mode", "regression") or "regression"),
-                            n_classes=int(getattr(args, "vol_regime_classes", 3) or 3),
-                            use_time_decay=bool(getattr(args, "use_time_decay", True)),
-                            encoder_lora=bool(getattr(args, "encoder_lora", False)),
-                            lora_curriculum_freeze_epoch=getattr(args, "lora_freeze_epoch", None),
-                            fusion_mode=str(getattr(args, "fusion_mode", "concat") or "concat"),
-                            infonce_lambda=float(getattr(args, "infonce_lambda", 0.1)),
-                            infonce_temperature=float(getattr(args, "infonce_temperature", 0.07)),
-                            infonce_latent_dim=int(getattr(args, "infonce_latent_dim", 64)),
-                            multi_task_loss=bool(getattr(args, "multi_task_loss", False)),
-                            multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
-                            multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
-                            multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
-                            multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
-                        ),
-                        "learning_rate": float(hp["learning_rate"]),
-                        "epochs": int(hp["epochs"]),
-                        "weight_decay": float(hp["weight_decay"]),
-                        "text_adapter_dim": text_adapter_dim,
-                        "seed": int(seed) if seed is not None else None,
-                        "hp_combo_id": int(hp_combo_id),
-                    }
-                    if fold_id is not None:
-                        candidate["fold_id"] = fold_id
-                    candidates.append(candidate)
+                    for encoder in encoder_axis:
+                        candidate = {
+                            "model_config": ModelConfig(
+                                input_size=_resolved_input_size(args),
+                                hidden_size=hp["hidden_size"],
+                                num_layers=hp["num_layers"],
+                                dropout=hp["dropout"],
+                                head_hidden_size=args.head_hidden_size,
+                                architecture=str(architecture),
+                                credibility_features=bool(args.credibility_features),
+                                text_embedding_dim=int(text_embedding_dim) if text_adapter_dim > 0 else 0,
+                                text_adapter_dim=text_adapter_dim,
+                                output_mode=str(getattr(args, "output_mode", "regression") or "regression"),
+                                n_classes=int(getattr(args, "vol_regime_classes", 3) or 3),
+                                use_time_decay=bool(getattr(args, "use_time_decay", True)),
+                                encoder_lora=bool(getattr(args, "encoder_lora", False)),
+                                lora_curriculum_freeze_epoch=getattr(args, "lora_freeze_epoch", None),
+                                fusion_mode=str(getattr(args, "fusion_mode", "concat") or "concat"),
+                                infonce_lambda=float(getattr(args, "infonce_lambda", 0.1)),
+                                infonce_temperature=float(getattr(args, "infonce_temperature", 0.07)),
+                                infonce_latent_dim=int(getattr(args, "infonce_latent_dim", 64)),
+                                multi_task_loss=bool(getattr(args, "multi_task_loss", False)),
+                                multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
+                                multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
+                                multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
+                                multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
+                            ),
+                            "learning_rate": float(hp["learning_rate"]),
+                            "epochs": int(hp["epochs"]),
+                            "weight_decay": float(hp["weight_decay"]),
+                            "text_adapter_dim": text_adapter_dim,
+                            "seed": int(seed) if seed is not None else None,
+                            "hp_combo_id": int(hp_combo_id),
+                        }
+                        if fold_id is not None:
+                            candidate["fold_id"] = fold_id
+                        if encoder is not None:
+                            candidate["text_encoder"] = str(encoder)
+                        candidates.append(candidate)
         return candidates
 
     # Exhaustive path: byte-identical to the pre-PR enumeration order so
@@ -1232,43 +1294,46 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
         seeds,
     ):
         for fold_id in fold_ids:
-            candidate = {
-                "model_config": ModelConfig(
-                    input_size=_resolved_input_size(args),
-                    hidden_size=hidden_size,
-                    num_layers=num_layers,
-                    dropout=dropout,
-                    head_hidden_size=args.head_hidden_size,
-                    architecture=str(architecture),
-                    credibility_features=bool(args.credibility_features),
-                    text_embedding_dim=int(text_embedding_dim) if int(text_adapter_dim) > 0 else 0,
-                    text_adapter_dim=int(text_adapter_dim),
-                    output_mode=str(getattr(args, "output_mode", "regression") or "regression"),
-                    n_classes=int(getattr(args, "vol_regime_classes", 3) or 3),
-                    lr_schedule=str(lr_schedule),
-                    sequence_length=int(sequence_length),
-                    use_time_decay=bool(getattr(args, "use_time_decay", True)),
-                    encoder_lora=bool(getattr(args, "encoder_lora", False)),
-                    lora_curriculum_freeze_epoch=getattr(args, "lora_freeze_epoch", None),
-                    fusion_mode=str(getattr(args, "fusion_mode", "concat") or "concat"),
-                    infonce_lambda=float(getattr(args, "infonce_lambda", 0.1)),
-                    infonce_temperature=float(getattr(args, "infonce_temperature", 0.07)),
-                    infonce_latent_dim=int(getattr(args, "infonce_latent_dim", 64)),
-                    multi_task_loss=bool(getattr(args, "multi_task_loss", False)),
-                    multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
-                    multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
-                    multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
-                    multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
-                ),
-                "learning_rate": float(learning_rate),
-                "epochs": int(epochs),
-                "weight_decay": float(weight_decay),
-                "text_adapter_dim": int(text_adapter_dim),
-                "seed": int(seed) if seed is not None else None,
-            }
-            if fold_id is not None:
-                candidate["fold_id"] = fold_id
-            candidates.append(candidate)
+            for encoder in encoder_axis:
+                candidate = {
+                    "model_config": ModelConfig(
+                        input_size=_resolved_input_size(args),
+                        hidden_size=hidden_size,
+                        num_layers=num_layers,
+                        dropout=dropout,
+                        head_hidden_size=args.head_hidden_size,
+                        architecture=str(architecture),
+                        credibility_features=bool(args.credibility_features),
+                        text_embedding_dim=int(text_embedding_dim) if int(text_adapter_dim) > 0 else 0,
+                        text_adapter_dim=int(text_adapter_dim),
+                        output_mode=str(getattr(args, "output_mode", "regression") or "regression"),
+                        n_classes=int(getattr(args, "vol_regime_classes", 3) or 3),
+                        lr_schedule=str(lr_schedule),
+                        sequence_length=int(sequence_length),
+                        use_time_decay=bool(getattr(args, "use_time_decay", True)),
+                        encoder_lora=bool(getattr(args, "encoder_lora", False)),
+                        lora_curriculum_freeze_epoch=getattr(args, "lora_freeze_epoch", None),
+                        fusion_mode=str(getattr(args, "fusion_mode", "concat") or "concat"),
+                        infonce_lambda=float(getattr(args, "infonce_lambda", 0.1)),
+                        infonce_temperature=float(getattr(args, "infonce_temperature", 0.07)),
+                        infonce_latent_dim=int(getattr(args, "infonce_latent_dim", 64)),
+                        multi_task_loss=bool(getattr(args, "multi_task_loss", False)),
+                        multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
+                        multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
+                        multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
+                        multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
+                    ),
+                    "learning_rate": float(learning_rate),
+                    "epochs": int(epochs),
+                    "weight_decay": float(weight_decay),
+                    "text_adapter_dim": int(text_adapter_dim),
+                    "seed": int(seed) if seed is not None else None,
+                }
+                if fold_id is not None:
+                    candidate["fold_id"] = fold_id
+                if encoder is not None:
+                    candidate["text_encoder"] = str(encoder)
+                candidates.append(candidate)
     return candidates
 
 
@@ -1661,6 +1726,27 @@ class _NullCudaStreamContext:
         return None
 
 
+def _default_fold_key(
+    walk_forward_splits: dict[Any, Any],
+    *,
+    encoder: str | None = None,
+) -> Any:
+    """Pick a sensible default fold id when a candidate omits one.
+
+    The walk-forward path keys splits either by fold_id (single
+    encoder) or by (encoder, fold_id) tuple (multi-encoder). The
+    helper picks the first matching fold so cells with no fold
+    assignment still resolve to a partition.
+    """
+
+    if encoder is None:
+        return next(iter(walk_forward_splits))
+    for key in walk_forward_splits:
+        if isinstance(key, tuple) and len(key) == 2 and key[0] == encoder:
+            return key[1]
+    return next(iter(walk_forward_splits))
+
+
 def _run_sweep(
     *,
     args: argparse.Namespace,
@@ -1717,6 +1803,29 @@ def _run_sweep(
         None if str(getattr(args, "text_encoder", "none")) == "none" else str(args.text_encoder)
     )
     text_pool_lambda = float(getattr(args, "text_pool_lambda_inv_days", 0.0))
+    multi_encoder_mode = _multi_encoder_axis_active(args)
+
+    def _candidate_text_encoder(candidate: dict[str, Any]) -> str | None:
+        """Resolve the encoder for a single sweep cell.
+
+        Multi-encoder sweeps stamp ``text_encoder`` onto each candidate
+        directly so the per-cell trainer can route to the matching
+        embedding cache. The legacy single-encoder path leaves the key
+        unset and falls back to the sweep-wide ``text_encoder_arg``.
+        """
+
+        cand_encoder = candidate.get("text_encoder")
+        if cand_encoder is None or str(cand_encoder) == "none":
+            return text_encoder_arg if cand_encoder is None else None
+        return str(cand_encoder)
+
+    if multi_encoder_mode and batching_mode != "off":
+        raise SystemExit(
+            "--text-encoders is not supported with --batching-mode != off; "
+            "the bucketed runner keys on a sweep-wide encoder. Re-run with "
+            "--batching-mode=off (sequential or ProcessPoolExecutor) for "
+            "the multi-encoder sweep."
+        )
 
     if batching_mode != "off":
         # Bucketed-HP path: group cells with the same model topology +
@@ -1869,7 +1978,12 @@ def _run_sweep(
             def _split_for_candidate(c: dict[str, Any]) -> WalkForwardSplit | None:
                 if walk_forward_splits is None:
                     return None
-                cand_fold = c.get("fold_id") or next(iter(walk_forward_splits))
+                # Multi-encoder sweeps key splits by (encoder, fold);
+                # legacy single-encoder sweeps key by fold_id only.
+                cand_fold = c.get("fold_id") or _default_fold_key(walk_forward_splits)
+                cand_encoder = _candidate_text_encoder(c) if multi_encoder_mode else None
+                if multi_encoder_mode:
+                    return walk_forward_splits.get((cand_encoder, cand_fold))
                 return walk_forward_splits.get(cand_fold)
 
             future_to_index = {
@@ -1884,7 +1998,7 @@ def _run_sweep(
                         device=device,
                         sequence_groups=None if walk_forward_splits is not None else sequence_groups,
                         walk_forward_split=_split_for_candidate(candidate),
-                        text_encoder_arg=text_encoder_arg,
+                        text_encoder_arg=_candidate_text_encoder(candidate),
                         text_pool_lambda=text_pool_lambda,
                     ),
                 ): index
@@ -1923,14 +2037,24 @@ def _run_sweep(
             weight_decay = candidate.get("weight_decay", args.weight_decay)
             seed = candidate.get("seed")
             fold_id = candidate.get("fold_id")
+            cell_text_encoder = _candidate_text_encoder(candidate)
             wf_split: WalkForwardSplit | None = None
             cell_sequence_groups: Sequence[Sequence[FeatureVector]] | None = sequence_groups
             if walk_forward_splits is not None:
                 # On the walk-forward path the per-fold split carries
                 # train/val/test partitions; the trainer skips the
-                # legacy single-list code path entirely.
-                split_key = fold_id if fold_id is not None else next(iter(walk_forward_splits))
-                wf_split = walk_forward_splits[split_key]
+                # legacy single-list code path entirely. Multi-encoder
+                # sweeps key the split by (encoder, fold) so each cell
+                # picks up the embedding stream for its assigned arm.
+                if multi_encoder_mode:
+                    encoder_key = cell_text_encoder
+                    fold_key = fold_id if fold_id is not None else _default_fold_key(
+                        walk_forward_splits, encoder=encoder_key
+                    )
+                    wf_split = walk_forward_splits[(encoder_key, fold_key)]
+                else:
+                    split_key = fold_id if fold_id is not None else next(iter(walk_forward_splits))
+                    wf_split = walk_forward_splits[split_key]
                 cell_sequence_groups = None
             summary = _run_single_training(
                 data_dir=data_dir,
@@ -1948,7 +2072,7 @@ def _run_sweep(
                 walk_forward_split=wf_split,
                 weight_decay=float(weight_decay),
                 shuffle_targets_control=bool(args.shuffle_targets_control),
-                text_encoder=text_encoder_arg,
+                text_encoder=cell_text_encoder,
                 text_pool_lambda_inv_days=text_pool_lambda,
                 grad_clip_norm=float(getattr(args, "grad_clip_norm", 0.0)),
                 use_compile=bool(getattr(args, "use_compile", True)),
@@ -2020,11 +2144,18 @@ def _run_sweep(
     )
     best_weight_decay = best_candidate.get("weight_decay", args.weight_decay)
     best_fold_id = best_candidate.get("fold_id")
+    best_text_encoder = _candidate_text_encoder(best_candidate)
     best_wf_split: WalkForwardSplit | None = None
     final_sequence_groups: Sequence[Sequence[FeatureVector]] | None = sequence_groups
     if walk_forward_splits is not None:
-        key = best_fold_id if best_fold_id is not None else next(iter(walk_forward_splits))
-        best_wf_split = walk_forward_splits[key]
+        if multi_encoder_mode:
+            fold_key = best_fold_id if best_fold_id is not None else _default_fold_key(
+                walk_forward_splits, encoder=best_text_encoder
+            )
+            best_wf_split = walk_forward_splits[(best_text_encoder, fold_key)]
+        else:
+            key = best_fold_id if best_fold_id is not None else next(iter(walk_forward_splits))
+            best_wf_split = walk_forward_splits[key]
         final_sequence_groups = None
     final_summary = _run_single_training(
         data_dir=data_dir,
@@ -2046,7 +2177,7 @@ def _run_sweep(
         walk_forward_split=best_wf_split,
         weight_decay=float(best_weight_decay),
         shuffle_targets_control=bool(args.shuffle_targets_control),
-        text_encoder=text_encoder_arg,
+        text_encoder=best_text_encoder,
         text_pool_lambda_inv_days=text_pool_lambda,
         grad_clip_norm=float(getattr(args, "grad_clip_norm", 0.0)),
         use_compile=bool(getattr(args, "use_compile", True)),
@@ -2074,6 +2205,11 @@ def _run_sweep(
         },
         "text_embeddings": {
             "encoder": text_encoder_arg,
+            "encoders": (
+                [str(e) for e in getattr(args, "text_encoders", None)]
+                if multi_encoder_mode
+                else None
+            ),
             "use_text_embeddings": bool(args.use_text_embeddings),
             "pool_lambda_inv_days": text_pool_lambda,
         },
@@ -2145,9 +2281,20 @@ def main() -> int:
             f"mp_surprise={args.use_mp_surprise}, multi_axis={args.use_multi_axis}, "
             f"llm_features={args.use_llm_features})"
         )
-        loader_text_encoder = (
-            None if str(args.text_encoder) == "none" else str(args.text_encoder)
-        )
+        # Multi-encoder mode loads one set of splits per alias so each
+        # sweep cell can pull its arm's embeddings without re-walking
+        # the package. Single-encoder mode collapses the list to one
+        # entry and keeps the legacy fold-keyed dict layout.
+        multi_encoder_mode_main = _multi_encoder_axis_active(args)
+        if multi_encoder_mode_main:
+            loader_text_encoders: list[str | None] = [
+                None if str(e) == "none" else str(e) for e in args.text_encoders
+            ]
+        else:
+            loader_text_encoders = [
+                None if str(args.text_encoder) == "none" else str(args.text_encoder)
+            ]
+        loader_text_encoder = loader_text_encoders[0]
 
         protocol_choice = str(getattr(args, "protocol", "auto") or "auto")
         cli_folds: list[str] = [str(f).strip() for f in (args.folds or []) if str(f).strip()]
@@ -2175,28 +2322,39 @@ def main() -> int:
 
         if resolved_protocol == "walk-forward":
             walk_forward_splits = {}
-            for fold_id in cli_folds:
-                split = load_walk_forward_split(
-                    args.training_package_id,
-                    fold_id=fold_id,
-                    target_mode=args.target_mode,
-                    rich_features=bool(args.rich_features),
-                    use_credibility=bool(args.use_credibility),
-                    use_linguistic=bool(args.use_linguistic),
-                    use_mp_surprise=bool(args.use_mp_surprise),
-                    use_multi_axis=bool(args.use_multi_axis),
-                    use_llm_features=bool(args.use_llm_features),
-                    text_encoder=loader_text_encoder,
-                    text_adapter_dim=int(args.text_adapter_dim),
-                    text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
-                    use_text_embeddings=bool(args.use_text_embeddings),
-                    embargo_days=int(args.embargo_days),
-                )
-                walk_forward_splits[fold_id] = split
-                print(
-                    f"  {fold_id}: train={len(split.train)} val={len(split.val)} "
-                    f"test={len(split.test)}"
-                )
+            for encoder_arg in loader_text_encoders:
+                for fold_id in cli_folds:
+                    split = load_walk_forward_split(
+                        args.training_package_id,
+                        fold_id=fold_id,
+                        target_mode=args.target_mode,
+                        rich_features=bool(args.rich_features),
+                        use_credibility=bool(args.use_credibility),
+                        use_linguistic=bool(args.use_linguistic),
+                        use_mp_surprise=bool(args.use_mp_surprise),
+                        use_multi_axis=bool(args.use_multi_axis),
+                        use_llm_features=bool(args.use_llm_features),
+                        text_encoder=encoder_arg,
+                        text_adapter_dim=int(args.text_adapter_dim),
+                        text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
+                        use_text_embeddings=bool(args.use_text_embeddings),
+                        embargo_days=int(args.embargo_days),
+                    )
+                    if multi_encoder_mode_main:
+                        # Key by (encoder, fold) so the sweep can route
+                        # each cell to the matching embedding stream.
+                        walk_forward_splits[(encoder_arg, fold_id)] = split
+                        print(
+                            f"  encoder={encoder_arg} {fold_id}: "
+                            f"train={len(split.train)} val={len(split.val)} "
+                            f"test={len(split.test)}"
+                        )
+                    else:
+                        walk_forward_splits[fold_id] = split
+                        print(
+                            f"  {fold_id}: train={len(split.train)} val={len(split.val)} "
+                            f"test={len(split.test)}"
+                        )
             sequence_count = sum(
                 len(s.train) + len(s.val) + len(s.test) for s in walk_forward_splits.values()
             )
@@ -2213,36 +2371,47 @@ def main() -> int:
             # splits_train_val_test.parquet partition. The trainer
             # honours the val and test lists as the early-stopping
             # signal and the held-out evaluation set.
-            split = load_walk_forward_split(
-                args.training_package_id,
-                fold_id=None,
-                target_mode=args.target_mode,
-                rich_features=bool(args.rich_features),
-                use_credibility=bool(args.use_credibility),
-                use_linguistic=bool(args.use_linguistic),
-                use_mp_surprise=bool(args.use_mp_surprise),
-                use_multi_axis=bool(args.use_multi_axis),
-                use_llm_features=bool(args.use_llm_features),
-                text_encoder=loader_text_encoder,
-                text_adapter_dim=int(args.text_adapter_dim),
-                text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
-                use_text_embeddings=bool(args.use_text_embeddings),
-                # Single-fold uses split_tag, not manifest dates -- embargo
-                # passes through but the loader will no-op on this path.
-                embargo_days=int(args.embargo_days),
-            )
-            walk_forward_splits = {"_single_fold": split}
-            print(
-                f"  single-fold: train={len(split.train)} val={len(split.val)} "
-                f"test={len(split.test)}"
-            )
-            sequence_count = len(split.train) + len(split.val) + len(split.test)
+            walk_forward_splits = {}
+            for encoder_arg in loader_text_encoders:
+                split = load_walk_forward_split(
+                    args.training_package_id,
+                    fold_id=None,
+                    target_mode=args.target_mode,
+                    rich_features=bool(args.rich_features),
+                    use_credibility=bool(args.use_credibility),
+                    use_linguistic=bool(args.use_linguistic),
+                    use_mp_surprise=bool(args.use_mp_surprise),
+                    use_multi_axis=bool(args.use_multi_axis),
+                    use_llm_features=bool(args.use_llm_features),
+                    text_encoder=encoder_arg,
+                    text_adapter_dim=int(args.text_adapter_dim),
+                    text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
+                    use_text_embeddings=bool(args.use_text_embeddings),
+                    # Single-fold uses split_tag, not manifest dates -- embargo
+                    # passes through but the loader will no-op on this path.
+                    embargo_days=int(args.embargo_days),
+                )
+                if multi_encoder_mode_main:
+                    walk_forward_splits[(encoder_arg, "_single_fold")] = split
+                    print(
+                        f"  encoder={encoder_arg} single-fold: "
+                        f"train={len(split.train)} val={len(split.val)} "
+                        f"test={len(split.test)}"
+                    )
+                else:
+                    walk_forward_splits["_single_fold"] = split
+                    print(
+                        f"  single-fold: train={len(split.train)} val={len(split.val)} "
+                        f"test={len(split.test)}"
+                    )
+            example_split = next(iter(walk_forward_splits.values()))
+            sequence_count = len(example_split.train) + len(example_split.val) + len(example_split.test)
             observation_count = sum(
-                len(seq) for seq in (split.train + split.val + split.test)
+                len(seq) for seq in (example_split.train + example_split.val + example_split.test)
             )
             window_count = sum(
                 max(0, len(seq) - SEQUENCE_LENGTH)
-                for seq in (split.train + split.val + split.test)
+                for seq in (example_split.train + example_split.val + example_split.test)
             )
         print(f"Device: {device}")
         print(f"Checkpoint path: {checkpoint_path}")
