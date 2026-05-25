@@ -11,6 +11,7 @@ from typing import Any, Sequence
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
 from app.determinism import enable_deterministic_mode, make_generator, seed_worker
@@ -316,24 +317,35 @@ def _make_partition_dataset(
     text_emb: torch.Tensor | None,
     text_missing: torch.Tensor | None,
     mt_aux: dict[str, torch.Tensor] | None,
+    log_rv: torch.Tensor | None = None,
 ) -> TensorDataset:
     """Pack one partition's tensors into a TensorDataset using a fixed contract.
 
-    Four supported arities, in order:
+    Supported arities, in order:
 
     - 2: ``(x, y)``
+    - 3: ``(x, y, log_rv)`` -- #304 dual-head log(RV) target only
     - 4: ``(x, y, text_emb, text_missing)``
+    - 5: text + log_rv combined
     - 8: ``(x, y, factor, factor_mask, certainty, certainty_mask, topic, topic_mask)``
+    - 9: mt_aux + log_rv combined
     - 10: text + multi-task combined
+    - 11: text + multi-task + log_rv combined
 
     The multi-task aux ordering is fixed by :data:`_MULTI_TASK_AUX_KEYS` so
     :func:`_unpack_batch` can recover the tensors positionally. The
     ``stance`` axis (a.k.a. the primary vol-regime target) is not packed
-    here — it lives in ``y`` and the train step rebuilds the
+    here -- it lives in ``y`` and the train step rebuilds the
     ``stance_mask`` (all True) at the batch boundary. This drops the
     text-side ``stance`` field from ``_build_multi_task_target_tensors``
     because the model's stance head is already booked for the
     vol-regime classification target.
+
+    The optional ``log_rv`` tensor (#304) carries the
+    ``log(forward_realized_vol_10d)`` scalar target the regression head
+    is trained against under ``head_mode`` in ``{regression, dual}``.
+    The tensor sits at the end of the tuple regardless of whether the
+    multi-task aux block precedes it so the contract is composable.
     """
 
     tensors: list[torch.Tensor] = [x, y]
@@ -347,6 +359,8 @@ def _make_partition_dataset(
                     f"got keys: {sorted(mt_aux)}"
                 )
             tensors.append(mt_aux[key])
+    if log_rv is not None:
+        tensors.append(log_rv)
     return TensorDataset(*tensors)
 
 
@@ -358,36 +372,58 @@ def _unpack_batch(
     torch.Tensor | None,
     torch.Tensor | None,
     dict[str, torch.Tensor] | None,
+    torch.Tensor | None,
 ]:
-    """Decode a DataLoader batch into ``(x, y, text, text_missing, mt_aux)``.
+    """Decode a DataLoader batch into ``(x, y, text, text_missing, mt_aux, log_rv)``.
 
-    Four batch shapes are tolerated; see :func:`_make_partition_dataset`
+    Eight batch shapes are tolerated; see :func:`_make_partition_dataset`
     for the arity-to-contents map. ``mt_aux`` is a 6-key dict (factor,
     factor_mask, certainty, certainty_mask, topic, topic_mask) when the
-    multi-task path is active and ``None`` otherwise.
+    multi-task path is active and ``None`` otherwise. ``log_rv`` is the
+    optional 1-D dual-head regression target tensor (#304); ``None``
+    on classification-only runs.
     """
 
     arity = len(batch)
     if arity == 2:
         batch_x, batch_y = batch
-        return batch_x, batch_y, None, None, None
+        return batch_x, batch_y, None, None, None, None
+    if arity == 3:
+        batch_x, batch_y, batch_log_rv = batch
+        return batch_x, batch_y, None, None, None, batch_log_rv
     if arity == 4:
         batch_x, batch_y, batch_text, batch_text_missing = batch
-        return batch_x, batch_y, batch_text, batch_text_missing, None
+        return batch_x, batch_y, batch_text, batch_text_missing, None, None
+    if arity == 5:
+        batch_x, batch_y, batch_text, batch_text_missing, batch_log_rv = batch
+        return batch_x, batch_y, batch_text, batch_text_missing, None, batch_log_rv
     if arity == 8:
         batch_x = batch[0]
         batch_y = batch[1]
         mt_aux = {key: batch[2 + idx] for idx, key in enumerate(_MULTI_TASK_AUX_KEYS)}
-        return batch_x, batch_y, None, None, mt_aux
+        return batch_x, batch_y, None, None, mt_aux, None
+    if arity == 9:
+        batch_x = batch[0]
+        batch_y = batch[1]
+        mt_aux = {key: batch[2 + idx] for idx, key in enumerate(_MULTI_TASK_AUX_KEYS)}
+        return batch_x, batch_y, None, None, mt_aux, batch[8]
     if arity == 10:
         batch_x = batch[0]
         batch_y = batch[1]
         batch_text = batch[2]
         batch_text_missing = batch[3]
         mt_aux = {key: batch[4 + idx] for idx, key in enumerate(_MULTI_TASK_AUX_KEYS)}
-        return batch_x, batch_y, batch_text, batch_text_missing, mt_aux
+        return batch_x, batch_y, batch_text, batch_text_missing, mt_aux, None
+    if arity == 11:
+        batch_x = batch[0]
+        batch_y = batch[1]
+        batch_text = batch[2]
+        batch_text_missing = batch[3]
+        mt_aux = {key: batch[4 + idx] for idx, key in enumerate(_MULTI_TASK_AUX_KEYS)}
+        return batch_x, batch_y, batch_text, batch_text_missing, mt_aux, batch[10]
     raise ValueError(
-        f"unexpected batch arity from DataLoader: {arity} (want 2, 4, 8 or 10)"
+        f"unexpected batch arity from DataLoader: {arity} "
+        "(want 2, 3, 4, 5, 8, 9, 10, or 11)"
     )
 
 
@@ -654,6 +690,160 @@ def _run_train_forward_and_align(
     return forward_model(batch_x, **kwargs), None
 
 
+def _combine_dual_head_loss(
+    *,
+    ce_loss: torch.Tensor,
+    logits_dict: dict[str, torch.Tensor],
+    batch_log_rv: torch.Tensor | None,
+    head_mode: str,
+    regression_alpha: float,
+) -> torch.Tensor:
+    """Combine the classification CE with the #304 log(RV) MSE term.
+
+    ``head_mode == "dual"`` returns ``(1 - alpha) * ce + alpha * mse``.
+    ``head_mode == "regression"`` returns the MSE only -- the classifier
+    head still runs forward so the checkpoint shape is unchanged, but
+    its loss contribution is dropped so the experiment isolates
+    regression-only learning. Any other ``head_mode`` (including the
+    default ``classification``) returns the CE unchanged -- this branch
+    is only reached when the train step explicitly opted in.
+    """
+
+    if head_mode not in {"regression", "dual"}:
+        return ce_loss
+    if "log_rv" not in logits_dict:
+        raise RuntimeError(
+            "head_mode requires the regression head but logits_dict has "
+            "no 'log_rv' key; the model was built without "
+            "head_mode in {regression, dual}."
+        )
+    if batch_log_rv is None:
+        raise RuntimeError(
+            "head_mode requires a log_rv target tensor but the batch "
+            "carries None; the partition builder did not emit the "
+            "dual-head target."
+        )
+    log_rv_pred = logits_dict["log_rv"]
+    mse_loss = F.mse_loss(log_rv_pred, batch_log_rv.to(log_rv_pred.dtype))
+    if head_mode == "regression":
+        return mse_loss
+    alpha = float(regression_alpha)
+    return (1.0 - alpha) * ce_loss + alpha * mse_loss
+
+
+def _maybe_add_dual_head_loss(
+    loss: torch.Tensor,
+    *,
+    logits_dict: dict[str, torch.Tensor],
+    batch_log_rv: torch.Tensor | None,
+    head_mode: str,
+    regression_alpha: float,
+) -> torch.Tensor:
+    """Augment an existing multi-task loss with the dual-head MSE.
+
+    The multi-task path already pays the CE on the stance branch as
+    part of ``MultiTaskLoss``; here we simply add the alpha-weighted
+    log(RV) MSE on top so the dual-head methodology composes with the
+    multi-task supervision cleanly. ``head_mode == "classification"``
+    short-circuits (returns the input loss unchanged) so the legacy
+    multi-task path stays byte-identical.
+    """
+
+    if head_mode not in {"regression", "dual"}:
+        return loss
+    if "log_rv" not in logits_dict or batch_log_rv is None:
+        return loss
+    log_rv_pred = logits_dict["log_rv"]
+    mse_loss = F.mse_loss(log_rv_pred, batch_log_rv.to(log_rv_pred.dtype))
+    if head_mode == "regression":
+        return mse_loss
+    alpha = float(regression_alpha)
+    return (1.0 - alpha) * loss + alpha * mse_loss
+
+
+def _zero_derived_text_features(
+    x: torch.Tensor | None,
+    mt_aux: dict[str, torch.Tensor] | None,
+) -> tuple[torch.Tensor | None, dict[str, torch.Tensor] | None]:
+    """Zero the #309 derived-text-feature slots on a partition's tensors.
+
+    Two surfaces are touched:
+
+    - ``sentiment_score`` lives at per-bar position 0 in ``as_list`` /
+      ``as_rich_list``; zero ``x[..., 0]`` so the recurrent core never
+      sees the ProsusAI per-sentence aggregate. Other market features
+      (close, vol, close-change, vol-change, elapsed-time) stay intact
+      so the model still has price + time signal.
+    - The multi-axis 6-slot ``[29:35]`` (stance_hawk / stance_dove /
+      stance_neutral / time_label_forward / certain_label_certain /
+      stance_missing) on the rich-feature tensor is the per-event
+      stance_label slot the forecaster head reads. Zero the whole slot
+      on rich-feature tensors; legacy 6-feature tensors short-circuit
+      because the slot does not exist.
+    - The multi-task aux ``factor`` / ``certainty`` / ``topic`` masks
+      are set to all-False so the auxiliary loss contribution from
+      those axes drops to zero, matching the "derived features off"
+      semantics on the multi-task supervision arm.
+
+    Operates by cloning + in-place zeroing on x to preserve the
+    train-fitted RobustScaler's medians (we are zeroing the post-scaler
+    tensor; the scaler stays intact for application to val / test).
+    """
+
+    if x is not None and x.dim() == 3 and x.shape[-1] >= 1:
+        x = x.clone()
+        x[..., 0] = 0.0
+        if x.shape[-1] >= 35:
+            x[..., 29:35] = 0.0
+    if mt_aux is not None:
+        new_aux = dict(mt_aux)
+        for axis in ("factor", "certainty", "topic"):
+            mask_key = f"{axis}_mask"
+            if mask_key in new_aux:
+                new_aux[mask_key] = torch.zeros_like(new_aux[mask_key])
+        mt_aux = new_aux
+    return x, mt_aux
+
+
+def _build_partition_log_rv_target(
+    sequence_groups: "Sequence[Sequence[FeatureVector]]",
+    *,
+    vol_regime_quantiles: "Sequence[float]",
+    log_rv_eps: float = 1e-8,
+) -> torch.Tensor | None:
+    """Materialise per-partition ``log(forward_realized_vol_10d)`` targets (#304).
+
+    Returns a 1-D ``torch.float32`` tensor row-aligned with the
+    classification ``y`` tensor that
+    :func:`_build_partition_tensors` emits -- same row filter (drop
+    groups whose target ``forward_realized_vol_10d`` is missing under
+    the fitted quantile cutoffs), same iteration order. ``log(...)`` is
+    applied with a small additive ``log_rv_eps`` floor so a zero-vol
+    row (impossible on real data but possible on a tiny synthetic
+    fixture) does not blow the loss up. Returns ``None`` when no rows
+    survive the filter, matching the ``None`` contract of the sibling
+    multi-task aux builder.
+    """
+
+    from app.training.loaders import vol_regime_class_for
+
+    values: list[float] = []
+    for sequence_group in sequence_groups:
+        if len(sequence_group) < SEQUENCE_LENGTH + 1:
+            continue
+        for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
+            target_row = sequence_group[idx]
+            forward_vol = getattr(target_row, "forward_realized_vol_10d", None)
+            cls_idx = vol_regime_class_for(forward_vol, vol_regime_quantiles)
+            if cls_idx < 0:
+                continue
+            value = float(forward_vol or 0.0)
+            values.append(math.log(max(value, log_rv_eps)))
+    if not values:
+        return None
+    return torch.tensor(values, dtype=torch.float32)
+
+
 def _evaluate_model(
     model: nn.Module,
     loader: DataLoader[Any],
@@ -697,8 +887,24 @@ def _evaluate_model(
         encoder_lora_bundle.encoder.eval()
     is_classification = str(getattr(model, "output_mode", "regression")) == "classification"
     multi_task_active = multi_task_loss_fn is not None
+    # #304 dual-head eval. Detect the regression head off the wrapped
+    # model (un-DDP, un-compile) so the partition can emit
+    # log(RV) RMSE / MAE without forcing the train loop to plumb the
+    # head_mode flag through. When the head is absent the running sums
+    # stay at zero and the helper emits ``None`` for the regression
+    # surface, preserving the byte-identical EvaluationMetrics shape on
+    # every pre-#304 caller.
+    _eval_underlying = model.module if hasattr(model, "module") else model
+    _eval_underlying = getattr(_eval_underlying, "_orig_mod", _eval_underlying)
+    has_regression_head = (
+        is_classification
+        and getattr(_eval_underlying, "regression_head", None) is not None
+    )
     total_loss_sum = torch.zeros((), dtype=torch.float64, device=device)
     total_items = torch.zeros((), dtype=torch.int64, device=device)
+    log_rv_squared_error_sum = torch.zeros((), dtype=torch.float64, device=device)
+    log_rv_abs_error_sum = torch.zeros((), dtype=torch.float64, device=device)
+    log_rv_items = torch.zeros((), dtype=torch.int64, device=device)
     # Per-axis loss bookkeeping for the multi-task eval path (#273
     # follow-up). Each axis accumulates ``loss * batch_size`` so the
     # final mean matches the per-batch mean ``MultiTaskLoss`` emits
@@ -772,7 +978,14 @@ def _evaluate_model(
     non_blocking = device.type == "cuda"
     with torch.no_grad():
         for batch in loader:
-            batch_x, batch_y, batch_text, batch_text_missing, batch_mt_aux = _unpack_batch(batch)
+            (
+                batch_x,
+                batch_y,
+                batch_text,
+                batch_text_missing,
+                batch_mt_aux,
+                batch_log_rv,
+            ) = _unpack_batch(batch)
             if multi_task_active and batch_mt_aux is None:
                 raise RuntimeError(
                     "multi_task_loss_fn is active but the DataLoader yielded "
@@ -861,6 +1074,44 @@ def _evaluate_model(
                     mt_axis_loss_sums[axis_name] += (
                         axis_breakdown[axis_name].detach().to(torch.float64) * batch_size
                     )
+                # #304 dual-head eval. When the regression head is also
+                # mounted under multi-task training, surface the
+                # log(RV) MAE / RMSE alongside the classification
+                # numbers.
+                if has_regression_head and "log_rv" in logits_dict and batch_log_rv is not None:
+                    log_rv_pred = logits_dict["log_rv"].detach().to(torch.float64)
+                    log_rv_true = batch_log_rv.to(device, non_blocking=non_blocking).to(torch.float64)
+                    diff = log_rv_pred - log_rv_true
+                    log_rv_squared_error_sum += torch.square(diff).sum()
+                    log_rv_abs_error_sum += torch.abs(diff).sum()
+                    log_rv_items += int(diff.shape[0])
+            elif has_regression_head:
+                # #304 single-task dual-head eval. ``forward_multi_task``
+                # is the only path that emits the ``log_rv`` head, so
+                # route through it whenever the regression head is
+                # mounted; the headline classification surface still
+                # reads off the stance logits so the eval contract on
+                # legacy callers stays compatible.
+                logits_dict = _run_train_forward_multi_task(
+                    model, batch_x, kwargs
+                )
+                predictions = logits_dict["stance"]
+                loss = loss_fn(predictions, batch_y)
+                if ce_weight is not None:
+                    batch_weight_sum = ce_weight.index_select(
+                        0, batch_y.detach().to(device=device, dtype=torch.long)
+                    ).sum()
+                    total_loss_sum += loss.detach().to(torch.float64) * batch_weight_sum
+                    total_weight_sum += batch_weight_sum
+                else:
+                    total_loss_sum += loss.detach().to(torch.float64) * batch_size
+                if "log_rv" in logits_dict and batch_log_rv is not None:
+                    log_rv_pred = logits_dict["log_rv"].detach().to(torch.float64)
+                    log_rv_true = batch_log_rv.to(device, non_blocking=non_blocking).to(torch.float64)
+                    diff = log_rv_pred - log_rv_true
+                    log_rv_squared_error_sum += torch.square(diff).sum()
+                    log_rv_abs_error_sum += torch.abs(diff).sum()
+                    log_rv_items += int(diff.shape[0])
             elif multimodal_forward is not None:
                 modality_out = multimodal_forward(batch_x, **kwargs)
                 predictions = modality_out["logits"]
@@ -996,6 +1247,24 @@ def _evaluate_model(
 
         gate_summary = _summarise_gate(gate_chunks, true_classes, n_classes_eval)
 
+        # #304 dual-head eval surface. When the regression head ran on
+        # this partition, surface the log(RV) RMSE / MAE so the §16
+        # three-way comparison table can read them off the per-trial
+        # JSON. ``None`` when the head was absent so the legacy
+        # EvaluationMetrics shape is unchanged on every pre-#304 caller.
+        log_rv_items_int = int(log_rv_items.item())
+        regression_rmse_log_rv_value: float | None = None
+        regression_mae_log_rv_value: float | None = None
+        regression_loss_value: float | None = None
+        if has_regression_head and log_rv_items_int > 0:
+            regression_loss_value = float(
+                log_rv_squared_error_sum.item() / log_rv_items_int
+            )
+            regression_rmse_log_rv_value = math.sqrt(regression_loss_value)
+            regression_mae_log_rv_value = float(
+                log_rv_abs_error_sum.item() / log_rv_items_int
+            )
+
         return EvaluationMetrics(
             loss=regime_loss,
             close_rmse=float("inf"),
@@ -1009,6 +1278,9 @@ def _evaluate_model(
             targets=targets_payload,
             class_scores=scores_payload,
             gate_summary=gate_summary,
+            regression_rmse_log_rv=regression_rmse_log_rv_value,
+            regression_mae_log_rv=regression_mae_log_rv_value,
+            regression_loss=regression_loss_value,
         )
 
     close_value = float(close_squared_error.item())
@@ -1245,6 +1517,18 @@ def train_model(
     multi_task_loss_active = bool(
         getattr(active_model_config, "multi_task_loss", False)
     )
+    # #304 dual-head methodology. The log(RV) target tensor lives on
+    # each partition only when ``head_mode in {regression, dual}``;
+    # default ``classification`` leaves the three slots ``None`` so
+    # the dataset arity stays unchanged for every pre-#304 caller.
+    train_log_rv: torch.Tensor | None = None
+    val_log_rv: torch.Tensor | None = None
+    test_log_rv: torch.Tensor | None = None
+    active_head_mode = str(
+        getattr(active_model_config, "head_mode", "classification")
+        or "classification"
+    )
+    dual_head_active = active_head_mode in {"regression", "dual"}
 
     if walk_forward_path:
         train_groups: list[list[FeatureVector]] = [list(group) for group in train_sequence_groups or []]
@@ -1352,6 +1636,10 @@ def train_model(
             train_mt_aux = _build_partition_multi_task_tensors(
                 train_groups, vol_regime_quantiles=fitted_quantiles
             )
+        if dual_head_active and active_output_mode == "classification":
+            train_log_rv = _build_partition_log_rv_target(
+                train_groups, vol_regime_quantiles=fitted_quantiles
+            )
         # Fit the rich-feature RobustScaler on the TRAIN tensor only;
         # no-op for legacy 6-feature tensors so the regression contract
         # at tests/regression/test_forecaster_determinism.py stays
@@ -1371,6 +1659,10 @@ def train_model(
             val_mt_aux = _build_partition_multi_task_tensors(
                 val_groups, vol_regime_quantiles=fitted_quantiles
             )
+        if dual_head_active and active_output_mode == "classification":
+            val_log_rv = _build_partition_log_rv_target(
+                val_groups, vol_regime_quantiles=fitted_quantiles
+            )
         val_x = apply_rich_feature_scaler_tensor(val_x, rich_feature_scaler)
         test_x, test_y, _test_scale, test_text_emb, test_text_missing = _build_partition_tensors(
             test_groups,
@@ -1384,7 +1676,30 @@ def train_model(
             test_mt_aux = _build_partition_multi_task_tensors(
                 test_groups, vol_regime_quantiles=fitted_quantiles
             )
+        if dual_head_active and active_output_mode == "classification":
+            test_log_rv = _build_partition_log_rv_target(
+                test_groups, vol_regime_quantiles=fitted_quantiles
+            )
         test_x = apply_rich_feature_scaler_tensor(test_x, rich_feature_scaler)
+        # #309 derived-text-features ablation. Default ``True`` is
+        # byte-identical to the pre-#309 path; ``False`` zeros the
+        # FeatureVector slots the per-sentence multi-axis classifier
+        # populates so the forecaster head sees only the document-level
+        # encoder text path. Applied AFTER the per-fold rich-feature
+        # scaler so the scaler parameters reflect the populated
+        # distribution -- subtracting the scaler-fitted median from a
+        # zero would produce non-zero entries and defeat the ablation
+        # contract.
+        if not bool(getattr(active_model_config, "use_derived_text_features", True)):
+            train_x, train_mt_aux = _zero_derived_text_features(train_x, train_mt_aux)
+            val_x, val_mt_aux = _zero_derived_text_features(val_x, val_mt_aux)
+            test_x, test_mt_aux = _zero_derived_text_features(test_x, test_mt_aux)
+            print(
+                "[train_model] derived-text-features OFF: zeroed "
+                "sentiment_score + multi-axis slot on x; masked "
+                "factor/certainty/topic on mt_aux",
+                flush=True,
+            )
         sequence_groups_for_summary = train_groups + val_groups + test_groups
     else:
         # Legacy single-list path: no LoRA support. encoder_lora must
@@ -1482,6 +1797,16 @@ def train_model(
         test_y = val_y
         test_text_emb = val_text_emb
         test_text_missing = val_text_missing
+        # #309 derived-text-features ablation -- mirror the walk-forward
+        # branch on the legacy 80/20 path. ``True`` (default) is
+        # byte-identical to the pre-#309 path; ``False`` zeros the
+        # FeatureVector slots on the assembled X tensors. The legacy
+        # path never carries mt_aux, so the helper's mask-zeroing
+        # branch short-circuits cleanly.
+        if not bool(getattr(active_model_config, "use_derived_text_features", True)):
+            train_x, _unused = _zero_derived_text_features(train_x, None)
+            val_x, _unused = _zero_derived_text_features(val_x, None)
+            test_x, _unused = _zero_derived_text_features(test_x, None)
 
     # Empty-tensor guard for the walk-forward branch. The legacy branch
     # already short-circuits above on (x, y) == (None, None).
@@ -1563,6 +1888,13 @@ def train_model(
         test_mt_aux = {
             key: _move_to_device(tensor, device_obj) for key, tensor in test_mt_aux.items()
         }
+    # #304 dual-head -- move the log(RV) target tensors to the active
+    # device so the DataLoader shuffler can index them with the same
+    # in-batch order it indexes ``x`` / ``y``. ``None`` when the head
+    # mode is the default ``classification``.
+    train_log_rv = _move_to_device(train_log_rv, device_obj)
+    val_log_rv = _move_to_device(val_log_rv, device_obj)
+    test_log_rv = _move_to_device(test_log_rv, device_obj)
     # Tensors now live on the target device, so DataLoader pinning is
     # neither needed nor supported (PyTorch raises on pinning a CUDA
     # tensor). The original pin-memory comment about deprecation
@@ -1570,7 +1902,7 @@ def train_model(
     pin_memory = False
     loader_generator = make_generator(seed) if seed is not None else None
     train_dataset = _make_partition_dataset(
-        train_x, train_y, train_text_emb, train_text_missing, train_mt_aux
+        train_x, train_y, train_text_emb, train_text_missing, train_mt_aux, train_log_rv
     )
 
     # Early-stopping val loader: when the walk-forward branch supplied
@@ -1584,20 +1916,27 @@ def train_model(
         val_text_emb_used = train_text_emb
         val_text_missing_used = train_text_missing
         val_mt_aux_used = train_mt_aux
+        val_log_rv_used = train_log_rv
     else:
         val_x_used = val_x
         val_y_used = val_y
         val_text_emb_used = val_text_emb
         val_text_missing_used = val_text_missing
         val_mt_aux_used = val_mt_aux
+        val_log_rv_used = val_log_rv
 
     val_dataset = _make_partition_dataset(
-        val_x_used, val_y_used, val_text_emb_used, val_text_missing_used, val_mt_aux_used
+        val_x_used,
+        val_y_used,
+        val_text_emb_used,
+        val_text_missing_used,
+        val_mt_aux_used,
+        val_log_rv_used,
     )
 
     if test_x is not None and test_y is not None and len(test_x) > 0:
         test_dataset = _make_partition_dataset(
-            test_x, test_y, test_text_emb, test_text_missing, test_mt_aux
+            test_x, test_y, test_text_emb, test_text_missing, test_mt_aux, test_log_rv
         )
     else:
         test_dataset = None
@@ -1789,6 +2128,31 @@ def train_model(
             flush=True,
         )
 
+    # #304 dual-head methodology. ``regression_alpha`` is the weight on
+    # the log(RV) MSE term in the joint loss ``(1 - alpha) * CE +
+    # alpha * MSE``. ``head_mode="classification"`` (the default)
+    # leaves the value unused -- the partition build emitted no log_rv
+    # tensor and the train step's dual-head branch never fires. The
+    # value is read from the active ModelConfig so a resumed checkpoint
+    # reuses the same alpha the original run trained under.
+    regression_alpha = float(
+        getattr(active_model_config, "regression_alpha", 0.5)
+    )
+    if dual_head_active and _active_output_mode != "classification":
+        raise ValueError(
+            "head_mode in {regression, dual} requires "
+            "output_mode='classification' (the regression head reads "
+            "log(forward_realized_vol_10d) which only exists on the "
+            "classification branch); got output_mode="
+            f"{_active_output_mode!r}"
+        )
+    if dual_head_active:
+        print(
+            f"[train_model] dual-head active: head_mode={active_head_mode} "
+            f"regression_alpha={regression_alpha}",
+            flush=True,
+        )
+
     # InfoNCE alignment loss for the gated_infonce fusion mode (#235).
     # The training step calls ``forward_with_modality_outputs`` on the
     # multi-modal model to recover the per-modality projections, then
@@ -1899,7 +2263,14 @@ def train_model(
         if encoder_lora_bundle is not None:
             encoder_lora_bundle.encoder.train()
         for batch in train_loader:
-            batch_x, batch_y, batch_text, batch_text_missing, batch_mt_aux = _unpack_batch(batch)
+            (
+                batch_x,
+                batch_y,
+                batch_text,
+                batch_text_missing,
+                batch_mt_aux,
+                batch_log_rv,
+            ) = _unpack_batch(batch)
             # Tensors are already on the target device; the .to() calls
             # below were the hot kernel-launch source the perf rewrite
             # eliminates.
@@ -1971,6 +2342,34 @@ def train_model(
                         "topic_mask": batch_mt_aux["topic_mask"],
                     }
                     loss, _ = multi_task_loss_fn(logits_dict, mt_targets, mt_masks)
+                    loss = _maybe_add_dual_head_loss(
+                        loss,
+                        logits_dict=logits_dict,
+                        batch_log_rv=batch_log_rv,
+                        head_mode=active_head_mode,
+                        regression_alpha=regression_alpha,
+                    )
+                elif dual_head_active:
+                    # #304 dual-head fast path. Single-task classification
+                    # already drives stance via ``loss_fn(predictions,
+                    # batch_y)``; the dual-head retrofit needs the
+                    # ``log_rv`` head's MSE too, which requires the
+                    # multi-task dict (since the regression head lives
+                    # alongside the MultiTaskHead). Run
+                    # ``forward_multi_task`` so both heads share the
+                    # same backbone activations in this batch.
+                    logits_dict = _run_train_forward_multi_task(
+                        forward_model, batch_x, kwargs
+                    )
+                    stance_logits = logits_dict["stance"]
+                    ce_loss = loss_fn(stance_logits, batch_y)
+                    loss = _combine_dual_head_loss(
+                        ce_loss=ce_loss,
+                        logits_dict=logits_dict,
+                        batch_log_rv=batch_log_rv,
+                        head_mode=active_head_mode,
+                        regression_alpha=regression_alpha,
+                    )
                 else:
                     predictions, align_loss = _run_train_forward_and_align(
                         forward_model,

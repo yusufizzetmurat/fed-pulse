@@ -320,6 +320,29 @@ class ModelConfig:
     # rare classes, mitigating the class-1 collapse the 3-class vol-regime
     # head exhibits on single-seed runs.
     class_weight_power: float = 1.0
+    # #304 dual-head methodology. ``classification`` (default) keeps the
+    # existing 3-class CrossEntropy head as the only output and is
+    # byte-identical to the pre-#304 path. ``regression`` swaps in a
+    # ``log(forward_realized_vol_10d)`` MSE head only (the classifier
+    # still mounts so the checkpoint shape is stable but its loss
+    # contribution is dropped). ``dual`` keeps both heads and trains
+    # the joint loss ``(1 - regression_alpha) * CE + regression_alpha * MSE``.
+    # The regression head is only meaningful when ``output_mode ==
+    # "classification"`` because that branch carries the
+    # ``forward_realized_vol_10d`` target; regression-output mode
+    # (close, vol) ignores ``head_mode`` entirely.
+    head_mode: str = "classification"
+    regression_alpha: float = 0.5
+    # #309 derived-text-features ablation. ``True`` (default) keeps the
+    # FeatureVector's per-bar ``sentiment_score`` slot and the multi-axis
+    # stance / certainty / topic slots wired into the forecaster head
+    # exactly as the pre-#309 path does, so back-compat is byte-identical.
+    # ``False`` zeros those slots after loader fan-out but before
+    # tensorisation, leaving the document-level encoder text path as the
+    # only text-derived signal flowing into the recurrent core. Used by
+    # the three-way comparison (baseline / ablation / replacement-with-
+    # pre-meeting) in ``scripts/run_derived_features_ablation.py``.
+    use_derived_text_features: bool = True
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -367,6 +390,11 @@ class ModelConfig:
             multi_task_lambda_certainty=float(getattr(model, "multi_task_lambda_certainty", 0.3)),
             multi_task_lambda_topic=float(getattr(model, "multi_task_lambda_topic", 0.3)),
             class_weight_power=float(getattr(model, "class_weight_power", 1.0)),
+            head_mode=str(getattr(model, "head_mode", "classification") or "classification"),
+            regression_alpha=float(getattr(model, "regression_alpha", 0.5)),
+            use_derived_text_features=bool(
+                getattr(model, "use_derived_text_features", True)
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:

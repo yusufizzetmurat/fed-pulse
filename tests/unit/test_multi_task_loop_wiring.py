@@ -46,12 +46,13 @@ def test_make_partition_dataset_minimal_arity() -> None:
     loader = DataLoader(ds, batch_size=n, shuffle=False)
     batch = next(iter(loader))
     assert len(batch) == 2
-    bx, by, text, missing, aux = _unpack_batch(batch)
+    bx, by, text, missing, aux, log_rv = _unpack_batch(batch)
     assert bx.shape == x.shape
     assert by.shape == y.shape
     assert text is None
     assert missing is None
     assert aux is None
+    assert log_rv is None
 
 
 def test_make_partition_dataset_text_arity() -> None:
@@ -66,11 +67,12 @@ def test_make_partition_dataset_text_arity() -> None:
     loader = DataLoader(ds, batch_size=n, shuffle=False)
     batch = next(iter(loader))
     assert len(batch) == 4
-    bx, by, btext, bmissing, aux = _unpack_batch(batch)
+    bx, by, btext, bmissing, aux, log_rv = _unpack_batch(batch)
     assert bx.shape == x.shape
     assert btext is not None and btext.shape == text.shape
     assert bmissing is not None and bmissing.shape == text_missing.shape
     assert aux is None
+    assert log_rv is None
 
 
 def test_make_partition_dataset_multi_task_arity() -> None:
@@ -84,10 +86,11 @@ def test_make_partition_dataset_multi_task_arity() -> None:
     loader = DataLoader(ds, batch_size=n, shuffle=False)
     batch = next(iter(loader))
     assert len(batch) == 8
-    bx, by, btext, bmissing, aux_out = _unpack_batch(batch)
+    bx, by, btext, bmissing, aux_out, log_rv = _unpack_batch(batch)
     assert btext is None
     assert bmissing is None
     assert aux_out is not None
+    assert log_rv is None
     for key in _MULTI_TASK_AUX_KEYS:
         assert key in aux_out
         assert aux_out[key].shape == aux_in[key].shape
@@ -106,9 +109,10 @@ def test_make_partition_dataset_text_plus_multi_task_arity() -> None:
     loader = DataLoader(ds, batch_size=n, shuffle=False)
     batch = next(iter(loader))
     assert len(batch) == 10
-    bx, by, btext, bmissing, aux_out = _unpack_batch(batch)
+    bx, by, btext, bmissing, aux_out, log_rv = _unpack_batch(batch)
     assert btext is not None
     assert aux_out is not None
+    assert log_rv is None
     for key in _MULTI_TASK_AUX_KEYS:
         assert aux_out[key].shape == aux_in[key].shape
 
@@ -125,10 +129,15 @@ def test_make_partition_dataset_rejects_missing_aux_key() -> None:
 
 
 def test_unpack_batch_rejects_unknown_arity() -> None:
-    """A 3-tuple batch (or other invalid arity) raises."""
+    """An unsupported arity (e.g. 6-tuple) raises with a clear message.
+
+    Arity 3, 5, 9, 11 became valid post-#304 (the dual-head log_rv
+    slot composes with every prior shape); pick 6 -- still
+    unsupported -- so the negative-path coverage stays.
+    """
 
     with pytest.raises(ValueError, match="unexpected batch arity"):
-        _unpack_batch((torch.zeros(1), torch.zeros(1), torch.zeros(1)))
+        _unpack_batch(tuple(torch.zeros(1) for _ in range(6)))
 
 
 def test_multi_task_loss_active_requires_classification_mode() -> None:

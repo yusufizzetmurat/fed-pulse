@@ -56,6 +56,15 @@ class EvaluationMetrics:
     # ``gate_summary['n_rows']`` is the eval-partition row count the
     # summary was averaged over.
     gate_summary: dict[str, Any] | None = None
+    # #304 dual-head methodology surface. Populated whenever the
+    # forecaster carried a ``regression_head`` (``head_mode`` in
+    # ``regression`` / ``dual``). The pair is computed in log space --
+    # the head predicts ``log(forward_realized_vol_10d)`` and the
+    # target is the same -- so the units are dimensionless. ``None`` on
+    # classification-only runs so the legacy dataclass shape holds.
+    regression_rmse_log_rv: float | None = None
+    regression_mae_log_rv: float | None = None
+    regression_loss: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
