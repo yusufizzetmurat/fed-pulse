@@ -87,8 +87,8 @@ export default function CalendarPage() {
         <StatusBar />
         <main id="main-content" tabIndex={-1} className="container space-y-6 py-8 focus:outline-none">
           <div className="space-y-2">
-            <h1 className="text-3xl font-semibold tracking-tight flex items-center gap-2">
-              <CalendarIcon className="h-7 w-7 text-primary" />
+            <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight sm:text-3xl">
+              <CalendarIcon className="h-6 w-6 text-primary sm:h-7 sm:w-7" />
               FOMC calendar
             </h1>
             <p className="max-w-2xl text-muted-foreground">

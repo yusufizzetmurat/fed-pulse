@@ -42,14 +42,14 @@ function MiniTrend({ trend }: { trend: number[] }) {
   );
 }
 
-function gapTone(value?: number): "hawkish" | "dovish" | "neutral" {
+function gapTone(value?: number | null): "hawkish" | "dovish" | "neutral" {
   if (value == null) return "neutral";
   if (value > 0.05) return "hawkish";
   if (value < -0.05) return "dovish";
   return "neutral";
 }
 
-function formatGap(value?: number): string {
+function formatGap(value?: number | null): string {
   if (value == null) return "—";
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
 }

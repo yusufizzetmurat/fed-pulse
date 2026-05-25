@@ -30,7 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   deleteHistoryRun,
   fetchHistory,
-  fetchHistoryRealized,
+  fetchHistoryRealizedBatch,
   resolveApiBaseUrl,
 } from "@/lib/analyze/api";
 import { stanceLabel, toStance } from "@/lib/analyze/format";
@@ -90,23 +90,25 @@ export default function HistoryPage() {
         if (signal.aborted) return;
         setItems(result.items.map((row) => ({ ...row, realized_regime: null })));
         setTotal(result.total);
-        // Per-row realized fetches share the same signal so a filter
-        // change cancels them before stale writes hit setItems.
-        result.items.forEach(async (row) => {
-          try {
-            const realized = await fetchHistoryRealized(apiBaseUrl, row.id, signal);
-            if (signal.aborted) return;
-            setItems((prev) =>
-              prev.map((entry) =>
-                entry.id === row.id
-                  ? { ...entry, realized_regime: realized.realized_regime ?? null }
-                  : entry,
-              ),
-            );
-          } catch {
-            // Realized fetch is best-effort; aborted requests land here too.
-          }
-        });
+        // One batched round trip replaces the N per-row fetches the page
+        // used to fan out. Backend caps the batch at 50 ids; the page
+        // limit defaults to 50 so the call fits in one request. Failures
+        // are best-effort — aborted requests and yfinance hiccups leave
+        // the realized column on "pending" rather than nuking the table.
+        const ids = result.items.map((row) => row.id);
+        try {
+          const batch = await fetchHistoryRealizedBatch(apiBaseUrl, ids, signal);
+          if (signal.aborted) return;
+          setItems((prev) =>
+            prev.map((entry) => {
+              const realized = batch.items[entry.id];
+              if (!realized) return entry;
+              return { ...entry, realized_regime: realized.realized_regime ?? null };
+            }),
+          );
+        } catch {
+          // Best-effort: realized column stays "pending" on batch failure.
+        }
       } catch (err) {
         if (!signal.aborted) {
           toast.error((err as Error).message || "Failed to load history.");

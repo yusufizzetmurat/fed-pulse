@@ -117,6 +117,26 @@ export function MultiAxisInterpretation({
   const stanceHistory = history?.stance;
   const factorHistory = history?.factor;
   const certaintyHistory = history?.certainty;
+  const allAxesNull =
+    !multiAxis.stance && !multiAxis.factor && !multiAxis.certainty && !multiAxis.topic;
+
+  if (allAxesNull) {
+    return (
+      <div className="rounded-md border border-dashed border-border bg-muted/20 p-4 text-xs text-muted-foreground sm:col-span-2">
+        <p className="mb-1 text-[10px] uppercase tracking-wide text-foreground">
+          Multi-axis classifier returned no axis labels
+        </p>
+        <p>
+          The classifier ran but every head returned null. The most common cause is a missing
+          checkpoint at <code className="rounded bg-muted px-1">backend/models/multi_axis_classifier.pt</code>
+          {" "}or a passage shorter than the encoder context window. Train and deploy the
+          checkpoint, or paste a longer FOMC statement to populate stance, factor, certainty,
+          and topic.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       {multiAxis.stance ? <StanceTile stance={multiAxis.stance} history={stanceHistory} /> : null}

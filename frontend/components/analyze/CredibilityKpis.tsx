@@ -23,6 +23,28 @@ export function CredibilityKpis({ credibility }: CredibilityKpisProps) {
   const marketGap = credibility.market_implied_gap;
   const monthsSince = credibility.months_since_reversal;
   const marketGapReady = isMarketGapAvailable(marketGap);
+  const driftReady = Math.abs(drift) > 1e-6 || (credibility.drift_trend?.length ?? 0) > 1;
+  const allFlat =
+    !driftReady &&
+    realizedGap == null &&
+    !marketGapReady &&
+    monthsSince == null;
+
+  if (allFlat) {
+    return (
+      <div className="rounded-md border border-dashed border-border bg-muted/20 p-4 text-xs text-muted-foreground">
+        <p className="mb-1 text-[10px] uppercase tracking-wide text-foreground">
+          Credibility features unpopulated
+        </p>
+        <p>
+          The credibility module ran but every signal is at its placeholder value. Needs the
+          prior four FOMC statements + the DFF history under <code className="rounded bg-muted px-1">data/external/fred/</code>
+          {" "}to compute drift, realized-vs-stated gap, and months-since-reversal. The
+          market-implied gap stays N/A until the SEP / OIS curve scrapers ship.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

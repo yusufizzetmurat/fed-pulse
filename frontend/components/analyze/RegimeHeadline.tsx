@@ -17,6 +17,13 @@ interface RegimeHeadlineProps {
   history?: Array<{ documentDate: string; argmax: string | null; realized?: string | null }>;
   symbol?: string;
   documentDate?: string;
+  // Empirical conformal coverage across recent history (fraction in
+  // [0,1]). When provided alongside the run-level nominal coverage,
+  // the headline renders a "Nominal X% · Empirical Y%" chip so the
+  // calibration claim on the spine card is audited rather than
+  // asserted. Null/undefined hides the chip.
+  empiricalCoverage?: number | null;
+  empiricalCoverageSampleSize?: number | null;
 }
 
 function regimeBarClass(label: Regime): string {
@@ -51,9 +58,20 @@ export function RegimeHeadline({
   history,
   symbol,
   documentDate,
+  empiricalCoverage,
+  empiricalCoverageSampleSize,
 }: RegimeHeadlineProps) {
   const distribution = regime.distribution ?? {};
   const coveragePct = Math.round(regime.coverage * 100);
+  const hasEmpirical =
+    typeof empiricalCoverage === "number" &&
+    !Number.isNaN(empiricalCoverage) &&
+    (empiricalCoverageSampleSize ?? 0) > 0;
+  const empiricalPct = hasEmpirical
+    ? Math.round((empiricalCoverage as number) * 100)
+    : null;
+  const coverageDeltaPct = hasEmpirical && empiricalPct !== null ? empiricalPct - coveragePct : 0;
+  const coverageDriftLarge = Math.abs(coverageDeltaPct) >= 10;
   const knownOrder = new Set<string>(REGIME_ORDER);
   const extraLabels = Object.keys(distribution).filter((k) => !knownOrder.has(k));
   const renderOrder = [...REGIME_ORDER, ...extraLabels];
@@ -81,8 +99,23 @@ export function RegimeHeadline({
               </Badge>
             ) : null}
             <Badge variant="outline" className="numeric text-[10px]">
-              {coveragePct}% coverage · set size {regime.set_size}
+              {hasEmpirical
+                ? `Nominal ${coveragePct}% · Empirical ${empiricalPct}%`
+                : `${coveragePct}% coverage`}
+              {` · set size ${regime.set_size}`}
             </Badge>
+            {hasEmpirical && coverageDriftLarge ? (
+              <Badge
+                variant={coverageDeltaPct < 0 ? "hawkish" : "neutral"}
+                className="text-[10px]"
+                title={`Empirical coverage drifted ${
+                  coverageDeltaPct < 0 ? "below" : "above"
+                } nominal across ${empiricalCoverageSampleSize ?? 0} runs.`}
+              >
+                {coverageDeltaPct > 0 ? "+" : ""}
+                {coverageDeltaPct}pp drift
+              </Badge>
+            ) : null}
             {oodFlag ? (
               <Badge variant="hawkish" className="text-[10px]">
                 <AlertTriangle className="h-3 w-3" /> OOD
@@ -90,11 +123,11 @@ export function RegimeHeadline({
             ) : null}
           </div>
         </div>
-        <CardTitle className="flex flex-wrap items-end gap-4">
-          <span className="numeric text-5xl font-semibold capitalize tracking-tight">
+        <CardTitle className="flex flex-wrap items-end gap-3 sm:gap-4">
+          <span className="numeric text-4xl font-semibold capitalize tracking-tight sm:text-5xl">
             {regime.argmax_class}
           </span>
-          <span className="numeric text-base text-muted-foreground">
+          <span className="numeric text-sm text-muted-foreground sm:text-base">
             argmax · {(argmaxProb * 100).toFixed(1)}%
           </span>
           <div className="flex flex-wrap items-center gap-1.5">

@@ -2,10 +2,13 @@ import axios from "axios";
 import type {
   AnalyzeRequest,
   AnalyzeResult,
+  ClassificationBreakdownResponse,
+  EvaluationCoverageResponse,
   FomcCalendarResponse,
   HistoryDetail,
   HistoryList,
   HistoryQuery,
+  HistoryRealizedBatchResponse,
   HistoryRealizedResponse,
   NextFomcForecastResponse,
   ResearchArtifactsResponse,
@@ -67,6 +70,42 @@ export async function fetchHistoryRealized(
 ): Promise<HistoryRealizedResponse> {
   const response = await axios.get(`${baseUrl}/history/${runId}/realized`, { signal });
   return response.data as HistoryRealizedResponse;
+}
+
+// Batched companion to ``fetchHistoryRealized``. The /history list page
+// used to fan out N parallel per-row requests; this collapses them to
+// one round trip. Deleted runs and yfinance failures land under
+// ``missing`` so a single broken row does not nuke the table render.
+export async function fetchHistoryRealizedBatch(
+  baseUrl: string,
+  runIds: readonly string[],
+  signal?: AbortSignal,
+): Promise<HistoryRealizedBatchResponse> {
+  if (runIds.length === 0) {
+    return { items: {}, missing: [] };
+  }
+  const response = await axios.get(`${baseUrl}/history-realized`, {
+    params: { ids: runIds.join(",") },
+    signal,
+  });
+  return response.data as HistoryRealizedBatchResponse;
+}
+
+export async function fetchEvaluationCoverage(
+  baseUrl: string,
+  params?: { symbol?: string; lookback_runs?: number },
+  signal?: AbortSignal,
+): Promise<EvaluationCoverageResponse> {
+  const response = await axios.get(`${baseUrl}/evaluation/coverage`, { params, signal });
+  return response.data as EvaluationCoverageResponse;
+}
+
+export async function fetchClassificationBreakdown(
+  baseUrl: string,
+  signal?: AbortSignal,
+): Promise<ClassificationBreakdownResponse> {
+  const response = await axios.get(`${baseUrl}/evaluation/classification-breakdown`, { signal });
+  return response.data as ClassificationBreakdownResponse;
 }
 
 // Pair-helper for the /compare page. There is no dedicated backend endpoint;

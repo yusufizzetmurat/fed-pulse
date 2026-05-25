@@ -27,6 +27,7 @@ import {
 } from "@/lib/analyze/api";
 import { DEFAULT_TEXT } from "@/lib/analyze/constants";
 import { toStance } from "@/lib/analyze/format";
+import { useEvaluationCoverage } from "@/lib/analyze/useEvaluationCoverage";
 import type { AnalyzeRequest, AnalyzeResult, HistoryEntry, Horizon } from "@/lib/analyze/types";
 import {
   DEFAULT_HORIZON,
@@ -81,6 +82,7 @@ export default function WorkspacePage() {
   const [loading, setLoading] = React.useState(false);
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
   const [historyEntries, setHistoryEntries] = React.useState<RegimeHistoryEntry[]>([]);
+  const coverage = useEvaluationCoverage(apiBaseUrl, { symbol: request.symbol });
 
   // Apply saved workspace prefs (default symbol / horizon) after mount.
   // Doing this in an effect rather than the initial state preserves the
@@ -334,6 +336,8 @@ export default function WorkspacePage() {
                   symbol={request.symbol}
                   documentDate={request.date}
                   history={regimeHistorySpark}
+                  empiricalCoverage={coverage.data?.empirical ?? null}
+                  empiricalCoverageSampleSize={coverage.data?.sample_size ?? null}
                 />
               ) : result.prediction?.close != null ? (
                 <LegacyForecastCard

@@ -1,6 +1,7 @@
 import io
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.config import DATA_DIR
 from app.db import (
+    AnalysisRun,
     delete_run,
     get_engine,
     get_run,
@@ -28,12 +30,17 @@ from app.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
     ArtifactFile,
+    ClassificationBreakdownClass,
+    ClassificationBreakdownResponse,
+    ClassificationBreakdownSource,
     DocumentParseResponse,
     DocumentParseUrlRequest,
+    EvaluationCoverageResponse,
     FomcCalendarResponse,
     HistoryDetail,
     HistoryEntry,
     HistoryList,
+    HistoryRealizedBatchResponse,
     HistoryRealizedResponse,
     NextFomcForecastResponse,
     ResearchArtifactsResponse,
@@ -50,6 +57,7 @@ from app.services.document_parser import (
     parse_url,
 )
 from app.services.decision_forecast import load_next_fomc_artifacts
+from app.services.classification_breakdown_loader import load_latest as load_classification_breakdown
 from app.services.fomc_calendar import get_calendar
 from app.services.research_artifacts import (
     SECTIONS as RESEARCH_SECTIONS,
@@ -645,22 +653,13 @@ def delete_history_run(run_id: str, session: Session = Depends(get_session)) -> 
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
 
 
-@app.get("/history/{run_id}/realized", response_model=HistoryRealizedResponse)
-def get_history_run_realized(
-    run_id: str, session: Session = Depends(get_session)
-) -> HistoryRealizedResponse:
-    row = get_run(session, run_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+def _build_realized_payload(row) -> HistoryRealizedResponse:
     steps = parse_horizon_steps(row.horizon)
-    try:
-        realized = fetch_realized_forward(
-            target_date=row.document_date,
-            symbol=row.symbol,
-            steps=steps,
-        )
-    except Exception as exc:  # pragma: no cover — yfinance failures bubble as 502
-        raise HTTPException(status_code=502, detail=f"Market lookup failed: {exc}") from exc
+    realized = fetch_realized_forward(
+        target_date=row.document_date,
+        symbol=row.symbol,
+        steps=steps,
+    )
     return HistoryRealizedResponse(
         run_id=row.id,
         symbol=row.symbol,
@@ -671,6 +670,177 @@ def get_history_run_realized(
         volatility=[float(point["volatility_5d"]) for point in realized],
         realized_regime=bucket_realized_regime(
             float(realized[-1]["volatility_5d"]) if realized else None
+        ),
+    )
+
+
+@app.get("/history/{run_id}/realized", response_model=HistoryRealizedResponse)
+def get_history_run_realized(
+    run_id: str, session: Session = Depends(get_session)
+) -> HistoryRealizedResponse:
+    row = get_run(session, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    try:
+        return _build_realized_payload(row)
+    except Exception as exc:  # pragma: no cover — yfinance failures bubble as 502
+        raise HTTPException(status_code=502, detail=f"Market lookup failed: {exc}") from exc
+
+
+@app.get("/history-realized", response_model=HistoryRealizedBatchResponse)
+def get_history_realized_batch(
+    ids: str = Query(..., description="Comma-separated run IDs (max 50)"),
+    session: Session = Depends(get_session),
+) -> HistoryRealizedBatchResponse:
+    """Batch the per-row realized fetch the /history list page used to do
+    one row at a time. ``ids`` is the comma-joined run-id list; deleted
+    rows and yfinance failures land under ``missing`` so a single broken
+    row does not nuke the table render."""
+
+    # Order-preserving dedupe so a caller passing the same id twice
+    # only triggers one yfinance lookup, and the response order matches
+    # the request order on the way back.
+    seen: set[str] = set()
+    id_list: list[str] = []
+    for chunk in ids.split(","):
+        chunk = chunk.strip()
+        if not chunk or chunk in seen:
+            continue
+        seen.add(chunk)
+        id_list.append(chunk)
+
+    if not id_list:
+        raise HTTPException(
+            status_code=422, detail="ids must contain at least one run id"
+        )
+    if len(id_list) > 50:
+        raise HTTPException(
+            status_code=422,
+            detail=f"ids must contain at most 50 run ids; got {len(id_list)}",
+        )
+
+    items: dict[str, HistoryRealizedResponse] = {}
+    missing: list[str] = []
+    for run_id in id_list:
+        row = get_run(session, run_id)
+        if row is None:
+            missing.append(run_id)
+            continue
+        try:
+            items[run_id] = _build_realized_payload(row)
+        except Exception:  # pragma: no cover — partial failures degrade silently
+            missing.append(run_id)
+    return HistoryRealizedBatchResponse(items=items, missing=missing)
+
+
+# In-memory cache for /evaluation/coverage. Aggregation walks up to
+# ``lookback_runs`` history rows and triggers one yfinance call per row,
+# so cold-cache latency can climb into tens of seconds. The default is
+# tightened to 25 and the hard cap to 100 to keep the workspace
+# headline chip from pinning a worker on first hit; a 5-minute TTL
+# absorbs repeated visits. A persisted realized-regime column on the
+# history row would let us drop the yfinance hop entirely — tracked as
+# the next-step polish item.
+_COVERAGE_CACHE_TTL_SECONDS = 5 * 60
+_coverage_cache: dict[str, tuple[float, "EvaluationCoverageResponse"]] = {}
+
+
+def _reset_coverage_cache() -> None:
+    _coverage_cache.clear()
+
+
+@app.get("/evaluation/coverage", response_model=EvaluationCoverageResponse)
+def evaluation_coverage(
+    symbol: str | None = Query(default=None),
+    lookback_runs: int = Query(default=25, ge=1, le=100),
+    session: Session = Depends(get_session),
+) -> EvaluationCoverageResponse:
+    """Aggregate empirical conformal coverage across recent history runs.
+
+    Empirical = fraction of runs where the realized regime label fell
+    inside that run's predicted set. Nominal is the conformal target the
+    active model was calibrated to (read off the most-recent run that
+    carries ``series.forecast_confidence_level``). Rows without a
+    ``regime_classification.predicted_set`` or without a fetchable
+    realized regime are skipped. Results cached for 5 minutes."""
+
+    cache_key = f"{symbol or '*'}:{lookback_runs}"
+    cached = _coverage_cache.get(cache_key)
+    now = time.monotonic()
+    if cached and now - cached[0] < _COVERAGE_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    query = session.query(AnalysisRun).order_by(AnalysisRun.created_at.desc())
+    if symbol:
+        query = query.filter(AnalysisRun.symbol == symbol)
+    rows = query.limit(lookback_runs).all()
+
+    nominal: float | None = None
+    inside = 0
+    sample_size = 0
+    for row in rows:
+        payload = row.payload if isinstance(row.payload, dict) else {}
+        regime = payload.get("regime_classification") or {}
+        predicted_set = regime.get("predicted_set")
+        if not isinstance(predicted_set, list) or not predicted_set:
+            continue
+        if nominal is None:
+            series = payload.get("series") or {}
+            level = series.get("forecast_confidence_level")
+            if isinstance(level, int | float):
+                nominal = float(level)
+        try:
+            realized = _build_realized_payload(row)
+        except Exception:  # pragma: no cover — yfinance failures skip the row
+            continue
+        if realized.realized_regime is None:
+            continue
+        sample_size += 1
+        if realized.realized_regime in predicted_set:
+            inside += 1
+
+    response = EvaluationCoverageResponse(
+        nominal=nominal,
+        empirical=(inside / sample_size) if sample_size else None,
+        sample_size=sample_size,
+        runs_total=len(rows),
+        computed_at=datetime.now(timezone.utc).isoformat(),
+    )
+    _coverage_cache[cache_key] = (now, response)
+    return response
+
+
+@app.get(
+    "/evaluation/classification-breakdown",
+    response_model=ClassificationBreakdownResponse,
+)
+def evaluation_classification_breakdown() -> ClassificationBreakdownResponse:
+    """Surface the freshest classification breakdown written by the
+    regime training scripts under ``data/artifacts/regime_*``. When no
+    qualifying artifact exists the response is ``available=False`` and
+    the /performance dashboard falls back to its client-side
+    aggregation."""
+
+    payload = load_classification_breakdown(DATA_DIR / "artifacts")
+    if payload is None:
+        return ClassificationBreakdownResponse(available=False)
+    return ClassificationBreakdownResponse(
+        available=True,
+        confusion_matrix=payload.confusion_matrix,
+        per_class=[ClassificationBreakdownClass(**row) for row in payload.per_class],
+        macro_f1=payload.macro_f1,
+        macro_precision=payload.macro_precision,
+        macro_recall=payload.macro_recall,
+        macro_roc_auc=payload.macro_roc_auc,
+        macro_pr_auc=payload.macro_pr_auc,
+        weighted_f1=payload.weighted_f1,
+        n_classes=payload.n_classes,
+        class_labels=payload.class_labels,
+        source=ClassificationBreakdownSource(
+            relative_path=payload.source_relative,
+            training_package_id=payload.training_package_id,
+            checkpoint_path=payload.checkpoint_path,
+            modified_at=payload.modified_at,
         ),
     )
 

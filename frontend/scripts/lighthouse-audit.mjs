@@ -26,13 +26,14 @@ const AUDIT_DIR = path.join(FRONTEND_ROOT, "audit");
 const BASE_URL = (process.env.LIGHTHOUSE_BASE_URL || "http://localhost:3000").replace(/\/$/, "");
 
 const ROUTES = [
-  { path: "/analyze", label: "Analyze" },
+  { path: "/", label: "Workspace" },
   { path: "/history", label: "History" },
-  { path: "/decisions", label: "Decisions" },
   { path: "/compare", label: "Compare" },
   { path: "/performance", label: "Performance" },
   { path: "/calendar", label: "FOMC calendar" },
   { path: "/research", label: "Research" },
+  { path: "/settings", label: "Settings" },
+  { path: "/decisions", label: "Decisions" },
   { path: "/training", label: "Training" },
 ];
 
