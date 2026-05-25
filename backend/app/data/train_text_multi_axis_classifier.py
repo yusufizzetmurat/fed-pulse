@@ -53,6 +53,7 @@ _logger = logging.getLogger(__name__)
 
 DEFAULT_CHECKPOINT_PATH = MODEL_CHECKPOINT_DIR / "text_multi_axis_best.pt"
 DEFAULT_ENCODER_ALIAS = "finbert_fed_adjacent"
+DEFAULT_ARTIFACT_ROOT = DATA_DIR / "artifacts" / "text_multi_axis"
 
 
 @dataclass
@@ -938,6 +939,29 @@ def _evaluate(
     return out
 
 
+def _save_hf_encoder_directory(
+    model: TextMultiAxisClassifier,
+    tokenizer: Any,
+    checkpoint_dir: Path,
+) -> None:
+    """Persist the encoder backbone + tokenizer as a HF-format directory.
+
+    Saves ONLY the encoder backbone (``model.encoder``), not the
+    ``TextMultiAxisClassifier`` wrapper — the registry consumes the
+    bare HF encoder via ``AutoModel.from_pretrained`` and the
+    multi-task head is irrelevant to downstream callers
+    (embedding-cache builder, forecaster). The resulting directory
+    follows the same convention as
+    ``app.data.finetune_pilot``'s ``hf_checkpoints/`` so future
+    tooling can find HF dirs the same way regardless of which trainer
+    produced them.
+    """
+
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    model.encoder.save_pretrained(str(checkpoint_dir))
+    tokenizer.save_pretrained(str(checkpoint_dir))
+
+
 def _save_checkpoint(
     model: TextMultiAxisClassifier,
     *,
@@ -1118,6 +1142,15 @@ def main(argv: list[str] | None = None) -> int:
 
     _log_per_axis_provenance_breakdown(train_rows)
 
+    # Per-run HF artifact directory. The singleton .pt at
+    # ``args.output_checkpoint`` stays the inference-service contract;
+    # this directory carries the encoder backbone + tokenizer in HF
+    # format so the registry, embedding-cache builder, and forecaster
+    # can consume the fine-tuned encoder via ``AutoModel.from_pretrained``.
+    run_token = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    artifact_dir = Path(args.artifact_root) / f"text_multi_axis_{run_token}"
+    hf_checkpoint_dir = artifact_dir / "hf_checkpoints"
+
     best_val_loss = float("inf")
     best_metrics: dict[str, float] = {}
     for epoch in range(args.epochs):
@@ -1142,6 +1175,8 @@ def main(argv: list[str] | None = None) -> int:
                 args=args,
                 class_weights=class_weights,
             )
+            _save_hf_encoder_directory(model, tokenizer, hf_checkpoint_dir)
+            print(f"[multi_axis] hf checkpoint saved to {hf_checkpoint_dir}")
 
     _logger.info("training_complete best_val_loss=%.4f", best_val_loss)
 
@@ -1234,6 +1269,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--output-checkpoint",
         default=str(DEFAULT_CHECKPOINT_PATH),
         help="Destination .pt path for the best-epoch checkpoint.",
+    )
+    parser.add_argument(
+        "--artifact-root",
+        default=str(DEFAULT_ARTIFACT_ROOT),
+        help=(
+            "Root directory for per-run HF-format encoder artifacts. Each "
+            "run writes to ``{artifact_root}/text_multi_axis_{run_token}/"
+            "hf_checkpoints/`` so the encoder backbone + tokenizer can be "
+            "consumed by ``AutoModel.from_pretrained`` (registry, embedding "
+            "cache, forecaster). Independent of the singleton .pt at "
+            "``--output-checkpoint`` which the inference service reads."
+        ),
     )
     parser.add_argument("--seed", type=int, default=97)
     parser.add_argument("--epochs", type=int, default=4)
