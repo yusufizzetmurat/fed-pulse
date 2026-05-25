@@ -544,10 +544,20 @@ def _collect_pairs(args: argparse.Namespace) -> list[dict[str, Any]]:
         pairs.extend(local_pairs)
 
     if args.substrate in {"bis", "both"}:
+        # ``--max-rows == 0`` is the "unlimited" sentinel used by both
+        # ``_bis_pair_stream`` and ``_iter_local_pairs``; only when
+        # ``--substrate both`` is supplied with a positive cap do we need
+        # to compute a remaining BIS budget and emit a drop-warning when
+        # the local slice has already exhausted it. The earlier
+        # ``if bis_cap != 0`` guard misread the sentinel as "skip BIS",
+        # silently emptying ``--substrate bis`` (and the default-cap
+        # ``--substrate both``) runs.
+        should_load_bis = True
         if args.substrate == "both" and args.max_rows:
             remaining = max(0, args.max_rows - len(pairs))
             bis_cap = remaining
             if remaining == 0:
+                should_load_bis = False
                 import warnings as _warnings
 
                 _warnings.warn(
@@ -558,7 +568,7 @@ def _collect_pairs(args: argparse.Namespace) -> list[dict[str, Any]]:
                 )
         else:
             bis_cap = args.max_rows
-        if bis_cap != 0:
+        if should_load_bis:
             bis_iter = _bis_pair_stream(
                 args.bis_dataset_id,
                 args.bis_dataset_revision,
