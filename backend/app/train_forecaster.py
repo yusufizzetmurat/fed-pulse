@@ -440,6 +440,21 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.set_defaults(encoder_lora=False)
+    parser.add_argument(
+        "--lora-freeze-epoch",
+        dest="lora_freeze_epoch",
+        type=int,
+        default=None,
+        help=(
+            "Bundle B LoRA freeze-curriculum boundary (0-indexed). When "
+            "set, the training loop freezes every LoRA matrix at the "
+            "start of this epoch so stage 2 only updates the "
+            "classification head. Default (None) keeps the adapter "
+            "trainable for the full epoch budget — byte-identical to the "
+            "pre-curriculum path. Only meaningful when ``--encoder-lora`` "
+            "is also set."
+        ),
+    )
     # InfoNCE + gated fusion (#235). ``concat`` (default) is the legacy
     # broadcast-text-into-LSTM-input path the determinism regression
     # locks. ``gated_infonce`` dispatches the factory to
@@ -901,6 +916,7 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         sequence_length=int(getattr(args, "sequence_length", 0) or 0),
         use_time_decay=bool(getattr(args, "use_time_decay", True)),
         encoder_lora=bool(getattr(args, "encoder_lora", False)),
+        lora_curriculum_freeze_epoch=getattr(args, "lora_freeze_epoch", None),
         fusion_mode=str(getattr(args, "fusion_mode", "concat") or "concat"),
         infonce_lambda=float(getattr(args, "infonce_lambda", 0.1)),
         infonce_temperature=float(getattr(args, "infonce_temperature", 0.07)),
@@ -1136,6 +1152,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                             n_classes=int(getattr(args, "vol_regime_classes", 3) or 3),
                             use_time_decay=bool(getattr(args, "use_time_decay", True)),
                             encoder_lora=bool(getattr(args, "encoder_lora", False)),
+                            lora_curriculum_freeze_epoch=getattr(args, "lora_freeze_epoch", None),
                             fusion_mode=str(getattr(args, "fusion_mode", "concat") or "concat"),
                             infonce_lambda=float(getattr(args, "infonce_lambda", 0.1)),
                             infonce_temperature=float(getattr(args, "infonce_temperature", 0.07)),
@@ -1232,6 +1249,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                     sequence_length=int(sequence_length),
                     use_time_decay=bool(getattr(args, "use_time_decay", True)),
                     encoder_lora=bool(getattr(args, "encoder_lora", False)),
+                    lora_curriculum_freeze_epoch=getattr(args, "lora_freeze_epoch", None),
                     fusion_mode=str(getattr(args, "fusion_mode", "concat") or "concat"),
                     infonce_lambda=float(getattr(args, "infonce_lambda", 0.1)),
                     infonce_temperature=float(getattr(args, "infonce_temperature", 0.07)),

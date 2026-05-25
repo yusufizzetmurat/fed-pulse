@@ -196,6 +196,91 @@ def tokenize_sequence_texts(
     return input_ids, attention_mask
 
 
+def freeze_adapter(model_or_module: nn.Module) -> int:
+    """Freeze every LoRA adapter parameter on ``model_or_module``.
+
+    Iterates over ``named_parameters()`` and sets ``requires_grad=False``
+    on each tensor whose name carries the canonical PEFT ``lora_`` token
+    (``lora_A`` / ``lora_B`` / ``lora_embedding_A`` / ``lora_embedding_B``).
+    When PEFT is installed and exposes :class:`peft.tuners.lora.LoraLayer`,
+    every parameter that lives inside such a layer is also frozen as a
+    belt-and-braces fallback against future renames.
+
+    Non-LoRA parameters (the frozen base encoder, layer norms, biases on
+    non-LoRA modules, etc.) are left untouched. The helper is idempotent
+    -- calling it on an already-frozen adapter is a no-op that returns
+    the same count.
+
+    Used by the stage-1-train-then-freeze curriculum
+    (``ModelConfig.lora_curriculum_freeze_epoch``): stage 1 trains the
+    LoRA adapter on the combined supervision pool; the loop calls this
+    helper at the configured epoch boundary so stage 2 only updates the
+    classification head while the encoder representation stays fixed.
+
+    Returns the number of LoRA parameter tensors that were marked
+    non-trainable after the call (matches the count of LoRA tensors on
+    the module, since the helper is idempotent).
+    """
+
+    lora_layer_cls: type | None = None
+    try:
+        from peft.tuners.lora import LoraLayer
+
+        lora_layer_cls = LoraLayer
+    except ImportError:  # pragma: no cover - defensive
+        lora_layer_cls = None
+    except AttributeError:  # pragma: no cover - older peft layouts
+        lora_layer_cls = None
+
+    # Collect LoRA parameter ids first by walking sub-modules (so we
+    # catch every tensor PEFT inserted regardless of the exact field
+    # name) and union with a name-pattern pass (covers PEFT releases
+    # that ship without ``LoraLayer`` at the documented import path).
+    lora_param_ids: set[int] = set()
+    if lora_layer_cls is not None:
+        for module in model_or_module.modules():
+            if isinstance(module, lora_layer_cls):
+                for param in module.parameters(recurse=True):
+                    lora_param_ids.add(id(param))
+
+    frozen = 0
+    for name, param in model_or_module.named_parameters():
+        is_lora = id(param) in lora_param_ids or ("lora_" in name)
+        if not is_lora:
+            continue
+        param.requires_grad_(False)
+        frozen += 1
+    return frozen
+
+
+def should_freeze_lora_at_epoch(
+    freeze_epoch: int | None,
+    current_epoch: int,
+    *,
+    already_frozen: bool,
+) -> bool:
+    """Return True when the loop should freeze the LoRA adapter this epoch.
+
+    Encapsulates the boundary policy of the stage-1-train-then-freeze
+    curriculum so the training loop and the unit tests share the same
+    decision logic:
+
+    - ``freeze_epoch is None`` → never freeze (current default).
+    - ``already_frozen`` → no-op; the adapter is frozen for the rest of
+      the run.
+    - ``current_epoch >= freeze_epoch`` → freeze this epoch.
+
+    The check is 0-indexed: ``freeze_epoch=2`` means "freeze at the start
+    of the 3rd epoch", which leaves epochs 0 and 1 training the adapter.
+    """
+
+    if freeze_epoch is None:
+        return False
+    if already_frozen:
+        return False
+    return int(current_epoch) >= int(freeze_epoch)
+
+
 def encode_batch_pooled(
     bundle: LoraEncoderBundle,
     input_ids: torch.Tensor,
