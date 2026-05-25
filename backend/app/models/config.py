@@ -314,6 +314,12 @@ class ModelConfig:
     multi_task_lambda_factor: float = 0.3
     multi_task_lambda_certainty: float = 0.3
     multi_task_lambda_topic: float = 0.3
+    # Steepens inverse-frequency class weights via ``raw[c] = 1 / (n_c + 1) ** power``.
+    # ``1.0`` (default) is the legacy formula and preserves byte-identity with
+    # pre-2026-05-25 sweep numbers; higher values force the gradient onto the
+    # rare classes, mitigating the class-1 collapse the 3-class vol-regime
+    # head exhibits on single-seed runs.
+    class_weight_power: float = 1.0
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -360,6 +366,7 @@ class ModelConfig:
             multi_task_lambda_factor=float(getattr(model, "multi_task_lambda_factor", 0.3)),
             multi_task_lambda_certainty=float(getattr(model, "multi_task_lambda_certainty", 0.3)),
             multi_task_lambda_topic=float(getattr(model, "multi_task_lambda_topic", 0.3)),
+            class_weight_power=float(getattr(model, "class_weight_power", 1.0)),
         )
 
     def to_dict(self) -> dict[str, Any]:

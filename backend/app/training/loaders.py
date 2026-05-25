@@ -2311,15 +2311,23 @@ def fit_class_weights(
     *,
     n_classes: int,
     smoothing: float = 1.0,
+    power: float = 1.0,
 ) -> tuple[float, ...]:
     """Return inverse-frequency class weights fitted on a train slice (#206).
 
     Computes per-class counts under the supplied quantile cutoffs, then
-    returns weights proportional to ``1 / (count + smoothing)`` so a
-    class with no events still receives finite weight rather than
+    returns weights proportional to ``1 / (count + smoothing) ** power``
+    so a class with no events still receives finite weight rather than
     blowing up the loss. The weights are normalised so they sum to
     ``n_classes`` -- a class with the dataset's average frequency gets
     weight ~1, a rare class gets > 1, a dominant class gets < 1.
+
+    ``power=1.0`` (default) is the standard inverse-frequency formula
+    and preserves the pre-Bundle-A.2 behaviour byte-identically. Larger
+    powers (e.g. ``2.0``) steepen the relative weight of rare classes,
+    forcing the gradient to chase the middle-vol class that single-seed
+    runs collapse on under uniform inverse-frequency weighting. Smaller
+    powers (e.g. ``0.5``) flatten the weighting toward uniform.
 
     Returns ``()`` (empty) when no quantile cutoffs are available; the
     caller then falls back to uniform weighting via the standard
@@ -2343,7 +2351,7 @@ def fit_class_weights(
             counts[cls] += 1
     if sum(counts) == 0:
         return ()
-    raw = [1.0 / (c + smoothing) for c in counts]
+    raw = [1.0 / ((c + smoothing) ** power) for c in counts]
     total = sum(raw)
     return tuple((w / total) * n_classes for w in raw)
 

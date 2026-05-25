@@ -101,6 +101,7 @@ def build_forecaster(
     multi_task_lambda_factor = float(kwargs.pop("multi_task_lambda_factor", 0.3))
     multi_task_lambda_certainty = float(kwargs.pop("multi_task_lambda_certainty", 0.3))
     multi_task_lambda_topic = float(kwargs.pop("multi_task_lambda_topic", 0.3))
+    class_weight_power = float(kwargs.pop("class_weight_power", 1.0))
     # Phase 9 V2 (#195) fields all forwarded: ``output_mode`` /
     # ``n_classes`` drive the head shape; ``vol_regime_quantiles`` /
     # ``vol_regime_target`` ride on the module so the checkpoint
@@ -140,6 +141,7 @@ def build_forecaster(
     model.multi_task_lambda_factor = multi_task_lambda_factor  # type: ignore[assignment]
     model.multi_task_lambda_certainty = multi_task_lambda_certainty  # type: ignore[assignment]
     model.multi_task_lambda_topic = multi_task_lambda_topic  # type: ignore[assignment]
+    model.class_weight_power = class_weight_power  # type: ignore[assignment]
     return model
 
 
