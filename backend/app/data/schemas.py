@@ -578,6 +578,46 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
         float, nullable=True, required=True, coerce=True
     ),
     "intra_meeting_factor_shift": Column(float, nullable=True, required=True, coerce=True),
+    # ----- #291 rates-complex forward targets (raw bps) -----
+    # required=False so older events.parquet files (pre #291) validate
+    # without the columns present. The pipeline emits None when the
+    # rates panel is unavailable so the schema stays nullable.
+    "yield_2y_change_5d": Column(float, nullable=True, required=False, coerce=True),
+    "yield_5y_change_5d": Column(float, nullable=True, required=False, coerce=True),
+    "terminal_rate_change_5d": Column(float, nullable=True, required=False, coerce=True),
+    # ----- #291 pre-meeting expectation features (strict-backward at t-1) -----
+    "pre_meeting_yield_1y": Column(float, nullable=True, required=False, coerce=True),
+    "pre_meeting_yield_2y": Column(float, nullable=True, required=False, coerce=True),
+    "pre_meeting_yield_5y": Column(float, nullable=True, required=False, coerce=True),
+    "pre_meeting_yield_10y": Column(float, nullable=True, required=False, coerce=True),
+    "pre_meeting_slope_10y_2y": Column(float, nullable=True, required=False, coerce=True),
+    "pre_meeting_slope_10y_3m": Column(float, nullable=True, required=False, coerce=True),
+    "pre_meeting_trailing_2y_yield_change_5d_bps": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "pre_meeting_implied_next_move_bps": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "pre_meeting_implied_hike_prob": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "pre_meeting_implied_cut_prob": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "pre_meeting_implied_pause_prob": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "pre_meeting_days_since_last_rate_change": Column(
+        float,
+        nullable=True,
+        required=False,
+        coerce=True,
+        description=(
+            "Calendar-day gap since the last DFEDTARU step change at t-1; "
+            "stored as float so pandas keeps the nullable semantics across "
+            "pyarrow round-trips (int columns cannot hold NaN)."
+        ),
+    ),
 }
 
 

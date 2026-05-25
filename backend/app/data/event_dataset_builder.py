@@ -150,6 +150,14 @@ from app.data.macro_releases import (
     build_heuristic_calendar,
     load_macro_release_calendar,
 )
+from app.data.rates_event_features import (
+    FORWARD_TARGET_COLUMNS,
+    PRE_MEETING_LEVEL_COLUMNS,
+    PreMeetingFeatures,
+    compute_pre_meeting_features,
+    forward_yield_change_bps,
+)
+from app.data.rates_panel import RatesPanelLookup, load_rates_panel_lookup
 from app.features.credibility import CredibilityVector
 from app.services.credibility_loader import load_credibility_for_run
 
@@ -1291,6 +1299,8 @@ def _build_event_rows(
     concurrent_macro_window_days: int = CONCURRENT_MACRO_TRADING_DAY_RADIUS,
     intra_meeting_shift: dict[str, float] | None = None,
     cross_asset_lookup: dict[_dt.date, dict[str, float]] | None = None,
+    rates_lookup: RatesPanelLookup | None = None,
+    rates_horizon: int = 5,
 ) -> list[dict[str, Any]]:
     event_date = _date(doc.event_date)
     as_of_ts = _as_of_for_event(doc.event_date, doc.event_kind)
@@ -1358,6 +1368,30 @@ def _build_event_rows(
             "intra_meeting_factor_shift": math.nan,
         }
 
+    # Rates-complex forward targets (#291). Strict-forward bps changes
+    # over the rates panel's t -> t+rates_horizon trading-day window.
+    # Empty lookup -> every target is None and the column degrades
+    # cleanly to a nullable float on the parquet write side.
+    rates_forward_targets: dict[str, float | None] = {
+        target_column: None for _, target_column in FORWARD_TARGET_COLUMNS
+    }
+    if rates_lookup is not None:
+        for column, target_column in FORWARD_TARGET_COLUMNS:
+            rates_forward_targets[target_column] = forward_yield_change_bps(
+                rates_lookup,
+                asset_series.dates,
+                column=column,
+                event_date=as_of_date,
+                horizon=rates_horizon,
+            )
+
+    # Pre-meeting expectation features (#291). Strict-backward at t-1.
+    pre_meeting: PreMeetingFeatures | None = None
+    if rates_lookup is not None:
+        pre_meeting = compute_pre_meeting_features(
+            rates_lookup, asset_series.dates, event_date=as_of_date
+        )
+
     rows: list[dict[str, Any]] = []
     for h in horizons:
         tgt = targets.get(h)
@@ -1418,9 +1452,67 @@ def _build_event_rows(
                     intra_meeting_shift["intra_meeting_factor_shift"]
                 ),
                 "realized_date": realized_date.isoformat() if realized_date else None,
+                # --- Rates-complex forward targets (#291), raw bps ---
+                "yield_2y_change_5d": _maybe_float(
+                    rates_forward_targets.get("yield_2y_change_5d")
+                ),
+                "yield_5y_change_5d": _maybe_float(
+                    rates_forward_targets.get("yield_5y_change_5d")
+                ),
+                "terminal_rate_change_5d": _maybe_float(
+                    rates_forward_targets.get("terminal_rate_change_5d")
+                ),
+                # --- Pre-meeting expectation features (#291) ---
+                "pre_meeting_yield_1y": _pre_meeting_field(pre_meeting, "pre_meeting_yield_1y"),
+                "pre_meeting_yield_2y": _pre_meeting_field(pre_meeting, "pre_meeting_yield_2y"),
+                "pre_meeting_yield_5y": _pre_meeting_field(pre_meeting, "pre_meeting_yield_5y"),
+                "pre_meeting_yield_10y": _pre_meeting_field(pre_meeting, "pre_meeting_yield_10y"),
+                "pre_meeting_slope_10y_2y": _pre_meeting_field(
+                    pre_meeting, "pre_meeting_slope_10y_2y"
+                ),
+                "pre_meeting_slope_10y_3m": _pre_meeting_field(
+                    pre_meeting, "pre_meeting_slope_10y_3m"
+                ),
+                "pre_meeting_trailing_2y_yield_change_5d_bps": _pre_meeting_field(
+                    pre_meeting, "pre_meeting_trailing_2y_yield_change_5d_bps"
+                ),
+                "pre_meeting_implied_next_move_bps": _pre_meeting_field(
+                    pre_meeting, "pre_meeting_implied_next_move_bps"
+                ),
+                "pre_meeting_implied_hike_prob": _pre_meeting_field(
+                    pre_meeting, "pre_meeting_implied_hike_prob"
+                ),
+                "pre_meeting_implied_cut_prob": _pre_meeting_field(
+                    pre_meeting, "pre_meeting_implied_cut_prob"
+                ),
+                "pre_meeting_implied_pause_prob": _pre_meeting_field(
+                    pre_meeting, "pre_meeting_implied_pause_prob"
+                ),
+                "pre_meeting_days_since_last_rate_change": _pre_meeting_field(
+                    pre_meeting, "pre_meeting_days_since_last_rate_change"
+                ),
             }
         )
     return rows
+
+
+def _maybe_float(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return float(value)
+
+
+def _pre_meeting_field(
+    features: PreMeetingFeatures | None, field_name: str
+) -> float | None:
+    if features is None:
+        return None
+    value = getattr(features, field_name)
+    if value is None:
+        return None
+    return float(value)
+
+
 
 
 _CREDIBILITY_EMPTY_INPUTS_WARNED = False
@@ -1503,6 +1595,23 @@ COLUMN_ORDER = (
     "intra_meeting_certainty_shift",
     "intra_meeting_factor_shift",
     "realized_date",
+    # Rates-complex forward targets (#291)
+    "yield_2y_change_5d",
+    "yield_5y_change_5d",
+    "terminal_rate_change_5d",
+    # Pre-meeting expectation features (#291)
+    "pre_meeting_yield_1y",
+    "pre_meeting_yield_2y",
+    "pre_meeting_yield_5y",
+    "pre_meeting_yield_10y",
+    "pre_meeting_slope_10y_2y",
+    "pre_meeting_slope_10y_3m",
+    "pre_meeting_trailing_2y_yield_change_5d_bps",
+    "pre_meeting_implied_next_move_bps",
+    "pre_meeting_implied_hike_prob",
+    "pre_meeting_implied_cut_prob",
+    "pre_meeting_implied_pause_prob",
+    "pre_meeting_days_since_last_rate_change",
 )
 
 
@@ -1524,6 +1633,9 @@ def build_event_rows(
     macro_release_calendar: MacroReleaseCalendar | None = None,
     macro_release_csv_path: Path | str | None = None,
     concurrent_macro_window_days: int = CONCURRENT_MACRO_TRADING_DAY_RADIUS,
+    rates_panel_path: Path | str | None = None,
+    rates_lookup: RatesPanelLookup | None = None,
+    rates_horizon: int = 5,
 ) -> pd.DataFrame:
     """Build the events DataFrame for one training package.
 
@@ -1615,6 +1727,20 @@ def build_event_rows(
         "fred_series_id": fred_series_id,
     }
 
+    # Rates panel lookup (#291). Tests inject ``rates_lookup`` directly;
+    # the pipeline path resolves the parquet at the supplied
+    # ``rates_panel_path`` or under ``fred_cache_dir / 'rates_panel.parquet'``
+    # by default, and degrades cleanly to an empty lookup when the file
+    # is absent so a fresh checkout still produces an events.parquet.
+    if rates_lookup is None:
+        resolved_rates_path: Path | None = None
+        if rates_panel_path is not None:
+            resolved_rates_path = Path(rates_panel_path)
+        elif fred_cache_dir is not None:
+            resolved_rates_path = Path(fred_cache_dir) / "rates_panel.parquet"
+        if resolved_rates_path is not None:
+            rates_lookup = load_rates_panel_lookup(resolved_rates_path)
+
     out_rows: list[dict[str, Any]] = []
     for doc in docs:
         rows = _build_event_rows(
@@ -1629,6 +1755,8 @@ def build_event_rows(
             concurrent_macro_window_days=concurrent_macro_window_days,
             intra_meeting_shift=intra_meeting_shifts.get(doc.event_date),
             cross_asset_lookup=cross_asset_lookup,
+            rates_lookup=rates_lookup,
+            rates_horizon=rates_horizon,
         )
         if not rows:
             summary.dropped_no_prior_window += 1
@@ -1756,6 +1884,25 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "attribution (~25%); set 0 to require exact same-day overlap."
         ),
     )
+    parser.add_argument(
+        "--rates-panel-path",
+        default=None,
+        help=(
+            "Path to data/external/fred/rates_panel.parquet for the "
+            "#291 rates-complex feature columns. Defaults to "
+            "<fred-cache-dir>/rates_panel.parquet; a missing file "
+            "degrades to null columns on every event row."
+        ),
+    )
+    parser.add_argument(
+        "--rates-horizon",
+        type=int,
+        default=5,
+        help=(
+            "Trading-day horizon for the strict-forward yield-change "
+            "targets (default: 5)."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1812,6 +1959,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         fred_cache_dir=Path(args.fred_cache_dir) if args.fred_cache_dir else None,
         summary=summary,
         macro_release_calendar=macro_calendar,
+        rates_panel_path=args.rates_panel_path,
+        rates_horizon=int(args.rates_horizon),
     )
     output_path = Path(args.output)
     if not output_path.is_absolute():
@@ -1849,6 +1998,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             summary=full_summary,
             macro_release_calendar=macro_calendar,
             keep_all_sources=True,
+            rates_panel_path=args.rates_panel_path,
+            rates_horizon=int(args.rates_horizon),
         )
         full_output_path = Path(full_output_arg)
         if not full_output_path.is_absolute():

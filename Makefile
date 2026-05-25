@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier
 
 help:
 	@echo "Targets:"
@@ -60,6 +60,7 @@ help:
 	@echo "  make macro-state      - Build the FRED macro-state parquet (Phase 8 #147)"
 	@echo "  make build-macro-state - Same as macro-state, named for the data-asset suite"
 	@echo "  make build-mp-surprises - Build the MP-surprise time-series parquet"
+	@echo "  make build-rates-panel - Build the daily rates panel (DGS1/2/5/10, DFEDTARU, #291)"
 	@echo "  make rebuild-linguistic-features TRAINING_PACKAGE_ID=<id>"
 	@echo "                         - Re-emit linguistic_features.parquet for a training package"
 	@echo "  make cache-voyage-embeddings"
@@ -599,6 +600,22 @@ build-mp-surprises:
 	docker compose run --rm backend \
 		python -m app.data.mp_surprise \
 		--output data/external/fred/mp_surprises.parquet
+
+# Build the daily rates panel at data/external/fred/rates_panel.parquet
+# (#291). Carries DGS1/2/5/10, T10Y2Y, T10Y3M, DFEDTARU, DFEDTARL with
+# strict-backward publication-date indexing. Required by the
+# event_dataset_builder when emitting rates-complex forward targets and
+# pre-meeting expectation features. Requires FRED_API_KEY in .env on
+# first run; subsequent runs reuse the per-series JSON cache.
+RATES_PANEL_START ?= 2008-01-01
+RATES_PANEL_END ?= today
+build-rates-panel:
+	@test -f .env || (echo ".env required for FRED_API_KEY"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.rates_panel \
+		--start "$(RATES_PANEL_START)" \
+		--end "$(RATES_PANEL_END)" \
+		--output data/external/fred/rates_panel.parquet
 
 # Re-emit linguistic_features.parquet for a given training package. The
 # default output filename and LDA-artifact filenames live under the package
