@@ -157,9 +157,15 @@ def forward_yield_change_bps(
     calendar runs out before ``t+horizon``.
     """
 
+    # Baseline ``t``: snap forward to the first trading day on or after
+    # event_date. When event_date sits past the calendar's last entry
+    # (stale yfinance cache vs. real-time FOMC date), fall back to
+    # event_date itself rather than dropping the most-recent event's
+    # target to None — the rates lookup gracefully resolves non-trading
+    # event dates via the same yield_on_or_before semantics.
     t = trading_day_offset(trading_calendar, event_date, offset=0)
     if t is None:
-        return None
+        t = event_date
     base = lookup.yield_on_or_before(column, t)
     if base is None:
         return None
@@ -249,7 +255,7 @@ def days_since_last_rate_change(
     *,
     column: str = "ff_target_upper",
     tolerance_bps: float = 0.5,
-    max_lookback_days: int = 730,
+    max_lookback_days: int = 3650,
 ) -> int | None:
     """Calendar days since the most recent change in ``ff_target_upper``.
 
@@ -263,6 +269,13 @@ def days_since_last_rate_change(
     ``tolerance_bps`` defaults to 0.5 bp to ignore micro-rounding in the
     published rate series; FOMC moves are 25 bps minimum, so the
     threshold is conservative.
+
+    ``max_lookback_days`` defaults to 10 years so multi-year pause
+    regimes (2009-12 to 2015-12 ZLB; 2020-03 to 2022-03 emergency
+    hold) still emit a positive gap rather than silently nulling the
+    feature for every FOMC meeting in those windows — the "very long
+    pause" signal is exactly the value a forecaster needs in those
+    regimes.
     """
 
     dates = lookup.dates_by_column.get(column)

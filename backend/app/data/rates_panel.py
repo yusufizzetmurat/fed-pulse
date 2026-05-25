@@ -226,15 +226,27 @@ def _daily_observations(series: FredSeriesResponse) -> list[_DailyObservation]:
     return out
 
 
-def _value_strictly_before(
+def _value_on_or_before(
     pub_index: Sequence[tuple[_dt.date, float]], as_of: _dt.date
 ) -> tuple[_dt.date | None, float | None]:
+    """Return the latest ``(pub_date, value)`` with ``pub_date <= as_of``.
+
+    The panel stores this raw "close as of date" value at each parquet
+    row. :class:`RatesPanelLookup` then layers strict-backward or
+    on-or-before semantics on top via its own bisect calls, so the
+    panel build itself must NOT pre-apply a shift — doing so would
+    double-shift every value returned by :meth:`yield_on_or_before`
+    and :meth:`yield_strictly_before` (an earlier draft of this
+    module used strict-before semantics in the build and silently
+    emitted values one trading day stale).
+    """
+
     import bisect as _bisect
 
     if not pub_index:
         return (None, None)
     dates = [d for d, _ in pub_index]
-    idx = _bisect.bisect_left(dates, as_of)
+    idx = _bisect.bisect_right(dates, as_of)
     if idx == 0:
         return (None, None)
     pub_date, val = pub_index[idx - 1]
@@ -323,7 +335,10 @@ def build_rates_panel(
     for d in target_dates:
         payload: dict[str, Any] = {"as_of_date": d.isoformat()}
         for series_id, column_name in COLUMN_BY_SERIES.items():
-            _, val = _value_strictly_before(panel_indices[series_id], d)
+            # Store the close-of-day value as of `d`. Strict-backward
+            # semantics are applied by RatesPanelLookup at query time,
+            # so pre-shifting here would double-shift every consumer.
+            _, val = _value_on_or_before(panel_indices[series_id], d)
             payload[column_name] = _round(_clean_float(val))
         payload["publication_delay_days"] = int(publication_delay_days)
         rows.append(payload)

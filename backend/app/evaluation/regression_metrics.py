@@ -195,7 +195,7 @@ class RegressionMetricCI:
         }
 
 
-def with_block_bootstrap_ci(
+def with_block_bootstrap_ci(  # noqa: PLR0913 — keyword-only args mirror the bootstrap.block_bootstrap_ci surface; collapsing into a config dataclass would obscure the call sites.
     *,
     name: str,
     predicted: Sequence[float],
@@ -295,7 +295,7 @@ def with_block_bootstrap_ci(
     )
 
 
-def regression_metric_panel(
+def regression_metric_panel(  # noqa: PLR0913 — keyword-only resample knobs forwarded to three with_block_bootstrap_ci calls; a config dataclass would just rename the same fields.
     *,
     predicted: Sequence[float],
     observed: Sequence[float],

@@ -81,8 +81,16 @@ def test_build_rates_panel_pins_column_order_and_publication_delay() -> None:
         assert col in COLUMN_ORDER, f"missing column {col!r} in COLUMN_ORDER"
 
 
-def test_value_strictly_before_excludes_event_day() -> None:
-    """A value published on event_date is NOT visible to a strict-backward lookup."""
+def test_parquet_row_stores_raw_close_at_as_of_date() -> None:
+    """Each parquet row carries the close-of-day FRED value for that as_of_date.
+
+    Strict-backward / on-or-before semantics are applied at *query*
+    time by RatesPanelLookup, so the builder must not pre-shift the
+    stored value. A prior draft pre-applied strict-backward and then
+    the lookup re-applied it, producing yields one trading day stale
+    in every production query path. This test pins the corrected
+    convention.
+    """
 
     responses = _stub_fred_responses()
     artifacts = build_rates_panel(
@@ -91,13 +99,12 @@ def test_value_strictly_before_excludes_event_day() -> None:
         fred_responses=responses,
     )
     frame = artifacts.frame
-    # Row dated 2026-05-21 must reflect the 2026-05-20 observation
-    # (strictly before): DGS2 = 4.60.
+    # Row dated 2026-05-21 carries that day's FRED DGS2 close (4.70).
+    # A value of 4.60 means the builder pre-applied strict-backward
+    # and the loaded lookup will be off by one trading day at every
+    # query (the double-shift regression).
     row = frame.loc[frame["as_of_date"] == "2026-05-21"].iloc[0]
-    assert row["treas_2y"] == pytest.approx(4.60), (
-        "Strict-backward lookup at 2026-05-21 must see 2026-05-20's "
-        "DGS2 (4.60) rather than the same-day 4.70."
-    )
+    assert row["treas_2y"] == pytest.approx(4.70)
 
 
 def test_lookup_yield_strictly_before_excludes_target_date() -> None:
@@ -159,8 +166,17 @@ def test_value_hash_is_deterministic_across_runs() -> None:
     assert dataframe_value_hash(a.frame) == dataframe_value_hash(b.frame)
 
 
-def test_round_trip_via_parquet_preserves_lookup(tmp_path) -> None:
-    """Writing + reloading the parquet returns the same strict-backward answers."""
+def test_round_trip_via_parquet_returns_raw_fred_values(tmp_path) -> None:
+    """build -> write -> load preserves raw FRED observations end-to-end.
+
+    Catches the double-shift regression directly: if the builder
+    pre-applied strict-backward (storing yield[as_of - 1] at row
+    as_of) the loaded lookup's bisect would re-apply the shift, and
+    ``yield_on_or_before(2026-05-21)`` would return 4.50 (2026-05-19)
+    instead of 4.70 (2026-05-21). Unit tests that construct
+    RatesPanelLookup directly from raw FRED pairs bypass this path
+    and cannot catch the regression on their own.
+    """
 
     responses = _stub_fred_responses()
     artifacts = build_rates_panel(
@@ -172,14 +188,15 @@ def test_round_trip_via_parquet_preserves_lookup(tmp_path) -> None:
     write_rates_panel_parquet(artifacts.frame, parquet_path)
 
     lookup = load_rates_panel_lookup(parquet_path)
-    # The parquet snapshots the per-business-day frame, so the
-    # lookup's strict-backward semantics now operate against the
-    # *as-of dates* embedded in the parquet rows. The 2026-05-21
-    # row's treas_2y is 4.60 (the strict-backward value computed on
-    # build) and ``yield_on_or_before(2026-05-21)`` returns it.
-    assert lookup.yield_on_or_before("treas_2y", _dt.date(2026, 5, 21)) == pytest.approx(
-        4.60
-    )
+    # yield_on_or_before returns the FRED close on or before the target.
+    assert lookup.yield_on_or_before("treas_2y", _dt.date(2026, 5, 21)) == pytest.approx(4.70)
+    assert lookup.yield_on_or_before("treas_2y", _dt.date(2026, 5, 20)) == pytest.approx(4.60)
+    # yield_strictly_before drops the same-day observation.
+    assert lookup.yield_strictly_before("treas_2y", _dt.date(2026, 5, 21)) == pytest.approx(4.60)
+    assert lookup.yield_strictly_before("treas_2y", _dt.date(2026, 5, 20)) == pytest.approx(4.50)
+    # All eight series round-trip the raw close at as_of_date.
+    assert lookup.yield_on_or_before("treas_1y", _dt.date(2026, 5, 21)) == pytest.approx(5.00)
+    assert lookup.yield_on_or_before("ff_target_upper", _dt.date(2026, 5, 21)) == pytest.approx(5.50)
 
 
 def test_missing_parquet_degrades_to_empty_lookup(tmp_path) -> None:
