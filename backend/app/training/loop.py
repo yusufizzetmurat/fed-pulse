@@ -836,6 +836,7 @@ def _evaluate_model(
                     model, batch_x, kwargs
                 )
                 assert batch_mt_aux is not None  # narrowed by the guard above
+                assert multi_task_loss_fn is not None  # narrowed by ``multi_task_active``
                 stance_mask = torch.ones(
                     (batch_size,), dtype=torch.bool, device=batch_x.device
                 )
