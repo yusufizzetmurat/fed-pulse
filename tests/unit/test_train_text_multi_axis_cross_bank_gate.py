@@ -18,6 +18,7 @@ from app.data.train_text_multi_axis_classifier import (  # noqa: E402
     _AxisRow,
     _collate,
     _compute_weighted_total_loss,
+    _evaluate,
     _gtfintechlab_row_to_axis_row,
     _log_per_axis_provenance_breakdown,
 )
@@ -493,3 +494,214 @@ def test_weighted_arm_leaves_other_axis_gradients_unchanged() -> None:
             rtol=1e-6,
             atol=1e-6,
         )
+
+
+# --- _evaluate train/val parity --------------------------------------
+#
+# Pins that ``_evaluate`` threads ``stance_sample_weight`` through to
+# ``loss_fn`` so the val loss tracks the same objective the optimizer
+# minimizes on the train side. Without the thread-through, the train
+# arm runs weighted CE on stance while the val arm runs unweighted CE
+# under ``--cross-bank-supervision=weighted`` — and best-checkpoint
+# selection by val_loss picks against the wrong objective.
+
+
+class _ConstantLogitsModel(torch.nn.Module):
+    """Stand-in module whose ``forward`` returns a fixed logits dict.
+
+    The trainer only reads ``model(input_ids, attention_mask)`` so a
+    constant-output model is enough to exercise the loss + weight path
+    without the real encoder. The dummy ``_param`` keeps optimizer.step
+    happy in the train-arm tests (no real parameter update happens
+    since the logits don't depend on it)."""
+
+    def __init__(self, logits: dict[str, "torch.Tensor"]) -> None:
+        super().__init__()
+        self._logits = logits
+        self._param = torch.nn.Parameter(torch.zeros(1, dtype=torch.float32))
+
+    def forward(
+        self, input_ids: "torch.Tensor", attention_mask: "torch.Tensor"
+    ) -> dict[str, "torch.Tensor"]:
+        # Re-emit the cached logits each call. ``_evaluate`` is called
+        # under ``torch.no_grad()`` so any graph attachment via
+        # ``self._param`` would be a no-op on the val side anyway.
+        return {k: v.clone() for k, v in self._logits.items()}
+
+
+def _two_row_batch(weights: list[float]) -> dict[str, "torch.Tensor"]:
+    """Build a 2-row collated batch with the given per-row stance weights."""
+
+    return {
+        "input_ids": torch.zeros(2, 4, dtype=torch.long),
+        "attention_mask": torch.ones(2, 4, dtype=torch.long),
+        "target_stance": torch.tensor([0, 1], dtype=torch.long),
+        "target_factor": torch.zeros(2, dtype=torch.float32),
+        "target_certainty": torch.zeros(2, dtype=torch.long),
+        "target_topic": torch.zeros(2, dtype=torch.long),
+        "mask_stance": torch.tensor([True, True], dtype=torch.bool),
+        "mask_factor": torch.tensor([False, False], dtype=torch.bool),
+        "mask_certainty": torch.tensor([False, False], dtype=torch.bool),
+        "mask_topic": torch.tensor([False, False], dtype=torch.bool),
+        "stance_sample_weight": torch.tensor(weights, dtype=torch.float32),
+        "source": ["fomc", "fomc"],
+        "provenance": ["peer_reviewed", "peer_reviewed"],
+    }
+
+
+def test_evaluate_threads_stance_sample_weight_through_loss() -> None:
+    """Train and val arms must produce the same loss on the same toy
+    batch when the same per-row weights are applied. Pre-fix, the val
+    arm ignored ``stance_sample_weight`` and ran unweighted CE — the
+    two losses diverged under the ``weighted`` arm. This test fails
+    on the old code (sees the unweighted/weighted gap) and passes on
+    the fixed code.
+
+    Uses non-uniform weights ``[1.0, 0.25]`` so the weighted vs plain
+    mean produce different numerics (uniform weights collapse to the
+    plain mean and would mask the bug).
+    """
+
+    # Deterministic logits chosen so the two rows have meaningfully
+    # different per-row CE — non-uniform weighting then yields a
+    # detectably different total from the plain mean.
+    stance_logits = torch.tensor(
+        [[2.0, 0.0, -1.0], [0.0, 1.0, 0.5]], dtype=torch.float32
+    )
+    factor_logits = torch.zeros(2, dtype=torch.float32)
+    certainty_logits = torch.zeros(2, 3, dtype=torch.float32)
+    topic_logits = torch.zeros(2, 4, dtype=torch.float32)
+    logits = {
+        "stance": stance_logits,
+        "factor": factor_logits,
+        "certainty": certainty_logits,
+        "topic": topic_logits,
+    }
+    model = _ConstantLogitsModel(logits)
+    loss_fn = MultiTaskLoss(
+        lambda_stance=1.0,
+        lambda_factor=0.0,
+        lambda_certainty=0.0,
+        lambda_topic=0.0,
+    )
+
+    batch = _two_row_batch([1.0, 0.25])
+
+    class _OneShotLoader:
+        def __init__(self, batch: dict[str, "torch.Tensor"]) -> None:
+            self._batch = batch
+
+        def __iter__(self):
+            return iter([self._batch])
+
+    # Eval loss with the per-row stance weight threaded through.
+    val_metrics_weighted = _evaluate(
+        model, _OneShotLoader(batch), loss_fn, torch.device("cpu")
+    )
+
+    # Train-side reference: ``_compute_weighted_total_loss`` is the
+    # train arm's loss-computation helper. Calling it directly on the
+    # same batch + same stance weight produces the loss the optimizer
+    # actually minimizes. Eval must match.
+    targets = {
+        "stance": batch["target_stance"],
+        "factor": batch["target_factor"],
+        "certainty": batch["target_certainty"],
+        "topic": batch["target_topic"],
+    }
+    masks = {
+        "stance_mask": batch["mask_stance"],
+        "factor_mask": batch["mask_factor"],
+        "certainty_mask": batch["mask_certainty"],
+        "topic_mask": batch["mask_topic"],
+    }
+    train_total, _ = _compute_weighted_total_loss(
+        loss_fn=loss_fn,
+        logits=logits,
+        targets=targets,
+        masks=masks,
+        stance_sample_weight=batch["stance_sample_weight"],
+    )
+
+    assert val_metrics_weighted["loss"] == pytest.approx(
+        float(train_total.detach().item()), rel=0.0, abs=1e-6
+    )
+
+    # And the val_loss under the non-uniform weight differs from the
+    # val_loss the pre-fix path would have produced (plain unweighted
+    # CE). The gap pins that the kwarg actually rode through to the
+    # loss formula.
+    plain_total, _ = loss_fn(logits, targets, masks)
+    assert val_metrics_weighted["loss"] != pytest.approx(
+        float(plain_total.detach().item()), abs=1e-6
+    )
+
+
+def test_evaluate_runs_under_no_grad() -> None:
+    """``_evaluate`` must not retain a computation graph on the
+    forward pass — ``model.eval()`` flips dropout/BN but does NOT
+    disable autograd. The model logits inside the eval forward must
+    have ``requires_grad=False`` because the ``@torch.no_grad()``
+    decorator suppresses graph construction. We capture the logits
+    via a side-effect list and assert their grad state."""
+
+    seen_requires_grad: list[bool] = []
+    leaf = torch.nn.Parameter(torch.tensor(1.0))
+
+    class _GraphAttachingModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.leaf = leaf
+
+        def forward(
+            self,
+            input_ids: "torch.Tensor",
+            attention_mask: "torch.Tensor",
+        ) -> dict[str, "torch.Tensor"]:
+            # Multiply by the leaf so the output WOULD attach to a
+            # grad graph in autograd-enabled mode. Under
+            # ``@torch.no_grad()`` the multiplication still produces
+            # a tensor but with ``requires_grad=False``.
+            scale = self.leaf
+            stance = torch.zeros(2, 3) * scale
+            seen_requires_grad.append(bool(stance.requires_grad))
+            return {
+                "stance": stance,
+                "factor": torch.zeros(2) * scale,
+                "certainty": torch.zeros(2, 3) * scale,
+                "topic": torch.zeros(2, 4) * scale,
+            }
+
+    loss_fn = MultiTaskLoss(
+        lambda_stance=1.0,
+        lambda_factor=0.0,
+        lambda_certainty=0.0,
+        lambda_topic=0.0,
+    )
+
+    class _OneShotLoader:
+        def __init__(self, batch: dict[str, "torch.Tensor"]) -> None:
+            self._batch = batch
+
+        def __iter__(self):
+            return iter([self._batch])
+
+    batch = _two_row_batch([1.0, 1.0])
+    metrics = _evaluate(
+        _GraphAttachingModel(),
+        _OneShotLoader(batch),
+        loss_fn,
+        torch.device("cpu"),
+    )
+    # Eval forward observed the logits as detached — autograd graph
+    # construction was suppressed by ``@torch.no_grad()``. Without
+    # the decorator, multiplying ``torch.zeros(...) * leaf`` (where
+    # ``leaf.requires_grad=True``) would produce a graph-attached
+    # tensor with ``requires_grad=True``.
+    assert seen_requires_grad == [False]
+    assert "loss" in metrics
+    # Logits are all zero → softmax is uniform across 3 classes →
+    # CE = ln(3) ≈ 1.0986. Sanity-check the formula matches.
+    import math
+
+    assert metrics["loss"] == pytest.approx(math.log(3.0), abs=1e-5)

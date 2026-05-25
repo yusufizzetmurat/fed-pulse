@@ -861,12 +861,29 @@ def _evaluate_per_bank(
     return out
 
 
+@torch.no_grad()
 def _evaluate(
     model: TextMultiAxisClassifier,
     loader: DataLoader,
     loss_fn: MultiTaskLoss,
     device: torch.device,
 ) -> dict[str, float]:
+    """Eval loop that mirrors the train loop's loss formula exactly.
+
+    The decorator suppresses autograd graph construction for the whole
+    forward + loss pass (``model.eval()`` only flips dropout/BN, it does
+    NOT disable autograd) — without it, the per-batch forward retained a
+    computation graph that was never backpropagated, ballooning memory.
+
+    The per-row ``stance_sample_weight`` from the batch is threaded into
+    ``loss_fn`` so the val loss tracks the same objective the optimizer
+    is minimizing on the train side. Otherwise (under
+    ``--cross-bank-supervision=weighted``) the train path runs weighted
+    CE on stance while the val path runs plain unweighted CE, and
+    best-checkpoint selection by ``val_loss`` picks against the wrong
+    objective.
+    """
+
     model.eval()
     sum_total = 0.0
     sum_axis = {"stance": 0.0, "factor": 0.0, "certainty": 0.0, "topic": 0.0}
@@ -889,7 +906,16 @@ def _evaluate(
             "certainty_mask": batch["mask_certainty"].to(device),
             "topic_mask": batch["mask_topic"].to(device),
         }
-        total, breakdown = loss_fn(logits, targets, masks)
+        stance_weight = batch.get("stance_sample_weight")
+        if stance_weight is not None:
+            stance_weight = stance_weight.to(device)
+        total, breakdown = _compute_weighted_total_loss(
+            loss_fn=loss_fn,
+            logits=logits,
+            targets=targets,
+            masks=masks,
+            stance_sample_weight=stance_weight,
+        )
         sum_total += float(total.item())
         for axis_name in sum_axis:
             sum_axis[axis_name] += float(breakdown[axis_name].item())
