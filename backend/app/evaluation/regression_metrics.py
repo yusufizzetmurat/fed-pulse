@@ -31,7 +31,7 @@ dependency.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from app.evaluation.bootstrap import BootstrapCI, block_bootstrap_ci
@@ -230,10 +230,12 @@ def with_block_bootstrap_ci(  # noqa: PLR0913 — keyword-only args mirror the b
             n_observations=0,
         )
 
-    point_fns = {
-        "mae_bps": lambda preds, obs: mae_bps(preds, obs),
-        "directional_accuracy": lambda preds, obs: directional_accuracy(preds, obs),
-        "r_squared": lambda preds, obs: r_squared(preds, obs),
+    point_fns: dict[
+        str, Callable[[Sequence[float], Sequence[float]], float]
+    ] = {
+        "mae_bps": mae_bps,
+        "directional_accuracy": directional_accuracy,
+        "r_squared": r_squared,
     }
     if statistic not in point_fns:
         raise ValueError(
@@ -255,7 +257,7 @@ def with_block_bootstrap_ci(  # noqa: PLR0913 — keyword-only args mirror the b
     samples: list[float] = []
     n = len(pairs)
     # Compute the metric on each resample.
-    from app.evaluation.bootstrap import _resample_indices  # type: ignore[attr-defined]
+    from app.evaluation.bootstrap import _resample_indices
 
     for _ in range(n_resamples):
         idx = _resample_indices(n, block_size, rng)
