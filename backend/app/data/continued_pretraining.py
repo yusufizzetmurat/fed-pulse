@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,8 @@ from typing import Any, Iterable
 from app.config import DATA_DIR
 from app.models.registry import revision_for
 from app.training.manifest import write_run_manifest
+
+_logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_CHECKPOINT = "ProsusAI/finbert"
 DEFAULT_OUT_NAME = "finbert_fed_adjacent"
@@ -79,6 +82,19 @@ _GTFINTECHLAB_XBANK_REVISIONS: dict[str, str] = {
     "gtfintechlab/bank_of_canada": "ab15ea2271bfa3208874a5517afc439640fd9200",
     "gtfintechlab/reserve_bank_of_australia": "7a91206b56f2841b2586e409feade2518284894b",
 }
+
+# Enforce that every cross-bank dataset id has a pinned SHA at import
+# time. A future edit that adds a sixth bank to
+# ``_GTFINTECHLAB_XBANK_DATASETS`` without an entry in
+# ``_GTFINTECHLAB_XBANK_REVISIONS`` would otherwise silently fall back
+# to fetching HF Hub HEAD, breaking the reproducibility invariant the
+# DAPT manifest relies on.
+assert set(dataset_id for _, dataset_id in _GTFINTECHLAB_XBANK_DATASETS) == set(
+    _GTFINTECHLAB_XBANK_REVISIONS.keys()
+), (
+    "_GTFINTECHLAB_XBANK_DATASETS and _GTFINTECHLAB_XBANK_REVISIONS must "
+    "list the same dataset ids; missing pin or stale entry detected."
+)
 
 _VALID_SUBSTRATES = ("bis", "local", "fomc", "both", "bis_xbank")
 
@@ -173,10 +189,12 @@ def _iter_gtfintechlab_xbank_pairs() -> list[dict[str, Any]]:
 
     pairs: list[dict[str, Any]] = []
     for _bank_key, dataset_id in _GTFINTECHLAB_XBANK_DATASETS:
-        revision = _GTFINTECHLAB_XBANK_REVISIONS.get(dataset_id)
-        kwargs: dict[str, Any] = {}
-        if revision:
-            kwargs["revision"] = revision
+        # Indexing (not ``.get``) so a missing pin raises ``KeyError`` at
+        # the call site instead of silently degrading to HF Hub HEAD —
+        # the same reproducibility guard the import-time assertion
+        # enforces, restated here for the dynamic dispatch path.
+        revision = _GTFINTECHLAB_XBANK_REVISIONS[dataset_id]
+        kwargs: dict[str, Any] = {"revision": revision}
         configs = list(get_dataset_config_names(dataset_id, **kwargs))
         if not configs:
             configs = [None]  # default config
@@ -191,14 +209,13 @@ def _iter_gtfintechlab_xbank_pairs() -> list[dict[str, Any]]:
             except Exception:
                 splits = ["train"]
             for split in splits:
-                load_kwargs: dict[str, Any] = {"split": split}
-                if revision:
-                    load_kwargs["revision"] = revision
+                load_kwargs: dict[str, Any] = {"split": split, "revision": revision}
                 if config is not None:
                     ds = load_dataset(dataset_id, config, **load_kwargs)
                 else:
                     ds = load_dataset(dataset_id, **load_kwargs)
                 buffer: list[str] = []
+                trailing_dropped = 0
                 for row in ds:
                     if not isinstance(row, dict):
                         continue
@@ -216,7 +233,31 @@ def _iter_gtfintechlab_xbank_pairs() -> list[dict[str, Any]]:
                                     "next_sentence_label": 0,
                                 }
                             )
-                        buffer = []
+                            buffer = []
+                        else:
+                            # Degenerate duplicate: drop ``a`` only; keep
+                            # ``b`` as the candidate first-of-pair for
+                            # the next iteration. Previously the buffer
+                            # was reset to ``[]``, silently discarding
+                            # ``b`` alongside the duplicate ``a`` and
+                            # losing a sentence that could have
+                            # legitimately paired with the next row.
+                            buffer = [b]
+                if buffer:
+                    # An odd number of non-empty sentences in this
+                    # ``(config, split)`` bucket leaves the last
+                    # sentence with no partner. We surface the count in
+                    # the logs so reproducibility audits can reconcile
+                    # the pair total against the row total.
+                    trailing_dropped += len(buffer)
+                if trailing_dropped:
+                    _logger.info(
+                        "xbank_trailing_dropped dataset_id=%s config=%s split=%s n=%d",
+                        dataset_id,
+                        config,
+                        split,
+                        trailing_dropped,
+                    )
     return pairs
 
 

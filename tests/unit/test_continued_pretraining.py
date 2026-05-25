@@ -368,6 +368,115 @@ def test_iter_gtfintechlab_xbank_pairs_covers_all_five_banks(monkeypatch) -> Non
         assert marker in joined, f"{marker} contribution missing from xbank pair stream"
 
 
+def test_iter_gtfintechlab_xbank_pairs_dedup_preserves_b(monkeypatch) -> None:
+    """When the pairing buffer contains a degenerate (a == b) duplicate,
+    only ``a`` should be dropped — ``b`` must roll forward as the
+    candidate first-of-pair so it can legitimately pair with the next
+    sentence. The pre-fix code reset the buffer to ``[]`` and silently
+    discarded ``b`` alongside ``a``.
+
+    Sequence: ["X", "X", "Y"]. The first two collapse into the
+    degenerate (X, X) — drop the first X, keep the second X as buffer.
+    Pair (X, Y) then emits a single pair.
+    """
+    sentences = {
+        # All five datasets must be present (the iterator walks the full
+        # _GTFINTECHLAB_XBANK_DATASETS tuple) but only the first carries
+        # the dedup-relevant fixture.
+        "gtfintechlab/european_central_bank": ["X", "X", "Y"],
+        "gtfintechlab/bank_of_japan": [],
+        "gtfintechlab/bank_of_england": [],
+        "gtfintechlab/bank_of_canada": [],
+        "gtfintechlab/reserve_bank_of_australia": [],
+    }
+    _install_fake_gtfintechlab(monkeypatch, sentences)
+    pairs = cpt._iter_gtfintechlab_xbank_pairs()
+    # Exactly one pair (X, Y) — not zero (pre-fix would have dropped
+    # the second X with the dedup-reset) and not two (would happen if
+    # the dedup somehow emitted (X, X) anyway).
+    assert pairs == [
+        {"sequenceA": "X", "sequenceB": "Y", "next_sentence_label": 0}
+    ]
+
+
+def test_iter_gtfintechlab_xbank_pairs_dedup_does_not_double_count_b(
+    monkeypatch,
+) -> None:
+    """Edge case: when ``b == c`` (the next sentence after a dedup also
+    equals ``b``), the loop must emit ONE pair, not two — the rolled-
+    forward ``b`` should dedup-cancel against ``c`` rather than
+    silently fire (b, c) as a degenerate pair.
+
+    Sequence: ["X", "X", "X", "Y"]. Step 1: (X, X) → drop first X,
+    buffer = [X]. Step 2: append X → (X, X) again → drop, buffer =
+    [X]. Step 3: append Y → (X, Y) emit. Exactly one pair.
+    """
+    sentences = {
+        "gtfintechlab/european_central_bank": ["X", "X", "X", "Y"],
+        "gtfintechlab/bank_of_japan": [],
+        "gtfintechlab/bank_of_england": [],
+        "gtfintechlab/bank_of_canada": [],
+        "gtfintechlab/reserve_bank_of_australia": [],
+    }
+    _install_fake_gtfintechlab(monkeypatch, sentences)
+    pairs = cpt._iter_gtfintechlab_xbank_pairs()
+    assert pairs == [
+        {"sequenceA": "X", "sequenceB": "Y", "next_sentence_label": 0}
+    ]
+
+
+def test_iter_gtfintechlab_xbank_pairs_logs_trailing_odd_sentence(
+    monkeypatch, caplog
+) -> None:
+    """A bucket with an odd number of non-empty sentences leaves the
+    last sentence unpaired. The iterator must log how many trailing
+    sentences were dropped per (config, split) bucket so
+    reproducibility audits can reconcile pair counts against row
+    counts."""
+    sentences = {
+        # 3 sentences in this dataset → 1 pair emitted, 1 trailing.
+        "gtfintechlab/european_central_bank": ["A", "B", "C"],
+        "gtfintechlab/bank_of_japan": [],
+        "gtfintechlab/bank_of_england": [],
+        "gtfintechlab/bank_of_canada": [],
+        "gtfintechlab/reserve_bank_of_australia": [],
+    }
+    _install_fake_gtfintechlab(monkeypatch, sentences)
+    caplog.set_level("INFO", logger="app.data.continued_pretraining")
+    pairs = cpt._iter_gtfintechlab_xbank_pairs()
+    assert pairs == [
+        {"sequenceA": "A", "sequenceB": "B", "next_sentence_label": 0}
+    ]
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "xbank_trailing_dropped" in messages
+    assert "dataset_id=gtfintechlab/european_central_bank" in messages
+    assert "n=1" in messages
+
+
+def test_iter_gtfintechlab_xbank_pairs_raises_on_missing_revision(
+    monkeypatch,
+) -> None:
+    """If a future edit adds a bank to ``_GTFINTECHLAB_XBANK_DATASETS``
+    without a corresponding entry in ``_GTFINTECHLAB_XBANK_REVISIONS``,
+    the iterator must raise loudly — silently degrading to HF Hub HEAD
+    would break the reproducibility invariant. Simulate by removing
+    one pin and asserting ``KeyError``."""
+    sentences = {
+        "gtfintechlab/european_central_bank": ["A", "B"],
+        "gtfintechlab/bank_of_japan": ["C", "D"],
+        "gtfintechlab/bank_of_england": ["E", "F"],
+        "gtfintechlab/bank_of_canada": ["G", "H"],
+        "gtfintechlab/reserve_bank_of_australia": ["I", "J"],
+    }
+    _install_fake_gtfintechlab(monkeypatch, sentences)
+    # Drop the BoJ pin so the iterator's first BoJ lookup fails.
+    patched = dict(cpt._GTFINTECHLAB_XBANK_REVISIONS)
+    patched.pop("gtfintechlab/bank_of_japan")
+    monkeypatch.setattr(cpt, "_GTFINTECHLAB_XBANK_REVISIONS", patched)
+    with pytest.raises(KeyError, match="bank_of_japan"):
+        cpt._iter_gtfintechlab_xbank_pairs()
+
+
 def test_iter_gtfintechlab_xbank_pairs_scale_floor() -> None:
     """The live HF datasets yield 5 x ~3,000 sentences; even after consecutive
     pairing we should clear 5,000 pairs. Skip when ``datasets`` package or
