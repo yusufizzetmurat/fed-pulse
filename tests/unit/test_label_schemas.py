@@ -9,6 +9,7 @@ from app.data.label_schemas import (  # noqa: E402
     MultiAxisLabel,
     Stance,
     Topic,
+    auxiliary_axis_weight_for,
     load_schema,
     sample_weight_for,
 )
@@ -29,6 +30,29 @@ def test_sample_weights_table_matches_provenance() -> None:
     assert sample_weight_for("peer_reviewed_cross_bank") == 0.0
     assert sample_weight_for("scraped") == 0.0
     assert sample_weight_for("unknown-bucket") == 0.0
+
+
+def test_auxiliary_axis_weight_admits_cross_bank() -> None:
+    # ``peer_reviewed_cross_bank`` is the only provenance whose
+    # auxiliary-axis weight diverges from ``sample_weight_for`` — the
+    # encoder fine-tune routes these rows through the non-stance heads
+    # while keeping them off the FOMC stance distribution.
+    assert auxiliary_axis_weight_for("peer_reviewed_cross_bank") == 1.0
+
+
+def test_auxiliary_axis_weight_falls_back_to_sample_weight() -> None:
+    # Every non-cross-bank bucket should match ``sample_weight_for``
+    # exactly so the helper stays a strict superset and downstream
+    # callers can pick either without changing the FOMC pool.
+    for provenance in (
+        "peer_reviewed",
+        "kaggle",
+        "scraped",
+        "unknown-bucket",
+    ):
+        assert auxiliary_axis_weight_for(provenance) == sample_weight_for(
+            provenance
+        )
 
 
 def test_multi_axis_label_stance_only() -> None:
