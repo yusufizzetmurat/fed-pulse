@@ -168,8 +168,8 @@ encoders:
       for reproducibility but the embedding cache builds against s11.
 
   finbert_fed_adjacent_xbank_dapt:
-    repo: local/finbert-fed-adjacent-xbank-dapt
-    revision: ""
+    repo: /data/artifacts/continued_pretraining/finbert_fed_adjacent_xbank_dapt_20260525T185524Z_s11/checkpoint
+    revision: "20260525T185524Z_s11"
     gated: false
     task: masked_lm
     description: |
