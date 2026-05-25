@@ -653,11 +653,19 @@ def _log_per_axis_provenance_breakdown(rows: list[_AxisRow]) -> None:
     matches the project's existing ``key=value key=value`` info-log
     style so downstream parsers (and the wiki's training-summary
     extractor) stay uniform.
+
+    The non-cross-bank bucket is named ``from_other`` (not
+    ``from_FOMC``) so a future provenance (e.g. ``scraped_cross_bank``
+    or an events_parquet row carrying provenance="") that is neither
+    FOMC nor the recognised cross-bank tag does not silently inflate
+    the FOMC counter. Today the supervised pool is dominated by FOMC
+    rows under the ``peer_reviewed`` tag, but the bucket name should
+    not encode that as a permanent assumption.
     """
 
     axis_names: tuple[str, ...] = ("stance", "factor", "certainty", "topic")
     for axis_name in axis_names:
-        from_fomc = 0
+        from_other = 0
         from_cross_bank = 0
         for row in rows:
             if not row.masks.get(axis_name, False):
@@ -665,13 +673,13 @@ def _log_per_axis_provenance_breakdown(rows: list[_AxisRow]) -> None:
             if row.provenance == "peer_reviewed_cross_bank":
                 from_cross_bank += 1
             else:
-                from_fomc += 1
-        total = from_fomc + from_cross_bank
+                from_other += 1
+        total = from_other + from_cross_bank
         _logger.info(
-            "axis=%s rows_total=%d from_FOMC=%d from_cross_bank=%d",
+            "axis=%s rows_total=%d from_other=%d from_cross_bank=%d",
             axis_name,
             total,
-            from_fomc,
+            from_other,
             from_cross_bank,
         )
 
@@ -958,6 +966,23 @@ def main(argv: list[str] | None = None) -> int:
     _set_all_seeds(args.seed)
 
     if args.data_source == "gtfintechlab_hf":
+        # Conflict warning: ``--gtfintechlab-fed-only`` restricts the
+        # loader to the FOMC dataset, which leaves the cross-bank
+        # supervision arm with zero rows to act on — the run log would
+        # otherwise advertise ``cross_bank_mode=stance_masked`` /
+        # ``weighted`` while silently doing nothing. Fed-only wins by
+        # design (it's the explicit FOMC-restriction switch); the
+        # warning lets the caller resolve the conflict on their next
+        # run instead of being misled by the cross-bank flag's
+        # appearance in the args.
+        if args.gtfintechlab_fed_only and args.cross_bank_supervision != "off":
+            _logger.warning(
+                "cross_bank_supervision_noop "
+                "--gtfintechlab-fed-only=True --cross-bank-supervision=%s "
+                "fed-only restricts the loader to the FOMC dataset so the "
+                "cross-bank arm has no rows to act on; fed-only wins.",
+                args.cross_bank_supervision,
+            )
         rows = _load_gtfintechlab_rows(
             fed_only=args.gtfintechlab_fed_only,
             cross_bank_mode=args.cross_bank_supervision,

@@ -104,6 +104,21 @@ def test_stance_masked_mode_drops_stance_for_cross_bank_only() -> None:
     assert fomc.masks["certainty"] is True
     assert fomc.stance_sample_weight == 1.0
 
+    # Pin the natural per-row factor / topic masks on a cross-bank
+    # row. The gtfintechlab schema does not carry factor or topic
+    # labels (the trainer maps only stance + certainty + time), so
+    # the natural masks are False here. Any future change that
+    # leaks a cross-bank stance label onto the factor or topic
+    # mask under ``stance_masked`` would flip these — the regression
+    # would show up as the assertion firing.
+    assert cross_bank.masks["factor"] is False
+    assert cross_bank.masks["topic"] is False
+    # FOMC rows under ``stance_masked`` follow the same natural
+    # per-row factor / topic masks the gtfintechlab schema produces;
+    # ``stance_masked`` rewrites are scoped to cross-bank rows only.
+    assert fomc.masks["factor"] is False
+    assert fomc.masks["topic"] is False
+
 
 def test_weighted_mode_scales_only_stance_for_cross_bank() -> None:
     """The ``weighted`` arm leaves every mask intact and scales the
@@ -205,7 +220,9 @@ def test_per_axis_provenance_log_splits_by_corpus(
     ``from_cross_bank`` column on the ``stance`` line. The
     ``stance_masked`` rewrite makes ``from_cross_bank`` on stance
     zero by construction even when the cross-bank rows are admitted
-    into the pool."""
+    into the pool. The non-cross-bank bucket is named ``from_other``
+    so a future provenance that is neither FOMC nor the recognised
+    cross-bank tag does not silently inflate the counter."""
 
     rows = [
         _axis_row_from_gtf(provenance="peer_reviewed", mode="stance_masked"),
@@ -221,10 +238,10 @@ def test_per_axis_provenance_log_splits_by_corpus(
     _log_per_axis_provenance_breakdown(rows)
     messages = "\n".join(record.getMessage() for record in caplog.records)
     assert (
-        "axis=stance rows_total=2 from_FOMC=2 from_cross_bank=0" in messages
+        "axis=stance rows_total=2 from_other=2 from_cross_bank=0" in messages
     )
     assert (
-        "axis=certainty rows_total=4 from_FOMC=2 from_cross_bank=2"
+        "axis=certainty rows_total=4 from_other=2 from_cross_bank=2"
         in messages
     )
 
