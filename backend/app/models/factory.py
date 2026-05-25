@@ -121,11 +121,20 @@ def build_forecaster(
     # actually trained — without it, every persisted summary shows
     # ``encoder_lora=False`` even on an active LoRA cell.
     encoder_lora_flag = bool(kwargs.pop("encoder_lora", False))
+    # Bundle B LoRA freeze curriculum is a training-loop concern too;
+    # the recurrent ``ForecasterModel`` constructor never sees it. The
+    # value is stashed back on the built module so ``ModelConfig.from_model``
+    # round-trips it onto the persisted run summary the same way
+    # ``encoder_lora`` does.
+    lora_curriculum_freeze_epoch_val = kwargs.pop(
+        "lora_curriculum_freeze_epoch", None
+    )
     model = ForecasterModel(model_type=architecture, **kwargs)
     # mypy reads ``nn.Module`` attribute writes as ``Tensor | Module``;
     # the LoRA flag is a plain bool stashed for ``from_model`` to read
     # back, so suppress the noise rather than register a fake buffer.
     model.encoder_lora = encoder_lora_flag  # type: ignore[assignment]
+    model.lora_curriculum_freeze_epoch = lora_curriculum_freeze_epoch_val  # type: ignore[assignment]
     model.multi_task_loss = multi_task_loss_flag  # type: ignore[assignment]
     model.multi_task_lambda_stance = multi_task_lambda_stance  # type: ignore[assignment]
     model.multi_task_lambda_factor = multi_task_lambda_factor  # type: ignore[assignment]

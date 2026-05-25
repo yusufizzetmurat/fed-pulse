@@ -1757,7 +1757,42 @@ def train_model(
 
     use_text_path = bool(getattr(work_model, "_text_path_active", False))
 
+    # Bundle B LoRA freeze curriculum. When the config carries a
+    # non-None ``lora_curriculum_freeze_epoch``, the LoRA adapter trains
+    # for the first ``freeze_epoch`` epochs and then gets frozen at the
+    # start of epoch ``freeze_epoch`` (0-indexed). Stage 2 only updates
+    # the classification head while the encoder representation stays
+    # fixed. The boundary is logged once so post-hoc analysis can find
+    # the transition in the run log.
+    lora_freeze_epoch_cfg = getattr(
+        active_model_config, "lora_curriculum_freeze_epoch", None
+    )
+    lora_freeze_epoch: int | None = (
+        int(lora_freeze_epoch_cfg) if lora_freeze_epoch_cfg is not None else None
+    )
+    lora_adapter_frozen = False
+
     for epoch_index in range(epochs):
+        if encoder_lora_bundle is not None:
+            from app.training.encoder_lora import (
+                freeze_adapter,
+                should_freeze_lora_at_epoch,
+            )
+
+            if should_freeze_lora_at_epoch(
+                lora_freeze_epoch,
+                epoch_index,
+                already_frozen=lora_adapter_frozen,
+            ):
+                frozen_count = freeze_adapter(encoder_lora_bundle.encoder)
+                print(
+                    "INFO lora_curriculum_freeze "
+                    f"epoch={epoch_index} path=encoder_lora "
+                    f"frozen_params={frozen_count} "
+                    f"alias={encoder_lora_bundle.encoder_alias}",
+                    flush=True,
+                )
+                lora_adapter_frozen = True
         work_model.train()
         if encoder_lora_bundle is not None:
             encoder_lora_bundle.encoder.train()

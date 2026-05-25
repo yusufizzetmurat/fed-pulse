@@ -280,6 +280,16 @@ class ModelConfig:
     # per batch through the LoRA-wrapped tower. Scoped to a single
     # arch x seed cell -- not a default replacement.
     encoder_lora: bool = False
+    # Bundle B LoRA freeze curriculum. When ``None`` (default) the LoRA
+    # adapter stays trainable for the full epoch budget -- byte-identical
+    # to the pre-Bundle-B path. When set to a non-negative integer, the
+    # training loop freezes every LoRA matrix at the start of that epoch
+    # (0-indexed) so subsequent epochs only update the classification
+    # head. Used by the stage-1-train-then-freeze schedule that lets the
+    # adapter absorb cross-bank-shared linguistic structure under FOMC
+    # supervision in stage 1, then specialises the head in stage 2
+    # without further encoder drift.
+    lora_curriculum_freeze_epoch: int | None = None
     # Multi-modal fusion (#235). ``concat`` (default) keeps the legacy
     # ForecasterModel path where the text adapter output is
     # broadcast-concatenated to every LSTM timestep. ``gated_infonce``
@@ -336,6 +346,11 @@ class ModelConfig:
             sequence_length=int(getattr(model, "sequence_length", 0) or 0),
             use_time_decay=bool(getattr(model, "use_time_decay", True)),
             encoder_lora=bool(getattr(model, "encoder_lora", False)),
+            lora_curriculum_freeze_epoch=(
+                int(getattr(model, "lora_curriculum_freeze_epoch"))
+                if getattr(model, "lora_curriculum_freeze_epoch", None) is not None
+                else None
+            ),
             fusion_mode=str(getattr(model, "fusion_mode", "concat") or "concat"),
             infonce_lambda=float(getattr(model, "infonce_lambda", 0.1)),
             infonce_temperature=float(getattr(model, "infonce_temperature", 0.07)),
