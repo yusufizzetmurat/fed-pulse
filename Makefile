@@ -518,6 +518,17 @@ finbert-bis-only-pretrain:
 		SUBSTRATE=bis \
 		PRETRAIN_OUT_NAME=finbert_bis_only
 
+# DAPT substrate extension: BIS speeches + 5 cross-bank gtfintechlab corpora
+# (ECB / BoJ / BoE / BoC / RBA) reformatted as consecutive-sentence NSP pairs.
+# Same hyperparameters as the headline finbert-fed-adjacent-pretrain run; only
+# the substrate changes. Output checkpoint registers under
+# ``finbert_fed_adjacent_xbank_dapt`` in models/registry.yaml after the first
+# GPU run lands and the embedding cache builder self-pins the revision.
+finbert-fed-adjacent-xbank-dapt-pretrain:
+	$(MAKE) finbert-fed-adjacent-pretrain \
+		SUBSTRATE=bis_xbank \
+		PRETRAIN_OUT_NAME=finbert_fed_adjacent_xbank_dapt
+
 finbert-fed-adjacent-pretrain-smoke:
 	docker compose run --rm backend \
 		python -m app.data.continued_pretraining \

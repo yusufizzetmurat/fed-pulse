@@ -166,3 +166,20 @@ encoders:
       stance head); the remaining four seeds are kept on disk under
       ``finetune_batch_20260519T190604Z/finbert_fed_adjacent_s{29,47,71,97}``
       for reproducibility but the embedding cache builds against s11.
+
+  finbert_fed_adjacent_xbank_dapt:
+    repo: local/finbert-fed-adjacent-xbank-dapt
+    revision: ""
+    gated: false
+    task: masked_lm
+    description: |
+      DAPT substrate-extension sibling of ``finbert_fed_adjacent``. Same
+      MLM+NSP recipe, but the pretraining substrate adds the 5 cross-bank
+      gtfintechlab corpora (ECB / BoJ / BoE / BoC / RBA, ~15k sentences
+      reformatted as ~7.5k consecutive NSP pairs) on top of the BIS
+      speeches firehose — pure pretrain extension, no FOMC / local
+      Fed-adjacent JSON, so the downstream fine-tune target is unchanged
+      and there is no target leakage. Produced by
+      ``make finbert-fed-adjacent-xbank-dapt-pretrain``. Revision stays
+      empty until the first GPU run lands a checkpoint; same unpinned-
+      local guard as ``finbert_fomc_only`` applies.
