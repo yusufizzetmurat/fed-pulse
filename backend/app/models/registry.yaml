@@ -217,3 +217,23 @@ encoders:
       ``finbert_fed_adjacent_xbank_aux_stance_masked`` that re-litigates
       the Phase C substitute-not-complement prior. Validation accuracy
       at the best epoch: stance 0.978 / certainty 0.984 (val_loss=0.0974).
+
+  finbert_fed_adjacent_xbank_dapt_retrieval:
+    repo: /data/artifacts/retrieval/finbert_fed_adjacent_xbank_dapt_retrieval/checkpoint
+    revision: ""
+    gated: false
+    task: sentence_embedding
+    description: |
+      Sentence-transformer fine-tune (#294) layered on top of the
+      ``finbert_fed_adjacent_xbank_dapt`` MLM checkpoint. Produced by
+      ``python -m app.retrieval.train`` — contrastive
+      MultipleNegativesRankingLoss over same-meeting positive pairs
+      (statement / minutes / press_conference sharing an event_date in
+      ``events.parquet``). Powers ``/analyze/analogs``: the historical
+      FOMC-statement index lives at
+      ``data/artifacts/retrieval/<run-id>/index.parquet`` and the
+      encoder is mean-pooled over the document at query time. Revision
+      stays empty until the first GPU run lands a pinned checkpoint;
+      same unpinned-local guard as ``finbert_fomc_only`` applies.
+      Deployability lane (#302) will mirror the checkpoint to HF Hub
+      in a follow-up — this PR keeps the artefact local.

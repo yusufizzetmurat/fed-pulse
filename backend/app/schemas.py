@@ -593,3 +593,48 @@ class NextFomcForecastResponse(BaseModel):
     metrics_ex_pandemic: dict[str, NextFomcModelMetrics] = Field(default_factory=dict)
     feature_attribution: list[NextFomcAttributionRow] = Field(default_factory=list)
     summary: dict[str, int] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Historical analog retrieval (#294 — /analyze/analogs)
+# ---------------------------------------------------------------------------
+
+
+class AnalogsRequest(BaseModel):
+    """Query a fine-tuned retrieval encoder for past FOMC statements that
+    sound like ``text``. Returns top-``k`` analogs ordered by cosine
+    similarity together with the realised post-event volatility so the
+    caller can show "what regime followed each analog"."""
+
+    model_config = _STRICT_REQUEST_CONFIG
+
+    text: str = Field(..., min_length=1, description="Statement text to match against past FOMC statements.")
+    k: int = Field(default=5, ge=1, le=20, description="Number of analogs to return (1-20).")
+
+
+class AnalogCard(BaseModel):
+    """One historical analog returned by /analyze/analogs."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    event_date: str = Field(..., description="ISO date of the historical FOMC statement.")
+    similarity: float = Field(..., description="Cosine similarity in [-1, 1] vs. the query embedding.")
+    axis_stance: str | None = Field(
+        default=None,
+        description="Stored stance label for the analog statement (hawkish / dovish / neutral). None when absent.",
+    )
+    forward_realized_vol_10d: float | None = Field(
+        default=None,
+        description="Realised 10-trading-day forward volatility after the analog statement. None when missing.",
+    )
+    excerpt: str = Field(..., description="First ~280 characters of the analog statement.")
+
+
+class AnalogsResponse(BaseModel):
+    """Result envelope for /analyze/analogs."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    analogs: list[AnalogCard] = Field(default_factory=list)
+    index_size: int = Field(..., description="Total number of past statements in the loaded retrieval index.")
+    encoder_alias: str = Field(..., description="Registry alias of the encoder used to embed the query.")

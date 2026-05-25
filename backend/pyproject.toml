@@ -18,6 +18,7 @@ dependencies = [
   "pyyaml>=6.0",
   "transformers",
   "accelerate>=1.1.0",
+  "sentence-transformers>=3.0",
   "torch",
   "python-multipart",
   "requests",
