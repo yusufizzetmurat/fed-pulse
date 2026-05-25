@@ -663,6 +663,7 @@ def _evaluate_model(
     *,
     record_row_predictions: bool = False,
     encoder_lora_bundle: Any = None,
+    multi_task_loss_fn: nn.Module | None = None,
 ) -> EvaluationMetrics:
     """Evaluate ``model`` on ``loader`` and return aggregate metrics.
 
@@ -679,14 +680,37 @@ def _evaluate_model(
     per-batch allocation kicks in via :func:`_zero_credibility` so
     callers outside the training loop (smoke checks, regression tests)
     keep working.
+
+    ``multi_task_loss_fn`` (#273 follow-up): when provided, the eval
+    dispatches to ``forward_multi_task`` on the model and computes the
+    val loss via :class:`MultiTaskLoss` using the per-axis targets +
+    masks carried on each batch's mt-aux block. The headline
+    ``EvaluationMetrics`` surface (loss, regime_accuracy,
+    regime_f1_macro, classification_breakdown) is computed off the
+    ``stance`` logits so the dataclass shape stays identical to the
+    single-task path. Pass ``None`` to keep the legacy single-task
+    behaviour byte-identical.
     """
 
     model.eval()
     if encoder_lora_bundle is not None:
         encoder_lora_bundle.encoder.eval()
     is_classification = str(getattr(model, "output_mode", "regression")) == "classification"
+    multi_task_active = multi_task_loss_fn is not None
     total_loss_sum = torch.zeros((), dtype=torch.float64, device=device)
     total_items = torch.zeros((), dtype=torch.int64, device=device)
+    # Per-axis loss bookkeeping for the multi-task eval path (#273
+    # follow-up). Each axis accumulates ``loss * batch_size`` so the
+    # final mean matches the per-batch mean ``MultiTaskLoss`` emits
+    # weighted by partition row count. Empty / zero on the single-task
+    # path so the per-axis breakdown surfaces only when the eval was
+    # actually run against MultiTaskLoss.
+    mt_axis_loss_sums: dict[str, torch.Tensor] = {
+        "stance": torch.zeros((), dtype=torch.float64, device=device),
+        "factor": torch.zeros((), dtype=torch.float64, device=device),
+        "certainty": torch.zeros((), dtype=torch.float64, device=device),
+        "topic": torch.zeros((), dtype=torch.float64, device=device),
+    }
     # Weighted CE bookkeeping. When ``loss_fn`` is
     # ``CrossEntropyLoss(weight=w, reduction='mean')`` the per-batch
     # loss is ``sum_i(w[y_i] * l_i) / sum_i(w[y_i])`` -- NOT divided by
@@ -698,10 +722,17 @@ def _evaluate_model(
     # divide at the end. Falls back to ``batch_size`` when ``loss_fn``
     # has no ``weight`` attribute or weights are uniform, so the
     # regression byte-identity regression contract stays green.
+    #
+    # The multi-task eval path bypasses the CE-weight reweighting
+    # entirely: ``MultiTaskLoss`` already emits a per-batch mean over
+    # masked rows on each axis, so the partition mean is the size-
+    # weighted mean of the per-batch values, identical to how the train
+    # step aggregates the loss across batches.
     ce_weight: torch.Tensor | None = None
     weight_attr = getattr(loss_fn, "weight", None)
     if (
         is_classification
+        and not multi_task_active
         and isinstance(weight_attr, torch.Tensor)
         and weight_attr.numel() > 0
     ):
@@ -741,7 +772,14 @@ def _evaluate_model(
     non_blocking = device.type == "cuda"
     with torch.no_grad():
         for batch in loader:
-            batch_x, batch_y, batch_text, batch_text_missing, _mt_aux = _unpack_batch(batch)
+            batch_x, batch_y, batch_text, batch_text_missing, batch_mt_aux = _unpack_batch(batch)
+            if multi_task_active and batch_mt_aux is None:
+                raise RuntimeError(
+                    "multi_task_loss_fn is active but the DataLoader yielded "
+                    "a batch without the aux tensors. This usually means the "
+                    "TensorDataset for this partition was built without the "
+                    "multi-task aux block -- check the partition build path."
+                )
             if batch_x.device != device:
                 batch_x = batch_x.to(device, non_blocking=non_blocking)
             if batch_y.device != device:
@@ -787,23 +825,67 @@ def _evaluate_model(
                                 device, non_blocking=non_blocking
                             )
                         kwargs["text_embedding_missing"] = batch_text_missing
-            if multimodal_forward is not None:
+            if multi_task_active:
+                # Multi-task eval (#273 follow-up): dispatch to
+                # ``forward_multi_task`` so the val loss matches the
+                # train-side objective. The stance logits drive the
+                # surfaced accuracy / F1 / breakdown so the
+                # EvaluationMetrics shape stays identical to the
+                # single-task path.
+                logits_dict = _run_train_forward_multi_task(
+                    model, batch_x, kwargs
+                )
+                assert batch_mt_aux is not None  # narrowed by the guard above
+                stance_mask = torch.ones(
+                    (batch_size,), dtype=torch.bool, device=batch_x.device
+                )
+                mt_targets = {
+                    "stance": batch_y,
+                    "factor": batch_mt_aux["factor"].to(device, non_blocking=non_blocking),
+                    "certainty": batch_mt_aux["certainty"].to(device, non_blocking=non_blocking),
+                    "topic": batch_mt_aux["topic"].to(device, non_blocking=non_blocking),
+                }
+                mt_masks = {
+                    "stance_mask": stance_mask,
+                    "factor_mask": batch_mt_aux["factor_mask"].to(device, non_blocking=non_blocking),
+                    "certainty_mask": batch_mt_aux["certainty_mask"].to(device, non_blocking=non_blocking),
+                    "topic_mask": batch_mt_aux["topic_mask"].to(device, non_blocking=non_blocking),
+                }
+                loss, axis_breakdown = multi_task_loss_fn(
+                    logits_dict, mt_targets, mt_masks
+                )
+                predictions = logits_dict["stance"]
+                total_loss_sum += loss.detach().to(torch.float64) * batch_size
+                for axis_name in ("stance", "factor", "certainty", "topic"):
+                    mt_axis_loss_sums[axis_name] += (
+                        axis_breakdown[axis_name].detach().to(torch.float64) * batch_size
+                    )
+            elif multimodal_forward is not None:
                 modality_out = multimodal_forward(batch_x, **kwargs)
                 predictions = modality_out["logits"]
                 # Capture gate on CPU in float32 so the per-partition
                 # accumulator stays bounded across long val/test splits.
                 gate_chunks.append(modality_out["gate"].detach().to("cpu", torch.float32))
+                loss = loss_fn(predictions, batch_y)
+                if ce_weight is not None:
+                    batch_weight_sum = ce_weight.index_select(
+                        0, batch_y.detach().to(device=device, dtype=torch.long)
+                    ).sum()
+                    total_loss_sum += loss.detach().to(torch.float64) * batch_weight_sum
+                    total_weight_sum += batch_weight_sum
+                else:
+                    total_loss_sum += loss.detach().to(torch.float64) * batch_size
             else:
                 predictions = model(batch_x, **kwargs)
-            loss = loss_fn(predictions, batch_y)
-            if ce_weight is not None:
-                batch_weight_sum = ce_weight.index_select(
-                    0, batch_y.detach().to(device=device, dtype=torch.long)
-                ).sum()
-                total_loss_sum += loss.detach().to(torch.float64) * batch_weight_sum
-                total_weight_sum += batch_weight_sum
-            else:
-                total_loss_sum += loss.detach().to(torch.float64) * batch_size
+                loss = loss_fn(predictions, batch_y)
+                if ce_weight is not None:
+                    batch_weight_sum = ce_weight.index_select(
+                        0, batch_y.detach().to(device=device, dtype=torch.long)
+                    ).sum()
+                    total_loss_sum += loss.detach().to(torch.float64) * batch_weight_sum
+                    total_weight_sum += batch_weight_sum
+                else:
+                    total_loss_sum += loss.detach().to(torch.float64) * batch_size
             total_items += batch_size
             if is_classification:
                 pred_class_chunks.append(
@@ -846,6 +928,16 @@ def _evaluate_model(
     # to the per-item count when no class weights were supplied.
     total_weight_value = float(total_weight_sum.item()) if ce_weight is not None else 0.0
     loss_divisor = total_weight_value if (ce_weight is not None and total_weight_value > 0.0) else float(total_items_int)
+    # Per-axis multi-task breakdown (#273 follow-up). Computed only on
+    # the multi-task eval path; the single-task path leaves the dict
+    # empty so the existing classification_breakdown payload shape stays
+    # unchanged on legacy runs.
+    multi_task_axis_losses: dict[str, float] | None = None
+    if multi_task_active and total_items_int > 0:
+        multi_task_axis_losses = {
+            axis: float(mt_axis_loss_sums[axis].item()) / float(total_items_int)
+            for axis in ("stance", "factor", "certainty", "topic")
+        }
 
     if is_classification:
         # Classification partition: surface accuracy + macro-F1 on the
@@ -881,6 +973,14 @@ def _evaluate_model(
             n_classes=n_classes_eval,
             class_scores=class_scores_list,
         )
+        breakdown_payload = breakdown.to_dict()
+        # Attach the per-axis multi-task loss breakdown so the per-trial
+        # JSON / sweep aggregator can surface it; the headline
+        # ``regime_loss`` keeps reporting the lambda-weighted total so
+        # checkpoint selection by val_loss ranks against the same
+        # objective the train side optimises.
+        if multi_task_axis_losses is not None:
+            breakdown_payload["multi_task_axis_losses"] = multi_task_axis_losses
 
         predictions_payload: list[int] | None = None
         targets_payload: list[int] | None = None
@@ -903,7 +1003,7 @@ def _evaluate_model(
             regime_accuracy=regime_acc,
             regime_f1_macro=float(breakdown.macro_f1),
             regime_loss=regime_loss,
-            classification_breakdown=breakdown.to_dict(),
+            classification_breakdown=breakdown_payload,
             predictions=predictions_payload,
             targets=targets_payload,
             class_scores=scores_payload,
@@ -1871,6 +1971,7 @@ def train_model(
             loss_fn,
             credibility_buffer=val_credibility_buffer,
             encoder_lora_bundle=encoder_lora_bundle,
+            multi_task_loss_fn=multi_task_loss_fn,
         )
         if schedule_steps_per_epoch is None:
             scheduler.step(eval_metrics.loss)
@@ -1915,6 +2016,7 @@ def train_model(
             device_obj,
             loss_fn,
             credibility_buffer=val_credibility_buffer,
+            multi_task_loss_fn=multi_task_loss_fn,
         )
     # Final-state training-set evaluation so the aggregator can emit
     # ``test_train_gap = (test_rmse - train_rmse) / train_rmse``. The
@@ -1935,6 +2037,7 @@ def train_model(
         loss_fn,
         credibility_buffer=train_credibility_buffer,
         encoder_lora_bundle=encoder_lora_bundle,
+        multi_task_loss_fn=multi_task_loss_fn,
     )
 
     # Final-state held-out test evaluation. On the walk-forward path
@@ -1962,6 +2065,7 @@ def train_model(
             credibility_buffer=test_credibility_buffer,
             record_row_predictions=True,
             encoder_lora_bundle=encoder_lora_bundle,
+            multi_task_loss_fn=multi_task_loss_fn,
         )
     else:
         test_metrics = best_val_metrics
