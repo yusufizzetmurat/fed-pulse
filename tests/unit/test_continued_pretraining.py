@@ -208,6 +208,65 @@ def test_collect_pairs_substrate_bis_uses_streaming(monkeypatch) -> None:
     assert pairs[0]["sequenceA"] == "BIS A1"
 
 
+def test_collect_pairs_substrate_bis_default_max_rows_loads_all_bis(monkeypatch) -> None:
+    """Regression: ``--substrate bis`` with the default ``--max-rows=0`` (the
+    "unlimited" sentinel) must load every BIS row, not silently skip the
+    substrate. The earlier ``if bis_cap != 0`` guard misread the sentinel
+    as "no rows wanted" and dropped the entire BIS stream, leaving
+    ``main()`` to raise ``No training pairs loaded`` on the default CLI."""
+    _install_fake_datasets(
+        monkeypatch,
+        [
+            {"sequenceA": "BIS A1", "sequenceB": "BIS B1", "next_sentence_label": 0},
+            {"sequenceA": "BIS A2", "sequenceB": "BIS B2", "next_sentence_label": 1},
+            {"sequenceA": "BIS A3", "sequenceB": "BIS B3", "next_sentence_label": 0},
+        ],
+    )
+    args = cpt._parse_args(["--substrate", "bis"])
+    assert args.max_rows == 0  # guards against a future default change
+    pairs = cpt._collect_pairs(args)
+    assert len(pairs) == 3
+    assert [p["sequenceA"] for p in pairs] == ["BIS A1", "BIS A2", "BIS A3"]
+
+
+def test_collect_pairs_substrate_both_default_max_rows_loads_local_and_bis(
+    monkeypatch, tmp_path
+) -> None:
+    """Regression: ``--substrate both`` with the default ``--max-rows=0``
+    (the "unlimited" sentinel) must load BOTH the local corpus and the
+    full BIS stream. The earlier guard fell through to ``bis_cap = 0``
+    and then ``if bis_cap != 0`` silently skipped BIS, making
+    ``--substrate both`` indistinguishable from ``--substrate local``
+    at the default cap."""
+    _install_fake_datasets(
+        monkeypatch,
+        [
+            {"sequenceA": "BIS A1", "sequenceB": "BIS B1", "next_sentence_label": 0},
+            {"sequenceA": "BIS A2", "sequenceB": "BIS B2", "next_sentence_label": 0},
+        ],
+    )
+    (tmp_path / "chair_speeches.json").write_text(
+        json.dumps([{"text": "Local 1."}]),
+        encoding="utf-8",
+    )
+    args = cpt._parse_args(
+        [
+            "--substrate",
+            "both",
+            "--data-dir",
+            str(tmp_path),
+            "--corpus-files",
+            "chair_speeches.json",
+        ]
+    )
+    assert args.max_rows == 0
+    pairs = cpt._collect_pairs(args)
+    # Local loads first (1 pair), BIS contributes the remaining 2 with no cap.
+    assert len(pairs) == 3
+    assert pairs[0]["sequenceA"] == "Local 1."
+    assert {p["sequenceA"] for p in pairs[1:]} == {"BIS A1", "BIS A2"}
+
+
 def test_collect_pairs_substrate_both_loads_local_first_then_bis_remainder(
     monkeypatch, tmp_path: Path
 ) -> None:
