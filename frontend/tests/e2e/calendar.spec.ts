@@ -1,24 +1,25 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("FOMC calendar", () => {
-  test("upcoming-meeting link prefills the workspace date input", async ({ page }) => {
+  test("upcoming-meeting click prefills the workspace date input", async ({ page }) => {
     await page.goto("/calendar");
     await expect(page.getByRole("heading", { name: /fomc calendar/i, level: 1 })).toBeVisible();
 
-    // The calendar has a past + upcoming section; pick the first
-    // upcoming meeting's Analyze link so the prefill is a real future
-    // date the workspace can ingest without yfinance lookups.
-    const upcomingLink = page.getByRole("link", { name: /analyze/i }).first();
-    await expect(upcomingLink).toBeVisible({ timeout: 15_000 });
-    const href = await upcomingLink.getAttribute("href");
-    expect(href).toMatch(/\/\?date=\d{4}-\d{2}-\d{2}/);
+    // The Analyze action is a button (router.push to /analyze?date=…),
+    // not an anchor — selector must match a button, and we capture the
+    // resulting URL after navigation rather than reading an href.
+    const analyzeButton = page.getByRole("button", { name: /^analyze$/i }).first();
+    await expect(analyzeButton).toBeVisible({ timeout: 15_000 });
+    await analyzeButton.click();
 
-    await upcomingLink.click();
-    await expect(page).toHaveURL(/\/\?date=/);
+    // /analyze is a getServerSideProps redirect → final URL lands at
+    // /?date=YYYY-MM-DD&kind=statement.
+    await expect(page).toHaveURL(/\/\?date=\d{4}-\d{2}-\d{2}/);
+    const finalUrl = new URL(page.url());
+    const expectedDate = finalUrl.searchParams.get("date") ?? "";
+    expect(expectedDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
-    // Workspace date input picks up the meeting date.
     const dateInput = page.getByLabel(/document date/i);
-    const expected = href?.match(/date=(\d{4}-\d{2}-\d{2})/)?.[1] ?? "";
-    await expect(dateInput).toHaveValue(expected);
+    await expect(dateInput).toHaveValue(expectedDate);
   });
 });

@@ -205,7 +205,10 @@ describe("PerformancePage", () => {
 
     await waitFor(() => expect(screen.getByText(/macro roc-auc/i)).toBeInTheDocument());
     expect(screen.getByText(/from training eval artifact/i)).toBeInTheDocument();
-    expect(screen.getByText(/training-time classification breakdown/i)).toBeInTheDocument();
+    // The "training-time classification breakdown" phrase appears in
+    // both the per-class table and the confusion matrix descriptions
+    // when the artifact is loaded — assert presence, not uniqueness.
+    expect(screen.getAllByText(/training-time classification breakdown/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/tp_fixture/)).toBeInTheDocument();
   });
 });

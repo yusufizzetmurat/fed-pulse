@@ -697,7 +697,18 @@ def get_history_realized_batch(
     rows and yfinance failures land under ``missing`` so a single broken
     row does not nuke the table render."""
 
-    id_list = [chunk.strip() for chunk in ids.split(",") if chunk.strip()]
+    # Order-preserving dedupe so a caller passing the same id twice
+    # only triggers one yfinance lookup, and the response order matches
+    # the request order on the way back.
+    seen: set[str] = set()
+    id_list: list[str] = []
+    for chunk in ids.split(","):
+        chunk = chunk.strip()
+        if not chunk or chunk in seen:
+            continue
+        seen.add(chunk)
+        id_list.append(chunk)
+
     if not id_list:
         raise HTTPException(
             status_code=422, detail="ids must contain at least one run id"
@@ -724,9 +735,12 @@ def get_history_realized_batch(
 
 # In-memory cache for /evaluation/coverage. Aggregation walks up to
 # ``lookback_runs`` history rows and triggers one yfinance call per row,
-# so refresh latency is on the order of 10-30s in the worst case. A
-# 5-minute TTL keeps the workspace headline chip responsive without
-# pinning a worker on every page load. Cleared by the test fixture.
+# so cold-cache latency can climb into tens of seconds. The default is
+# tightened to 25 and the hard cap to 100 to keep the workspace
+# headline chip from pinning a worker on first hit; a 5-minute TTL
+# absorbs repeated visits. A persisted realized-regime column on the
+# history row would let us drop the yfinance hop entirely — tracked as
+# the next-step polish item.
 _COVERAGE_CACHE_TTL_SECONDS = 5 * 60
 _coverage_cache: dict[str, tuple[float, "EvaluationCoverageResponse"]] = {}
 
@@ -738,7 +752,7 @@ def _reset_coverage_cache() -> None:
 @app.get("/evaluation/coverage", response_model=EvaluationCoverageResponse)
 def evaluation_coverage(
     symbol: str | None = Query(default=None),
-    lookback_runs: int = Query(default=50, ge=1, le=200),
+    lookback_runs: int = Query(default=25, ge=1, le=100),
     session: Session = Depends(get_session),
 ) -> EvaluationCoverageResponse:
     """Aggregate empirical conformal coverage across recent history runs.

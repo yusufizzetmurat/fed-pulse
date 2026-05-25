@@ -16,11 +16,15 @@ test.describe("sentence strike counterfactual", () => {
     const panelHeading = page.getByRole("heading", { name: /sentence attribution/i });
     await expect(panelHeading).toBeVisible();
 
-    // Find a clickable sentence (each `<button aria-pressed>` inside the
-    // panel is a strike-toggle). Click the first one and wait for the
-    // counterfactual round trip to land. The panel header gets a "1
-    // struck" badge once the strike set is non-empty.
-    const sentenceButton = page
+    // Scope strike-toggle lookup to the Sentence Attribution card so
+    // we don't pick up other aria-pressed buttons on the workspace
+    // (WatchlistChips also uses aria-pressed for the active-symbol
+    // chip state).
+    const sentencePanel = page
+      .locator('div')
+      .filter({ has: panelHeading })
+      .first();
+    const sentenceButton = sentencePanel
       .locator('button[aria-pressed="false"]')
       .first();
     await expect(sentenceButton).toBeVisible({ timeout: 5_000 });

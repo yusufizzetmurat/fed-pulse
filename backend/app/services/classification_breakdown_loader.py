@@ -86,12 +86,25 @@ def _extract_breakdown(payload: Any) -> dict[str, Any] | None:
     return breakdown
 
 
+# Skip very large sweep JSONs (>10MB). The breakdown-bearing artifacts
+# we care about are small per-trial summaries; the multi-megabyte files
+# are full hyperparameter sweep dumps that don't carry the breakdown
+# block at all. Walking them costs hundreds of MB of memory on hosts
+# that have accumulated several sweep runs.
+_MAX_CANDIDATE_BYTES = 10 * 1024 * 1024
+
+
 def _try_load(path: Path) -> dict[str, Any] | None:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        if path.stat().st_size > _MAX_CANDIDATE_BYTES:
+            return None
+        raw = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
         LOGGER.debug("classification_breakdown skip %s: %s", path, exc)
         return None
+    if not isinstance(raw, dict):
+        return None
+    return raw
 
 
 def load_latest(artifacts_root: Path) -> BreakdownPayload | None:

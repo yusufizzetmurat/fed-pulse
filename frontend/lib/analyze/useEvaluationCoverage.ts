@@ -15,12 +15,13 @@ interface UseEvaluationCoverageState {
 }
 
 /**
- * Polls /evaluation/coverage so the workspace can surface a "Nominal X% /
- * Empirical Y%" chip alongside the regime headline. Failures are
- * intentionally silent — the chip is informational and the workspace
- * should not flash an error toast when the aggregation has nothing to
- * show yet. Backend caches its own aggregation for 5 minutes; the hook
- * does not poll.
+ * Fetches /evaluation/coverage once per (baseUrl, symbol, lookback)
+ * tuple so the workspace can surface a "Nominal X% / Empirical Y%"
+ * chip alongside the regime headline. Failures are intentionally
+ * silent — the chip is informational and the workspace should not
+ * flash an error toast when the aggregation has nothing to show yet.
+ * Backend already caches its own aggregation for 5 minutes; no polling
+ * here.
  */
 export function useEvaluationCoverage(
   apiBaseUrl: string,

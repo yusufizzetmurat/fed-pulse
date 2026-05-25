@@ -29,7 +29,11 @@ test.describe("history → compare flow", () => {
     await expect(optionList).toBeVisible({ timeout: 5_000 });
     await optionList.getByRole("option").nth(1).click();
 
-    await expect(page.getByText(/Δ A − B/i)).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(/^Regime$/i)).toBeVisible();
+    // The Δ A − B card title appears 3× once both slots are populated
+    // (DeltaSummary + Multi-axis Δ + the table header). Anchor on
+    // .first() to dodge Playwright's strict-mode "more than one element"
+    // guard while still proving the delta surface rendered.
+    await expect(page.getByText(/Δ A − B/i).first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/^Regime$/i).first()).toBeVisible();
   });
 });
