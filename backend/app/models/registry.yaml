@@ -183,3 +183,37 @@ encoders:
       ``make finbert-fed-adjacent-xbank-dapt-pretrain``. Revision stays
       empty until the first GPU run lands a checkpoint; same unpinned-
       local guard as ``finbert_fomc_only`` applies.
+
+  finbert_fed_adjacent_xbank_aux_stance_masked:
+    repo: /data/artifacts/text_multi_axis/text_multi_axis_20260525T105459Z/hf_checkpoints
+    revision: "20260525T105459Z"
+    gated: false
+    task: stance_classification
+    description: |
+      Bundle A.2 arm A: ``finbert_fed_adjacent`` fine-tuned through
+      ``train_text_multi_axis_classifier.py --cross-bank-supervision
+      stance_masked``. Cross-bank rows enter the loader and contribute
+      gradient on the certainty / factor / topic axes, but every row
+      with ``provenance=peer_reviewed_cross_bank`` carries
+      ``mask_stance=False`` so the stance head only fits the FOMC stance
+      distribution. The substitute-not-complement guard from Phase C
+      (#231). Validation accuracy at the best epoch: stance 0.981 /
+      certainty 0.984 (val_loss=0.0922). Pin holds the encoder backbone
+      + tokenizer saved alongside the singleton inference checkpoint at
+      ``backend/models/text_multi_axis_best.pt``.
+
+  finbert_fed_adjacent_xbank_aux_weighted:
+    repo: /data/artifacts/text_multi_axis/text_multi_axis_20260525T110428Z/hf_checkpoints
+    revision: "20260525T110428Z"
+    gated: false
+    task: stance_classification
+    description: |
+      Bundle A.2 arm B: ``finbert_fed_adjacent`` fine-tuned through
+      ``train_text_multi_axis_classifier.py --cross-bank-supervision
+      weighted --cross-bank-stance-weight 0.25``. Cross-bank rows enter
+      with their stance label intact but their per-row stance CE
+      contribution is scaled by 0.25 so they regularise rather than
+      dominate the FOMC stance distribution. The diagnostic A/B against
+      ``finbert_fed_adjacent_xbank_aux_stance_masked`` that re-litigates
+      the Phase C substitute-not-complement prior. Validation accuracy
+      at the best epoch: stance 0.978 / certainty 0.984 (val_loss=0.0974).
