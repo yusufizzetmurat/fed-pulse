@@ -1,8 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render as rtlRender, screen, fireEvent } from "@testing-library/react";
 
 import { SentenceStrikeXaiPanel } from "@/components/analyze/SentenceStrikeXaiPanel";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type { AnalyzeResult, XaiResponse } from "@/lib/analyze/types";
+
+function render(ui: React.ReactElement) {
+  return rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+}
+
+function rerenderWith(
+  rerender: (ui: React.ReactElement) => void,
+  ui: React.ReactElement,
+) {
+  rerender(<TooltipProvider>{ui}</TooltipProvider>);
+}
 
 const XAI: XaiResponse = {
   sentences: [
@@ -62,7 +74,8 @@ describe("SentenceStrikeXaiPanel cumulative drift chart", () => {
       />,
     );
 
-    rerender(
+    rerenderWith(
+      rerender,
       <SentenceStrikeXaiPanel
         xai={XAI}
         struck={new Set([0])}
@@ -74,7 +87,8 @@ describe("SentenceStrikeXaiPanel cumulative drift chart", () => {
     expect(screen.getByText(/across 1 strike/i)).toBeInTheDocument();
     expect(screen.getByText(/60\.0% → 52\.0%/i)).toBeInTheDocument();
 
-    rerender(
+    rerenderWith(
+      rerender,
       <SentenceStrikeXaiPanel
         xai={XAI}
         struck={new Set([0, 1])}

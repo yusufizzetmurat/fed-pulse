@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render as rtlRender, screen } from "@testing-library/react";
 
 import { CredibilityKpis } from "@/components/analyze/CredibilityKpis";
 import { MultiAxisInterpretation } from "@/components/analyze/MultiAxisInterpretation";
+import { TooltipProvider } from "@/components/ui/tooltip";
+
+function render(ui: React.ReactElement) {
+  return rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+}
 
 describe("Inline 'awaiting checkpoint' reasons", () => {
   it("MultiAxisInterpretation explains why no axes are present when all four are null", () => {
