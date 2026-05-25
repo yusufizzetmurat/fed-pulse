@@ -552,6 +552,18 @@ def _parse_args() -> argparse.Namespace:
         default=0.3,
         help="Loss weight on the topic branch.",
     )
+    parser.add_argument(
+        "--class-weight-power",
+        type=float,
+        default=1.0,
+        help=(
+            "Exponent on the inverse-frequency class weights. ``1.0`` "
+            "(default) is the legacy linear ``1 / (n_c + 1)`` formula. "
+            "``2.0`` steepens the relative weight of rare classes, "
+            "mitigating the class-1 (`normal` vol-regime) collapse the "
+            "3-class head exhibits on single-seed runs."
+        ),
+    )
     # Phase B (#227) LR schedule + sequence-length knobs.
     parser.add_argument(
         "--lr-schedule",
@@ -983,6 +995,7 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
         multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
         multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
+        class_weight_power=float(getattr(args, "class_weight_power", 1.0)),
     )
 
 
@@ -1227,6 +1240,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                                 multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
                                 multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
                                 multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
+                                class_weight_power=float(getattr(args, "class_weight_power", 1.0)),
                             ),
                             "learning_rate": float(hp["learning_rate"]),
                             "epochs": int(hp["epochs"]),
@@ -1327,6 +1341,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                         multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
                         multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
                         multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
+                        class_weight_power=float(getattr(args, "class_weight_power", 1.0)),
                     ),
                     "learning_rate": float(learning_rate),
                     "epochs": int(epochs),

@@ -1291,6 +1291,7 @@ def train_model(
                     train_forward_vols,
                     fitted_quantiles,
                     n_classes=n_classes_active,
+                    power=float(getattr(active_model_config, "class_weight_power", 1.0)),
                 )
             else:
                 fitted_class_weights = ()
