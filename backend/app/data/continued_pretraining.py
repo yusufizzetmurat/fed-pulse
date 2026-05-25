@@ -585,24 +585,38 @@ def main(argv: list[str] | None = None) -> int:
         objective=args.objective,
     )
     (run_dir / "metrics.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+    # Mirror the BIS-revision capture for the cross-bank corpora so a
+    # bis_xbank run records every HF dataset id + pinned SHA that fed it.
+    # Pulled from the module constant rather than re-querying the Hub:
+    # the SHAs are pinned for reproducibility, so a fresh resolve would
+    # only introduce drift risk.
+    hyperparameters: dict[str, Any] = {
+        "base_checkpoint": args.base_checkpoint,
+        "epochs": args.epochs,
+        "learning_rate": args.learning_rate,
+        "batch_size": args.batch_size,
+        "block_size": args.block_size,
+        "objective": args.objective,
+        "substrate": args.substrate,
+        "bis_dataset_id": args.bis_dataset_id,
+        "bis_dataset_revision_requested": args.bis_dataset_revision,
+        "bis_dataset_revision_resolved": resolved_revision,
+    }
+    inputs: list[str] = (
+        [args.bis_dataset_id] if args.substrate in {"bis", "both", "bis_xbank"} else []
+    )
+    if args.substrate == "bis_xbank":
+        hyperparameters["xbank_dataset_revisions"] = dict(_GTFINTECHLAB_XBANK_REVISIONS)
+        inputs.extend(dataset_id for _bank_key, dataset_id in _GTFINTECHLAB_XBANK_DATASETS)
+
     write_run_manifest(
         run_dir,
         run_id=f"{args.checkpoint_name}_{run_token}_s{args.seed}",
         version_ids={"model_version": args.checkpoint_name},
         seeds=[args.seed],
-        hyperparameters={
-            "base_checkpoint": args.base_checkpoint,
-            "epochs": args.epochs,
-            "learning_rate": args.learning_rate,
-            "batch_size": args.batch_size,
-            "block_size": args.block_size,
-            "objective": args.objective,
-            "substrate": args.substrate,
-            "bis_dataset_id": args.bis_dataset_id,
-            "bis_dataset_revision_requested": args.bis_dataset_revision,
-            "bis_dataset_revision_resolved": resolved_revision,
-        },
-        inputs=[args.bis_dataset_id] if args.substrate in {"bis", "both", "bis_xbank"} else [],
+        hyperparameters=hyperparameters,
+        inputs=inputs,
         extra={"num_examples": result["num_examples"]},
     )
     print(f"[mlm] checkpoint at {result['checkpoint_path']}")

@@ -464,3 +464,87 @@ def test_collect_pairs_substrate_bis_xbank_respects_max_rows(
     assert pairs[0]["sequenceA"].startswith("XBANK")
     assert pairs[1]["sequenceA"].startswith("XBANK")
     assert pairs[2]["sequenceA"].startswith("BIS")
+
+
+def test_main_bis_xbank_manifest_records_xbank_dataset_revisions(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Reproducibility: a --substrate bis_xbank run must record every
+    cross-bank dataset id + pinned SHA in the manifest, alongside the BIS
+    entry. Otherwise a future re-run can't reconstruct the exact text mix.
+    """
+    _install_fake_datasets(
+        monkeypatch,
+        [{"sequenceA": "BIS A1", "sequenceB": "BIS B1", "next_sentence_label": 0}],
+    )
+    monkeypatch.setattr(
+        cpt,
+        "_iter_gtfintechlab_xbank_pairs",
+        lambda: [
+            {"sequenceA": "XBANK A1", "sequenceB": "XBANK B1", "next_sentence_label": 0}
+        ],
+    )
+    # Keep the manifest writer offline + skip the real MLM training run.
+    monkeypatch.setattr(cpt, "_resolve_dataset_sha", lambda dataset_id, revision: revision)
+
+    def _fake_run_mlm(**kwargs):
+        out_dir = kwargs["output_dir"]
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "checkpoint").mkdir(parents=True, exist_ok=True)
+        return {
+            "base_checkpoint": kwargs["base_checkpoint"],
+            "base_revision": None,
+            "epochs": kwargs["epochs"],
+            "learning_rate": kwargs["learning_rate"],
+            "batch_size": kwargs["batch_size"],
+            "block_size": kwargs["block_size"],
+            "objective": kwargs["objective"],
+            "train_runtime_s": 0.0,
+            "train_loss": 0.0,
+            "num_examples": len(kwargs["pair_records"]),
+            "checkpoint_path": str(out_dir / "checkpoint"),
+        }
+
+    monkeypatch.setattr(cpt, "run_mlm", _fake_run_mlm)
+
+    rc = cpt.main(
+        [
+            "--substrate",
+            "bis_xbank",
+            "--artifact-root",
+            str(tmp_path),
+            "--data-dir",
+            str(tmp_path),
+            "--bis-dataset-revision",
+            "deadbeef",
+        ]
+    )
+    assert rc == 0
+
+    # Locate the run dir under the temp artifact root.
+    run_dirs = [p for p in tmp_path.iterdir() if p.is_dir()]
+    assert len(run_dirs) == 1, f"expected single run dir, got {run_dirs}"
+    manifest_path = run_dirs[0] / "run_manifest.json"
+    assert manifest_path.exists(), "manifest was not written"
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    expected_xbank_ids = {
+        "gtfintechlab/european_central_bank",
+        "gtfintechlab/bank_of_japan",
+        "gtfintechlab/bank_of_england",
+        "gtfintechlab/bank_of_canada",
+        "gtfintechlab/reserve_bank_of_australia",
+    }
+
+    # The 5 xbank ids + the BIS id should all be referenced under
+    # hyperparameters.xbank_dataset_revisions (5 ids -> 5 pinned SHAs).
+    recorded = manifest["hyperparameters"]["xbank_dataset_revisions"]
+    assert set(recorded.keys()) == expected_xbank_ids
+    for dataset_id, sha in recorded.items():
+        assert sha == cpt._GTFINTECHLAB_XBANK_REVISIONS[dataset_id]
+        # Pinned SHAs are 40-char lowercase hex; guard against accidental nulls.
+        assert isinstance(sha, str) and len(sha) == 40
+
+    # BIS entry is unaffected: id + requested + resolved still in place.
+    assert manifest["hyperparameters"]["bis_dataset_id"] == cpt.DEFAULT_BIS_DATASET_ID
+    assert manifest["hyperparameters"]["bis_dataset_revision_resolved"] == "deadbeef"
