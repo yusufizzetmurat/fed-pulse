@@ -300,3 +300,167 @@ def test_parse_args_objective_validates_choices() -> None:
     assert args.objective == "mlm"
     with pytest.raises(SystemExit):
         cpt._parse_args(["--objective", "nonsense"])
+
+
+def test_bis_xbank_substrate_is_registered() -> None:
+    """The bis_xbank substrate must show up in the valid-choices tuple
+    so the CLI accepts ``--substrate bis_xbank`` without an argparse error."""
+    assert "bis_xbank" in cpt._VALID_SUBSTRATES
+
+
+def _install_fake_gtfintechlab(monkeypatch, sentences_per_dataset: dict[str, list[str]]) -> None:
+    """Stub the datasets module's load_dataset + config/split helpers used by
+    ``_iter_gtfintechlab_xbank_pairs``.
+
+    ``sentences_per_dataset`` keys are HF dataset ids; values are the flat list
+    of sentence strings that should be returned (single config / single split).
+    """
+    fake = types.SimpleNamespace()
+    fake.get_dataset_config_names = lambda dataset_id, revision=None: ["default"]
+    fake.get_dataset_split_names = lambda dataset_id, config, revision=None: ["train"]
+
+    def _load(dataset_id, config=None, split=None, revision=None, **kw):
+        sents = sentences_per_dataset.get(dataset_id, [])
+        return [{"sentences": s} for s in sents]
+
+    fake.load_dataset = _load
+    monkeypatch.setitem(sys.modules, "datasets", fake)
+
+
+def test_iter_gtfintechlab_xbank_pairs_shape(monkeypatch) -> None:
+    """The xbank pair iterator must return pair dicts with the same keys as
+    ``_iter_fomc_pairs`` / ``_bis_pair_stream`` so the trainer stays uniform."""
+    sentences = {
+        "gtfintechlab/european_central_bank": ["ECB s1.", "ECB s2.", "ECB s3.", "ECB s4."],
+        "gtfintechlab/bank_of_japan": ["BoJ s1.", "BoJ s2."],
+        "gtfintechlab/bank_of_england": ["BoE s1.", "BoE s2."],
+        "gtfintechlab/bank_of_canada": ["BoC s1.", "BoC s2."],
+        "gtfintechlab/reserve_bank_of_australia": ["RBA s1.", "RBA s2."],
+    }
+    _install_fake_gtfintechlab(monkeypatch, sentences)
+
+    pairs = cpt._iter_gtfintechlab_xbank_pairs()
+    assert isinstance(pairs, list)
+    assert len(pairs) > 0
+    for p in pairs:
+        assert set(p.keys()) >= {"sequenceA", "sequenceB", "next_sentence_label"}
+        assert isinstance(p["sequenceA"], str) and p["sequenceA"]
+        assert isinstance(p["sequenceB"], str) and p["sequenceB"]
+        # Pairs must be two distinct sentences, not degenerate copies.
+        assert p["sequenceA"] != p["sequenceB"]
+        assert isinstance(p["next_sentence_label"], int)
+
+
+def test_iter_gtfintechlab_xbank_pairs_covers_all_five_banks(monkeypatch) -> None:
+    """Every one of the 5 cross-bank datasets must contribute pairs — no silent
+    drop of a single bank."""
+    sentences = {
+        "gtfintechlab/european_central_bank": ["ECB a.", "ECB b."],
+        "gtfintechlab/bank_of_japan": ["BoJ a.", "BoJ b."],
+        "gtfintechlab/bank_of_england": ["BoE a.", "BoE b."],
+        "gtfintechlab/bank_of_canada": ["BoC a.", "BoC b."],
+        "gtfintechlab/reserve_bank_of_australia": ["RBA a.", "RBA b."],
+    }
+    _install_fake_gtfintechlab(monkeypatch, sentences)
+    pairs = cpt._iter_gtfintechlab_xbank_pairs()
+    joined = " | ".join(p["sequenceA"] + " " + p["sequenceB"] for p in pairs)
+    for marker in ("ECB", "BoJ", "BoE", "BoC", "RBA"):
+        assert marker in joined, f"{marker} contribution missing from xbank pair stream"
+
+
+def test_iter_gtfintechlab_xbank_pairs_scale_floor() -> None:
+    """The live HF datasets yield 5 x ~3,000 sentences; even after consecutive
+    pairing we should clear 5,000 pairs. Skip when ``datasets`` package or
+    network is unavailable (CI runs in offline-only mode)."""
+    pytest.importorskip("datasets")
+    try:
+        pairs = cpt._iter_gtfintechlab_xbank_pairs()
+    except Exception as exc:  # pragma: no cover — networkless CI
+        pytest.skip(f"HF cross-bank load failed: {exc}")
+    assert len(pairs) >= 5000, (
+        f"expected >= 5000 xbank pairs across the 5 banks, got {len(pairs)}"
+    )
+
+
+def test_collect_pairs_substrate_bis_xbank_combines_bis_and_xbank(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """``--substrate bis_xbank`` must combine BIS + cross-bank pairs and
+    exclude FOMC / local Fed-adjacent JSONs."""
+    _install_fake_datasets(
+        monkeypatch,
+        [
+            {"sequenceA": "BIS A1", "sequenceB": "BIS B1", "next_sentence_label": 0},
+            {"sequenceA": "BIS A2", "sequenceB": "BIS B2", "next_sentence_label": 1},
+        ],
+    )
+    # The fake xbank iterator replaces the real HF loader to keep the test
+    # offline. Returns a couple of clearly-tagged pairs we can assert on.
+    monkeypatch.setattr(
+        cpt,
+        "_iter_gtfintechlab_xbank_pairs",
+        lambda: [
+            {"sequenceA": "XBANK A1", "sequenceB": "XBANK B1", "next_sentence_label": 0},
+            {"sequenceA": "XBANK A2", "sequenceB": "XBANK B2", "next_sentence_label": 0},
+        ],
+    )
+    # Decoy local + FOMC files that must NOT be loaded under bis_xbank.
+    (tmp_path / "chair_speeches.json").write_text(
+        json.dumps([{"text": "Decoy local speech."}]),
+        encoding="utf-8",
+    )
+    (tmp_path / "fomc_statements.json").write_text(
+        json.dumps([{"text": "Decoy FOMC statement."}]),
+        encoding="utf-8",
+    )
+    args = cpt._parse_args(
+        [
+            "--substrate",
+            "bis_xbank",
+            "--data-dir",
+            str(tmp_path),
+        ]
+    )
+    pairs = cpt._collect_pairs(args)
+    bodies_a = [p["sequenceA"] for p in pairs]
+    assert "BIS A1" in bodies_a and "BIS A2" in bodies_a
+    assert "XBANK A1" in bodies_a and "XBANK A2" in bodies_a
+    # Decoys excluded.
+    assert "Decoy local speech." not in bodies_a
+    assert "Decoy FOMC statement." not in bodies_a
+
+
+def test_collect_pairs_substrate_bis_xbank_respects_max_rows(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Under ``--substrate bis_xbank --max-rows N``, xbank loads first (small,
+    finite) and BIS fills the remainder — mirroring the local/both convention
+    so the xbank contribution is never silently emptied."""
+    _install_fake_datasets(
+        monkeypatch,
+        [{"sequenceA": f"BIS A{i}", "sequenceB": "B", "next_sentence_label": 0} for i in range(10)],
+    )
+    monkeypatch.setattr(
+        cpt,
+        "_iter_gtfintechlab_xbank_pairs",
+        lambda: [
+            {"sequenceA": "XBANK A1", "sequenceB": "XBANK B1", "next_sentence_label": 0},
+            {"sequenceA": "XBANK A2", "sequenceB": "XBANK B2", "next_sentence_label": 0},
+        ],
+    )
+    args = cpt._parse_args(
+        [
+            "--substrate",
+            "bis_xbank",
+            "--data-dir",
+            str(tmp_path),
+            "--max-rows",
+            "5",
+        ]
+    )
+    pairs = cpt._collect_pairs(args)
+    assert len(pairs) == 5
+    # First two come from xbank, remaining 3 from BIS.
+    assert pairs[0]["sequenceA"].startswith("XBANK")
+    assert pairs[1]["sequenceA"].startswith("XBANK")
+    assert pairs[2]["sequenceA"].startswith("BIS")

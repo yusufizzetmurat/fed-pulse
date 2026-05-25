@@ -13,6 +13,16 @@ larger and within range of FinBERT's original pretraining substrate.
 The legacy local JSON corpus is preserved as an optional auxiliary substrate
 via ``--auxiliary-local-dir`` for ablation studies; pass ``--substrate local``
 to use it as the sole substrate (reproduces the pre-Sprint-1B behaviour).
+
+Substrate options:
+- ``bis``   – BIS speeches only (default headline substrate).
+- ``local`` – legacy 44-doc Fed-adjacent JSON corpus.
+- ``fomc``  – strict FOMC statements + minutes only (Round 3 / #242 ablation).
+- ``both``  – local + BIS combined.
+- ``bis_xbank`` – BIS speeches + cross-bank gtfintechlab corpora (ECB / BoJ /
+  BoE / BoC / RBA) reformatted as consecutive-sentence NSP pairs. Gives the
+  encoder exposure to non-Fed monetary-policy language without changing the
+  downstream fine-tune target.
 """
 
 from __future__ import annotations
@@ -51,7 +61,26 @@ DEFAULT_FOMC_CORPUS_FILES: tuple[str, ...] = (
     "fomc_statements.json",
     "fomc_minutes.json",
 )
-_VALID_SUBSTRATES = ("bis", "local", "fomc", "both")
+# Cross-bank gtfintechlab datasets reused for the bis_xbank substrate. The
+# (bank_key, hf_dataset_id) pairs and SHA pins mirror the supervised loader in
+# ``app.data.ingest_sources`` — keep the two lists in sync if you ever add a
+# sixth bank. Revisions captured 2026-05-15.
+_GTFINTECHLAB_XBANK_DATASETS: tuple[tuple[str, str], ...] = (
+    ("european_central_bank", "gtfintechlab/european_central_bank"),
+    ("bank_of_japan", "gtfintechlab/bank_of_japan"),
+    ("bank_of_england", "gtfintechlab/bank_of_england"),
+    ("bank_of_canada", "gtfintechlab/bank_of_canada"),
+    ("reserve_bank_of_australia", "gtfintechlab/reserve_bank_of_australia"),
+)
+_GTFINTECHLAB_XBANK_REVISIONS: dict[str, str] = {
+    "gtfintechlab/european_central_bank": "867cee85784ce569826e0104797b6e017205867b",
+    "gtfintechlab/bank_of_japan": "1885e21cf1c33c4aea19a824ba40eac886c7a122",
+    "gtfintechlab/bank_of_england": "de1123cf9d747dbb3e0c2224467f501692d5a310",
+    "gtfintechlab/bank_of_canada": "ab15ea2271bfa3208874a5517afc439640fd9200",
+    "gtfintechlab/reserve_bank_of_australia": "7a91206b56f2841b2586e409feade2518284894b",
+}
+
+_VALID_SUBSTRATES = ("bis", "local", "fomc", "both", "bis_xbank")
 
 
 def _iter_local_pairs(data_dir: Path, files: Iterable[str]) -> list[dict[str, Any]]:
@@ -117,6 +146,78 @@ def _bis_pair_stream(
             continue
         yield {"sequenceA": a, "sequenceB": b, "next_sentence_label": int(row.get("next_sentence_label") or 0)}
         seen += 1
+
+
+def _iter_gtfintechlab_xbank_pairs() -> list[dict[str, Any]]:
+    """Stream the 5 cross-bank gtfintechlab corpora as NSP-style sentence pairs.
+
+    Each dataset (ECB / BoJ / BoE / BoC / RBA) ships ~3,000 single-sentence rows
+    annotated with stance / time / certainty axes. For DAPT we ignore the
+    labels and use only the raw ``sentences`` field, pairing rows
+    ``[2k, 2k+1]`` within the same ``(config, split)`` bucket so each emitted
+    record looks like the BIS stream output: two distinct sentence strings plus
+    a ``next_sentence_label``. Label is fixed at 0 (BIS convention: 0 = "is
+    next"); the assumption is loose since gtfintechlab rows aren't guaranteed
+    consecutive in any original document, but it keeps the schema uniform and
+    the trainer doesn't differentiate per-row.
+
+    Revisions are pinned via ``_GTFINTECHLAB_XBANK_REVISIONS`` so HF Hub pushes
+    can't rotate row indices mid-run; the same SHAs are mirrored from
+    ``app.data.ingest_sources._DATASET_REVISIONS``.
+    """
+    from datasets import (  # type: ignore
+        get_dataset_config_names,
+        get_dataset_split_names,
+        load_dataset,
+    )
+
+    pairs: list[dict[str, Any]] = []
+    for _bank_key, dataset_id in _GTFINTECHLAB_XBANK_DATASETS:
+        revision = _GTFINTECHLAB_XBANK_REVISIONS.get(dataset_id)
+        kwargs: dict[str, Any] = {}
+        if revision:
+            kwargs["revision"] = revision
+        configs = list(get_dataset_config_names(dataset_id, **kwargs))
+        if not configs:
+            configs = [None]  # default config
+        for config in configs:
+            split_kwargs = dict(kwargs)
+            try:
+                splits = (
+                    list(get_dataset_split_names(dataset_id, config, **split_kwargs))
+                    if config is not None
+                    else list(get_dataset_split_names(dataset_id, **split_kwargs))
+                )
+            except Exception:
+                splits = ["train"]
+            for split in splits:
+                load_kwargs: dict[str, Any] = {"split": split}
+                if revision:
+                    load_kwargs["revision"] = revision
+                if config is not None:
+                    ds = load_dataset(dataset_id, config, **load_kwargs)
+                else:
+                    ds = load_dataset(dataset_id, **load_kwargs)
+                buffer: list[str] = []
+                for row in ds:
+                    if not isinstance(row, dict):
+                        continue
+                    sentence = (row.get("sentences") or "").strip()
+                    if not sentence:
+                        continue
+                    buffer.append(sentence)
+                    if len(buffer) == 2:
+                        a, b = buffer
+                        if a != b:
+                            pairs.append(
+                                {
+                                    "sequenceA": a,
+                                    "sequenceB": b,
+                                    "next_sentence_label": 0,
+                                }
+                            )
+                        buffer = []
+    return pairs
 
 
 def run_mlm(
@@ -285,7 +386,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "bis (default; samchain/BIS_speeches_97_23_MLM), local (legacy "
             "Fed-adjacent JSON corpus), fomc (strict FOMC-only — minutes + "
-            "statements; Round 3 / #242 ablation), or both (local + BIS)."
+            "statements; Round 3 / #242 ablation), both (local + BIS), or "
+            "bis_xbank (BIS + 5 cross-bank gtfintechlab corpora paired as NSP)."
         ),
     )
     parser.add_argument(
@@ -352,6 +454,47 @@ def _collect_pairs(args: argparse.Namespace) -> list[dict[str, Any]]:
         pairs.extend(fomc_pairs)
         return pairs
 
+    if args.substrate == "bis_xbank":
+        # BIS + cross-bank (ECB / BoJ / BoE / BoC / RBA) substrate. Cross-bank
+        # pairs (small, finite ~7,500) load first so the BIS firehose can't
+        # silently empty the xbank slice under --max-rows, mirroring the
+        # local-first convention of --substrate both. FOMC and the broader
+        # local Fed-adjacent JSON corpus are deliberately excluded — the
+        # downstream fine-tune target stays FOMC, so adding FOMC text here
+        # would leak the target into pretraining.
+        xbank_pairs = _iter_gtfintechlab_xbank_pairs()
+        if args.max_rows and len(xbank_pairs) > args.max_rows:
+            xbank_pairs = xbank_pairs[: args.max_rows]
+        pairs.extend(xbank_pairs)
+
+        # --max-rows == 0 means unlimited for both halves; non-zero caps BIS
+        # at whatever capacity remains after the (already-clamped) xbank slice.
+        if args.max_rows:
+            remaining = max(0, args.max_rows - len(pairs))
+            bis_cap = remaining
+            should_load_bis = remaining > 0
+            if not should_load_bis:
+                import warnings as _warnings
+
+                _warnings.warn(
+                    f"--substrate bis_xbank --max-rows {args.max_rows} was reached "
+                    f"by cross-bank ({len(pairs)} pairs); BIS substrate dropped. "
+                    "Raise --max-rows or use --substrate bis to override.",
+                    stacklevel=2,
+                )
+        else:
+            bis_cap = 0  # _bis_pair_stream treats 0 as "no cap".
+            should_load_bis = True
+        if should_load_bis:
+            bis_iter = _bis_pair_stream(
+                args.bis_dataset_id,
+                args.bis_dataset_revision,
+                streaming=args.streaming,
+                max_rows=bis_cap,
+            )
+            pairs.extend(list(bis_iter))
+        return pairs
+
     if args.substrate in {"local", "both"}:
         local_dir = Path(args.auxiliary_local_dir) if args.auxiliary_local_dir else Path(args.data_dir)
         local_pairs = _iter_local_pairs(local_dir, args.corpus_files)
@@ -359,7 +502,7 @@ def _collect_pairs(args: argparse.Namespace) -> list[dict[str, Any]]:
             local_pairs = local_pairs[: args.max_rows]
         pairs.extend(local_pairs)
 
-    if args.substrate in {"bis", "both"}:
+    if args.substrate in {"bis", "both", "bis_xbank"}:
         if args.substrate == "both" and args.max_rows:
             remaining = max(0, args.max_rows - len(pairs))
             bis_cap = remaining
@@ -418,7 +561,7 @@ def main(argv: list[str] | None = None) -> int:
 
     resolved_revision = (
         _resolve_dataset_sha(args.bis_dataset_id, args.bis_dataset_revision)
-        if args.substrate in {"bis", "both"}
+        if args.substrate in {"bis", "both", "bis_xbank"}
         else None
     )
 
@@ -459,7 +602,7 @@ def main(argv: list[str] | None = None) -> int:
             "bis_dataset_revision_requested": args.bis_dataset_revision,
             "bis_dataset_revision_resolved": resolved_revision,
         },
-        inputs=[args.bis_dataset_id] if args.substrate in {"bis", "both"} else [],
+        inputs=[args.bis_dataset_id] if args.substrate in {"bis", "both", "bis_xbank"} else [],
         extra={"num_examples": result["num_examples"]},
     )
     print(f"[mlm] checkpoint at {result['checkpoint_path']}")
