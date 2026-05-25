@@ -705,3 +705,103 @@ def test_evaluate_runs_under_no_grad() -> None:
     import math
 
     assert metrics["loss"] == pytest.approx(math.log(3.0), abs=1e-5)
+
+
+# --- Checkpoint provenance: effective_cross_bank_supervision ---------
+#
+# When ``--gtfintechlab-fed-only`` is combined with a non-``off``
+# cross-bank arm, the loader silently restricts to FOMC. The
+# checkpoint payload must record this resolution honestly:
+# ``effective_cross_bank_supervision`` is ``"off"`` regardless of the
+# requested arm. The raw ``cross_bank_supervision`` field stays so
+# operators can trace what they originally asked for.
+
+
+class _StubMultiAxisModel(torch.nn.Module):
+    """Bare-minimum stand-in for ``TextMultiAxisClassifier`` so the
+    checkpoint payload test can exercise ``_save_checkpoint`` without
+    pulling a real encoder off HF Hub.
+
+    Only the two surfaces ``_save_checkpoint`` touches are implemented:
+    ``state_dict`` (inherited from ``nn.Module``) and ``metadata()``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._param = torch.nn.Parameter(torch.zeros(1, dtype=torch.float32))
+
+    def metadata(self) -> dict[str, object]:
+        return {"encoder_alias": "stub", "encoder_revision": "stub"}
+
+
+def _checkpoint_args(*, fed_only: bool, supervision: str) -> "argparse.Namespace":
+    import argparse
+
+    return argparse.Namespace(
+        training_package_id="dummy",
+        encoder_alias="finbert",
+        epochs=1,
+        seed=0,
+        learning_rate=1e-5,
+        batch_size=2,
+        val_fraction=0.1,
+        max_length=8,
+        data_source="gtfintechlab_hf",
+        gtfintechlab_fed_only=fed_only,
+        cross_bank_supervision=supervision,
+        cross_bank_stance_weight=0.25,
+    )
+
+
+def test_checkpoint_payload_records_effective_cross_bank_under_fed_only(
+    tmp_path,
+) -> None:
+    """The checkpoint payload must surface
+    ``effective_cross_bank_supervision="off"`` when fed_only is True,
+    even if the operator asked for ``weighted`` — and must keep the
+    raw request alongside for traceability."""
+
+    from app.data.train_text_multi_axis_classifier import _save_checkpoint
+
+    args = _checkpoint_args(fed_only=True, supervision="weighted")
+    ckpt_path = tmp_path / "ckpt.pt"
+    _save_checkpoint(
+        _StubMultiAxisModel(),
+        path=ckpt_path,
+        metrics={"val_loss": 0.0},
+        args=args,
+        class_weights={},
+    )
+    payload = torch.load(ckpt_path, weights_only=False)
+    ta = payload["training_args"]
+    # Raw request is preserved for traceability.
+    assert ta["cross_bank_supervision"] == "weighted"
+    # Effective field reflects what the run actually did — under
+    # fed_only the cross-bank pool is empty so the arm reduces to off.
+    assert ta["effective_cross_bank_supervision"] == "off"
+    assert ta["gtfintechlab_fed_only"] is True
+
+
+def test_checkpoint_payload_effective_matches_raw_when_not_fed_only(
+    tmp_path,
+) -> None:
+    """When fed_only is False, the effective field mirrors the raw
+    request — operator asked for ``weighted``, the run ran
+    ``weighted``."""
+
+    from app.data.train_text_multi_axis_classifier import _save_checkpoint
+
+    args = _checkpoint_args(fed_only=False, supervision="weighted")
+    ckpt_path = tmp_path / "ckpt.pt"
+    _save_checkpoint(
+        _StubMultiAxisModel(),
+        path=ckpt_path,
+        metrics={"val_loss": 0.0},
+        args=args,
+        class_weights={},
+    )
+    payload = torch.load(ckpt_path, weights_only=False)
+    ta = payload["training_args"]
+    assert ta["cross_bank_supervision"] == "weighted"
+    assert ta["effective_cross_bank_supervision"] == "weighted"
+    assert ta["gtfintechlab_fed_only"] is False

@@ -979,6 +979,19 @@ def _save_checkpoint(
             "cross_bank_stance_weight": float(
                 getattr(args, "cross_bank_stance_weight", 0.25)
             ),
+            # When ``--gtfintechlab-fed-only`` is combined with a
+            # non-``off`` cross-bank arm, ``main()`` warns and the
+            # loader restricts to FOMC — so the run did NOT actually
+            # use cross-bank supervision regardless of what was
+            # requested. Surface the resolved effective mode alongside
+            # the raw request so the checkpoint provenance is honest:
+            # the raw field traces what the operator asked for, the
+            # effective field traces what the run actually did.
+            "effective_cross_bank_supervision": (
+                "off"
+                if bool(getattr(args, "gtfintechlab_fed_only", False))
+                else str(getattr(args, "cross_bank_supervision", "off"))
+            ),
         },
         "saved_at_utc": datetime.now(timezone.utc).isoformat(),
     }
