@@ -17,6 +17,7 @@ pytest.importorskip("torch")
 
 from app.train_forecaster import (
     _parse_args,  # type: ignore[attr-defined]
+    _resolve_text_embedding_dim,  # type: ignore[attr-defined]
     TEXT_ENCODER_CHOICES,
     build_sweep_candidates,
 )
@@ -250,3 +251,50 @@ def test_xbank_aux_aliases_are_registered_choices() -> None:
     assert "finbert_fed_adjacent_xbank_aux_weighted" in TEXT_ENCODER_CHOICES
     # And the queued DAPT alias pre-empts a future Bundle A.4 blocker.
     assert "finbert_fed_adjacent_xbank_dapt" in TEXT_ENCODER_CHOICES
+
+
+def test_resolve_text_embedding_dim_reads_plural_encoders_flag() -> None:
+    """Multi-encoder mode resolves the embedding dim off the encoder axis.
+
+    The singular ``args.text_encoder`` is unset under the mutually
+    exclusive ``--text-encoders alias_a alias_b`` flag; the dim helper
+    must pick up the first alias from the axis instead of collapsing the
+    text path to zero. The collapse was the silent root cause of the
+    Bundle A.2 smoke sweep returning bit-identical losses across arms
+    (the text branch was never wired into the model).
+    """
+
+    args = argparse.Namespace(
+        text_encoder="none",
+        text_encoders=[
+            "finbert_fed_adjacent_xbank_aux_stance_masked",
+            "finbert_fed_adjacent_xbank_aux_weighted",
+        ],
+        use_text_embeddings=True,
+        training_package_id="tp_dummy_v1",
+    )
+    assert _resolve_text_embedding_dim(args) == 768
+
+
+def test_resolve_text_embedding_dim_singular_back_compat() -> None:
+    """Single-encoder runs preserve the legacy lookup path."""
+
+    args = argparse.Namespace(
+        text_encoder="finbert_fed_adjacent",
+        text_encoders=None,
+        use_text_embeddings=True,
+        training_package_id="tp_dummy_v1",
+    )
+    assert _resolve_text_embedding_dim(args) == 768
+
+
+def test_resolve_text_embedding_dim_returns_zero_when_disabled() -> None:
+    """Text-off path stays at zero regardless of which flag form."""
+
+    args = argparse.Namespace(
+        text_encoder="none",
+        text_encoders=None,
+        use_text_embeddings=True,
+        training_package_id="tp_dummy_v1",
+    )
+    assert _resolve_text_embedding_dim(args) == 0

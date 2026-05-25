@@ -943,7 +943,12 @@ def _resolve_text_embedding_dim(args: argparse.Namespace) -> int:
         "nomic_embed_text_v15": 768,
         "voyage_finance_2": 1024,
     }
-    encoder = str(getattr(args, "text_encoder", "none") or "none")
+    # Multi-encoder mode (``--text-encoders alias_a alias_b``) leaves the
+    # singular ``args.text_encoder`` unset; resolve via the encoder axis so
+    # the embedding dim picks up the first alias instead of collapsing the
+    # text path to zero.
+    encoders = _resolved_encoder_axis(args)
+    encoder = next((str(e) for e in encoders if e and str(e) != "none"), "none")
     if encoder == "none":
         return 0
     return int(table.get(encoder, 768))
