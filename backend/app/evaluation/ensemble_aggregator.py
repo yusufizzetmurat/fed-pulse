@@ -777,6 +777,52 @@ def _agreement_matrix(
     return out
 
 
+def per_fold_conformal_calibration(
+    fold_softmax: Sequence[Sequence[float]],
+    fold_targets: Sequence[int],
+    *,
+    conformal_alpha: float = DEFAULT_CONFORMAL_ALPHA,
+) -> tuple[float, float, float]:
+    """Per-fold conformal calibration on averaged softmax probabilities.
+
+    Wires through the existing
+    :func:`app.evaluation.conformal.calibrate_classification_conformal` +
+    :func:`predict_conformal_set` +
+    :func:`empirical_classification_coverage` helpers introduced in
+    PR #279. The fold's own scores fit the threshold and feed the
+    coverage check; no global calibration tier is used (calibration
+    leak guard path (b) in the Phase 5 deliverables).
+
+    Returns ``(softmax_quantile, coverage, avg_set_size)``. Any of
+    the three may be ``nan`` when the fold has too few rows for the
+    finite-sample-corrected quantile (the underlying helper raises
+    ``ValueError`` on an empty conformity-score set).
+    """
+
+    from app.evaluation.conformal import (
+        calibrate_classification_conformal,
+        empirical_classification_coverage,
+        predict_conformal_set,
+    )
+
+    try:
+        softmax_q = calibrate_classification_conformal(
+            softmax_scores=fold_softmax,
+            true_classes=fold_targets,
+            alpha=conformal_alpha,
+        )
+    except ValueError:
+        return float("nan"), float("nan"), float("nan")
+    if not math.isfinite(softmax_q):
+        return float("nan"), float("nan"), float("nan")
+    sets = [predict_conformal_set(row, softmax_q) for row in fold_softmax]
+    coverage = empirical_classification_coverage(sets, fold_targets)
+    avg_set_size = (
+        sum(len(s) for s in sets) / len(sets) if sets else float("nan")
+    )
+    return float(softmax_q), float(coverage), float(avg_set_size)
+
+
 def _drop_redundant_runs(
     run_ids: Sequence[str],
     agreement: Mapping[tuple[str, str], float],
@@ -911,12 +957,6 @@ def aggregate_multi_run_ensemble(  # noqa: C901, PLR0913
     weights = [w / total_w for w in raw_weights]
 
     # Step: per-fold logit averaging + conformal calibration.
-    from app.evaluation.conformal import (
-        calibrate_classification_conformal,
-        empirical_classification_coverage,
-        predict_conformal_set,
-    )
-
     per_fold_results: list[MultiRunFoldResult] = []
     pooled_preds: list[int] = []
     pooled_targets: list[int] = []
@@ -991,23 +1031,11 @@ def aggregate_multi_run_ensemble(  # noqa: C901, PLR0913
         # its own walk-forward partition; the conformal threshold is
         # fit on the fold's own held-out scores rather than a global
         # calibration tier.
-        try:
-            softmax_q = calibrate_classification_conformal(
-                softmax_scores=fold_softmax,
-                true_classes=fold_targets,
-                alpha=conformal_alpha,
-            )
-        except ValueError:
-            softmax_q = float("nan")
-        if math.isfinite(softmax_q):
-            sets = [predict_conformal_set(row, softmax_q) for row in fold_softmax]
-            coverage = empirical_classification_coverage(sets, fold_targets)
-            avg_set_size = (
-                sum(len(s) for s in sets) / len(sets) if sets else float("nan")
-            )
-        else:
-            coverage = float("nan")
-            avg_set_size = float("nan")
+        softmax_q, coverage, avg_set_size = per_fold_conformal_calibration(
+            fold_softmax,
+            fold_targets,
+            conformal_alpha=conformal_alpha,
+        )
 
         breakdown = compute_classification_breakdown(
             predictions=fold_preds,

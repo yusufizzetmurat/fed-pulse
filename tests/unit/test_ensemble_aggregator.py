@@ -25,6 +25,7 @@ from app.evaluation.ensemble_aggregator import (
     _plurality_vote,
     aggregate,
     aggregate_multi_run_ensemble,
+    per_fold_conformal_calibration,
 )
 
 
@@ -836,3 +837,138 @@ def test_ensemble_run_specs_cli_accepts_bare_list(tmp_path: Path) -> None:
     )
     assert rc == 0
     assert (output_dir / "ensemble_phase5_results.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Per-fold conformal calibration helper
+# ---------------------------------------------------------------------------
+
+
+def test_per_fold_conformal_calibration_returns_finite_triple() -> None:
+    """The helper returns ``(softmax_q, coverage, avg_set_size)`` and
+    none of the values is nan on a non-degenerate fold."""
+
+    # 10 confident rows; class 0 is always truth.
+    fold_softmax = [[0.85, 0.10, 0.05]] * 10
+    fold_targets = [0] * 10
+    q, coverage, avg_size = per_fold_conformal_calibration(
+        fold_softmax, fold_targets, conformal_alpha=0.2
+    )
+    assert math.isfinite(q)
+    assert math.isfinite(coverage)
+    assert math.isfinite(avg_size)
+    # Coverage on the calibration set must be >= nominal (1 - alpha).
+    assert coverage >= 0.8 - 1e-9
+
+
+def test_per_fold_conformal_calibration_handles_empty_fold() -> None:
+    """Empty fold -> all-nan triple, never raises."""
+
+    q, coverage, avg_size = per_fold_conformal_calibration(
+        [], [], conformal_alpha=0.2
+    )
+    assert math.isnan(q)
+    assert math.isnan(coverage)
+    assert math.isnan(avg_size)
+
+
+def test_per_fold_conformal_threshold_differs_across_folds(
+    tmp_path: Path,
+) -> None:
+    """The per-fold calibration must not collapse to a single global
+    threshold — folds with different confidence distributions should
+    yield different softmax-quantile values.
+
+    The deliverables specify "use the per-fold conformal wrapper" so
+    this test pins the per-fold contract: two folds with materially
+    different confidence yield different thresholds, proving the
+    aggregator is not silently re-using one global quantile."""
+
+    # Fold 1: confident truth (low non-conformity scores).
+    layout = [("wf_fold_1", 11), ("wf_fold_2", 11)]
+    targets = [[0] * 12, [0] * 12]
+    preds_a = [[0] * 12, [0] * 12]
+    preds_b = [[0] * 12, [0] * 12]
+    scores_a = [
+        [[0.9, 0.05, 0.05]] * 12,  # fold 1: very confident on truth
+        [[0.45, 0.30, 0.25]] * 12,  # fold 2: less confident
+    ]
+    scores_b = [
+        [[0.92, 0.04, 0.04]] * 12,
+        [[0.48, 0.27, 0.25]] * 12,
+    ]
+    run_a = _run_trials(
+        fold_seed_layout=layout,
+        per_trial_preds=preds_a,
+        per_trial_targets=targets,
+        per_trial_scores=scores_a,
+    )
+    run_b = _run_trials(
+        fold_seed_layout=layout,
+        per_trial_preds=preds_b,
+        per_trial_targets=targets,
+        per_trial_scores=scores_b,
+    )
+    path_a = _write_run_blob(tmp_path / "a" / "forecaster_sweep_results.json", run_a)
+    path_b = _write_run_blob(tmp_path / "b" / "forecaster_sweep_results.json", run_b)
+    specs = [
+        RunSpec(
+            run_id="run_a",
+            architecture="lstm",
+            encoder_alias="none",
+            seed=11,
+            results_path=str(path_a),
+        ),
+        RunSpec(
+            run_id="run_b",
+            architecture="tft",
+            encoder_alias="none",
+            seed=11,
+            results_path=str(path_b),
+        ),
+    ]
+    result = aggregate_multi_run_ensemble(
+        specs,
+        conformal_alpha=0.2,
+        redundancy_kappa_threshold=1.5,
+    )
+    assert len(result.per_fold) == 2
+    fold1, fold2 = result.per_fold
+    # Fold 2's averaged softmax is less confident, so its conformal
+    # threshold (1 - softmax[truth]) sits materially higher than
+    # fold 1's. If the aggregator were applying a single global
+    # threshold both folds would carry the same softmax_quantile.
+    assert math.isfinite(fold1.softmax_quantile)
+    assert math.isfinite(fold2.softmax_quantile)
+    assert fold2.softmax_quantile > fold1.softmax_quantile + 1e-3
+
+
+def test_aggregate_rejects_unsupported_calibration_strategy(tmp_path: Path) -> None:
+    """Phase 5 ships only ``conformal_per_fold``; any other value must
+    raise so future expansions are forced through a code review."""
+
+    layout = [("wf_fold_1", 11)]
+    targets = [[0, 1, 2]]
+    preds = [[0, 1, 2]]
+    scores = [[[0.8, 0.1, 0.1], [0.1, 0.8, 0.1], [0.1, 0.1, 0.8]]]
+    trials = _run_trials(
+        fold_seed_layout=layout,
+        per_trial_preds=preds,
+        per_trial_targets=targets,
+        per_trial_scores=scores,
+    )
+    path = _write_run_blob(tmp_path / "a" / "forecaster_sweep_results.json", trials)
+    specs = [
+        RunSpec(
+            run_id="run_a",
+            architecture="lstm",
+            encoder_alias="none",
+            seed=11,
+            results_path=str(path),
+        ),
+    ]
+    with pytest.raises(ValueError, match="unsupported calibration_strategy"):
+        aggregate_multi_run_ensemble(
+            specs,
+            calibration_strategy="temperature_scaling",  # type: ignore[arg-type]
+        )
