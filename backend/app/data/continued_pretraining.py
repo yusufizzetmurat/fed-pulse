@@ -502,7 +502,7 @@ def _collect_pairs(args: argparse.Namespace) -> list[dict[str, Any]]:
             local_pairs = local_pairs[: args.max_rows]
         pairs.extend(local_pairs)
 
-    if args.substrate in {"bis", "both", "bis_xbank"}:
+    if args.substrate in {"bis", "both"}:
         if args.substrate == "both" and args.max_rows:
             remaining = max(0, args.max_rows - len(pairs))
             bis_cap = remaining

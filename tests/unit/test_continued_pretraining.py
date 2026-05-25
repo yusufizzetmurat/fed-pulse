@@ -316,8 +316,8 @@ def _install_fake_gtfintechlab(monkeypatch, sentences_per_dataset: dict[str, lis
     of sentence strings that should be returned (single config / single split).
     """
     fake = types.SimpleNamespace()
-    fake.get_dataset_config_names = lambda dataset_id, revision=None: ["default"]
-    fake.get_dataset_split_names = lambda dataset_id, config, revision=None: ["train"]
+    fake.get_dataset_config_names = lambda dataset_id, revision=None, **kw: ["default"]
+    fake.get_dataset_split_names = lambda dataset_id, config, revision=None, **kw: ["train"]
 
     def _load(dataset_id, config=None, split=None, revision=None, **kw):
         sents = sentences_per_dataset.get(dataset_id, [])
