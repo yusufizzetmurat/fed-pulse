@@ -94,6 +94,8 @@ class MultiTaskLoss(nn.Module):
         logits: dict[str, torch.Tensor],
         targets: dict[str, torch.Tensor],
         masks: dict[str, torch.Tensor],
+        *,
+        stance_sample_weight: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Return ``(total_loss, per_axis_breakdown)``.
 
@@ -101,6 +103,17 @@ class MultiTaskLoss(nn.Module):
         keyed by axis name so the training-loop logger can record per-
         axis loss trajectories. Axes whose mask is all-False contribute
         zero loss to the total and emit a zero-valued breakdown entry.
+
+        ``stance_sample_weight`` is an optional per-row float vector
+        with the same length as the batch. When supplied, the stance
+        branch becomes a weighted-mean CE where each masked-in row's
+        contribution is scaled by its weight. When ``None`` (the
+        default), the stance loss is the unweighted masked mean — the
+        path every existing call site reaches today. The cross-bank
+        supervision arm (``--cross-bank-supervision weighted``) is the
+        only caller that passes a non-None vector; FOMC-only training
+        runs leave it as ``None`` and reproduce the prior numerics
+        byte-identically.
         """
 
         device = logits["stance"].device
@@ -111,6 +124,7 @@ class MultiTaskLoss(nn.Module):
             targets["stance"],
             masks["stance_mask"],
             weight=self._stance_weight_or_none(),
+            sample_weight=stance_sample_weight,
         )
         factor_loss = self._masked_regression_loss(
             logits["factor"],
@@ -152,6 +166,7 @@ class MultiTaskLoss(nn.Module):
         mask: torch.Tensor,
         *,
         weight: torch.Tensor | None,
+        sample_weight: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Mean CE loss over masked rows; zero when no rows are masked.
 
@@ -161,13 +176,34 @@ class MultiTaskLoss(nn.Module):
         Returns a graph-attached zero (``logits.sum() * 0``) when no
         rows survive so the optimiser still sees a tensor on the
         same device with the same gradient connectivity.
+
+        ``sample_weight`` (optional per-row float vector, same length
+        as ``mask``) scales each masked-in row's CE contribution. The
+        return is a weighted mean: ``sum(w_i * ce_i) / sum(w_i)`` over
+        masked-in rows. When the total weight collapses to zero (an
+        all-cross-bank batch under ``weighted`` with weight=0.0), the
+        result is the same graph-attached zero used for the empty-mask
+        case so backward stays well-defined and contributes no
+        gradient through the stance head.
         """
 
         if mask.numel() == 0 or not mask.any():
             return logits.sum() * 0.0
         active_logits = logits[mask]
         active_target = target[mask]
-        return F.cross_entropy(active_logits, active_target, weight=weight)
+        if sample_weight is None:
+            return F.cross_entropy(active_logits, active_target, weight=weight)
+        active_sample_weight = sample_weight[mask]
+        per_row = F.cross_entropy(
+            active_logits, active_target, weight=weight, reduction="none"
+        )
+        weight_total = active_sample_weight.sum()
+        # ``> 0`` keeps the zero-weight collapse on the same graph-
+        # attached zero path the empty-mask branch uses; otherwise the
+        # ``/ weight_total`` divisor would produce NaN gradients.
+        if float(weight_total.detach().item()) <= 0.0:
+            return logits.sum() * 0.0
+        return (per_row * active_sample_weight).sum() / weight_total
 
     def _masked_regression_loss(
         self,

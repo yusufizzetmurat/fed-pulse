@@ -737,47 +737,35 @@ def _compute_weighted_total_loss(
     masks: dict[str, torch.Tensor],
     stance_sample_weight: torch.Tensor | None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-    """Apply per-row stance weighting on top of the masked multi-task loss.
+    """Forward through ``MultiTaskLoss`` with the per-row stance weight.
 
-    The default ``MultiTaskLoss`` path is preserved when no per-row
-    weight vector is supplied OR when every weight is 1.0 (the only
-    state the FOMC-only pool ever produces). When the ``weighted``
-    arm of ``--cross-bank-supervision`` produces non-unit weights,
-    the stance branch is recomputed as a per-row weighted CE so
-    cross-bank rows scale their contribution down by
-    ``--cross-bank-stance-weight`` without changing any other axis.
-    The breakdown dict mirrors the standard ``MultiTaskLoss`` output
-    so the training-loop logger keeps the same per-axis trajectory.
+    ``MultiTaskLoss.forward`` takes an optional ``stance_sample_weight``
+    kwarg that turns the stance branch into a weighted-mean CE; the
+    factor / certainty / topic branches are unchanged. Passing the
+    vector straight through keeps every gradient path on the loss
+    side, so the helper here is a thin call-site adapter: when the
+    batch carries no weights, or every weight is exactly 1.0 (the
+    only state the FOMC-only pool ever produces), we call the loss
+    without the kwarg so the numerics reproduce the prior path
+    byte-identically.
+
+    Note on correctness: an earlier draft of this helper computed the
+    weighted stance loss outside the loss and then subtracted
+    ``breakdown["stance"]`` (a detached scalar) from the original
+    ``total``. That left the original stance gradient path through
+    ``logits["stance"]`` accumulated alongside the new weighted path
+    — a silent double-count. The current path delegates the swap to
+    ``MultiTaskLoss`` itself so there is exactly one stance loss term
+    in the computation graph.
     """
 
-    total, breakdown = loss_fn(logits, targets, masks)
     if stance_sample_weight is None:
-        return total, breakdown
+        return loss_fn(logits, targets, masks)
     if torch.all(stance_sample_weight == 1.0):
-        return total, breakdown
-    stance_mask = masks["stance_mask"]
-    if stance_mask.numel() == 0 or not stance_mask.any():
-        return total, breakdown
-    active_logits = logits["stance"][stance_mask]
-    active_target = targets["stance"][stance_mask]
-    active_weight = stance_sample_weight[stance_mask]
-    weight_buf = loss_fn.get_buffer("_stance_weight")
-    class_weight = weight_buf if weight_buf.numel() > 0 else None
-    per_row = torch.nn.functional.cross_entropy(
-        active_logits, active_target, weight=class_weight, reduction="none"
+        return loss_fn(logits, targets, masks)
+    return loss_fn(
+        logits, targets, masks, stance_sample_weight=stance_sample_weight
     )
-    weight_total = active_weight.sum()
-    if float(weight_total.item()) <= 0.0:
-        return total, breakdown
-    stance_loss_weighted = (per_row * active_weight).sum() / weight_total
-    new_total = (
-        total
-        - loss_fn.lambda_stance * breakdown["stance"]
-        + loss_fn.lambda_stance * stance_loss_weighted
-    )
-    new_breakdown = dict(breakdown)
-    new_breakdown["stance"] = stance_loss_weighted.detach()
-    return new_total, new_breakdown
 
 
 @torch.no_grad()
