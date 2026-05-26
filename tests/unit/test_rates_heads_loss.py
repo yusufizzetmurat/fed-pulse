@@ -166,8 +166,9 @@ def test_compute_rates_loss_regression_only_returns_mse() -> None:
         rates_alpha=0.5,
     )
     assert loss is not None
-    # MSE of (0, 1) = 1.0
-    assert torch.isclose(loss, torch.tensor(1.0), atol=1e-6)
+    # MSE of (0, 1) = 1.0; rates_alpha=0.5 now scales the regression
+    # term (#317 finding #1) so the joint contribution is 0.5 * 1.0.
+    assert torch.isclose(loss, torch.tensor(0.5), atol=1e-6)
 
 
 def test_compute_rates_loss_dual_mixes_terms() -> None:
@@ -228,8 +229,9 @@ def test_compute_rates_loss_masked_rows_drop_contribution() -> None:
         rates_alpha=0.5,
     )
     assert loss is not None
-    # Only 2 rows kept; each (1 - 0)^2 = 1.0; mean = 1.0.
-    assert torch.isclose(loss, torch.tensor(1.0), atol=1e-6)
+    # Only 2 rows kept; each (1 - 0)^2 = 1.0; mean = 1.0; rates_alpha=0.5
+    # now scales the regression term so the joint contribution is 0.5.
+    assert torch.isclose(loss, torch.tensor(0.5), atol=1e-6)
 
 
 # ---------------------------------------------------------------------------
