@@ -52,8 +52,28 @@ from app.training.loss import MultiTaskLoss
 _logger = logging.getLogger(__name__)
 
 DEFAULT_CHECKPOINT_PATH = MODEL_CHECKPOINT_DIR / "text_multi_axis_best.pt"
-DEFAULT_ENCODER_ALIAS = "finbert_fed_adjacent"
 DEFAULT_ARTIFACT_ROOT = DATA_DIR / "artifacts" / "text_multi_axis"
+
+
+def _default_classifier_encoder_alias() -> str:
+    """Resolve the canonical ``role: classifier`` encoder (ADR 0019).
+
+    Falls back to the historical hard-coded alias when the registry has
+    no ``role: classifier`` tag so the classifier training CLI keeps
+    booting on legacy configs (mirrors the retrieval entrypoint).
+    """
+
+    # Late import to avoid pulling the full registry yaml at module
+    # import time on environments that only need the dataclasses.
+    from app.models.registry import resolve_by_role
+
+    try:
+        return resolve_by_role("classifier")
+    except KeyError:
+        return "finbert_fed_adjacent"
+
+
+DEFAULT_ENCODER_ALIAS = _default_classifier_encoder_alias()
 
 
 @dataclass

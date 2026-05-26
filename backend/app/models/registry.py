@@ -5,9 +5,18 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
+
+# Canonical encoder roles (ADR 0019). Two encoders win the canonical
+# slots: the FOMC-only DAPT substrate as the headline classifier, and
+# the cross-bank DAPT encoder as the retrieval base. The pre-#330
+# arrangement pinned the cross-bank DAPT substrate as the single
+# canonical encoder despite Bundle A.2 / A.4 returning null on the
+# vol-regime classifier — one substrate doing two jobs poorly.
+EncoderRole = Literal["classifier", "retrieval"]
+KNOWN_ROLES: tuple[str, ...] = ("classifier", "retrieval")
 
 # HF Hub repo-id format: ``owner/name`` where each side starts with an
 # alphanumeric and may contain ``[a-zA-Z0-9_.-]``. The grammar matches
@@ -40,6 +49,11 @@ class EncoderRef:
     gated: bool
     task: str
     description: str
+    # Canonical role tag (ADR 0019). ``None`` for entries that do not
+    # claim either canonical slot — bake-off siblings, control ablations,
+    # placeholder rows. Two tagged entries ship: ``classifier`` for the
+    # headline substrate, ``retrieval`` for the retrieval base.
+    role: str | None = None
 
 
 @lru_cache(maxsize=1)
@@ -51,6 +65,7 @@ def load_registry(path: Path | None = None) -> dict[str, EncoderRef]:
     for alias, fields in encoders.items():
         if not isinstance(fields, dict):
             continue
+        raw_role = fields.get("role")
         ref = EncoderRef(
             alias=alias,
             repo=str(fields["repo"]),
@@ -58,12 +73,50 @@ def load_registry(path: Path | None = None) -> dict[str, EncoderRef]:
             gated=bool(fields.get("gated", False)),
             task=str(fields.get("task", "classification")),
             description=str(fields.get("description", "")),
+            role=str(raw_role) if raw_role is not None else None,
         )
         by_repo[ref.repo] = ref
         by_repo[ref.alias] = ref
         for repo_alias in fields.get("repo_aliases") or ():
             by_repo[str(repo_alias)] = ref
     return by_repo
+
+
+def resolve_by_role(role: EncoderRole) -> str:
+    """Return the canonical encoder alias for the given role (ADR 0019).
+
+    Two roles are recognised: ``classifier`` (headline classification
+    substrate) and ``retrieval`` (retrieval base). The resolver scans
+    the encoder block once, dedup-keyed by ``alias`` so callers see
+    each registered entry once, and returns the first ``alias`` whose
+    ``role:`` matches.
+
+    Raises :class:`KeyError` when the role is unknown (not in
+    :data:`KNOWN_ROLES`) or when no encoder in the registry carries
+    that role tag. Callers that want to gracefully fall back to a
+    legacy default should resolve through :func:`encoder_ref` or a
+    callsite-specific default constant, not through this function.
+    """
+
+    if role not in KNOWN_ROLES:
+        raise KeyError(
+            f"unknown encoder role {role!r}; known roles: {KNOWN_ROLES}"
+        )
+    registry = load_registry()
+    # Dedup by alias — the loader fans an entry out across ``repo`` /
+    # ``alias`` / ``repo_aliases`` keys, so scanning ``.values()``
+    # directly would visit the same ref multiple times.
+    seen: set[str] = set()
+    for ref in registry.values():
+        if ref.alias in seen:
+            continue
+        seen.add(ref.alias)
+        if ref.role == role:
+            return ref.alias
+    raise KeyError(
+        f"no encoder with role={role!r} registered in models/registry.yaml; "
+        f"known roles: {KNOWN_ROLES}"
+    )
 
 
 def revision_for(repo_or_alias: str) -> str | None:

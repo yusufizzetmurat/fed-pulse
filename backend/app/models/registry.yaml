@@ -128,6 +128,7 @@ encoders:
     revision: ""
     gated: false
     task: masked_lm
+    role: classifier
     description: |
       Round 3 (#242) corpus-ablation sibling of ``finbert_fed_adjacent``.
       Continued-pretrained on FOMC statements + minutes ONLY (~48 docs,
@@ -136,6 +137,12 @@ encoders:
       revision stays empty until the first GPU run lands a checkpoint;
       ``encoder_ref`` treats this as "unpinned local" and the bake-off
       CLI will refuse to load it until the path + revision are filled in.
+
+      Carries ``role: classifier`` under ADR 0019 — the canonical
+      classifier substrate. Bundle A.2 / A.4 returned null on vol-regime
+      against the cross-bank DAPT encoder, so the FOMC-only DAPT
+      substrate keeps the headline classifier role and the cross-bank
+      DAPT encoder owns the retrieval role only.
 
   finbert_bis_only:
     repo: local/finbert-bis-only
@@ -172,6 +179,7 @@ encoders:
     revision: "20260525T185524Z_s11"
     gated: false
     task: masked_lm
+    role: retrieval
     description: |
       DAPT substrate-extension sibling of ``finbert_fed_adjacent``. Same
       MLM+NSP recipe, but the pretraining substrate adds the 5 cross-bank
@@ -183,6 +191,12 @@ encoders:
       ``make finbert-fed-adjacent-xbank-dapt-pretrain``. Revision stays
       empty until the first GPU run lands a checkpoint; same unpinned-
       local guard as ``finbert_fomc_only`` applies.
+
+      Carries ``role: retrieval`` under ADR 0019 — the canonical
+      retrieval substrate. Bundle A.2 / A.4 showed the cross-bank
+      supervised + DAPT layers null on the headline classifier target,
+      so this encoder owns the retrieval role only; the classifier role
+      is held by ``finbert_fomc_only``.
 
   finbert_fed_adjacent_xbank_aux_stance_masked:
     repo: /data/artifacts/text_multi_axis/text_multi_axis_20260525T105459Z/hf_checkpoints
