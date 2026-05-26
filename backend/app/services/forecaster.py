@@ -167,7 +167,6 @@ def _set_singleton_after_train(
     global _model, _model_artifact_metadata
     from app.models.factory import build_serving_forecaster
     from app.models.multimodal_forecaster import MultiModalForecasterModel
-    from app.training.loop import _coerce_model_config
 
     with _model_lock:
         payload = _read_checkpoint_payload(checkpoint_target, device_obj)
