@@ -42,6 +42,15 @@ git checkout main
 
 # Env file for the backend container (contains HF_TOKEN + FRED_API_KEY)
 mkdir -p /etc/fed-pulse /etc/fed-pulse/data
+
+# The runtime container runs as a non-root `fedpulse` user (UID 10001
+# per Dockerfile.prod). Without an explicit chown the bind-mounted
+# /etc/fed-pulse/data sits at root:root on the host and the container
+# cannot write to /data/db on first boot — uvicorn aborts with
+# `PermissionError: [Errno 13]` and the healthcheck never goes green.
+chown -R 10001:0 /etc/fed-pulse/data
+chmod -R u+rwX,g+rwX /etc/fed-pulse/data
+
 cat <<'EOF' > /etc/fed-pulse/.env
 HF_TOKEN=hf_xxx
 FRED_API_KEY=xxx
