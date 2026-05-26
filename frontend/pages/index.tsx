@@ -13,6 +13,7 @@ import {
   type RegimeHistoryEntry,
 } from "@/components/analyze/RegimeHistoryStrip";
 import { SentenceStrikeXaiPanel } from "@/components/analyze/SentenceStrikeXaiPanel";
+import { TrajectoryPanel } from "@/components/analyze/TrajectoryPanel";
 import { WatchlistChips } from "@/components/analyze/WatchlistChips";
 import { Header } from "@/components/shell/header";
 import { StatusBar } from "@/components/shell/status-bar";
@@ -396,6 +397,12 @@ export default function WorkspacePage() {
                   loading={counterfactualLoading}
                 />
               ) : null}
+
+              <TrajectoryPanel
+                apiBaseUrl={apiBaseUrl}
+                asOfDate={request.date}
+                historyLength={12}
+              />
 
               <PipelineTrace result={result} inputText={request.text} />
 
