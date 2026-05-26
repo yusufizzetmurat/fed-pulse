@@ -1,10 +1,24 @@
-"""Walk-forward trainer for the trajectory model (#296).
+"""Walk-forward trainer for the trajectory model (#296, #332).
 
 Builds the per-meeting input panel from ``events.parquet``, applies
 the same strict-forward walk-forward cut as the retrieval encoder
 (:mod:`app.retrieval.train`), trains the architecture selected by
 ``--architecture {lstm,transformer}``, and persists the bundle under
 ``data/artifacts/trajectory/<run_name>/``.
+
+Parameter-count cap (#332). With ~250 historical statements, a 4-layer
+x 64-d_model x 4-head Transformer (the #296 default at ~250k parameters)
+sits at a poor data:parameter ratio. Per the lift-or-no-lift convention
+spelled out in the issue, the Transformer arm caps at 2 layers x 32
+d_model unless it beats the strongest naive baseline (previous_stance /
+rolling_majority(3) / small-LSTM) by >= 5pp directional accuracy on the
+canonical fold protocol. The cap is enforced via
+:func:`assert_parameter_count_within_cap` before the training loop
+starts; ``--no-param-cap`` opts out only when the lift threshold has
+already been demonstrated on a downstream sweep. The cap default
+(75_000) accommodates a 2x32 Transformer at the canonical 768-d DAPT
+embedding (~50k parameters) with comfortable headroom and rejects the
+historical 4x64 default (~250k parameters).
 
 Bundle layout (matches the §13 acceptance for #296)::
 
@@ -58,6 +72,13 @@ import pandas as pd
 from app.config import DATA_DIR
 from app.evaluation.conformal import calibrate_classification_conformal
 from app.evaluation.regression_metrics import with_block_bootstrap_ci
+from app.trajectory.baselines import (
+    DEFAULT_ROLLING_WINDOW,
+    compare_against_transformer,
+    evaluate_previous_stance,
+    evaluate_rolling_majority,
+    evaluate_small_lstm,
+)
 from app.trajectory.model import (
     DEFAULT_HISTORY_LENGTH,
     MARKET_FEATURE_DIM,
@@ -87,6 +108,13 @@ DEFAULT_HOLDOUT_SHARE = 0.2
 DEFAULT_CALIBRATION_SHARE = 0.15
 DEFAULT_BOOTSTRAP_RESAMPLES = 500
 DEFAULT_BOOTSTRAP_BLOCK_SIZE = 4
+
+# Default parameter-count cap (#332). Sized to comfortably admit the
+# 2 layers x 32 d_model Transformer arm at the canonical 768-d DAPT
+# embedding (~50.6k params) while rejecting the original 4 layers x 64
+# d_model default (~250k params). Lift threshold for an override is
+# >= 5pp directional-accuracy beat over the strongest naive baseline.
+DEFAULT_PARAMETER_COUNT_CAP: int = 75_000
 
 FOLD_MANIFEST_FILENAME = "fold_manifest_expanding_walk_forward.json"
 
@@ -440,6 +468,63 @@ def standardise_inputs(
 # ---------------------------------------------------------------------------
 # Training loop
 # ---------------------------------------------------------------------------
+
+
+def _history_label_lists(
+    sequences: Sequence[TrainingSequence],
+    meetings: Sequence[MeetingRow],
+) -> list[list[int]]:
+    """Build per-row stance-index history lists from the meetings panel.
+
+    The naive baselines (#332) consume stance-only history — the same
+    sequence of past meeting labels the Transformer arm sees, projected
+    down to the label space. Returns one history list per row in
+    ``sequences``, with unrecognised stances dropped. Used by the
+    trainer to feed ``evaluate_previous_stance`` /
+    ``evaluate_rolling_majority`` / ``evaluate_small_lstm``.
+    """
+
+    label_by_date: dict[str, int] = {}
+    for row in meetings:
+        if row.axis_stance is not None and row.axis_stance in STANCE_TO_INDEX:
+            label_by_date[row.event_date] = STANCE_TO_INDEX[row.axis_stance]
+    histories: list[list[int]] = []
+    for seq in sequences:
+        history: list[int] = []
+        for event_date in seq.history_event_dates:
+            idx = label_by_date.get(str(event_date))
+            if idx is not None:
+                history.append(idx)
+        histories.append(history)
+    return histories
+
+
+def assert_parameter_count_within_cap(
+    model: Any, *, cap: int = DEFAULT_PARAMETER_COUNT_CAP
+) -> int:
+    """Block oversized trajectory architectures from entering the train loop (#332).
+
+    With ~250 historical statements, even the 2x32 Transformer (~50k
+    params at the 768-d DAPT embedding) is data-starved; the 4x64
+    default (~250k) is the configuration this cap exists to reject.
+    Lifting the cap requires the lift-or-no-lift verdict on the
+    canonical fold protocol to already favour the larger architecture
+    by >= 5pp directional accuracy over the strongest naive baseline.
+
+    Returns the actual parameter count so the caller can record it in
+    the metrics payload.
+    """
+
+    actual = int(sum(p.numel() for p in model.parameters()))
+    if actual > int(cap):
+        raise AssertionError(
+            f"trajectory model parameter count {actual} exceeds cap {cap}; "
+            "shrink the architecture (e.g. transformer_layers=2, "
+            "transformer_d_model=32) or pass --no-param-cap when the "
+            ">=5pp lift threshold over the strongest naive baseline has "
+            "already been demonstrated on the canonical fold protocol."
+        )
+    return actual
 
 
 def _set_all_seeds(seed: int) -> None:
@@ -1019,6 +1104,8 @@ def train_and_persist(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only
     calibration_share: float = DEFAULT_CALIBRATION_SHARE,
     conformal_alpha: float = 0.2,
     training_package_id: str | None = None,
+    enforce_param_cap: bool = True,
+    parameter_count_cap: int = DEFAULT_PARAMETER_COUNT_CAP,
 ) -> Path:
     """End-to-end: read events, train, evaluate, persist the bundle.
 
@@ -1187,6 +1274,15 @@ def train_and_persist(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only
     )
     pca_mean, pca_components = fit_pca_axes(train_embeddings_slice)
 
+    # Parameter-count cap (#332) — runs BEFORE the training loop so a
+    # mis-configured architecture surfaces in seconds rather than after
+    # a multi-epoch fit. The cap is opt-out via ``enforce_param_cap``;
+    # the CLI exposes the override as ``--no-param-cap``.
+    if enforce_param_cap:
+        probe_model = build_model(config)
+        assert_parameter_count_within_cap(probe_model, cap=parameter_count_cap)
+        del probe_model
+
     model = train_model(
         train_sequences,
         config,
@@ -1213,6 +1309,7 @@ def train_and_persist(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only
             ),
         }
         # Naive-prior baseline: predict the modal class of the train slice.
+        modal: int | None = None
         if train_sequences:
             train_labels = [seq.label_index for seq in train_sequences]
             modal = max(set(train_labels), key=train_labels.count)
@@ -1221,6 +1318,56 @@ def train_and_persist(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only
                 evaluation["labels"].tolist(),
                 baseline_pred,
                 seed=seed,
+            )
+
+        # Naive baselines + small-LSTM (#332). Each consumes the stance
+        # sequence of the same history window the Transformer arm sees,
+        # so the comparison is on the canonical fold protocol. The
+        # results land both on ``metrics_payload['baselines']`` (for
+        # downstream reporting) and on ``metrics_payload['lift_check']``
+        # (the lift / no-lift verdict the API endpoint surfaces).
+        holdout_histories = _history_label_lists(holdout_sequences, meetings)
+        holdout_truths = evaluation["labels"].tolist()
+        train_histories = _history_label_lists(train_sequences, meetings)
+
+        prev_result = evaluate_previous_stance(
+            holdout_histories, holdout_truths, fallback_modal=modal
+        )
+        rolling_result = evaluate_rolling_majority(
+            holdout_histories,
+            holdout_truths,
+            n=DEFAULT_ROLLING_WINDOW,
+            fallback_modal=modal,
+        )
+        try:
+            lstm_result = evaluate_small_lstm(
+                train_histories,
+                holdout_histories,
+                holdout_truths,
+                seed=seed,
+                fallback_modal=modal,
+            )
+        except Exception:  # pragma: no cover — guarded so a torch import / fit failure never crashes the trainer
+            _logger.warning("trajectory_small_lstm_baseline_failed", exc_info=True)
+            lstm_result = None
+
+        baseline_results = [prev_result, rolling_result]
+        if lstm_result is not None:
+            baseline_results.append(lstm_result)
+        metrics_payload["baselines"] = {
+            b.name: {
+                "directional_accuracy": float(b.directional_accuracy)
+                if not (b.directional_accuracy != b.directional_accuracy)  # noqa: PLR0124 — nan check
+                else None,
+                "confusion_matrix": [list(row) for row in b.confusion_matrix],
+                "n": int(b.n),
+            }
+            for b in baseline_results
+        }
+        transformer_dir_acc = metrics_payload["holdout"]["directional_accuracy"]["point"]
+        if transformer_dir_acc == transformer_dir_acc:  # noqa: PLR0124 — finite check
+            metrics_payload["lift_check"] = compare_against_transformer(
+                transformer_dir_acc, baseline_results
             )
     if calibration_sequences:
         cal_eval = evaluate_model(model, calibration_sequences)
@@ -1317,6 +1464,22 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--conformal-alpha", type=float, default=0.2)
     parser.add_argument("--training-package-id", default=None)
+    parser.add_argument(
+        "--no-param-cap",
+        action="store_true",
+        help=(
+            "Bypass the trajectory parameter-count cap (#332). Use only "
+            "when the >=5pp lift threshold over the strongest naive "
+            "baseline has been demonstrated on the canonical fold "
+            "protocol."
+        ),
+    )
+    parser.add_argument(
+        "--parameter-count-cap",
+        type=int,
+        default=DEFAULT_PARAMETER_COUNT_CAP,
+        help="Override the default parameter-count cap (#332).",
+    )
     return parser.parse_args()
 
 
@@ -1344,6 +1507,8 @@ def main() -> int:
         calibration_share=args.calibration_share,
         conformal_alpha=args.conformal_alpha,
         training_package_id=args.training_package_id,
+        enforce_param_cap=not args.no_param_cap,
+        parameter_count_cap=args.parameter_count_cap,
     )
     print(f"[trajectory.train] saved bundle to {out_dir}")
     return 0
