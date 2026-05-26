@@ -349,7 +349,7 @@ class ForecasterModel(nn.Module):
             # ModuleDict defaults stay so the regression-only forward
             # paths keep their attribute checks cheap.
             self.regression_head = None
-            self.rates_heads_active: tuple[str, ...] = ()
+            self.rates_heads_active = ()
             self.rates_regression_heads = nn.ModuleDict()
             self.rates_classification_heads = nn.ModuleDict()
 
