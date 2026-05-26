@@ -67,7 +67,7 @@ _FOMC_SOURCE_TYPES = {"fomc_statement", "fomc_minutes"}
 # ---------------------------------------------------------------------------
 
 
-def mixed_pool_macro_f1(
+def mixed_pool_macro_f1(  # noqa: PLR0913 — kw-only stratification config; collapsing would hide the variant contract
     records: Sequence[Record],
     *,
     n_classes: int = 3,
@@ -96,7 +96,7 @@ def mixed_pool_macro_f1(
     )
 
 
-def fomc_only_macro_f1(
+def fomc_only_macro_f1(  # noqa: PLR0913 — kw-only stratification config; collapsing would hide the variant contract
     records: Sequence[Record],
     *,
     source_type_field: str = "source_type",
@@ -133,7 +133,7 @@ def fomc_only_macro_f1(
     )
 
 
-def with_without_fold(
+def with_without_fold(  # noqa: PLR0913 — kw-only stratification config; collapsing would hide the variant contract
     records: Sequence[Record],
     *,
     drop_fold_id: str,
