@@ -100,7 +100,7 @@ def _coerce_index(value: Any) -> int | None:
 
     if value is None:
         return None
-    if isinstance(value, (int, np.integer)):
+    if isinstance(value, (int, np.integer)):  # noqa: UP038 — keep tuple form; numpy + builtin int via X | Y breaks isinstance on some numpy versions
         idx = int(value)
         if 0 <= idx < N_STANCE_CLASSES:
             return idx
@@ -453,7 +453,7 @@ def evaluate_rolling_majority(
     )
 
 
-def evaluate_small_lstm(
+def evaluate_small_lstm(  # noqa: PLR0913 — kw-only baseline-evaluation config; collapsing into a dataclass would obscure the (train / history / target / hidden_size / lr / epochs / seed / n_classes) contract
     train_stance_sequences: Sequence[Sequence[int]],
     history_label_lists: Sequence[Sequence[Any]],
     truths: Sequence[int],
