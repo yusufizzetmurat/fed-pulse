@@ -1,0 +1,67 @@
+# Caddy v2 config for the fed-pulse droplet. Automatic Let's Encrypt
+# certificates are issued for fedpulse.yusufizzetmurat.com on first
+# boot. The frontend service serves the marketing + dashboard pages,
+# the backend serves the JSON API; both are reached over the internal
+# Docker network by service name.
+
+{
+    # Email is used by Let's Encrypt for expiry notifications. Override
+    # via env var ACME_EMAIL on the host if the operator changes hands.
+    email {$ACME_EMAIL:admin@yusufizzetmurat.com}
+    # On-demand TLS is disabled — the certificate is pre-provisioned
+    # for the single hostname so cold-start latency stays low.
+
+    # Trust only private-range proxies (the docker network) for the
+    # X-Forwarded-* family. Without this an outside client could spoof
+    # the source IP on every request by sending its own X-Forwarded-For
+    # header. Caddy 2.7+ syntax.
+    servers {
+        trusted_proxies static private_ranges
+    }
+}
+
+fedpulse.yusufizzetmurat.com {
+    encode gzip zstd
+
+    log {
+        output stdout
+        format console
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        # CSP intentionally allows ``'unsafe-inline'`` for script-src
+        # and style-src — Next.js' inline runtime script and the
+        # styled-jsx output both require it. The connect-src clause
+        # locks browser-side XHR to the same origin so a future
+        # /analyze response that smuggles a hostile script can't
+        # exfiltrate to an attacker-controlled domain.
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    }
+
+    # Health probe — proxied directly so the deploy workflow can hit
+    # https://fedpulse.yusufizzetmurat.com/health and the GH Actions
+    # smoke step gets a real backend liveness signal.
+    handle /health {
+        reverse_proxy backend:8000
+    }
+
+    # API surface. ``handle_path`` strips the /api prefix before
+    # forwarding so the backend sees the same paths it does in dev.
+    handle_path /api/* {
+        reverse_proxy backend:8000 {
+            transport http {
+                read_timeout 120s
+                write_timeout 120s
+            }
+        }
+    }
+
+    # Everything else is the Next.js standalone server.
+    handle {
+        reverse_proxy frontend:3000
+    }
+}

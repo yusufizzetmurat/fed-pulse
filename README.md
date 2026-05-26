@@ -50,6 +50,16 @@ Long-form design / requirements / roadmap / ADRs live in the companion wiki at `
 1. `cp .env.example .env` and fill in the credentials you need (`HF_TOKEN` covers most gated checkpoints).
 2. Install pre-commit (`pip install --user pre-commit`) and run `pre-commit install` once in this clone — every commit then runs ruff, ruff-format, gitleaks, and the whitespace/EOF hooks.
 
+## Deploy
+
+The production stack runs on a single DigitalOcean droplet (8 GB / 4 vCPU, ~$48/month). See [`docs/deploy.md`](docs/deploy.md) for the provisioning runbook and [`docs/reproduce.md`](docs/reproduce.md) for the `make reproduce-all` walkthrough.
+
+- Hostname: `fedpulse.yusufizzetmurat.com`
+- Stack: Caddy reverse proxy + FastAPI backend + Next.js standalone frontend (all in `compose.prod.yml`)
+- HF Hub stores every model artefact; the droplet eager-pulls the hot path at boot and lazy-fetches the alternatives on first use
+- Deploy automation: `.github/workflows/deploy.yml` triggers on push to `main` and blocks until `ci.yml` succeeds on the same sha. Required secrets: `DROPLET_SSH_KEY`, `HF_TOKEN`, `FRED_API_KEY`
+- HF artefact pushes run server-side via the manual `.github/workflows/hf-push.yml` workflow (workflow_dispatch) using `HF_TOKEN_WRITE`; the write-scoped token never leaves the GH secret store
+
 ## Executable contracts
 
 The four files under `docs/` pin down what every official run must do. Code and CI gate on these directly:

@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep reproduce-all push-artefacts deploy-prod-build
 
 help:
 	@echo "Targets:"
@@ -132,6 +132,36 @@ train-batch:
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--mode full \
 		--owner "$(OWNER)"
+
+# Fresh-machine reproduction smoke (#302 Stage 5). Pulls the canonical
+# training package + embedding caches from HF Hub and runs a single-
+# seed, single-epoch forecaster training so a reviewer with only
+# Docker + an HF token can confirm the pipeline runs end-to-end. The
+# expected wall time on the 8 GB / 4 vCPU droplet is ~15 minutes
+# (~10 min for the artefact pull on a cold cache, ~5 min for the
+# one-epoch training pass). Sets ``FED_PULSE_REPRODUCE_SMOKE=1`` so
+# downstream code paths know they are in the smoke run and can shrink
+# expensive sub-steps without changing the canonical training script.
+reproduce-all:
+	docker compose run --rm \
+		-e FED_PULSE_REPRODUCE_SMOKE=1 \
+		-e HF_TOKEN=$$HF_TOKEN \
+		backend bash -c '\
+			set -e && \
+			python scripts/reproduce_all.py'
+
+# One-time push of every canonical artefact to HF Hub. Runs the
+# idempotent uploader in dry-run by default so the operator can sanity
+# check the plan before flipping --all on. See
+# ``scripts/push_artefacts_to_hub.py`` for full documentation.
+push-artefacts:
+	python scripts/push_artefacts_to_hub.py --dry-run
+
+# Local build of the production container — useful for verifying the
+# Dockerfile builds clean before pushing to main. Does NOT publish the
+# image anywhere.
+deploy-prod-build:
+	docker compose -f compose.prod.yml build
 
 # Train the text-only multi-axis classifier (#78 follow-up). Reads
 # events.parquet from the supplied training package, fine-tunes
