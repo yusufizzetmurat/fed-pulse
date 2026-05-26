@@ -23,6 +23,16 @@ Policy is fixed for the current benchmark cycle. Method changes require a new ve
 ## Canonical Training Objective
 As of ADR 0015 (`docs/adr/0015-regression-canonical-objective.md`, issue #322), the canonical training objective for the vol-regime head is the regression head on `log(forward_realized_vol_10d)`, optimised with MSE on per-fold standardised log-RV. The 3-class calm / normal / high label is a UI-side bucketing of the regression output against the per-fold `vol_regime_quantiles` cutoffs persisted in `fold_manifest_expanding_walk_forward.json`; it is no longer a training target under the canonical setting. The classification head stays mounted on every checkpoint for shape stability and to back the aux conformal calibration surface (`rates_softmax_quantiles`), but contributes zero gradient when `head_mode="regression"`. The dual-head mixing surface (`head_mode={classification,regression,dual}` plus `regression_alpha`) introduced in #304 remains available for the methodology comparison in §6.15 of the deep-learning roadmap. Headline vol-regime rows in published reports must cite RMSE-log_rv and R² alongside any UI-derived classification metrics.
 
+## Aggregation Rule
+The canonical pooling rule for macro-F1 across walk-forward folds is **mean-of-fold-means**: compute per-fold macro-F1, then average unweighted across folds. The secondary rule is **row-pooled**: concatenate every per-row prediction across all folds into one confusion matrix, then compute macro-F1 once. Both numbers are published on every honest macro-F1 cell so the per-fold class-balance variance is visible — the row-pooled number weights folds by support, the mean-of-fold-means number weights folds equally and is the conservative read against the `wf_fold_4` zero-`calm` slice (R-17).
+
+Honest macro-F1 reports MUST include:
+1. **Per-class P/R/F1 footnote** on every published macro-F1 cell — precision, recall, F1, and support per class. Pooled headlines that suppress this footnote can mask a degenerate per-class distribution and are not eligible for publication.
+2. **Fold-4 with-and-without rows** on every headline cell — publish both `with all folds` and `without wf_fold_4` so the reader can see the magnitude of the zero-`calm`-class fold's contribution. Flag if the two readings diverge by more than the bootstrap CI half-width.
+3. **Macro-release with-and-without rows** on every headline cell — publish both `with macro-release-augmented rows` and `FOMC-only` so the §6.7 Chunk-3 lift attribution stays auditable. The FOMC-only cell is the primary thesis number; the mixed-pool cell is the secondary comparator.
+
+The four reporting variants (mixed-pool, FOMC-only, fold-4 with/without, macro-release with/without) are computed by `backend/app/evaluation/reporting.py` (issue #323). Block-bootstrap CIs use 1000 resamples at `block_size=20` by default, matching the convention in `backend/app/evaluation/regime_pooled_aggregator.py`.
+
 ## Leakage Rules
 1. No future-derived features
 2. No future target leakage in feature creation
