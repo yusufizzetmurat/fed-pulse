@@ -56,7 +56,7 @@ _REPLACEMENT_ARM_DATA = (
 # clears is tracked separately; the runner reports the deferral on the
 # manifest so downstream readers know which arm ran.
 _REPLACEMENT_ARM_DEFERRAL_TICKET = (
-    "deferred: pre-meeting wiring tracked in #320"
+    "deferred: pre-meeting wiring tracked in #315"
 )
 
 
