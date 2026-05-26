@@ -280,33 +280,37 @@ encoders:
 artefacts:
   encoder_canonical:
     hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent-xbank-dapt
-    revision: ""
+    revision: "50677e3a0a84e2ce66089c902de2a5438c13d28e"
     eager: true
     description: |
       Canonical hot-path encoder — cross-bank DAPT-extended FinBERT
       substrate. Boot-time eager pull on the droplet entrypoint.
 
   encoder_finbert_fomc:
-    hf_uri: hf://yusufizzetmurat/finbert-fomc
-    revision: ""
+    # Upstream third-party repo — we don't host our own copy. The pinned
+    # revision matches the `encoders:` block above so the resolver hits
+    # the same weights whether it goes through the legacy alias path or
+    # the artefacts.hf_uri path.
+    hf_uri: hf://ZiweiChen/FinBERT-FOMC
+    revision: "7754dd1d88da18e8b1d51cc1656496858ce19aae"
     eager: false
-    description: Lazy-fetched encoder for the bake-off comparison.
+    description: Upstream third-party FinBERT-FOMC. Lazy-fetched for the bake-off comparison.
 
   encoder_finbert_fed_adjacent:
     hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent
-    revision: ""
+    revision: "332e31e166e859deba81535bfeec410b3c6e7023"
     eager: false
     description: DAPT encoder over BIS speeches + Fed-adjacent auxiliary corpus.
 
   encoder_finbert_fed_adjacent_xbank:
     hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent-xbank
-    revision: ""
+    revision: "178fcfaa70f7949bd4b703f36e4c45746e279bce"
     eager: false
     description: Bundle A cross-bank auxiliary supervised variant.
 
   forecaster_canonical:
     hf_uri: hf://yusufizzetmurat/fed-pulse-forecaster
-    revision: ""
+    revision: "c26182b61057ab02c169f57703be0a487d244fa6"
     eager: true
     description: |
       Canonical multi-head forecaster checkpoint (#292). Loaded into
@@ -314,7 +318,7 @@ artefacts:
 
   rates_heads_canonical:
     hf_uri: hf://yusufizzetmurat/fed-pulse-rates-heads
-    revision: ""
+    revision: "0a76dabb67006b532e376d9b4dd69b8ad172e7d7"
     eager: true
     description: Multi-target rates heads checkpoint (#292/#293).
 
@@ -336,7 +340,7 @@ artefacts:
 
   training_package:
     hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-training-package
-    revision: ""
+    revision: "b9a71cc97a00c6108eabcc1d004352b0701eac6f"
     eager: false
     description: |
       Canonical training package for ``make reproduce-all``. Pulled to
@@ -345,7 +349,7 @@ artefacts:
 
   embedding_caches:
     hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-embedding-caches
-    revision: ""
+    revision: "89c3bc119182b9a39a4f96d18bd238a5adbcdfba"
     eager: false
     description: |
       Per-encoder embedding caches lazy-fetched on first use by

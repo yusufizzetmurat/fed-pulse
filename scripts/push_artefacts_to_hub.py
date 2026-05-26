@@ -84,11 +84,10 @@ ARTEFACT_SOURCES: dict[str, dict[str, str]] = {
         "license": "cc-by-4.0",
         "kind": "encoder",
     },
-    "encoder_finbert_fomc": {
-        "encoder_alias": "finbert_fomc",
-        "license": "cc-by-4.0",
-        "kind": "encoder",
-    },
+    # encoder_finbert_fomc is upstream ZiweiChen/FinBERT-FOMC; we don't
+    # host a copy under the project namespace. The registry's
+    # ``artefacts.encoder_finbert_fomc.hf_uri`` already points at the
+    # upstream repo, so the runtime lazy-fetches it directly when needed.
     "encoder_finbert_fed_adjacent": {
         "encoder_alias": "finbert_fed_adjacent",
         "license": "cc-by-4.0",
