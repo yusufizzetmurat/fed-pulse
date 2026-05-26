@@ -206,6 +206,208 @@ def _predict_next_point(model: ForecasterModel, sequence: list[FeatureVector]) -
 
 
 @torch.no_grad()
+def build_market_reaction_panel(
+    sequence: list[FeatureVector],
+    *,
+    text_embedding: "torch.Tensor | None" = None,
+    chunks: "torch.Tensor | None" = None,
+    elapsed_days: "torch.Tensor | None" = None,
+) -> dict[str, Any] | None:
+    """Build the four-card market-reaction panel (#293).
+
+    Returns ``None`` only when the active checkpoint mounts NEITHER the
+    rates heads (any of ``2y`` / ``5y`` / ``terminal``) NOR the
+    vol-regime classifier (a regression-only forecaster). When the
+    checkpoint mounts rates heads under ``output_mode='regression'``
+    the rates cards still render -- the gate that drops the function
+    on ``output_mode != 'classification'`` was removed (#317 finding
+    #11). The vol-regime card stays conditional on classification mode
+    via :func:`build_regime_classification_card`.
+
+    Per-rates-head card semantics:
+
+    - point_bps + symmetric conformal band (when the sidecar carries
+      ``rates_residual_quantiles[name]``);
+    - directional bucket + per-bucket softmax probabilities (when the
+      aux classifier is mounted). Regression-only checkpoints set
+      both to ``None`` so the frontend renders a "no model evidence"
+      badge rather than a fake 'easing' grounded in uniform probs
+      (#317 finding #10);
+    - calibrated APS predicted_set when the sidecar carries
+      ``rates_softmax_quantiles[name]``.
+
+    The optional ``text_embedding`` / ``chunks`` / ``elapsed_days``
+    are forwarded into ``forward_multi_task`` when the checkpoint has
+    the corresponding path active so the call does not raise on
+    text-mounted models (#317 finding #17).
+    """
+
+    model = _get_model()
+    active_rates = tuple(
+        str(name).lower()
+        for name in getattr(model, "rates_heads_active", ()) or ()
+    )
+    output_mode = str(getattr(model, "output_mode", "regression"))
+    # #317 finding #11: rates cards render under either output_mode as
+    # long as the rates heads are mounted; the vol-regime card remains
+    # gated on classification via build_regime_classification_card.
+    if output_mode != "classification" and not active_rates:
+        return None
+    device = next(model.parameters()).device
+    window = build_lookback_sequence(sequence)
+    x = _build_inference_tensor(window, model, device)
+    kwargs: dict[str, torch.Tensor] = {}
+    if getattr(model, "credibility_features", False):
+        kwargs["credibility"] = torch.zeros(
+            (1, int(getattr(model, "credibility_dim", 4))),
+            dtype=torch.float32,
+            device=device,
+        )
+    # #317 finding #17: forward the text path inputs through to
+    # forward_multi_task on text-mounted checkpoints. The model's
+    # forward path raises ``RuntimeError("text path active but inputs
+    # missing")`` if these are absent.
+    if getattr(model, "_text_path_active", False) and text_embedding is not None:
+        kwargs["text_embedding"] = text_embedding.to(device)
+    if (
+        getattr(model, "use_chunk_attention", False)
+        or getattr(model, "use_llm_embeddings", False)
+    ) and chunks is not None and elapsed_days is not None:
+        kwargs["chunks"] = chunks.to(device)
+        kwargs["elapsed_days"] = elapsed_days.to(device)
+    forward_multi = getattr(model, "forward_multi_task", None)
+    if forward_multi is None:
+        return None
+    try:
+        out_dict = forward_multi(x, **kwargs)
+    except RuntimeError:
+        # The text / chunks path is mounted but the caller did not
+        # supply the embedding. Surface a None panel rather than
+        # bubbling a 5xx -- the route handler converts to an empty
+        # response.
+        return None
+
+    metadata = _model_artifact_metadata or {}
+    rates_scalers_payload = metadata.get("rates_scalers") or {}
+    manifest = _conformal_manifest_for(BEST_MODEL_PATH)
+    rates_residuals = (
+        getattr(manifest, "rates_residual_quantiles", None) if manifest else None
+    ) or {}
+    rates_softmax_quantiles = (
+        getattr(manifest, "rates_softmax_quantiles", None) if manifest else None
+    ) or {}
+    coverage = (
+        float(getattr(manifest, "nominal_coverage", 0.0))
+        if manifest is not None
+        else None
+    )
+
+    # Rates cards.
+    from app.evaluation.conformal import predict_conformal_set
+    from app.models.rates_heads import RATES_HEAD_LABEL_NAMES, RATES_HEAD_NAMES
+    from app.training.rates_targets import RatesHeadScaler, inverse_standardise_bps
+
+    rates_cards: list[dict[str, Any]] = []
+    for name in active_rates:
+        if name not in RATES_HEAD_NAMES:
+            continue
+        pred_key = f"rates_{name}_bps"
+        cls_key = f"rates_{name}_cls_logits"
+        if pred_key not in out_dict:
+            continue
+        pred_std_tensor = out_dict[pred_key]
+        pred_std = float(pred_std_tensor.squeeze().item())
+        scaler_payload = rates_scalers_payload.get(name) if isinstance(rates_scalers_payload, dict) else None
+        if isinstance(scaler_payload, dict):
+            scaler = RatesHeadScaler(
+                mean=float(scaler_payload.get("mean", 0.0)),
+                std=float(scaler_payload.get("std", 1.0)),
+            )
+        else:
+            scaler = RatesHeadScaler(mean=0.0, std=1.0)
+        point_bps = inverse_standardise_bps(pred_std, scaler)
+        band_q: float | None = None
+        if isinstance(rates_residuals, dict) and name in rates_residuals:
+            band_q = float(rates_residuals[name])
+        lower_bps = point_bps - band_q if band_q is not None else None
+        upper_bps = point_bps + band_q if band_q is not None else None
+        labels = RATES_HEAD_LABEL_NAMES
+        # #317 finding #10: only render directional_bucket /
+        # bucket_probabilities when the aux classifier is mounted. A
+        # missing cls_logits key (regression-only head) leaves both
+        # None so the frontend shows "not available" instead of a fake
+        # 'easing' on uniform probs.
+        bucket: str | None = None
+        bucket_probs: dict[str, float] | None = None
+        predicted_set: list[str] | None = None
+        if cls_key in out_dict:
+            cls_logits = out_dict[cls_key].squeeze(0)
+            cls_probs_list = torch.softmax(cls_logits, dim=-1).tolist()
+            argmax_idx = max(range(len(cls_probs_list)), key=lambda i: cls_probs_list[i])
+            bucket = labels[argmax_idx] if argmax_idx < len(labels) else "neutral"
+            bucket_probs = {
+                labels[i]: float(cls_probs_list[i])
+                for i in range(min(len(cls_probs_list), len(labels)))
+            }
+            # #317 finding #3: calibrated APS prediction set per head.
+            cls_threshold = (
+                float(rates_softmax_quantiles[name])
+                if isinstance(rates_softmax_quantiles, dict)
+                and name in rates_softmax_quantiles
+                else None
+            )
+            if cls_threshold is not None:
+                set_indices = predict_conformal_set(cls_probs_list, cls_threshold)
+                predicted_set = [
+                    labels[i] if i < len(labels) else f"class_{i}"
+                    for i in set_indices
+                ]
+        rates_cards.append(
+            {
+                "head": name,
+                "point_bps": float(point_bps),
+                "lower_bps": float(lower_bps) if lower_bps is not None else None,
+                "upper_bps": float(upper_bps) if upper_bps is not None else None,
+                "coverage": coverage if band_q is not None else None,
+                "directional_bucket": bucket,
+                "bucket_probabilities": bucket_probs,
+                "predicted_set": predicted_set,
+            }
+        )
+
+    # Vol-regime card: reuse the build_regime_classification_card surface
+    # but also lift the dual-head log_rv prediction off the same forward.
+    vol_regime_card: dict[str, Any] | None = None
+    if output_mode == "classification":
+        regime_payload = build_regime_classification_card(sequence)
+        if regime_payload is not None:
+            log_rv_point: float | None = None
+            log_rv_payload = out_dict.get("log_rv")
+            if log_rv_payload is not None:
+                log_rv_point = float(log_rv_payload.squeeze().item())
+            vol_regime_card = {
+                "log_rv_point": log_rv_point,
+                "log_rv_lower": None,
+                "log_rv_upper": None,
+                "regime_label": str(regime_payload.get("argmax_class") or "normal"),
+                "regime_probabilities": {
+                    str(k): float(v) for k, v in regime_payload.get("distribution", {}).items()
+                },
+                "predicted_set": list(regime_payload.get("predicted_set") or []),
+                "coverage": float(regime_payload.get("coverage") or 0.0) or None,
+            }
+
+    if not rates_cards and vol_regime_card is None:
+        return None
+    return {
+        "rates": rates_cards,
+        "vol_regime": vol_regime_card,
+        "encoder_alias": metadata.get("encoder_key"),
+        "checkpoint_path": str(BEST_MODEL_PATH),
+    }
+
+
+@torch.no_grad()
 def build_regime_classification_card(
     sequence: list[FeatureVector],
 ) -> dict[str, Any] | None:

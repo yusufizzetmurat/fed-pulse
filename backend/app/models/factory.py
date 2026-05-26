@@ -112,6 +112,30 @@ def build_forecaster(
     use_derived_text_features_flag = bool(
         kwargs.pop("use_derived_text_features", True)
     )
+    # #292 rates heads. ``rates_heads`` is a tuple of head short-names
+    # forwarded to the ForecasterModel constructor so the rates regression
+    # + aux classification heads mount on the shared encoder. The mode +
+    # alpha knobs are loss-side concerns (the training loop reads them
+    # off the stashed module attribute); stash them so
+    # ``ModelConfig.from_model`` round-trips them onto the persisted
+    # summary regardless of whether the run also wires the loss.
+    rates_heads_tuple = tuple(
+        str(v) for v in kwargs.pop("rates_heads", ()) or ()
+    )
+    rates_head_mode_value = str(
+        kwargs.pop("rates_head_mode", "regression") or "regression"
+    )
+    rates_alpha_value = float(kwargs.pop("rates_alpha", 0.5))
+    # #317 finding #8: fail fast at the factory rather than silently
+    # zeroing rates_heads when output_mode='regression'. The operator
+    # gets a clear error message instead of a checkpoint that
+    # advertises rates_heads in its config but mounts no rates heads.
+    if rates_heads_tuple and resolved.output_mode == "regression":
+        raise ValueError(
+            "rates_heads can only be mounted alongside "
+            "output_mode='classification' (current: 'regression'). "
+            "Pass --output-mode classification or --rates-heads none."
+        )
     # Phase 9 V2 (#195) fields all forwarded: ``output_mode`` /
     # ``n_classes`` drive the head shape; ``vol_regime_quantiles`` /
     # ``vol_regime_target`` ride on the module so the checkpoint
@@ -140,7 +164,11 @@ def build_forecaster(
     lora_curriculum_freeze_epoch_val = kwargs.pop(
         "lora_curriculum_freeze_epoch", None
     )
-    model = ForecasterModel(model_type=architecture, **kwargs)
+    model = ForecasterModel(
+        model_type=architecture,
+        rates_heads=rates_heads_tuple,
+        **kwargs,
+    )
     # mypy reads ``nn.Module`` attribute writes as ``Tensor | Module``;
     # the LoRA flag is a plain bool stashed for ``from_model`` to read
     # back, so suppress the noise rather than register a fake buffer.
@@ -159,6 +187,11 @@ def build_forecaster(
     # flag are training-loop / loader concerns and stay as attributes.
     model.regression_alpha = regression_alpha_value  # type: ignore[assignment]
     model.use_derived_text_features = use_derived_text_features_flag  # type: ignore[assignment]
+    # #292 stash the loss-side knobs so ``ModelConfig.from_model`` round-
+    # trips them onto the persisted run summary.
+    model.rates_heads = rates_heads_tuple  # type: ignore[assignment]
+    model.rates_head_mode = rates_head_mode_value  # type: ignore[assignment]
+    model.rates_alpha = rates_alpha_value  # type: ignore[assignment]
     return model
 
 

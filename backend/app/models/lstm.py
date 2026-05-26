@@ -24,6 +24,7 @@ from app.models.config import (
 )
 from app.models.dlinear import DLinear
 from app.models.multi_task_head import MultiTaskHead
+from app.models.rates_heads import RATES_HEAD_N_CLASSES, RATES_HEAD_NAMES
 from app.models.tcn import TemporalConvNet
 from app.models.transformer import SmallTransformer
 
@@ -88,6 +89,15 @@ class ForecasterModel(nn.Module):
         # keeps working -- only the loss contribution and the persisted
         # output dict differ across modes.
         head_mode: str = "classification",
+        # #292 rates-complex heads. Tuple of head short-names
+        # (``"2y"`` / ``"5y"`` / ``"terminal"``) to mount alongside the
+        # existing MultiTaskHead and optional log_rv regression head.
+        # Each name maps to one regression-head (``Linear -> 1`` scalar
+        # predicting strict-forward 5-day yield change in basis points)
+        # and one auxiliary 3-class classifier head (easing / neutral /
+        # tightening). Default ``()`` keeps the pre-#292 path
+        # byte-identical: no rates heads mount.
+        rates_heads: tuple[str, ...] = (),
     ):
         """Forecaster LSTM with optional text-feature variants.
 
@@ -287,6 +297,39 @@ class ForecasterModel(nn.Module):
                 )
             else:
                 self.regression_head = None
+            # #292 rates-complex heads. Each mounted head gets two
+            # parallel projections off the shared pooled backbone: one
+            # scalar regression head (bps prediction) plus one 3-class
+            # classifier (easing / neutral / tightening). Both share a
+            # per-head LayerNorm + Linear + GELU + Dropout stem matching
+            # the MultiTaskHead's per-axis stem so head capacity stays
+            # comparable across the regime + log_rv + rates heads.
+            self.rates_heads_active: tuple[str, ...] = tuple(
+                str(name).lower() for name in rates_heads or ()
+            )
+            for name in self.rates_heads_active:
+                if name not in RATES_HEAD_NAMES:
+                    raise ValueError(
+                        f"Unknown rates head: {name!r}. Allowed: "
+                        f"{list(RATES_HEAD_NAMES)}"
+                    )
+            self.rates_regression_heads: nn.ModuleDict = nn.ModuleDict()
+            self.rates_classification_heads: nn.ModuleDict = nn.ModuleDict()
+            for name in self.rates_heads_active:
+                self.rates_regression_heads[name] = nn.Sequential(
+                    nn.LayerNorm(hidden_size),
+                    nn.Linear(hidden_size, head_hidden_size),
+                    nn.GELU(),
+                    nn.Dropout(dropout),
+                    nn.Linear(head_hidden_size, 1),
+                )
+                self.rates_classification_heads[name] = nn.Sequential(
+                    nn.LayerNorm(hidden_size),
+                    nn.Linear(hidden_size, head_hidden_size),
+                    nn.GELU(),
+                    nn.Dropout(dropout),
+                    nn.Linear(head_hidden_size, RATES_HEAD_N_CLASSES),
+                )
         else:
             self.head = nn.Sequential(
                 nn.LayerNorm(hidden_size),
@@ -299,7 +342,16 @@ class ForecasterModel(nn.Module):
             # classification branch (which carries the
             # forward_realized_vol_10d target); regression-output mode
             # already emits (close, vol) and ignores head_mode entirely.
+            # #317 finding #8: the factory now raises at construction
+            # time if rates_heads is non-empty alongside
+            # output_mode='regression', so reaching this branch with
+            # active rates heads is a programmer error. The empty
+            # ModuleDict defaults stay so the regression-only forward
+            # paths keep their attribute checks cheap.
             self.regression_head = None
+            self.rates_heads_active = ()
+            self.rates_regression_heads = nn.ModuleDict()
+            self.rates_classification_heads = nn.ModuleDict()
 
     def forward(
         self,
@@ -425,6 +477,21 @@ class ForecasterModel(nn.Module):
             ):
                 log_rv_pred = self.regression_head(pooled_step).squeeze(-1)
                 stashed["log_rv"] = log_rv_pred.detach()
+            # #292 rates heads. The per-head regression / classifier
+            # output rides alongside the four classification axes so
+            # the inference path can read both surfaces in one forward
+            # call. ``rates_<name>_bps`` is the scalar bps prediction;
+            # ``rates_<name>_cls_logits`` is the (B, 3) softmax-able
+            # logits over (easing / neutral / tightening). Detached
+            # because ``forward`` returns the stance branch alone for
+            # back-compat with the CrossEntropy training path; the
+            # gradient-tracked variant rides through
+            # ``forward_multi_task`` below.
+            for name in self.rates_heads_active:
+                bps_pred = self.rates_regression_heads[name](pooled_step).squeeze(-1)
+                cls_logits = self.rates_classification_heads[name](pooled_step)
+                stashed[f"rates_{name}_bps"] = bps_pred.detach()
+                stashed[f"rates_{name}_cls_logits"] = cls_logits.detach()
             self._last_multi_task = stashed
             return multi_task["stance"]  # type: ignore[no-any-return]
         raw = self.head(pooled_step)
@@ -545,6 +612,16 @@ class ForecasterModel(nn.Module):
         ):
             log_rv_pred = self.regression_head(pooled_step).squeeze(-1)
             multi_task["log_rv"] = log_rv_pred
+        # #292 rates heads -- gradient-tracked variants. ``rates_<name>_bps``
+        # is the scalar bps prediction the rates MSE loss reads;
+        # ``rates_<name>_cls_logits`` is the (B, 3) auxiliary classifier
+        # the optional CE branch reads. Both ride alongside the four
+        # classification axes so the dual-head joint loss can mix them.
+        for name in self.rates_heads_active:
+            bps_pred = self.rates_regression_heads[name](pooled_step).squeeze(-1)
+            cls_logits = self.rates_classification_heads[name](pooled_step)
+            multi_task[f"rates_{name}_bps"] = bps_pred
+            multi_task[f"rates_{name}_cls_logits"] = cls_logits
         return multi_task
 
     def attention_diagnostics(

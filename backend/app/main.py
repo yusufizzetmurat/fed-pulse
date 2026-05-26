@@ -45,7 +45,9 @@ from app.schemas import (
     HistoryList,
     HistoryRealizedBatchResponse,
     HistoryRealizedResponse,
+    MarketReactionPanel,
     NextFomcForecastResponse,
+    RatesReactionCard,
     ResearchArtifactsResponse,
     SettingsCheckpoint,
     SettingsCheckpointsResponse,
@@ -55,6 +57,7 @@ from app.schemas import (
     TrajectoryProjection,
     TrajectoryRequest,
     TrajectoryResponse,
+    VolRegimeReactionCard,
 )
 from app.evaluation.xai import attribute_text, split_sentences, to_response as xai_to_response
 from app.services.document_parser import (
@@ -76,6 +79,7 @@ from app.services.forecaster import (
     bootstrap_checkpoint,
     bucket_realized_regime,
     build_feature_vectors,
+    build_market_reaction_panel,
     build_regime_classification_card,
     checkpoint_exists,
     forecast_quantitative_series,
@@ -978,6 +982,61 @@ def next_fomc_forecast() -> NextFomcForecastResponse:
     artifacts_dir = DATA_DIR / "artifacts" / "next_fomc"
     payload = load_next_fomc_artifacts(artifacts_dir)
     return NextFomcForecastResponse(**payload)
+
+
+# ---------------------------------------------------------------------------
+# Market reaction panel (#293 — /analyze/market)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/analyze/market", response_model=MarketReactionPanel)
+async def analyze_market(payload: AnalyzeRequest) -> MarketReactionPanel:
+    """Build the four-card market-reaction panel for one document (#293).
+
+    Reuses the trained shared encoder + per-fold scalers persisted on
+    the active forecaster checkpoint. Returns an empty payload (empty
+    ``rates`` list + ``vol_regime=None``) when the active checkpoint
+    has neither rates heads nor a classification surface mounted, so a
+    fresh checkout that has not yet run the rates-head sweep does not
+    surface a 5xx.
+    """
+
+    sentiment = analyze_text(payload.text)
+    market_history = await run_in_threadpool(
+        fetch_market_history,
+        target_date=payload.date,
+        symbol=payload.symbol,
+        history_length=30,
+    )
+    history_vectors = build_feature_vectors(
+        market_history,
+        sentiment_score=float(sentiment["score"]),
+        document_date=payload.date,
+    )
+    try:
+        result = await run_in_threadpool(
+            build_market_reaction_panel, history_vectors
+        )
+    except Exception:  # pragma: no cover -- defensive
+        logger.exception("analyze_market_failed")
+        raise HTTPException(
+            status_code=503, detail="Market reaction panel unavailable"
+        ) from None
+    if result is None:
+        return MarketReactionPanel(rates=[], vol_regime=None)
+    cards = [RatesReactionCard(**row) for row in result.get("rates", [])]
+    vol_regime_payload = result.get("vol_regime")
+    vol_regime = (
+        VolRegimeReactionCard(**vol_regime_payload)
+        if vol_regime_payload is not None
+        else None
+    )
+    return MarketReactionPanel(
+        rates=cards,
+        vol_regime=vol_regime,
+        encoder_alias=result.get("encoder_alias"),
+        checkpoint_path=result.get("checkpoint_path"),
+    )
 
 
 # ---------------------------------------------------------------------------

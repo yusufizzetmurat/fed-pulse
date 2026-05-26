@@ -28,6 +28,15 @@ class ConformalManifest:
     partition using ``1 - softmax[y_true]`` as the non-conformity score.
     Pre-#216 manifests without the field load with ``softmax_quantile=None``
     and the inference path falls back to uncalibrated max-softmax confidence.
+
+    #292 extension: ``rates_residual_quantiles`` maps the per-head short
+    name (``2y`` / ``5y`` / ``terminal``) to the (1 - alpha) absolute-
+    residual quantile in **raw bps** -- the inference path applies
+    ``[y_hat - q, y_hat + q]`` as the conformal bps band. Per-head aux
+    classification surfaces use ``rates_softmax_quantiles`` which maps
+    the same short name to the APS threshold for the per-head
+    (easing / neutral / tightening) classifier. Both default to empty
+    dicts so pre-#292 manifests round-trip clean.
     """
 
     alpha: float
@@ -37,8 +46,10 @@ class ConformalManifest:
     calibration_n: int
     notes: str | None = None
     softmax_quantile: float | None = None
+    rates_residual_quantiles: dict[str, float] | None = None
+    rates_softmax_quantiles: dict[str, float] | None = None
 
-    def to_dict(self) -> dict[str, float | int | str | None]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "alpha": self.alpha,
             "nominal_coverage": self.nominal_coverage,
@@ -47,6 +58,16 @@ class ConformalManifest:
             "calibration_n": self.calibration_n,
             "notes": self.notes,
             "softmax_quantile": self.softmax_quantile,
+            "rates_residual_quantiles": (
+                dict(self.rates_residual_quantiles)
+                if self.rates_residual_quantiles
+                else None
+            ),
+            "rates_softmax_quantiles": (
+                dict(self.rates_softmax_quantiles)
+                if self.rates_softmax_quantiles
+                else None
+            ),
         }
 
 
@@ -132,6 +153,46 @@ def apply_conformal_bands(
         vol_lower.append(min(max(0.0, pred_vol - vol_w), pred_vol))
         vol_upper.append(pred_vol + vol_w)
     return close_lower, close_upper, vol_lower, vol_upper
+
+
+def calibrate_rates_regression_conformal(
+    *,
+    predictions_bps: Sequence[float],
+    actuals_bps: Sequence[float],
+    alpha: float = 0.2,
+) -> float:
+    """Fit the (1 - alpha) absolute-residual quantile for one rates head.
+
+    Inputs are paired predictions / observations in **raw bps**; the
+    helper returns the conformal band half-width the inference path
+    applies symmetrically as ``[y_hat - q, y_hat + q]``. Same Lei-
+    Wasserman correction the close / volatility regression helper uses;
+    rows with non-finite values are dropped silently after the length
+    check.
+    """
+
+    if len(predictions_bps) != len(actuals_bps):
+        raise ValueError(
+            f"predictions_bps ({len(predictions_bps)}) and actuals_bps "
+            f"({len(actuals_bps)}) must align in length."
+        )
+    if not (0.0 < alpha < 1.0):
+        raise ValueError(f"alpha must lie in (0, 1); got {alpha!r}.")
+    residuals: list[float] = []
+    for pred, actual in zip(predictions_bps, actuals_bps):
+        if pred is None or actual is None:
+            continue
+        try:
+            pf = float(pred)
+            af = float(actual)
+        except (TypeError, ValueError):
+            continue
+        if not (math.isfinite(pf) and math.isfinite(af)):
+            continue
+        residuals.append(af - pf)
+    if not residuals:
+        raise ValueError("Calibration residual set is empty after filtering.")
+    return split_conformal_quantile(residuals, alpha)
 
 
 def calibrate_classification_conformal(
@@ -271,6 +332,26 @@ def load_manifest(path: Path | str) -> ConformalManifest:
     if not isinstance(payload, Mapping):
         raise ValueError(f"Conformal manifest must be a JSON object: {path}")
     softmax_quantile_raw = payload.get("softmax_quantile")
+    rates_residuals_raw = payload.get("rates_residual_quantiles")
+    rates_softmax_raw = payload.get("rates_softmax_quantiles")
+    rates_residuals: dict[str, float] | None = None
+    rates_softmax: dict[str, float] | None = None
+    if isinstance(rates_residuals_raw, Mapping):
+        rates_residuals = {
+            str(k): float(v)
+            for k, v in rates_residuals_raw.items()
+            if v is not None
+        }
+        if not rates_residuals:
+            rates_residuals = None
+    if isinstance(rates_softmax_raw, Mapping):
+        rates_softmax = {
+            str(k): float(v)
+            for k, v in rates_softmax_raw.items()
+            if v is not None
+        }
+        if not rates_softmax:
+            rates_softmax = None
     return ConformalManifest(
         alpha=float(payload["alpha"]),
         nominal_coverage=float(payload["nominal_coverage"]),
@@ -283,6 +364,8 @@ def load_manifest(path: Path | str) -> ConformalManifest:
         softmax_quantile=(
             float(softmax_quantile_raw) if softmax_quantile_raw is not None else None
         ),
+        rates_residual_quantiles=rates_residuals,
+        rates_softmax_quantiles=rates_softmax,
     )
 
 
