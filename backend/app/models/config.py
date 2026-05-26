@@ -320,22 +320,25 @@ class ModelConfig:
     # rare classes, mitigating the class-1 collapse the 3-class vol-regime
     # head exhibits on single-seed runs.
     class_weight_power: float = 1.0
-    # #304 dual-head methodology, recanonicalised under ADR 0015 (#322).
-    # ``regression`` (default) is the canonical objective: a
-    # ``log(forward_realized_vol_10d)`` MSE head only. The 3-class
-    # classifier still mounts so the checkpoint shape stays stable, but
-    # its loss contribution is dropped; bucket labels are recovered at
-    # inference by gating the regression point against
-    # ``vol_regime_quantiles`` (see ``app.services.regime_bucketing``).
-    # ``classification`` keeps the legacy 3-class CrossEntropy head as
-    # the sole supervised signal and is retained for back-compat with
-    # pre-#322 checkpoints and the cross-objective ablation. ``dual``
-    # trains the joint loss ``(1 - regression_alpha) * CE +
-    # regression_alpha * MSE``. The regression head is only meaningful
-    # when ``output_mode == "classification"`` because that branch
-    # carries the ``forward_realized_vol_10d`` target; regression-output
-    # mode (close, vol) ignores ``head_mode`` entirely.
-    head_mode: str = "regression"
+    # #304 dual-head methodology, recanonicalised under ADR 0015 (#322),
+    # with the empirical refinement per the dual-head three-way
+    # comparison (`artifacts/experiments/dual_head_comparison_canonical.json`,
+    # 2026-05-27). ``dual`` (default) trains the joint loss
+    # ``(1 - regression_alpha) * CE + regression_alpha * MSE`` so the
+    # 3-class CE head and the ``log(forward_realized_vol_10d)`` MSE head
+    # share a backbone; the sweep showed dual matches classification
+    # macro-F1 (0.419 vs 0.417) while shipping the regression band the
+    # canonical surface needs. ``regression`` trains the log-RV MSE head
+    # only — kept for the comparison sweep and for ablation, but on this
+    # corpus loses ~20pp macro-F1 vs classification on the UI-bucketed
+    # label space. ``classification`` keeps the legacy 3-class
+    # CrossEntropy head as the sole supervised signal and is retained
+    # for back-compat with pre-#322 checkpoints and the cross-objective
+    # ablation. The regression head is only meaningful when
+    # ``output_mode == "classification"`` because that branch carries
+    # the ``forward_realized_vol_10d`` target; regression-output mode
+    # (close, vol) ignores ``head_mode`` entirely.
+    head_mode: str = "dual"
     regression_alpha: float = 0.5
     # #309 derived-text-features ablation. ``True`` (default) keeps the
     # FeatureVector's per-bar ``sentiment_score`` slot and the multi-axis
@@ -420,7 +423,7 @@ class ModelConfig:
             multi_task_lambda_certainty=float(getattr(model, "multi_task_lambda_certainty", 0.3)),
             multi_task_lambda_topic=float(getattr(model, "multi_task_lambda_topic", 0.3)),
             class_weight_power=float(getattr(model, "class_weight_power", 1.0)),
-            head_mode=str(getattr(model, "head_mode", "regression") or "regression"),
+            head_mode=str(getattr(model, "head_mode", "dual") or "dual"),
             regression_alpha=float(getattr(model, "regression_alpha", 0.5)),
             use_derived_text_features=bool(
                 getattr(model, "use_derived_text_features", True)
