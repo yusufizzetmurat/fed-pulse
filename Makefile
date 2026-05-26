@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep
 
 help:
 	@echo "Targets:"
@@ -77,6 +77,7 @@ help:
 	@echo "  make dual-head-comparison TRAINING_PACKAGE_ID=<id>"
 	@echo "                         - Three-way head-mode comparison (classification / regression / dual) across the official seed set"
 	@echo "  make derived-features-ablation TRAINING_PACKAGE_ID=<id>"
+	@echo "  make rates-heads-sweep TRAINING_PACKAGE_ID=<id> [SEED=<seed>]"
 	@echo "                         - Three-way derived-text-features ablation (baseline / ablation / replacement)"
 
 dev: dev-cpu
@@ -691,3 +692,16 @@ derived-features-ablation:
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--seeds 11 29 47 71 97 \
 		--epochs 40
+
+
+# #292 / #317 finding #16 rates-heads sweep runner. Trains the three
+# rates heads (2y / 5y / terminal) on the official 5-seed x 4-fold
+# protocol and emits a per-head MAE-bps + directional-accuracy + R^2
+# panel keyed by fold and seed. SEED is the single-seed override
+# (defaults to the full official seed set when unset).
+rates-heads-sweep:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose --profile "$(FORECASTER_COMPOSE_PROFILE)" run --rm "$(FORECASTER_COMPOSE_SERVICE)" \
+		python -m scripts.run_rates_heads_sweep \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		$(if $(SEED),--seeds $(SEED),--seeds 11 29 47 71 97)

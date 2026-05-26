@@ -1001,6 +1001,13 @@ async def analyze_market(payload: AnalyzeRequest) -> MarketReactionPanel:
     surface a 5xx.
     """
 
+    # #317 finding #12: mirror the /analyze cold-start guard so a
+    # fresh deploy hitting /analyze/market first does not surface
+    # empty cards. Shared with /analyze via the _bootstrap_cold_start
+    # helper.
+    if not checkpoint_exists():
+        await run_in_threadpool(_bootstrap_cold_start, payload)
+
     sentiment = analyze_text(payload.text)
     market_history = await run_in_threadpool(
         fetch_market_history,

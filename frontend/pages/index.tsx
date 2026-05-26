@@ -199,36 +199,52 @@ export default function WorkspacePage() {
     };
   }, [apiBaseUrl, request.symbol]);
 
+  // #317 finding #14: monotonic seq for /analyze/market fetches. A
+  // second submit before the first market fetch resolves bumps the
+  // seq; the late-arriving resolver checks the seq and skips state
+  // commit if it does not match the most recent issued id. Mirrors
+  // the counterfactualSeqRef pattern below.
+  const marketPanelSeqRef = React.useRef(0);
+
   const handleSubmit = async () => {
     setLoading(true);
     setStruck(new Set());
+    marketPanelSeqRef.current += 1;
+    const marketTicket = marketPanelSeqRef.current;
     try {
-      const next = await postAnalyze(apiBaseUrl, { ...request, mask_sentence_indices: [] });
-      setResult(next);
-      setBaselineResult(next);
-      toast.success("Analysis complete");
-      // Fire the market panel fetch in parallel-after-analyze: a
-      // failure here is non-fatal (the panel is opt-in / requires a
-      // checkpoint with rates heads mounted), so a 4xx or 5xx degrades
-      // to a silent empty state rather than blowing up the workspace.
-      try {
-        const panel = await postAnalyzeMarket(apiBaseUrl, {
-          ...request,
-          mask_sentence_indices: [],
-        });
-        setMarketPanel(panel);
-      } catch {
-        setMarketPanel(null);
+      // #317 finding #13: dispatch /analyze + /analyze/market in
+      // parallel rather than sequentially -- the market panel does
+      // not depend on the /analyze response payload. Halves the
+      // user-visible latency on a submit click. Wrapped via
+      // ``Promise.allSettled`` so a failure on the optional market
+      // panel does not abort the primary /analyze surface.
+      const sharedRequest = { ...request, mask_sentence_indices: [] };
+      const [analyzeRes, marketRes] = await Promise.allSettled([
+        postAnalyze(apiBaseUrl, sharedRequest),
+        postAnalyzeMarket(apiBaseUrl, sharedRequest),
+      ]);
+      if (analyzeRes.status === "fulfilled") {
+        setResult(analyzeRes.value);
+        setBaselineResult(analyzeRes.value);
+        toast.success("Analysis complete");
+      } else {
+        setResult(null);
+        setBaselineResult(null);
+        const err = analyzeRes.reason;
+        const message =
+          (err as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
+          (err as Error).message ||
+          "Request failed. Is the backend running?";
+        toast.error(message);
       }
-    } catch (err) {
-      setResult(null);
-      setBaselineResult(null);
-      setMarketPanel(null);
-      const message =
-        (err as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
-        (err as Error).message ||
-        "Request failed. Is the backend running?";
-      toast.error(message);
+      // Commit the market panel only when the seq still matches the
+      // most recent submit. Older in-flight fetches that arrive late
+      // never overwrite a newer submit's result.
+      if (marketTicket === marketPanelSeqRef.current) {
+        setMarketPanel(
+          marketRes.status === "fulfilled" ? marketRes.value : null,
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -245,24 +261,40 @@ export default function WorkspacePage() {
     async (mask: Set<number>) => {
       if (!baselineResult) return;
       counterfactualSeqRef.current += 1;
+      marketPanelSeqRef.current += 1;
       const ticket = counterfactualSeqRef.current;
+      const marketTicket = marketPanelSeqRef.current;
       setCounterfactualLoading(true);
       try {
         const indices = Array.from(mask).sort((a, b) => a - b);
-        const next = await postAnalyze(apiBaseUrl, {
-          ...request,
-          mask_sentence_indices: indices,
-        });
-        if (ticket === counterfactualSeqRef.current) {
-          setResult(next);
+        // #317 finding #15: refetch the market panel alongside the
+        // sentence-strike counterfactual so the per-head rates cards
+        // reflect the masked input rather than staying stale on the
+        // baseline forward pass.
+        const sharedRequest = { ...request, mask_sentence_indices: indices };
+        const [analyzeRes, marketRes] = await Promise.allSettled([
+          postAnalyze(apiBaseUrl, sharedRequest),
+          postAnalyzeMarket(apiBaseUrl, sharedRequest),
+        ]);
+        if (
+          ticket === counterfactualSeqRef.current
+          && analyzeRes.status === "fulfilled"
+        ) {
+          setResult(analyzeRes.value);
         }
-      } catch (err) {
-        if (ticket !== counterfactualSeqRef.current) return;
-        const message =
-          (err as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
-          (err as Error).message ||
-          "Counterfactual request failed.";
-        toast.error(message);
+        if (marketTicket === marketPanelSeqRef.current) {
+          setMarketPanel(
+            marketRes.status === "fulfilled" ? marketRes.value : null,
+          );
+        }
+        if (analyzeRes.status === "rejected") {
+          const err = analyzeRes.reason;
+          const message =
+            (err as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
+            (err as Error).message ||
+            "Counterfactual request failed.";
+          toast.error(message);
+        }
       } finally {
         if (ticket === counterfactualSeqRef.current) {
           setCounterfactualLoading(false);

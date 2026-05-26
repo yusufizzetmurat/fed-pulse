@@ -213,3 +213,108 @@ def test_build_market_reaction_panel_returns_none_on_regression_model(
         ]
     )
     assert out is None
+
+
+# ---------------------------------------------------------------------------
+# #317 fix-up tests (#22 + #23)
+
+
+def test_market_reaction_panel_no_aux_classifier(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the checkpoint has no aux classifier, directional_bucket is None (#317 finding #22).
+
+    Mirrors the #10 fix: a missing aux classifier surfaces as
+    ``directional_bucket=None`` / ``bucket_probabilities=None`` rather
+    than fabricating a confident 'easing' on uniform probabilities.
+    """
+
+    _stub_market_history(monkeypatch)
+    fake_payload: dict[str, Any] = {
+        "rates": [
+            {
+                "head": "2y",
+                "point_bps": 4.5,
+                "lower_bps": None,
+                "upper_bps": None,
+                "coverage": None,
+                "directional_bucket": None,
+                "bucket_probabilities": None,
+                "predicted_set": None,
+            }
+        ],
+        "vol_regime": None,
+        "encoder_alias": None,
+        "checkpoint_path": "/tmp/forecaster_best.pt",
+    }
+    monkeypatch.setattr(
+        main_mod, "build_market_reaction_panel", lambda _vectors: fake_payload
+    )
+    response = client.post(
+        "/analyze/market",
+        json={
+            "text": "Hello world.",
+            "date": "2024-12-18",
+            "symbol": "^GSPC",
+            "horizon": "5d",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["rates"][0]["directional_bucket"] is None
+    assert payload["rates"][0]["bucket_probabilities"] is None
+
+
+def test_market_reaction_panel_regression_only_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A regression-only checkpoint with rates heads emits rates cards (#317 finding #23 / #11)."""
+
+    class _DummyModel:
+        output_mode = "regression"
+        rates_heads_active = ("2y",)
+        _text_path_active = False
+        use_chunk_attention = False
+        use_llm_embeddings = False
+        credibility_features = False
+
+        def parameters(self):
+            return iter([torch.zeros(1)])
+
+        def forward_multi_task(self, _x, **_kwargs):  # noqa: D401
+            return {"rates_2y_bps": torch.tensor([0.5])}
+
+    monkeypatch.setattr(forecaster_service, "_get_model", lambda: _DummyModel())
+    monkeypatch.setattr(
+        forecaster_service, "build_lookback_sequence", lambda seq: seq
+    )
+    monkeypatch.setattr(
+        forecaster_service,
+        "_build_inference_tensor",
+        lambda _w, _m, _d: torch.zeros((1, 5, 6)),
+    )
+    monkeypatch.setattr(
+        forecaster_service, "_conformal_manifest_for", lambda _p: None
+    )
+    monkeypatch.setattr(
+        forecaster_service,
+        "_model_artifact_metadata",
+        {"rates_scalers": {"2y": {"mean": 0.0, "std": 1.0}}},
+    )
+    out = forecaster_service.build_market_reaction_panel(
+        [
+            FeatureVector(
+                date="2024-12-18",
+                sentiment_score=0.0,
+                market_close=100.0,
+                market_volatility=0.01,
+            )
+        ]
+    )
+    assert out is not None
+    assert len(out["rates"]) == 1
+    assert out["rates"][0]["head"] == "2y"
+    # No aux classifier mounted -- directional fields are None.
+    assert out["rates"][0]["directional_bucket"] is None
+    # Regression-only mode -- no vol_regime card.
+    assert out["vol_regime"] is None

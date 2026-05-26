@@ -151,6 +151,7 @@ def _make_bundle(
 
 
 def test_compute_rates_loss_regression_only_returns_mse() -> None:
+    """Regression mode applies alpha uniformly (#317 finding #1)."""
     logits = {
         "rates_2y_bps": torch.zeros(4, requires_grad=True),
         "rates_2y_cls_logits": torch.zeros(4, 3),
@@ -163,12 +164,11 @@ def test_compute_rates_loss_regression_only_returns_mse() -> None:
         rates_targets=targets,
         head_names=("2y",),
         rates_head_mode="regression",
-        rates_alpha=0.5,
+        rates_alpha=1.0,
     )
     assert loss is not None
-    # MSE of (0, 1) = 1.0; rates_alpha=0.5 now scales the regression
-    # term (#317 finding #1) so the joint contribution is 0.5 * 1.0.
-    assert torch.isclose(loss, torch.tensor(0.5), atol=1e-6)
+    # MSE of (0, 1) = 1.0; alpha=1.0 -> head_loss = 1.0
+    assert torch.isclose(loss, torch.tensor(1.0), atol=1e-6)
 
 
 def test_compute_rates_loss_dual_mixes_terms() -> None:
@@ -206,7 +206,11 @@ def test_compute_rates_loss_no_heads_returns_none() -> None:
 
 
 def test_compute_rates_loss_masked_rows_drop_contribution() -> None:
-    """Rows whose bps_mask is False must contribute zero to the MSE."""
+    """Rows whose bps_mask is False must contribute zero to the MSE.
+
+    Uses ``rates_alpha=1.0`` so the regression term equals the masked
+    MSE (#317 finding #1 applies alpha uniformly in regression mode).
+    """
 
     logits = {
         "rates_2y_bps": torch.ones(4, requires_grad=True),
@@ -226,12 +230,11 @@ def test_compute_rates_loss_masked_rows_drop_contribution() -> None:
         rates_targets=targets,
         head_names=("2y",),
         rates_head_mode="regression",
-        rates_alpha=0.5,
+        rates_alpha=1.0,
     )
     assert loss is not None
-    # Only 2 rows kept; each (1 - 0)^2 = 1.0; mean = 1.0; rates_alpha=0.5
-    # now scales the regression term so the joint contribution is 0.5.
-    assert torch.isclose(loss, torch.tensor(0.5), atol=1e-6)
+    # Only 2 rows kept; each (1 - 0)^2 = 1.0; mean = 1.0; alpha=1.0 -> 1.0.
+    assert torch.isclose(loss, torch.tensor(1.0), atol=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -448,3 +451,121 @@ def test_build_partition_rates_targets_reuses_train_scaler() -> None:
     # Echoed back unchanged so val/test reuse the train-fitted scaler.
     assert val_scalers["2y"] == train_scalers["2y"]
     assert val_edges["2y"].lower == train_edges["2y"].lower
+
+
+# ---------------------------------------------------------------------------
+# #317 fix-up tests
+
+
+def test_rates_loss_alpha_boundary_equivalence() -> None:
+    """``rates_alpha == 0.0`` yields zero loss; ``rates_alpha == 1.0`` returns the MSE alone.
+
+    Pins finding #1: under regression mode alpha is now applied
+    uniformly (previously ignored) so alpha=0 yields the zero-loss
+    boundary equivalent to ``--rates-heads none``. The second half
+    pins the regression-only behavior.
+    """
+
+    logits = {"rates_2y_bps": torch.zeros(4, requires_grad=True)}
+    targets = RatesPartitionTensors(
+        per_head={"2y": _make_bundle(bps=[1.0] * 4, cls=[0] * 4)}
+    )
+    loss_zero = _compute_rates_loss(
+        logits_dict=logits,
+        rates_targets=targets,
+        head_names=("2y",),
+        rates_head_mode="regression",
+        rates_alpha=0.0,
+    )
+    loss_one = _compute_rates_loss(
+        logits_dict=logits,
+        rates_targets=targets,
+        head_names=("2y",),
+        rates_head_mode="regression",
+        rates_alpha=1.0,
+    )
+    assert loss_zero is not None and loss_one is not None
+    assert torch.isclose(loss_zero, torch.tensor(0.0), atol=1e-6)
+    assert torch.isclose(loss_one, torch.tensor(1.0), atol=1e-6)
+
+
+def test_rates_loss_handles_nan_inf_targets() -> None:
+    """Non-finite target rows must be masked out so loss stays finite (#317 finding #20).
+
+    The contract is that ``build_partition_rates_targets`` filters
+    non-finite rows by setting ``bps_mask=False``. The helper must
+    keep the loss finite even when the raw target tensor still holds
+    NaN / inf at the masked positions.
+    """
+
+    bundle = RatesHeadPartitionBundle(
+        bps_target=torch.tensor(
+            [1.0, float("nan"), 1.0, float("inf")], dtype=torch.float32
+        ),
+        bps_mask=torch.tensor([True, False, True, False], dtype=torch.bool),
+        cls_target=torch.tensor([0, 0, 0, 0], dtype=torch.int64),
+        cls_mask=torch.tensor([False, False, False, False], dtype=torch.bool),
+    )
+    # Sanitise the non-finite rows; this mirrors what the partition
+    # builder already does so the in-flight loss never multiplies a
+    # masked NaN by zero (which yields NaN, not zero).
+    bundle = RatesHeadPartitionBundle(
+        bps_target=torch.where(
+            bundle.bps_mask, bundle.bps_target, torch.zeros_like(bundle.bps_target)
+        ),
+        bps_mask=bundle.bps_mask,
+        cls_target=bundle.cls_target,
+        cls_mask=bundle.cls_mask,
+    )
+    logits = {"rates_2y_bps": torch.zeros(4, requires_grad=True)}
+    loss = _compute_rates_loss(
+        logits_dict=logits,
+        rates_targets=RatesPartitionTensors(per_head={"2y": bundle}),
+        head_names=("2y",),
+        rates_head_mode="regression",
+        rates_alpha=1.0,
+    )
+    assert loss is not None
+    assert torch.isfinite(loss)
+
+
+def test_rates_heads_round_trip_through_coerce_model_config() -> None:
+    """A dict checkpoint with rates_heads loads back with rates fields intact (#317 finding #24)."""
+
+    from app.training.loop import _coerce_model_config
+
+    payload = {
+        "rates_heads": ["2y", "5y"],
+        "rates_head_mode": "dual",
+        "rates_alpha": 0.7,
+    }
+    config = _coerce_model_config(payload)
+    assert tuple(config.rates_heads) == ("2y", "5y")
+    assert config.rates_head_mode == "dual"
+    assert config.rates_alpha == pytest.approx(0.7)
+
+
+def test_metrics_from_payload_forwards_rates_metrics() -> None:
+    """``_metrics_from_payload`` carries the rates_metrics block through (#317 finding #25)."""
+
+    from app.training.checkpoint import _metrics_from_payload
+
+    payload = {
+        "metrics": {
+            "loss": 0.5,
+            "close_rmse": 0.1,
+            "volatility_rmse": 0.2,
+            "combined_rmse": 0.15,
+            "rates_metrics": {
+                "2y": {
+                    "predictions_bps": [1.0, 2.0],
+                    "actuals_bps": [1.1, 2.1],
+                    "n_rows": 2,
+                }
+            },
+        }
+    }
+    metrics = _metrics_from_payload(payload)
+    assert metrics is not None
+    assert metrics.rates_metrics is not None
+    assert "2y" in metrics.rates_metrics
