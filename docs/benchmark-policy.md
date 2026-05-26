@@ -51,6 +51,23 @@ Contract:
 
 Regression coverage: `tests/regression/test_feature_provenance_as_of.py` walks a canonical training package and asserts the contract per row. The test is the gate; the audit is the human-readable inventory.
 
+## Sealed Holdout
+
+The canonical training package's `event_date` cutoff is 2024-12-31. Every FOMC event filed after that date sits under `data/external/sealed_holdout/` and has never been part of any sweep / val / test partition, never been visible to any embedding / DAPT / encoder used during training, and never been touched by any HP grid. It is the reserve slice that closes R-14 (`fed-pulse.wiki/09_Risk_Register.md`).
+
+One-shot rule. The sealed slice is queried EXACTLY ONCE at final-report time. The canonical configuration — already chosen, frozen, and published in-protocol — is evaluated against the sealed slice and the resulting headline is filed alongside the in-protocol headline. There is no iteration on the sealed result: no re-tuning, no model swap, no follow-up sweep. A repeat read against the same on-disk seal is a build failure unless the operator passes `force=True` and accepts the warning trail.
+
+AUDIT_TOKEN integrity contract. `data/external/sealed_holdout/AUDIT_TOKEN` is a plain-JSON object with three fields:
+- `seal_status` — `"sealed"` until the one-shot fires, then `"broken_by:<audit_caller>"`.
+- `usage_count` — strictly monotone; increments on every call to `load_sealed_holdout`, including forced repeats.
+- `last_accessed_utc` — ISO-8601 timestamp of the last consumption; `null` while sealed.
+
+The committed token reads `{"seal_status": "sealed", "usage_count": 0, "last_accessed_utc": null}`. `tests/regression/test_sealed_holdout_audit.py` fails the build if any of those fields drift, if the sealed JSONL drops below four entries, or if any production module under `backend/app/` (outside the loader itself) imports `load_sealed_holdout`. `audit_status()` is the only public hook safe to import from production code — it returns the token as a dict without mutating disk state.
+
+Stubs surface loudly. Rows whose `text` field starts with `# pragma: stub` emit a hard warning on load so a sealed-eval headline cannot be silently published against placeholder text. Real scraped text must replace stubs before the one-shot run.
+
+Final-report contract. The report's headline carries both the in-protocol number and the sealed-eval number. The two are reported side-by-side; neither replaces the other; the delta is the honest read on search-space variance.
+
 ## Versioning
 Required IDs:
 - `dataset_version`
