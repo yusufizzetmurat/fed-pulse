@@ -340,7 +340,7 @@ def _normalise_axis_value(value: Any) -> str | None:
     return text
 
 
-def _build_shared_axis_pairs(df: pd.DataFrame) -> list[TrainingPair]:
+def _build_shared_axis_pairs(df: pd.DataFrame) -> list[TrainingPair]:  # noqa: C901 — single-pass three-axis pair builder; collapsing the three axis loops would hide the policy
     """Shared-axis pair builder for the #329 rebuild policy.
 
     Walks the statement rows once to bucket text_hashes by

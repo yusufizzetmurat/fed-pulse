@@ -59,7 +59,7 @@ def _l2_normalise(matrix: np.ndarray, *, eps: float = 1e-12) -> np.ndarray:
     return arr / norms
 
 
-def compute_recall_at_k(
+def compute_recall_at_k(  # noqa: C901 — multi-input validation + multi-k pass; collapsing would hide the recall@k semantics
     index_embeddings: np.ndarray,
     query_embeddings: np.ndarray,
     ground_truth_matches: Sequence[int],
