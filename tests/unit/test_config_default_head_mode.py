@@ -1,11 +1,12 @@
 """ModelConfig.head_mode default after the #322 canonical flip.
 
-ADR 0015 makes regression the canonical training objective for the
-vol-regime head; the dataclass default flips from ``"classification"``
-to ``"regression"``. ``from_model`` must keep round-tripping explicit
-``head_mode`` values off old checkpoints so the back-compat contract
-holds. The rates-complex head's mode and the dual-head joint-loss alpha
-are unrelated to #322 and stay at their existing defaults.
+ADR 0015 (amended 2026-05-27 after the dual-head three-way comparison)
+makes ``dual`` the canonical training objective for the vol-regime head;
+the dataclass default flips from ``"classification"`` to ``"dual"``.
+``from_model`` must keep round-tripping explicit ``head_mode`` values off
+old checkpoints so the back-compat contract holds. The rates-complex
+head's mode and the dual-head joint-loss alpha are unrelated to #322 and
+stay at their existing defaults.
 """
 
 from __future__ import annotations
@@ -106,9 +107,9 @@ def _strip_head_mode(stub_cls: type) -> type:
     return type(stub_cls.__name__ + "_NoHeadMode", (), fields)
 
 
-def test_default_modelconfig_head_mode_is_regression() -> None:
+def test_default_modelconfig_head_mode_is_dual() -> None:
     cfg = ModelConfig()
-    assert cfg.head_mode == "regression"
+    assert cfg.head_mode == "dual"
 
 
 def test_classification_head_mode_round_trips_via_replace_and_asdict() -> None:
@@ -134,14 +135,14 @@ def test_from_model_preserves_explicit_classification_head_mode() -> None:
     assert cfg.head_mode == "classification"
 
 
-def test_from_model_falls_back_to_regression_when_attribute_missing() -> None:
+def test_from_model_falls_back_to_dual_when_attribute_missing() -> None:
     """A freshly built model (or a stub without the attribute) must
-    surface the new ``regression`` default rather than the pre-#322
+    surface the new ``dual`` default rather than the pre-#322
     ``classification`` fallback."""
 
     stub_cls = _strip_head_mode(_StubModelWithHeadMode)
     cfg = ModelConfig.from_model(stub_cls())
-    assert cfg.head_mode == "regression"
+    assert cfg.head_mode == "dual"
 
 
 def test_rates_head_mode_default_unchanged_by_322() -> None:

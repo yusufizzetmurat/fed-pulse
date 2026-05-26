@@ -1,0 +1,1021 @@
+{
+  "head_modes": [
+    "classification",
+    "regression",
+    "dual"
+  ],
+  "seeds": [
+    11,
+    29,
+    47,
+    71,
+    97
+  ],
+  "fold_ids": [
+    "wf_fold_1",
+    "wf_fold_2",
+    "wf_fold_3",
+    "wf_fold_4",
+    "wf_fold_5"
+  ],
+  "epochs": 40,
+  "regression_alpha": 0.5,
+  "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+  "trials": {
+    "classification": [
+      {
+        "head_mode": "classification",
+        "seed": 11,
+        "regression_alpha": 0.5,
+        "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.3755826694151949,
+              "regime_accuracy": 0.5029940009117126,
+              "regime_loss": 1.0375986364412706,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.43758472301827744,
+              "regime_accuracy": 0.6445783376693726,
+              "regime_loss": 0.8244037908243845,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.43273518842524106,
+              "regime_accuracy": 0.5454545617103577,
+              "regime_loss": 0.9609246780509227,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.4793338240706662,
+              "regime_accuracy": 0.6000000238418579,
+              "regime_loss": 0.8684500235499758,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.38707400685622106,
+              "regime_accuracy": 0.4047619104385376,
+              "regime_loss": 1.5368936970120384,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "classification",
+        "seed": 29,
+        "regression_alpha": 0.5,
+        "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.45182377354848335,
+              "regime_accuracy": 0.5089820623397827,
+              "regime_loss": 0.9927115849737416,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.44860392052745696,
+              "regime_accuracy": 0.6867470145225525,
+              "regime_loss": 0.8511867745813116,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.4459459459459459,
+              "regime_accuracy": 0.539393961429596,
+              "regime_loss": 0.9752768843071041,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.4008838383838384,
+              "regime_accuracy": 0.539393961429596,
+              "regime_loss": 1.114009514721957,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.4267892576130469,
+              "regime_accuracy": 0.4226190447807312,
+              "regime_loss": 1.1114749908447266,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "classification",
+        "seed": 47,
+        "regression_alpha": 0.5,
+        "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.31982254486791695,
+              "regime_accuracy": 0.49700599908828735,
+              "regime_loss": 1.1612106770599848,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.5018832391713747,
+              "regime_accuracy": 0.6927710771560669,
+              "regime_loss": 0.7459497566682747,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.38980463980463975,
+              "regime_accuracy": 0.5333333611488342,
+              "regime_loss": 0.9939527767343928,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.46768100918881883,
+              "regime_accuracy": 0.5333333611488342,
+              "regime_loss": 0.928293811191212,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.3214771152112183,
+              "regime_accuracy": 0.3392857015132904,
+              "regime_loss": 1.2171310243152438,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "classification",
+        "seed": 71,
+        "regression_alpha": 0.5,
+        "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.36834094368340936,
+              "regime_accuracy": 0.5209580659866333,
+              "regime_loss": 1.0593240435893705,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.45798898071625344,
+              "regime_accuracy": 0.6927710771560669,
+              "regime_loss": 0.7807532376553639,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.45949117998453853,
+              "regime_accuracy": 0.581818163394928,
+              "regime_loss": 0.9972875693372072,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.4727739911284215,
+              "regime_accuracy": 0.5454545617103577,
+              "regime_loss": 0.9650085163838935,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.32990509831000625,
+              "regime_accuracy": 0.3571428656578064,
+              "regime_loss": 1.3429734536579676,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "classification",
+        "seed": 97,
+        "regression_alpha": 0.5,
+        "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.40036157277592155,
+              "regime_accuracy": 0.46107783913612366,
+              "regime_loss": 1.0083499908238693,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.4565214443585676,
+              "regime_accuracy": 0.6807228922843933,
+              "regime_loss": 0.7861853514809206,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.3886243890052688,
+              "regime_accuracy": 0.5333333611488342,
+              "regime_loss": 0.9830716252485928,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.459716970808645,
+              "regime_accuracy": 0.5636363625526428,
+              "regime_loss": 0.9083413514223966,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.3562152133580705,
+              "regime_accuracy": 0.369047611951828,
+              "regime_loss": 1.0917600450061618,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null
+            }
+          }
+        ]
+      }
+    ],
+    "regression": [
+      {
+        "head_mode": "regression",
+        "seed": 11,
+        "regression_alpha": 0.5,
+        "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.14150943396226415,
+              "regime_accuracy": 0.269461065530777,
+              "regime_loss": 1.1050434400067743,
+              "regression_rmse_log_rv": 0.961021845189181,
+              "regression_mae_log_rv": 0.7386672920184935,
+              "regression_loss": 0.9235629869308182
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.13277298532772983,
+              "regime_accuracy": 0.1807228922843933,
+              "regime_loss": 1.0775672412780395,
+              "regression_rmse_log_rv": 1.1250091586182276,
+              "regression_mae_log_rv": 0.9087389347855989,
+              "regression_loss": 1.2656456069748925
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.2780720338983051,
+              "regime_accuracy": 0.5151515007019043,
+              "regime_loss": 1.0348759897526114,
+              "regression_rmse_log_rv": 1.3028824522526894,
+              "regression_mae_log_rv": 1.0667100354831553,
+              "regression_loss": 1.6975026843879815
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.2231182795698925,
+              "regime_accuracy": 0.5030303001403809,
+              "regime_loss": 1.0539382670864914,
+              "regression_rmse_log_rv": 0.7923349041223212,
+              "regression_mae_log_rv": 0.6432061895389448,
+              "regression_loss": 0.6277946002905279
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.17256164346966582,
+              "regime_accuracy": 0.1964285671710968,
+              "regime_loss": 1.1593522798447382,
+              "regression_rmse_log_rv": 0.6492531779885403,
+              "regression_mae_log_rv": 0.5151719975484801,
+              "regression_loss": 0.42152968912821925
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "regression",
+        "seed": 29,
+        "regression_alpha": 0.5,
+        "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.2772612003381234,
+              "regime_accuracy": 0.32335329055786133,
+              "regime_loss": 1.120081116393625,
+              "regression_rmse_log_rv": 0.8724969592201269,
+              "regression_mae_log_rv": 0.6451874426203573,
+              "regression_loss": 0.7612509438483679
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.10171576424678162,
+              "regime_accuracy": 0.1265060305595398,
+              "regime_loss": 1.1574027351586216,
+              "regression_rmse_log_rv": 1.1005188907373644,
+              "regression_mae_log_rv": 0.8793546469652105,
+              "regression_loss": 1.2111418288697988
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.13612313612313612,
+              "regime_accuracy": 0.20606060326099396,
+              "regime_loss": 1.2184393572873773,
+              "regression_rmse_log_rv": 1.3197336395288606,
+              "regression_mae_log_rv": 1.034490839394769,
+              "regression_loss": 1.7416968793040923
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.17070083123617785,
+              "regime_accuracy": 0.23030303418636322,
+              "regime_loss": 1.1553267059904155,
+              "regression_rmse_log_rv": 0.8358470987813866,
+              "regression_mae_log_rv": 0.7091208339753476,
+              "regression_loss": 0.6986403725412611
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.2578391680558863,
+              "regime_accuracy": 0.494047611951828,
+              "regime_loss": 1.0739769708542597,
+              "regression_rmse_log_rv": 0.6678067744242739,
+              "regression_mae_log_rv": 0.503276198293038,
+              "regression_loss": 0.4459658879669531
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "regression",
+        "seed": 47,
+        "regression_alpha": 0.5,
+        "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.20555555555555557,
+              "regime_accuracy": 0.443113774061203,
+              "regime_loss": 1.0871919087595907,
+              "regression_rmse_log_rv": 0.9532617560913258,
+              "regression_mae_log_rv": 0.7234614804431707,
+              "regression_loss": 0.9087079756263183
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.4089506172839506,
+              "regime_accuracy": 0.7289156913757324,
+              "regime_loss": 1.0424414815672909,
+              "regression_rmse_log_rv": 1.041798857270743,
+              "regression_mae_log_rv": 0.8307283484595772,
+              "regression_loss": 1.085344859010626
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.18537567084078713,
+              "regime_accuracy": 0.3333333432674408,
+              "regime_loss": 1.1277434450597954,
+              "regression_rmse_log_rv": 1.3813249351716184,
+              "regression_mae_log_rv": 1.0945992793351638,
+              "regression_loss": 1.9080585765268758
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.14493527767391345,
+              "regime_accuracy": 0.23030303418636322,
+              "regime_loss": 1.1551986744909575,
+              "regression_rmse_log_rv": 0.8026908180177712,
+              "regression_mae_log_rv": 0.6773871367063486,
+              "regression_loss": 0.6443125493300387
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.19858781994704325,
+              "regime_accuracy": 0.3214285671710968,
+              "regime_loss": 1.117271173567999,
+              "regression_rmse_log_rv": 0.7686569347208438,
+              "regression_mae_log_rv": 0.6077237220458864,
+              "regression_loss": 0.5908334832944435
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "regression",
+        "seed": 71,
+        "regression_alpha": 0.5,
+        "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.30352030947775627,
+              "regime_accuracy": 0.401197612285614,
+              "regime_loss": 1.0818549012071736,
+              "regression_rmse_log_rv": 0.9151816779140489,
+              "regression_mae_log_rv": 0.6922817029683532,
+              "regression_loss": 0.8375575035895739
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.2511500468671137,
+              "regime_accuracy": 0.39759036898612976,
+              "regime_loss": 1.0626743127064533,
+              "regression_rmse_log_rv": 1.1276968345679947,
+              "regression_mae_log_rv": 0.9009714238710298,
+              "regression_loss": 1.2717001506946755
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.35000000000000003,
+              "regime_accuracy": 0.4787878692150116,
+              "regime_loss": 1.0783187945954584,
+              "regression_rmse_log_rv": 1.3916790758970559,
+              "regression_mae_log_rv": 1.0993801373000625,
+              "regression_loss": 1.9367706502896833
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.1954044811086624,
+              "regime_accuracy": 0.21212121844291687,
+              "regime_loss": 1.1008188392176772,
+              "regression_rmse_log_rv": 0.7998204144035979,
+              "regression_mae_log_rv": 0.6432823359627615,
+              "regression_loss": 0.639712695296743
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.3627777777777778,
+              "regime_accuracy": 0.4166666567325592,
+              "regime_loss": 1.1064090331395466,
+              "regression_rmse_log_rv": 0.6316043724009889,
+              "regression_mae_log_rv": 0.48889765625686515,
+              "regression_loss": 0.39892408323604706
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "regression",
+        "seed": 97,
+        "regression_alpha": 0.5,
+        "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.16777860143316037,
+              "regime_accuracy": 0.299401193857193,
+              "regime_loss": 1.097541509393057,
+              "regression_rmse_log_rv": 0.9210359676580252,
+              "regression_mae_log_rv": 0.7020766826313056,
+              "regression_loss": 0.8483072537197548
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.10204081632653061,
+              "regime_accuracy": 0.1807228922843933,
+              "regime_loss": 1.088685140552291,
+              "regression_rmse_log_rv": 1.069992543655813,
+              "regression_mae_log_rv": 0.8558706507249455,
+              "regression_loss": 1.1448840434790373
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.24428376001563415,
+              "regime_accuracy": 0.27272728085517883,
+              "regime_loss": 1.169949166521944,
+              "regression_rmse_log_rv": 1.244520198600119,
+              "regression_mae_log_rv": 0.9985588377426293,
+              "regression_loss": 1.54883052472368
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.17415138098250058,
+              "regime_accuracy": 0.23030303418636322,
+              "regime_loss": 1.1925324526700107,
+              "regression_rmse_log_rv": 0.7843385522321371,
+              "regression_mae_log_rv": 0.640993652662093,
+              "regression_loss": 0.6151869645176048
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.3058608058608059,
+              "regime_accuracy": 0.4523809552192688,
+              "regime_loss": 1.0532376822971163,
+              "regression_rmse_log_rv": 0.7346717733874042,
+              "regression_mae_log_rv": 0.545463451417163,
+              "regression_loss": 0.5397426146121933
+            }
+          }
+        ]
+      }
+    ],
+    "dual": [
+      {
+        "head_mode": "dual",
+        "seed": 11,
+        "regression_alpha": 0.5,
+        "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.3439412484700122,
+              "regime_accuracy": 0.4491018056869507,
+              "regime_loss": 1.0979107761219709,
+              "regression_rmse_log_rv": 1.1007485138868123,
+              "regression_mae_log_rv": 0.858556688590321,
+              "regression_loss": 1.2116472908240257
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.477508573388203,
+              "regime_accuracy": 0.6867470145225525,
+              "regime_loss": 0.7766113934746708,
+              "regression_rmse_log_rv": 1.0936473692216564,
+              "regression_mae_log_rv": 0.8725541453298001,
+              "regression_loss": 1.1960645682054503
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.449299296144553,
+              "regime_accuracy": 0.5696969628334045,
+              "regime_loss": 0.9427216233128053,
+              "regression_rmse_log_rv": 1.2889784806164275,
+              "regression_mae_log_rv": 1.025954069854748,
+              "regression_loss": 1.6614655234922338
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.4366211130917013,
+              "regime_accuracy": 0.5878787636756897,
+              "regime_loss": 0.8715718265735741,
+              "regression_rmse_log_rv": 0.7636557010608597,
+              "regression_mae_log_rv": 0.634957109402978,
+              "regression_loss": 0.5831700297627531
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.36800258564964444,
+              "regime_accuracy": 0.3928571343421936,
+              "regime_loss": 1.2037671009699504,
+              "regression_rmse_log_rv": 0.7454098387227603,
+              "regression_mae_log_rv": 0.5622218421416446,
+              "regression_loss": 0.5556358276646916
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "dual",
+        "seed": 29,
+        "regression_alpha": 0.5,
+        "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.39652270341986967,
+              "regime_accuracy": 0.5029940009117126,
+              "regime_loss": 0.957385602469258,
+              "regression_rmse_log_rv": 0.8752951179327072,
+              "regression_mae_log_rv": 0.6571937977464614,
+              "regression_loss": 0.7661415434768318
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.47969181121877486,
+              "regime_accuracy": 0.6927710771560669,
+              "regime_loss": 0.8372512452573662,
+              "regression_rmse_log_rv": 1.0852429029810036,
+              "regression_mae_log_rv": 0.8802261582143739,
+              "regression_loss": 1.1777521584706359
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.43781009979840385,
+              "regime_accuracy": 0.5515151619911194,
+              "regime_loss": 0.9702347708570955,
+              "regression_rmse_log_rv": 1.316805167431297,
+              "regression_mae_log_rv": 1.0451357372584893,
+              "regression_loss": 1.733975848973766
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.4356965885267772,
+              "regime_accuracy": 0.5757575631141663,
+              "regime_loss": 0.9429133740338412,
+              "regression_rmse_log_rv": 0.8043557067373367,
+              "regression_mae_log_rv": 0.6677279898727482,
+              "regression_loss": 0.6469881029609205
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.4336794861458249,
+              "regime_accuracy": 0.4345238208770752,
+              "regime_loss": 1.148172880922045,
+              "regression_rmse_log_rv": 0.774775841881922,
+              "regression_mae_log_rv": 0.6061134269305816,
+              "regression_loss": 0.6002776051638409
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "dual",
+        "seed": 47,
+        "regression_alpha": 0.5,
+        "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.29642350481594865,
+              "regime_accuracy": 0.485029935836792,
+              "regime_loss": 1.1402139009905672,
+              "regression_rmse_log_rv": 1.0211926135539726,
+              "regression_mae_log_rv": 0.7817162911290537,
+              "regression_loss": 1.0428343539771934
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.4951444679351656,
+              "regime_accuracy": 0.7650602459907532,
+              "regime_loss": 0.676057649664132,
+              "regression_rmse_log_rv": 1.0208670069332413,
+              "regression_mae_log_rv": 0.806563129241814,
+              "regression_loss": 1.0421694458448345
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.4450155557615301,
+              "regime_accuracy": 0.5696969628334045,
+              "regime_loss": 0.947135071296818,
+              "regression_rmse_log_rv": 1.2531971211721713,
+              "regression_mae_log_rv": 1.0368656417213833,
+              "regression_loss": 1.570503024514218
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.43760060261323347,
+              "regime_accuracy": 0.5454545617103577,
+              "regime_loss": 1.046846170497663,
+              "regression_rmse_log_rv": 0.9677347769175055,
+              "regression_mae_log_rv": 0.7701023216839089,
+              "regression_loss": 0.9365105984555742
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.17835125448028674,
+              "regime_accuracy": 0.2023809552192688,
+              "regime_loss": 1.5123843579065233,
+              "regression_rmse_log_rv": 1.195878245590085,
+              "regression_mae_log_rv": 0.9861783748936086,
+              "regression_loss": 1.4301247782756195
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "dual",
+        "seed": 71,
+        "regression_alpha": 0.5,
+        "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.4103343465045593,
+              "regime_accuracy": 0.538922131061554,
+              "regime_loss": 0.9791047942888685,
+              "regression_rmse_log_rv": 0.8925478570886541,
+              "regression_mae_log_rv": 0.6668529682709071,
+              "regression_loss": 0.7966416771935485
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.4747285325384269,
+              "regime_accuracy": 0.7349397540092468,
+              "regime_loss": 0.6965956838734179,
+              "regression_rmse_log_rv": 1.0333898607552978,
+              "regression_mae_log_rv": 0.8078536706589476,
+              "regression_loss": 1.0678946043118538
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.3857078593920699,
+              "regime_accuracy": 0.5333333611488342,
+              "regime_loss": 1.015735782819876,
+              "regression_rmse_log_rv": 1.4126225621133766,
+              "regression_mae_log_rv": 1.1180396942732236,
+              "regression_loss": 1.9955025029917604
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.45509031198686367,
+              "regime_accuracy": 0.5333333611488342,
+              "regime_loss": 0.9692962924639384,
+              "regression_rmse_log_rv": 0.891966290563666,
+              "regression_mae_log_rv": 0.7219965281360077,
+              "regression_loss": 0.7956038635019063
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.3865285485263288,
+              "regime_accuracy": 0.3988095223903656,
+              "regime_loss": 1.0951575835545857,
+              "regression_rmse_log_rv": 0.6923043599632905,
+              "regression_mae_log_rv": 0.5479282161575698,
+              "regression_loss": 0.4792853268241813
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "dual",
+        "seed": 97,
+        "regression_alpha": 0.5,
+        "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.4356548279689234,
+              "regime_accuracy": 0.4910179674625397,
+              "regime_loss": 0.9966250336137997,
+              "regression_rmse_log_rv": 0.9176984062484553,
+              "regression_mae_log_rv": 0.6944666126084899,
+              "regression_loss": 0.8421703648309549
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.49605734767025084,
+              "regime_accuracy": 0.7168674468994141,
+              "regime_loss": 0.6878445572163685,
+              "regression_rmse_log_rv": 1.016388838740573,
+              "regression_mae_log_rv": 0.8020122585150536,
+              "regression_loss": 1.0330462715164108
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.5171424970063655,
+              "regime_accuracy": 0.5939394235610962,
+              "regime_loss": 0.9567739659991097,
+              "regression_rmse_log_rv": 1.3062558297680895,
+              "regression_mae_log_rv": 1.0147395708823972,
+              "regression_loss": 1.7063042928031202
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.42251321906384187,
+              "regime_accuracy": 0.581818163394928,
+              "regime_loss": 0.9085086789998141,
+              "regression_rmse_log_rv": 0.8135837356318844,
+              "regression_mae_log_rv": 0.6578518721529029,
+              "regression_loss": 0.6619184948847319
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.3810381038103811,
+              "regime_accuracy": 0.380952388048172,
+              "regime_loss": 1.21085444518498,
+              "regression_rmse_log_rv": 0.8092021178576104,
+              "regression_mae_log_rv": 0.6307657251600176,
+              "regression_loss": 0.654808067545242
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "classification": {
+      "regime_f1_macro": {
+        "mean": 0.4174786192070977,
+        "std": 0.050739113362098805,
+        "min": 0.31982254486791695,
+        "max": 0.5018832391713747,
+        "n": 25
+      },
+      "regression_rmse_log_rv": null
+    },
+    "regression": {
+      "regime_f1_macro": {
+        "mean": 0.21968189589516618,
+        "std": 0.08082364835774926,
+        "min": 0.10171576424678162,
+        "max": 0.4089506172839506,
+        "n": 25
+      },
+      "regression_rmse_log_rv": {
+        "mean": 0.9678071845140984,
+        "std": 0.22780138263518565,
+        "min": 0.6316043724009889,
+        "max": 1.3916790758970559,
+        "n": 25
+      }
+    },
+    "dual": {
+      "regime_f1_macro": {
+        "mean": 0.41904417943711764,
+        "std": 0.0697502271520479,
+        "min": 0.17835125448028674,
+        "max": 0.5171424970063655,
+        "n": 25
+      },
+      "regression_rmse_log_rv": {
+        "mean": 1.0037497705348262,
+        "std": 0.20005960314350227,
+        "min": 0.6923043599632905,
+        "max": 1.4126225621133766,
+        "n": 25
+      }
+    }
+  }
+}

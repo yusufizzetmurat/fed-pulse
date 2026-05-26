@@ -172,11 +172,12 @@ def _run_one_cell(
 ) -> dict[str, Any]:
     # Imports happen here so the script is importable without a torch
     # install (useful for doc-only environments).
-    from app.models.config import ModelConfig
+    from app.models.config import RICH_FEATURE_SIZE, ModelConfig
     from app.training.loaders import load_walk_forward_split
     from app.training.loop import train_model
 
     config = ModelConfig(
+        input_size=RICH_FEATURE_SIZE,
         output_mode="classification",
         head_mode=head_mode,
         regression_alpha=regression_alpha,
