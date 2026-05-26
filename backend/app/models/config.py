@@ -216,6 +216,30 @@ FORECASTER_ARCHITECTURES: tuple[str, ...] = (
     "tft",
 )
 
+# Architectures excluded from the canonical sweep targets. See ADR 0020
+# (``docs/adr/0020-tft-architecture-comparison-exclusion.md``) and the
+# footnote on ``fed-pulse.wiki/06_Deep_Learning_Roadmap.md §6.7`` for
+# the rationale. TFT's published recipe routes predictions through its
+# native quantile output + Variable Selection Network; the in-repo
+# encoder pools to a generic classifier head, which strips the
+# inductive bias the architecture is designed around. The 0.3803 row
+# from §6.6 is retained as historical record only. A faithful
+# quantile-head reimplementation is filed as a STRETCH follow-up.
+#
+# The architecture identifier stays in ``FORECASTER_ARCHITECTURES`` so
+# existing checkpoints that recorded ``architecture='tft'`` continue to
+# load and the ``TFTEncoder`` module remains importable; new sweeps
+# should iterate ``CANONICAL_SWEEP_ARCHITECTURES`` instead.
+TFT_EXCLUSION_REASON: str = (
+    "TFT excluded from canonical architecture sweep per ADR 0020 "
+    "(generic classifier head strips the native quantile-output + "
+    "Variable Selection Network inductive bias). Faithful "
+    "quantile-head reimplementation is a STRETCH-tier follow-up."
+)
+CANONICAL_SWEEP_ARCHITECTURES: tuple[str, ...] = tuple(
+    arch for arch in FORECASTER_ARCHITECTURES if arch != "tft"
+)
+
 
 @dataclass(frozen=True)
 class ModelConfig:

@@ -23,9 +23,14 @@ InfoNCE is research-only and rejects ``role="serving"``.
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Literal
 
-from app.models.config import FORECASTER_ARCHITECTURES, ModelConfig
+from app.models.config import (
+    FORECASTER_ARCHITECTURES,
+    TFT_EXCLUSION_REASON,
+    ModelConfig,
+)
 from app.models.multimodal_forecaster import MultiModalForecasterModel
 from app.models.research_model import ForecasterResearchModel
 from app.models.serving_model import ForecasterServingModel
@@ -59,6 +64,16 @@ def build_forecaster(
         raise ValueError(
             f"Unknown architecture: {architecture!r}. "
             f"Allowed: {sorted(FORECASTER_ARCHITECTURES)}"
+        )
+    # TFT stays importable + checkpoint-loadable for back-compat, but is
+    # excluded from canonical sweep targets. Surface a DeprecationWarning
+    # whenever the factory is asked to build one so a future sweep that
+    # mis-includes TFT does not silently regress the comparison.
+    if architecture == "tft":
+        warnings.warn(
+            TFT_EXCLUSION_REASON,
+            DeprecationWarning,
+            stacklevel=2,
         )
 
     if role not in {"research", "serving"}:

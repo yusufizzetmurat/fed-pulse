@@ -27,12 +27,18 @@ from pathlib import Path
 
 _DEFAULT_REPORT_ROOT = Path("data/artifacts/regime_arch_sweep")
 
+# TFT is intentionally absent from the canonical sweep targets. See
+# ``docs/adr/0020-tft-architecture-comparison-exclusion.md`` and the
+# §6.7 footnote in ``fed-pulse.wiki/06_Deep_Learning_Roadmap.md`` --
+# the in-repo generic-head evaluation is architecture-mismatch with
+# TFT's native quantile + VSN inductive bias; the 0.3803 result lives
+# in the wiki only as historical record. Pass ``--architectures tft``
+# explicitly to opt back in for a one-off investigation.
 _DEFAULT_ARCHITECTURES = (
     "lstm_attn",
     "gru",
     "tcn",
     "transformer",
-    "tft",
 )
 
 
@@ -108,7 +114,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--architectures",
         nargs="+",
         default=list(_DEFAULT_ARCHITECTURES),
-        help="Architectures to sweep. Default: lstm_attn, gru, tcn, transformer, tft.",
+        help=(
+            "Architectures to sweep. Default: lstm_attn, gru, tcn, transformer. "
+            "TFT is excluded from the canonical comparison per ADR 0020; "
+            "pass --architectures tft explicitly to opt in."
+        ),
     )
     parser.add_argument(
         "--seeds",

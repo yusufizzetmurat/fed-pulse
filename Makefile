@@ -183,11 +183,17 @@ train-text-multi-axis-classifier:
 		--learning-rate $(LEARNING_RATE)
 
 # Forecaster architecture sweep. The default target runs the
-# rich-feature path (35-dim per-bar input) across all eight registered
+# rich-feature path (35-dim per-bar input) across the seven canonical
 # architectures (lstm, lstm_attn, gru, tcn, transformer, dlinear,
-# informer, tft) x the official 5-seed set {11, 29, 47, 71, 97}, so the
+# informer) x the official 5-seed set {11, 29, 47, 71, 97}, so the
 # forecaster sees the four feature families the data pipeline already
 # ships (credibility, linguistic, MP-surprise, multi-axis) on every bar.
+#
+# TFT is excluded from the canonical sweep targets per ADR 0020 (the
+# generic classifier head strips the native quantile-output + Variable
+# Selection Network inductive bias). The ``tft`` identifier and module
+# are kept for back-compat with existing checkpoints; opt back in by
+# passing ``--architectures tft`` explicitly on the trainer command line.
 #
 # The default target draws a random subset of HP combos from the full
 # cross-product (--random-search-samples=50, seed=42) and runs eight
@@ -245,7 +251,7 @@ forecaster-sweep:
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--sweep \
 		--rich-features \
-		--architectures lstm lstm_attn gru tcn transformer dlinear informer tft \
+		--architectures lstm lstm_attn gru tcn transformer dlinear informer \
 		--seeds 11 29 47 71 97 \
 		--folds wf_fold_1 wf_fold_2 wf_fold_3 wf_fold_4 \
 		--hidden-sizes 32 64 128 \
@@ -275,7 +281,7 @@ forecaster-sweep-exhaustive:
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--sweep \
 		--rich-features \
-		--architectures lstm lstm_attn gru tcn transformer dlinear informer tft \
+		--architectures lstm lstm_attn gru tcn transformer dlinear informer \
 		--seeds 11 29 47 71 97 \
 		--hidden-sizes 32 64 128 \
 		--num-layers-grid 1 2 3 \
@@ -302,7 +308,7 @@ forecaster-sweep-shuffled-control:
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--sweep \
 		--rich-features \
-		--architectures lstm lstm_attn gru tcn transformer dlinear informer tft \
+		--architectures lstm lstm_attn gru tcn transformer dlinear informer \
 		--seeds 11 29 47 71 97 \
 		--hidden-sizes 64 \
 		--num-layers-grid 2 \
