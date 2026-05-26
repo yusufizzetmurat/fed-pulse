@@ -27,6 +27,9 @@ from app.db import (
 from app.logging import configure_logging, get_logger
 from app.middleware.errors import RunIdMiddleware, register_error_handlers
 from app.schemas import (
+    AnalogCard,
+    AnalogsRequest,
+    AnalogsResponse,
     AnalyzeRequest,
     AnalyzeResponse,
     ArtifactFile,
@@ -971,3 +974,71 @@ def next_fomc_forecast() -> NextFomcForecastResponse:
     artifacts_dir = DATA_DIR / "artifacts" / "next_fomc"
     payload = load_next_fomc_artifacts(artifacts_dir)
     return NextFomcForecastResponse(**payload)
+
+
+# ---------------------------------------------------------------------------
+# Historical analog retrieval (#294 — /analyze/analogs)
+# ---------------------------------------------------------------------------
+
+
+_DEFAULT_RETRIEVAL_ENCODER_ALIAS = "finbert_fed_adjacent_xbank_dapt_retrieval"
+
+
+@app.post("/analyze/analogs", response_model=AnalogsResponse)
+async def analyze_analogs(payload: AnalogsRequest) -> AnalogsResponse:
+    """Return historical FOMC statements that semantically match ``text``.
+
+    Loads the fine-tuned retrieval encoder + persisted analog index on
+    first hit via the singleton at ``app.services.analogs``. When no
+    bundle is present (fresh checkout, encoder not yet trained) the
+    response is shaped with an empty ``analogs`` list and
+    ``index_size=0`` so the frontend can render an empty state rather
+    than treating the call as a 5xx. Unexpected failures surface as a
+    sanitized 503 — internal paths / exception text never leak to the
+    client.
+    """
+
+    from app.services import analogs as analogs_service
+
+    # Pre-flight: if the bundle is permanently absent on disk and no
+    # state has been installed (e.g. by the test suite), short-circuit
+    # rather than paying ``_load_state`` + log a cold-miss on every
+    # request.
+    if not analogs_service.bundle_available() and analogs_service.get_state() is None:
+        return AnalogsResponse(
+            analogs=[],
+            index_size=0,
+            encoder_alias=_DEFAULT_RETRIEVAL_ENCODER_ALIAS,
+        )
+
+    try:
+        result = await run_in_threadpool(
+            analogs_service.find_analogs,
+            payload.text,
+            k=payload.k,
+            as_of_date=payload.as_of_date,
+        )
+    except ValueError:
+        # Surface a client-safe message instead of echoing the raw
+        # exception text (file paths, library internals).
+        logger.warning("analyze_analogs_validation_failed", exc_info=True)
+        raise HTTPException(status_code=422, detail="Invalid analog query") from None
+    except Exception:  # never let a downstream failure 500 the whole API
+        logger.exception("analyze_analogs_failed")
+        raise HTTPException(
+            status_code=503, detail="Analog retrieval unavailable"
+        ) from None
+
+    if result is None:
+        return AnalogsResponse(
+            analogs=[],
+            index_size=0,
+            encoder_alias=_DEFAULT_RETRIEVAL_ENCODER_ALIAS,
+        )
+
+    cards = [AnalogCard(**row) for row in analogs_service.render_analog_cards(result["hits"])]
+    return AnalogsResponse(
+        analogs=cards,
+        index_size=int(result["index_size"]),
+        encoder_alias=str(result["encoder_alias"]),
+    )
