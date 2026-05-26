@@ -1,0 +1,101 @@
+# Production container for fed-pulse — combines the FastAPI backend and
+# the Next.js frontend in a single image and runs both via s6-overlay.
+# Caddy lives in its own container in compose.prod.yml so the image
+# stays free of reverse-proxy state.
+#
+# Stage layout:
+#   builder-python : Python 3.11 venv at /opt/venv with backend deps.
+#   builder-frontend : Node 20, Next.js standalone output for the FE.
+#   runtime : Python 3.11-slim, copies the venv + standalone bundle,
+#             plus s6-overlay to supervise uvicorn and node side by side.
+#
+# The runtime entrypoint (deploy/entrypoint.sh) authenticates against
+# HF Hub with $HF_TOKEN, eager-pulls the hot-path artefacts via the
+# registry resolver, and then hands off to s6-overlay.
+
+FROM python:3.11-slim@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0 AS builder-python
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip
+
+COPY backend/pyproject.toml ./
+
+RUN /opt/venv/bin/pip install --no-cache-dir "."
+
+
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder-frontend
+
+WORKDIR /app
+
+COPY frontend/package.json frontend/package-lock.json* ./
+
+RUN npm ci
+
+COPY frontend/ ./
+
+# Standalone output is enabled in next.config.js for the prod build.
+# The standalone bundle is self-contained — no node_modules copy needed
+# on the runtime side.
+RUN npm run build
+
+
+FROM python:3.11-slim@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0 AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1
+
+WORKDIR /app
+
+# Node + s6-overlay supervise the FE process alongside uvicorn. curl is
+# kept in the image so the deploy workflow's smoke test can poke
+# /health from inside the container if needed.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        curl ca-certificates xz-utils nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# s6-overlay v3 supervises the two processes. The download URL is pinned
+# to a stable release tag.
+ARG S6_OVERLAY_VERSION=3.1.6.2
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp/s6-noarch.tar.xz
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-x86_64.tar.xz /tmp/s6-x86_64.tar.xz
+RUN tar -C / -Jxpf /tmp/s6-noarch.tar.xz \
+    && tar -C / -Jxpf /tmp/s6-x86_64.tar.xz \
+    && rm /tmp/s6-noarch.tar.xz /tmp/s6-x86_64.tar.xz
+
+COPY --from=builder-python /opt/venv /opt/venv
+
+COPY backend/ /app/backend/
+COPY scripts/ /app/scripts/
+
+# Next.js standalone bundle: server.js + minimal node_modules slice.
+# The static / public assets need to land alongside the server output.
+COPY --from=builder-frontend /app/.next/standalone /app/frontend/
+COPY --from=builder-frontend /app/.next/static /app/frontend/.next/static
+COPY --from=builder-frontend /app/public /app/frontend/public
+
+COPY deploy/entrypoint.sh /entrypoint.sh
+COPY deploy/s6-services /etc/s6-overlay/s6-rc.d
+RUN chmod +x /entrypoint.sh
+
+ENV PYTHONPATH=/app/backend \
+    FED_PULSE_REGISTRY_PREFER_HF=1 \
+    FED_PULSE_DATA_DIR=/data
+
+EXPOSE 8000 3000
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/init"]

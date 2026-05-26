@@ -268,3 +268,85 @@ encoders:
       ``python -m app.trajectory.train --architecture transformer``;
       revision stays empty until the first GPU run lands a pinned
       checkpoint.
+
+# HF Hub mirror of every artefact the inference container needs to boot.
+# Local paths in ``encoders:`` above stay primary (the dev stack keeps
+# reading them from the ``/data/`` mount); the URIs below are the
+# fallback path the production droplet pulls via
+# ``huggingface_hub.snapshot_download``. ``parse_hf_uri`` and
+# ``resolve_hf_uri`` in ``app.models.registry`` consume these. Revisions
+# stay empty until the operator runs ``python scripts/push_artefacts_to_hub.py``
+# once and pins the resulting commit shas here.
+artefacts:
+  encoder_canonical:
+    hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent-xbank-dapt
+    revision: ""
+    eager: true
+    description: |
+      Canonical hot-path encoder — cross-bank DAPT-extended FinBERT
+      substrate. Boot-time eager pull on the droplet entrypoint.
+
+  encoder_finbert_fomc:
+    hf_uri: hf://yusufizzetmurat/finbert-fomc
+    revision: ""
+    eager: false
+    description: Lazy-fetched encoder for the bake-off comparison.
+
+  encoder_finbert_fed_adjacent:
+    hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent
+    revision: ""
+    eager: false
+    description: DAPT encoder over BIS speeches + Fed-adjacent auxiliary corpus.
+
+  encoder_finbert_fed_adjacent_xbank:
+    hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent-xbank
+    revision: ""
+    eager: false
+    description: Bundle A cross-bank auxiliary supervised variant.
+
+  forecaster_canonical:
+    hf_uri: hf://yusufizzetmurat/fed-pulse-forecaster
+    revision: ""
+    eager: true
+    description: |
+      Canonical multi-head forecaster checkpoint (#292). Loaded into
+      ``backend/models/forecaster_best.pt`` on first boot.
+
+  rates_heads_canonical:
+    hf_uri: hf://yusufizzetmurat/fed-pulse-rates-heads
+    revision: ""
+    eager: true
+    description: Multi-target rates heads checkpoint (#292/#293).
+
+  retrieval_bundle:
+    hf_uri: hf://yusufizzetmurat/fed-pulse-retrieval
+    revision: ""
+    eager: true
+    description: |
+      Retrieval bundle for /analyze/analogs — embedding_index.parquet +
+      embeddings.npy + manifest produced by ``python -m app.retrieval.train``.
+
+  trajectory_bundle:
+    hf_uri: hf://yusufizzetmurat/fed-pulse-trajectory
+    revision: ""
+    eager: true
+    description: |
+      Trajectory bundle for /analyze/trajectory — LSTM checkpoint +
+      2D embeddings + manifest produced by ``python -m app.trajectory.train``.
+
+  training_package:
+    hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-training-package
+    revision: ""
+    eager: false
+    description: |
+      Canonical training package for ``make reproduce-all``. Pulled to
+      ``data/processed/canonical/`` via
+      ``huggingface_hub.snapshot_download(repo_type='dataset')``.
+
+  embedding_caches:
+    hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-embedding-caches
+    revision: ""
+    eager: false
+    description: |
+      Per-encoder embedding caches lazy-fetched on first use by
+      ``app.data.embedding_cache.ensure_local``.

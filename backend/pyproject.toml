@@ -19,6 +19,7 @@ dependencies = [
   "transformers",
   "accelerate>=1.1.0",
   "sentence-transformers>=3.0",
+  "huggingface_hub>=0.24",
   "torch",
   "python-multipart",
   "requests",

@@ -1,0 +1,71 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ssh_user:
+        description: "SSH user on the droplet (default: root for fresh DO droplets)"
+        required: false
+        default: root
+
+concurrency:
+  group: deploy-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      DROPLET_HOST: fedpulse.yusufizzetmurat.com
+      DROPLET_USER: ${{ github.event.inputs.ssh_user || 'root' }}
+      HEALTH_URL: https://fedpulse.yusufizzetmurat.com/health
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: install ssh key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${DROPLET_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: deploy
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new "${DROPLET_USER}@${DROPLET_HOST}" bash <<'REMOTE'
+          set -euo pipefail
+          cd /opt/fed-pulse
+
+          PRIOR_SHA=$(git rev-parse HEAD)
+          mkdir -p /etc/fed-pulse
+          echo "${PRIOR_SHA}" > /etc/fed-pulse/last-deploy.sha
+
+          git fetch --depth=1 origin main
+          git reset --hard origin/main
+          docker compose -f compose.prod.yml up -d --build
+
+          ROLLBACK() {
+              echo "smoke test failed — rolling back to ${PRIOR_SHA}" >&2
+              git reset --hard "${PRIOR_SHA}"
+              docker compose -f compose.prod.yml up -d --build
+              exit 1
+          }
+
+          if ! timeout 60 sh -c 'until curl -sfk https://fedpulse.yusufizzetmurat.com/health >/dev/null; do sleep 2; done'; then
+              ROLLBACK
+          fi
+
+          echo "deploy ok @ $(git rev-parse HEAD)"
+          REMOTE
+
+      - name: post-deploy smoke
+        run: |
+          if ! curl --fail --silent --show-error --max-time 30 "${HEALTH_URL}" >/dev/null; then
+              echo "post-deploy /health probe from the runner failed" >&2
+              exit 1
+          fi
+          echo "health: ok"

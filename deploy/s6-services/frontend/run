@@ -1,0 +1,5 @@
+#!/command/with-contenv sh
+cd /app/frontend
+export PORT=3000
+export HOSTNAME=0.0.0.0
+exec node server.js

@@ -377,6 +377,73 @@ def require_cache_exists(
     return paths.parquet
 
 
+# HF Hub dataset that mirrors the per-encoder embedding caches for the
+# deployability lane (#302). The droplet pulls a single parquet on a
+# cold start of a non-eager encoder; subsequent runs hit the local
+# cache. The dataset URI lives in ``app.models.registry`` under the
+# ``embedding_caches`` artefact entry — keep this in sync with that
+# block.
+HF_EMBEDDING_CACHE_DATASET = "yusufizzetmurat/fed-pulse-embedding-caches"
+
+
+def ensure_local(
+    encoder_alias: str,
+    *,
+    revision: str | None = None,
+    cache_dir: Path | str | None = None,
+    allow_hf_fetch: bool = True,
+    hf_dataset: str = HF_EMBEDDING_CACHE_DATASET,
+    token: str | None = None,
+) -> Path:
+    """Return the cache parquet path, lazy-fetching from HF Hub on a miss.
+
+    Looks for ``<cache_dir>/<encoder_alias>_<rev_slug>.parquet`` first.
+    If absent and ``allow_hf_fetch`` is set, pulls the file from
+    ``hf://datasets/<hf_dataset>/<filename>`` via
+    :func:`huggingface_hub.hf_hub_download` and stores it under
+    ``cache_dir``. Raises :class:`FileNotFoundError` with a fixable
+    message when the file is still missing — that surfaces the cache
+    miss in the same shape ``require_cache_exists`` already uses.
+    """
+
+    paths = resolve_cache_paths(encoder_alias, revision=revision, cache_dir=cache_dir)
+    if paths.parquet.exists():
+        return paths.parquet
+
+    if not allow_hf_fetch:
+        raise FileNotFoundError(
+            f"Embedding cache missing for encoder={encoder_alias!r} at {paths.parquet}. "
+            f"Pass allow_hf_fetch=True or rebuild via "
+            f"`make cache-embeddings ENCODER={encoder_alias} ALLOW_NETWORK=1`."
+        )
+
+    from huggingface_hub import hf_hub_download  # type: ignore[import-not-found]
+
+    paths.directory.mkdir(parents=True, exist_ok=True)
+    filename = paths.parquet.name
+    resolved_token = (
+        token
+        or os.environ.get("HF_TOKEN")
+        or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+    )
+    kwargs: dict[str, Any] = {
+        "repo_id": hf_dataset,
+        "filename": filename,
+        "repo_type": "dataset",
+        "local_dir": str(paths.directory),
+    }
+    if resolved_token:
+        kwargs["token"] = resolved_token
+    downloaded = Path(hf_hub_download(**kwargs))
+
+    # ``hf_hub_download(local_dir=...)`` already lands the file at the
+    # canonical name; the explicit rename below is a no-op when the
+    # cache hits the canonical path and a safety net otherwise.
+    if downloaded != paths.parquet:
+        downloaded.replace(paths.parquet)
+    return paths.parquet
+
+
 def _parse_args() -> "object":
     import argparse
 

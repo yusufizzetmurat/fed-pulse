@@ -576,7 +576,15 @@ def _append_event_day_target(
 
 
 def _resolve_training_package_dir(training_package_id: str) -> Path:
-    """Resolve ``<id>`` to ``<DATA_DIR>/processed/<id>/``.
+    """Resolve ``<id>`` to a local package dir.
+
+    Accepts either:
+
+    - a local package id like ``tp_v3_macro_aug_2026_05_25`` which
+      maps to ``<DATA_DIR>/processed/<id>/`` (legacy behaviour), or
+    - an ``hf://datasets/owner/name[:revision]`` URI which is pulled
+      via :func:`huggingface_hub.snapshot_download` into the HF cache
+      and treated as the package directory (deployability lane #302).
 
     Also verifies the manifest sidecar (``dataset_metadata.sha256``)
     when present. A mismatch raises ``ManifestShaMismatch``; a missing
@@ -584,7 +592,12 @@ def _resolve_training_package_dir(training_package_id: str) -> Path:
     the load proceeds.
     """
 
-    package_dir = DATA_DIR / "processed" / training_package_id
+    from app.models.registry import is_hf_uri, resolve_hf_uri
+
+    if is_hf_uri(training_package_id):
+        package_dir = resolve_hf_uri(training_package_id)
+    else:
+        package_dir = DATA_DIR / "processed" / training_package_id
     if not package_dir.exists():
         raise FileNotFoundError(
             f"Training package directory not found: {package_dir}"

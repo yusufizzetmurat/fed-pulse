@@ -22,8 +22,24 @@ import type {
 
 export function resolveApiBaseUrl(): string {
   const raw = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  // Production builds set NEXT_PUBLIC_API_URL to the public origin
+  // (https://fedpulse.yusufizzetmurat.com). Caddy reverse-proxies
+  // `/api/*` to the backend container after stripping the `/api`
+  // prefix, so the browser-side axios call must include that prefix
+  // for the production origin only. Local dev keeps the literal
+  // localhost:8000 backend URL and the existing rewrite-from-compose
+  // hostname guard.
   if (typeof window !== "undefined" && raw.includes("://backend:")) {
     return raw.replace("://backend:", "://localhost:");
+  }
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === "https:" && parsed.pathname === "/") {
+      // ``https://host`` -> ``https://host/api``
+      return raw.replace(/\/?$/, "") + "/api";
+    }
+  } catch {
+    // Not a parseable URL — fall through to the raw value.
   }
   return raw;
 }

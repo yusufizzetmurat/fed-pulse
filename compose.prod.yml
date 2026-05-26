@@ -1,0 +1,76 @@
+# Production compose stack for the fed-pulse DigitalOcean droplet.
+#
+# Three services:
+#   backend   : FastAPI (uvicorn, 2 workers) on internal :8000
+#   frontend  : Next.js standalone server on internal :3000
+#   caddy     : reverse proxy + Let's Encrypt on host :80 / :443
+#
+# The backend and frontend share the same image (Dockerfile.prod
+# multi-stage build); each container runs its own entrypoint by
+# overriding the s6 service mask via FED_PULSE_SVC_MASK so the
+# supervisor only starts the matching process. Keeping one image
+# halves the bandwidth on every deploy and matches the per-droplet
+# hot-path model where both processes hold their own warm HF cache
+# slice.
+
+services:
+  backend:
+    image: fed-pulse:prod
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: fed-pulse-backend
+    restart: always
+    env_file:
+      - /etc/fed-pulse/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - FED_PULSE_SVC_MASK=backend
+      - FED_PULSE_REGISTRY_PREFER_HF=1
+    volumes:
+      - /etc/fed-pulse/data:/data
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
+  frontend:
+    image: fed-pulse:prod
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: fed-pulse-frontend
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - FED_PULSE_SVC_MASK=frontend
+      - FED_PULSE_SKIP_EAGER_PULL=1
+      - NEXT_PUBLIC_API_URL=https://fedpulse.yusufizzetmurat.com
+    expose:
+      - "3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2
+    container_name: fed-pulse-caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  caddy_data:
+  caddy_config:

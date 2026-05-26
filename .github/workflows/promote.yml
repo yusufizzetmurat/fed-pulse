@@ -1,0 +1,42 @@
+name: promote
+
+# Manual fast-forward of main from dev when a release window is ready.
+# Pushing to main triggers deploy.yml, so this workflow only does the
+# main-pointer move and the operator confirms the release window first.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dev_sha:
+        description: "dev commit sha to promote (default: dev HEAD)"
+        required: false
+        default: ""
+
+concurrency:
+  group: promote-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: promote dev -> main
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git fetch origin dev main
+          TARGET="${{ github.event.inputs.dev_sha }}"
+          if [ -z "${TARGET}" ]; then
+              TARGET=$(git rev-parse origin/dev)
+          fi
+          echo "promoting ${TARGET} to main"
+          git checkout main
+          git reset --hard "${TARGET}"
+          git push origin main
