@@ -175,6 +175,38 @@ describe("HistoricalAnalogPanel", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders both cards when two analogs share the same event_date", () => {
+    // The retrieval index dedupes by text_hash, not event_date — an
+    // intermeeting statement and a same-day correction can both land
+    // in the top-k. With ``key={card.event_date}`` alone React would
+    // collapse the two cards into one DOM node and bleed the per-card
+    // expand state. The composite key (event_date, similarity, idx)
+    // is what keeps them distinct.
+    const sameDate = {
+      event_date: "2020-03-15",
+      similarity: 0.81,
+      axis_stance: "dovish" as const,
+      subsequent_vol_regime: "high" as const,
+      excerpt: "Intermeeting statement excerpt.",
+    };
+    const sameDateCorrection = {
+      ...sameDate,
+      similarity: 0.74,
+      excerpt: "Correction issued same day.",
+    };
+    render(
+      <HistoricalAnalogPanel
+        analogs={{
+          analogs: [sameDate, sameDateCorrection],
+          index_size: 200,
+          encoder_alias: "test",
+        }}
+      />,
+    );
+    expect(screen.getByText(/Intermeeting statement excerpt/)).toBeInTheDocument();
+    expect(screen.getByText(/Correction issued same day/)).toBeInTheDocument();
+  });
+
   it("renders the encoder alias + index size in the footer note", () => {
     render(<HistoricalAnalogPanel analogs={fixture()} />);
     // index size is formatted with toLocaleString — accept either

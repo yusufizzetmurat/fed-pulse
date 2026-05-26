@@ -262,8 +262,16 @@ export function HistoricalAnalogPanel({
     <div className="space-y-2">
       {headerBadge}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {filtered.map((card) => (
-          <AnalogCardItem key={card.event_date} card={card} />
+        {filtered.map((card, idx) => (
+          // event_date alone is not guaranteed unique — the retrieval
+          // index dedupes by text_hash, so the same date can carry an
+          // intermeeting statement and a correction. Composite key on
+          // (event_date, similarity, idx) keeps React reconciliation
+          // honest so the per-card expand state cannot bleed.
+          <AnalogCardItem
+            key={`${card.event_date}-${card.similarity.toFixed(6)}-${idx}`}
+            card={card}
+          />
         ))}
       </div>
       <p className="text-[11px] leading-relaxed text-muted-foreground">

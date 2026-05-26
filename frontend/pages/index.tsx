@@ -295,7 +295,13 @@ export default function WorkspacePage() {
         // #317 finding #15: refetch the market panel alongside the
         // sentence-strike counterfactual so the per-head rates cards
         // reflect the masked input rather than staying stale on the
-        // baseline forward pass.
+        // baseline forward pass. The historical analog panel is
+        // intentionally NOT refetched here: ``AnalogsRequest`` has no
+        // ``mask_sentence_indices`` field, so a refetch would resend
+        // the same original text and produce the same top-k. The
+        // panel is contextual ("statements that sound like the one
+        // you pasted"), not attributional, so freezing it on the
+        // baseline retrieval is the right semantics under a strike.
         const sharedRequest = { ...request, mask_sentence_indices: indices };
         const [analyzeRes, marketRes] = await Promise.allSettled([
           postAnalyze(apiBaseUrl, sharedRequest),
