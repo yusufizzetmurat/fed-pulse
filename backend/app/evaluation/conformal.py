@@ -450,7 +450,7 @@ def class_conditional_gap_flag(
     return flagged
 
 
-def compute_regression_band_class_coverage(
+def compute_regression_band_class_coverage(  # noqa: C901 — single-pass validation + bucketing, intentionally branchy
     *,
     log_rv_predictions: Sequence[float],
     log_rv_actuals: Sequence[float],
@@ -568,7 +568,7 @@ def empirical_coverage(
     return inside / len(predictions)
 
 
-def load_manifest(path: Path | str) -> ConformalManifest:
+def load_manifest(path: Path | str) -> ConformalManifest:  # noqa: C901 — JSON deserialiser with many optional back-compat fields
     """Read a JSON manifest. Residual quantile fields default to 0.0
     when absent (classification-only manifests written by
     ``save_manifest`` drop them); the inference loader treats a 0.0
