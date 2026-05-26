@@ -71,6 +71,7 @@ jobs:
     env:
       DROPLET_HOST: fedpulse.yusufizzetmurat.com
       DROPLET_USER: ${{ github.event.inputs.ssh_user || 'root' }}
+      DROPLET_PORT: ${{ vars.DROPLET_SSH_PORT || '2222' }}
       HEALTH_URL: https://fedpulse.yusufizzetmurat.com/health
 
     steps:
@@ -84,11 +85,11 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${DROPLET_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -p "${DROPLET_PORT}" -H "${DROPLET_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: deploy
         run: |
-          ssh -o StrictHostKeyChecking=accept-new "${DROPLET_USER}@${DROPLET_HOST}" bash <<'REMOTE'
+          ssh -p "${DROPLET_PORT}" -o StrictHostKeyChecking=accept-new "${DROPLET_USER}@${DROPLET_HOST}" bash <<'REMOTE'
           set -euo pipefail
           cd /opt/fed-pulse
 
