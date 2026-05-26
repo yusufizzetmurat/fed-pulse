@@ -165,6 +165,23 @@ def _train_single(
         use_amp=False,
     )
     metrics = result.summary.metrics
+    # #317 finding #6: persist the per-fold rates_quantile_edges into
+    # the canonical fold_manifest so inference can read back the same
+    # tertile cutoffs the model trained against (the per-trial JSON
+    # also keeps them but is per-seed; the fold_manifest is the
+    # cross-seed source of truth).
+    try:
+        from app.data.build_training_package import (
+            update_fold_manifest_rates_quantile_edges,
+        )
+        from app.training.loaders import _resolve_training_package_dir
+
+        package_dir = _resolve_training_package_dir(training_package_id)
+        update_fold_manifest_rates_quantile_edges(
+            package_dir, fold_id, result.summary.rates_quantile_edges
+        )
+    except Exception:  # pragma: no cover -- never let upsert break the sweep
+        pass
     return {
         "seed": seed,
         "fold_id": fold_id,

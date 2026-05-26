@@ -41,7 +41,13 @@ interface RatesReactionCardProps {
 }
 
 export function RatesReactionCard({ card }: RatesReactionCardProps) {
-  const tone = bucketTone(card.directional_bucket);
+  // #317 finding #10: when the checkpoint exposes no aux classifier
+  // for this head the backend returns ``directional_bucket: null`` and
+  // ``bucket_probabilities: null``; render an explicit "aux classifier
+  // unavailable" badge rather than fabricating an argmax on
+  // non-existent probabilities.
+  const hasBucket = card.directional_bucket != null && card.bucket_probabilities != null;
+  const tone = hasBucket ? bucketTone(card.directional_bucket!) : "neutral";
   const bandText =
     card.lower_bps != null && card.upper_bps != null
       ? `${formatBps(card.lower_bps)} … ${formatBps(card.upper_bps)}`
@@ -55,10 +61,16 @@ export function RatesReactionCard({ card }: RatesReactionCardProps) {
         </CardDescription>
         <CardTitle className="flex items-center justify-between text-2xl">
           <span className="numeric">{formatBps(card.point_bps)}</span>
-          <Badge variant={tone} className="flex items-center gap-1 capitalize">
-            <BucketIcon bucket={card.directional_bucket} />
-            {card.directional_bucket}
-          </Badge>
+          {hasBucket ? (
+            <Badge variant={tone} className="flex items-center gap-1 capitalize">
+              <BucketIcon bucket={card.directional_bucket!} />
+              {card.directional_bucket}
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+              Aux classifier unavailable
+            </Badge>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -74,32 +86,39 @@ export function RatesReactionCard({ card }: RatesReactionCardProps) {
               </span>
             ) : null}
           </p>
+          {card.predicted_set != null && card.predicted_set.length > 0 ? (
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              calibrated set: {`{${card.predicted_set.join(", ")}}`}
+            </p>
+          ) : null}
         </div>
-        <div className="space-y-2">
-          {BUCKET_ORDER.map((bucket) => {
-            const value = card.bucket_probabilities[bucket] ?? 0;
-            return (
-              <div key={bucket} className="space-y-1">
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span className="capitalize">{bucket}</span>
-                  <span className="font-medium text-foreground">
-                    {(value * 100).toFixed(0)}%
-                  </span>
+        {hasBucket ? (
+          <div className="space-y-2">
+            {BUCKET_ORDER.map((bucket) => {
+              const value = card.bucket_probabilities![bucket] ?? 0;
+              return (
+                <div key={bucket} className="space-y-1">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span className="capitalize">{bucket}</span>
+                    <span className="font-medium text-foreground">
+                      {(value * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                  <Progress
+                    value={value * 100}
+                    indicatorClassName={
+                      bucket === "tightening"
+                        ? "bg-hawkish"
+                        : bucket === "easing"
+                        ? "bg-dovish"
+                        : "bg-neutral"
+                    }
+                  />
                 </div>
-                <Progress
-                  value={value * 100}
-                  indicatorClassName={
-                    bucket === "tightening"
-                      ? "bg-hawkish"
-                      : bucket === "easing"
-                      ? "bg-dovish"
-                      : "bg-neutral"
-                  }
-                />
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

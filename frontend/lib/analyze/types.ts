@@ -223,8 +223,15 @@ export interface RatesReactionCard {
   lower_bps: number | null;
   upper_bps: number | null;
   coverage: number | null;
-  directional_bucket: RatesDirectionalBucket;
-  bucket_probabilities: Partial<Record<RatesDirectionalBucket, number>>;
+  // #317 finding #10: nullable when the checkpoint exposes no aux
+  // classifier for this head. The card renders an "aux classifier
+  // unavailable" badge in that case rather than fabricating an
+  // argmax over a fake uniform distribution.
+  directional_bucket: RatesDirectionalBucket | null;
+  bucket_probabilities: Partial<Record<RatesDirectionalBucket, number>> | null;
+  // #317 finding #3: calibrated APS prediction set per head when the
+  // conformal sidecar carries the per-head softmax_quantile.
+  predicted_set: RatesDirectionalBucket[] | null;
 }
 
 export interface VolRegimeReactionCard {

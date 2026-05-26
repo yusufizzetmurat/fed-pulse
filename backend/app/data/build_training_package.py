@@ -35,6 +35,46 @@ class FoldRange:
     val_source_distribution: dict[str, int]
     test_source_distribution: dict[str, int]
     source_drift_max: float
+    # #317 finding #6: per-fold rates quantile edges (one entry per
+    # mounted rates head). Populated by the training loop / sweep
+    # script after the train slice fits the tertile cutoffs; left
+    # ``None`` at data-prep time (the edges depend on the train rows,
+    # which the data-prep stage has but does not bin). The inference
+    # path reads this dict back to label a live event with the same
+    # bucket cutoffs the model trained against.
+    rates_quantile_edges: dict[str, dict[str, float]] | None = None
+
+
+def update_fold_manifest_rates_quantile_edges(
+    package_dir: Path,
+    fold_id: str,
+    rates_quantile_edges: dict[str, dict[str, float]] | None,
+) -> bool:
+    """Upsert per-fold rates_quantile_edges onto the canonical manifest (#317).
+
+    Loads ``fold_manifest_expanding_walk_forward.json``, looks for the
+    fold matching ``fold_id``, and writes ``rates_quantile_edges`` into
+    that fold's dict. Returns True when the upsert hit a fold; False
+    when the manifest is missing or the fold_id is not present (the
+    sweep script logs the miss as a warning rather than aborting so
+    the run can continue).
+    """
+
+    manifest_path = package_dir / "fold_manifest_expanding_walk_forward.json"
+    if not manifest_path.exists():
+        return False
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    folds = payload.get("folds") or []
+    hit = False
+    for fold in folds:
+        if str(fold.get("fold_id", "")) == fold_id:
+            fold["rates_quantile_edges"] = rates_quantile_edges
+            hit = True
+            break
+    if not hit:
+        return False
+    manifest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return True
 
 
 def _parse_args() -> argparse.Namespace:

@@ -15,6 +15,7 @@ function fixture(): MarketReactionPanelResponse {
         coverage: 0.8,
         directional_bucket: "tightening",
         bucket_probabilities: { easing: 0.1, neutral: 0.3, tightening: 0.6 },
+        predicted_set: ["tightening"],
       },
       {
         head: "5y",
@@ -24,6 +25,7 @@ function fixture(): MarketReactionPanelResponse {
         coverage: 0.8,
         directional_bucket: "neutral",
         bucket_probabilities: { easing: 0.2, neutral: 0.55, tightening: 0.25 },
+        predicted_set: ["neutral"],
       },
       {
         head: "terminal",
@@ -33,6 +35,7 @@ function fixture(): MarketReactionPanelResponse {
         coverage: 0.8,
         directional_bucket: "tightening",
         bucket_probabilities: { easing: 0.05, neutral: 0.1, tightening: 0.85 },
+        predicted_set: null,
       },
     ],
     vol_regime: {
@@ -86,6 +89,7 @@ describe("MarketReactionPanel", () => {
           coverage: 0.8,
           directional_bucket: "tightening",
           bucket_probabilities: { easing: 0.1, neutral: 0.3, tightening: 0.6 },
+          predicted_set: null,
         }}
       />,
     );
@@ -103,9 +107,31 @@ describe("MarketReactionPanel", () => {
           coverage: null,
           directional_bucket: "neutral",
           bucket_probabilities: { easing: 0.3, neutral: 0.4, tightening: 0.3 },
+          predicted_set: null,
         }}
       />,
     );
     expect(screen.getByText(/Band unavailable/i)).toBeInTheDocument();
+  });
+
+  it("renders 'Aux classifier unavailable' badge when directional_bucket is null", () => {
+    // #317 finding #10: a regression-only checkpoint without aux
+    // classifier surfaces null fields; the card must show the
+    // explicit "not available" badge rather than a fake bucket label.
+    render(
+      <RatesReactionCard
+        card={{
+          head: "2y",
+          point_bps: 3.5,
+          lower_bps: null,
+          upper_bps: null,
+          coverage: null,
+          directional_bucket: null,
+          bucket_probabilities: null,
+          predicted_set: null,
+        }}
+      />,
+    );
+    expect(screen.getByText(/Aux classifier unavailable/i)).toBeInTheDocument();
   });
 });

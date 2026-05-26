@@ -129,3 +129,82 @@ def test_classification_quantile_helper_still_works() -> None:
         softmax_scores=scores, true_classes=truth, alpha=0.2
     )
     assert 0.0 <= q <= 1.0
+
+
+def test_rates_conformal_uses_only_val_partition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_maybe_write_rates_conformal_manifest`` reads only the val rates_metrics block (#317 finding #21).
+
+    Spies on both per-head calibrators and asserts the predictions /
+    softmax rows came from the val ``EvaluationMetrics`` instance.
+    """
+
+    from pathlib import Path
+    from app.evaluation.metrics import EvaluationMetrics
+    from app.training import loop as loop_mod
+
+    captured: dict[str, list] = {"regression_preds": [], "softmax_rows": []}
+
+    def _spy_regression(*, predictions_bps, actuals_bps, alpha=0.2):
+        captured["regression_preds"].append(list(predictions_bps))
+        return 0.42
+
+    def _spy_classification(*, softmax_scores, true_classes, alpha=0.2):
+        captured["softmax_rows"].append(list(softmax_scores))
+        return 0.33
+
+    # The helper does a local ``from app.evaluation.conformal import
+    # (...)`` inside its body, so patch the conformal module directly
+    # rather than the loop module's namespace.
+    monkeypatch.setattr(
+        "app.evaluation.conformal.calibrate_rates_regression_conformal",
+        _spy_regression,
+    )
+    monkeypatch.setattr(
+        "app.evaluation.conformal.calibrate_classification_conformal",
+        _spy_classification,
+    )
+
+    val_rates_metrics = {
+        "2y": {
+            "predictions_bps": [10.0, 11.0, 12.0],
+            "actuals_bps": [10.5, 10.8, 12.2],
+            "n_rows": 3,
+            "cls_softmax_scores": [
+                [0.7, 0.2, 0.1],
+                [0.3, 0.5, 0.2],
+                [0.2, 0.3, 0.5],
+            ],
+            "cls_true_classes": [0, 1, 2],
+            "cls_mask": [True, True, True],
+        }
+    }
+    val_metrics = EvaluationMetrics(
+        loss=0.0,
+        close_rmse=0.0,
+        volatility_rmse=0.0,
+        combined_rmse=0.0,
+        rates_metrics=val_rates_metrics,
+    )
+
+    tmp_target = Path("/tmp/_rates_conformal_val_only.pt")
+    sidecar = tmp_target.with_suffix(".conformal.json")
+    if sidecar.exists():
+        sidecar.unlink()
+    loop_mod._maybe_write_rates_conformal_manifest(
+        val_metrics, tmp_target, head_names=("2y",)
+    )
+    # The regression-side spy must have seen the val predictions
+    # (not e.g. their negation, not e.g. a train partition).
+    assert captured["regression_preds"] == [[10.0, 11.0, 12.0]]
+    # The classification spy must have received the val softmax rows.
+    assert captured["softmax_rows"] == [
+        [
+            [0.7, 0.2, 0.1],
+            [0.3, 0.5, 0.2],
+            [0.2, 0.3, 0.5],
+        ]
+    ]
+    if sidecar.exists():
+        sidecar.unlink()
