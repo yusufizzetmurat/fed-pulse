@@ -20,6 +20,9 @@ Policy is fixed for the current benchmark cycle. Method changes require a new ve
 - Reliability: coverage (and calibration error if available)
 - Runtime: latency `p50`/`p95`, adaptation time, peak memory (if available)
 
+## Canonical Training Objective
+As of ADR 0015 (`docs/adr/0015-regression-canonical-objective.md`, issue #322), the canonical training objective for the vol-regime head is the regression head on `log(forward_realized_vol_10d)`, optimised with MSE on per-fold standardised log-RV. The 3-class calm / normal / high label is a UI-side bucketing of the regression output against the per-fold `vol_regime_quantiles` cutoffs persisted in `fold_manifest_expanding_walk_forward.json`; it is no longer a training target under the canonical setting. The classification head stays mounted on every checkpoint for shape stability and to back the aux conformal calibration surface (`rates_softmax_quantiles`), but contributes zero gradient when `head_mode="regression"`. The dual-head mixing surface (`head_mode={classification,regression,dual}` plus `regression_alpha`) introduced in #304 remains available for the methodology comparison in §6.15 of the deep-learning roadmap. Headline vol-regime rows in published reports must cite RMSE-log_rv and R² alongside any UI-derived classification metrics.
+
 ## Leakage Rules
 1. No future-derived features
 2. No future target leakage in feature creation

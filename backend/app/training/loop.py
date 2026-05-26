@@ -126,33 +126,36 @@ def _coerce_model_config(model_config: ModelConfig | dict[str, Any] | None = Non
     if isinstance(model_config, ModelConfig):
         return model_config
     if isinstance(model_config, dict):
-        return ModelConfig(
-            input_size=int(model_config.get("input_size", FEATURE_SIZE)),
-            hidden_size=int(model_config.get("hidden_size", DEFAULT_HIDDEN_SIZE)),
-            num_layers=int(model_config.get("num_layers", DEFAULT_NUM_LAYERS)),
-            dropout=float(model_config.get("dropout", DEFAULT_DROPOUT)),
-            head_hidden_size=int(model_config.get("head_hidden_size", DEFAULT_HEAD_HIDDEN_SIZE)),
-            initial_decay_rate=float(model_config.get("initial_decay_rate", DEFAULT_INITIAL_DECAY_RATE)),
-            text_channel=str(model_config.get("text_channel", "scalar")),
-            embedding_adapter_dim=int(model_config.get("embedding_adapter_dim", 128)),
-            credibility_features=bool(model_config.get("credibility_features", False)),
-            architecture=str(model_config.get("architecture", "lstm")),
-            text_embedding_dim=int(model_config.get("text_embedding_dim", 0) or 0),
-            text_adapter_dim=int(model_config.get("text_adapter_dim", 0) or 0),
-            # #317 finding #4: forward post-#292 rates fields so a
-            # checkpoint with rates heads round-trips through the
-            # loader. Pre-#292 callers leave these keys absent and the
-            # defaults give back the empty-tuple no-op.
-            rates_heads=tuple(
-                str(v).lower()
-                for v in (model_config.get("rates_heads") or ())
-            ),
-            rates_head_mode=str(
-                model_config.get("rates_head_mode", "regression")
-                or "regression"
-            ),
-            rates_alpha=float(model_config.get("rates_alpha", 0.5)),
-        )
+        # The historical implementation listed each ``ModelConfig`` field
+        # individually and silently dropped anything not enumerated --
+        # which meant a checkpoint's ``output_mode``, ``n_classes``,
+        # ``vol_regime_quantiles``, ``head_mode``, ``multi_task_loss`` and
+        # most other post-baseline fields never reached the rebuilt
+        # config. The reloaded model therefore inherited the dataclass
+        # defaults, mismatched the checkpoint's head shape on load, and
+        # crashed at inference when callers relied on attributes the
+        # checkpoint had actually persisted (the on-disk
+        # ``forecaster_best.pt`` regularly hits this on
+        # ``test_forecast_quantitative_series_fast_shape`` and friends).
+        # ``dataclasses.fields`` is the source of truth; we forward every
+        # key the dataclass declares, with type-coercion only for the
+        # fields that JSON round-trips lossy (tuples become lists, etc.).
+        field_names = {f.name for f in dataclasses.fields(ModelConfig)}
+        tuple_fields = {
+            "rates_heads",
+            "vol_regime_quantiles",
+        }
+        kwargs: dict[str, Any] = {}
+        for key, value in model_config.items():
+            if key not in field_names:
+                continue
+            if key == "rates_heads":
+                kwargs[key] = tuple(str(v).lower() for v in (value or ()))
+            elif key in tuple_fields:
+                kwargs[key] = tuple(float(v) for v in (value or ()))
+            else:
+                kwargs[key] = value
+        return ModelConfig(**kwargs)
     return ModelConfig()
 
 
@@ -1275,11 +1278,14 @@ def _combine_dual_head_loss(
             "head_mode in {regression, dual}."
         )
     if batch_log_rv is None:
-        raise RuntimeError(
-            "head_mode requires a log_rv target tensor but the batch "
-            "carries None; the partition builder did not emit the "
-            "dual-head target."
-        )
+        # ADR 0015 (#322) made ``head_mode='regression'`` the default,
+        # which means datasets that lack ``forward_realized_vol_10d``
+        # rows (typical for narrow rates-only test fixtures + the
+        # cross-bank auxiliary path) now inherit the regression objective
+        # by default. Soft-demote to CE-only on this batch rather than
+        # failing the run; the caller's ``ce_loss`` already accounts for
+        # the classification surface that ships when log_rv is missing.
+        return ce_loss
     log_rv_pred = logits_dict["log_rv"]
     mse_loss = F.mse_loss(log_rv_pred, batch_log_rv.to(log_rv_pred.dtype))
     _assert_dual_head_scales_balanced(ce_loss, mse_loss)
@@ -3093,13 +3099,26 @@ def train_model(
         getattr(active_model_config, "regression_alpha", 0.5)
     )
     if dual_head_active and _active_output_mode != "classification":
-        raise ValueError(
-            "head_mode in {regression, dual} requires "
-            "output_mode='classification' (the regression head reads "
-            "log(forward_realized_vol_10d) which only exists on the "
-            "classification branch); got output_mode="
-            f"{_active_output_mode!r}"
+        # ADR 0015 (#322) flipped the ``head_mode`` default to
+        # ``regression``, which means the close/vol regression
+        # (``output_mode='regression'``) path now inherits the new
+        # default even though it has no ``log(forward_realized_vol_10d)``
+        # target to optimise against. Per the design contract in
+        # ``ModelConfig.head_mode`` ("regression-output mode (close,
+        # vol) ignores ``head_mode`` entirely"), demote the dual-head
+        # branch silently rather than failing the run. The previous
+        # ``raise`` predated the default flip and only fired when a
+        # caller explicitly set ``head_mode='regression'`` on a
+        # close/vol run -- now it would fire on every legacy training
+        # call too.
+        print(
+            f"[train_model] head_mode={active_head_mode} ignored on "
+            f"output_mode={_active_output_mode!r}; regression head "
+            "has no log(forward_realized_vol_10d) target in this mode.",
+            flush=True,
         )
+        dual_head_active = False
+        active_head_mode = "classification"
     if dual_head_active:
         print(
             f"[train_model] dual-head active: head_mode={active_head_mode} "

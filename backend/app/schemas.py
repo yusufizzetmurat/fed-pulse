@@ -368,6 +368,33 @@ class RegimeClassificationCard(BaseModel):
     coverage: float
     distribution: dict[str, float]
     argmax_class: str
+    log_rv_point: float | None = Field(
+        default=None,
+        description=(
+            "Regression-head point prediction in standardised log(forward "
+            "realized vol) space, or None on a classification-only checkpoint. "
+            "See ADR 0015 / #322."
+        ),
+    )
+    log_rv_lower: float | None = Field(
+        default=None,
+        description=(
+            "80% conformal-band lower bound around log_rv_point (matches the "
+            "existing close/vol band convention). None when no conformal "
+            "manifest is on disk or the regression head is not active."
+        ),
+    )
+    log_rv_upper: float | None = Field(default=None, description="See log_rv_lower; upper bound.")
+    bucket_source: Literal["regression", "classification"] = Field(
+        default="classification",
+        description=(
+            "Declares which head produced argmax_class: 'regression' means "
+            "the 3-class label was bucketed UI-side from log_rv_point against "
+            "the active checkpoint's vol_regime_quantiles cutoffs (see "
+            "app.services.regime_bucketing); 'classification' means the "
+            "label came from the 3-class softmax head's argmax."
+        ),
+    )
 
 
 class AnalyzeResponse(BaseModel):
