@@ -368,3 +368,24 @@ artefacts:
     description: |
       Per-encoder embedding caches lazy-fetched on first use by
       ``app.data.embedding_cache.ensure_local``.
+
+# Integrity pin for the B1 (#212) LLM-as-features cache. The cache is the
+# authoritative artefact for the §6.6 Tier 4 / Tier 5 experiments — the
+# Anthropic model snapshot it was extracted against (`claude-sonnet-4-6`)
+# will be retired upstream, so the extraction is reproducible from the
+# in-tree script + pinned snapshot today but not re-extractable from a
+# future model. Treat the cache file as immutable; integrity is enforced
+# by the sha256 below (see ``tests/unit/test_llm_features_pin.py``).
+llm_features:
+  cache_path: data/raw/llm_features/claude-sonnet-4-6_2026-05-19.v1/tp_v2_sprint1_2026_05_15_sentiment_market_core_v1.0_epv1_v1.0.parquet
+  sha256: 159eb09e58e932adcd0f191aaf3aa80c61d62c466a2955785237429932794bf7
+  size_bytes: 89406
+  model: claude-sonnet-4-6
+  temperature: 0
+  pinned_at: 2026-05-27
+  immutability_note: |
+    This cache is reproducible from the in-tree extraction script + the
+    pinned Anthropic model snapshot. When the model snapshot deprecates
+    (Anthropic retires claude-sonnet-4-6), the extraction is no longer
+    replicable from a future model. The cache file is the authoritative
+    artefact; do not delete or regenerate without an ADR.

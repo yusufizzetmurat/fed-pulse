@@ -377,6 +377,36 @@ land via `scripts/cache_voyage_embeddings.py --allow-network`; the
 SOURCES.lock format is identical to the Hugging Face encoders so a
 downstream consumer reads voyage rows with no shape change.
 
+## LLM-features cache immutability
+
+The B1 (#212) LLM-as-features cache at
+`data/raw/llm_features/claude-sonnet-4-6_2026-05-19.v1/tp_v2_sprint1_2026_05_15_sentiment_market_core_v1.0_epv1_v1.0.parquet`
+is the authoritative artefact for the §6.6 Tier 4 / Tier 5 results.
+The catalogue was extracted with Claude Sonnet 4.6 at temperature 0;
+reproducibility binds to that specific Anthropic model snapshot.
+Anthropic will eventually retire `claude-sonnet-4-6`, after which the
+extraction script cannot reproduce the cache byte-for-byte from a
+future model — a successor model would shift category-level
+agreement on the 10-feature catalogue even at the same temperature.
+
+Rule:
+
+1. **Do not delete or regenerate the cache file.** It is the only
+   reproducible artefact for the §6.6 LLM-features experiment once
+   `claude-sonnet-4-6` is deprecated. If the cache is lost, the
+   experiment is irreplicable and the §6.6 Tier 4 / Tier 5 rows
+   cannot be re-derived from a future model snapshot.
+2. **Integrity is enforced by the registry SHA pin.** The cache
+   `sha256` + `size_bytes` are pinned in
+   `backend/app/models/registry.yaml` under the `llm_features:`
+   top-level block; a tampered cache file fails the
+   `tests/unit/test_llm_features_pin.py` integrity check.
+3. **A regeneration requires an ADR.** Any change to the catalogue,
+   the model snapshot, or the cache content must land as an
+   `Architecture Decision Record` in
+   `fed-pulse.wiki/12_Architecture_Decision_Records.md` together
+   with a registry pin bump; silent regenerations are forbidden.
+
 ## Structured linguistic features (Phase 8)
 
 `backend/app/features/linguistic.py` emits a 15-dim interpretable
