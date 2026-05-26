@@ -142,11 +142,10 @@ tags:
 
 # {repo_id}
 
-Canonical artefact published by the [fed-pulse](https://github.com/yusufizzetmurat/fed-pulse) SWE 599 research project at Boğaziçi University.
+Artefact for the [fed-pulse](https://github.com/yusufizzetmurat/fed-pulse) FOMC text analytics project.
 
-- Companion repo: <https://github.com/yusufizzetmurat/fed-pulse>
-- Companion wiki: <https://github.com/yusufizzetmurat/fed-pulse/wiki>
-- Kind: `{kind}`
+- Source code: <https://github.com/yusufizzetmurat/fed-pulse>
+- Live demo: <https://fedpulse.yusufizzetmurat.com>
 - License: `{license}`
 
 ## Training corpus
@@ -159,69 +158,117 @@ Canonical artefact published by the [fed-pulse](https://github.com/yusufizzetmur
 {train_cmd}
 ```
 
-## Consumer schema
+## Attribution
 
-The fed-pulse FastAPI app reads this artefact through the registry resolver
-in `backend/app/models/registry.py`. The events parquet schema the
-consumer side expects (when this repo is a dataset) is documented in
-`fed-pulse.wiki/07_Data_Schema.md`. A minimal snippet:
-
-```
-events.parquet columns:
-  event_date       string  ISO date
-  symbol           string  yfinance ticker
-  text             string  FOMC statement / minutes / press conference body
-  stance           int     0 hawkish / 1 dovish / 2 neutral
-  certainty        int     0 low / 1 medium / 2 high
-  factor           int     0 inflation / 1 employment / 2 financial-stability / 3 other
-  topic            int     0 rates / 1 balance-sheet / 2 communication / 3 outlook
-  next_meeting     date    next-FOMC pointer
-  rates_*          float   pre/post-meeting yield observations
-```
-
-## Citation
-
-If you use this artefact, please cite the fed-pulse repository.
+{attribution}
 """
+
+
+ATTRIBUTION_BLURBS: dict[str, str] = {
+    "encoder": (
+        "- Base model: [ProsusAI/finbert](https://huggingface.co/ProsusAI/finbert) "
+        "(Araci, 2019).\n"
+        "- BIS speeches NSP pairs: "
+        "[samchain/BIS_speeches_97_23_MLM](https://huggingface.co/datasets/samchain/BIS_speeches_97_23_MLM), "
+        "redistributed from the [Bank for International Settlements speeches archive](https://www.bis.org/cbspeeches/).\n"
+        "- Cross-bank monetary-policy corpora: "
+        "[gtfintechlab](https://huggingface.co/gtfintechlab) "
+        "multi-axis sentence datasets for the ECB, Bank of Japan, Bank of "
+        "England, Bank of Canada, and Reserve Bank of Australia."
+    ),
+    "forecaster": (
+        "- FOMC statements, minutes, and press conferences: scraped from the "
+        "[Board of Governors of the Federal Reserve System](https://www.federalreserve.gov/monetarypolicy/fomc.htm) "
+        "(US-government public domain), with supervised labels merged from "
+        "[gtfintechlab/fomc_communication](https://huggingface.co/datasets/gtfintechlab/fomc_communication) "
+        "and the historical [drlexus/fed-statements-and-minutes](https://www.kaggle.com/datasets/drlexus/fed-statements-and-minutes) Kaggle archive.\n"
+        "- Treasury yields and macro series: [FRED](https://fred.stlouisfed.org/) "
+        "(Federal Reserve Bank of St. Louis).\n"
+        "- Equity / volatility prices: [Yahoo Finance](https://finance.yahoo.com) "
+        "via `yfinance`."
+    ),
+    "rates_heads": (
+        "- Yield-curve targets and target-rate series: [FRED](https://fred.stlouisfed.org/) "
+        "(Federal Reserve Bank of St. Louis).\n"
+        "- FOMC text context: scraped from the "
+        "[Board of Governors of the Federal Reserve System](https://www.federalreserve.gov/monetarypolicy/fomc.htm) "
+        "(US-government public domain), with supervised labels merged from "
+        "[gtfintechlab/fomc_communication](https://huggingface.co/datasets/gtfintechlab/fomc_communication)."
+    ),
+    "retrieval": (
+        "- FOMC text: scraped from the "
+        "[Board of Governors of the Federal Reserve System](https://www.federalreserve.gov/monetarypolicy/fomc.htm) "
+        "(US-government public domain), with supervised labels merged from "
+        "[gtfintechlab/fomc_communication](https://huggingface.co/datasets/gtfintechlab/fomc_communication).\n"
+        "- Encoder backbone: `yusufizzetmurat/fed-pulse-encoder` (see that "
+        "card for upstream BIS / gtfintechlab / FinBERT attribution)."
+    ),
+    "trajectory": (
+        "- FOMC text: scraped from the "
+        "[Board of Governors of the Federal Reserve System](https://www.federalreserve.gov/monetarypolicy/fomc.htm) "
+        "(US-government public domain), with supervised labels merged from "
+        "[gtfintechlab/fomc_communication](https://huggingface.co/datasets/gtfintechlab/fomc_communication).\n"
+        "- Encoder backbone: `yusufizzetmurat/fed-pulse-encoder`."
+    ),
+    "training_package": (
+        "- FOMC statements, minutes, and press conferences: scraped from the "
+        "[Board of Governors of the Federal Reserve System](https://www.federalreserve.gov/monetarypolicy/fomc.htm) "
+        "(US-government public domain), with supervised labels merged from "
+        "[gtfintechlab/fomc_communication](https://huggingface.co/datasets/gtfintechlab/fomc_communication) "
+        "and the historical [drlexus/fed-statements-and-minutes](https://www.kaggle.com/datasets/drlexus/fed-statements-and-minutes) Kaggle archive.\n"
+        "- Treasury yields and macro series: [FRED](https://fred.stlouisfed.org/).\n"
+        "- Equity / volatility prices: [Yahoo Finance](https://finance.yahoo.com) "
+        "via `yfinance`.\n"
+        "- Monetary-policy surprise series: [Acosta MPS](https://www.federalreserve.gov/econres/notes/feds-notes/the-federal-reserves-policies-rates-and-monetary-policy-surprises-20221221.htm) "
+        "and related public datasets."
+    ),
+    "embedding_caches": (
+        "- Source text: scraped FOMC releases from the "
+        "[Board of Governors of the Federal Reserve System](https://www.federalreserve.gov/monetarypolicy/fomc.htm) "
+        "(US-government public domain).\n"
+        "- Encoders: `yusufizzetmurat/fed-pulse-encoder` family (see those "
+        "cards for upstream attribution)."
+    ),
+}
 
 
 CORPUS_BLURBS: dict[str, str] = {
     "encoder": (
         "FinBERT base + cross-bank pretraining substrate "
-        "(`samchain/BIS_speeches_97_23_MLM` + the gtfintechlab ECB / BoJ / BoE / "
-        "BoC / RBA multi-axis corpora reformatted as NSP pairs). See "
-        "`fed-pulse.wiki/13_External_Corpora_Inventory.md` for the full provenance."
+        "(`samchain/BIS_speeches_97_23_MLM` plus the gtfintechlab ECB / BoJ / "
+        "BoE / BoC / RBA monetary-policy corpora reformatted as NSP pairs)."
     ),
     "forecaster": (
-        "Multi-head forecaster (#292) trained on the canonical fed-pulse "
-        "training package over the expanding walk-forward fold protocol. "
-        "Multi-target rates heads + vol-regime classifier share the cross-bank "
+        "Multi-head forecaster trained on the canonical FOMC event-window "
+        "dataset over an expanding walk-forward fold protocol. Multi-target "
+        "rates heads and the vol-regime classifier share the cross-bank "
         "DAPT encoder backbone."
     ),
     "rates_heads": (
-        "Multi-target rates heads (#292/#293). 2y, 10y, target-rate regression "
-        "outputs with auxiliary 3-class easing/neutral/tightening surface per "
-        "head. Conformal-calibrated."
+        "Multi-target rates heads: 2y, 10y, and target-rate regression "
+        "outputs with an auxiliary 3-class easing / neutral / tightening "
+        "surface per head. Conformal-calibrated."
     ),
     "retrieval": (
-        "Sentence-transformer retrieval bundle (#294) — embedding_index.parquet + "
-        "embeddings.npy + manifest. Trained via MultipleNegativesRankingLoss on "
-        "same-meeting positive pairs."
+        "Sentence-transformer retrieval bundle: `embedding_index.parquet`, "
+        "`embeddings.npy`, and `manifest.json`. Trained via "
+        "MultipleNegativesRankingLoss on same-meeting positive pairs."
     ),
     "trajectory": (
-        "Sequence-of-meetings trajectory bundle (#296) — LSTM checkpoint + 2D "
-        "embeddings + manifest. Predicts next-meeting stance from the prior "
-        "sequence of statement embeddings."
+        "Sequence-of-meetings model bundle: LSTM and Transformer "
+        "checkpoints plus 2D embeddings and manifest. Predicts the next "
+        "meeting's stance from the prior statement embeddings."
     ),
     "training_package": (
-        "Canonical training package — events.parquet + splits + fold manifest + "
-        "rates_panel.parquet + linguistic_features.parquet + mp_surprises.parquet "
-        "+ macro_state.parquet + registry_normalized.jsonl + quality reports."
+        "Canonical FOMC event dataset: `events.parquet`, splits, fold "
+        "manifest, `rates_panel.parquet`, `linguistic_features.parquet`, "
+        "`mp_surprises.parquet`, `macro_state.parquet`, "
+        "`registry_normalized.jsonl`, and quality reports."
     ),
     "embedding_caches": (
-        "Per-encoder embedding caches keyed on (encoder alias, encoder revision). "
-        "Each parquet matches the schema in `backend/app/data/embedding_cache.py`: "
-        "record_id, doc_id, event_date, chunk_index, chunk_preview, embedding."
+        "Per-encoder embedding caches keyed on (encoder alias, encoder "
+        "revision). Each parquet carries `record_id`, `doc_id`, "
+        "`event_date`, `chunk_index`, `chunk_preview`, and `embedding`."
     ),
 }
 
@@ -325,6 +372,7 @@ def _render_model_card(plan: PushPlan) -> str:
         kind=plan.kind,
         corpus=CORPUS_BLURBS.get(plan.kind, "See companion repo for details."),
         train_cmd=TRAIN_CMDS.get(plan.kind, "See companion repo."),
+        attribution=ATTRIBUTION_BLURBS.get(plan.kind, "See companion repo."),
     )
 
 

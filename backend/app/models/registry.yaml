@@ -324,7 +324,7 @@ artefacts:
 
   retrieval_bundle:
     hf_uri: hf://yusufizzetmurat/fed-pulse-retrieval
-    revision: ""
+    revision: "a4693b818e4e2a738f3e32c844f45c651424ee3e"
     eager: true
     description: |
       Retrieval bundle for /analyze/analogs — embedding_index.parquet +
@@ -332,7 +332,7 @@ artefacts:
 
   trajectory_bundle:
     hf_uri: hf://yusufizzetmurat/fed-pulse-trajectory
-    revision: ""
+    revision: "df7ccaac07473dfff4e1a62d557a6979d5077304"
     eager: true
     description: |
       Trajectory bundle for /analyze/trajectory — LSTM checkpoint +
