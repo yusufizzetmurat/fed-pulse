@@ -170,9 +170,16 @@ def market_feature_vector(
 
     The block is fixed-width by design so the train + inference paths
     can concatenate it onto the encoder embedding without reasoning
-    about which #291 columns are present. ``None`` inputs degrade to
-    zero so a missing pre-meeting row contributes a no-signal block
-    rather than crashing the build.
+    about which #291 columns are present.
+
+    Missingness is signalled by ``None`` / ``NaN`` on the input — NOT
+    by a ``> 0`` heuristic on ``vix_close``. A future regime with a
+    near-zero or sub-mean VIX must still produce the correct z-score
+    rather than collapse into the missing-data bin. The bias slot
+    encodes an explicit "VIX is present" bit (``1.0`` when ``vix_close``
+    is a finite number, ``0.0`` when it is missing) so the model can
+    distinguish "no data" from "VIX printed exactly at the long-run
+    mean" without overloading the magnitude channel.
 
     ``vix_close`` is z-scored with a pinned mean / std (default 20 / 8
     matches the long-run distribution of ^VIX on the train slice). The
@@ -181,22 +188,28 @@ def market_feature_vector(
     apply at train + inference time.
     """
 
-    def _finite(value: float | None) -> float:
+    def _coerce(value: float | None) -> tuple[float, bool]:
+        """Return ``(value, is_missing)`` — missing when None / NaN / non-finite."""
+
+        if value is None:
+            return 0.0, True
         try:
-            if value is None:
-                return 0.0
             scalar = float(value)
         except (TypeError, ValueError):
-            return 0.0
+            return 0.0, True
         if not math.isfinite(scalar):
-            return 0.0
-        return scalar
+            return 0.0, True
+        return scalar, False
 
-    bias = 1.0
-    yield_bp = _finite(trailing_2y_yield_change_5d_bps)
-    vix_raw = _finite(vix_close)
+    yield_bp, _yield_missing = _coerce(trailing_2y_yield_change_5d_bps)
+    vix_raw, vix_missing = _coerce(vix_close)
     denom = float(vix_std) if vix_std and vix_std > 1e-9 else 1.0
-    vix_z = (vix_raw - float(vix_mean)) / denom if vix_raw > 0 else 0.0
+    # The bias slot doubles as the "VIX present" indicator: 1.0 when
+    # we have a real reading (sub-mean or otherwise), 0.0 when the
+    # input was None / NaN. Keeps MARKET_FEATURE_DIM stable while
+    # surfacing the missingness bit to the model.
+    bias = 0.0 if vix_missing else 1.0
+    vix_z = 0.0 if vix_missing else (vix_raw - float(vix_mean)) / denom
     return np.asarray([bias, yield_bp, vix_z], dtype=np.float32)
 
 
@@ -367,16 +380,30 @@ def _TransformerTrajectoryModel(config: TrajectoryConfig, torch_mod: Any) -> Any
             positions = torch_mod.arange(seq_len, device=inputs.device)
             pos_embed = self.position_embedding(positions).unsqueeze(0)
             projected = projected + pos_embed
+            effective_mask = mask
             key_padding_mask: Any | None = None
             if mask is not None:
                 # ``TransformerEncoder`` expects ``True`` for positions to
                 # IGNORE; our ``mask`` marks real positions as ``True``,
                 # so flip the polarity here.
-                key_padding_mask = ~mask.bool()
+                mask_bool = mask.bool()
+                # All-pad rows would feed ``softmax(-inf)`` into the
+                # attention layer and produce NaN. Force at least one
+                # position per row to be attended; the final-position
+                # pooler then reads a finite vector. The (now real)
+                # position is the last absolute slot — that mirrors
+                # ``_final_real_position``'s fallback when ``mask`` is
+                # entirely False (it clamps ``counts`` to 1).
+                all_pad = (~mask_bool).all(dim=1)
+                if all_pad.any():
+                    mask_bool = mask_bool.clone()
+                    mask_bool[all_pad, -1] = True
+                    effective_mask = mask_bool
+                key_padding_mask = ~mask_bool
             encoded = self.encoder(
                 projected, src_key_padding_mask=key_padding_mask
             )
-            pooled = _final_real_position(encoded, mask, torch_mod)
+            pooled = _final_real_position(encoded, effective_mask, torch_mod)
             pooled = self.dropout(pooled)
             logits = self.head(pooled)
             return logits, pooled
@@ -409,7 +436,12 @@ def save_model(model: Any, config: TrajectoryConfig, path: Path) -> None:
     """Persist a model + its config to a single ``.pt`` file.
 
     Writes via ``torch.save`` to a sibling ``.tmp`` path and renames so
-    a crash mid-write never leaves a truncated checkpoint on disk.
+    a crash mid-write never leaves a truncated checkpoint on disk. The
+    payload stores the config as a plain dict + the state_dict (tensor
+    leaves only) so the file can be reloaded with
+    ``torch.load(weights_only=True)`` — eliminating the pickle-RCE
+    surface that would otherwise be reachable via the
+    ``FED_PULSE_TRAJECTORY_DIR`` env override.
     """
 
     import os
@@ -418,9 +450,14 @@ def save_model(model: Any, config: TrajectoryConfig, path: Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
+    # Persist config as a JSON string so the resulting checkpoint
+    # carries only str + tensor leaves — safe under weights_only=True
+    # on PyTorch >= 2.4. Older checkpoints written with a raw dict
+    # payload are handled at load time via a one-shot fallback.
+    config_json = _json_dumps(config.to_dict())
     torch.save(
         {
-            "config": config.to_dict(),
+            "config_json": config_json,
             "state_dict": model.state_dict(),
         },
         tmp,
@@ -428,18 +465,50 @@ def save_model(model: Any, config: TrajectoryConfig, path: Path) -> None:
     os.replace(tmp, path)
 
 
+def _json_dumps(payload: dict[str, Any]) -> str:
+    import json
+
+    return json.dumps(payload, sort_keys=True)
+
+
 def load_model(path: Path) -> tuple[Any, TrajectoryConfig]:
-    """Reconstruct a model + config from a checkpoint written by ``save_model``."""
+    """Reconstruct a model + config from a checkpoint written by ``save_model``.
+
+    Uses ``weights_only=True`` so the bundle directory (which can be
+    swapped via the ``FED_PULSE_TRAJECTORY_DIR`` env var) cannot be
+    used as a pickle-execution vector. The config travels as a JSON
+    string in the payload so only ``str`` + tensor leaves are
+    deserialised. Legacy checkpoints written under the prior
+    ``weights_only=False`` schema (raw ``config`` dict) are still
+    accepted via a guarded fallback that logs the trust assumption.
+    """
+
+    import json
 
     torch = _import_torch()
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"trajectory checkpoint not found: {path}")
-    # weights_only=False so the optimizer / config dict round-trips,
-    # but the file is project-internal so the trust boundary is the
-    # same as for the encoder checkpoints.
-    payload = torch.load(path, map_location="cpu", weights_only=False)
-    config = TrajectoryConfig.from_dict(payload["config"])
+    try:
+        payload = torch.load(path, map_location="cpu", weights_only=True)
+    except Exception:
+        # Legacy bundle: a dict-typed ``config`` leaf forces
+        # weights_only=False. Surfaces the trust boundary in the log
+        # so an operator can rebuild via ``app.trajectory.train`` to
+        # regain the hardened path.
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "trajectory_checkpoint_legacy_pickle path=%s — falling back to "
+            "weights_only=False; rebuild the bundle to re-enable the "
+            "weights_only=True load path",
+            path,
+        )
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+    if "config_json" in payload:
+        config = TrajectoryConfig.from_dict(json.loads(payload["config_json"]))
+    else:
+        config = TrajectoryConfig.from_dict(payload["config"])
     model = build_model(config)
     model.load_state_dict(payload["state_dict"])
     model.eval()

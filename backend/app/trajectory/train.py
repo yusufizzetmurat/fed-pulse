@@ -164,6 +164,37 @@ def resolve_train_end_from_fold(
     )
 
 
+def resolve_test_end_from_fold(
+    *,
+    events_parquet: Path,
+    fold_id: str,
+) -> str | None:
+    """Return the fold's ``test_end`` (or ``None`` when the manifest omits it).
+
+    The walk-forward holdout for fold ``F`` is every meeting with
+    ``event_date >= F.train_end AND event_date < F.test_end``. When the
+    manifest omits a ``test_end`` (older training packages) we treat
+    the slice as open-ended (every meeting past ``train_end`` becomes
+    holdout) so the trajectory metrics still measure something
+    walk-forward-correct.
+    """
+
+    manifest_path = events_parquet.parent / FOLD_MANIFEST_FILENAME
+    if not manifest_path.exists():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    for fold in payload.get("folds") or []:
+        if fold.get("fold_id") == fold_id:
+            raw = fold.get("test_end")
+            if not raw:
+                return None
+            return str(raw)
+    return None
+
+
 def distill_meeting_rows(events: pd.DataFrame) -> list[MeetingRow]:
     """Project ``events.parquet`` to one ``MeetingRow`` per FOMC statement.
 
@@ -309,39 +340,47 @@ def build_training_sequences(
     return sequences
 
 
-def standardise_inputs(
+def fit_standardisation_stats(
     sequences: list[TrainingSequence],
     *,
     embedding_dim: int,
-) -> tuple[list[TrainingSequence], np.ndarray, np.ndarray]:
-    """Z-score the per-meeting input slabs using train-slice statistics.
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute the per-embedding-feature mean / std over REAL timesteps.
 
-    Fits the mean / std on the concatenation of every REAL (non-pad)
-    timestep in ``sequences``, then applies the same transform to all
-    sequences in place. Returns the standardised sequences plus the
-    ``(D,)`` mean and std arrays so the inference path can reapply the
-    same transform without re-fitting.
-
-    Statistics are computed across the embedding axis only — the market
-    block enters the model already in interpretable units (bps, z-vol)
-    and z-scoring it a second time would over-shrink the signal.
+    Returns ``(mean, std)`` shaped ``(embedding_dim,)`` each. ``std`` is
+    floored at ``1e-6`` so a constant feature does not divide-by-zero
+    in the transform step. Empty input yields ``(zeros, ones)``.
     """
 
     if not sequences:
-        mean = np.zeros(embedding_dim, dtype=np.float32)
-        std = np.ones(embedding_dim, dtype=np.float32)
-        return sequences, mean, std
+        return (
+            np.zeros(embedding_dim, dtype=np.float32),
+            np.ones(embedding_dim, dtype=np.float32),
+        )
     stacked = np.concatenate(
         [seq.inputs[seq.mask, :embedding_dim] for seq in sequences if seq.mask.any()],
         axis=0,
     )
     if stacked.size == 0:
-        mean = np.zeros(embedding_dim, dtype=np.float32)
-        std = np.ones(embedding_dim, dtype=np.float32)
-        return sequences, mean, std
+        return (
+            np.zeros(embedding_dim, dtype=np.float32),
+            np.ones(embedding_dim, dtype=np.float32),
+        )
     mean = stacked.mean(axis=0).astype(np.float32)
     std = stacked.std(axis=0).astype(np.float32)
     std[std < 1e-6] = 1.0  # guard against constant features.
+    return mean, std
+
+
+def apply_standardisation(
+    sequences: list[TrainingSequence],
+    *,
+    embedding_dim: int,
+    mean: np.ndarray,
+    std: np.ndarray,
+) -> list[TrainingSequence]:
+    """Apply pre-fit ``(mean, std)`` to the embedding slab of every sequence."""
+
     rescaled: list[TrainingSequence] = []
     for seq in sequences:
         new_inputs = seq.inputs.copy()
@@ -360,6 +399,41 @@ def standardise_inputs(
                 label_index=seq.label_index,
             )
         )
+    return rescaled
+
+
+def standardise_inputs(
+    sequences: list[TrainingSequence],
+    *,
+    embedding_dim: int,
+    train_sequences: list[TrainingSequence] | None = None,
+) -> tuple[list[TrainingSequence], np.ndarray, np.ndarray]:
+    """Z-score the per-meeting input slabs using TRAIN-slice statistics.
+
+    The mean / std are fit on ``train_sequences`` when supplied — that
+    is the path the trainer takes after the temporal carve into
+    train / calibration / holdout, so the calibration and holdout
+    rows never contribute to the standardisation statistics. When
+    ``train_sequences`` is ``None`` we fall back to fitting on the
+    full ``sequences`` list (kept for backwards compatibility with
+    standalone callers, e.g. ad-hoc unit tests).
+
+    Statistics are computed across the embedding axis only — the market
+    block enters the model already in interpretable units (bps, z-vol)
+    and z-scoring it a second time would over-shrink the signal.
+    """
+
+    if not sequences:
+        return (
+            sequences,
+            np.zeros(embedding_dim, dtype=np.float32),
+            np.ones(embedding_dim, dtype=np.float32),
+        )
+    fit_source = train_sequences if train_sequences is not None else sequences
+    mean, std = fit_standardisation_stats(fit_source, embedding_dim=embedding_dim)
+    rescaled = apply_standardisation(
+        sequences, embedding_dim=embedding_dim, mean=mean, std=std
+    )
     return rescaled, mean, std
 
 
@@ -604,26 +678,65 @@ def evaluate_metrics(  # noqa: PLR0913 — keyword-only bootstrap knobs forwarde
 # ---------------------------------------------------------------------------
 
 
-def project_2d(matrix: np.ndarray) -> np.ndarray:
-    """Project an ``(N, d)`` embedding matrix to ``(N, 2)`` via PCA.
+def fit_pca_axes(
+    train_matrix: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fit the centred-mean + top-2 principal axes on ``train_matrix``.
 
-    Uses ``np.linalg.svd`` directly so we do not pull a scikit-learn
-    dependency. Centres the matrix on the column mean first; with
-    fewer than 2 rows / 2 columns the function returns zeros so the
-    panel still renders a graceful empty state.
+    Returns ``(mean, components)`` where ``mean`` is ``(d,)`` and
+    ``components`` is ``(2, d)`` — the same shape ``vt[:2]`` returns
+    from :func:`np.linalg.svd`. Callers re-use the pair via
+    :func:`project_with_axes` so train / cal / holdout all land on the
+    same train-fit basis. Degraded inputs (fewer than 2 rows or
+    fewer than 2 columns) return all-zero axes; downstream projection
+    then falls back to zero coords so the panel still renders.
     """
+
+    arr = np.asarray(train_matrix, dtype=np.float32)
+    if arr.ndim != 2 or arr.shape[0] == 0 or arr.shape[1] < 2:
+        mean = (
+            np.zeros(arr.shape[1] if arr.ndim == 2 else 0, dtype=np.float32)
+        )
+        components = np.zeros((2, mean.shape[0]), dtype=np.float32)
+        return mean, components
+    mean = arr.mean(axis=0).astype(np.float32)
+    centred = arr - mean
+    try:
+        _, _, vt = np.linalg.svd(centred, full_matrices=False)
+    except np.linalg.LinAlgError:
+        return mean, np.zeros((2, arr.shape[1]), dtype=np.float32)
+    components = vt[:2].astype(np.float32)
+    return mean, components
+
+
+def project_with_axes(
+    matrix: np.ndarray,
+    *,
+    mean: np.ndarray,
+    components: np.ndarray,
+) -> np.ndarray:
+    """Project an ``(N, d)`` matrix onto pre-fit ``mean`` + ``components``."""
 
     arr = np.asarray(matrix, dtype=np.float32)
     if arr.ndim != 2 or arr.shape[0] == 0 or arr.shape[1] < 2:
         return np.zeros((max(arr.shape[0], 0), 2), dtype=np.float32)
-    centred = arr - arr.mean(axis=0, keepdims=True)
-    try:
-        _, _, vt = np.linalg.svd(centred, full_matrices=False)
-    except np.linalg.LinAlgError:
+    if components.shape[0] < 2 or (components == 0).all():
         return np.zeros((arr.shape[0], 2), dtype=np.float32)
-    components = vt[:2]
+    centred = arr - mean.reshape(1, -1)
     projected = centred @ components.T
     return np.asarray(projected, dtype=np.float32)
+
+
+def project_2d(matrix: np.ndarray) -> np.ndarray:
+    """Fit + project in one call — convenience for callers without a holdout.
+
+    Prefer :func:`fit_pca_axes` + :func:`project_with_axes` in the
+    walk-forward trainer so the holdout slice's embedding geometry
+    never leaks into the principal-axes fit.
+    """
+
+    mean, components = fit_pca_axes(matrix)
+    return project_with_axes(matrix, mean=mean, components=components)
 
 
 # ---------------------------------------------------------------------------
@@ -658,7 +771,7 @@ def _atomic_save_npz(path: Path, **arrays: np.ndarray) -> None:
     _atomic_write_bytes(path, buf.getvalue())
 
 
-def persist_bundle(  # noqa: PLR0913 — keyword-only persistence args mirror the trainer CLI.
+def persist_bundle(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only persistence args mirror the trainer CLI.
     *,
     out_dir: Path,
     model: Any,
@@ -675,31 +788,77 @@ def persist_bundle(  # noqa: PLR0913 — keyword-only persistence args mirror th
     conformal_quantile: float | None,
     conformal_alpha: float | None,
     training_package_id: str | None = None,
+    pca_mean: np.ndarray | None = None,
+    pca_components: np.ndarray | None = None,
+    model_parameter_count: int | None = None,
 ) -> Path:
     """Persist the full trajectory bundle atomically.
 
     Writes happen in this order so a half-built bundle cannot pass the
     runtime singleton's pre-flight check:
 
-    1. parquet (meeting metadata + 2D coords)
-    2. .npz (raw embeddings + standardisation statistics)
+    1. parquet (meeting metadata + market columns + 2D coords)
+    2. .npz (raw embeddings + standardisation statistics + PCA axes)
     3. model.pt (state dict)
     4. metrics.json, conformal.json (optional)
     5. manifest.json (written LAST so its presence implies the bundle
        is complete; the runtime singleton keys availability on this file.)
+
+    Bundle hygiene rules enforced here:
+
+    * **train_end filter** — the persisted parquet / npz only carry
+      meetings with ``event_date < train_end``. The model never trained
+      on a meeting from the holdout slice, so projecting from one would
+      be a walk-forward leak at inference time. ``train_end=None``
+      degrades to "persist everything" for ad-hoc / smoke runs.
+    * **PCA axes from train slice** — when ``pca_mean`` and
+      ``pca_components`` are supplied, the 2D coords land on the
+      caller-fit basis (train-only). When omitted, we fit + project on
+      the persisted slice as a fallback for legacy callers.
+    * **market columns** — ``pre_meeting_trailing_2y_yield_change_5d_bps``
+      and ``vix_close`` ride along on the parquet so the runtime path
+      reads the same numbers the trainer saw. Missing inputs persist
+      as NaN; the runtime ``_market_for`` honours that with the
+      explicit-missing bit in the market feature vector.
     """
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    projected = project_2d(raw_embeddings)
-    if projected.shape[0] != len(meetings):
-        # PCA degraded to empty — fall back to zeros so the panel
-        # renders something rather than crashing the writer.
-        projected = np.zeros((len(meetings), 2), dtype=np.float32)
+    cutoff_iso = _validate_train_end(train_end)
+    if cutoff_iso is not None:
+        keep_mask = np.array(
+            [row.event_date < cutoff_iso for row in meetings], dtype=bool
+        )
+    else:
+        keep_mask = np.ones(len(meetings), dtype=bool)
+    kept_meetings = [m for m, keep in zip(meetings, keep_mask) if keep]
+    kept_embeddings = (
+        raw_embeddings[keep_mask] if raw_embeddings.size else raw_embeddings
+    )
+
+    # 2D projection: project the persisted slice onto the caller's
+    # pre-fit axes when available (walk-forward path); otherwise fit
+    # on the persisted slice itself (legacy / smoke path).
+    if pca_mean is not None and pca_components is not None and kept_embeddings.size:
+        projected = project_with_axes(
+            kept_embeddings, mean=pca_mean, components=pca_components
+        )
+    else:
+        # Fallback path: re-fit on the persisted slice. Safe because
+        # the persisted slice itself is train-side (post-cutoff rows
+        # were already dropped above), so the geometry still excludes
+        # holdout rows.
+        pca_mean, pca_components = fit_pca_axes(kept_embeddings)
+        projected = project_with_axes(
+            kept_embeddings, mean=pca_mean, components=pca_components
+        )
+    if projected.shape[0] != len(kept_meetings):
+        projected = np.zeros((len(kept_meetings), 2), dtype=np.float32)
+
     parquet_path = out_dir / "embedding_index.parquet"
     rows = []
-    for idx, row in enumerate(meetings):
+    for idx, row in enumerate(kept_meetings):
         rows.append(
             {
                 "event_date": row.event_date,
@@ -707,18 +866,36 @@ def persist_bundle(  # noqa: PLR0913 — keyword-only persistence args mirror th
                 "axis_stance": row.axis_stance,
                 "embedding_2d_x": float(projected[idx, 0]) if idx < projected.shape[0] else 0.0,
                 "embedding_2d_y": float(projected[idx, 1]) if idx < projected.shape[0] else 0.0,
+                "pre_meeting_trailing_2y_yield_change_5d_bps": (
+                    float(row.trailing_2y_yield_change_5d_bps)
+                    if row.trailing_2y_yield_change_5d_bps is not None
+                    else None
+                ),
+                "vix_close": (
+                    float(row.vix_close)
+                    if row.vix_close is not None
+                    else None
+                ),
             }
         )
     metadata_df = pd.DataFrame(rows)
     _atomic_write_parquet(metadata_df, parquet_path)
 
     npz_path = out_dir / "embedding_index.npz"
-    _atomic_save_npz(
-        npz_path,
-        embeddings=raw_embeddings.astype(np.float32),
-        feature_mean=feature_mean.astype(np.float32),
-        feature_std=feature_std.astype(np.float32),
-    )
+    npz_arrays: dict[str, np.ndarray] = {
+        "embeddings": (
+            kept_embeddings.astype(np.float32)
+            if kept_embeddings.size
+            else np.zeros((0, raw_embeddings.shape[1] if raw_embeddings.ndim == 2 else 0), dtype=np.float32)
+        ),
+        "feature_mean": feature_mean.astype(np.float32),
+        "feature_std": feature_std.astype(np.float32),
+    }
+    if pca_mean is not None:
+        npz_arrays["pca_mean"] = pca_mean.astype(np.float32)
+    if pca_components is not None:
+        npz_arrays["pca_components"] = pca_components.astype(np.float32)
+    _atomic_save_npz(npz_path, **npz_arrays)
 
     save_model(model, config, out_dir / "model.pt")
 
@@ -750,12 +927,20 @@ def persist_bundle(  # noqa: PLR0913 — keyword-only persistence args mirror th
         "history_length": config.history_length,
         "embedding_dim": config.embedding_dim,
         "n_classes": config.n_classes,
-        "row_count": int(len(meetings)),
+        "row_count": int(len(kept_meetings)),
         "training_package_id": training_package_id,
         "stance_classes": list(STANCE_CLASSES),
         "built_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "config": config.to_dict(),
+        # Calibration convention: the calibration partition is a
+        # temporal tail of the train slice (last ``calibration_share``
+        # of pre-train_end sequences). Holdout = the post-train_end
+        # meetings up to the fold's ``test_end`` boundary. See
+        # ``train_and_persist`` for the carving logic.
+        "calibration_convention": "tail_of_train_slice",
     }
+    if model_parameter_count is not None:
+        manifest["model_parameter_count"] = int(model_parameter_count)
     _atomic_write_text(
         out_dir / "manifest.json",
         json.dumps(manifest, indent=2, sort_keys=True),
@@ -882,33 +1067,125 @@ def train_and_persist(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only
         history_length=history_length,
     )
 
-    sequences = build_training_sequences(
+    # Build BOTH the pre-train_end training pool (for fit) AND the
+    # post-train_end holdout pool (for walk-forward metrics) in a
+    # single pass over the meetings panel. Targets whose ``event_date``
+    # equals or exceeds ``train_end`` are walk-forward holdout; the
+    # rest are train + calibration. ``build_training_sequences`` with
+    # ``train_end=None`` returns every labelled target; we filter
+    # downstream with explicit boundaries so both slices share the
+    # same upstream pipeline.
+    all_sequences = build_training_sequences(
         meetings,
         embeddings=raw_embeddings,
         history_length=history_length,
-        train_end=resolved_train_end,
+        train_end=None,
     )
-    if not sequences:
+    if not all_sequences:
         raise RuntimeError(
             "training sequence build yielded zero rows — verify the parquet "
-            "carries statement rows with non-null axis_stance and that "
-            "train_end is not stripping every target."
+            "carries statement rows with non-null axis_stance."
         )
 
-    sequences, feature_mean, feature_std = standardise_inputs(
-        sequences, embedding_dim=embedding_dim
+    # Holdout boundary from the fold manifest when available. The
+    # walk-forward holdout for fold F is meetings with
+    # ``train_end <= event_date < test_end`` — exactly the slice the
+    # rest of the project's metrics benchmark against. When the
+    # manifest omits a ``test_end`` (or no fold was supplied) the
+    # holdout extends to end-of-history.
+    resolved_test_end: str | None = None
+    if fold_id is not None:
+        try:
+            resolved_test_end = resolve_test_end_from_fold(
+                events_parquet=Path(events_parquet), fold_id=fold_id
+            )
+        except Exception:  # pragma: no cover — guarded so a missing manifest never crashes the trainer
+            resolved_test_end = None
+
+    pre_cutoff: list[TrainingSequence] = []
+    post_cutoff: list[TrainingSequence] = []
+    if resolved_train_end is None:
+        pre_cutoff = list(all_sequences)
+    else:
+        for seq in all_sequences:
+            if seq.target_event_date < resolved_train_end:
+                pre_cutoff.append(seq)
+            else:
+                if (
+                    resolved_test_end is None
+                    or seq.target_event_date < resolved_test_end
+                ):
+                    post_cutoff.append(seq)
+    if not pre_cutoff:
+        raise RuntimeError(
+            "pre-train_end sequence pool is empty — verify train_end leaves "
+            "at least one labelled target inside the train slice."
+        )
+
+    # Calibration partition = TEMPORAL TAIL of the train slice (last
+    # ``calibration_share`` of pre-train_end sequences). Keeps the
+    # calibration pool walk-forward-correct without consuming holdout
+    # rows. ``holdout_share`` is preserved as a knob but only affects
+    # the legacy fallback path when no post-train_end slice exists.
+    n_pre = len(pre_cutoff)
+    n_calibration = max(0, int(n_pre * calibration_share))
+    train_sequences = pre_cutoff[: max(1, n_pre - n_calibration)]
+    calibration_sequences = pre_cutoff[max(1, n_pre - n_calibration) :]
+    if post_cutoff:
+        holdout_sequences = post_cutoff
+    else:
+        # Legacy / smoke fallback: no fold manifest and no train_end →
+        # carve a tail-of-train holdout so the metrics block is
+        # non-empty. This path is never the canonical walk-forward
+        # report and is documented as such in manifest.json.
+        n_holdout = max(0, int(n_pre * holdout_share))
+        if n_holdout > 0 and len(train_sequences) > n_holdout:
+            holdout_sequences = train_sequences[-n_holdout:]
+            train_sequences = train_sequences[:-n_holdout]
+        else:
+            holdout_sequences = []
+
+    # Standardise: fit mean / std on TRAIN ONLY, apply to all three
+    # partitions + the persisted raw_embeddings pathway (the inference
+    # path z-scores embeddings via the same stats stored in the npz).
+    feature_mean, feature_std = fit_standardisation_stats(
+        train_sequences, embedding_dim=embedding_dim
+    )
+    train_sequences = apply_standardisation(
+        train_sequences,
+        embedding_dim=embedding_dim,
+        mean=feature_mean,
+        std=feature_std,
+    )
+    calibration_sequences = apply_standardisation(
+        calibration_sequences,
+        embedding_dim=embedding_dim,
+        mean=feature_mean,
+        std=feature_std,
+    )
+    holdout_sequences = apply_standardisation(
+        holdout_sequences,
+        embedding_dim=embedding_dim,
+        mean=feature_mean,
+        std=feature_std,
     )
 
-    # Holdout / calibration carve from the END of the training pool so
-    # the slices are temporally contiguous (matches the walk-forward
-    # spirit of the rest of the project).
-    n_total = len(sequences)
-    n_calibration = max(0, int(n_total * calibration_share))
-    n_holdout = max(0, int(n_total * holdout_share))
-    n_train = max(1, n_total - n_calibration - n_holdout)
-    train_sequences = sequences[:n_train]
-    calibration_sequences = sequences[n_train : n_train + n_calibration]
-    holdout_sequences = sequences[n_train + n_calibration :]
+    # Fit the PCA projection axes on the TRAIN-SLICE embeddings only,
+    # so the 2D anchors that ship in the bundle never depend on the
+    # holdout slice's embedding geometry. The persisted parquet is
+    # filtered to the same train-slice rows in ``persist_bundle``.
+    if resolved_train_end is not None:
+        train_embedding_mask = np.array(
+            [row.event_date < resolved_train_end for row in meetings], dtype=bool
+        )
+    else:
+        train_embedding_mask = np.ones(len(meetings), dtype=bool)
+    train_embeddings_slice = (
+        raw_embeddings[train_embedding_mask]
+        if raw_embeddings.size
+        else raw_embeddings
+    )
+    pca_mean, pca_components = fit_pca_axes(train_embeddings_slice)
 
     model = train_model(
         train_sequences,
@@ -930,6 +1207,9 @@ def train_and_persist(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only
                 evaluation["labels"].tolist(),
                 evaluation["predictions"].tolist(),
                 seed=seed,
+            ),
+            "holdout_slice": (
+                "post_train_end_to_test_end" if post_cutoff else "tail_of_train_fallback"
             ),
         }
         # Naive-prior baseline: predict the modal class of the train slice.
@@ -955,6 +1235,18 @@ def train_and_persist(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only
         except ValueError:
             conformal_quantile = None
 
+    # Parameter count — methodological hygiene for the LSTM vs
+    # Transformer comparison. Logged on both the per-architecture
+    # metrics block and the manifest so a future reviewer can confirm
+    # the two arms ran with comparable capacity.
+    model_parameter_count: int | None = None
+    try:
+        model_parameter_count = int(sum(p.numel() for p in model.parameters()))
+        if metrics_payload is not None:
+            metrics_payload["model_parameter_count"] = model_parameter_count
+    except Exception:  # pragma: no cover — extremely defensive
+        model_parameter_count = None
+
     resolved_run_name = run_name or (
         DEFAULT_RUN_NAME_LSTM
         if architecture == "lstm"
@@ -977,12 +1269,18 @@ def train_and_persist(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only
         conformal_quantile=conformal_quantile,
         conformal_alpha=conformal_alpha if conformal_quantile is not None else None,
         training_package_id=training_package_id,
+        pca_mean=pca_mean,
+        pca_components=pca_components,
+        model_parameter_count=model_parameter_count,
     )
     _logger.info(
-        "trajectory_train_done architecture=%s rows=%d holdout=%d out_dir=%s",
+        "trajectory_train_done architecture=%s train_rows=%d cal_rows=%d "
+        "holdout_rows=%d holdout_slice=%s out_dir=%s",
         architecture,
-        n_train,
+        len(train_sequences),
+        len(calibration_sequences),
         len(holdout_sequences),
+        "post_train_end" if post_cutoff else "tail_of_train_fallback",
         out_dir,
     )
     return out_dir

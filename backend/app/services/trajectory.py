@@ -100,6 +100,59 @@ def bundle_available() -> bool:
     )
 
 
+def _load_npz_arrays(
+    npz_path: Path, bundle_dir: Path
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    """Load the embedding matrix + standardisation stats from the npz.
+
+    Falls back to zero-mean / unit-std with a logged warning when the
+    bundle predates the standardisation contract. ``NpzFile`` does not
+    support ``.get`` so the probe uses an explicit ``in .files`` check.
+    """
+
+    try:
+        npz = np.load(npz_path, allow_pickle=False)
+        embeddings = np.asarray(npz["embeddings"], dtype=np.float32)
+    except Exception:  # pragma: no cover — guarded so a malformed npz never 500s the worker
+        _logger.warning(
+            "trajectory_bundle_load_failed path=%s", bundle_dir, exc_info=True
+        )
+        return None
+    if "feature_mean" in npz.files:
+        feature_mean = np.asarray(npz["feature_mean"], dtype=np.float32)
+    else:
+        _logger.warning(
+            "trajectory_bundle_missing_feature_mean path=%s — falling back to zeros",
+            bundle_dir,
+        )
+        feature_mean = np.zeros(embeddings.shape[1], dtype=np.float32)
+    if "feature_std" in npz.files:
+        feature_std = np.asarray(npz["feature_std"], dtype=np.float32)
+    else:
+        _logger.warning(
+            "trajectory_bundle_missing_feature_std path=%s — falling back to ones",
+            bundle_dir,
+        )
+        feature_std = np.ones(embeddings.shape[1], dtype=np.float32)
+    feature_std[feature_std < 1e-6] = 1.0
+    return embeddings, feature_mean, feature_std
+
+
+def _load_conformal(bundle_dir: Path) -> tuple[float | None, float | None]:
+    conformal_path = bundle_dir / CONFORMAL_NAME
+    if not conformal_path.exists():
+        return None, None
+    try:
+        payload = json.loads(conformal_path.read_text(encoding="utf-8"))
+    except Exception:  # pragma: no cover
+        return None, None
+    raw_q = payload.get("softmax_quantile")
+    raw_a = payload.get("alpha")
+    q = float(raw_q) if raw_q is not None else None
+    a = float(raw_a) if raw_a is not None else None
+    return q, a
+
+
 def _load_state() -> _TrajectoryState | None:
     bundle_dir = _resolve_bundle_dir()
     if not bundle_available():
@@ -107,22 +160,15 @@ def _load_state() -> _TrajectoryState | None:
         return None
     try:
         metadata = pd.read_parquet(bundle_dir / PARQUET_NAME)
-        npz = np.load(bundle_dir / NPZ_NAME, allow_pickle=False)
-        embeddings = np.asarray(npz["embeddings"], dtype=np.float32)
-        feature_mean = np.asarray(
-            npz.get("feature_mean", np.zeros(embeddings.shape[1])),
-            dtype=np.float32,
-        )
-        feature_std = np.asarray(
-            npz.get("feature_std", np.ones(embeddings.shape[1])),
-            dtype=np.float32,
-        )
-        feature_std[feature_std < 1e-6] = 1.0
-    except Exception:  # pragma: no cover — guarded so a malformed bundle never 500s the worker
+    except Exception:  # pragma: no cover
         _logger.warning(
             "trajectory_bundle_load_failed path=%s", bundle_dir, exc_info=True
         )
         return None
+    loaded = _load_npz_arrays(bundle_dir / NPZ_NAME, bundle_dir)
+    if loaded is None:
+        return None
+    embeddings, feature_mean, feature_std = loaded
 
     try:
         model, config = load_model(bundle_dir / MODEL_NAME)
@@ -137,20 +183,7 @@ def _load_state() -> _TrajectoryState | None:
     except Exception:  # pragma: no cover
         manifest = {}
 
-    conformal_quantile: float | None = None
-    conformal_alpha: float | None = None
-    conformal_path = bundle_dir / CONFORMAL_NAME
-    if conformal_path.exists():
-        try:
-            payload = json.loads(conformal_path.read_text(encoding="utf-8"))
-            raw_q = payload.get("softmax_quantile")
-            if raw_q is not None:
-                conformal_quantile = float(raw_q)
-            raw_a = payload.get("alpha")
-            if raw_a is not None:
-                conformal_alpha = float(raw_a)
-        except Exception:  # pragma: no cover
-            conformal_quantile = None
+    conformal_quantile, conformal_alpha = _load_conformal(bundle_dir)
 
     return _TrajectoryState(
         model=model,
@@ -170,12 +203,27 @@ def _load_state() -> _TrajectoryState | None:
 
 
 def get_state() -> _TrajectoryState | None:
+    """Return the cached state, building it on first call.
+
+    Double-checked locking: the lock-free pre-check serves the steady
+    state, the lock is only contested on cold start, and the actual
+    bundle load (HF + torch + npz) runs OUTSIDE the lock so concurrent
+    first-hit requests do not serialize on the slow path. We accept
+    that two simultaneous first hits may both call ``_load_state``;
+    the second result is discarded by the compare-and-assign under the
+    lock so the worker still ends up with a single shared state.
+    """
+
     global _state
     if _state is not None:
         return _state
+    # Build outside the lock so a concurrent first-hit caller does not
+    # block on a multi-second torch.load. The worst case is duplicate
+    # work; correctness is preserved by the compare-and-assign below.
+    candidate = _load_state()
     with _state_lock:
         if _state is None:
-            _state = _load_state()
+            _state = candidate
         return _state
 
 
@@ -244,18 +292,29 @@ def _slice_history(
     as_of_iso: str,
     history_length: int,
 ) -> pd.DataFrame:
-    """Strict-backward window: rows with ``event_date <= as_of`` (most recent ``N``)."""
+    """Strict-backward window: rows with ``event_date < as_of`` (most recent ``N``).
+
+    Matches the strict-backward convention enforced by
+    :func:`app.retrieval.index.query` — a meeting whose ``event_date``
+    equals the query date is the meeting being projected, never an
+    eligible history marker.
+    """
 
     if metadata.empty:
         return metadata
-    eligible = metadata[metadata["event_date"].astype(str) <= as_of_iso]
+    eligible = metadata[metadata["event_date"].astype(str) < as_of_iso]
     if eligible.empty:
         return eligible
     eligible = eligible.sort_values("event_date").reset_index(drop=True)
     return eligible.tail(int(history_length)).reset_index(drop=True)
 
 
-def _market_for(state: _TrajectoryState, event_date: str) -> tuple[float | None, float | None]:
+def _market_for(
+    state: _TrajectoryState,
+    event_date: str,
+    *,
+    text_hash: str | None = None,
+) -> tuple[float | None, float | None]:
     """Return the per-meeting market block inputs for ``event_date``.
 
     Production path: the metadata frame already carries
@@ -263,10 +322,22 @@ def _market_for(state: _TrajectoryState, event_date: str) -> tuple[float | None,
     columns when the trainer included them; fall through to the
     optional ``market_provider`` callable when those columns are
     absent (tests / hot-reload of an older bundle).
+
+    ``text_hash`` disambiguates duplicate ``event_date`` rows (e.g.
+    intermeeting release stamped same-day as a statement). When set,
+    we key the lookup on the hash so the row returned matches the
+    history marker the embedding window was built from.
     """
 
     if state.metadata is not None and not state.metadata.empty:
-        row = state.metadata[state.metadata["event_date"].astype(str) == event_date]
+        if text_hash and "text_hash" in state.metadata.columns:
+            row = state.metadata[
+                state.metadata["text_hash"].astype(str) == str(text_hash)
+            ]
+        else:
+            row = state.metadata[
+                state.metadata["event_date"].astype(str) == event_date
+            ]
         if not row.empty:
             r0 = row.iloc[0]
             y = r0.get("pre_meeting_trailing_2y_yield_change_5d_bps")
@@ -337,8 +408,15 @@ def project_trajectory(  # noqa: C901 — keep the branches inline so the data f
     history_markers: list[dict[str, Any]] = []
     embeddings_window: list[np.ndarray] = []
     market_blocks: list[np.ndarray] = []
+    metadata_has_hash = (
+        state.metadata is not None and "text_hash" in state.metadata.columns
+    )
     for _, row in history_df.iterrows():
         event_date = str(row["event_date"])
+        text_hash_raw = row.get("text_hash") if metadata_has_hash else None
+        text_hash = (
+            str(text_hash_raw) if text_hash_raw is not None and str(text_hash_raw) != "" else None
+        )
         history_markers.append(
             {
                 "event_date": event_date,
@@ -349,22 +427,37 @@ def project_trajectory(  # noqa: C901 — keep the branches inline so the data f
                 ),
             }
         )
-        # Resolve the row's embedding from the npz matrix using a date
-        # lookup. The matrix is row-aligned with the parquet so iloc
-        # by the parquet's matching positional index reads the right
-        # vector.
-        parquet_idx = int(
-            state.metadata.index[
+        # Resolve the row's embedding from the npz matrix. With
+        # duplicate ``event_date`` rows (e.g. intermeeting release
+        # same-day as a statement) the date is not unique; prefer
+        # ``text_hash`` when the bundle carries it so the embedding,
+        # market block, and history marker all point at the same row.
+        if text_hash and metadata_has_hash:
+            matches = state.metadata.index[
+                state.metadata["text_hash"].astype(str) == text_hash
+            ]
+        else:
+            matches = state.metadata.index[
                 state.metadata["event_date"].astype(str) == event_date
-            ][0]
-        )
+            ]
+        parquet_idx = int(matches[0])
         raw_emb = state.embeddings[parquet_idx]
         embeddings_window.append(_standardise_embedding(raw_emb, state))
-        y, v = _market_for(state, event_date)
+        y, v = _market_for(state, event_date, text_hash=text_hash)
         market_blocks.append(
             market_feature_vector(
                 trailing_2y_yield_change_5d_bps=y, vix_close=v
             )
+        )
+
+    warning: str | None = None
+    if state.train_end and as_of_iso > str(state.train_end):
+        # The bundle's model never trained on meetings past ``train_end``;
+        # honour the request but flag the extrapolation so the caller
+        # can decide whether to surface a banner in the UI.
+        warning = (
+            "as_of_date is beyond train_end; projection extrapolates "
+            "beyond the walk-forward fold boundary"
         )
 
     if not embeddings_window:
@@ -377,6 +470,7 @@ def project_trajectory(  # noqa: C901 — keep the branches inline so the data f
             "train_end": state.train_end,
             "as_of_date": as_of_iso,
             "available": False,
+            "warning": warning,
         }
 
     padded_inputs, mask = pad_sequence(
@@ -425,6 +519,7 @@ def project_trajectory(  # noqa: C901 — keep the branches inline so the data f
         "train_end": state.train_end,
         "as_of_date": as_of_iso,
         "available": True,
+        "warning": warning,
     }
 
 

@@ -484,7 +484,7 @@ def _build_multi_axis_block(
     canonical_labels = ("hawkish", "dovish", "neutral")
     label = label_raw if label_raw in canonical_labels else "neutral"
 
-    distribution: dict[str, float] = {key: 0.0 for key in canonical_labels}
+    distribution: dict[str, float] = dict.fromkeys(canonical_labels, 0.0)
     for entry in sentiment.get("raw", []) or []:
         raw_label = str(entry.get("label", "")).strip().lower()
         if raw_label in distribution:
@@ -1124,4 +1124,5 @@ async def analyze_trajectory(payload: TrajectoryRequest) -> TrajectoryResponse:
         history_length=int(result.get("history_length", payload.history_length)),
         train_end=result.get("train_end"),
         as_of_date=str(result.get("as_of_date") or payload.as_of_date.isoformat()),
+        warning=result.get("warning"),
     )

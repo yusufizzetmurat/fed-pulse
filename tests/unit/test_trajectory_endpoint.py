@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -190,3 +191,232 @@ def test_analyze_trajectory_validates_missing_as_of_date(client: TestClient) -> 
         json={"history_length": 12},
     )
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Strict-backward boundary (finding 1)
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_trajectory_excludes_meeting_on_as_of_date(
+    client: TestClient,
+) -> None:
+    """A meeting whose ``event_date`` equals ``as_of_date`` is the
+    meeting being projected — never an eligible history marker.
+    Strict-backward enforces ``event_date < as_of_date``.
+    """
+
+    _install_fake_trajectory_state()
+    response = client.post(
+        "/analyze/trajectory",
+        # Latest fixture date is 2022-06-15 — query it directly.
+        json={"as_of_date": "2022-06-15", "history_length": 12},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    dates = {marker["event_date"] for marker in body["history"]}
+    assert "2022-06-15" not in dates, (
+        f"history leaked the as_of meeting: {sorted(dates)}"
+    )
+
+
+def test_analyze_trajectory_disambiguates_duplicate_event_dates(
+    client: TestClient,
+) -> None:
+    """When two metadata rows share an ``event_date`` (e.g. statement +
+    intermeeting release on the same day) the embedding-row lookup
+    must key on ``text_hash`` so the embedding matches the marker
+    being projected. Without the fix the first row always wins.
+    """
+
+    metadata = pd.DataFrame(
+        [
+            {
+                "event_date": "2020-03-15",
+                "text_hash": "h_statement",
+                "axis_stance": "dovish",
+                "embedding_2d_x": 0.1,
+                "embedding_2d_y": 0.2,
+                "pre_meeting_trailing_2y_yield_change_5d_bps": 1.0,
+                "vix_close": 15.0,
+            },
+            # Distinct second row sharing the same event_date.
+            {
+                "event_date": "2020-03-15",
+                "text_hash": "h_intermeeting",
+                "axis_stance": "neutral",
+                "embedding_2d_x": -0.3,
+                "embedding_2d_y": 0.4,
+                "pre_meeting_trailing_2y_yield_change_5d_bps": -2.5,
+                "vix_close": 60.0,
+            },
+            {
+                "event_date": "2020-06-10",
+                "text_hash": "h_june",
+                "axis_stance": "dovish",
+                "embedding_2d_x": 0.5,
+                "embedding_2d_y": -0.1,
+                "pre_meeting_trailing_2y_yield_change_5d_bps": 0.5,
+                "vix_close": 28.0,
+            },
+        ]
+    )
+    embedding_dim = 6
+    rng = np.random.default_rng(11)
+    embeddings = rng.normal(size=(len(metadata), embedding_dim)).astype(np.float32)
+    # Make the two same-date rows trivially distinguishable.
+    embeddings[0] = 1.0
+    embeddings[1] = -1.0
+    config = traj_model.TrajectoryConfig(
+        architecture="lstm", embedding_dim=embedding_dim, history_length=3
+    )
+    model = traj_model.build_model(config)
+    state = trajectory_service.build_state_for_tests(
+        model=model,
+        config=config,
+        embeddings=embeddings,
+        metadata=metadata,
+        encoder_alias="test_trajectory_encoder",
+        train_end="2025-01-01",
+        architecture="lstm",
+        conformal_quantile=0.5,
+        conformal_alpha=0.2,
+    )
+    trajectory_service.install_state(state)
+    response = client.post(
+        "/analyze/trajectory",
+        json={"as_of_date": "2020-07-01", "history_length": 3},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    # Both same-date rows must surface in the history slice.
+    history_hashes = {marker.get("event_date") for marker in body["history"]}
+    assert "2020-03-15" in history_hashes
+    # Projection runs cleanly with the disambiguated lookups.
+    assert body["projected_next"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Warning when as_of beyond train_end (finding 5b)
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_trajectory_emits_warning_when_as_of_beyond_train_end(
+    client: TestClient,
+) -> None:
+    _install_fake_trajectory_state()
+    # State has train_end="2025-01-01" — query past it.
+    response = client.post(
+        "/analyze/trajectory",
+        json={"as_of_date": "2030-01-01", "history_length": 4},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body.get("warning") is not None
+    assert "train_end" in body["warning"]
+
+
+# ---------------------------------------------------------------------------
+# Real-encoder smoke (finding 16) — guarded slow test
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.slow
+def test_analyze_trajectory_real_encoder_load_path(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Exercise the production ``_load_state`` path end-to-end with a
+    tiny real encoder + a synthetic bundle. Covers the regression
+    surface every other endpoint test bypasses (they all install a
+    pre-built state directly).
+
+    Skipped automatically when the tiny encoder is not cached locally
+    so the suite can run offline; full CI fetches it on demand.
+    """
+
+    import os
+
+    tiny_repo = os.environ.get(
+        "FED_PULSE_TEST_TINY_ENCODER", "sshleifer/tiny-distilbert-base-uncased"
+    )
+    try:
+        from transformers import AutoModel, AutoTokenizer  # type: ignore[import-not-found,unused-ignore]
+    except Exception:  # pragma: no cover
+        pytest.skip("transformers not available")
+
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(tiny_repo)
+        encoder = AutoModel.from_pretrained(tiny_repo)
+    except Exception as exc:  # pragma: no cover — offline / rate-limited
+        pytest.skip(f"tiny encoder unavailable: {exc!r}")
+
+    # Build a synthetic bundle with a couple of meeting rows and
+    # standardisation stats so ``_load_state`` produces a valid state.
+    bundle = tmp_path / "trajectory_real"
+    bundle.mkdir()
+    embedding_dim = encoder.config.hidden_size
+    dates = ["2020-01-29", "2021-03-17", "2022-06-15"]
+    metadata = pd.DataFrame(
+        [
+            {
+                "event_date": dt,
+                "text_hash": f"h_{idx}",
+                "axis_stance": ["hawkish", "dovish", "neutral"][idx % 3],
+                "embedding_2d_x": float(idx),
+                "embedding_2d_y": float(-idx),
+                "pre_meeting_trailing_2y_yield_change_5d_bps": float(idx),
+                "vix_close": 15.0 + idx,
+            }
+            for idx, dt in enumerate(dates)
+        ]
+    )
+    metadata.to_parquet(bundle / "embedding_index.parquet", index=False)
+    rng = np.random.default_rng(11)
+    embeddings = rng.normal(size=(len(dates), embedding_dim)).astype(np.float32)
+    feature_mean = embeddings.mean(axis=0).astype(np.float32)
+    feature_std = embeddings.std(axis=0).astype(np.float32)
+    feature_std[feature_std < 1e-6] = 1.0
+    np.savez(
+        bundle / "embedding_index.npz",
+        embeddings=embeddings,
+        feature_mean=feature_mean,
+        feature_std=feature_std,
+    )
+    config = traj_model.TrajectoryConfig(
+        architecture="lstm", embedding_dim=embedding_dim, history_length=4
+    )
+    model = traj_model.build_model(config)
+    traj_model.save_model(model, config, bundle / "model.pt")
+    (bundle / "manifest.json").write_text(
+        json.dumps(
+            {
+                "architecture": "lstm",
+                "encoder_alias": tiny_repo,
+                "encoder_revision": "",
+                "train_end": "2025-01-01",
+                "history_length": 4,
+                "embedding_dim": embedding_dim,
+                "n_classes": 3,
+                "row_count": len(dates),
+                "stance_classes": ["hawkish", "dovish", "neutral"],
+                "config": config.to_dict(),
+                "built_at_utc": "2026-05-26T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FED_PULSE_TRAJECTORY_DIR", str(bundle))
+    trajectory_service.reset_state()
+    response = client.post(
+        "/analyze/trajectory",
+        json={"as_of_date": "2023-01-01", "history_length": 4},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert body["projected_next"] is not None
+    assert body["encoder_alias"] == tiny_repo
+
+

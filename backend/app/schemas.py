@@ -812,3 +812,11 @@ class TrajectoryResponse(BaseModel):
         default="",
         description="Echo of the request as_of_date (ISO YYYY-MM-DD).",
     )
+    warning: str | None = Field(
+        default=None,
+        description=(
+            "Optional non-fatal advisory — set when ``as_of_date`` is "
+            "beyond the bundle's ``train_end`` so the caller can flag "
+            "that the projection extrapolates beyond the fold."
+        ),
+    )
