@@ -125,10 +125,12 @@ COPY backend/ /app/backend/
 COPY scripts/ /app/scripts/
 
 # Next.js standalone bundle: server.js + minimal node_modules slice.
-# The static / public assets need to land alongside the server output.
+# The static assets land alongside the server output. The optional
+# frontend/public/ directory is omitted — the project does not ship
+# static root-level assets (favicon, robots.txt, etc.) so the
+# Next.js standalone runtime serves only what `.next/static` carries.
 COPY --from=builder-frontend /app/.next/standalone /app/frontend/
 COPY --from=builder-frontend /app/.next/static /app/frontend/.next/static
-COPY --from=builder-frontend /app/public /app/frontend/public
 
 COPY deploy/entrypoint.sh /entrypoint.sh
 COPY deploy/s6-services /etc/s6-overlay/s6-rc.d
