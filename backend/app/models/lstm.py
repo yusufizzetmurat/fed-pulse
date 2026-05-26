@@ -342,12 +342,14 @@ class ForecasterModel(nn.Module):
             # classification branch (which carries the
             # forward_realized_vol_10d target); regression-output mode
             # already emits (close, vol) and ignores head_mode entirely.
-            # The #292 rates heads share the same constraint -- they
-            # ride on the classification output_mode so the rates
-            # target tensors line up with the per-fold class manifold;
-            # regression-output mode never mounts them.
+            # #317 finding #8: the factory now raises at construction
+            # time if rates_heads is non-empty alongside
+            # output_mode='regression', so reaching this branch with
+            # active rates heads is a programmer error. The empty
+            # ModuleDict defaults stay so the regression-only forward
+            # paths keep their attribute checks cheap.
             self.regression_head = None
-            self.rates_heads_active = ()
+            self.rates_heads_active: tuple[str, ...] = ()
             self.rates_regression_heads = nn.ModuleDict()
             self.rates_classification_heads = nn.ModuleDict()
 

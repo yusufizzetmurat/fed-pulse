@@ -126,6 +126,16 @@ def build_forecaster(
         kwargs.pop("rates_head_mode", "regression") or "regression"
     )
     rates_alpha_value = float(kwargs.pop("rates_alpha", 0.5))
+    # #317 finding #8: fail fast at the factory rather than silently
+    # zeroing rates_heads when output_mode='regression'. The operator
+    # gets a clear error message instead of a checkpoint that
+    # advertises rates_heads in its config but mounts no rates heads.
+    if rates_heads_tuple and resolved.output_mode == "regression":
+        raise ValueError(
+            "rates_heads can only be mounted alongside "
+            "output_mode='classification' (current: 'regression'). "
+            "Pass --output-mode classification or --rates-heads none."
+        )
     # Phase 9 V2 (#195) fields all forwarded: ``output_mode`` /
     # ``n_classes`` drive the head shape; ``vol_regime_quantiles`` /
     # ``vol_regime_target`` ride on the module so the checkpoint

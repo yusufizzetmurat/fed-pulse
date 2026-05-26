@@ -77,6 +77,12 @@ def _metrics_from_payload(payload: dict[str, Any] | None) -> EvaluationMetrics |
 
         breakdown_raw = metrics.get("classification_breakdown")
         breakdown = breakdown_raw if isinstance(breakdown_raw, dict) else None
+        # #317 finding #7: forward the per-head rates_metrics block so a
+        # checkpoint with rates heads round-trips through the loader.
+        rates_metrics_raw = metrics.get("rates_metrics")
+        rates_metrics = (
+            rates_metrics_raw if isinstance(rates_metrics_raw, dict) else None
+        )
 
         try:
             return EvaluationMetrics(
@@ -91,6 +97,7 @@ def _metrics_from_payload(payload: dict[str, Any] | None) -> EvaluationMetrics |
                 regime_f1_macro=_opt_float("regime_f1_macro"),
                 regime_loss=_opt_float("regime_loss"),
                 classification_breakdown=breakdown,
+                rates_metrics=rates_metrics,
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -126,6 +133,19 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             vol_regime_target=str(
                 raw.get("vol_regime_target", "forward_realized_vol_10d")
             ),
+            # #317 finding #4 mirror: forward post-#292 rates fields
+            # so a checkpoint with rates heads rehydrates the same
+            # rates config the run trained against. Pre-#292
+            # checkpoints leave these absent and the defaults give back
+            # the empty-tuple no-op.
+            rates_heads=tuple(
+                str(v).lower()
+                for v in (raw.get("rates_heads") or ())
+            ),
+            rates_head_mode=str(
+                raw.get("rates_head_mode", "regression") or "regression"
+            ),
+            rates_alpha=float(raw.get("rates_alpha", 0.5)),
         )
     return ModelConfig()
 

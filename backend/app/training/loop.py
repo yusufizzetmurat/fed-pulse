@@ -139,6 +139,19 @@ def _coerce_model_config(model_config: ModelConfig | dict[str, Any] | None = Non
             architecture=str(model_config.get("architecture", "lstm")),
             text_embedding_dim=int(model_config.get("text_embedding_dim", 0) or 0),
             text_adapter_dim=int(model_config.get("text_adapter_dim", 0) or 0),
+            # #317 finding #4: forward post-#292 rates fields so a
+            # checkpoint with rates heads round-trips through the
+            # loader. Pre-#292 callers leave these keys absent and the
+            # defaults give back the empty-tuple no-op.
+            rates_heads=tuple(
+                str(v).lower()
+                for v in (model_config.get("rates_heads") or ())
+            ),
+            rates_head_mode=str(
+                model_config.get("rates_head_mode", "regression")
+                or "regression"
+            ),
+            rates_alpha=float(model_config.get("rates_alpha", 0.5)),
         )
     return ModelConfig()
 
@@ -347,6 +360,7 @@ def _compute_rates_loss(
             "choose one of regression / classification / dual."
         )
     loss_accum: torch.Tensor | None = None
+    n_contrib = 0
     for name in head_names:
         bundle = rates_targets.per_head.get(name)
         if bundle is None:
@@ -367,7 +381,11 @@ def _compute_rates_loss(
                 # density.
                 denom = float(bps_mask.sum().item()) or 1.0
                 mse = (diff * diff).sum() / denom
-                head_loss = mse if mode == "regression" else alpha * mse
+                # Apply alpha uniformly across regression and dual modes
+                # (#317 finding #1: previously alpha was discarded in
+                # regression-only mode so the CLI sweep over --rates-alpha
+                # produced identical trajectories).
+                head_loss = alpha * mse
         if mode in {"classification", "dual"} and cls_logits_key in logits_dict:
             cls_logits = logits_dict[cls_logits_key]
             cls_target = bundle.cls_target.to(cls_logits.device)
@@ -392,6 +410,16 @@ def _compute_rates_loss(
         if head_loss is None:
             continue
         loss_accum = head_loss if loss_accum is None else loss_accum + head_loss
+        n_contrib += 1
+    if loss_accum is None:
+        return None
+    # #317 finding #2: per-head rates losses are roughly unit-variance
+    # under the train-fit bps_scaler, so summing across 3 heads triples
+    # the rates branch's gradient share relative to a single-head run.
+    # Averaging keeps the rates contribution comparable to one MSE / CE
+    # term and preserves the alpha semantics #314 established.
+    if n_contrib > 1:
+        loss_accum = loss_accum / float(n_contrib)
     return loss_accum
 
 
@@ -464,6 +492,17 @@ def _compute_rates_partition_metrics(
     pred_buffers: dict[str, list[float]] = {name: [] for name in head_names}
     actual_buffers: dict[str, list[float]] = {name: [] for name in head_names}
     mask_buffers: dict[str, list[bool]] = {name: [] for name in head_names}
+    # #317 finding #3 + #18: per-head aux classifier softmax + true
+    # class buffers so the conformal calibrator can fit the per-head
+    # APS quantile and the manifest emits a real
+    # ``rates_softmax_quantiles`` map instead of None.
+    cls_softmax_buffers: dict[str, list[list[float]]] = {name: [] for name in head_names}
+    cls_target_buffers: dict[str, list[int]] = {name: [] for name in head_names}
+    cls_mask_buffers: dict[str, list[bool]] = {name: [] for name in head_names}
+    # #317 finding #18 -- track which heads the model actually emits a
+    # forward output for. Empty means the model lacks rates heads and
+    # the helper short-circuits at the bottom with a single info log.
+    heads_with_output: set[str] = set()
     if isinstance(underlying, nn.Module):
         underlying.eval()
     with torch.no_grad():
@@ -482,14 +521,26 @@ def _compute_rates_partition_metrics(
             out = forward_multi(batch_x, **kwargs)
             for name in head_names:
                 pred_key = f"rates_{name}_bps"
+                cls_key = f"rates_{name}_cls_logits"
                 if pred_key not in out:
                     continue
+                heads_with_output.add(name)
                 pred_std = out[pred_key].detach().to("cpu")
+                cls_logits_tensor = (
+                    out[cls_key].detach().to("cpu") if cls_key in out else None
+                )
+                cls_softmax_tensor = (
+                    torch.softmax(cls_logits_tensor, dim=-1)
+                    if cls_logits_tensor is not None
+                    else None
+                )
                 bundle = rates_targets.per_head.get(name)
                 if bundle is None:
                     continue
                 target_std = bundle.bps_target[start:stop]
                 mask = bundle.bps_mask[start:stop]
+                cls_target_slice = bundle.cls_target[start:stop]
+                cls_mask_slice = bundle.cls_mask[start:stop]
                 scaler_payload = rates_scalers.get(name)
                 if isinstance(scaler_payload, RatesHeadScaler):
                     scaler = scaler_payload
@@ -507,6 +558,19 @@ def _compute_rates_partition_metrics(
                     pred_buffers[name].append(pred_raw)
                     actual_buffers[name].append(target_raw)
                     mask_buffers[name].append(is_masked)
+                    if cls_softmax_tensor is not None:
+                        cls_softmax_buffers[name].append(
+                            [float(v) for v in cls_softmax_tensor[i].tolist()]
+                        )
+                        cls_target_buffers[name].append(int(cls_target_slice[i].item()))
+                        cls_mask_buffers[name].append(bool(cls_mask_slice[i].item()))
+    # #317 finding #18: short-circuit + log when the model lacks rates
+    # heads so operators see why the conformal sidecar is empty.
+    if not heads_with_output:
+        _logger.info(
+            "rates partition metrics skipped: model exposes no rates head outputs"
+        )
+        return None
     out_metrics: dict[str, dict[str, Any]] = {}
     for name in head_names:
         preds = pred_buffers[name]
@@ -523,6 +587,9 @@ def _compute_rates_partition_metrics(
                 "mae_bps": None,
                 "directional_accuracy": None,
                 "r_squared": None,
+                "cls_softmax_scores": [],
+                "cls_true_classes": [],
+                "cls_mask": [],
             }
             continue
         kept_preds = [p for p, _ in kept_pairs]
@@ -534,6 +601,12 @@ def _compute_rates_partition_metrics(
             predicted=kept_preds,
             observed=kept_actuals,
         )
+        # #317 finding #3: persist per-head aux classifier softmax +
+        # true class buffers so the rates conformal manifest can fit
+        # the per-head APS quantile on these rows.
+        cls_softmax_rows = cls_softmax_buffers[name]
+        cls_target_rows = cls_target_buffers[name]
+        cls_mask_rows = cls_mask_buffers[name]
         out_metrics[name] = {
             "predictions_bps": kept_preds,
             "actuals_bps": kept_actuals,
@@ -541,7 +614,15 @@ def _compute_rates_partition_metrics(
             "mae_bps": panel["mae_bps"].to_dict(),
             "directional_accuracy": panel["directional_accuracy"].to_dict(),
             "r_squared": panel["r_squared"].to_dict(),
+            "cls_softmax_scores": cls_softmax_rows,
+            "cls_true_classes": cls_target_rows,
+            "cls_mask": cls_mask_rows,
         }
+    # #317 finding #18: empty out_metrics means every head produced
+    # zero kept rows. Surface the short-circuit so calibration is
+    # skipped rather than silently emitting empty per-head blocks.
+    if not out_metrics:
+        return None
     return out_metrics
 
 
@@ -671,27 +752,49 @@ def _unpack_batch(
     """
 
     arity = len(batch)
-    # #292 -- the rates_index tensor may ride at the tail of every supported
-    # arity. The tensor is always 1-D ``int64`` while the other trailing
-    # slots (``log_rv``) are 1-D ``float32`` and the multi-task ``factor``
-    # is 1-D ``float32``. We detect the optional trailing rates_index by
-    # dtype on int64 + dim==1 + matching batch_size, and strip it before
-    # falling through to the legacy arity dispatch.
+    # #292 / #317 finding #9 -- the rates_index tensor may ride at the
+    # tail of every supported arity. The full contract is:
+    #
+    #   - dtype is exactly ``torch.int64``;
+    #   - dim is 1;
+    #   - shape[0] == batch_size_probe (the per-row index tensor agrees
+    #     with the rest of the batch);
+    #   - all values are in ``[0, batch_size_probe)`` because the
+    #     producer is ``torch.arange(N)`` (rates_index identifies the
+    #     row in the partition, never a sentinel like -1);
+    #   - the remaining arity after the strip falls into the documented
+    #     set ``{2, 3, 4, 5, 8, 9, 10, 11}``.
+    #
+    # A future aux int64 tensor that pairs with a different role
+    # (e.g. timestamps, group ids) will violate one of the dtype /
+    # range / arity guards and fall through to the legacy dispatch
+    # rather than being silently consumed. The arity-registry refactor
+    # is the longer-term fix; this fix-up batch tightens the dtype
+    # sniff with the value-range guard as the cheap interim.
     batch_list = list(batch)
     batch_x_probe = batch_list[0]
     batch_size_probe = int(batch_x_probe.size(0))
     trailing_rates_index: torch.Tensor | None = None
     if batch_list:
         candidate = batch_list[-1]
-        if (
+        is_rates_index_candidate = (
             isinstance(candidate, torch.Tensor)
             and candidate.dim() == 1
             and candidate.dtype == torch.int64
             and int(candidate.size(0)) == batch_size_probe
             and len(batch_list) - 1 in {2, 3, 4, 5, 8, 9, 10, 11}
-        ):
-            trailing_rates_index = candidate
-            batch_list = batch_list[:-1]
+        )
+        if is_rates_index_candidate:
+            # Value-range guard: rates_index is produced by torch.arange(N)
+            # so every row is in ``[0, N)``. A future aux int64 tensor
+            # that uses negatives (e.g. timestamps as epoch-deltas) or
+            # values >= N will be rejected here and fall through to the
+            # legacy dispatch.
+            min_val = int(candidate.min().item()) if candidate.numel() else 0
+            max_val = int(candidate.max().item()) if candidate.numel() else 0
+            if 0 <= min_val and max_val < batch_size_probe:
+                trailing_rates_index = candidate
+                batch_list = batch_list[:-1]
     arity = len(batch_list)
     if arity == 2:
         batch_x, batch_y = batch_list
@@ -859,30 +962,65 @@ def _maybe_write_rates_conformal_manifest(
     from app.evaluation.conformal import (
         DEFAULT_CLASSIFICATION_ALPHA,
         ConformalManifest,
+        calibrate_classification_conformal,
         calibrate_rates_regression_conformal,
         load_manifest,
         save_manifest,
     )
 
     rates_residuals: dict[str, float] = {}
+    # #317 finding #3: per-head APS quantile on the val partition's
+    # aux classifier softmax + true bucket labels. Persists into
+    # ``rates_softmax_quantiles`` so the inference path can emit a
+    # calibrated prediction set per rates head.
+    rates_softmax: dict[str, float] = {}
     for name in head_names:
         head_block = rates_metrics.get(name) if isinstance(rates_metrics, dict) else None
         if not isinstance(head_block, dict):
             continue
         preds = head_block.get("predictions_bps") or []
         actuals = head_block.get("actuals_bps") or []
-        if len(preds) < 2 or len(actuals) < 2:
-            continue
-        try:
-            q = calibrate_rates_regression_conformal(
-                predictions_bps=preds,
-                actuals_bps=actuals,
-                alpha=DEFAULT_CLASSIFICATION_ALPHA,
+        if len(preds) >= 2 and len(actuals) >= 2:
+            try:
+                q = calibrate_rates_regression_conformal(
+                    predictions_bps=preds,
+                    actuals_bps=actuals,
+                    alpha=DEFAULT_CLASSIFICATION_ALPHA,
+                )
+                rates_residuals[name] = float(q)
+            except ValueError:
+                pass
+        # Per-head aux classifier APS quantile. Filter on cls_mask so
+        # only rows the classifier saw a real label for contribute.
+        softmax_rows_raw = head_block.get("cls_softmax_scores") or []
+        true_classes_raw = head_block.get("cls_true_classes") or []
+        cls_mask_raw = head_block.get("cls_mask") or []
+        if (
+            len(softmax_rows_raw) >= 2
+            and len(true_classes_raw) == len(softmax_rows_raw)
+        ):
+            mask = (
+                cls_mask_raw
+                if len(cls_mask_raw) == len(softmax_rows_raw)
+                else [True] * len(softmax_rows_raw)
             )
-        except ValueError:
-            continue
-        rates_residuals[name] = float(q)
-    if not rates_residuals:
+            softmax_rows = [
+                row for row, m in zip(softmax_rows_raw, mask) if m
+            ]
+            true_classes = [
+                int(c) for c, m in zip(true_classes_raw, mask) if m
+            ]
+            if len(softmax_rows) >= 2:
+                try:
+                    cls_q = calibrate_classification_conformal(
+                        softmax_scores=softmax_rows,
+                        true_classes=true_classes,
+                        alpha=DEFAULT_CLASSIFICATION_ALPHA,
+                    )
+                    rates_softmax[name] = float(cls_q)
+                except ValueError:
+                    pass
+    if not rates_residuals and not rates_softmax:
         return
 
     sidecar = Path(str(checkpoint_target.with_suffix("")) + ".conformal.json")
@@ -910,14 +1048,21 @@ def _maybe_write_rates_conformal_manifest(
                 "calibration_n": existing.calibration_n,
                 "notes": existing.notes,
                 "softmax_quantile": existing.softmax_quantile,
-                "rates_softmax_quantiles": existing.rates_softmax_quantiles,
             }
         )
-    base_kwargs["rates_residual_quantiles"] = rates_residuals
+    if rates_residuals:
+        base_kwargs["rates_residual_quantiles"] = rates_residuals
+    elif existing is not None and existing.rates_residual_quantiles:
+        base_kwargs["rates_residual_quantiles"] = existing.rates_residual_quantiles
+    if rates_softmax:
+        base_kwargs["rates_softmax_quantiles"] = rates_softmax
+    elif existing is not None and existing.rates_softmax_quantiles:
+        base_kwargs["rates_softmax_quantiles"] = existing.rates_softmax_quantiles
     manifest = ConformalManifest(**base_kwargs)
     save_manifest(manifest, sidecar)
     print(
         f"[conformal] calibrated rates residual_quantiles={rates_residuals} "
+        f"softmax_quantiles={rates_softmax} "
         f"-> {sidecar.name}",
         flush=True,
     )
@@ -2694,7 +2839,13 @@ def train_model(
     # tensors as a tracker so the loop still has a stopping signal.
     # ``val_metrics`` then collapses to the training-set value and
     # ``test_metrics`` stays the headline number.
-    if val_x is None or val_y is None or len(val_x) == 0:
+    # #317 finding #5: track whether val_x_used is the real val
+    # partition or a fallback to train. The rates conformal calibrator
+    # must skip when this is a fallback so the residual quantile is
+    # not fit on the same rows the model trained against (which would
+    # be anticonservative).
+    val_partition_is_real = not (val_x is None or val_y is None or len(val_x) == 0)
+    if not val_partition_is_real:
         val_x_used = train_x
         val_y_used = train_y
         val_text_emb_used = train_text_emb
@@ -3504,9 +3655,18 @@ def train_model(
         # rates head. The helper merges into the existing sidecar
         # written above so a single .conformal.json file carries the
         # legacy vol-regime softmax_quantile AND every rates band.
-        _maybe_write_rates_conformal_manifest(
-            best_val_metrics, checkpoint_target, head_names=active_rates_heads
-        )
+        # #317 finding #5: skip when val_x_used fell back to train_x;
+        # fitting on the train rows would be anticonservative.
+        if not val_partition_is_real:
+            if rates_heads_active:
+                _logger.warning(
+                    "rates conformal calibration skipped: "
+                    "no validation partition available"
+                )
+        else:
+            _maybe_write_rates_conformal_manifest(
+                best_val_metrics, checkpoint_target, head_names=active_rates_heads
+            )
         if encoder_lora_bundle is not None:
             # Round 5 (#244) sidecar: write only the LoRA adapter state
             # (not the base encoder weights) so a future audit / resume

@@ -260,13 +260,35 @@ class RatesReactionCard(BaseModel):
         default=None,
         description="Nominal conformal coverage (1 - alpha). None when bands are absent.",
     )
-    directional_bucket: str = Field(
-        ...,
-        description="easing | neutral | tightening (argmax of the auxiliary classifier).",
+    # #317 finding #10: when the checkpoint has no aux classifier
+    # mounted (regression-only mode or unbuilt cls head) the response
+    # must clearly say "not available" rather than emitting a fake
+    # argmax over uniform probabilities. Nullable fields let the
+    # frontend render a "no model evidence" badge instead.
+    directional_bucket: str | None = Field(
+        default=None,
+        description=(
+            "easing | neutral | tightening (argmax of the auxiliary "
+            "classifier). None when no aux classifier is mounted."
+        ),
     )
-    bucket_probabilities: dict[str, float] = Field(
-        default_factory=dict,
-        description="Per-bucket softmax probabilities over (easing, neutral, tightening).",
+    bucket_probabilities: dict[str, float] | None = Field(
+        default=None,
+        description=(
+            "Per-bucket softmax probabilities over "
+            "(easing, neutral, tightening). None when no aux "
+            "classifier is mounted."
+        ),
+    )
+    # #317 finding #3: calibrated APS prediction set per rates head
+    # (subset of {easing, neutral, tightening}). None when no
+    # ``rates_softmax_quantiles`` sidecar is present.
+    predicted_set: list[str] | None = Field(
+        default=None,
+        description=(
+            "Calibrated APS prediction set per rates head. None when "
+            "no conformal sidecar is present."
+        ),
     )
 
 
