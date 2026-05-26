@@ -126,33 +126,36 @@ def _coerce_model_config(model_config: ModelConfig | dict[str, Any] | None = Non
     if isinstance(model_config, ModelConfig):
         return model_config
     if isinstance(model_config, dict):
-        return ModelConfig(
-            input_size=int(model_config.get("input_size", FEATURE_SIZE)),
-            hidden_size=int(model_config.get("hidden_size", DEFAULT_HIDDEN_SIZE)),
-            num_layers=int(model_config.get("num_layers", DEFAULT_NUM_LAYERS)),
-            dropout=float(model_config.get("dropout", DEFAULT_DROPOUT)),
-            head_hidden_size=int(model_config.get("head_hidden_size", DEFAULT_HEAD_HIDDEN_SIZE)),
-            initial_decay_rate=float(model_config.get("initial_decay_rate", DEFAULT_INITIAL_DECAY_RATE)),
-            text_channel=str(model_config.get("text_channel", "scalar")),
-            embedding_adapter_dim=int(model_config.get("embedding_adapter_dim", 128)),
-            credibility_features=bool(model_config.get("credibility_features", False)),
-            architecture=str(model_config.get("architecture", "lstm")),
-            text_embedding_dim=int(model_config.get("text_embedding_dim", 0) or 0),
-            text_adapter_dim=int(model_config.get("text_adapter_dim", 0) or 0),
-            # #317 finding #4: forward post-#292 rates fields so a
-            # checkpoint with rates heads round-trips through the
-            # loader. Pre-#292 callers leave these keys absent and the
-            # defaults give back the empty-tuple no-op.
-            rates_heads=tuple(
-                str(v).lower()
-                for v in (model_config.get("rates_heads") or ())
-            ),
-            rates_head_mode=str(
-                model_config.get("rates_head_mode", "regression")
-                or "regression"
-            ),
-            rates_alpha=float(model_config.get("rates_alpha", 0.5)),
-        )
+        # The historical implementation listed each ``ModelConfig`` field
+        # individually and silently dropped anything not enumerated --
+        # which meant a checkpoint's ``output_mode``, ``n_classes``,
+        # ``vol_regime_quantiles``, ``head_mode``, ``multi_task_loss`` and
+        # most other post-baseline fields never reached the rebuilt
+        # config. The reloaded model therefore inherited the dataclass
+        # defaults, mismatched the checkpoint's head shape on load, and
+        # crashed at inference when callers relied on attributes the
+        # checkpoint had actually persisted (the on-disk
+        # ``forecaster_best.pt`` regularly hits this on
+        # ``test_forecast_quantitative_series_fast_shape`` and friends).
+        # ``dataclasses.fields`` is the source of truth; we forward every
+        # key the dataclass declares, with type-coercion only for the
+        # fields that JSON round-trips lossy (tuples become lists, etc.).
+        field_names = {f.name for f in dataclasses.fields(ModelConfig)}
+        tuple_fields = {
+            "rates_heads",
+            "vol_regime_quantiles",
+        }
+        kwargs: dict[str, Any] = {}
+        for key, value in model_config.items():
+            if key not in field_names:
+                continue
+            if key == "rates_heads":
+                kwargs[key] = tuple(str(v).lower() for v in (value or ()))
+            elif key in tuple_fields:
+                kwargs[key] = tuple(float(v) for v in (value or ()))
+            else:
+                kwargs[key] = value
+        return ModelConfig(**kwargs)
     return ModelConfig()
 
 
