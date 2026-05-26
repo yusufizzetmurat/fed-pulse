@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -48,6 +49,27 @@ class ConformalManifest:
     softmax_quantile: float | None = None
     rates_residual_quantiles: dict[str, float] | None = None
     rates_softmax_quantiles: dict[str, float] | None = None
+    # #326 conditional-coverage diagnostics. Both fields are computed on
+    # the same calibration partition the ``softmax_quantile`` was fitted
+    # on so they stay paired with the manifest's nominal coverage claim.
+    # ``class_conditional_coverage`` maps the class label (string,
+    # matches the active checkpoint's ``stance_classes`` / regime label
+    # tuple) to empirical coverage = fraction of rows in that class
+    # whose true label is inside the APS prediction set. A class whose
+    # row count is zero on the calibration fold maps to ``nan``.
+    # ``set_size_distribution`` maps the integer set size (``1``, ``2``,
+    # ``3`` for the 3-class regime target) to the fraction of rows
+    # emitting that set size, summing to ``1.0`` within finite-sample
+    # rounding. Pre-#326 manifests round-trip with both fields ``None``.
+    # On regression-canonical checkpoints the same fields carry the
+    # bucketed-regression interpretation -- the calibrator bins the
+    # predicted log_rv via ``bucket_log_rv`` and reports the same
+    # diagnostics under the regression band's coverage surface; the
+    # manifest's ``notes`` field surfaces the dual interpretation so a
+    # downstream reader can tell which calibration produced the
+    # numbers.
+    class_conditional_coverage: dict[str, float] | None = None
+    set_size_distribution: dict[int, float] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -66,6 +88,31 @@ class ConformalManifest:
             "rates_softmax_quantiles": (
                 dict(self.rates_softmax_quantiles)
                 if self.rates_softmax_quantiles
+                else None
+            ),
+            "class_conditional_coverage": (
+                # NaN sneaks in when a class is absent from the calibration
+                # fold (compute_class_conditional_coverage returns float('nan')
+                # for empty class slices); json.dumps would emit the bare
+                # `NaN` token, which is not RFC-8259-compliant and would
+                # crash load_manifest on read. Map NaN to None so the JSON
+                # round-trip stays valid.
+                {
+                    str(k): (None if not math.isfinite(float(v)) else float(v))
+                    for k, v in self.class_conditional_coverage.items()
+                }
+                if self.class_conditional_coverage is not None
+                else None
+            ),
+            "set_size_distribution": (
+                # JSON object keys must be strings; the loader reverses
+                # this to int on read. NaN handling mirrors the class
+                # coverage branch above.
+                {
+                    str(int(k)): (None if not math.isfinite(float(v)) else float(v))
+                    for k, v in self.set_size_distribution.items()
+                }
+                if self.set_size_distribution is not None
                 else None
             ),
         }
@@ -279,6 +326,223 @@ def empirical_classification_coverage(
     return inside / len(predicted_sets)
 
 
+def compute_class_conditional_coverage(
+    predicted_sets: Sequence[Sequence[int]],
+    true_classes: Sequence[int],
+    class_names: Sequence[str],
+) -> dict[str, float]:
+    """Per-class empirical coverage on the calibration partition (#326).
+
+    APS marginally covers ``1 - alpha`` of rows under exchangeability;
+    that guarantee is silent on the per-class slice. A model whose
+    softmax is systematically miscalibrated on one class (the #326
+    canonical example: ``normal`` at ~7 % recall on the 3-class
+    vol-regime head) can emit prediction sets that exclude that class
+    almost every row while marginal coverage still reads at nominal.
+    The helper measures the per-class slice directly: for each class
+    label, divide ``#{rows whose true class is in the set}`` by
+    ``#{rows whose true class is that label}``.
+
+    ``class_names`` is the active checkpoint's label tuple (regime
+    label tuple on the vol-regime head; stance label tuple on the
+    stance head). Classes with zero rows on the calibration partition
+    map to ``float('nan')`` so the downstream gap-flag helper can
+    distinguish "empty slice" from "degenerate coverage". Returns a
+    fresh dict keyed by the string label so the manifest round-trip
+    stays serialisable.
+    """
+
+    if len(predicted_sets) != len(true_classes):
+        raise ValueError(
+            f"predicted_sets ({len(predicted_sets)}) and true_classes "
+            f"({len(true_classes)}) must align in length."
+        )
+    if not class_names:
+        raise ValueError("class_names must carry at least one label.")
+    coverage: dict[str, float] = {}
+    for class_idx, label in enumerate(class_names):
+        row_total = 0
+        inside = 0
+        for predicted_set, true_class in zip(predicted_sets, true_classes):
+            if int(true_class) != class_idx:
+                continue
+            row_total += 1
+            if int(true_class) in {int(x) for x in predicted_set}:
+                inside += 1
+        coverage[str(label)] = (
+            float(inside) / float(row_total) if row_total > 0 else float("nan")
+        )
+    return coverage
+
+
+def compute_set_size_distribution(
+    predicted_sets: Sequence[Sequence[int]],
+    *,
+    n_classes: int = 3,
+) -> dict[int, float]:
+    """Fraction of rows emitting each prediction-set size (#326).
+
+    The 3-class APS surface admits sizes ``{1, 2, 3}``; the helper
+    returns a dict keyed by every size in ``[1, n_classes]`` so the
+    distribution sums to 1.0 even when one or more sizes never appear
+    (their entry is ``0.0`` rather than missing). Pathological empty
+    sets (which ``predict_conformal_set`` already rewrites to the
+    argmax singleton) would land in the ``0`` bucket, which is
+    intentionally absent from the contract -- if a future surface
+    emits true empty sets, this helper will raise rather than silently
+    hide them.
+
+    Returns a fresh dict keyed by ``int``. ``n_classes`` defaults to
+    3 to match the active vol-regime / stance heads; callers on a
+    different cardinality target pass the right number.
+    """
+
+    if n_classes < 1:
+        raise ValueError(f"n_classes must be >= 1; got {n_classes!r}.")
+    total = len(predicted_sets)
+    if total == 0:
+        # NaN per bucket so an empty partition does not fabricate a
+        # 0.0 mass for every size -- the caller knows the calibration
+        # partition was empty and needs to surface that on the
+        # manifest.
+        return {k: float("nan") for k in range(1, n_classes + 1)}
+    counts: Counter[int] = Counter()
+    for predicted_set in predicted_sets:
+        size = len(predicted_set)
+        if size <= 0:
+            raise ValueError(
+                "predicted_sets must not carry empty sets; APS contract "
+                "rewrites empties to {argmax} (see predict_conformal_set)."
+            )
+        if size > n_classes:
+            raise ValueError(
+                f"predicted set size {size} exceeds n_classes={n_classes}."
+            )
+        counts[size] += 1
+    return {k: float(counts.get(k, 0)) / float(total) for k in range(1, n_classes + 1)}
+
+
+def class_conditional_gap_flag(
+    coverage_dict: Mapping[str, float],
+    *,
+    nominal: float = 0.80,
+    tolerance: float = 0.10,
+) -> list[str]:
+    """Return the class names whose conditional coverage falls > tolerance below nominal.
+
+    A class with ``coverage < (nominal - tolerance)`` lands on the
+    flag list. NaN coverage (empty class slice on the calibration
+    partition) is skipped silently -- absence of evidence is not
+    evidence of a degenerate coverage gap, and the gap diagnostic
+    should not fire purely on a small-sample fold.
+
+    Defaults track the #326 issue contract: nominal 0.80, tolerance
+    0.10 (so 0.70 is the gap threshold). Class names returned in the
+    order ``coverage_dict`` iterates so a deterministic dict ordering
+    upstream produces a deterministic flag list.
+    """
+
+    if not (0.0 <= nominal <= 1.0):
+        raise ValueError(f"nominal must lie in [0, 1]; got {nominal!r}.")
+    if tolerance < 0.0:
+        raise ValueError(f"tolerance must be >= 0; got {tolerance!r}.")
+    # Float epsilon: ``0.80 - 0.10`` lands at ``0.7000000000000001`` so
+    # a class with coverage exactly ``0.70`` would otherwise flag under
+    # ``cov < threshold``. The issue contract is "> tolerance below"
+    # nominal — a class whose gap is exactly ``tolerance`` is on the
+    # boundary and must NOT flag. Compare the gap directly instead of
+    # the subtracted threshold so the boundary case is clean.
+    flagged: list[str] = []
+    for label, coverage in coverage_dict.items():
+        cov = float(coverage)
+        if not math.isfinite(cov):
+            continue
+        gap = float(nominal) - cov
+        if gap > tolerance + 1e-12:
+            flagged.append(str(label))
+    return flagged
+
+
+def compute_regression_band_class_coverage(  # noqa: C901 — single-pass validation + bucketing, intentionally branchy
+    *,
+    log_rv_predictions: Sequence[float],
+    log_rv_actuals: Sequence[float],
+    residual_quantile: float,
+    raw_vol_cutoffs: tuple[float, ...],
+    class_names: Sequence[str] = ("calm", "normal", "high"),
+) -> dict[str, float]:
+    """Per-class coverage of a regression-canonical conformal band (#326).
+
+    On the regression-canonical surface (ADR 0015 / #322) there is no
+    softmax to threshold; the calibrated object is a band
+    ``[y_hat - q, y_hat + q]`` in log-vol space. This helper carries
+    the dual interpretation issue #326 asks for: bucket the true
+    log_rv via the active checkpoint's tertile cutoffs and report,
+    per class, the fraction of rows whose true value sits inside the
+    regression band.
+
+    A class with zero rows on the calibration partition maps to
+    ``float('nan')`` so ``class_conditional_gap_flag`` can skip it.
+    The helper is intentionally pure -- it imports nothing from the
+    bucketing service to keep the unit tests trivially mockable; the
+    caller is responsible for passing the live ``raw_vol_cutoffs``
+    tuple off the active ``ModelConfig.vol_regime_quantiles``.
+    """
+
+    if len(log_rv_predictions) != len(log_rv_actuals):
+        raise ValueError(
+            f"log_rv_predictions ({len(log_rv_predictions)}) and "
+            f"log_rv_actuals ({len(log_rv_actuals)}) must align in length."
+        )
+    if len(raw_vol_cutoffs) != 2:
+        raise ValueError(
+            f"raw_vol_cutoffs must carry exactly two cutoffs; "
+            f"got {len(raw_vol_cutoffs)}."
+        )
+    cutoff_low, cutoff_high = (float(c) for c in raw_vol_cutoffs)
+    if cutoff_low <= 0.0 or cutoff_high <= 0.0 or cutoff_low > cutoff_high:
+        raise ValueError(
+            f"raw_vol_cutoffs must be positive and ordered; got {raw_vol_cutoffs!r}."
+        )
+    q = float(residual_quantile)
+    log_cutoff_low = math.log(cutoff_low)
+    log_cutoff_high = math.log(cutoff_high)
+
+    def _bucket(raw_value: float) -> str | None:
+        if not math.isfinite(raw_value):
+            return None
+        if raw_value < log_cutoff_low:
+            return class_names[0] if len(class_names) >= 1 else None
+        if raw_value < log_cutoff_high:
+            return class_names[1] if len(class_names) >= 2 else None
+        return class_names[2] if len(class_names) >= 3 else None
+
+    rows_per_class: Counter[str] = Counter()
+    inside_per_class: Counter[str] = Counter()
+    for pred, actual in zip(log_rv_predictions, log_rv_actuals):
+        try:
+            p = float(pred)
+            a = float(actual)
+        except (TypeError, ValueError):
+            continue
+        if not (math.isfinite(p) and math.isfinite(a)):
+            continue
+        bucket = _bucket(a)
+        if bucket is None:
+            continue
+        rows_per_class[bucket] += 1
+        if (p - q) <= a <= (p + q):
+            inside_per_class[bucket] += 1
+    coverage: dict[str, float] = {}
+    for label in class_names:
+        total = rows_per_class.get(str(label), 0)
+        if total == 0:
+            coverage[str(label)] = float("nan")
+        else:
+            coverage[str(label)] = float(inside_per_class.get(str(label), 0)) / float(total)
+    return coverage
+
+
 def format_class_set_label(
     predicted_set: Sequence[int],
     class_names: Sequence[str],
@@ -317,7 +581,7 @@ def empirical_coverage(
     return inside / len(predictions)
 
 
-def load_manifest(path: Path | str) -> ConformalManifest:
+def load_manifest(path: Path | str) -> ConformalManifest:  # noqa: C901 — JSON deserialiser with many optional back-compat fields
     """Read a JSON manifest. Residual quantile fields default to 0.0
     when absent (classification-only manifests written by
     ``save_manifest`` drop them); the inference loader treats a 0.0
@@ -352,6 +616,36 @@ def load_manifest(path: Path | str) -> ConformalManifest:
         }
         if not rates_softmax:
             rates_softmax = None
+    # #326 conditional diagnostics. Pre-#326 manifests on disk simply
+    # lack both keys; the loader resolves them to ``None`` so the
+    # ConformalManifest constructor keeps its existing default and the
+    # back-compat contract holds.
+    class_cond_raw = payload.get("class_conditional_coverage")
+    set_size_raw = payload.get("set_size_distribution")
+    class_cond: dict[str, float] | None = None
+    set_size: dict[int, float] | None = None
+    if isinstance(class_cond_raw, Mapping):
+        class_cond = {
+            str(k): float(v)
+            for k, v in class_cond_raw.items()
+            if v is not None
+        }
+        if not class_cond:
+            class_cond = None
+    if isinstance(set_size_raw, Mapping):
+        # JSON object keys are strings on disk; cast back to int. A
+        # malformed key (non-integer) is dropped silently so a stale
+        # manifest does not crash the inference loader.
+        parsed: dict[int, float] = {}
+        for k, v in set_size_raw.items():
+            if v is None:
+                continue
+            try:
+                parsed[int(k)] = float(v)
+            except (TypeError, ValueError):
+                continue
+        if parsed:
+            set_size = parsed
     return ConformalManifest(
         alpha=float(payload["alpha"]),
         nominal_coverage=float(payload["nominal_coverage"]),
@@ -366,6 +660,8 @@ def load_manifest(path: Path | str) -> ConformalManifest:
         ),
         rates_residual_quantiles=rates_residuals,
         rates_softmax_quantiles=rates_softmax,
+        class_conditional_coverage=class_cond,
+        set_size_distribution=set_size,
     )
 
 
