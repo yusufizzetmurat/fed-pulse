@@ -91,15 +91,28 @@ class ConformalManifest:
                 else None
             ),
             "class_conditional_coverage": (
-                {str(k): float(v) for k, v in self.class_conditional_coverage.items()}
-                if self.class_conditional_coverage
+                # NaN sneaks in when a class is absent from the calibration
+                # fold (compute_class_conditional_coverage returns float('nan')
+                # for empty class slices); json.dumps would emit the bare
+                # `NaN` token, which is not RFC-8259-compliant and would
+                # crash load_manifest on read. Map NaN to None so the JSON
+                # round-trip stays valid.
+                {
+                    str(k): (None if not math.isfinite(float(v)) else float(v))
+                    for k, v in self.class_conditional_coverage.items()
+                }
+                if self.class_conditional_coverage is not None
                 else None
             ),
             "set_size_distribution": (
                 # JSON object keys must be strings; the loader reverses
-                # this to int on read.
-                {str(int(k)): float(v) for k, v in self.set_size_distribution.items()}
-                if self.set_size_distribution
+                # this to int on read. NaN handling mirrors the class
+                # coverage branch above.
+                {
+                    str(int(k)): (None if not math.isfinite(float(v)) else float(v))
+                    for k, v in self.set_size_distribution.items()
+                }
+                if self.set_size_distribution is not None
                 else None
             ),
         }

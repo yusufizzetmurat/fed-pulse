@@ -336,6 +336,41 @@ def test_manifest_round_trip_loads_pre_326_manifests_with_none() -> None:
     assert loaded.softmax_quantile == pytest.approx(0.30)
 
 
+def test_manifest_round_trip_handles_nan_class_slice() -> None:
+    """When a class is absent from the calibration fold,
+    ``compute_class_conditional_coverage`` returns ``float('nan')`` for that
+    class. The bare ``NaN`` token is not RFC-8259-compliant JSON, so
+    ``save_manifest`` must serialise it as ``null`` and ``load_manifest``
+    must round-trip the remaining finite entries cleanly (the all-NaN map
+    collapses to ``None`` via the existing empty-after-filter guard)."""
+
+    manifest = ConformalManifest(
+        alpha=0.2,
+        nominal_coverage=0.8,
+        residual_quantile_close=11.0,
+        residual_quantile_volatility=0.02,
+        calibration_n=300,
+        softmax_quantile=0.4,
+        class_conditional_coverage={
+            "calm": 0.83,
+            "normal": float("nan"),
+            "high": 0.71,
+        },
+        set_size_distribution={1: 0.6, 2: float("nan"), 3: 0.0},
+    )
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "nan-slice.conformal.json"
+        save_manifest(manifest, path)
+        # The serialised file must be valid JSON (json.loads would raise
+        # JSONDecodeError otherwise).
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert payload["class_conditional_coverage"]["normal"] is None
+        assert payload["set_size_distribution"]["2"] is None
+        loaded = load_manifest(path)
+    assert loaded.class_conditional_coverage == {"calm": 0.83, "high": 0.71}
+    assert loaded.set_size_distribution == {1: 0.6, 3: 0.0}
+
+
 def test_save_manifest_omits_none_class_conditional_fields() -> None:
     """A manifest without the new fields populated must serialise
     without the keys so a downstream reader of the legacy schema
