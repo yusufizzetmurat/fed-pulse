@@ -1,0 +1,60 @@
+schema_version: 1
+
+axes:
+  stance:
+    kind: categorical
+    classes:
+      - hawkish
+      - dovish
+      - neutral
+    nullable: false
+    description: |
+      Primary policy-stance axis. Sourced from the Trillion Dollar Words
+      hand-labels and downstream encoder fine-tunes.
+
+  factor:
+    kind: regression
+    range: [-1.0, 1.0]
+    nullable: true
+    description: |
+      Forward-guidance (positive) vs target-rate (negative) loading.
+      Filled from Gürkaynak-Sack-Swanson factor decomposition where the
+      FOMC date is in the GSS dataset; null otherwise.
+
+  certainty:
+    kind: regression
+    range: [0.0, 1.0]
+    nullable: true
+    description: |
+      Hedging / uncertainty score. Derived from modal-verb density and
+      hedge-word counts; can be backed by a labelled corpus if one
+      becomes available.
+
+  topic:
+    kind: categorical
+    classes:
+      - inflation
+      - employment
+      - financial_stability
+      - growth
+    nullable: true
+    description: |
+      Dominant topic per Hansen-McMahon-style LDA topic shares. Filled
+      from external topic-share datasets where available; null otherwise.
+
+provenance:
+  # ``sample_weight`` is currently a binary inclusion gate, NOT a per-row
+  # loss multiplier. Downstream code (``app.data.finetune_pilot`` and
+  # the LSTM forecaster in ``app.training.loop``) treats any row whose
+  # ``sample_weight`` is exactly ``0.0`` as excluded from training and
+  # ignores the magnitude otherwise. The earlier ``kaggle: 0.7`` value
+  # was therefore cosmetic — it had no effect on the loss. The weights
+  # below are pinned to 0.0/1.0 to match what the implementation
+  # actually does. To re-introduce graded weighting later, multiply
+  # ``sample_weight`` into the per-row loss in the training loop AND
+  # document the empirical justification for the chosen ratios.
+  sample_weights:
+    peer_reviewed: 1.0
+    kaggle: 1.0
+    peer_reviewed_cross_bank: 0.0  # ECB/BoJ/BoE/BoC/RBA labels held out from FOMC training; used for cross-CB generalization eval only.
+    scraped: 0.0

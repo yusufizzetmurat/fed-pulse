@@ -1,0 +1,43 @@
+name: benchmark-smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      training_package_id:
+        description: "Training package ID under data/processed/"
+        required: true
+      seed:
+        description: "Seed for the smoke run"
+        required: true
+        default: "11"
+
+jobs:
+  train-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: install backend
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]"
+      - name: run smoke training
+        env:
+          PYTHONPATH: backend
+        run: |
+          python -m app.data.nlp_baseline_batch \
+            --training-package-id "${{ inputs.training_package_id }}" \
+            --mode smoke \
+            --seed "${{ inputs.seed }}" \
+            --owner ci
+      - name: upload run manifest
+        uses: actions/upload-artifact@v7
+        with:
+          name: run-manifest-${{ inputs.training_package_id }}-s${{ inputs.seed }}
+          path: data/artifacts/phase3/**/run_manifest.json
+          if-no-files-found: warn

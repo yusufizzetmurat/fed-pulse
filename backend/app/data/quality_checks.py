@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
 import warnings
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -9,8 +11,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
+from app.config import DATA_DIR as DEFAULT_DATA_DIR
 DEFAULT_INPUT = DEFAULT_DATA_DIR / "interim" / "phase2" / "registry_labeled.jsonl"
 DEFAULT_OUTPUT = DEFAULT_DATA_DIR / "interim" / "phase2" / "registry_quality_passed.jsonl"
 DEFAULT_REPORT_DIR = DEFAULT_DATA_DIR / "interim" / "phase2" / "quality_reports"
@@ -50,7 +51,28 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _validate_quality_passed_rows(rows: list[dict[str, Any]]) -> None:
+    """Run ``QualityPassedRowSchema`` on the deduped frame before emit.
+
+    Lazy mode reports every violation in one ``SchemaErrors``. Set
+    ``FED_PULSE_SKIP_SCHEMA_VALIDATION=1`` to bypass for diagnostic
+    re-runs against intentionally malformed inputs.
+    """
+
+    if not rows:
+        return
+    try:
+        import pandas as pd  # type: ignore
+    except Exception:
+        return
+    from app.data.schemas import QualityPassedRowSchema, validate_frame
+
+    frame = pd.DataFrame(rows)
+    validate_frame(QualityPassedRowSchema, frame)
+
+
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    _validate_quality_passed_rows(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
@@ -153,17 +175,28 @@ def _leakage_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _distribution_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
     source_counts = Counter(str(r.get("source", "")) for r in rows)
+    source_type_counts = Counter(
+        str(r.get("source_type", "")) for r in rows if r.get("source_type")
+    )
     label_counts = Counter(str(r.get("mapped_label", "")) for r in rows if r.get("mapped_label"))
     source_label_counts: dict[str, dict[str, int]] = {}
+    source_type_label_counts: dict[str, dict[str, int]] = {}
     for row in rows:
         source = str(row.get("source", ""))
+        source_type = str(row.get("source_type", "")) or "unknown"
         label = str(row.get("mapped_label", "")) or "unlabeled"
         source_label_counts.setdefault(source, {})
         source_label_counts[source][label] = source_label_counts[source].get(label, 0) + 1
+        source_type_label_counts.setdefault(source_type, {})
+        source_type_label_counts[source_type][label] = (
+            source_type_label_counts[source_type].get(label, 0) + 1
+        )
     return {
         "source_counts": dict(source_counts),
+        "source_type_counts": dict(source_type_counts),
         "mapped_label_counts": dict(label_counts),
         "source_label_counts": source_label_counts,
+        "source_type_label_counts": source_type_label_counts,
     }
 
 
@@ -197,6 +230,26 @@ def main() -> int:
 
     print(f"Quality-passed registry written to {output_path}")
     print(f"Reports written to {report_dir}")
+
+    # Audit Tier 1.5: previous behaviour wrote leakage_report.json with
+    # ``status: fail`` and still returned 0, so an unattended pipeline
+    # would emit a quality-passed registry over a contaminated dataset
+    # without surfacing the failure. Exit non-zero on a failed leakage
+    # gate. ``FED_PULSE_LEAKAGE_GATE=off`` is the explicit opt-out for
+    # the rare case where the caller knowingly accepts the contamination.
+    if leakage.get("status") == "fail":
+        if os.environ.get("FED_PULSE_LEAKAGE_GATE", "on").lower() == "off":
+            print(
+                "WARNING: leakage gate disabled via FED_PULSE_LEAKAGE_GATE=off; "
+                "quality-passed registry written despite status=fail",
+                file=sys.stderr,
+            )
+            return 0
+        print(
+            f"ERROR: leakage gate failed -- see {report_dir / 'leakage_report.json'}",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

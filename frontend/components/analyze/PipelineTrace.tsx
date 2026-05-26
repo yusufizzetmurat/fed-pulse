@@ -1,0 +1,582 @@
+import * as React from "react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  Check,
+  ChevronDown,
+  Cpu,
+  FileInput,
+  Highlighter,
+  Layers,
+  ShieldCheck,
+  Workflow,
+} from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { cn } from "@/lib/utils";
+import type {
+  AnalyzeResult,
+  MultiAxisResponse,
+} from "@/lib/analyze/types";
+
+interface PipelineTraceProps {
+  result: AnalyzeResult;
+  inputText: string;
+}
+
+interface Step {
+  key: string;
+  title: string;
+  blurb: string;
+  icon: React.ReactNode;
+  summary: string;
+  state: "ok" | "warn" | "absent";
+  body: React.ReactNode;
+}
+
+function countWords(text: string): number {
+  return text.trim() ? text.trim().split(/\s+/).length : 0;
+}
+
+function regimeBarClass(label: string): string {
+  if (label === "calm") return "bg-dovish";
+  if (label === "high") return "bg-hawkish";
+  return "bg-neutral";
+}
+
+function MiniBar({
+  label,
+  value,
+  max = 1,
+  tone = "neutral",
+}: {
+  label: string;
+  value: number | null | undefined;
+  max?: number;
+  tone?: "neutral" | "hawkish" | "dovish" | "up" | "down";
+}) {
+  const pct =
+    value == null || !Number.isFinite(value) || max <= 0
+      ? 0
+      : Math.max(0, Math.min(1, value / max)) * 100;
+  const fillClass =
+    tone === "hawkish"
+      ? "bg-hawkish"
+      : tone === "dovish"
+      ? "bg-dovish"
+      : tone === "up"
+      ? "bg-up"
+      : tone === "down"
+      ? "bg-down"
+      : "bg-primary/70";
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="numeric text-foreground">
+          {value == null || !Number.isFinite(value) ? "—" : value.toFixed(2)}
+        </span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+        <div className={cn("h-full", fillClass)} style={{ width: `${pct}%` }} aria-hidden="true" />
+      </div>
+    </div>
+  );
+}
+
+function CoverageGauge({ coverage }: { coverage: number }) {
+  const pct = Math.round(coverage * 100);
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">Nominal coverage</span>
+        <span className="numeric text-foreground">{pct}%</span>
+      </div>
+      <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+        <div className="h-full bg-up" style={{ width: `${pct}%` }} aria-hidden="true" />
+      </div>
+    </div>
+  );
+}
+
+function multiAxisSummary(multiAxis: MultiAxisResponse): string {
+  const parts: string[] = [];
+  if (multiAxis.stance) parts.push(`stance ${multiAxis.stance.label}`);
+  if (multiAxis.factor) parts.push(`factor ${multiAxis.factor.value.toFixed(2)}`);
+  if (multiAxis.certainty) parts.push(`certainty ${multiAxis.certainty.label}`);
+  if (multiAxis.topic)
+    parts.push(
+      `topic ${(multiAxis.topic.label ?? multiAxis.topic.primary ?? "—").toString()}`,
+    );
+  return parts.join(" · ") || "axes absent";
+}
+
+function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
+  const sentiment = result.sentiment;
+  const multiAxis = result.multi_axis;
+  const regime = result.regime_classification;
+  const encoderKey = (result.model as { encoder_key?: string } | undefined)?.encoder_key;
+  const xaiSentences = result.xai?.sentences?.length ?? 0;
+  const ood = sentiment?.is_in_distribution;
+  const oodEnergy = sentiment?.ood_energy;
+  const oodThreshold = sentiment?.ood_threshold;
+
+  const ingestStep: Step = {
+    key: "ingest",
+    title: "Ingest",
+    blurb:
+      "Splits the document into sentences and records the source. Every downstream step operates on these sentence units.",
+    icon: <FileInput className="h-3.5 w-3.5" />,
+    state: "ok",
+    summary: `${countWords(inputText)} words · ${inputText.length} chars · ${xaiSentences} sentences`,
+    body: (
+      <div className="space-y-3">
+        <dl className="grid gap-x-4 gap-y-1.5 text-sm sm:grid-cols-2">
+          <dt className="text-muted-foreground">Character count</dt>
+          <dd className="numeric text-right">{inputText.length}</dd>
+          <dt className="text-muted-foreground">Word count</dt>
+          <dd className="numeric text-right">{countWords(inputText)}</dd>
+          <dt className="text-muted-foreground">Sentences scored</dt>
+          <dd className="numeric text-right">{xaiSentences}</dd>
+        </dl>
+        <div className="rounded-md border border-border bg-muted/30 p-2 font-mono text-xs leading-relaxed text-muted-foreground">
+          {inputText.slice(0, 220)}
+          {inputText.length > 220 ? "…" : ""}
+        </div>
+      </div>
+    ),
+  };
+
+  const encodeStep: Step = {
+    key: "encode",
+    title: "Encode",
+    blurb:
+      "Runs the text through the encoder backbone. Surfaces an energy-based OOD signal so the workspace can flag inputs outside the training distribution.",
+    icon: <Layers className="h-3.5 w-3.5" />,
+    state: ood === false ? "warn" : "ok",
+    summary: encoderKey
+      ? `Encoder: ${encoderKey}${ood === false ? " · OOD flag set" : ""}`
+      : "Encoder: classifier-side embedding (default)",
+    body: (
+      <div className="space-y-3">
+        <dl className="grid gap-x-4 gap-y-1.5 text-sm sm:grid-cols-2">
+          <dt className="text-muted-foreground">Encoder alias</dt>
+          <dd className="numeric text-right">{encoderKey ?? "default"}</dd>
+          <dt className="text-muted-foreground">OOD energy</dt>
+          <dd className="numeric text-right">{oodEnergy != null ? oodEnergy.toFixed(3) : "—"}</dd>
+          <dt className="text-muted-foreground">OOD threshold</dt>
+          <dd className="numeric text-right">
+            {oodThreshold != null ? oodThreshold.toFixed(3) : "—"}
+          </dd>
+          <dt className="text-muted-foreground">In-distribution</dt>
+          <dd className="text-right">
+            {ood == null ? (
+              "—"
+            ) : ood ? (
+              <Badge variant="dovish" className="text-[10px]">
+                yes
+              </Badge>
+            ) : (
+              <Badge variant="hawkish" className="text-[10px]">
+                <AlertTriangle className="h-3 w-3" /> no
+              </Badge>
+            )}
+          </dd>
+        </dl>
+        {oodEnergy != null && oodThreshold != null && oodThreshold !== 0 ? (
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">Energy vs threshold</span>
+              <span className="numeric text-foreground">
+                {oodEnergy.toFixed(3)} / {oodThreshold.toFixed(3)}
+              </span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className={cn("h-full", ood === false ? "bg-hawkish" : "bg-up")}
+                style={{
+                  width: `${Math.min(
+                    100,
+                    Math.max(2, Math.abs(oodEnergy / oodThreshold) * 100),
+                  ).toFixed(1)}%`,
+                }}
+                aria-hidden="true"
+              />
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Energy below the threshold reads as in-distribution; above flags OOD.
+            </p>
+          </div>
+        ) : null}
+      </div>
+    ),
+  };
+
+  const multiAxisStep: Step = {
+    key: "multi-axis",
+    title: "Multi-axis head",
+    blurb:
+      "Four heads off the shared trunk — stance, hawkish-dovish factor, certainty, topic — each calibrated against the labeled FOMC corpus.",
+    icon: <Workflow className="h-3.5 w-3.5" />,
+    state: multiAxis ? "ok" : "absent",
+    summary: multiAxis ? multiAxisSummary(multiAxis) : "Multi-axis checkpoint absent",
+    body: multiAxis ? (
+      <div className="space-y-3">
+        <ul className="grid gap-1.5 text-sm sm:grid-cols-2">
+          <li className="flex items-center justify-between">
+            <span className="text-muted-foreground">stance</span>
+            <span className="numeric capitalize">
+              {multiAxis.stance?.label ?? "—"}{" "}
+              {multiAxis.stance ? `· ${multiAxis.stance.confidence.toFixed(2)}` : ""}
+            </span>
+          </li>
+          <li className="flex items-center justify-between">
+            <span className="text-muted-foreground">factor</span>
+            <span className="numeric">
+              {multiAxis.factor
+                ? `${multiAxis.factor.value >= 0 ? "+" : ""}${multiAxis.factor.value.toFixed(2)} · ±${multiAxis.factor.confidence.toFixed(2)}`
+                : "—"}
+            </span>
+          </li>
+          <li className="flex items-center justify-between">
+            <span className="text-muted-foreground">certainty</span>
+            <span className="numeric capitalize">
+              {multiAxis.certainty?.label ?? "—"}{" "}
+              {multiAxis.certainty ? `· ${multiAxis.certainty.confidence.toFixed(2)}` : ""}
+            </span>
+          </li>
+          <li className="flex items-center justify-between">
+            <span className="text-muted-foreground">topic</span>
+            <span className="numeric capitalize">
+              {(multiAxis.topic?.label ?? multiAxis.topic?.primary ?? "—")
+                .toString()
+                .replace(/_/g, " ")}{" "}
+              {multiAxis.topic ? `· ${multiAxis.topic.confidence.toFixed(2)}` : ""}
+            </span>
+          </li>
+        </ul>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {multiAxis.stance ? (
+            <MiniBar
+              label="stance confidence"
+              value={multiAxis.stance.confidence}
+              tone={
+                multiAxis.stance.label === "hawkish"
+                  ? "hawkish"
+                  : multiAxis.stance.label === "dovish"
+                  ? "dovish"
+                  : "neutral"
+              }
+            />
+          ) : null}
+          {multiAxis.factor ? (
+            <MiniBar
+              label="factor magnitude"
+              value={Math.abs(multiAxis.factor.value)}
+              tone={multiAxis.factor.value >= 0 ? "hawkish" : "dovish"}
+            />
+          ) : null}
+          {multiAxis.certainty ? (
+            <MiniBar label="certainty confidence" value={multiAxis.certainty.confidence} />
+          ) : null}
+          {multiAxis.topic ? (
+            <MiniBar label="topic confidence" value={multiAxis.topic.confidence} />
+          ) : null}
+        </div>
+      </div>
+    ) : (
+      <p className="text-sm text-muted-foreground">
+        No multi-axis classifier checkpoint at{" "}
+        <code className="rounded bg-muted px-1 font-mono text-xs">
+          backend/models/text_multi_axis_best.pt
+        </code>
+        . The stance card is populated from the legacy sentiment classifier fallback.
+      </p>
+    ),
+  };
+
+  const regimeStep: Step = {
+    key: "regime",
+    title: "Regime head",
+    blurb:
+      "Predicts the 10-day forward vol regime — calm / normal / high — plus the calibrated conformal set so the UI can hedge across more than one class when the model is unsure.",
+    icon: <Cpu className="h-3.5 w-3.5" />,
+    state: regime ? "ok" : "absent",
+    summary: regime
+      ? `argmax: ${regime.argmax_class} · set size ${regime.set_size}`
+      : "Regression-mode checkpoint or conformal sidecar absent",
+    body: regime ? (
+      <div className="space-y-3 text-sm">
+        <dl className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
+          <dt className="text-muted-foreground">Argmax class</dt>
+          <dd className="text-right capitalize">{regime.argmax_class}</dd>
+          <dt className="text-muted-foreground">Set composition</dt>
+          <dd className="text-right capitalize">{regime.predicted_set.join(", ") || "—"}</dd>
+          <dt className="text-muted-foreground">Set size</dt>
+          <dd className="numeric text-right">{regime.set_size}</dd>
+        </dl>
+        <div className="space-y-2">
+          {Object.entries(regime.distribution).map(([label, prob]) => {
+            const inSet = regime.predicted_set.includes(label);
+            return (
+              <div key={label} className="space-y-1">
+                <div className="flex items-center justify-between text-sm">
+                  <span
+                    className={cn(
+                      "flex items-center gap-1.5 capitalize",
+                      inSet ? "text-foreground" : "text-muted-foreground",
+                    )}
+                  >
+                    <span
+                      className={cn("h-1.5 w-1.5 rounded-full", regimeBarClass(label))}
+                      aria-hidden="true"
+                    />
+                    {label}
+                    {inSet ? (
+                      <span className="text-xs text-muted-foreground">in set</span>
+                    ) : null}
+                  </span>
+                  <span
+                    className={cn(
+                      "numeric",
+                      inSet ? "font-medium text-foreground" : "text-muted-foreground",
+                    )}
+                  >
+                    {(prob * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <Progress value={prob} indicatorClassName={regimeBarClass(label)} />
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Calibrated APS: classes whose softmax mass meets the calibration quantile are included in
+          the set. Coverage + quantile come from the conformal sidecar.
+        </p>
+      </div>
+    ) : (
+      <p className="text-sm text-muted-foreground">
+        The active checkpoint is regression-mode or no <code>.conformal.json</code> sidecar with{" "}
+        <code>softmax_quantile</code> was found. The regression head still emits close + vol point
+        forecasts in the response; the workspace hides them because the headline target is the
+        calibrated regime set.
+      </p>
+    ),
+  };
+
+  const xaiStep: Step = {
+    key: "xai",
+    title: "Sentence attribution",
+    blurb:
+      "Per-sentence attribution against the stance logit. Surfaces which sentences pushed the model toward its decision and feeds the strike-out counterfactual loop.",
+    icon: <Highlighter className="h-3.5 w-3.5" />,
+    state: xaiSentences > 0 ? "ok" : "absent",
+    summary:
+      xaiSentences > 0
+        ? `${xaiSentences} sentences scored · method ${result.xai?.method ?? "keyword"}`
+        : "No sentences detected",
+    body:
+      xaiSentences > 0 ? (
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">
+            Three highest-magnitude sentences. The full panel above lets you strike any of them.
+          </p>
+          <ul className="space-y-1.5">
+            {[...(result.xai?.sentences ?? [])]
+              .sort((a, b) => Math.abs(b.score) - Math.abs(a.score))
+              .slice(0, 3)
+              .map((sentence, idx) => (
+                <li
+                  key={`${idx}-${sentence.text.slice(0, 12)}`}
+                  className="flex items-start gap-2 rounded-md border border-border bg-muted/20 p-2"
+                >
+                  <Badge
+                    variant={sentence.score >= 0 ? "hawkish" : "dovish"}
+                    className="numeric text-[10px]"
+                  >
+                    {sentence.score >= 0 ? "+" : ""}
+                    {sentence.score.toFixed(2)}
+                  </Badge>
+                  <span className="text-xs leading-snug text-foreground">
+                    {sentence.text.length > 160
+                      ? `${sentence.text.slice(0, 160)}…`
+                      : sentence.text}
+                  </span>
+                </li>
+              ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          No salient sentences detected — common for very short inputs or text outside the FOMC
+          vocabulary the attribution dictionary covers.
+        </p>
+      ),
+  };
+
+  const calibrationStep: Step = {
+    key: "calibration",
+    title: "Calibration",
+    blurb:
+      "How tight the conformal set is and what coverage was calibrated for. Empirical coverage on resolved runs lives on the Performance page.",
+    icon: <ShieldCheck className="h-3.5 w-3.5" />,
+    state: regime ? "ok" : "absent",
+    summary: regime
+      ? `Calibrated split-conformal · ${Math.round(regime.coverage * 100)}% nominal`
+      : "Calibration sidecar absent",
+    body: regime ? (
+      <div className="space-y-3">
+        <CoverageGauge coverage={regime.coverage} />
+        <dl className="grid gap-x-4 gap-y-1.5 text-sm sm:grid-cols-2">
+          <dt className="text-muted-foreground">Set size</dt>
+          <dd className="numeric text-right">{regime.set_size}</dd>
+          <dt className="text-muted-foreground">Set label</dt>
+          <dd className="text-right">{regime.set_label}</dd>
+        </dl>
+        <p className="text-xs text-muted-foreground">
+          A tighter set (size 1) means the model is confident enough to single out one regime; a
+          looser set hedges across more classes. Empirical coverage over resolved runs is tracked
+          on the Performance page.
+        </p>
+      </div>
+    ) : (
+      <p className="text-sm text-muted-foreground">
+        Calibration is only available when the regime head is active. Empirical coverage is still
+        computed on the Performance page when realised regimes resolve.
+      </p>
+    ),
+  };
+
+  return [ingestStep, encodeStep, multiAxisStep, regimeStep, xaiStep, calibrationStep];
+}
+
+function StepRail({
+  steps,
+  activeKey,
+  onSelect,
+}: {
+  steps: Step[];
+  activeKey: string;
+  onSelect: (key: string) => void;
+}) {
+  return (
+    <ol className="flex flex-wrap items-center gap-1 text-xs">
+      {steps.map((step, idx) => {
+        const active = step.key === activeKey;
+        const stateClass =
+          step.state === "warn"
+            ? "border-hawkish/60 text-hawkish"
+            : step.state === "absent"
+            ? "border-border text-muted-foreground"
+            : "border-up/40 text-foreground";
+        const StateIcon =
+          step.state === "warn" ? AlertTriangle : step.state === "absent" ? null : Check;
+        return (
+          <li key={step.key} className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => onSelect(step.key)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
+                stateClass,
+                active
+                  ? "bg-background shadow-sm ring-2 ring-ring/40"
+                  : "bg-muted/30 hover:bg-muted/50",
+              )}
+              aria-current={active ? "step" : undefined}
+            >
+              <span className="numeric text-[10px] text-muted-foreground">
+                {String(idx + 1).padStart(2, "0")}
+              </span>
+              <span>{step.title}</span>
+              {StateIcon ? <StateIcon className="h-3 w-3" aria-hidden="true" /> : null}
+            </button>
+            {idx < steps.length - 1 ? (
+              <ArrowRight className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
+            ) : null}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+export function PipelineTrace({ result, inputText }: PipelineTraceProps) {
+  const steps = React.useMemo(() => buildSteps({ result, inputText }), [result, inputText]);
+  const [openKey, setOpenKey] = React.useState<string>("regime");
+
+  return (
+    <Card>
+      <CardHeader className="space-y-3">
+        <div className="space-y-1">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Workflow className="h-5 w-5 text-primary" />
+            Pipeline trace
+          </CardTitle>
+          <CardDescription>
+            End-to-end view of what the backend actually ran on this input. Click any step in the
+            rail or row below for the diagnostics.
+          </CardDescription>
+        </div>
+        <StepRail steps={steps} activeKey={openKey} onSelect={setOpenKey} />
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {steps.map((step, idx) => {
+          const open = openKey === step.key;
+          return (
+            <div
+              key={step.key}
+              className={cn(
+                "rounded-md border border-border bg-muted/20",
+                open && "bg-muted/40",
+                step.state === "warn" && !open && "border-hawkish/30",
+              )}
+            >
+              <button
+                type="button"
+                onClick={() => setOpenKey(open ? "" : step.key)}
+                className="flex w-full items-start justify-between gap-3 px-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-expanded={open}
+              >
+                <span className="flex items-start gap-2">
+                  <span className="numeric mt-0.5 text-xs text-muted-foreground">
+                    {String(idx + 1).padStart(2, "0")}
+                  </span>
+                  <span className="mt-0.5 text-muted-foreground">{step.icon}</span>
+                  <span className="space-y-0.5">
+                    <span className="block text-sm font-medium">{step.title}</span>
+                    <span className="block text-xs text-muted-foreground">{step.blurb}</span>
+                  </span>
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="hidden text-xs text-muted-foreground sm:inline">
+                    {step.summary}
+                  </span>
+                  <ChevronDown
+                    className={cn(
+                      "h-4 w-4 text-muted-foreground transition-transform",
+                      open && "rotate-180",
+                    )}
+                    aria-hidden="true"
+                  />
+                </span>
+              </button>
+              {open ? (
+                <div className="border-t border-border px-3 py-3 sm:hidden">
+                  <p className="mb-2 text-xs text-muted-foreground">{step.summary}</p>
+                  {step.body}
+                </div>
+              ) : null}
+              {open ? (
+                <div className="hidden border-t border-border px-3 py-3 sm:block">{step.body}</div>
+              ) : null}
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
+}

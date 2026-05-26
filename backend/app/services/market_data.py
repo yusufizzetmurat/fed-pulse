@@ -1,12 +1,163 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+import csv
+import json
+import os
+from datetime import date, datetime, time, timedelta, timezone
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yfinance as yf
 
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = BACKEND_ROOT.parent
+DEFAULT_SNAPSHOT_DIR = REPO_ROOT / "data" / "raw" / "market"
+FOMC_MEETINGS_CSV = REPO_ROOT / "data" / "external" / "fomc_meetings_2010_2026.csv"
 
-def _close_series_from_frame(frame):
+# The FOMC press release lands at 2pm Eastern. Any market-side feature dated
+# on an FOMC day with a timestamp strictly after this boundary is looking at
+# information the model would not have had at decision time, so we reject it
+# at the feature-assembly seam. The comparison is done in America/New_York
+# local time so DST is handled automatically: EST months land 14:00 ET at
+# 19:00 UTC, EDT months at 18:00 UTC, and either way the assertion fires
+# on bars later than 14:00 local time.
+FOMC_LOCAL_CUTOFF_TIME = time(14, 0, 0)
+FOMC_ZONE = ZoneInfo("America/New_York")
+
+
+def _market_source() -> str:
+    return (os.environ.get("FED_PULSE_MARKET_SOURCE") or "live").strip().lower()
+
+
+@lru_cache(maxsize=1)
+def _fomc_days() -> frozenset[date]:
+    """Load the scheduled / unscheduled FOMC meeting dates as a set.
+
+    The CSV is checked into ``data/external/`` (PR #154) and never changes
+    at runtime, so caching the parsed set is safe. The set is consulted by
+    ``assert_fomc_day_market_cutoff`` to decide whether the cutoff applies.
+    """
+
+    if not FOMC_MEETINGS_CSV.exists():
+        return frozenset()
+    days: set[date] = set()
+    with FOMC_MEETINGS_CSV.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            value = (row.get("meeting_date") or "").strip()
+            if not value:
+                continue
+            try:
+                days.add(datetime.strptime(value, "%Y-%m-%d").date())
+            except ValueError:
+                continue
+    return frozenset(days)
+
+
+def is_fomc_day(value: date) -> bool:
+    """Return True when `value` is a scheduled or unscheduled FOMC meeting."""
+
+    return value in _fomc_days()
+
+
+def assert_fomc_day_market_cutoff(
+    timestamp: datetime,
+    *,
+    feature_name: str = "market feature",
+) -> None:
+    """Hard-fail when a same-day market feature lands after the 14:00 ET cutoff.
+
+    The FOMC statement is released at 2pm Eastern. Any market-side bar (close,
+    volatility, rolling stat) whose timestamp falls on an FOMC day **and**
+    sits strictly after 14:00 ET embeds post-announcement information that
+    the model would not have had at decision time. Letting such a bar into
+    the feature frame is a textbook lookahead bug.
+
+    ``timestamp`` is expected to be tz-aware (UTC or otherwise). A naive
+    datetime is interpreted as UTC. The comparison happens in
+    ``America/New_York`` local time so DST is handled automatically and
+    the cutoff is the same 14:00 wall-clock both halves of the year.
+
+    Raises ``ValueError`` on violation so the caller can surface a clear
+    error to the operator. No silent coercion: a bad row is a bug, not a
+    rounding error.
+    """
+
+    if not is_fomc_day(timestamp.date()):
+        return  # Not an FOMC day -> cutoff does not apply.
+
+    if timestamp.tzinfo is None:
+        anchored = timestamp.replace(tzinfo=timezone.utc)
+    else:
+        anchored = timestamp
+    local = anchored.astimezone(FOMC_ZONE)
+    cutoff = datetime.combine(local.date(), FOMC_LOCAL_CUTOFF_TIME, tzinfo=FOMC_ZONE)
+    if local > cutoff:
+        raise ValueError(
+            f"{feature_name} dated {local.isoformat()} is after the FOMC "
+            f"14:00 ET cutoff ({cutoff.isoformat()}) on a meeting day. "
+            "Same-day post-announcement bars leak the policy decision into the "
+            "feature frame. Drop the bar or rebuild the feature with an "
+            "as-of timestamp ≤ 14:00 ET."
+        )
+
+
+def _safe_symbol(symbol: str) -> str:
+    return symbol.replace("^", "").replace("=", "_").replace("/", "_").replace(":", "_")
+
+
+def _snapshot_lock_path() -> Path:
+    override = os.environ.get("FED_PULSE_MARKET_SNAPSHOT_DIR")
+    base = Path(override) if override else DEFAULT_SNAPSHOT_DIR
+    return base / "SOURCES.lock"
+
+
+def _snapshot_dir() -> Path:
+    override = os.environ.get("FED_PULSE_MARKET_SNAPSHOT_DIR")
+    return Path(override) if override else DEFAULT_SNAPSHOT_DIR
+
+
+@lru_cache(maxsize=64)
+def _load_snapshot_series(symbol: str) -> Any:
+    import pandas as pd
+
+    snapshot_dir = _snapshot_dir()
+    lock_path = _snapshot_lock_path()
+    if lock_path.exists():
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        entry = (lock.get("entries") or {}).get(symbol)
+        if entry and entry.get("parquet_path"):
+            candidate = REPO_ROOT / entry["parquet_path"]
+            if candidate.exists():
+                frame = pd.read_parquet(candidate)
+                return _snapshot_frame_to_series(frame)
+    fallback = snapshot_dir / f"{_safe_symbol(symbol)}.parquet"
+    if not fallback.exists():
+        raise FileNotFoundError(
+            f"Market snapshot for symbol={symbol!r} is missing at {fallback}. "
+            f"Run `python scripts/snapshot_market_data.py --symbols {symbol} ...` "
+            f"or set FED_PULSE_MARKET_SOURCE=live."
+        )
+    frame = pd.read_parquet(fallback)
+    return _snapshot_frame_to_series(frame)
+
+
+def _snapshot_frame_to_series(frame: Any) -> Any:
+    import pandas as pd
+
+    if "date" not in frame.columns or "close" not in frame.columns:
+        raise RuntimeError(
+            "Snapshot parquet must contain 'date' and 'close' columns; got "
+            f"{list(frame.columns)}"
+        )
+    index = pd.to_datetime(frame["date"]).dt.tz_localize(None)
+    series = pd.Series(frame["close"].astype(float).to_numpy(), index=index, name="Close")
+    return series.sort_index().dropna()
+
+
+def _close_series_from_frame(frame: Any) -> Any:
     close_data = frame["Close"]
     if hasattr(close_data, "columns"):
         # yfinance may return a DataFrame (e.g., MultiIndex columns).
@@ -23,7 +174,19 @@ def _parse_iso_date(value: str) -> date:
         raise ValueError("date must be in YYYY-MM-DD format") from exc
 
 
-def _download_close_series_in_window(symbol: str, start: date, end: date):
+def _download_close_series_in_window(symbol: str, start: date, end: date) -> Any:
+    if _market_source() == "snapshot":
+        series = _load_snapshot_series(symbol)
+        window = series.loc[
+            (series.index.date >= start) & (series.index.date < end)
+        ]
+        if window.empty:
+            raise RuntimeError(
+                f"Snapshot has no rows for {symbol} in [{start}, {end}). "
+                "Re-run scripts/snapshot_market_data.py to widen the window."
+            )
+        return window
+
     ticker = yf.Ticker(symbol)
     frame = ticker.history(
         start=start.isoformat(),
@@ -39,7 +202,9 @@ def _download_close_series_in_window(symbol: str, start: date, end: date):
     return close_series
 
 
-def _download_close_series(symbol: str, requested_date: date, lookback_days: int, extra_days: int):
+def _download_close_series(
+    symbol: str, requested_date: date, lookback_days: int, extra_days: int
+) -> Any:
     start = requested_date - timedelta(days=lookback_days + extra_days)
     end = requested_date + timedelta(days=1)
     return _download_close_series_in_window(symbol=symbol, start=start, end=end)

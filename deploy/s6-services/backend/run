@@ -1,0 +1,10 @@
+#!/command/with-contenv sh
+# Drop to the non-root ``fedpulse`` user before exec'ing uvicorn. Any
+# file the backend writes into the /data bind mount or /home/fedpulse
+# HF cache then lands under UID 10001 on the host rather than root.
+cd /app/backend
+exec s6-setuidgid fedpulse /opt/venv/bin/uvicorn app.main:app \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --workers 2 \
+    --no-access-log

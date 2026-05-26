@@ -1,421 +1,105 @@
+"""Facade for the forecaster module.
+
+The actual implementations live under ``app.models``, ``app.training``, and
+``app.evaluation``. This module hosts the FastAPI-singleton state plus the
+inference path that depends on it (``forecast_quantitative_series``,
+``_get_model``, ``_predict_next_point``, ``get_model_artifact_metadata``,
+``_build_confidence_bands``) and re-exports every public name that callers
+across the codebase import from here.
+"""
 from __future__ import annotations
 
 import copy
-import csv
-import datetime
-import json
 import math
-import sys
 import threading
-from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from collections.abc import Iterable
+from typing import Any
 
 import torch
-from torch import nn
-from torch.nn import functional as F
-from torch.utils.data import DataLoader, TensorDataset
 
-SEQUENCE_LENGTH = 5
-FEATURE_SIZE = 6  # [sentiment_score, market_close, market_volatility, close_change_pct, volatility_change, elapsed_time]
-SENTIMENT_FEATURE_INDEX = 0
-ELAPSED_TIME_FEATURE_INDEX = 5
-FORECAST_CONFIDENCE_LEVEL = 0.8
-CONFIDENCE_Z_SCORE = 1.2816  # Approximate central 80% interval
-DEFAULT_CLOSE_SCALE = 10000.0
-DEFAULT_EPOCHS = 40
-DEFAULT_BATCH_SIZE = 64
-DEFAULT_LEARNING_RATE = 1e-3
-DEFAULT_EARLY_STOPPING_PATIENCE = 8
-DEFAULT_VALIDATION_SPLIT = 0.2
-DEFAULT_HIDDEN_SIZE = 64
-DEFAULT_NUM_LAYERS = 2
-DEFAULT_DROPOUT = 0.15
-DEFAULT_HEAD_HIDDEN_SIZE = 32
-DEFAULT_INITIAL_DECAY_RATE = 0.1
+from app.evaluation.metrics import (
+    EvaluationMetrics,
+    TrainingDataSourceSummary,
+    TrainingResult,
+    TrainingRunSummary,
+)
+from app.models.attention import ChunkAttentionPooler, TimeDecayAttention
+from app.models.config import (
+    BEST_MODEL_PATH,
+    CONFIDENCE_Z_SCORE,
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_CHUNK_DECAY_RATE,
+    DEFAULT_CHUNK_EMBEDDING_SIZE,
+    DEFAULT_CHUNK_PROJECTION_DIM,
+    DEFAULT_CLOSE_SCALE,
+    DEFAULT_DATA_DIR,
+    DEFAULT_DROPOUT,
+    DEFAULT_EARLY_STOPPING_PATIENCE,
+    DEFAULT_EPOCHS,
+    DEFAULT_HEAD_HIDDEN_SIZE,
+    DEFAULT_HIDDEN_SIZE,
+    DEFAULT_INITIAL_DECAY_RATE,
+    DEFAULT_LEARNING_RATE,
+    DEFAULT_NUM_LAYERS,
+    DEFAULT_VALIDATION_SPLIT,
+    ELAPSED_TIME_FEATURE_INDEX,
+    FEATURE_SIZE,
+    FORECAST_CONFIDENCE_LEVEL,
+    RICH_FEATURE_SIZE,
+    RichFeatureScalerParams,
+    MODELS_DIR,
+    SENTIMENT_FEATURE_INDEX,
+    SEQUENCE_LENGTH,
+    FeatureVector,
+    ModelConfig,
+    build_lookback_sequence,
+)
+from app.models.lstm import ForecasterModel
+from app.models.tcn import TemporalConvNet
+from app.models.transformer import SmallTransformer, _SinusoidalPositionalEncoding
+from app.training.checkpoint import (
+    _capture_rng_state,
+    _checkpoint_metadata,
+    _checkpoint_payload,
+    _load_model_checkpoint,
+    _load_state_dict_loose,
+    _read_checkpoint_payload,
+    _restore_rng_state,
+    _save_model_checkpoint,
+    checkpoint_exists,
+)
+from app.training.loaders import (
+    _build_training_tensors,
+    _extract_required_float,
+    _extract_record_groups,
+    _is_record_mapping_list,
+    _load_csv_records,
+    _load_json_records,
+    _load_jsonl_records,
+    _load_record_groups,
+    _split_train_validation,
+    build_feature_vectors,
+    inspect_training_data_sources,
+    load_training_sequences_from_data,
+    load_training_sequences_from_package,
+)
+from app.training.loop import (
+    _build_model,
+    _coerce_model_config,
+    _evaluate_model,
+    _resolve_device,
+    bootstrap_checkpoint,
+    train_model,
+)
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
-MODELS_DIR = BACKEND_ROOT / "models"
-BEST_MODEL_PATH = MODELS_DIR / "forecaster_best.pt"
-
-if torch.cuda.is_available():
-    torch.backends.cudnn.benchmark = True
-
-
-@dataclass(frozen=True)
-class ModelConfig:
-    input_size: int = FEATURE_SIZE
-    hidden_size: int = DEFAULT_HIDDEN_SIZE
-    num_layers: int = DEFAULT_NUM_LAYERS
-    dropout: float = DEFAULT_DROPOUT
-    head_hidden_size: int = DEFAULT_HEAD_HIDDEN_SIZE
-    initial_decay_rate: float = DEFAULT_INITIAL_DECAY_RATE
-
-    @classmethod
-    def from_model(cls, model: "ForecasterModel") -> "ModelConfig":
-        return cls(
-            input_size=model.input_size,
-            hidden_size=model.hidden_size,
-            num_layers=model.num_layers,
-            dropout=model.dropout,
-            head_hidden_size=model.head_hidden_size,
-            initial_decay_rate=model.initial_decay_rate,
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(frozen=True)
-class EvaluationMetrics:
-    loss: float
-    close_rmse: float
-    volatility_rmse: float
-    combined_rmse: float
-
-    def to_dict(self) -> dict[str, float]:
-        return asdict(self)
-
-
-@dataclass(frozen=True)
-class TrainingRunSummary:
-    model_config: ModelConfig
-    device: str
-    epochs_requested: int
-    epochs_completed: int
-    batch_size: int
-    learning_rate: float
-    validation_split: float
-    early_stopping_patience: int
-    sequence_groups: int
-    total_windows: int
-    train_windows: int
-    validation_windows: int
-    checkpoint_path: str | None
-    checkpoint_saved: bool
-    best_epoch: int | None = None
-    metrics: EvaluationMetrics | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(frozen=True)
-class TrainingResult:
-    model: "ForecasterModel"
-    summary: TrainingRunSummary
-
-
-class TimeDecayAttention(nn.Module):
-    """Dampens the sentiment feature by exp(-lambda * |elapsed_time|) per timestep.
-
-    lambda = softplus(raw_lambda) so it stays non-negative while remaining
-    smoothly differentiable. elapsed_time is read from feature index 5 of the
-    input tensor (days between the FOMC document and the record, normalized by
-    30 upstream). The absolute value makes decay symmetric in time so past bars
-    (elapsed < 0) attenuate rather than amplify.
-    """
-
-    def __init__(self, initial_decay_rate: float = DEFAULT_INITIAL_DECAY_RATE):
-        super().__init__()
-        raw_init = math.log(math.expm1(max(float(initial_decay_rate), 1e-6)))
-        self.raw_lambda = nn.Parameter(torch.tensor(raw_init, dtype=torch.float32))
-
-    @property
-    def decay_rate(self) -> torch.Tensor:
-        return F.softplus(self.raw_lambda)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        elapsed = x[..., ELAPSED_TIME_FEATURE_INDEX].abs()
-        decay = torch.exp(-self.decay_rate * elapsed).unsqueeze(-1)
-        feature_mask = torch.zeros(x.shape[-1], dtype=x.dtype, device=x.device)
-        feature_mask[SENTIMENT_FEATURE_INDEX] = 1.0
-        scale = (1.0 - feature_mask) + decay * feature_mask
-        return x * scale
-
-
-class ForecasterModel(nn.Module):
-    def __init__(
-        self,
-        input_size: int = FEATURE_SIZE,
-        hidden_size: int = DEFAULT_HIDDEN_SIZE,
-        num_layers: int = DEFAULT_NUM_LAYERS,
-        dropout: float = DEFAULT_DROPOUT,
-        head_hidden_size: int = DEFAULT_HEAD_HIDDEN_SIZE,
-        initial_decay_rate: float = DEFAULT_INITIAL_DECAY_RATE,
-    ):
-        super().__init__()
-        self.input_size = input_size
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.dropout = dropout
-        self.head_hidden_size = head_hidden_size
-        self.initial_decay_rate = float(initial_decay_rate)
-        self.time_decay = TimeDecayAttention(initial_decay_rate)
-        lstm_dropout = dropout if num_layers > 1 else 0.0
-        self.lstm = nn.LSTM(
-            input_size=input_size,
-            hidden_size=hidden_size,
-            num_layers=num_layers,
-            dropout=lstm_dropout,
-            batch_first=True,
-        )
-        self.head = nn.Sequential(
-            nn.LayerNorm(hidden_size),
-            nn.Linear(hidden_size, head_hidden_size),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(head_hidden_size, 2),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.time_decay(x)
-        output, _ = self.lstm(x)
-        last_step = output[:, -1, :]
-        raw = self.head(last_step)
-        close = raw[:, 0:1]
-        # Volatility must stay non-negative, while close remains unconstrained.
-        volatility = F.softplus(raw[:, 1:2])
-        return torch.cat((close, volatility), dim=1)
-
-
-@dataclass
-class FeatureVector:
-    date: str
-    sentiment_score: float
-    market_close: float
-    market_volatility: float
-    close_change_pct: float = 0.0
-    volatility_change: float = 0.0
-    elapsed_time: float = 0.0
-
-    @classmethod
-    def from_market_state(
-        cls,
-        *,
-        date: str,
-        sentiment_score: float,
-        market_close: float,
-        market_volatility: float,
-        previous_close: float | None = None,
-        previous_volatility: float | None = None,
-        elapsed_time: float = 0.0,
-    ) -> "FeatureVector":
-        close_change_pct = 0.0
-        if previous_close is not None and abs(previous_close) > 1e-12:
-            close_change_pct = (float(market_close) - float(previous_close)) / float(previous_close)
-
-        volatility_change = 0.0
-        if previous_volatility is not None:
-            volatility_change = float(market_volatility) - float(previous_volatility)
-
-        return cls(
-            date=date,
-            sentiment_score=float(sentiment_score),
-            market_close=float(market_close),
-            market_volatility=float(market_volatility),
-            close_change_pct=float(close_change_pct),
-            volatility_change=float(volatility_change),
-            elapsed_time=float(elapsed_time),
-        )
-
-    def as_list(self, close_scale: float = DEFAULT_CLOSE_SCALE) -> list[float]:
-        return [
-            float(self.sentiment_score),
-            float(self.market_close) / close_scale,
-            float(self.market_volatility),
-            max(min(float(self.close_change_pct), 1.0), -1.0),
-            max(min(float(self.volatility_change), 1.0), -1.0),
-            float(self.elapsed_time) / 30.0,
-        ]
-
-
-@dataclass
-class TrainingDataSourceSummary:
-    path: Path
-    format: str
-    record_groups: int
-    records: int
-    vectors: int
-    usable_sequences: int
-    status: str
-    message: str
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True
 
 
 _model: ForecasterModel | None = None
 _model_artifact_metadata: dict[str, Any] | None = None
 _model_lock = threading.Lock()
-
-
-def _resolve_device(device: str | torch.device | None = None) -> torch.device:
-    if device is not None:
-        return torch.device(device)
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def _coerce_model_config(model_config: ModelConfig | dict[str, Any] | None = None) -> ModelConfig:
-    if isinstance(model_config, ModelConfig):
-        return model_config
-    if isinstance(model_config, dict):
-        return ModelConfig(
-            input_size=int(model_config.get("input_size", FEATURE_SIZE)),
-            hidden_size=int(model_config.get("hidden_size", DEFAULT_HIDDEN_SIZE)),
-            num_layers=int(model_config.get("num_layers", DEFAULT_NUM_LAYERS)),
-            dropout=float(model_config.get("dropout", DEFAULT_DROPOUT)),
-            head_hidden_size=int(model_config.get("head_hidden_size", DEFAULT_HEAD_HIDDEN_SIZE)),
-            initial_decay_rate=float(model_config.get("initial_decay_rate", DEFAULT_INITIAL_DECAY_RATE)),
-        )
-    return ModelConfig()
-
-
-def _checkpoint_input_size(payload: dict[str, Any]) -> int | None:
-    model_config = payload.get("model_config")
-    if isinstance(model_config, dict) and "input_size" in model_config:
-        try:
-            return int(model_config["input_size"])
-        except (TypeError, ValueError):
-            return None
-    if "input_size" in payload:
-        try:
-            return int(payload["input_size"])
-        except (TypeError, ValueError):
-            return None
-    return None
-
-
-def _read_checkpoint_payload(checkpoint_path: Path, device: torch.device) -> dict[str, Any] | None:
-    if not checkpoint_path.exists():
-        return None
-
-    payload = torch.load(checkpoint_path, map_location=device)
-    if not (isinstance(payload, dict) and "model_state_dict" in payload):
-        payload = {"model_state_dict": payload}
-
-    saved_input_size = _checkpoint_input_size(payload)
-    if saved_input_size is not None and saved_input_size != FEATURE_SIZE:
-        print(
-            f"[forecaster] ignoring checkpoint {checkpoint_path}: input_size={saved_input_size} "
-            f"incompatible with current FEATURE_SIZE={FEATURE_SIZE}",
-            file=sys.stderr,
-        )
-        return None
-    return payload
-
-
-def _metrics_from_payload(payload: dict[str, Any] | None) -> EvaluationMetrics | None:
-    if not isinstance(payload, dict):
-        return None
-    metrics = payload.get("metrics")
-    if isinstance(metrics, dict):
-        try:
-            return EvaluationMetrics(
-                loss=float(metrics["loss"]),
-                close_rmse=float(metrics["close_rmse"]),
-                volatility_rmse=float(metrics["volatility_rmse"]),
-                combined_rmse=float(metrics["combined_rmse"]),
-            )
-        except (KeyError, TypeError, ValueError):
-            return None
-    return None
-
-
-def _checkpoint_metadata(
-    payload: dict[str, Any] | None,
-    checkpoint_path: Path,
-    *,
-    runtime_mode: str = "fast",
-    model: ForecasterModel | None = None,
-    adaptation_summary: TrainingRunSummary | None = None,
-) -> dict[str, Any]:
-    model_config = (
-        ModelConfig.from_model(model)
-        if model is not None
-        else _coerce_model_config(payload.get("model_config") if isinstance(payload, dict) else None)
-    )
-    payload_metrics = _metrics_from_payload(payload)
-    metrics = adaptation_summary.metrics if adaptation_summary and adaptation_summary.metrics else payload_metrics
-    metadata: dict[str, Any] = {
-        "checkpoint_path": str(checkpoint_path),
-        "checkpoint_exists": checkpoint_path.exists(),
-        "checkpoint_loaded": bool(payload),
-        "runtime_mode": runtime_mode,
-        "hidden_size": model_config.hidden_size,
-        "num_layers": model_config.num_layers,
-        "dropout": model_config.dropout,
-        "head_hidden_size": model_config.head_hidden_size,
-        "close_scale": (
-            float(payload.get("close_scale", DEFAULT_CLOSE_SCALE))
-            if isinstance(payload, dict)
-            else float(DEFAULT_CLOSE_SCALE)
-        ),
-        "sequence_length": (
-            int(payload.get("sequence_length", SEQUENCE_LENGTH))
-            if isinstance(payload, dict)
-            else int(SEQUENCE_LENGTH)
-        ),
-        "best_loss": payload_metrics.loss if payload_metrics else payload.get("best_loss") if isinstance(payload, dict) else None,
-        "combined_rmse": payload_metrics.combined_rmse if payload_metrics else None,
-        "adaptation_epochs_completed": adaptation_summary.epochs_completed if adaptation_summary else None,
-        "adaptation_best_epoch": adaptation_summary.best_epoch if adaptation_summary else None,
-        "adaptation_loss": metrics.loss if adaptation_summary and metrics else None,
-        "adaptation_combined_rmse": metrics.combined_rmse if adaptation_summary and metrics else None,
-    }
-    return metadata
-
-
-def _build_model(
-    model_config: ModelConfig | dict[str, Any] | None = None,
-    *,
-    device: torch.device | None = None,
-) -> ForecasterModel:
-    resolved_config = _coerce_model_config(model_config)
-    model = ForecasterModel(**resolved_config.to_dict())
-    if device is not None:
-        model = model.to(device)
-    return model
-
-
-def _checkpoint_payload(model: ForecasterModel, summary: TrainingRunSummary) -> dict[str, Any]:
-    return {
-        "model_state_dict": model.state_dict(),
-        "best_loss": float(summary.metrics.loss) if summary.metrics else None,
-        "metrics": summary.metrics.to_dict() if summary.metrics else None,
-        "model_config": ModelConfig.from_model(model).to_dict(),
-        "training_summary": summary.to_dict(),
-        "input_size": FEATURE_SIZE,
-        "sequence_length": SEQUENCE_LENGTH,
-        "close_scale": DEFAULT_CLOSE_SCALE,
-    }
-
-
-def _save_model_checkpoint(model: ForecasterModel, checkpoint_path: Path, summary: TrainingRunSummary) -> None:
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(_checkpoint_payload(model, summary), checkpoint_path)
-
-
-def _load_state_dict_loose(model: ForecasterModel, state_dict: dict[str, Any], source: str) -> None:
-    """Load a checkpoint non-strictly and surface any missing/unexpected keys."""
-    result = model.load_state_dict(state_dict, strict=False)
-    missing = list(getattr(result, "missing_keys", []) or [])
-    unexpected = list(getattr(result, "unexpected_keys", []) or [])
-    if missing or unexpected:
-        print(
-            f"[forecaster] checkpoint {source}: missing={missing} unexpected={unexpected}",
-            file=sys.stderr,
-        )
-
-
-def _load_model_checkpoint(
-    model: ForecasterModel,
-    checkpoint_path: Path,
-    device: torch.device,
-) -> dict[str, Any] | None:
-    payload = _read_checkpoint_payload(checkpoint_path, device)
-    if payload is None:
-        return None
-    _load_state_dict_loose(model, payload["model_state_dict"], str(checkpoint_path))
-    return payload
 
 
 def _get_model() -> ForecasterModel:
@@ -439,6 +123,359 @@ def _get_model() -> ForecasterModel:
     return _model
 
 
+def _set_singleton_after_train(
+    work_model: ForecasterModel,
+    checkpoint_target: Path,
+    device_obj: torch.device,
+) -> None:
+    """Refresh the in-process singleton + metadata after training writes a checkpoint."""
+    global _model, _model_artifact_metadata
+    with _model_lock:
+        _model = copy.deepcopy(work_model).to(device_obj)
+        _model.eval()
+        _model_artifact_metadata = _checkpoint_metadata(
+            _read_checkpoint_payload(checkpoint_target, device_obj),
+            checkpoint_target,
+            model=_model,
+        )
+
+
+def _build_inference_tensor(
+    sequence: list[FeatureVector],
+    model: ForecasterModel,
+    device: torch.device,
+) -> torch.Tensor:
+    """Build the per-event input tensor for one forward pass.
+
+    Dispatches on the loaded model's ``input_size``: rich-features
+    models (input_size == RICH_FEATURE_SIZE = 35) use
+    ``as_rich_list`` and apply the persisted RobustScaler from the
+    checkpoint metadata so inference matches training-time
+    normalisation. Legacy 6-feature models keep the byte-identical
+    ``as_list`` path so the existing /analyze contract is unchanged.
+    """
+
+    if int(getattr(model, "input_size", FEATURE_SIZE)) == RICH_FEATURE_SIZE:
+        rows = [item.as_rich_list() for item in sequence]
+        x = torch.tensor([rows], dtype=torch.float32, device=device)
+        scaler = (_model_artifact_metadata or {}).get("rich_feature_scaler")
+        if scaler is not None:
+            from app.training.loaders import apply_rich_feature_scaler_tensor
+
+            x = apply_rich_feature_scaler_tensor(x, scaler)
+        return x
+    rows = [item.as_list() for item in sequence]
+    return torch.tensor([rows], dtype=torch.float32, device=device)
+
+
+def _predict_next_point(model: ForecasterModel, sequence: list[FeatureVector]) -> tuple[float, float]:
+    # Classification-mode checkpoints emit ``(B, n_classes)`` logits
+    # from ``forward()`` (the stance branch under the MultiTaskHead);
+    # reading ``out[0]`` and ``out[1]`` as ``(close, vol)`` would
+    # surface logits in the response. Until /analyze splits the
+    # regression series from the regime classification card (filed as
+    # a follow-up to #216), echo the most recent bar's market state as
+    # a degenerate forecast so the response stays valid. The new
+    # ``RegimeClassificationCard`` is the correct surface for
+    # classification checkpoints.
+    if str(getattr(model, "output_mode", "regression")) == "classification":
+        last = sequence[-1] if sequence else None
+        last_close = float(getattr(last, "market_close", 0.0)) if last else 0.0
+        last_vol = float(getattr(last, "market_volatility", 0.0)) if last else 0.0
+        return last_close, last_vol
+    device = next(model.parameters()).device
+    x = _build_inference_tensor(sequence, model, device)
+    kwargs: dict[str, torch.Tensor] = {}
+    if getattr(model, "credibility_features", False):
+        # Inference-side credibility uses a zero vector by default; the live
+        # vtasca + FRED loader (services.credibility_loader) populates real
+        # numbers in the training loop and at /analyze when the caller wires it
+        # in. Zero is the neutral "all axes unknown" reading from
+        # CredibilityVector — safe for forecast inference.
+        kwargs["credibility"] = torch.zeros(
+            (1, int(getattr(model, "credibility_dim", 4))),
+            dtype=torch.float32,
+            device=device,
+        )
+    with torch.no_grad():
+        out = model(x, **kwargs).squeeze(0)
+    close_scale = float((_model_artifact_metadata or {}).get("close_scale", DEFAULT_CLOSE_SCALE))
+    pred_close = float(out[0].item()) * close_scale
+    pred_vol = float(out[1].item())
+    return pred_close, pred_vol
+
+
+@torch.no_grad()
+def build_market_reaction_panel(
+    sequence: list[FeatureVector],
+    *,
+    text_embedding: "torch.Tensor | None" = None,
+    chunks: "torch.Tensor | None" = None,
+    elapsed_days: "torch.Tensor | None" = None,
+) -> dict[str, Any] | None:
+    """Build the four-card market-reaction panel (#293).
+
+    Returns ``None`` only when the active checkpoint mounts NEITHER the
+    rates heads (any of ``2y`` / ``5y`` / ``terminal``) NOR the
+    vol-regime classifier (a regression-only forecaster). When the
+    checkpoint mounts rates heads under ``output_mode='regression'``
+    the rates cards still render -- the gate that drops the function
+    on ``output_mode != 'classification'`` was removed (#317 finding
+    #11). The vol-regime card stays conditional on classification mode
+    via :func:`build_regime_classification_card`.
+
+    Per-rates-head card semantics:
+
+    - point_bps + symmetric conformal band (when the sidecar carries
+      ``rates_residual_quantiles[name]``);
+    - directional bucket + per-bucket softmax probabilities (when the
+      aux classifier is mounted). Regression-only checkpoints set
+      both to ``None`` so the frontend renders a "no model evidence"
+      badge rather than a fake 'easing' grounded in uniform probs
+      (#317 finding #10);
+    - calibrated APS predicted_set when the sidecar carries
+      ``rates_softmax_quantiles[name]``.
+
+    The optional ``text_embedding`` / ``chunks`` / ``elapsed_days``
+    are forwarded into ``forward_multi_task`` when the checkpoint has
+    the corresponding path active so the call does not raise on
+    text-mounted models (#317 finding #17).
+    """
+
+    model = _get_model()
+    active_rates = tuple(
+        str(name).lower()
+        for name in getattr(model, "rates_heads_active", ()) or ()
+    )
+    output_mode = str(getattr(model, "output_mode", "regression"))
+    # #317 finding #11: rates cards render under either output_mode as
+    # long as the rates heads are mounted; the vol-regime card remains
+    # gated on classification via build_regime_classification_card.
+    if output_mode != "classification" and not active_rates:
+        return None
+    device = next(model.parameters()).device
+    window = build_lookback_sequence(sequence)
+    x = _build_inference_tensor(window, model, device)
+    kwargs: dict[str, torch.Tensor] = {}
+    if getattr(model, "credibility_features", False):
+        kwargs["credibility"] = torch.zeros(
+            (1, int(getattr(model, "credibility_dim", 4))),
+            dtype=torch.float32,
+            device=device,
+        )
+    # #317 finding #17: forward the text path inputs through to
+    # forward_multi_task on text-mounted checkpoints. The model's
+    # forward path raises ``RuntimeError("text path active but inputs
+    # missing")`` if these are absent.
+    if getattr(model, "_text_path_active", False) and text_embedding is not None:
+        kwargs["text_embedding"] = text_embedding.to(device)
+    if (
+        getattr(model, "use_chunk_attention", False)
+        or getattr(model, "use_llm_embeddings", False)
+    ) and chunks is not None and elapsed_days is not None:
+        kwargs["chunks"] = chunks.to(device)
+        kwargs["elapsed_days"] = elapsed_days.to(device)
+    forward_multi = getattr(model, "forward_multi_task", None)
+    if forward_multi is None:
+        return None
+    try:
+        out_dict = forward_multi(x, **kwargs)
+    except RuntimeError:
+        # The text / chunks path is mounted but the caller did not
+        # supply the embedding. Surface a None panel rather than
+        # bubbling a 5xx -- the route handler converts to an empty
+        # response.
+        return None
+
+    metadata = _model_artifact_metadata or {}
+    rates_scalers_payload = metadata.get("rates_scalers") or {}
+    manifest = _conformal_manifest_for(BEST_MODEL_PATH)
+    rates_residuals = (
+        getattr(manifest, "rates_residual_quantiles", None) if manifest else None
+    ) or {}
+    rates_softmax_quantiles = (
+        getattr(manifest, "rates_softmax_quantiles", None) if manifest else None
+    ) or {}
+    coverage = (
+        float(getattr(manifest, "nominal_coverage", 0.0))
+        if manifest is not None
+        else None
+    )
+
+    # Rates cards.
+    from app.evaluation.conformal import predict_conformal_set
+    from app.models.rates_heads import RATES_HEAD_LABEL_NAMES, RATES_HEAD_NAMES
+    from app.training.rates_targets import RatesHeadScaler, inverse_standardise_bps
+
+    rates_cards: list[dict[str, Any]] = []
+    for name in active_rates:
+        if name not in RATES_HEAD_NAMES:
+            continue
+        pred_key = f"rates_{name}_bps"
+        cls_key = f"rates_{name}_cls_logits"
+        if pred_key not in out_dict:
+            continue
+        pred_std_tensor = out_dict[pred_key]
+        pred_std = float(pred_std_tensor.squeeze().item())
+        scaler_payload = rates_scalers_payload.get(name) if isinstance(rates_scalers_payload, dict) else None
+        if isinstance(scaler_payload, dict):
+            scaler = RatesHeadScaler(
+                mean=float(scaler_payload.get("mean", 0.0)),
+                std=float(scaler_payload.get("std", 1.0)),
+            )
+        else:
+            scaler = RatesHeadScaler(mean=0.0, std=1.0)
+        point_bps = inverse_standardise_bps(pred_std, scaler)
+        band_q: float | None = None
+        if isinstance(rates_residuals, dict) and name in rates_residuals:
+            band_q = float(rates_residuals[name])
+        lower_bps = point_bps - band_q if band_q is not None else None
+        upper_bps = point_bps + band_q if band_q is not None else None
+        labels = RATES_HEAD_LABEL_NAMES
+        # #317 finding #10: only render directional_bucket /
+        # bucket_probabilities when the aux classifier is mounted. A
+        # missing cls_logits key (regression-only head) leaves both
+        # None so the frontend shows "not available" instead of a fake
+        # 'easing' on uniform probs.
+        bucket: str | None = None
+        bucket_probs: dict[str, float] | None = None
+        predicted_set: list[str] | None = None
+        if cls_key in out_dict:
+            cls_logits = out_dict[cls_key].squeeze(0)
+            cls_probs_list = torch.softmax(cls_logits, dim=-1).tolist()
+            argmax_idx = max(range(len(cls_probs_list)), key=lambda i: cls_probs_list[i])
+            bucket = labels[argmax_idx] if argmax_idx < len(labels) else "neutral"
+            bucket_probs = {
+                labels[i]: float(cls_probs_list[i])
+                for i in range(min(len(cls_probs_list), len(labels)))
+            }
+            # #317 finding #3: calibrated APS prediction set per head.
+            cls_threshold = (
+                float(rates_softmax_quantiles[name])
+                if isinstance(rates_softmax_quantiles, dict)
+                and name in rates_softmax_quantiles
+                else None
+            )
+            if cls_threshold is not None:
+                set_indices = predict_conformal_set(cls_probs_list, cls_threshold)
+                predicted_set = [
+                    labels[i] if i < len(labels) else f"class_{i}"
+                    for i in set_indices
+                ]
+        rates_cards.append(
+            {
+                "head": name,
+                "point_bps": float(point_bps),
+                "lower_bps": float(lower_bps) if lower_bps is not None else None,
+                "upper_bps": float(upper_bps) if upper_bps is not None else None,
+                "coverage": coverage if band_q is not None else None,
+                "directional_bucket": bucket,
+                "bucket_probabilities": bucket_probs,
+                "predicted_set": predicted_set,
+            }
+        )
+
+    # Vol-regime card: reuse the build_regime_classification_card surface
+    # but also lift the dual-head log_rv prediction off the same forward.
+    vol_regime_card: dict[str, Any] | None = None
+    if output_mode == "classification":
+        regime_payload = build_regime_classification_card(sequence)
+        if regime_payload is not None:
+            log_rv_point: float | None = None
+            log_rv_payload = out_dict.get("log_rv")
+            if log_rv_payload is not None:
+                log_rv_point = float(log_rv_payload.squeeze().item())
+            vol_regime_card = {
+                "log_rv_point": log_rv_point,
+                "log_rv_lower": None,
+                "log_rv_upper": None,
+                "regime_label": str(regime_payload.get("argmax_class") or "normal"),
+                "regime_probabilities": {
+                    str(k): float(v) for k, v in regime_payload.get("distribution", {}).items()
+                },
+                "predicted_set": list(regime_payload.get("predicted_set") or []),
+                "coverage": float(regime_payload.get("coverage") or 0.0) or None,
+            }
+
+    if not rates_cards and vol_regime_card is None:
+        return None
+    return {
+        "rates": rates_cards,
+        "vol_regime": vol_regime_card,
+        "encoder_alias": metadata.get("encoder_key"),
+        "checkpoint_path": str(BEST_MODEL_PATH),
+    }
+
+
+@torch.no_grad()
+def build_regime_classification_card(
+    sequence: list[FeatureVector],
+) -> dict[str, Any] | None:
+    """Run the classifier on the inference window and emit the calibrated card.
+
+    Returns ``None`` whenever any of the prerequisites is missing — the
+    active checkpoint is not in classification mode, the conformal
+    sidecar is absent, or the sidecar carries no
+    ``softmax_quantile``. The /analyze handler then leaves
+    ``regime_classification`` at ``None`` on the response.
+
+    When all three are in place: build the inference tensor from the
+    last ``SEQUENCE_LENGTH`` bars, run the model forward, softmax the
+    logits, build the APS prediction set via the calibrated threshold,
+    and emit a serialisable card dict matching the
+    :class:`RegimeClassificationCard` schema.
+    """
+
+    model = _get_model()
+    if str(getattr(model, "output_mode", "regression")) != "classification":
+        return None
+    manifest = _conformal_manifest_for(BEST_MODEL_PATH)
+    if manifest is None or getattr(manifest, "softmax_quantile", None) is None:
+        return None
+
+    from app.evaluation.conformal import (
+        format_class_set_label,
+        predict_conformal_set,
+    )
+
+    device = next(model.parameters()).device
+    window = build_lookback_sequence(sequence)
+    x = _build_inference_tensor(window, model, device)
+    kwargs: dict[str, torch.Tensor] = {}
+    if getattr(model, "credibility_features", False):
+        kwargs["credibility"] = torch.zeros(
+            (1, int(getattr(model, "credibility_dim", 4))),
+            dtype=torch.float32,
+            device=device,
+        )
+    logits = model(x, **kwargs)
+    if logits.dim() != 2:
+        return None
+    probs_tensor = torch.softmax(logits, dim=-1).squeeze(0)
+    probs = [float(p) for p in probs_tensor.tolist()]
+    n_classes = len(probs)
+    labels: tuple[str, ...] = VOL_REGIME_CLASS_LABELS
+    if n_classes != len(labels):
+        # Defensive: a 5-class quantile run would emit 5 probs but our
+        # label tuple is 3-wide. Pad with f"class_{i}" so the response
+        # still serialises rather than indexing past the tuple.
+        labels = tuple(
+            labels[i] if i < len(labels) else f"class_{i}" for i in range(n_classes)
+        )
+    threshold = float(manifest.softmax_quantile)
+    set_indices = predict_conformal_set(probs, threshold)
+    set_labels = [labels[i] for i in set_indices]
+    argmax_idx = max(range(n_classes), key=lambda i: probs[i])
+    return {
+        "predicted_set": set_labels,
+        "set_label": format_class_set_label(set_indices, labels),
+        "set_size": len(set_indices),
+        "coverage": float(manifest.nominal_coverage),
+        "distribution": {labels[i]: probs[i] for i in range(n_classes)},
+        "argmax_class": labels[argmax_idx],
+    }
+
+
 def _parse_horizon_steps(horizon: str) -> int:
     if horizon.endswith("d") and horizon[:-1].isdigit():
         return max(1, int(horizon[:-1]))
@@ -447,488 +484,6 @@ def _parse_horizon_steps(horizon: str) -> int:
 
 def parse_horizon_steps(horizon: str) -> int:
     return _parse_horizon_steps(horizon)
-
-
-def _extract_required_float(record: dict[str, Any], keys: Sequence[str]) -> float:
-    for key in keys:
-        if key in record and record[key] not in {None, ""}:
-            return float(record[key])
-    raise ValueError(f"Missing required numeric field from keys: {', '.join(keys)}")
-
-
-def build_feature_vectors(
-    records: Sequence[dict[str, Any]],
-    sentiment_score: float | None = None,
-    document_date: str | None = None,
-) -> list[FeatureVector]:
-    vectors: list[FeatureVector] = []
-    previous_close: float | None = None
-    previous_volatility: float | None = None
-
-    parsed_doc_date: datetime.date | None = None
-    if document_date:
-        parsed_doc_date = datetime.date.fromisoformat(document_date)
-
-    sorted_records = sorted(records, key=lambda item: str(item.get("date", item.get("timestamp", ""))))
-    for record in sorted_records:
-        date_value = str(record.get("date", record.get("timestamp", "")))
-        if not date_value:
-            continue
-
-        elapsed_time = 0.0
-        if parsed_doc_date is not None:
-            record_date = datetime.date.fromisoformat(date_value[:10])
-            elapsed_time = float((record_date - parsed_doc_date).days)
-
-        close_value = _extract_required_float(record, ("close", "market_close"))
-        volatility_value = _extract_required_float(
-            record,
-            ("volatility_5d", "market_volatility", "volatility"),
-        )
-        row_sentiment = float(record.get("sentiment_score", sentiment_score if sentiment_score is not None else 0.0))
-        vectors.append(
-            FeatureVector.from_market_state(
-                date=date_value,
-                sentiment_score=row_sentiment,
-                market_close=close_value,
-                market_volatility=volatility_value,
-                previous_close=previous_close,
-                previous_volatility=previous_volatility,
-                elapsed_time=elapsed_time,
-            )
-        )
-        previous_close = close_value
-        previous_volatility = volatility_value
-
-    return vectors
-
-
-def build_last5_sequence(vectors: Iterable[FeatureVector], length: int = SEQUENCE_LENGTH) -> list[FeatureVector]:
-    items = list(vectors)
-    if not items:
-        items = [FeatureVector(date="", sentiment_score=0.0, market_close=0.0, market_volatility=0.0)]
-
-    if len(items) >= length:
-        return items[-length:]
-
-    pad = [items[0] for _ in range(length - len(items))]
-    return pad + items
-
-
-def _load_json_records(path: Path) -> list[dict[str, Any]]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
-    if isinstance(payload, dict):
-        for key in ("records", "rows", "data", "items"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                return [item for item in value if isinstance(item, dict)]
-    return []
-
-
-def _load_jsonl_records(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        payload = json.loads(line)
-        if isinstance(payload, dict):
-            rows.append(payload)
-    return rows
-
-
-def _load_csv_records(path: Path) -> list[dict[str, Any]]:
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        return [dict(row) for row in csv.DictReader(handle)]
-
-
-def _is_record_mapping_list(value: Any) -> bool:
-    return isinstance(value, list) and all(isinstance(item, dict) for item in value)
-
-
-def _extract_record_groups(payload: Any) -> list[list[dict[str, Any]]]:
-    if _is_record_mapping_list(payload):
-        if payload and any(any(key in item for key in ("records", "rows", "data", "items")) for item in payload):
-            nested_groups: list[list[dict[str, Any]]] = []
-            for item in payload:
-                if not isinstance(item, dict):
-                    continue
-                nested_groups.extend(_extract_record_groups(item))
-            return nested_groups or [payload]
-        return [payload]
-
-    if isinstance(payload, dict):
-        for key in ("sequences", "series", "groups"):
-            nested = payload.get(key)
-            if isinstance(nested, list):
-                groups: list[list[dict[str, Any]]] = []
-                for entry in nested:
-                    groups.extend(_extract_record_groups(entry))
-                if groups:
-                    return groups
-
-        for key in ("records", "rows", "data", "items"):
-            nested = payload.get(key)
-            if _is_record_mapping_list(nested):
-                return [nested]
-
-    return []
-
-
-def _load_record_groups(path: Path) -> tuple[list[list[dict[str, Any]]], str]:
-    if path.suffix == ".json":
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return _extract_record_groups(payload), "json"
-    if path.suffix == ".jsonl":
-        return [_load_jsonl_records(path)], "jsonl"
-    if path.suffix == ".csv":
-        return [_load_csv_records(path)], "csv"
-    return [], path.suffix.lstrip(".") or "unknown"
-
-
-def inspect_training_data_sources(
-    data_dir: str | Path | None = None,
-) -> tuple[list[list[FeatureVector]], list[TrainingDataSourceSummary]]:
-    root = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
-    if not root.exists():
-        return [], []
-
-    sequences: list[list[FeatureVector]] = []
-    summaries: list[TrainingDataSourceSummary] = []
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.name.startswith("."):
-            continue
-
-        try:
-            groups, format_name = _load_record_groups(path)
-            if not groups:
-                summaries.append(
-                    TrainingDataSourceSummary(
-                        path=path,
-                        format=format_name,
-                        record_groups=0,
-                        records=0,
-                        vectors=0,
-                        usable_sequences=0,
-                        status="ignored",
-                        message="No trainable market-record groups detected.",
-                    )
-                )
-                continue
-
-            record_count = sum(len(group) for group in groups)
-            vectors_for_path = [build_feature_vectors(group) for group in groups]
-            usable = [vector_group for vector_group in vectors_for_path if len(vector_group) >= SEQUENCE_LENGTH + 1]
-            sequences.extend(usable)
-            summaries.append(
-                TrainingDataSourceSummary(
-                    path=path,
-                    format=format_name,
-                    record_groups=len(groups),
-                    records=record_count,
-                    vectors=sum(len(group) for group in vectors_for_path),
-                    usable_sequences=len(usable),
-                    status="usable" if usable else "insufficient",
-                    message=(
-                        "Usable training sequences detected."
-                        if usable
-                        else f"Need at least {SEQUENCE_LENGTH + 1} usable rows per sequence."
-                    ),
-                )
-            )
-        except Exception as exc:
-            summaries.append(
-                TrainingDataSourceSummary(
-                    path=path,
-                    format=path.suffix.lstrip(".") or "unknown",
-                    record_groups=0,
-                    records=0,
-                    vectors=0,
-                    usable_sequences=0,
-                    status="error",
-                    message=str(exc),
-                )
-            )
-            continue
-
-    return sequences, summaries
-
-
-def load_training_sequences_from_data(data_dir: str | Path | None = None) -> list[list[FeatureVector]]:
-    sequences, _ = inspect_training_data_sources(data_dir)
-    return sequences
-
-
-def _build_training_tensors(
-    sequence_groups: Sequence[Sequence[FeatureVector]],
-) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-    sequences: list[list[list[float]]] = []
-    targets: list[list[float]] = []
-
-    for sequence_group in sequence_groups:
-        if len(sequence_group) < SEQUENCE_LENGTH + 1:
-            continue
-        for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
-            window = sequence_group[idx - SEQUENCE_LENGTH : idx]
-            target = sequence_group[idx]
-            sequences.append([item.as_list() for item in window])
-            targets.append(
-                [
-                    target.market_close / DEFAULT_CLOSE_SCALE,
-                    max(target.market_volatility, 0.0),
-                ]
-            )
-
-    if not sequences:
-        return None, None
-
-    x = torch.tensor(sequences, dtype=torch.float32)
-    y = torch.tensor(targets, dtype=torch.float32)
-    return x, y
-
-
-def _split_train_validation(
-    x: torch.Tensor,
-    y: torch.Tensor,
-    validation_split: float,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    if len(x) < 2:
-        return x, y, x, y
-
-    val_size = max(1, int(len(x) * validation_split))
-    train_size = max(1, len(x) - val_size)
-    if train_size >= len(x):
-        train_size = len(x) - 1
-        val_size = 1
-
-    return x[:train_size], y[:train_size], x[train_size:], y[train_size:]
-
-
-def _evaluate_model(
-    model: ForecasterModel,
-    loader: DataLoader,
-    device: torch.device,
-    loss_fn: nn.Module,
-) -> EvaluationMetrics:
-    model.eval()
-    total_loss = 0.0
-    total_items = 0
-    close_squared_error = 0.0
-    volatility_squared_error = 0.0
-    with torch.no_grad():
-        for batch_x, batch_y in loader:
-            batch_x = batch_x.to(device, non_blocking=device.type == "cuda")
-            batch_y = batch_y.to(device, non_blocking=device.type == "cuda")
-            predictions = model(batch_x)
-            loss = loss_fn(predictions, batch_y)
-            batch_size = batch_x.size(0)
-            total_loss += float(loss.item()) * batch_size
-            total_items += batch_size
-            delta = predictions - batch_y
-            close_squared_error += float(torch.square(delta[:, 0]).sum().item())
-            volatility_squared_error += float(torch.square(delta[:, 1]).sum().item())
-    if total_items <= 0:
-        return EvaluationMetrics(
-            loss=float("inf"),
-            close_rmse=float("inf"),
-            volatility_rmse=float("inf"),
-            combined_rmse=float("inf"),
-        )
-
-    combined_squared_error = close_squared_error + volatility_squared_error
-    return EvaluationMetrics(
-        loss=total_loss / total_items,
-        close_rmse=math.sqrt(close_squared_error / total_items),
-        volatility_rmse=math.sqrt(volatility_squared_error / total_items),
-        combined_rmse=math.sqrt(combined_squared_error / (total_items * 2)),
-    )
-
-
-def train_model(
-    *,
-    base_model: ForecasterModel | None = None,
-    model_config: ModelConfig | dict[str, Any] | None = None,
-    vectors: list[FeatureVector] | None = None,
-    data_dir: str | Path | None = None,
-    epochs: int = DEFAULT_EPOCHS,
-    batch_size: int = DEFAULT_BATCH_SIZE,
-    learning_rate: float = DEFAULT_LEARNING_RATE,
-    validation_split: float = DEFAULT_VALIDATION_SPLIT,
-    early_stopping_patience: int = DEFAULT_EARLY_STOPPING_PATIENCE,
-    checkpoint_path: str | Path | None = None,
-    save_checkpoint: bool = True,
-    device: str | torch.device | None = None,
-) -> TrainingResult:
-    device_obj = _resolve_device(device)
-    active_model_config = ModelConfig.from_model(base_model) if base_model is not None else _coerce_model_config(model_config)
-    sequence_groups = load_training_sequences_from_data(data_dir)
-    if vectors:
-        sequence_groups.append(list(vectors))
-
-    x, y = _build_training_tensors(sequence_groups)
-    if x is None or y is None:
-        model = copy.deepcopy(base_model).to(device_obj) if base_model is not None else _build_model(active_model_config, device=device_obj)
-        model.eval()
-        return TrainingResult(
-            model=model,
-            summary=TrainingRunSummary(
-                model_config=ModelConfig.from_model(model),
-                device=str(device_obj),
-                epochs_requested=epochs,
-                epochs_completed=0,
-                batch_size=batch_size,
-                learning_rate=learning_rate,
-                validation_split=validation_split,
-                early_stopping_patience=early_stopping_patience,
-                sequence_groups=len(sequence_groups),
-                total_windows=0,
-                train_windows=0,
-                validation_windows=0,
-                checkpoint_path=str(checkpoint_path) if checkpoint_path is not None else str(BEST_MODEL_PATH),
-                checkpoint_saved=False,
-                best_epoch=None,
-                metrics=None,
-            ),
-        )
-
-    train_x, train_y, val_x, val_y = _split_train_validation(x, y, validation_split)
-    # The current Torch build emits deprecation warnings from DataLoader pinning internals.
-    # For this dataset size, disabling pinning keeps training clean without a meaningful throughput hit.
-    pin_memory = False
-    train_loader = DataLoader(
-        TensorDataset(train_x, train_y),
-        batch_size=min(batch_size, len(train_x)),
-        shuffle=True,
-        pin_memory=pin_memory,
-    )
-    val_loader = DataLoader(
-        TensorDataset(val_x, val_y),
-        batch_size=min(batch_size, len(val_x)),
-        shuffle=False,
-        pin_memory=pin_memory,
-    )
-
-    work_model = (
-        copy.deepcopy(base_model).to(device_obj)
-        if base_model is not None
-        else _build_model(active_model_config, device=device_obj)
-    )
-    work_model.train()
-    optimizer = torch.optim.AdamW(work_model.parameters(), lr=learning_rate, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3)
-    loss_fn = nn.SmoothL1Loss(beta=0.02)
-
-    best_metrics: EvaluationMetrics | None = None
-    best_state = copy.deepcopy(work_model.state_dict())
-    best_epoch: int | None = None
-    completed_epochs = 0
-    stale_epochs = 0
-    checkpoint_target = Path(checkpoint_path) if checkpoint_path is not None else BEST_MODEL_PATH
-
-    for epoch_index in range(epochs):
-        work_model.train()
-        for batch_x, batch_y in train_loader:
-            batch_x = batch_x.to(device_obj, non_blocking=device_obj.type == "cuda")
-            batch_y = batch_y.to(device_obj, non_blocking=device_obj.type == "cuda")
-            optimizer.zero_grad(set_to_none=True)
-            predictions = work_model(batch_x)
-            loss = loss_fn(predictions, batch_y)
-            loss.backward()
-            nn.utils.clip_grad_norm_(work_model.parameters(), max_norm=1.0)
-            optimizer.step()
-
-        completed_epochs = epoch_index + 1
-        eval_metrics = _evaluate_model(work_model, val_loader, device_obj, loss_fn)
-        scheduler.step(eval_metrics.loss)
-
-        if best_metrics is None or eval_metrics.loss + 1e-6 < best_metrics.loss:
-            best_metrics = eval_metrics
-            best_state = copy.deepcopy(work_model.state_dict())
-            best_epoch = completed_epochs
-            stale_epochs = 0
-        else:
-            stale_epochs += 1
-            if stale_epochs >= early_stopping_patience:
-                break
-
-    work_model.load_state_dict(best_state)
-    work_model.eval()
-    if best_metrics is None:
-        best_metrics = _evaluate_model(work_model, val_loader, device_obj, loss_fn)
-
-    summary = TrainingRunSummary(
-        model_config=ModelConfig.from_model(work_model),
-        device=str(device_obj),
-        epochs_requested=epochs,
-        epochs_completed=completed_epochs,
-        batch_size=batch_size,
-        learning_rate=learning_rate,
-        validation_split=validation_split,
-        early_stopping_patience=early_stopping_patience,
-        sequence_groups=len(sequence_groups),
-        total_windows=len(x),
-        train_windows=len(train_x),
-        validation_windows=len(val_x),
-        checkpoint_path=str(checkpoint_target),
-        checkpoint_saved=save_checkpoint,
-        best_epoch=best_epoch,
-        metrics=best_metrics,
-    )
-
-    if save_checkpoint:
-        _save_model_checkpoint(work_model, checkpoint_target, summary)
-
-    global _model, _model_artifact_metadata
-    with _model_lock:
-        if save_checkpoint:
-            _model = copy.deepcopy(work_model).to(device_obj)
-            _model.eval()
-            _model_artifact_metadata = _checkpoint_metadata(
-                _read_checkpoint_payload(checkpoint_target, device_obj),
-                checkpoint_target,
-                model=_model,
-            )
-
-    return TrainingResult(model=work_model, summary=summary)
-
-
-def _predict_next_point(model: ForecasterModel, sequence: list[FeatureVector]) -> tuple[float, float]:
-    device = next(model.parameters()).device
-    x = torch.tensor([[item.as_list() for item in sequence]], dtype=torch.float32, device=device)
-    with torch.no_grad():
-        out = model(x).squeeze(0)
-    close_scale = float((_model_artifact_metadata or {}).get("close_scale", DEFAULT_CLOSE_SCALE))
-    pred_close = float(out[0].item()) * close_scale
-    pred_vol = float(out[1].item())
-    return pred_close, pred_vol
-
-
-def checkpoint_exists(checkpoint_path: str | Path = BEST_MODEL_PATH) -> bool:
-    return Path(checkpoint_path).exists()
-
-
-def bootstrap_checkpoint(
-    *,
-    vectors: list[FeatureVector],
-    epochs: int = 80,
-    batch_size: int = 64,
-    learning_rate: float = 3e-4,
-    validation_split: float = 0.2,
-    early_stopping_patience: int = 10,
-    checkpoint_path: str | Path = BEST_MODEL_PATH,
-) -> TrainingResult:
-    return train_model(
-        vectors=vectors,
-        epochs=epochs,
-        batch_size=batch_size,
-        learning_rate=learning_rate,
-        validation_split=validation_split,
-        early_stopping_patience=early_stopping_patience,
-        checkpoint_path=checkpoint_path,
-        save_checkpoint=True,
-    )
 
 
 def _sample_std(values: Iterable[float]) -> float:
@@ -940,12 +495,99 @@ def _sample_std(values: Iterable[float]) -> float:
     return math.sqrt(max(variance, 0.0))
 
 
+# Canonical vol-regime class labels (#216). Index ordering matches the
+# per-fold quantile bins: 0 = lowest tertile (calm), 1 = middle (normal),
+# 2 = highest (high). Used by the conformal prediction-set card on
+# /analyze to render the set as ``"{normal, high}"`` instead of indices.
+VOL_REGIME_CLASS_LABELS: tuple[str, ...] = ("calm", "normal", "high")
+
+
+def get_vol_regime_quantiles() -> tuple[float, ...]:
+    """Expose the active checkpoint's regime quantile cutoffs.
+
+    Returns () when the loaded model is regression-only or when the
+    cutoffs were never fit (e.g. cold-start bootstrap).
+    """
+
+    try:
+        model = _get_model()
+    except Exception:
+        return ()
+    return tuple(getattr(model, "vol_regime_quantiles", ()) or ())
+
+
+def bucket_realized_regime(realized_vol: float | None) -> str | None:
+    """Map a realised forward-vol value to a calm / normal / high label.
+
+    Uses the loaded checkpoint's train-only quantile cutoffs (see
+    :func:`app.training.loaders.fit_vol_regime_quantiles`). Returns None
+    when the input is missing or when the active model carries no
+    cutoffs (regression-only or fresh cold-start). Boundaries match the
+    training-time definition: ``v < q[0]`` -> first class, ``v >= q[-1]``
+    -> last class, intermediate v -> middle classes in order.
+    """
+
+    if realized_vol is None:
+        return None
+    try:
+        value = float(realized_vol)
+    except (TypeError, ValueError):
+        return None
+    if value != value:  # NaN guard
+        return None
+    cutoffs = get_vol_regime_quantiles()
+    if not cutoffs or len(cutoffs) + 1 != len(VOL_REGIME_CLASS_LABELS):
+        return None
+    for idx, cutoff in enumerate(cutoffs):
+        if value < cutoff:
+            return VOL_REGIME_CLASS_LABELS[idx]
+    return VOL_REGIME_CLASS_LABELS[-1]
+
+
+def _conformal_manifest_for(checkpoint_path: Path | None) -> Any:
+    if checkpoint_path is None:
+        return None
+    # `with_suffix(".conformal.json")` rejects multi-dot suffixes on Python < 3.12.
+    # `with_name` constructs the sibling path explicitly so behaviour is identical
+    # on 3.11 and 3.12+.
+    manifest_path = checkpoint_path.with_name(checkpoint_path.stem + ".conformal.json")
+    if not manifest_path.exists():
+        return None
+    try:
+        from app.evaluation.conformal import load_manifest
+
+        return load_manifest(manifest_path)
+    except Exception:
+        return None
+
+
 def _build_confidence_bands(
     history_close: list[float],
     history_vol: list[float],
     forecast_close: list[float],
     forecast_vol: list[float],
+    *,
+    conformal_manifest: Any = None,
 ) -> tuple[list[float], list[float], list[float], list[float]]:
+    # A non-None manifest with both residual quantiles at 0 is the
+    # marker for a classification-only sidecar (saved by the training
+    # loop when only the APS softmax_quantile is fit on the val
+    # partition). Treat that case as "no regression bands available"
+    # and fall through to the gaussian-z heuristic so the close/vol
+    # series does not emit zero-width bands.
+    has_residual_bands = conformal_manifest is not None and (
+        float(getattr(conformal_manifest, "residual_quantile_close", 0.0)) > 0.0
+        or float(getattr(conformal_manifest, "residual_quantile_volatility", 0.0)) > 0.0
+    )
+    if has_residual_bands:
+        from app.evaluation.conformal import apply_conformal_bands
+
+        return apply_conformal_bands(
+            close_predictions=forecast_close,
+            volatility_predictions=forecast_vol,
+            manifest=conformal_manifest,
+        )
+
     close_returns = [
         (curr - prev) / prev
         for prev, curr in zip(history_close, history_close[1:])
@@ -1018,7 +660,25 @@ def get_model_artifact_metadata(
                 ),
             }
         )
+    base_metadata.setdefault("encoder_key", _resolve_encoder_key())
     return base_metadata
+
+
+def _resolve_encoder_key() -> str | None:
+    """Best-effort fetch of the multi-axis classifier encoder alias.
+
+    Inner import so a missing optional dependency in the classifier
+    service cannot break the forecaster's diagnostics path.
+    """
+
+    try:
+        from app.services.multi_axis_classifier import get_loaded_encoder_alias
+    except Exception:  # pragma: no cover — defensive
+        return None
+    try:
+        return get_loaded_encoder_alias()
+    except Exception:  # pragma: no cover — defensive
+        return None
 
 
 def forecast_quantitative_series(
@@ -1030,22 +690,13 @@ def forecast_quantitative_series(
     if not vectors:
         vectors = [FeatureVector(date="", sentiment_score=0.0, market_close=0.0, market_volatility=0.0)]
 
-    base_model = _get_model()
-    training_result = (
-        train_model(
-            base_model=base_model,
-            vectors=vectors,
-            epochs=18,
-            batch_size=32,
-            learning_rate=5e-4,
-            validation_split=0.25,
-            early_stopping_patience=4,
-            save_checkpoint=False,
-        )
-        if forecast_mode == "quick_train"
-        else None
-    )
-    model = training_result.model if training_result is not None else base_model
+    # ``forecast_mode`` is kept as a parameter (default ``"fast"``) for
+    # back-compat with persisted history rows; the runtime path is
+    # always the cached checkpoint now. The quick_train adaptation
+    # branch was retired in #265 along with the rest of the runtime
+    # adaptation surface.
+    model = _get_model()
+    training_result = None
 
     history_vectors = vectors[-30:]
     history_timestamps = [item.date for item in history_vectors]
@@ -1060,7 +711,7 @@ def forecast_quantitative_series(
 
     last_date = history_timestamps[-1] if history_timestamps else ""
     for step in range(steps):
-        fixed_sequence = build_last5_sequence(rolling)
+        fixed_sequence = build_lookback_sequence(rolling)
         next_close, next_vol = _predict_next_point(model, fixed_sequence)
         last_vector = fixed_sequence[-1]
         if forecast_dates and step < len(forecast_dates):
@@ -1081,12 +732,19 @@ def forecast_quantitative_series(
         forecast_close.append(next_close)
         forecast_vol.append(next_vol)
 
+    conformal_manifest = _conformal_manifest_for(BEST_MODEL_PATH)
     (
         forecast_close_lower,
         forecast_close_upper,
         forecast_vol_lower,
         forecast_vol_upper,
-    ) = _build_confidence_bands(history_close, history_vol, forecast_close, forecast_vol)
+    ) = _build_confidence_bands(
+        history_close,
+        history_vol,
+        forecast_close,
+        forecast_vol,
+        conformal_manifest=conformal_manifest,
+    )
 
     vol_values = [*history_vol, *forecast_vol, *forecast_vol_lower, *forecast_vol_upper]
     if vol_values:
@@ -1122,7 +780,39 @@ def forecast_quantitative_series(
             "forecast_volatility": forecast_vol,
             "forecast_volatility_lower": forecast_vol_lower,
             "forecast_volatility_upper": forecast_vol_upper,
-            "forecast_confidence_level": FORECAST_CONFIDENCE_LEVEL,
+            "forecast_confidence_level": (
+                float(conformal_manifest.nominal_coverage)
+                if (
+                    conformal_manifest is not None
+                    and float(
+                        getattr(conformal_manifest, "residual_quantile_close", 0.0)
+                    )
+                    > 0.0
+                )
+                else FORECAST_CONFIDENCE_LEVEL
+            ),
             "volatility_scale": vol_scale,
+            "forecast_band_source": (
+                "conformal"
+                if (
+                    conformal_manifest is not None
+                    and float(
+                        getattr(conformal_manifest, "residual_quantile_close", 0.0)
+                    )
+                    > 0.0
+                )
+                else "gaussian_z"
+            ),
+            "conformal_coverage": (
+                float(conformal_manifest.nominal_coverage)
+                if (
+                    conformal_manifest is not None
+                    and float(
+                        getattr(conformal_manifest, "residual_quantile_close", 0.0)
+                    )
+                    > 0.0
+                )
+                else None
+            ),
         },
     }

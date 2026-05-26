@@ -1,0 +1,63 @@
+version: 2
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      torch-stack:
+        patterns:
+          - "torch*"
+          - "transformers"
+          - "accelerate"
+          - "datasets"
+      web-stack:
+        patterns:
+          - "fastapi"
+          - "uvicorn*"
+          - "pydantic*"
+          - "httpx"
+          - "sqlalchemy"
+    labels:
+      - "dependencies"
+      - "backend"
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      next-stack:
+        patterns:
+          - "next"
+          - "react"
+          - "react-dom"
+          - "@types/react*"
+          - "@types/node"
+      radix-stack:
+        patterns:
+          - "@radix-ui/*"
+      testing-stack:
+        patterns:
+          - "@testing-library/*"
+          - "vitest"
+          - "@vitejs/plugin-react"
+          - "jsdom"
+    labels:
+      - "dependencies"
+      - "frontend"

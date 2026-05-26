@@ -1,0 +1,13 @@
+# gitlint config — enforces Conventional Commits-style titles
+# (https://www.conventionalcommits.org/). Body rules stay loose so PR
+# descriptions can still carry context.
+
+[general]
+ignore = body-is-missing,body-min-length,body-max-line-length
+contrib = contrib-title-conventional-commits
+
+[contrib-title-conventional-commits]
+types = feat,fix,perf,refactor,docs,test,build,ci,chore,revert
+
+[title-max-length]
+line-length = 80

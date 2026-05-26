@@ -11,8 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = Path("/data") if Path("/data").exists() else BACKEND_ROOT.parent / "data"
+from app.config import DATA_DIR as DEFAULT_DATA_DIR
 DEFAULT_INPUT = DEFAULT_DATA_DIR / "interim" / "phase2" / "registry_quality_passed.jsonl"
 DEFAULT_REPORT_DIR = DEFAULT_DATA_DIR / "interim" / "phase2" / "quality_reports"
 DEFAULT_PROCESSED_ROOT = DEFAULT_DATA_DIR / "processed"
@@ -32,6 +31,50 @@ class FoldRange:
     val_rows: int
     test_rows: int
     class_distribution: dict[str, int]
+    train_source_distribution: dict[str, int]
+    val_source_distribution: dict[str, int]
+    test_source_distribution: dict[str, int]
+    source_drift_max: float
+    # #317 finding #6: per-fold rates quantile edges (one entry per
+    # mounted rates head). Populated by the training loop / sweep
+    # script after the train slice fits the tertile cutoffs; left
+    # ``None`` at data-prep time (the edges depend on the train rows,
+    # which the data-prep stage has but does not bin). The inference
+    # path reads this dict back to label a live event with the same
+    # bucket cutoffs the model trained against.
+    rates_quantile_edges: dict[str, dict[str, float]] | None = None
+
+
+def update_fold_manifest_rates_quantile_edges(
+    package_dir: Path,
+    fold_id: str,
+    rates_quantile_edges: dict[str, dict[str, float]] | None,
+) -> bool:
+    """Upsert per-fold rates_quantile_edges onto the canonical manifest (#317).
+
+    Loads ``fold_manifest_expanding_walk_forward.json``, looks for the
+    fold matching ``fold_id``, and writes ``rates_quantile_edges`` into
+    that fold's dict. Returns True when the upsert hit a fold; False
+    when the manifest is missing or the fold_id is not present (the
+    sweep script logs the miss as a warning rather than aborting so
+    the run can continue).
+    """
+
+    manifest_path = package_dir / "fold_manifest_expanding_walk_forward.json"
+    if not manifest_path.exists():
+        return False
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    folds = payload.get("folds") or []
+    hit = False
+    for fold in folds:
+        if str(fold.get("fold_id", "")) == fold_id:
+            fold["rates_quantile_edges"] = rates_quantile_edges
+            hit = True
+            break
+    if not hit:
+        return False
+    manifest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return True
 
 
 def _parse_args() -> argparse.Namespace:
@@ -51,6 +94,30 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--processed-root", default=str(DEFAULT_PROCESSED_ROOT), help="Processed package root.")
     parser.add_argument("--min-train-ratio", type=float, default=0.6, help="Min train date ratio for fold seed.")
     parser.add_argument("--fold-count", type=int, default=5, help="Target walk-forward fold count.")
+    parser.add_argument(
+        "--source-drift-tolerance",
+        type=float,
+        default=0.0,
+        help=(
+            "Maximum allowed source-share drift between train and either val or test, per fold, "
+            "in absolute share points (0.15 = 15 percentage points). 0.0 disables the check; "
+            "drift numbers are still reported in fold_manifest.json. The check exists because mixing "
+            "labelled sources with different stance priors (TDW hawkish-skewed, Op-Fed dovish-skewed) "
+            "can let a model learn the source instead of the stance."
+        ),
+    )
+    parser.add_argument(
+        "--force-overwrite",
+        action="store_true",
+        help=(
+            "Allow overwriting an existing training-package directory. "
+            "Default behaviour (audit Tier 1.10) refuses to overwrite so "
+            "a published package cannot be silently replaced -- the "
+            "benchmark policy in docs/benchmark-policy.md says "
+            "'checkpoints behind a published version are not replaced "
+            "silently' and the same applies at the dataset layer."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -92,6 +159,32 @@ def _rows_between(rows: list[dict[str, Any]], start_date: str, end_date: str) ->
     return [r for r in rows if start_date <= str(r.get("event_date", "")) <= end_date]
 
 
+def _source_distribution(rows: list[dict[str, Any]]) -> dict[str, int]:
+    return dict(Counter(str(r.get("source", "")) for r in rows if r.get("source")))
+
+
+def _source_shares(distribution: dict[str, int]) -> dict[str, float]:
+    total = sum(distribution.values())
+    if total == 0:
+        return {}
+    return {src: count / total for src, count in distribution.items()}
+
+
+def _source_drift_max(train: dict[str, int], split: dict[str, int]) -> float:
+    """Absolute share-point gap between train and a val or test split, taken over the
+    union of source keys. 0.0 when either side is empty (drift is undefined).
+    """
+
+    if not train or not split:
+        return 0.0
+    train_shares = _source_shares(train)
+    split_shares = _source_shares(split)
+    keys = set(train_shares) | set(split_shares)
+    if not keys:
+        return 0.0
+    return max(abs(train_shares.get(k, 0.0) - split_shares.get(k, 0.0)) for k in keys)
+
+
 def _build_folds(rows: list[dict[str, Any]], min_train_ratio: float, fold_count: int) -> list[FoldRange]:
     unique_dates = sorted({str(r.get("event_date", "")) for r in rows if r.get("event_date")})
     if len(unique_dates) < 8:
@@ -120,6 +213,14 @@ def _build_folds(rows: list[dict[str, Any]], min_train_ratio: float, fold_count:
         test_rows = _rows_between(rows, *test_dates)
         cls_count = Counter(str(r.get("mapped_label", "")) for r in test_rows if r.get("mapped_label"))
 
+        train_sources = _source_distribution(train_rows)
+        val_sources = _source_distribution(val_rows)
+        test_sources = _source_distribution(test_rows)
+        drift = max(
+            _source_drift_max(train_sources, val_sources),
+            _source_drift_max(train_sources, test_sources),
+        )
+
         folds.append(
             FoldRange(
                 fold_id=f"wf_fold_{i}",
@@ -133,18 +234,39 @@ def _build_folds(rows: list[dict[str, Any]], min_train_ratio: float, fold_count:
                 val_rows=len(val_rows),
                 test_rows=len(test_rows),
                 class_distribution=dict(cls_count),
+                train_source_distribution=train_sources,
+                val_source_distribution=val_sources,
+                test_source_distribution=test_sources,
+                source_drift_max=round(drift, 4),
             )
         )
     return folds
 
 
-def _maybe_write_parquet(path: Path, rows: list[dict[str, Any]]) -> bool:
+def _maybe_write_parquet(
+    path: Path,
+    rows: list[dict[str, Any]],
+    *,
+    schema: Any | None = None,
+) -> bool:
+    """Write rows to parquet, validating against ``schema`` first when provided.
+
+    Validation errors propagate so a bad row halts the build at the
+    write site. The legacy ``except Exception`` fallback only catches
+    pandas / pyarrow availability + IO problems; pandera failures must
+    not be silently swallowed.
+    """
+
     try:
         import pandas as pd  # type: ignore
     except Exception:
         return False
+    df = pd.DataFrame(rows)
+    if schema is not None:
+        from app.data.schemas import validate_frame
+
+        validate_frame(schema, df)
     try:
-        df = pd.DataFrame(rows)
         df.to_parquet(path, index=False)
         return True
     except Exception:
@@ -178,13 +300,33 @@ def main() -> int:
     )
     package_dir = processed_root / training_package_id
     quality_out_dir = package_dir / "quality_reports"
+    # Audit Tier 1.10: refuse to overwrite an existing package directory
+    # unless --force-overwrite is set. The previous mkdir(exist_ok=True)
+    # silently replaced every parquet + manifest in place, which the
+    # benchmark policy explicitly forbids at the dataset layer.
+    if package_dir.exists() and not args.force_overwrite:
+        existing = sorted(p.name for p in package_dir.iterdir())
+        raise SystemExit(
+            f"Training package already exists at {package_dir} (contents: "
+            f"{existing}). Pass --force-overwrite to replace, or pick a "
+            "different --training-package-id."
+        )
     package_dir.mkdir(parents=True, exist_ok=True)
     quality_out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pandera schemas guard each parquet write so a contract violation
+    # raises at this stage instead of downstream. Imported lazily to keep
+    # the module's existing import surface unchanged.
+    from app.data.schemas import FoldRowSchema, NormalizedDocSchema
 
     # Base registry artifact
     registry_jsonl = package_dir / "registry_normalized.jsonl"
     _write_jsonl(registry_jsonl, supervised_rows)
-    parquet_written = _maybe_write_parquet(package_dir / "registry_normalized.parquet", supervised_rows)
+    parquet_written = _maybe_write_parquet(
+        package_dir / "registry_normalized.parquet",
+        supervised_rows,
+        schema=NormalizedDocSchema,
+    )
 
     # Train/val/test split artifact
     train_rows, val_rows, test_rows = _time_split(supervised_rows)
@@ -197,15 +339,40 @@ def main() -> int:
         split_rows.append({**row, "split_tag": "test"})
     splits_jsonl = package_dir / "splits_train_val_test.jsonl"
     _write_jsonl(splits_jsonl, split_rows)
-    _maybe_write_parquet(package_dir / "splits_train_val_test.parquet", split_rows)
+    _maybe_write_parquet(
+        package_dir / "splits_train_val_test.parquet",
+        split_rows,
+        schema=FoldRowSchema,
+    )
 
     folds = _build_folds(supervised_rows, min_train_ratio=args.min_train_ratio, fold_count=args.fold_count)
+
+    drift_violations: list[tuple[str, float]] = []
+    if args.source_drift_tolerance > 0:
+        drift_violations = [
+            (fold.fold_id, fold.source_drift_max)
+            for fold in folds
+            if fold.source_drift_max > args.source_drift_tolerance
+        ]
+        if drift_violations:
+            for fold_id, drift in drift_violations:
+                print(
+                    f"[source-drift] {fold_id}: drift={drift:.3f} exceeds tolerance "
+                    f"{args.source_drift_tolerance:.3f}"
+                )
+            print(
+                f"[source-drift] {len(drift_violations)}/{len(folds)} fold(s) exceeded the tolerance. "
+                f"Aborting build_training_package."
+            )
+            return 1
+
     fold_manifest = {
         "evaluation_protocol": args.protocol,
         "dataset_version": args.dataset_version,
         "feature_version": args.feature_version,
         "training_package_id": training_package_id,
         "fold_count": len(folds),
+        "source_drift_tolerance": args.source_drift_tolerance,
         "folds": [asdict(fold) for fold in folds],
     }
     (package_dir / "fold_manifest_expanding_walk_forward.json").write_text(
@@ -227,12 +394,29 @@ def main() -> int:
         "supervised_rows": len(supervised_rows),
         "split_counts": {"train": len(train_rows), "val": len(val_rows), "test": len(test_rows)},
         "source_counts": dict(Counter(str(r.get("source", "")) for r in supervised_rows)),
+        "source_type_counts": dict(
+            Counter(str(r.get("source_type", "")) for r in supervised_rows if r.get("source_type"))
+        ),
         "label_counts": dict(Counter(str(r.get("mapped_label", "")) for r in supervised_rows)),
         "registry_parquet_written": parquet_written,
+        "source_drift_tolerance": args.source_drift_tolerance,
+        "source_drift_per_fold": {
+            fold.fold_id: fold.source_drift_max for fold in folds
+        },
+        "source_drift_max_across_folds": max(
+            (fold.source_drift_max for fold in folds), default=0.0
+        ),
     }
     (package_dir / "dataset_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
+    # Immutability sidecar (docs/benchmark-policy.md). A later load
+    # whose manifest disagrees with this hash raises so a silent
+    # replacement cannot reach a published run.
+    from app.data.manifest_sha import write_manifest_sha
+
+    sha = write_manifest_sha(package_dir)
     print(f"Training package created: {package_dir}")
+    print(f"Manifest sha256: {sha}")
     return 0
 
 

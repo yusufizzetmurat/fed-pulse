@@ -1,0 +1,116 @@
+# Root-level ruff config so `cd /wt && ruff check backend/app/ tests/unit/`
+# can pick the same rules up for both subtrees. The backend tree has its
+# own pyproject.toml (kept authoritative for backend-only invocations);
+# this file mirrors the lint surface for the root-level invocation and
+# adds the tests/** opt-out at a path that the root resolver actually
+# sees.
+
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = [
+  "E",
+  "F",
+  "W",
+  "I",
+  "B",
+  "C4",
+  "UP",
+  "C901",
+  "PLR0913",
+  "TID252",
+  "INP001",
+]
+ignore = [
+  "E402",
+  "E501",
+  "F401",
+  "F541",
+  "F841",
+  "I001",
+  "B008",
+  "B905",
+  "UP012",
+  "UP017",
+  "UP035",
+  "UP037",
+]
+
+[lint.per-file-ignores]
+# Tests are intentionally not a package (no __init__.py) and test
+# fixtures naturally pile up positional arguments.
+"tests/**/*.py" = ["C901", "PLR0913", "INP001"]
+# Scripts are top-level entrypoints, not a package; CLI builders accept a
+# fan-out of keyword arguments by design.
+"scripts/**/*.py" = ["C901", "PLR0913", "INP001"]
+# Backend-side debt is keyed in backend/pyproject.toml; root invocations
+# delegate to it implicitly by ignoring the same rules on backend paths.
+"backend/app/audit.py" = ["PLR0913"]
+"backend/app/data/attention_ablation.py" = ["PLR0913", "C901"]
+"backend/app/data/build_training_package.py" = ["PLR0913", "C901"]
+"backend/app/data/chunk_embedding_retrieval.py" = ["PLR0913", "C901"]
+"backend/app/data/chunk_embedding_store.py" = ["PLR0913", "C901"]
+"backend/app/data/continued_pretraining.py" = ["PLR0913", "C901"]
+"backend/app/data/embedding_cache.py" = ["PLR0913", "C901"]
+"backend/app/data/embedding_comparator.py" = ["PLR0913", "C901"]
+"backend/app/data/event_dataset_builder.py" = ["PLR0913", "C901"]
+"backend/app/data/finetune_batch.py" = ["PLR0913", "C901"]
+"backend/app/data/finetune_pilot.py" = ["PLR0913", "C901"]
+"backend/app/data/generate_baseline_run_specs.py" = ["PLR0913"]
+"backend/app/data/ingest_sources.py" = ["PLR0913", "C901"]
+"backend/app/data/label_normalization.py" = ["PLR0913"]
+"backend/app/data/llm_embedding_store.py" = ["PLR0913", "C901"]
+"backend/app/data/llm_judge.py" = ["PLR0913", "C901"]
+"backend/app/data/llm_zero_shot_execution.py" = ["PLR0913", "C901"]
+"backend/app/data/macro_releases.py" = ["C901"]
+"backend/app/data/macro_state.py" = ["C901"]
+"backend/app/data/mp_surprise.py" = ["PLR0913", "C901"]
+"backend/app/data/nlp_baseline_batch.py" = ["PLR0913", "C901"]
+"backend/app/data/normalize_labels.py" = ["C901"]
+"backend/app/data/pipeline_data_prep.py" = ["PLR0913", "C901"]
+"backend/app/data/pseudo_labeling.py" = ["PLR0913", "C901"]
+"backend/app/data/quality_checks.py" = ["C901"]
+"backend/app/data/quality_validation.py" = ["PLR0913"]
+"backend/app/data/source_type_stratified_analysis.py" = ["PLR0913", "C901"]
+"backend/app/data/training_package_builder.py" = ["PLR0913"]
+"backend/app/db.py" = ["PLR0913"]
+"backend/app/evaluation/bootstrap.py" = ["PLR0913", "C901"]
+"backend/app/evaluation/conformal.py" = ["PLR0913"]
+"backend/app/evaluation/cross_bank_transfer.py" = ["PLR0913"]
+"backend/app/evaluation/metrics.py" = ["PLR0913"]
+"backend/app/evaluation/regime_aggregator.py" = ["PLR0913", "C901"]
+"backend/app/evaluation/transfer_matrix.py" = ["PLR0913"]
+"backend/app/features/credibility.py" = ["PLR0913"]
+"backend/app/features/linguistic.py" = ["PLR0913", "C901"]
+"backend/app/forecasting/cross_asset_response.py" = ["PLR0913", "C901"]
+"backend/app/forecasting/next_fomc_decision.py" = ["PLR0913", "C901"]
+"backend/app/main.py" = ["PLR0913", "C901"]
+"backend/app/models/config.py" = ["PLR0913"]
+"backend/app/models/informer.py" = ["PLR0913"]
+"backend/app/models/lstm.py" = ["PLR0913", "C901"]
+"backend/app/models/tft.py" = ["PLR0913"]
+"backend/app/models/transformer.py" = ["PLR0913"]
+"backend/app/prepare_training_data.py" = ["PLR0913"]
+"backend/app/services/credibility_loader.py" = ["PLR0913", "C901"]
+"backend/app/services/decision_forecast.py" = ["PLR0913", "C901"]
+"backend/app/services/document_parser.py" = ["C901"]
+"backend/app/services/fomc_calendar.py" = ["C901"]
+"backend/app/services/forecaster.py" = ["PLR0913", "C901"]
+"backend/app/services/fred_client.py" = ["PLR0913"]
+"backend/app/services/gemini_client.py" = ["PLR0913"]
+"backend/app/services/market_data.py" = ["PLR0913", "C901"]
+"backend/app/services/research_artifacts.py" = ["C901"]
+"backend/app/services/scraper_beige_book.py" = ["C901"]
+"backend/app/services/scraper_press_conferences.py" = ["C901"]
+"backend/app/services/scraper_regional_research.py" = ["C901"]
+"backend/app/services/scraper_speeches.py" = ["C901"]
+"backend/app/services/scraper_testimonies.py" = ["C901"]
+"backend/app/services/sentiment.py" = ["C901"]
+"backend/app/services/text_encoder.py" = ["PLR0913"]
+"backend/app/train_forecaster.py" = ["PLR0913", "C901"]
+"backend/app/training/loaders.py" = ["PLR0913", "C901"]
+"backend/app/training/loop.py" = ["PLR0913", "C901"]
+"backend/app/training/manifest.py" = ["PLR0913", "C901"]
+"backend/app/training/batched_sweep.py" = ["PLR0913", "C901"]
+"backend/app/training/rates_targets.py" = ["PLR0913", "C901"]

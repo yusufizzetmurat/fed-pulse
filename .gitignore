@@ -2,12 +2,18 @@
 .DS_Store
 .idea/
 .vscode/
+.claude/
+.cursor/
 
 # Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 .venv/
 venv/
 
@@ -24,15 +30,24 @@ npm-debug.log*
 # Docker/runtime artifacts
 *.log
 
-# Generated data and model weights
+# Generated data and model weights (checkpoint store, not source code)
 data/*
 !data/.gitkeep
-models/
+!data/raw/
+data/raw/*
+!data/raw/market/
+!data/schema/
+!data/external/
+data/external/*
+!data/external/macro_releases.csv
+!data/external/macro_releases.csv.lock.json
+/backend/models/
 *.pt
 *.pth
 *.bin
 *.safetensors
 
-# Ignore all root markdown files except README
+# Ignore all root markdown files except README + CHANGELOG
 /*.md
 !README.md
+!CHANGELOG.md

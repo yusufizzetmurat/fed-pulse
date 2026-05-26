@@ -1,0 +1,14 @@
+{
+  "source": "bls_ism_curated",
+  "description": "Macro release calendar for the Phase 8 concurrent_macro_release flag. CPI dates 2008-2026 were hand-encoded against BLS published Schedule of Releases archives; CPI 1977-2007 use a second-Wednesday fallback since pre-2008 BLS archives were not hand-encoded. NFP dates are first-Friday-of-month with federal-holiday forward shift across the full range. ISM dates are first-business-day-of-month with federal-holiday forward shift across the full range.",
+  "coverage_start": "1977-01-01",
+  "coverage_end": "2026-12-31",
+  "release_kinds": ["NFP", "CPI", "ISM"],
+  "refresh_command": "python -m app.data.macro_releases --refresh-from-fred",
+  "notes": [
+    "ISM Manufacturing PMI is a private (non-FRED) release; refresh-from-FRED preserves the existing ISM column.",
+    "FRED release IDs used for live refresh: NFP=50, CPI=10.",
+    "Pre-2008 CPI dates are rule-derived (second Wednesday of each month) rather than hand-encoded; refresh from FRED to lift them to BLS archival accuracy.",
+    "2026 dates beyond 2026-05 are projected from the standard cadence; refresh once BLS publishes the 2026 H2 schedule."
+  ]
+}

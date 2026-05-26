@@ -1,0 +1,356 @@
+updated_at: 2026-05-15
+
+encoders:
+  bert_base:
+    repo: google-bert/bert-base-uncased
+    revision: 86b5e0934494bd15c9632b12f734a8a67f723594
+    gated: false
+    task: masked_lm
+    description: Base BERT, used for the NLP-row comparison and continued pretraining.
+    repo_aliases:
+      - bert-base-uncased
+
+  finbert:
+    repo: ProsusAI/finbert
+    revision: 4556d13015211d73dccd3fdd39d39232506f3e43
+    gated: false
+    task: classification
+    description: Araci's FinBERT.
+
+  finbert_tone:
+    repo: yiyanghkust/finbert-tone
+    revision: 4921590d3c0c3832c0efea24c8381ce0bda7844b
+    gated: false
+    task: classification
+    description: FinBERT-tone.
+
+  finbert_fomc:
+    repo: ZiweiChen/FinBERT-FOMC
+    revision: 7754dd1d88da18e8b1d51cc1656496858ce19aae
+    gated: false
+    task: classification
+    description: FinBERT fine-tuned on FOMC minutes (Chen et al. 2023).
+
+  fomc_roberta:
+    repo: gtfintechlab/FOMC-RoBERTa
+    revision: aa3bc4281fb1fe73c8872e09ad5c64b898f90d83
+    gated: false
+    task: classification
+    description: gtfintechlab FOMC-RoBERTa. Flagged data-contaminated against TDW; kept for audit only.
+
+  fomc_roberta_any_exp:
+    repo: gtfintechlab/fomc-roberta-any-exp
+    revision: main
+    gated: true
+    task: classification
+    description: Gated checkpoint used by the dashboard sentiment service. Pin to a SHA after the next authenticated load.
+
+  distilbert_sst2:
+    repo: distilbert/distilbert-base-uncased-finetuned-sst-2-english
+    revision: 714eb0fa89d2f80546fda750413ed43d93601a13
+    gated: false
+    task: classification
+    description: Fallback when FOMC-RoBERTa fails to load.
+    repo_aliases:
+      - distilbert-base-uncased-finetuned-sst-2-english
+
+  distilbert_base_uncased:
+    repo: distilbert/distilbert-base-uncased
+    revision: 12040accade4e8a0f71eabdb258fecc2e7e948be
+    gated: false
+    task: masked_lm
+    description: Lightweight BERT used in the bake-off as a cheap baseline.
+    repo_aliases:
+      - distilbert-base-uncased
+
+  deberta_v3_base:
+    repo: microsoft/deberta-v3-base
+    revision: 7d4a04c4f6f4bd3a9dd55fb55c25aa7e22f7c79b
+    gated: false
+    task: masked_lm
+    description: DeBERTa v3 base — bake-off entry to test a non-BERT-family encoder.
+
+  bge_large_en_v15:
+    repo: BAAI/bge-large-en-v1.5
+    revision: d4aa6901d3a41ba39fb536a557fa166f842b0e09
+    gated: false
+    task: sentence_embedding
+    description: BGE large English v1.5. Sentence-embedding encoder for the embedding-cache bake-off lane.
+
+  nomic_embed_text_v15:
+    repo: nomic-ai/nomic-embed-text-v1.5
+    revision: b0753ae76394dd36bcfb912a46018088bca48be0
+    gated: false
+    task: sentence_embedding
+    description: Nomic embed text v1.5. Sentence-embedding encoder; second bake-off entry alongside BGE.
+
+  voyage_finance_2:
+    repo: voyageai/voyage-finance-2
+    revision: voyage-finance-2
+    gated: true
+    task: sentence_embedding
+    description: |
+      Voyage AI voyage-finance-2 sentence-embedding encoder (1024-dim,
+      finance-tuned). Served by Voyage's hosted REST API, not the
+      Hugging Face hub, so the cache builder lives at
+      ``scripts/cache_voyage_embeddings.py`` rather than going through
+      ``app.data.embedding_cache``. ``VOYAGE_API_KEY`` must be set;
+      Voyage does not publish a checkpoint sha, so the revision field
+      pins the model name itself.
+
+  finbert_fed_adjacent:
+    repo: /data/artifacts/continued_pretraining/finbert_fed_adjacent_20260515T104824Z_s11/checkpoint
+    revision: "20260515T104824Z"
+    gated: false
+    task: masked_lm
+    description: |
+      FinBERT continued-pretrained on BIS speeches (+ optional local Fed-adjacent
+      auxiliary). Produced by ``make finbert-fed-adjacent-pretrain``; pinned to
+      the 2026-05-15 GPU run whose embedding cache lives at
+      ``data/raw/embeddings/finbert_fed_adjacent_20260515T104.parquet``. The
+      bake-off CLI now treats this encoder as runnable; cross-bank-supervised
+      variants ride under ``finbert_fed_adjacent_xbank``.
+
+  bert_base_fed_adjacent:
+    repo: local/bert-base-fed-adjacent
+    revision: ""
+    gated: false
+    task: masked_lm
+    description: |
+      Control ablation for finbert_fed_adjacent — same BIS+local continued-
+      pretrain recipe applied on top of bert-base-uncased instead of ProsusAI/
+      finbert. Run via ``make finbert-fed-adjacent-pretrain-bert-control``; the
+      bake-off pairs the two checkpoints so we can isolate the contribution of
+      the FinBERT prior versus the BIS substrate alone.
+
+  finbert_fomc_only:
+    repo: local/finbert-fomc-only
+    revision: ""
+    gated: false
+    task: masked_lm
+    description: |
+      Round 3 (#242) corpus-ablation sibling of ``finbert_fed_adjacent``.
+      Continued-pretrained on FOMC statements + minutes ONLY (~48 docs,
+      ~240k tokens), bypassing BIS speeches and the broader Fed-adjacent
+      JSON corpus. Produced by ``make finbert-fomc-only-pretrain``. The
+      revision stays empty until the first GPU run lands a checkpoint;
+      ``encoder_ref`` treats this as "unpinned local" and the bake-off
+      CLI will refuse to load it until the path + revision are filled in.
+
+  finbert_bis_only:
+    repo: local/finbert-bis-only
+    revision: ""
+    gated: false
+    task: masked_lm
+    description: |
+      Round 3 (#242) corpus-ablation sibling of ``finbert_fed_adjacent``.
+      Continued-pretrained on samchain/BIS_speeches_97_23_MLM ONLY,
+      dropping the legacy local Fed-adjacent auxiliary JSONs. Produced
+      by ``make finbert-bis-only-pretrain``. Revision empty until the
+      first GPU run lands a checkpoint; same unpinned-local guard as
+      ``finbert_fomc_only`` applies.
+
+  finbert_fed_adjacent_xbank:
+    repo: /data/artifacts/phase3/finetune_batch_20260519T190604Z/finbert_fed_adjacent_s11/hf_checkpoints
+    revision: "20260519T190604Z_s11"
+    gated: false
+    task: stance_classification
+    description: |
+      Phase C (#228) cross-bank auxiliary-supervised variant of
+      ``finbert_fed_adjacent``. Same MLM substrate; the supervised
+      stance head trains with ``--cross-bank-supervision=on`` so the
+      15k cross-bank rows (ECB / BoJ / BoE / BoC / RBA at
+      ``provenance=peer_reviewed_cross_bank``) join the FOMC pool as
+      full-weight training rows. Pinned to the s11 checkpoint from the
+      2026-05-19 GPU run (macro-F1 0.672 mean across 5 seeds on the
+      stance head); the remaining four seeds are kept on disk under
+      ``finetune_batch_20260519T190604Z/finbert_fed_adjacent_s{29,47,71,97}``
+      for reproducibility but the embedding cache builds against s11.
+
+  finbert_fed_adjacent_xbank_dapt:
+    repo: /data/artifacts/continued_pretraining/finbert_fed_adjacent_xbank_dapt_20260525T185524Z_s11/checkpoint
+    revision: "20260525T185524Z_s11"
+    gated: false
+    task: masked_lm
+    description: |
+      DAPT substrate-extension sibling of ``finbert_fed_adjacent``. Same
+      MLM+NSP recipe, but the pretraining substrate adds the 5 cross-bank
+      gtfintechlab corpora (ECB / BoJ / BoE / BoC / RBA, ~15k sentences
+      reformatted as ~7.5k consecutive NSP pairs) on top of the BIS
+      speeches firehose — pure pretrain extension, no FOMC / local
+      Fed-adjacent JSON, so the downstream fine-tune target is unchanged
+      and there is no target leakage. Produced by
+      ``make finbert-fed-adjacent-xbank-dapt-pretrain``. Revision stays
+      empty until the first GPU run lands a checkpoint; same unpinned-
+      local guard as ``finbert_fomc_only`` applies.
+
+  finbert_fed_adjacent_xbank_aux_stance_masked:
+    repo: /data/artifacts/text_multi_axis/text_multi_axis_20260525T105459Z/hf_checkpoints
+    revision: "20260525T105459Z"
+    gated: false
+    task: stance_classification
+    description: |
+      Bundle A.2 arm A: ``finbert_fed_adjacent`` fine-tuned through
+      ``train_text_multi_axis_classifier.py --cross-bank-supervision
+      stance_masked``. Cross-bank rows enter the loader and contribute
+      gradient on the certainty / factor / topic axes, but every row
+      with ``provenance=peer_reviewed_cross_bank`` carries
+      ``mask_stance=False`` so the stance head only fits the FOMC stance
+      distribution. The substitute-not-complement guard from Phase C
+      (#231). Validation accuracy at the best epoch: stance 0.981 /
+      certainty 0.984 (val_loss=0.0922). Pin holds the encoder backbone
+      + tokenizer saved alongside the singleton inference checkpoint at
+      ``backend/models/text_multi_axis_best.pt``.
+
+  finbert_fed_adjacent_xbank_aux_weighted:
+    repo: /data/artifacts/text_multi_axis/text_multi_axis_20260525T110428Z/hf_checkpoints
+    revision: "20260525T110428Z"
+    gated: false
+    task: stance_classification
+    description: |
+      Bundle A.2 arm B: ``finbert_fed_adjacent`` fine-tuned through
+      ``train_text_multi_axis_classifier.py --cross-bank-supervision
+      weighted --cross-bank-stance-weight 0.25``. Cross-bank rows enter
+      with their stance label intact but their per-row stance CE
+      contribution is scaled by 0.25 so they regularise rather than
+      dominate the FOMC stance distribution. The diagnostic A/B against
+      ``finbert_fed_adjacent_xbank_aux_stance_masked`` that re-litigates
+      the Phase C substitute-not-complement prior. Validation accuracy
+      at the best epoch: stance 0.978 / certainty 0.984 (val_loss=0.0974).
+
+  finbert_fed_adjacent_xbank_dapt_retrieval:
+    repo: /data/artifacts/retrieval/finbert_fed_adjacent_xbank_dapt_retrieval/checkpoint
+    revision: ""
+    gated: false
+    task: sentence_embedding
+    description: |
+      Sentence-transformer fine-tune (#294) layered on top of the
+      ``finbert_fed_adjacent_xbank_dapt`` MLM checkpoint. Produced by
+      ``python -m app.retrieval.train`` — contrastive
+      MultipleNegativesRankingLoss over same-meeting positive pairs
+      (statement / minutes / press_conference sharing an event_date in
+      ``events.parquet``). Powers ``/analyze/analogs``: the historical
+      FOMC-statement index lives at
+      ``data/artifacts/retrieval/<run-id>/index.parquet`` and the
+      encoder is mean-pooled over the document at query time. Revision
+      stays empty until the first GPU run lands a pinned checkpoint;
+      same unpinned-local guard as ``finbert_fomc_only`` applies.
+      Deployability lane (#302) will mirror the checkpoint to HF Hub
+      in a follow-up — this PR keeps the artefact local.
+
+  trajectory_lstm:
+    repo: /data/artifacts/trajectory/trajectory_lstm/model.pt
+    revision: ""
+    gated: false
+    task: trajectory_classification
+    description: |
+      Sequence-of-meetings LSTM baseline (#296). Two layers, 64-dim
+      hidden. Consumes the per-meeting embedding produced by the
+      cross-bank DAPT encoder (``finbert_fed_adjacent_xbank_dapt``)
+      concatenated with the #291 pre-meeting market block (trailing
+      2y yield change in bps + z-scored VIX close + bias term).
+      Predicts the next meeting's stance (3-class hawkish / dovish /
+      neutral). Produced by ``python -m app.trajectory.train
+      --architecture lstm``; revision stays empty until the first
+      GPU run lands a pinned checkpoint.
+
+  trajectory_transformer:
+    repo: /data/artifacts/trajectory/trajectory_transformer/model.pt
+    revision: ""
+    gated: false
+    task: trajectory_classification
+    description: |
+      Sequence-of-meetings Transformer arm (#296). Encoder-only, four
+      layers, 64-dim model, four attention heads, learned positional
+      embeddings. Same input contract as ``trajectory_lstm``; the
+      architecture A/B is the methodological point of the trajectory
+      panel per §3 Panel 4 of the finalization roadmap. Produced by
+      ``python -m app.trajectory.train --architecture transformer``;
+      revision stays empty until the first GPU run lands a pinned
+      checkpoint.
+
+# HF Hub mirror of every artefact the inference container needs to boot.
+# Local paths in ``encoders:`` above stay primary (the dev stack keeps
+# reading them from the ``/data/`` mount); the URIs below are the
+# fallback path the production droplet pulls via
+# ``huggingface_hub.snapshot_download``. ``parse_hf_uri`` and
+# ``resolve_hf_uri`` in ``app.models.registry`` consume these. Revisions
+# stay empty until the operator runs ``python scripts/push_artefacts_to_hub.py``
+# once and pins the resulting commit shas here.
+artefacts:
+  encoder_canonical:
+    hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent-xbank-dapt
+    revision: "50677e3a0a84e2ce66089c902de2a5438c13d28e"
+    eager: true
+    description: |
+      Canonical hot-path encoder — cross-bank DAPT-extended FinBERT
+      substrate. Boot-time eager pull on the droplet entrypoint.
+
+  encoder_finbert_fomc:
+    # Upstream third-party repo — we don't host our own copy. The pinned
+    # revision matches the `encoders:` block above so the resolver hits
+    # the same weights whether it goes through the legacy alias path or
+    # the artefacts.hf_uri path.
+    hf_uri: hf://ZiweiChen/FinBERT-FOMC
+    revision: "7754dd1d88da18e8b1d51cc1656496858ce19aae"
+    eager: false
+    description: Upstream third-party FinBERT-FOMC. Lazy-fetched for the bake-off comparison.
+
+  encoder_finbert_fed_adjacent:
+    hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent
+    revision: "332e31e166e859deba81535bfeec410b3c6e7023"
+    eager: false
+    description: DAPT encoder over BIS speeches + Fed-adjacent auxiliary corpus.
+
+  encoder_finbert_fed_adjacent_xbank:
+    hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent-xbank
+    revision: "178fcfaa70f7949bd4b703f36e4c45746e279bce"
+    eager: false
+    description: Bundle A cross-bank auxiliary supervised variant.
+
+  forecaster_canonical:
+    hf_uri: hf://yusufizzetmurat/fed-pulse-forecaster
+    revision: "c26182b61057ab02c169f57703be0a487d244fa6"
+    eager: true
+    description: |
+      Canonical multi-head forecaster checkpoint (#292). Loaded into
+      ``backend/models/forecaster_best.pt`` on first boot.
+
+  rates_heads_canonical:
+    hf_uri: hf://yusufizzetmurat/fed-pulse-rates-heads
+    revision: "0a76dabb67006b532e376d9b4dd69b8ad172e7d7"
+    eager: true
+    description: Multi-target rates heads checkpoint (#292/#293).
+
+  retrieval_bundle:
+    hf_uri: hf://yusufizzetmurat/fed-pulse-retrieval
+    revision: "a4693b818e4e2a738f3e32c844f45c651424ee3e"
+    eager: true
+    description: |
+      Retrieval bundle for /analyze/analogs — embedding_index.parquet +
+      embeddings.npy + manifest produced by ``python -m app.retrieval.train``.
+
+  trajectory_bundle:
+    hf_uri: hf://yusufizzetmurat/fed-pulse-trajectory
+    revision: "df7ccaac07473dfff4e1a62d557a6979d5077304"
+    eager: true
+    description: |
+      Trajectory bundle for /analyze/trajectory — LSTM checkpoint +
+      2D embeddings + manifest produced by ``python -m app.trajectory.train``.
+
+  training_package:
+    hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-training-package
+    revision: "b9a71cc97a00c6108eabcc1d004352b0701eac6f"
+    eager: false
+    description: |
+      Canonical training package for ``make reproduce-all``. Pulled to
+      ``data/processed/canonical/`` via
+      ``huggingface_hub.snapshot_download(repo_type='dataset')``.
+
+  embedding_caches:
+    hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-embedding-caches
+    revision: "89c3bc119182b9a39a4f96d18bd238a5adbcdfba"
+    eager: false
+    description: |
+      Per-encoder embedding caches lazy-fetched on first use by
+      ``app.data.embedding_cache.ensure_local``.

@@ -59,6 +59,14 @@ def test_analyze_happy_path_with_realized_overlay(monkeypatch):
                 "adaptation_best_epoch": None,
                 "adaptation_loss": None,
                 "adaptation_combined_rmse": None,
+                "decay_rate": 0.1234,
+                "chunk_attention": {
+                    "chunk_count": 2,
+                    "weights": [0.6, 0.4],
+                    "decay_coeffs": [1.0, 0.5],
+                    "chunk_previews": ["intro...", "policy..."],
+                    "lambda_value": 0.1234,
+                },
             },
             "series": {
                 "timestamps": ["2026-03-12", "2026-03-13"],
@@ -94,7 +102,6 @@ def test_analyze_happy_path_with_realized_overlay(monkeypatch):
             "text": "sample",
             "date": "2026-03-15",
             "symbol": "^GSPC",
-            "forecast_mode": "fast",
             "horizon": "3d",
             "include_realized": True,
         },
@@ -106,9 +113,17 @@ def test_analyze_happy_path_with_realized_overlay(monkeypatch):
     assert payload["series"]["realized_timestamps"] == ["2026-03-14", "2026-03-15", "2026-03-16"]
     assert payload["series"]["forecast_confidence_level"] == 0.8
     assert payload["model"]["checkpoint_loaded"] is True
+    assert payload["model"]["decay_rate"] == pytest.approx(0.1234)
+    assert payload["model"]["chunk_attention"]["chunk_count"] == 2
+    assert payload["model"]["chunk_attention"]["weights"] == [0.6, 0.4]
+    assert payload["model"]["chunk_attention"]["lambda_value"] == pytest.approx(0.1234)
 
 
-def test_analyze_invalid_mode_returns_422():
+def test_analyze_rejects_unknown_field():
+    """Strict request schema (#265 Phase 2) — forecast_mode is no longer
+    a field, so a stale payload that includes it must 422 rather than
+    silently land on the fast-mode path."""
+
     client = TestClient(main_mod.app)
     response = client.post(
         "/analyze",
@@ -116,7 +131,7 @@ def test_analyze_invalid_mode_returns_422():
             "text": "sample",
             "date": "2026-03-15",
             "symbol": "^GSPC",
-            "forecast_mode": "bad_mode",
+            "forecast_mode": "fast",
             "horizon": "3d",
         },
     )

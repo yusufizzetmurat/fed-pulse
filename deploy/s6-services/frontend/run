@@ -1,0 +1,7 @@
+#!/command/with-contenv sh
+# Drop to the non-root ``fedpulse`` user before exec'ing node so the
+# Next.js standalone server never touches the bind mount as root.
+cd /app/frontend
+export PORT=3000
+export HOSTNAME=0.0.0.0
+exec s6-setuidgid fedpulse node server.js

@@ -9,7 +9,11 @@ services:
     volumes:
       - ./backend:/app
       - ./tests:/app/tests:ro
+      - ./scripts:/app/scripts:ro
       - ./data:/data
+    env_file:
+      - path: .env
+        required: false
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
@@ -26,7 +30,11 @@ services:
     volumes:
       - ./backend:/app
       - ./tests:/app/tests:ro
+      - ./scripts:/app/scripts:ro
       - ./data:/data
+    env_file:
+      - path: .env
+        required: false
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
