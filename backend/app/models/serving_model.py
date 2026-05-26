@@ -181,6 +181,7 @@ class ForecasterServingModel(ForecasterBase):
         credibility: torch.Tensor | None = None,
         text_embedding: torch.Tensor | None = None,
         text_embedding_missing: torch.Tensor | None = None,
+        text_embedding_per_bar: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Narrow serving forward.
 
@@ -199,6 +200,7 @@ class ForecasterServingModel(ForecasterBase):
             credibility=credibility,
             text_embedding=text_embedding,
             text_embedding_missing=text_embedding_missing,
+            text_embedding_per_bar=text_embedding_per_bar,
         )
         pooled_step = self._encode(x)
         if self.output_mode == "classification":
@@ -230,6 +232,7 @@ class ForecasterServingModel(ForecasterBase):
         credibility: torch.Tensor | None = None,
         text_embedding: torch.Tensor | None = None,
         text_embedding_missing: torch.Tensor | None = None,
+        text_embedding_per_bar: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """Emit the full multi-task / rates / regime dict.
 
@@ -251,6 +254,7 @@ class ForecasterServingModel(ForecasterBase):
             credibility=credibility,
             text_embedding=text_embedding,
             text_embedding_missing=text_embedding_missing,
+            text_embedding_per_bar=text_embedding_per_bar,
         )
         pooled_step = self._encode(x)
         multi_task: dict[str, torch.Tensor] = self.head(pooled_step)

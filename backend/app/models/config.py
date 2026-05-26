@@ -214,6 +214,12 @@ FORECASTER_ARCHITECTURES: tuple[str, ...] = (
     "dlinear",
     "informer",
     "tft",
+    # #327 Arm B. ``flat_mlp`` drops the sequence wrap on the text path
+    # entirely: the recurrent core is replaced by a flat MLP head that
+    # consumes ``[pooled_market_window || pooled_text_adapter || rich]``
+    # so the broadcast-static framing of the text path has an honest
+    # comparator. Wires through :class:`app.models.flat_mlp.ForecasterFlatMLP`.
+    "flat_mlp",
 )
 
 # Architectures excluded from the canonical sweep targets. See ADR 0020
@@ -678,6 +684,17 @@ class FeatureVector:
     # ``TextEmbeddingAdapter`` so the scalar slice stays at 35 dims.
     text_embedding_pooled: list[float] = field(default_factory=list)
     text_embedding_missing: float = 1.0
+    # #327 Arm A. Per-bar pooled-text payload (``seq_len`` rows each of
+    # encoder-native width). Default ``None`` keeps the broadcast-static
+    # path (``text_channel='scalar'`` / ``'embeddings'``) byte-identical:
+    # the loader only populates this slot when ``text_channel='per_bar'``
+    # is wired, in which case each entry carries a per-day pool over the
+    # prior-N FOMC documents aligned to that bar's calendar date. The
+    # length is enforced to match the lookback the loader emits the
+    # sequence under; ``None`` collapses the per-bar slot at model
+    # forward time to the same broadcast-zero path the embedding adapter
+    # walks when the missing flag fires.
+    text_per_bar: list[list[float]] | None = None
     # Round 5 (#244) LoRA path raw text. Populated by the loader on the
     # target-row bar of each sequence only when ``encoder_lora=True`` is
     # threaded into the package-loading call. The other 20 lookback

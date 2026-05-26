@@ -31,6 +31,7 @@ from app.models.config import (
     TFT_EXCLUSION_REASON,
     ModelConfig,
 )
+from app.models.flat_mlp import ForecasterFlatMLP
 from app.models.multimodal_forecaster import MultiModalForecasterModel
 from app.models.research_model import ForecasterResearchModel
 from app.models.serving_model import ForecasterServingModel
@@ -47,7 +48,12 @@ def build_forecaster(
     config: ModelConfig | dict[str, Any],
     *,
     role: Role = "research",
-) -> ForecasterResearchModel | ForecasterServingModel | MultiModalForecasterModel:
+) -> (
+    ForecasterResearchModel
+    | ForecasterServingModel
+    | MultiModalForecasterModel
+    | ForecasterFlatMLP
+):
     """Build a forecaster module for ``config.architecture``.
 
     All architectures share the same input contract ``(batch, seq_len, 6)``
@@ -117,6 +123,74 @@ def build_forecaster(
         multimodal.infonce_temperature = float(resolved.infonce_temperature)  # type: ignore[assignment]
         multimodal.infonce_latent_dim = int(resolved.infonce_latent_dim)  # type: ignore[assignment]
         return multimodal
+
+    # #327 Arm B. ``flat_mlp`` is the no-sequence-wrap comparator on the
+    # text path. It is research-only (the broadcast-static methodology
+    # question is not a serving concern); a serving dispatch on it
+    # would skip the recurrent core which the /analyze contract still
+    # exposes through the close/vol time series.
+    if architecture == "flat_mlp":
+        if role == "serving":
+            raise ValueError(
+                "architecture='flat_mlp' is research-only (issue #327 Arm B); "
+                "the comparator runs against the canonical recurrent forecaster."
+            )
+        flat_kwargs = resolved.to_dict()
+        flat_kwargs.pop("architecture", None)
+        # Drop fields the flat_mlp ctor does not consume so the kwargs
+        # dispatch stays a strict shape contract.
+        for drop in (
+            "fusion_mode",
+            "infonce_lambda",
+            "infonce_temperature",
+            "infonce_latent_dim",
+            "lr_schedule",
+            "sequence_length",
+            "encoder_lora",
+            "lora_curriculum_freeze_epoch",
+            "multi_task_loss",
+            "multi_task_lambda_stance",
+            "multi_task_lambda_factor",
+            "multi_task_lambda_certainty",
+            "multi_task_lambda_topic",
+            "class_weight_power",
+            "regression_alpha",
+            "use_derived_text_features",
+            "rates_head_mode",
+            "rates_alpha",
+        ):
+            flat_kwargs.pop(drop, None)
+        flat_rates_heads = tuple(
+            str(v) for v in flat_kwargs.pop("rates_heads", ()) or ()
+        )
+        if flat_rates_heads and resolved.output_mode == "regression":
+            raise ValueError(
+                "rates_heads can only be mounted alongside "
+                "output_mode='classification' (current: 'regression'). "
+                "Pass --output-mode classification or --rates-heads none."
+            )
+        flat = ForecasterFlatMLP(
+            model_type=architecture,
+            rates_heads=flat_rates_heads,
+            **flat_kwargs,
+        )
+        # Stash the loss-side / training-loop flags on the module so
+        # ``ModelConfig.from_model`` round-trips them onto the persisted
+        # run summary the same way the recurrent path does.
+        flat.encoder_lora = bool(resolved.encoder_lora)  # type: ignore[assignment]
+        flat.lora_curriculum_freeze_epoch = resolved.lora_curriculum_freeze_epoch
+        flat.multi_task_loss = bool(resolved.multi_task_loss)  # type: ignore[assignment]
+        flat.multi_task_lambda_stance = float(resolved.multi_task_lambda_stance)  # type: ignore[assignment]
+        flat.multi_task_lambda_factor = float(resolved.multi_task_lambda_factor)  # type: ignore[assignment]
+        flat.multi_task_lambda_certainty = float(resolved.multi_task_lambda_certainty)  # type: ignore[assignment]
+        flat.multi_task_lambda_topic = float(resolved.multi_task_lambda_topic)  # type: ignore[assignment]
+        flat.class_weight_power = float(resolved.class_weight_power)  # type: ignore[assignment]
+        flat.regression_alpha = float(resolved.regression_alpha)  # type: ignore[assignment]
+        flat.use_derived_text_features = bool(resolved.use_derived_text_features)  # type: ignore[assignment]
+        flat.rates_heads = flat_rates_heads  # type: ignore[assignment]
+        flat.rates_head_mode = str(resolved.rates_head_mode or "regression")  # type: ignore[assignment]
+        flat.rates_alpha = float(resolved.rates_alpha)  # type: ignore[assignment]
+        return flat
 
     kwargs = resolved.to_dict()
     kwargs.pop("architecture", None)
@@ -245,7 +319,7 @@ def build_forecaster(
 
 def build_research_forecaster(
     config: ModelConfig | dict[str, Any],
-) -> ForecasterResearchModel | MultiModalForecasterModel:
+) -> ForecasterResearchModel | MultiModalForecasterModel | ForecasterFlatMLP:
     """Convenience entrypoint for the training / sweep / research callers."""
     model = build_forecaster(config, role="research")
     assert not isinstance(model, ForecasterServingModel)
