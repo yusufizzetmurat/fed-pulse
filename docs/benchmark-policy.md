@@ -30,6 +30,17 @@ As of ADR 0015 (`docs/adr/0015-regression-canonical-objective.md`, issue #322), 
 4. Pseudo-labeling excludes final reporting holdout
 5. Scaling/statistics fit on train only
 
+## Per-Feature Provenance
+Every `FeatureVector` column carries a declared `as_of` offset relative to `row.event_date`. The declarations live in `docs/feature-provenance-audit.md` and cover four bands: `T-Δ` (data observable strictly before the event), `T (snapshot)` (a quantity defined on the event itself and observable from the released document or its calendar entry), `T+Δ` (post-event data), and `future-derived` (training targets only).
+
+Contract:
+1. No scalar feature column on a lookback bar may read from a source post-dating `row.event_date`. Lookback bars consume only `T-Δ` data; `T (snapshot)` columns are document-level signals on `T` itself.
+2. `T+Δ` columns are training targets only and are mounted on the appended event-day target frame, not on lookback bars.
+3. New `FeatureVector` columns require a row in the audit table before merge; the regression test enforces the column inventory.
+4. `T (snapshot)` columns whose sources are post-event by construction (e.g. monetary-policy surprise quantities defined on a `[T-1, T+1]` window) are flagged in the audit's "Leaks found" section and tracked through an ADR + canonical-cell re-baseline.
+
+Regression coverage: `tests/regression/test_feature_provenance_as_of.py` walks a canonical training package and asserts the contract per row. The test is the gate; the audit is the human-readable inventory.
+
 ## Versioning
 Required IDs:
 - `dataset_version`

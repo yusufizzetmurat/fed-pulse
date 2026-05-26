@@ -255,4 +255,5 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 markers = [
   "slow: marks tests as slow (skip via -m 'not slow')",
+  "regression: marks tests that lock in the canonical training / serving contracts (run via -m regression)",
 ]
