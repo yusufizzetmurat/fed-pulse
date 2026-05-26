@@ -237,3 +237,34 @@ encoders:
       same unpinned-local guard as ``finbert_fomc_only`` applies.
       Deployability lane (#302) will mirror the checkpoint to HF Hub
       in a follow-up — this PR keeps the artefact local.
+
+  trajectory_lstm:
+    repo: /data/artifacts/trajectory/trajectory_lstm/model.pt
+    revision: ""
+    gated: false
+    task: trajectory_classification
+    description: |
+      Sequence-of-meetings LSTM baseline (#296). Two layers, 64-dim
+      hidden. Consumes the per-meeting embedding produced by the
+      cross-bank DAPT encoder (``finbert_fed_adjacent_xbank_dapt``)
+      concatenated with the #291 pre-meeting market block (trailing
+      2y yield change in bps + z-scored VIX close + bias term).
+      Predicts the next meeting's stance (3-class hawkish / dovish /
+      neutral). Produced by ``python -m app.trajectory.train
+      --architecture lstm``; revision stays empty until the first
+      GPU run lands a pinned checkpoint.
+
+  trajectory_transformer:
+    repo: /data/artifacts/trajectory/trajectory_transformer/model.pt
+    revision: ""
+    gated: false
+    task: trajectory_classification
+    description: |
+      Sequence-of-meetings Transformer arm (#296). Encoder-only, four
+      layers, 64-dim model, four attention heads, learned positional
+      embeddings. Same input contract as ``trajectory_lstm``; the
+      architecture A/B is the methodological point of the trajectory
+      panel per §3 Panel 4 of the finalization roadmap. Produced by
+      ``python -m app.trajectory.train --architecture transformer``;
+      revision stays empty until the first GPU run lands a pinned
+      checkpoint.

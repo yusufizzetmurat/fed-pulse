@@ -53,6 +53,10 @@ from app.schemas import (
     SettingsCheckpointsResponse,
     SymbolDescriptor,
     SymbolListResponse,
+    TrajectoryMarker,
+    TrajectoryProjection,
+    TrajectoryRequest,
+    TrajectoryResponse,
     VolRegimeReactionCard,
 )
 from app.evaluation.xai import attribute_text, split_sentences, to_response as xai_to_response
@@ -484,7 +488,7 @@ def _build_multi_axis_block(
     canonical_labels = ("hawkish", "dovish", "neutral")
     label = label_raw if label_raw in canonical_labels else "neutral"
 
-    distribution: dict[str, float] = {key: 0.0 for key in canonical_labels}
+    distribution: dict[str, float] = dict.fromkeys(canonical_labels, 0.0)
     for entry in sentiment.get("raw", []) or []:
         raw_label = str(entry.get("label", "")).strip().lower()
         if raw_label in distribution:
@@ -1100,4 +1104,84 @@ async def analyze_analogs(payload: AnalogsRequest) -> AnalogsResponse:
         analogs=cards,
         index_size=int(result["index_size"]),
         encoder_alias=str(result["encoder_alias"]),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Hawkish/dovish trajectory model (#296 — /analyze/trajectory)
+# ---------------------------------------------------------------------------
+
+
+_DEFAULT_TRAJECTORY_ENCODER_ALIAS = "finbert_fed_adjacent_xbank_dapt"
+
+
+@app.post("/analyze/trajectory", response_model=TrajectoryResponse)
+async def analyze_trajectory(payload: TrajectoryRequest) -> TrajectoryResponse:
+    """Project the FOMC stance trajectory ending at ``as_of_date``.
+
+    Loads the trajectory bundle (LSTM or Transformer arm + per-meeting
+    embedding index) on first hit via the singleton at
+    :mod:`app.services.trajectory`. When no bundle is present the
+    response is shaped with ``available=False`` and an empty
+    ``history`` so the frontend renders an empty state rather than
+    treating the call as a 5xx. Unexpected failures surface as a
+    sanitized 503.
+    """
+
+    from app.services import trajectory as trajectory_service
+
+    if not trajectory_service.bundle_available() and trajectory_service.get_state() is None:
+        return TrajectoryResponse(
+            available=False,
+            encoder_alias=_DEFAULT_TRAJECTORY_ENCODER_ALIAS,
+            history=[],
+            projected_next=None,
+            history_length=int(payload.history_length),
+            as_of_date=payload.as_of_date.isoformat(),
+        )
+
+    state = trajectory_service.get_state()
+    if state is None:
+        return TrajectoryResponse(
+            available=False,
+            encoder_alias=_DEFAULT_TRAJECTORY_ENCODER_ALIAS,
+            history=[],
+            projected_next=None,
+            history_length=int(payload.history_length),
+            as_of_date=payload.as_of_date.isoformat(),
+        )
+
+    try:
+        result = await run_in_threadpool(
+            trajectory_service.project_trajectory,
+            state,
+            as_of_date=payload.as_of_date,
+            history_length=payload.history_length,
+        )
+    except ValueError:
+        logger.warning("analyze_trajectory_validation_failed", exc_info=True)
+        raise HTTPException(status_code=422, detail="Invalid trajectory query") from None
+    except Exception:  # never let a downstream failure 500 the whole API
+        logger.exception("analyze_trajectory_failed")
+        raise HTTPException(
+            status_code=503, detail="Trajectory projection unavailable"
+        ) from None
+
+    history = [TrajectoryMarker(**marker) for marker in result.get("history", [])]
+    projection_payload = result.get("projected_next")
+    projection = (
+        TrajectoryProjection(**projection_payload)
+        if projection_payload is not None
+        else None
+    )
+    return TrajectoryResponse(
+        available=bool(result.get("available", False)),
+        history=history,
+        projected_next=projection,
+        architecture=result.get("architecture"),
+        encoder_alias=str(result.get("encoder_alias") or _DEFAULT_TRAJECTORY_ENCODER_ALIAS),
+        history_length=int(result.get("history_length", payload.history_length)),
+        train_end=result.get("train_end"),
+        as_of_date=str(result.get("as_of_date") or payload.as_of_date.isoformat()),
+        warning=result.get("warning"),
     )
