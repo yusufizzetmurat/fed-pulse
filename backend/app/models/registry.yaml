@@ -310,7 +310,7 @@ artefacts:
 
   forecaster_canonical:
     hf_uri: hf://yusufizzetmurat/fed-pulse-forecaster
-    revision: "c26182b61057ab02c169f57703be0a487d244fa6"
+    revision: "de318540e2c9def75c0b6068dcebf73fd22dbb1d"
     eager: true
     description: |
       Canonical multi-head forecaster checkpoint (#292). Loaded into
