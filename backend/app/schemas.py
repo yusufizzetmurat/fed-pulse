@@ -687,3 +687,128 @@ class AnalogsResponse(BaseModel):
     analogs: list[AnalogCard] = Field(default_factory=list)
     index_size: int = Field(..., description="Total number of past statements in the loaded retrieval index.")
     encoder_alias: str = Field(..., description="Registry alias of the encoder used to embed the query.")
+
+
+# ---------------------------------------------------------------------------
+# Hawkish/dovish trajectory model (#296 — /analyze/trajectory)
+# ---------------------------------------------------------------------------
+
+
+class TrajectoryRequest(BaseModel):
+    """Project the FOMC stance trajectory as of ``as_of_date``.
+
+    Strict-backward by construction: the history slice only considers
+    meetings whose ``event_date <= as_of_date``. ``history_length``
+    caps the number of recent meetings rendered in the panel chart.
+    Defaults to 12 (~1.5 years of FOMC meetings) per the §3 Panel 4
+    spec.
+    """
+
+    model_config = _STRICT_REQUEST_CONFIG
+
+    as_of_date: date = Field(
+        ..., description="As-of date for the trajectory projection (YYYY-MM-DD)."
+    )
+    history_length: int = Field(
+        default=12,
+        ge=1,
+        le=60,
+        description="Number of past meetings to surface in the panel (1-60).",
+    )
+
+    @field_validator("as_of_date", mode="before")
+    @classmethod
+    def _coerce_as_of_date(cls, value: Any) -> Any:
+        if value is None or isinstance(value, date):
+            return value
+        if isinstance(value, str):
+            try:
+                return date.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError(
+                    f"as_of_date must be ISO YYYY-MM-DD, got {value!r}"
+                ) from exc
+        return value
+
+
+class TrajectoryMarker(BaseModel):
+    """One past FOMC meeting rendered as a semantic marker on the panel chart."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    event_date: str = Field(..., description="ISO date of the historical FOMC meeting.")
+    axis_stance: str | None = Field(
+        default=None,
+        description=(
+            "Stored stance label (hawkish / dovish / neutral) for the meeting. "
+            "None when the panel was trained against a corpus without labels."
+        ),
+    )
+    embedding_2d: tuple[float, float] = Field(
+        ...,
+        description=(
+            "PCA / UMAP projection of the meeting's encoder embedding to "
+            "2-D space, used as the marker's (x, y) coordinates."
+        ),
+    )
+
+
+class TrajectoryProjection(BaseModel):
+    """Next-meeting projection — predicted class + calibrated confidence band."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    predicted_stance: str = Field(
+        ..., description="Argmax over the next-meeting stance distribution."
+    )
+    class_probs: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Per-class probability over hawkish / dovish / neutral. Sums "
+            "to 1.0 after defensive renormalisation."
+        ),
+    )
+    confidence_band: list[str] | None = Field(
+        default=None,
+        description=(
+            "APS-calibrated stance set (Romano et al. 2020). Empty when no "
+            "conformal sidecar shipped with the bundle; the UI then "
+            "renders the argmax marker without the confidence ring."
+        ),
+    )
+    conformal_alpha: float | None = Field(
+        default=None,
+        description="Conformal mis-coverage level applied to confidence_band.",
+    )
+
+
+class TrajectoryResponse(BaseModel):
+    """Result envelope for /analyze/trajectory."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    available: bool = Field(
+        ..., description="False when no trajectory bundle is loaded on this host."
+    )
+    history: list[TrajectoryMarker] = Field(default_factory=list)
+    projected_next: TrajectoryProjection | None = None
+    architecture: str | None = Field(
+        default=None,
+        description="lstm | transformer — which arm produced the projection.",
+    )
+    encoder_alias: str = Field(
+        default="",
+        description="Registry alias of the encoder backing the meeting embeddings.",
+    )
+    history_length: int = Field(
+        default=0,
+        description="How many past meetings were considered (after truncation).",
+    )
+    train_end: str | None = Field(
+        default=None,
+        description="Walk-forward boundary from the bundle manifest.",
+    )
+    as_of_date: str = Field(
+        default="",
+        description="Echo of the request as_of_date (ISO YYYY-MM-DD).",
+    )
