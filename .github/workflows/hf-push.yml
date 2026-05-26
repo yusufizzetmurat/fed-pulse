@@ -34,8 +34,15 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
-      - name: install huggingface_hub
-        run: pip install --upgrade "huggingface_hub>=0.24" "pyyaml>=6.0"
+      - name: install backend deps + huggingface_hub
+        # scripts/push_artefacts_to_hub.py imports app.models.registry,
+        # which transitively pulls pydantic via app.config; install the
+        # backend pyproject so every transitive import resolves like in
+        # production. Mirrors the ci.yml pytest job's install step.
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]" "huggingface_hub>=0.24" "pyyaml>=6.0"
       - name: push artefacts
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN_WRITE }}
