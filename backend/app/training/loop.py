@@ -955,9 +955,11 @@ def _is_finite_positive_forward_vol(value: float | None) -> bool:
 
     if value is None:
         return False
-    if not isinstance(value, (int, float)):
+    if isinstance(value, bool):
         return False
-    return math.isfinite(value) and value > 0.0
+    if not isinstance(value, int | float):
+        return False
+    return math.isfinite(float(value)) and float(value) > 0.0
 
 
 def _build_partition_log_rv_target(
