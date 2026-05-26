@@ -874,7 +874,11 @@ def _maybe_write_classification_conformal_manifest(
         DEFAULT_CLASSIFICATION_ALPHA,
         ConformalManifest,
         calibrate_classification_conformal,
+        class_conditional_gap_flag,
+        compute_class_conditional_coverage,
+        compute_set_size_distribution,
         load_manifest,
+        predict_conformal_set,
         save_manifest,
     )
 
@@ -887,6 +891,38 @@ def _maybe_write_classification_conformal_manifest(
     except ValueError as exc:
         print(f"[conformal] classification calibration skipped: {exc}", flush=True)
         return
+
+    # #326 conditional diagnostics. Rebuild APS sets on the same val
+    # rows the threshold was fitted on -- self-coverage is the
+    # canonical reporting partition for split-conformal (Romano 2020
+    # §4) and matches the "calibration fold" the issue contract names.
+    # Class labels come from the active config's regime tuple; the
+    # helper falls back to ``["class_0", "class_1", ...]`` when no
+    # class names tuple is available so the helper is not gated on a
+    # ModelConfig fixture in tests / smoke runs.
+    n_classes = max((len(row) for row in class_scores), default=0)
+    class_names = _resolve_class_names_for_conformal(n_classes)
+    predicted_sets = [predict_conformal_set(row, softmax_q) for row in class_scores]
+    try:
+        class_cond = compute_class_conditional_coverage(
+            predicted_sets, targets, class_names
+        )
+    except ValueError as exc:
+        print(
+            f"[conformal] class-conditional coverage skipped: {exc}",
+            flush=True,
+        )
+        class_cond = None
+    try:
+        set_size = compute_set_size_distribution(
+            predicted_sets, n_classes=n_classes
+        )
+    except ValueError as exc:
+        print(
+            f"[conformal] set-size distribution skipped: {exc}",
+            flush=True,
+        )
+        set_size = None
 
     sidecar = Path(str(checkpoint_target.with_suffix("")) + ".conformal.json")
     if sidecar.exists():
@@ -911,6 +947,8 @@ def _maybe_write_classification_conformal_manifest(
                 softmax_quantile=softmax_q,
                 rates_residual_quantiles=existing.rates_residual_quantiles,
                 rates_softmax_quantiles=existing.rates_softmax_quantiles,
+                class_conditional_coverage=class_cond,
+                set_size_distribution=set_size,
             )
         except Exception:
             # Stale / unreadable sidecar — overwrite with a classification-only
@@ -923,6 +961,8 @@ def _maybe_write_classification_conformal_manifest(
                 residual_quantile_volatility=0.0,
                 calibration_n=len(class_scores),
                 softmax_quantile=softmax_q,
+                class_conditional_coverage=class_cond,
+                set_size_distribution=set_size,
             )
     else:
         manifest = ConformalManifest(
@@ -932,13 +972,66 @@ def _maybe_write_classification_conformal_manifest(
             residual_quantile_volatility=0.0,
             calibration_n=len(class_scores),
             softmax_quantile=softmax_q,
+            class_conditional_coverage=class_cond,
+            set_size_distribution=set_size,
         )
     save_manifest(manifest, sidecar)
+    # #326 class-conditional coverage gap flag. Surface degenerate
+    # per-class coverage (any class falling >0.10 below nominal) on
+    # the calibration log so the operator sees the warning before the
+    # checkpoint goes to inference -- the marginal coverage number
+    # alone can hide a class systematically dropped from the set
+    # (the issue's canonical normal-class collapse case).
+    flagged: list[str] = []
+    if class_cond:
+        flagged = class_conditional_gap_flag(
+            class_cond,
+            nominal=1.0 - DEFAULT_CLASSIFICATION_ALPHA,
+            tolerance=0.10,
+        )
     print(
         f"[conformal] calibrated softmax_quantile={softmax_q:.4f} "
         f"on n={len(class_scores)} val rows -> {sidecar.name}",
         flush=True,
     )
+    if class_cond is not None:
+        cov_repr = ", ".join(
+            f"{k}={v:.3f}" for k, v in class_cond.items()
+        )
+        print(f"[conformal] class-conditional coverage: {cov_repr}", flush=True)
+    if set_size is not None:
+        size_repr = ", ".join(
+            f"|S|={k}:{v:.3f}" for k, v in set_size.items()
+        )
+        print(f"[conformal] set-size distribution: {size_repr}", flush=True)
+    if flagged:
+        print(
+            "[conformal] WARNING class-conditional coverage gap > 0.10 below "
+            f"nominal on: {flagged}",
+            flush=True,
+        )
+
+
+def _resolve_class_names_for_conformal(n_classes: int) -> list[str]:
+    """Resolve the class label tuple the conformal diagnostics key on (#326).
+
+    The 3-class vol-regime head uses the canonical
+    ``("calm", "normal", "high")`` tuple from
+    :mod:`app.services.regime_bucketing`. On a different cardinality
+    (stance head, future multi-axis variants) the helper falls back
+    to ``[f"class_{i}"]`` so the conditional-coverage dict still
+    round-trips through the manifest -- the operator can rename the
+    keys downstream when the surface is wired through the API.
+    """
+
+    if n_classes == 3:
+        try:
+            from app.services.regime_bucketing import REGIME_LABELS
+
+            return list(REGIME_LABELS)
+        except Exception:  # pragma: no cover -- defensive
+            pass
+    return [f"class_{i}" for i in range(max(0, n_classes))]
 
 
 def _maybe_write_rates_conformal_manifest(
@@ -1051,6 +1144,16 @@ def _maybe_write_rates_conformal_manifest(
                 "calibration_n": existing.calibration_n,
                 "notes": existing.notes,
                 "softmax_quantile": existing.softmax_quantile,
+                # #326 conditional diagnostics. Preserve the
+                # classification-side conditional fields written by
+                # ``_maybe_write_classification_conformal_manifest``;
+                # the rates step does not produce its own
+                # class-conditional view (rates heads are per-row
+                # regression, not classification) so the merge keeps
+                # whatever the prior step wrote rather than clobbering
+                # the fields back to None.
+                "class_conditional_coverage": existing.class_conditional_coverage,
+                "set_size_distribution": existing.set_size_distribution,
             }
         )
     if rates_residuals:
