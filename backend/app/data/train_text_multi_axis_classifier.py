@@ -981,7 +981,7 @@ def _factor_coverage_fraction(rows: list[_AxisRow]) -> float:
     return populated / len(rows)
 
 
-def _save_checkpoint(
+def _save_checkpoint(  # noqa: PLR0913 — kw-only checkpoint envelope; collapsing the metadata kwargs into a single dataclass would obscure the persisted fields
     model: TextMultiAxisClassifier,
     *,
     path: Path,
