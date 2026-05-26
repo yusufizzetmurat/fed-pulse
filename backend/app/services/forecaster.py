@@ -55,7 +55,9 @@ from app.models.config import (
     ModelConfig,
     build_lookback_sequence,
 )
-from app.models.lstm import ForecasterModel
+from app.models.lstm import ForecasterModel  # noqa: F401 -- back-compat re-export
+from app.models.research_model import ForecasterResearchModel  # noqa: F401
+from app.models.serving_model import ForecasterServingModel
 from app.models.tcn import TemporalConvNet
 from app.models.transformer import SmallTransformer, _SinusoidalPositionalEncoding
 from app.training.checkpoint import (
@@ -98,44 +100,103 @@ torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = True
 
 
-_model: ForecasterModel | None = None
+_model: ForecasterServingModel | None = None
 _model_artifact_metadata: dict[str, Any] | None = None
 _model_lock = threading.Lock()
 
 
-def _get_model() -> ForecasterModel:
+def _get_model() -> ForecasterServingModel:
+    """Resolve the cached serving singleton; cold-load from disk if absent.
+
+    Issue #336 split the model classes. The /analyze inference path
+    holds a :class:`ForecasterServingModel`; the state_dict on disk is
+    written by the research class but the two share the same key
+    layout (the backbone + adapter weights live on
+    :class:`ForecasterBase`, and the heads use the same names), so a
+    research checkpoint loads cleanly into a serving model under
+    ``load_state_dict(strict=False)``. The promotion contract in
+    :mod:`scripts.promote_checkpoint` should still run on every
+    research artefact before it is served -- this loose-load is the
+    safety net for legacy checkpoints written before the promotion
+    contract existed.
+    """
     global _model, _model_artifact_metadata
     if _model is not None:
         return _model
 
     with _model_lock:
         if _model is None:
+            from app.models.factory import build_serving_forecaster
+            from app.training.loop import _coerce_model_config
+
             device = _resolve_device()
             payload = _read_checkpoint_payload(BEST_MODEL_PATH, device)
-            model = _build_model(
-                payload.get("model_config") if isinstance(payload, dict) else None,
-                device=device,
+            raw_config = (
+                payload.get("model_config") if isinstance(payload, dict) else None
             )
+            resolved = _coerce_model_config(raw_config)
+            model = build_serving_forecaster(resolved).to(device)
             if payload is not None:
-                _load_state_dict_loose(model, payload["model_state_dict"], str(BEST_MODEL_PATH))
+                _load_state_dict_loose(
+                    model, payload["model_state_dict"], str(BEST_MODEL_PATH)
+                )
             model.eval()
             _model = model
-            _model_artifact_metadata = _checkpoint_metadata(payload, BEST_MODEL_PATH, model=model)
+            _model_artifact_metadata = _checkpoint_metadata(
+                payload, BEST_MODEL_PATH, model=model
+            )
     return _model
 
 
 def _set_singleton_after_train(
-    work_model: ForecasterModel,
+    work_model: Any,
     checkpoint_target: Path,
     device_obj: torch.device,
 ) -> None:
-    """Refresh the in-process singleton + metadata after training writes a checkpoint."""
+    """Refresh the in-process singleton + metadata after training writes a checkpoint.
+
+    The training loop hands over a research-side module
+    (:class:`ForecasterResearchModel` or :class:`MultiModalForecasterModel`);
+    issue #336 routes /analyze through :class:`ForecasterServingModel`,
+    so we build a serving instance from the persisted ``model_config``
+    and load the freshly trained state into it. The state_dict keys are
+    shared verbatim through :class:`ForecasterBase`, so this is the
+    in-memory equivalent of the
+    :mod:`scripts.promote_checkpoint` promotion contract.
+    """
     global _model, _model_artifact_metadata
+    from app.models.factory import build_serving_forecaster
+    from app.models.multimodal_forecaster import MultiModalForecasterModel
+    from app.training.loop import _coerce_model_config
+
     with _model_lock:
-        _model = copy.deepcopy(work_model).to(device_obj)
+        payload = _read_checkpoint_payload(checkpoint_target, device_obj)
+        raw_config = (
+            payload.get("model_config") if isinstance(payload, dict) else None
+        )
+        # Multi-modal (gated-InfoNCE) research-side checkpoints are
+        # research-only by construction: the serving class does not
+        # mount the InfoNCE alignment head. Fall back to a deep-copy of
+        # the research module so the singleton at least stays a
+        # working forward path until a serving-shaped artefact lands.
+        if isinstance(work_model, MultiModalForecasterModel):
+            # The static type of ``_model`` is ``ForecasterServingModel``;
+            # the multimodal fallback writes a research-side module so
+            # the in-process /analyze handler keeps a working forward
+            # pass on an InfoNCE-trained run. Promoted artefacts come
+            # back through the standard build_serving_forecaster path.
+            _model = copy.deepcopy(work_model).to(device_obj)  # type: ignore[assignment]
+        else:
+            resolved = _coerce_model_config(raw_config)
+            serving = build_serving_forecaster(resolved).to(device_obj)
+            _load_state_dict_loose(
+                serving, work_model.state_dict(), str(checkpoint_target)
+            )
+            _model = serving
+        assert _model is not None
         _model.eval()
         _model_artifact_metadata = _checkpoint_metadata(
-            _read_checkpoint_payload(checkpoint_target, device_obj),
+            payload,
             checkpoint_target,
             model=_model,
         )
@@ -143,7 +204,7 @@ def _set_singleton_after_train(
 
 def _build_inference_tensor(
     sequence: list[FeatureVector],
-    model: ForecasterModel,
+    model: ForecasterServingModel,
     device: torch.device,
 ) -> torch.Tensor:
     """Build the per-event input tensor for one forward pass.
@@ -169,7 +230,7 @@ def _build_inference_tensor(
     return torch.tensor([rows], dtype=torch.float32, device=device)
 
 
-def _predict_next_point(model: ForecasterModel, sequence: list[FeatureVector]) -> tuple[float, float]:
+def _predict_next_point(model: ForecasterServingModel, sequence: list[FeatureVector]) -> tuple[float, float]:
     # Classification-mode checkpoints emit ``(B, n_classes)`` logits
     # from ``forward()`` (the stance branch under the MultiTaskHead);
     # reading ``out[0]`` and ``out[1]`` as ``(close, vol)`` would
@@ -767,7 +828,7 @@ def _build_confidence_bands(
 def get_model_artifact_metadata(
     *,
     runtime_mode: str = "fast",
-    model: ForecasterModel | None = None,
+    model: ForecasterServingModel | None = None,
     adaptation_summary: TrainingRunSummary | None = None,
 ) -> dict[str, Any]:
     base_metadata = dict(

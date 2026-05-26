@@ -1,38 +1,48 @@
 """Forecaster architecture factory.
 
-The six architectures (``lstm``, ``lstm_attn``, ``gru``, ``tcn``,
-``transformer``, ``dlinear``) are all wired through the same
-:class:`app.models.lstm.ForecasterModel` wrapper via its ``model_type``
-constructor argument — the wrapper handles per-architecture core selection
-plus the shared optional ``TimeDecayAttention`` /
-``RecurrentSequenceAttention`` / ``ChunkAttentionPooler`` /
-credibility-features paths. The factory exists so callers (sweep harness,
-training loop, tests) get a single dispatch entry point that does not have
-to know the wrapper's internal kwarg layout, and so the public
-``ModelConfig.architecture`` field is the only thing they have to set.
+The eight architectures (``lstm``, ``lstm_attn``, ``gru``, ``tcn``,
+``transformer``, ``dlinear``, ``informer``, ``tft``) are all wired through
+the shared :class:`app.models.forecaster_base.ForecasterBase` backbone via
+the ``model_type`` constructor argument. ``role="research"`` returns a
+:class:`ForecasterResearchModel` (all knobs, training entrypoint);
+``role="serving"`` returns a :class:`ForecasterServingModel` (frozen
+surface, /analyze entrypoint, regression-canonical default per ADR 0015).
+Issue #336 split the legacy 712-line ``ForecasterModel`` into the two
+classes and pulled the input-prep onto :func:`prepare_recurrent_input`.
 
-The default ``architecture="lstm"`` path is byte-identical to the previous
-``ForecasterModel()`` construction so the determinism regression at
-``tests/regression/test_forecaster_determinism.py`` stays green.
+The default ``architecture="lstm"`` research path is byte-identical to the
+pre-#336 ``ForecasterModel()`` construction so the determinism regression
+at ``tests/regression/test_forecaster_determinism.py`` stays green.
 
 When ``config.fusion_mode == "gated_infonce"`` (#235), the factory
-dispatches to :class:`MultiModalForecasterModel` instead — the two
+dispatches to :class:`MultiModalForecasterModel` instead -- the two
 modalities stay separate until the gated fusion stage so the InfoNCE
-alignment loss has separable representations to pull together.
+alignment loss has separable representations to pull together. Gated-
+InfoNCE is research-only and rejects ``role="serving"``.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from app.models.config import FORECASTER_ARCHITECTURES, ModelConfig
-from app.models.lstm import ForecasterModel
 from app.models.multimodal_forecaster import MultiModalForecasterModel
+from app.models.research_model import ForecasterResearchModel
+from app.models.serving_model import ForecasterServingModel
+
+# Back-compat alias. Pre-#336 the factory return type was
+# ``ForecasterModel | MultiModalForecasterModel``; post-split the alias
+# resolves to the research class so existing call sites keep type-checking.
+ForecasterModel = ForecasterResearchModel
+
+Role = Literal["research", "serving"]
 
 
 def build_forecaster(
     config: ModelConfig | dict[str, Any],
-) -> ForecasterModel | MultiModalForecasterModel:
+    *,
+    role: Role = "research",
+) -> ForecasterResearchModel | ForecasterServingModel | MultiModalForecasterModel:
     """Build a forecaster module for ``config.architecture``.
 
     All architectures share the same input contract ``(batch, seq_len, 6)``
@@ -51,7 +61,17 @@ def build_forecaster(
             f"Allowed: {sorted(FORECASTER_ARCHITECTURES)}"
         )
 
+    if role not in {"research", "serving"}:
+        raise ValueError(
+            f"Unknown role: {role!r}. Allowed: research, serving"
+        )
+
     if resolved.fusion_mode == "gated_infonce":
+        if role == "serving":
+            raise ValueError(
+                "fusion_mode='gated_infonce' is research-only; promote a checkpoint "
+                "to the serving class via scripts.promote_checkpoint instead."
+            )
         if resolved.output_mode != "classification":
             raise ValueError(
                 "fusion_mode='gated_infonce' requires output_mode='classification' "
@@ -164,11 +184,24 @@ def build_forecaster(
     lora_curriculum_freeze_epoch_val = kwargs.pop(
         "lora_curriculum_freeze_epoch", None
     )
-    model = ForecasterModel(
-        model_type=architecture,
-        rates_heads=rates_heads_tuple,
-        **kwargs,
-    )
+    model: ForecasterResearchModel | ForecasterServingModel
+    if role == "serving":
+        # Serving construction trims the loss-side / sweep-side knobs the
+        # narrow class does not consume. The state_dict shape is identical
+        # to the research class for shared backbone + adapter keys; the
+        # narrower forward path is what makes the class an inference-only
+        # surface.
+        model = ForecasterServingModel(
+            model_type=architecture,
+            rates_heads=rates_heads_tuple,
+            **kwargs,
+        )
+    else:
+        model = ForecasterResearchModel(
+            model_type=architecture,
+            rates_heads=rates_heads_tuple,
+            **kwargs,
+        )
     # mypy reads ``nn.Module`` attribute writes as ``Tensor | Module``;
     # the LoRA flag is a plain bool stashed for ``from_model`` to read
     # back, so suppress the noise rather than register a fake buffer.
@@ -195,4 +228,27 @@ def build_forecaster(
     return model
 
 
-__all__ = ["build_forecaster"]
+def build_research_forecaster(
+    config: ModelConfig | dict[str, Any],
+) -> ForecasterResearchModel | MultiModalForecasterModel:
+    """Convenience entrypoint for the training / sweep / research callers."""
+    model = build_forecaster(config, role="research")
+    assert not isinstance(model, ForecasterServingModel)
+    return model
+
+
+def build_serving_forecaster(
+    config: ModelConfig | dict[str, Any],
+) -> ForecasterServingModel:
+    """Convenience entrypoint for /analyze cold-start + checkpoint load."""
+    model = build_forecaster(config, role="serving")
+    assert isinstance(model, ForecasterServingModel)
+    return model
+
+
+__all__ = [
+    "ForecasterModel",
+    "build_forecaster",
+    "build_research_forecaster",
+    "build_serving_forecaster",
+]
