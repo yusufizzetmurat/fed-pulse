@@ -386,6 +386,16 @@ def require_cache_exists(
 HF_EMBEDDING_CACHE_DATASET = "yusufizzetmurat/fed-pulse-embedding-caches"
 
 
+class EmbeddingCacheUnavailable(RuntimeError):
+    """Raised when an embedding cache is missing both locally and on HF Hub.
+
+    Carries a human-readable ``reason`` that names the encoder alias and
+    points at ``make cache-embeddings`` as the recovery path. Callers
+    that want to degrade to zero-embeddings should catch this explicitly
+    rather than swallowing every ``RuntimeError`` from the HF stack.
+    """
+
+
 def ensure_local(
     encoder_alias: str,
     *,
@@ -401,9 +411,10 @@ def ensure_local(
     If absent and ``allow_hf_fetch`` is set, pulls the file from
     ``hf://datasets/<hf_dataset>/<filename>`` via
     :func:`huggingface_hub.hf_hub_download` and stores it under
-    ``cache_dir``. Raises :class:`FileNotFoundError` with a fixable
-    message when the file is still missing — that surfaces the cache
-    miss in the same shape ``require_cache_exists`` already uses.
+    ``cache_dir``. Raises :class:`EmbeddingCacheUnavailable` (wrapping
+    the underlying HF error) when the file is still missing — that
+    surfaces the cache miss in a single shape the production loader can
+    catch and log without swallowing every unrelated runtime error.
     """
 
     paths = resolve_cache_paths(encoder_alias, revision=revision, cache_dir=cache_dir)
@@ -417,7 +428,12 @@ def ensure_local(
             f"`make cache-embeddings ENCODER={encoder_alias} ALLOW_NETWORK=1`."
         )
 
-    from huggingface_hub import hf_hub_download  # type: ignore[import-not-found]
+    from huggingface_hub import hf_hub_download
+    from huggingface_hub.errors import (
+        EntryNotFoundError,
+        HfHubHTTPError,
+        RepositoryNotFoundError,
+    )
 
     paths.directory.mkdir(parents=True, exist_ok=True)
     filename = paths.parquet.name
@@ -434,7 +450,21 @@ def ensure_local(
     }
     if resolved_token:
         kwargs["token"] = resolved_token
-    downloaded = Path(hf_hub_download(**kwargs))
+    try:
+        downloaded = Path(hf_hub_download(**kwargs))
+    except (RepositoryNotFoundError, EntryNotFoundError) as exc:
+        raise EmbeddingCacheUnavailable(
+            f"Embedding cache missing for encoder={encoder_alias!r}: "
+            f"HF Hub repo {hf_dataset!r} or file {filename!r} not found. "
+            f"Recover via `make cache-embeddings ENCODER={encoder_alias} ALLOW_NETWORK=1` "
+            f"or `python scripts/push_artefacts_to_hub.py --kinds embedding_caches`."
+        ) from exc
+    except HfHubHTTPError as exc:
+        raise EmbeddingCacheUnavailable(
+            f"Embedding cache fetch failed for encoder={encoder_alias!r} "
+            f"(HF Hub HTTP error). Verify HF_TOKEN scope and network access. "
+            f"Recover via `make cache-embeddings ENCODER={encoder_alias} ALLOW_NETWORK=1`."
+        ) from exc
 
     # ``hf_hub_download(local_dir=...)`` already lands the file at the
     # canonical name; the explicit rename below is a no-op when the

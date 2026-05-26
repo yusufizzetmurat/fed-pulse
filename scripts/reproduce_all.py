@@ -50,12 +50,15 @@ def _ensure_training_package() -> Path:
 
     target = DATA_DIR / "processed" / CANONICAL_TP_ID
     target.mkdir(parents=True, exist_ok=True)
+    # Copy unconditionally. The previous ``if dst.exists(): continue``
+    # guard meant a second run after a revision bump silently kept the
+    # old files — exactly the failure mode this script is supposed to
+    # detect. ``shutil.copy2`` overwrites; ``copytree(dirs_exist_ok=True)``
+    # recurses without complaining about partial copies.
     for src in snapshot_dir.iterdir():
         dst = target / src.name
-        if dst.exists():
-            continue
         if src.is_dir():
-            shutil.copytree(src, dst)
+            shutil.copytree(src, dst, dirs_exist_ok=True)
         else:
             shutil.copy2(src, dst)
     print(f"[reproduce]   -> {target}", flush=True)

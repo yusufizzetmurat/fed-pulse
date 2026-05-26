@@ -35,7 +35,7 @@ def test_parse_hf_uri_dataset_with_revision() -> None:
 
 
 def test_parse_hf_uri_rejects_missing_owner() -> None:
-    with pytest.raises(ValueError, match="must be 'owner/name'"):
+    with pytest.raises(ValueError, match="owner/name"):
         registry.parse_hf_uri("hf://just-a-name")
 
 
@@ -47,6 +47,57 @@ def test_parse_hf_uri_rejects_empty_body() -> None:
 def test_parse_hf_uri_rejects_non_hf_uri() -> None:
     with pytest.raises(ValueError, match="Not an hf:// URI"):
         registry.parse_hf_uri("/local/path/to/checkpoint")
+
+
+def test_parse_hf_uri_rejects_path_traversal() -> None:
+    # ``..`` in either segment must not be accepted — the resolver
+    # would otherwise pass the path through to snapshot_download where
+    # a malformed value could land artefacts outside the cache root.
+    for malformed in (
+        "hf://../../etc/passwd",
+        "hf://owner/..",
+        "hf://../name",
+        "hf://datasets/../escape",
+    ):
+        with pytest.raises(ValueError):
+            registry.parse_hf_uri(malformed)
+
+
+def test_parse_hf_uri_rejects_trailing_slash() -> None:
+    with pytest.raises(ValueError, match="trailing slash"):
+        registry.parse_hf_uri("hf://owner/name/")
+
+
+def test_parse_hf_uri_rejects_multi_colon() -> None:
+    with pytest.raises(ValueError, match="multiple ':'"):
+        registry.parse_hf_uri("hf://owner/name:rev1:rev2")
+
+
+def test_parse_hf_uri_rejects_empty_revision() -> None:
+    with pytest.raises(ValueError, match="empty revision"):
+        registry.parse_hf_uri("hf://owner/name:")
+
+
+def test_parse_hf_uri_rejects_empty_repo_id_side() -> None:
+    # ``/name`` (empty owner) and ``owner/`` (empty name) must both fail.
+    for malformed in ("hf:///name", "hf://owner/"):
+        with pytest.raises(ValueError):
+            registry.parse_hf_uri(malformed)
+
+
+def test_parse_hf_uri_rejects_illegal_revision_characters() -> None:
+    # Revisions are restricted to ``[a-zA-Z0-9._-]+`` — slashes, spaces
+    # and shell metacharacters all reject. Tags and branches in the wild
+    # do contain ``/`` but huggingface_hub itself treats those as
+    # path-like references; the resolver intentionally rejects them so
+    # the registry stays auditable.
+    for malformed in (
+        "hf://owner/name:rev/with/slash",
+        "hf://owner/name:rev with space",
+        "hf://owner/name:rev;rm",
+    ):
+        with pytest.raises(ValueError):
+            registry.parse_hf_uri(malformed)
 
 
 def test_resolve_hf_uri_invokes_snapshot_download(monkeypatch, tmp_path: Path) -> None:

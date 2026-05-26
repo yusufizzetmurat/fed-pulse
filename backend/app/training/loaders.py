@@ -5,6 +5,7 @@ import dataclasses
 import datetime
 import json
 import logging
+import os
 import warnings
 from pathlib import Path
 from typing import Any, Literal, Sequence
@@ -757,7 +758,11 @@ def _read_chunk_embedding_lookup(
 
     # Local import keeps the heavy embedding-cache module out of the
     # training-time import path on the legacy ``--data-dir`` flow.
-    from app.data.embedding_cache import resolve_cache_paths
+    from app.data.embedding_cache import (
+        EmbeddingCacheUnavailable,
+        ensure_local,
+        resolve_cache_paths,
+    )
     from app.models.registry import revision_for
 
     revision = revision_for(encoder_alias)
@@ -770,13 +775,31 @@ def _read_chunk_embedding_lookup(
         return {}, {}
     paths = resolve_cache_paths(encoder_alias, revision=revision, cache_dir=cache_dir)
     if not paths.parquet.exists():
-        _logger.warning(
-            "embedding cache parquet missing for encoder=%r at %s; "
-            "text-embedding lookup will return empty",
-            encoder_alias,
-            paths.parquet,
-        )
-        return {}, {}
+        # Production path (#302): if the parquet is absent locally, try
+        # the lazy HF Hub fetch before degrading to empty. The training-
+        # time flow that explicitly disables network access keys off
+        # ``FED_PULSE_ALLOW_HF_FETCH=0``; production leaves it unset so
+        # the default ``True`` route hits the Hub.
+        allow_fetch = os.environ.get("FED_PULSE_ALLOW_HF_FETCH", "1") != "0"
+        if allow_fetch:
+            try:
+                ensure_local(encoder_alias, revision=revision, cache_dir=cache_dir)
+            except EmbeddingCacheUnavailable as exc:
+                _logger.warning(
+                    "embedding cache lazy-fetch failed for encoder=%r: %s; "
+                    "text-embedding lookup will return empty",
+                    encoder_alias,
+                    exc,
+                )
+                return {}, {}
+        if not paths.parquet.exists():
+            _logger.warning(
+                "embedding cache parquet missing for encoder=%r at %s; "
+                "text-embedding lookup will return empty",
+                encoder_alias,
+                paths.parquet,
+            )
+            return {}, {}
 
     frame = pd.read_parquet(paths.parquet)
     if "embedding" not in frame.columns or "event_date" not in frame.columns:

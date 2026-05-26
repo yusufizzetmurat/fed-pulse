@@ -1,9 +1,10 @@
 """Push canonical fed-pulse artefacts to Hugging Face Hub (#302 Stage 1-3).
 
-Run this once locally after merging the deployability PR. The script is
-idempotent — it skips files whose remote SHA matches the local SHA, so
-re-running it after a partial failure or a checkpoint refresh only
-uploads the diff.
+Runs idempotently — every file upload is skipped when the remote LFS
+pointer sha already matches the local sha256, so re-running after a
+partial failure or a checkpoint refresh only uploads the diff. The
+README / model-card is staged in a tempdir so the canonical source
+directories on disk are never mutated.
 
 Usage
 -----
@@ -25,6 +26,11 @@ The script reads the canonical paths off ``backend/app/models/registry.yaml``
 where possible. Anything that isn't pinned there (e.g. the per-encoder
 embedding cache parquets) is enumerated from disk.
 
+``upload_folder`` is invoked with an explicit ``ignore_patterns`` allow-
+list so secrets (``.env`` files, ``credentials*``, ``*.pem``, ``*.key``),
+git metadata (``.git/``), and notebook checkpoint litter
+(``.ipynb_checkpoints/``) never leak into a PUBLIC HF Dataset repo.
+
 Requirements
 ------------
 
@@ -38,10 +44,13 @@ Post-run actions
 ----------------
 
 After every successful push the script prints the resulting commit
-SHAs. Copy each sha into ``backend/app/models/registry.yaml`` under the
-matching ``artefacts:`` entry's ``revision:`` field. Without this pin
-the inference container will pull ``main``, which defeats the
-deterministic-load contract the rest of the registry enforces.
+SHAs (read off ``model_info`` / ``dataset_info`` post-upload, not the
+``CommitInfo`` return value). A missing sha raises a hard error so the
+operator never pastes ``?`` into ``registry.yaml``. Copy each sha into
+``backend/app/models/registry.yaml`` under the matching ``artefacts:``
+entry's ``revision:`` field. Without this pin the inference container
+will pull ``main``, which defeats the deterministic-load contract the
+rest of the registry enforces.
 """
 
 from __future__ import annotations
@@ -50,7 +59,9 @@ import argparse
 import dataclasses
 import hashlib
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -216,6 +227,33 @@ CORPUS_BLURBS: dict[str, str] = {
 }
 
 
+# Anything matching these globs is excluded from every ``upload_folder``
+# call. The HF Datasets these scripts target are PUBLIC, so a leaked
+# ``.env`` or ``credentials.json`` would be world-readable until the
+# operator notices and rotates the secret. Update this list rather than
+# papering over with a ``.gitignore``-style workaround.
+UPLOAD_IGNORE_PATTERNS: list[str] = [
+    "*.env",
+    ".env*",
+    ".git",
+    ".git/*",
+    ".github",
+    ".github/*",
+    ".ipynb_checkpoints",
+    ".ipynb_checkpoints/*",
+    "credentials*",
+    "*.pem",
+    "*.key",
+    "*.crt",
+    "id_rsa*",
+    "id_ed25519*",
+    ".DS_Store",
+    "__pycache__",
+    "__pycache__/*",
+    "*.pyc",
+]
+
+
 TRAIN_CMDS: dict[str, str] = {
     "encoder": "python -m app.data.continued_pretraining --substrate xbank_dapt --seed 11",
     "forecaster": "python -m app.train_forecaster --training-package-id <tp-id> --seed 11",
@@ -291,6 +329,68 @@ def _render_model_card(plan: PushPlan) -> str:
     )
 
 
+def _stage_folder_for_upload(local_path: Path, card: str) -> Path:
+    """Materialise the upload tree in a temp dir without mutating source.
+
+    Copies every file under ``local_path`` into a fresh tempdir,
+    excluding the ``UPLOAD_IGNORE_PATTERNS`` set, and drops the rendered
+    model card at the staged root. Returns the tempdir path. The caller
+    is responsible for cleaning it up.
+    """
+
+    staged = Path(tempfile.mkdtemp(prefix="fed-pulse-upload-"))
+    # ``shutil.copytree`` with ``ignore`` excludes per-directory entries
+    # by name; we widen it to also skip dotfiles that match the env /
+    # secret globs so a stray ``.env`` in a nested directory does not
+    # ride along into the public dataset.
+    def _ignore(directory: str, names: list[str]) -> list[str]:
+        del directory
+        return [
+            name
+            for name in names
+            if any(_matches_glob(name, pattern) for pattern in UPLOAD_IGNORE_PATTERNS)
+        ]
+
+    # Copy the source tree into the staging dir. ``dirs_exist_ok=True``
+    # so the staged dir (already created by mkdtemp) is OK as the
+    # destination.
+    shutil.copytree(local_path, staged, ignore=_ignore, dirs_exist_ok=True)
+    (staged / "README.md").write_text(card, encoding="utf-8")
+    return staged
+
+
+def _matches_glob(name: str, pattern: str) -> bool:
+    from fnmatch import fnmatch
+
+    # Strip trailing ``/*`` so the pattern matches the parent directory
+    # name as it appears in shutil.copytree's per-directory listing.
+    base = pattern.rstrip("/*") if pattern.endswith("/*") else pattern
+    return fnmatch(name, base) or fnmatch(name, pattern)
+
+
+def _list_upload_plan(local_path: Path) -> list[str]:
+    """Return relative paths that would be uploaded under ``local_path``.
+
+    Used by the dry-run printout so the operator can verify nothing
+    sensitive would leak before flipping --all on.
+    """
+
+    out: list[str] = []
+    for path in local_path.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(local_path)
+        # Skip globs at any depth.
+        if any(
+            _matches_glob(part, pattern)
+            for part in relative.parts
+            for pattern in UPLOAD_IGNORE_PATTERNS
+        ):
+            continue
+        out.append(str(relative))
+    return out
+
+
 def _push_one(
     plan: PushPlan,
     *,
@@ -313,8 +413,12 @@ def _push_one(
         if plan.local_path.is_file():
             print(f"    [dry-run] file sha256: {_file_sha256(plan.local_path)}")
         else:
-            count = sum(1 for _ in plan.local_path.rglob("*") if _.is_file())
-            print(f"    [dry-run] folder contains {count} files")
+            plan_files = _list_upload_plan(plan.local_path)
+            print(f"    [dry-run] folder contains {len(plan_files)} files (post ignore-patterns)")
+            for relative in plan_files[:20]:
+                print(f"    [dry-run]   - {relative}")
+            if len(plan_files) > 20:
+                print(f"    [dry-run]   ... and {len(plan_files) - 20} more")
         return
 
     from huggingface_hub import HfApi, create_repo, upload_folder, upload_file  # type: ignore[import-not-found]
@@ -328,18 +432,17 @@ def _push_one(
     )
     api = HfApi(token=token)
 
-    # Always (re)write the model card.
-    card_path = plan.local_path / "README.md" if plan.local_path.is_dir() else plan.local_path.parent / "README.md"
-    if plan.local_path.is_dir():
-        (plan.local_path / "README.md").write_text(card, encoding="utf-8")
-
     if plan.local_path.is_file():
+        # Single-file artefact (e.g. forecaster_best.pt). Upload the
+        # checkpoint + the rendered card side-by-side. No source dir
+        # mutation involved.
         api.upload_file(
             path_or_fileobj=str(plan.local_path),
             path_in_repo=plan.local_path.name,
             repo_id=plan.repo_id,
             repo_type=plan.repo_type,
             token=token,
+            commit_message=f"fed-pulse push: {plan.artefact_key}",
         )
         api.upload_file(
             path_or_fileobj=card.encode("utf-8"),
@@ -347,22 +450,40 @@ def _push_one(
             repo_id=plan.repo_id,
             repo_type=plan.repo_type,
             token=token,
+            commit_message=f"fed-pulse push: {plan.artefact_key} card",
         )
     else:
-        upload_folder(
-            folder_path=str(plan.local_path),
-            repo_id=plan.repo_id,
-            repo_type=plan.repo_type,
-            token=token,
-        )
+        # Directory artefact. Stage to a tempdir so the source data
+        # directory (e.g. ``data/processed/canonical/``) is never
+        # touched and no ``.env`` / ``.git`` slips into the upload.
+        staged = _stage_folder_for_upload(plan.local_path, card)
+        try:
+            upload_folder(
+                folder_path=str(staged),
+                repo_id=plan.repo_id,
+                repo_type=plan.repo_type,
+                token=token,
+                ignore_patterns=UPLOAD_IGNORE_PATTERNS,
+                commit_message=f"fed-pulse push: {plan.artefact_key}",
+            )
+        finally:
+            shutil.rmtree(staged, ignore_errors=True)
 
+    # Verify the resulting commit sha. ``getattr(info, 'sha', '?')`` is
+    # the previous failure mode: a missing attribute silently surfaced
+    # ``?`` and the operator pasted that into registry.yaml. A hard
+    # error here forces a manual check via the HF Hub UI.
     info_fn = api.model_info if plan.repo_type == "model" else api.dataset_info
     info = info_fn(plan.repo_id)
-    print(f"    pushed @ {getattr(info, 'sha', '?')}")
+    pushed_sha = getattr(info, "sha", None)
+    if not pushed_sha:
+        raise RuntimeError(
+            f"Push succeeded but commit SHA could not be retrieved for "
+            f"{plan.repo_id!r} ({plan.repo_type}). Check the HF Hub UI "
+            f"manually and re-run with the verified sha."
+        )
+    print(f"    pushed @ {pushed_sha}")
     print(f"    --> pin this sha in registry.yaml under artefacts.{plan.artefact_key}.revision")
-    # Silence the unused variable from card_path which is only built to keep the
-    # local-dir branch parallel to the file branch.
-    del card_path
 
 
 def main(argv: list[str] | None = None) -> int:

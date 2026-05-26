@@ -10,12 +10,25 @@ This page is the operator runbook for the fed-pulse droplet. It covers the one-t
 - Frontend: Next.js standalone server on internal `:3000`
 - All three services live in `compose.prod.yml` and share the `fed-pulse:prod` image (built from `Dockerfile.prod`)
 - HF Hub stores every model artefact; the droplet pulls the hot path eagerly at boot and lazy-fetches the alternative encoders
+- The HF cache lives on a named volume (`hf-cache`) so the 2-4 GB encoder bundles survive image rebuilds
 
 ## Provisioning
 
 Provision an [8 GB / 4 vCPU Basic Regular droplet](https://www.digitalocean.com/pricing/droplets) on DigitalOcean (around $48/month). The boot budget targets that hardware; smaller droplets will OOM during the eager-pull step.
 
-One-time setup commands as `root` on the fresh droplet:
+### 1. DNS first
+
+Create an A record `fedpulse.yusufizzetmurat.com -> <droplet ip>` and wait for propagation before doing anything else. Caddy's first-boot Let's Encrypt challenge needs the hostname to resolve to the droplet, and the cert request will rate-limit if it fails repeatedly. Verify with:
+
+```sh
+dig +short fedpulse.yusufizzetmurat.com
+```
+
+Wait until that returns the droplet IP (usually under 60 seconds after creating the A record).
+
+### 2. One-time setup on the droplet
+
+As `root` on the fresh droplet:
 
 ```sh
 # Docker + Compose
@@ -48,8 +61,6 @@ docker compose -f compose.prod.yml up -d --build
 curl -sf https://fedpulse.yusufizzetmurat.com/health
 ```
 
-DNS prerequisite: the operator must point an A record `fedpulse.yusufizzetmurat.com -> <droplet ip>` before the first boot — Caddy needs the hostname to resolve to the droplet for the Let's Encrypt challenge to succeed.
-
 ## GitHub Actions secrets
 
 The deploy workflow needs three secrets on the repository (Settings -> Secrets and variables -> Actions):
@@ -57,20 +68,33 @@ The deploy workflow needs three secrets on the repository (Settings -> Secrets a
 | Secret | Contents | Where it is used |
 |---|---|---|
 | `DROPLET_SSH_KEY` | Private ed25519 key (the public side lives in `/root/.ssh/authorized_keys` on the droplet) | `deploy.yml` writes it to `~/.ssh/id_ed25519` before sshing in |
-| `HF_TOKEN` | Hugging Face PAT with `read` scope on `yusufizzetmurat` (or `write` if also pushing artefacts via the workflow) | Threaded into the droplet env file; consumed by the entrypoint to pull hot-path artefacts |
+| `HF_TOKEN` | Hugging Face PAT with `read` scope on `yusufizzetmurat` | Threaded into the droplet env file; consumed by the entrypoint to pull hot-path artefacts |
+| `HF_TOKEN_WRITE` | Hugging Face PAT with `write` scope on `yusufizzetmurat` | Used by the manual `hf-push` workflow only; never lives on the operator's laptop |
 | `FRED_API_KEY` | FRED API key | Consumed by `app.services.fred_client` for the rates panel refresh |
 
 ## Deploy contract
 
 Pushing to `main` triggers `.github/workflows/deploy.yml`. The workflow does:
 
-1. Writes `DROPLET_SSH_KEY` to a temp file with `chmod 600`.
-2. Sshes to the droplet as `root` (override via the `ssh_user` workflow_dispatch input).
-3. Records the prior HEAD into `/etc/fed-pulse/last-deploy.sha`, fetches `main`, hard-resets to it, and runs `docker compose -f compose.prod.yml up -d --build`.
-4. Polls `https://fedpulse.yusufizzetmurat.com/health` until success or a 60-second timeout.
-5. On health-probe failure: hard-resets to the recorded prior sha and rebuilds. The job exits non-zero.
+1. Polls the GitHub Actions API for the `ci.yml` run targeting the same commit sha and refuses to proceed unless it concluded `success`. Times out at 10 minutes.
+2. Writes `DROPLET_SSH_KEY` to a temp file with `chmod 600`.
+3. Sshes to the droplet as `root` (override via the `ssh_user` workflow_dispatch input).
+4. Records the current droplet HEAD as the prior-known-good sha (BEFORE fetching `main` from origin), fetches `main`, hard-resets to it, and runs `docker compose -f compose.prod.yml up -d --build`.
+5. Polls `https://fedpulse.yusufizzetmurat.com/health` until success or a 60-second timeout.
+6. On health-probe success: writes the now-current sha to `/etc/fed-pulse/last-deploy.sha` (the next rollback target).
+7. On health-probe failure: hard-resets to the recorded prior sha and rebuilds, then re-runs the smoke probe. Exit 1 on the original failure, exit 2 if the rollback also failed (the droplet is then in an inconsistent state and needs manual recovery).
 
-`dev` continues to be the integration branch; the deploy workflow does not fire on `dev` pushes. Releases happen by running the `promote.yml` workflow_dispatch — it fast-forwards `main` to a specified `dev` sha (default: `dev` HEAD), which in turn triggers `deploy.yml`.
+`dev` continues to be the integration branch; the deploy workflow does not fire on `dev` pushes. Releases happen by running the `promote.yml` workflow_dispatch — it fast-forwards `main` to a specified `dev` sha (default: `dev` HEAD), which in turn triggers `deploy.yml`. The promote workflow uses `git push --force-with-lease` so a stale view of `main` (e.g. a hotfix that landed in parallel) refuses the push instead of silently rewinding.
+
+## Pushing artefacts to HF Hub
+
+The one-time and follow-up artefact pushes run server-side via the `hf-push` workflow (`.github/workflows/hf-push.yml`). Trigger it manually from the GH Actions tab:
+
+- `dry-run=true` prints the upload plan without contacting HF Hub. Inspect the per-file listing for accidental secrets / git metadata before flipping to `false`.
+- `repos` is an optional comma-separated list of kinds (`encoder,forecaster,retrieval,trajectory,rates_heads,training_package,embedding_caches`). Leaving it empty pushes everything via `--all`.
+- The script reads `HF_TOKEN_WRITE` from the GH secret store, so the operator's laptop never holds the write-scoped token.
+
+After a successful run, copy the printed commit shas into `backend/app/models/registry.yaml` under each `artefacts.<key>.revision` field, commit + push to `dev`, then run `promote.yml` to roll the pinned shas onto `main`.
 
 ## Rollback (manual)
 
@@ -95,5 +119,6 @@ After a deploy lands, the operator should:
 ## Known constraints
 
 - First request after a cold boot of a non-eager encoder pulls a ~600 MB parquet from HF Hub; allow 15-30 seconds. Subsequent requests hit the local cache.
-- Eager-pull at boot dominates the cold-start time. Budget under 90 seconds on the 8 GB droplet for the canonical hot path.
+- Eager-pull at boot dominates the cold-start time. Budget under 90 seconds on the 8 GB droplet for the canonical hot path. The `hf-cache` named volume survives image rebuilds, so a deploy that does not bump artefact pins typically skips the eager pull entirely.
 - Caddy's Let's Encrypt cache lives in the `caddy_data` named volume; do not `docker compose down -v` in production or the next boot will retry the ACME challenge from scratch.
+- Container processes drop to UID 10001 (`fedpulse`) via `s6-setuidgid` before exec'ing uvicorn / node, so files written into `/etc/fed-pulse/data` land under that UID on the host. Do not `chown root` over them — the next container start will refuse to write.

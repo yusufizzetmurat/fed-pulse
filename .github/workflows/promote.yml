@@ -22,13 +22,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      # Pinned to v4.2.2 commit sha. See deploy.yml for the rationale.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: promote dev -> main
         run: |
+          set -euo pipefail
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
           git fetch origin dev main
@@ -37,6 +39,14 @@ jobs:
               TARGET=$(git rev-parse origin/dev)
           fi
           echo "promoting ${TARGET} to main"
+          # Record the current remote main tip so ``--force-with-lease``
+          # can refuse the push if main has moved (e.g. a hotfix landed
+          # while the operator was confirming the dev sha). Without this
+          # the silent failure mode is rewinding a real hotfix.
+          MAIN_TIP=$(git rev-parse origin/main)
           git checkout main
           git reset --hard "${TARGET}"
-          git push origin main
+          if ! git push --force-with-lease="main:${MAIN_TIP}" origin main; then
+              echo "main has diverged from the local view (expected ${MAIN_TIP}); refusing to force-push; investigate manually" >&2
+              exit 1
+          fi

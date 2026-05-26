@@ -3,11 +3,15 @@
 #
 # Responsibilities:
 #   1. Log in to Hugging Face Hub with the HF_TOKEN env var if present.
+#      Failure is fatal — uvicorn will not start on a broken token because
+#      the eager-pull would silently fall back to anonymous rate limits.
 #   2. Eager-pull the hot-path artefacts via the registry resolver so
 #      the first /analyze request does not wait on a checkpoint
 #      download.
 #   3. Hand off to s6-overlay which supervises uvicorn (backend on
-#      :8000) and the Next.js standalone server (FE on :3000).
+#      :8000) and the Next.js standalone server (FE on :3000). Each
+#      service drops to the ``fedpulse`` UID via ``s6-setuidgid``
+#      before exec'ing the workload (see deploy/s6-services/*/run).
 #
 # Boot budget on the 8 GB / 4 vCPU droplet: under 90 seconds. The
 # eager-pull step is what dominates — local SSD plus a fast NIC make
@@ -18,12 +22,18 @@
 set -e
 
 if [ -n "${HF_TOKEN}" ]; then
-    # huggingface-cli login --token is silent; we redirect to /dev/null
-    # so the token never lands in a process listing. Set
-    # HUGGINGFACE_HUB_TOKEN as a fallback for any tool that doesn't see
-    # the cached token.
+    # Pin HUGGINGFACE_HUB_TOKEN so any tool that doesn't see the cached
+    # token (e.g. transformers' from_pretrained called outside the
+    # huggingface_hub login session) still authenticates. Failures here
+    # are fatal — a stale or revoked HF token degrades the eager-pull
+    # to anonymous rate-limited reads which silently break the first
+    # /analyze request. Capture stderr so the operator sees the actual
+    # huggingface_hub error message in the deploy logs.
     export HUGGINGFACE_HUB_TOKEN="${HF_TOKEN}"
-    python -c "from huggingface_hub import login; import os; login(token=os.environ['HF_TOKEN'], add_to_git_credential=False)" >/dev/null 2>&1 || true
+    if ! python -c "from huggingface_hub import login; import os; login(token=os.environ['HF_TOKEN'], add_to_git_credential=False)"; then
+        echo "[entrypoint] HF login failed — verify HF_TOKEN secret is set and not expired" >&2
+        exit 1
+    fi
 fi
 
 # Mask the s6 service set so the FE container does not also boot a

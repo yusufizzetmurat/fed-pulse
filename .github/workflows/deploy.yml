@@ -15,7 +15,56 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Gate the droplet deploy on ci.yml succeeding for this commit. Push
+  # to main fans out ci.yml and deploy.yml in parallel; without this
+  # guard a broken commit on main would deploy before its tests fail.
+  # The polling loop times out at 10 minutes — comfortable headroom for
+  # the ~6 min wall time the ci.yml jobs take on ubuntu-latest.
+  wait-for-ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      actions: read
+    steps:
+      - name: wait for ci.yml on the same sha
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          deadline=$(( $(date +%s) + 600 ))
+          while [ "$(date +%s)" -lt "${deadline}" ]; do
+              # Look up the ci.yml run targeting this sha. ``head_sha``
+              # filters to runs triggered by the same commit; the deploy
+              # workflow is what triggered this run, so ci.yml's run is
+              # separately identifiable.
+              payload=$(gh api \
+                  "repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=1" \
+                  --jq '.workflow_runs[0] // {}')
+              status=$(echo "${payload}" | jq -r '.status // "missing"')
+              conclusion=$(echo "${payload}" | jq -r '.conclusion // ""')
+              echo "ci status=${status} conclusion=${conclusion}"
+              case "${status}" in
+                  completed)
+                      if [ "${conclusion}" = "success" ]; then
+                          echo "ci passed; proceeding to deploy"
+                          exit 0
+                      fi
+                      echo "ci concluded ${conclusion}; refusing to deploy" >&2
+                      exit 1
+                      ;;
+                  missing)
+                      echo "ci.yml run not found yet for sha ${SHA}, retrying"
+                      ;;
+              esac
+              sleep 15
+          done
+          echo "timed out waiting for ci.yml on sha ${SHA}" >&2
+          exit 1
+
   deploy:
+    needs: wait-for-ci
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -25,7 +74,10 @@ jobs:
       HEALTH_URL: https://fedpulse.yusufizzetmurat.com/health
 
     steps:
-      - uses: actions/checkout@v6
+      # Pinned to the v4.2.2 commit sha. Floating major tags can be
+      # retargeted by a repo owner under a compromise; a specific sha
+      # is immutable.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: install ssh key
         run: |
@@ -40,24 +92,47 @@ jobs:
           set -euo pipefail
           cd /opt/fed-pulse
 
+          # Capture the prior known-good sha BEFORE fetching from
+          # origin — otherwise PRIOR_SHA would already be the new
+          # commit and the rollback path would loop right back into
+          # the failure. last-deploy.sha is touched ONLY after the
+          # health probe succeeds; on a failed rollback the file is
+          # intentionally left alone so the next operator deploy still
+          # sees the last-known-good.
           PRIOR_SHA=$(git rev-parse HEAD)
           mkdir -p /etc/fed-pulse
-          echo "${PRIOR_SHA}" > /etc/fed-pulse/last-deploy.sha
 
           git fetch --depth=1 origin main
           git reset --hard origin/main
           docker compose -f compose.prod.yml up -d --build
 
           ROLLBACK() {
-              echo "smoke test failed — rolling back to ${PRIOR_SHA}" >&2
+              echo "smoke test failed on $(git rev-parse HEAD) — rolling back to ${PRIOR_SHA}" >&2
               git reset --hard "${PRIOR_SHA}"
               docker compose -f compose.prod.yml up -d --build
+              # Re-run the smoke probe against the rolled-back build. A
+              # rollback that itself fails leaves the droplet in a half-
+              # broken state; exit 2 distinguishes that from the
+              # original-failure exit 1 so the operator knows manual
+              # recovery is required.
+              if ! timeout 60 sh -c 'until curl -sfk https://fedpulse.yusufizzetmurat.com/health >/dev/null; do sleep 2; done'; then
+                  echo "rollback ALSO failed; droplet may be in an inconsistent state; manual recovery required" >&2
+                  exit 2
+              fi
+              echo "rollback ok @ ${PRIOR_SHA}" >&2
               exit 1
           }
 
           if ! timeout 60 sh -c 'until curl -sfk https://fedpulse.yusufizzetmurat.com/health >/dev/null; do sleep 2; done'; then
               ROLLBACK
           fi
+
+          # Smoke passed — the now-current sha is the new known-good.
+          # Recording it AFTER the probe (not before the fetch) is the
+          # whole point of the file: the next operator deploy should
+          # roll back to a healthy state, never to the previous failed
+          # attempt.
+          git rev-parse HEAD > /etc/fed-pulse/last-deploy.sha
 
           echo "deploy ok @ $(git rev-parse HEAD)"
           REMOTE

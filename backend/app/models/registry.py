@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+# HF Hub repo-id format: ``owner/name`` where each side starts with an
+# alphanumeric and may contain ``[a-zA-Z0-9_.-]``. The grammar matches
+# what huggingface_hub itself accepts; the stricter point is that paths
+# like ``../../etc/passwd`` or ``owner/`` are rejected outright at the
+# resolver boundary instead of being passed to ``snapshot_download``.
+_HF_REPO_ID_RE = re.compile(
+    r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*/[a-zA-Z0-9][a-zA-Z0-9_.-]*$"
+)
+# Revision pin: commit sha, tag, or branch. No path separators, no ``..``.
+_HF_REVISION_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
 
 MODEL_REGISTRY_PATH = Path(__file__).resolve().parent / "registry.yaml"
 
@@ -155,6 +167,14 @@ def parse_hf_uri(uri: str) -> HFRef:
     The grammar is intentionally narrow: a single ``:`` separates the
     repo id from an optional revision pin. Branch names containing
     colons are not supported (mirroring HF's own URI-style references).
+
+    ``repo_id`` is validated against the HF Hub format
+    (``[a-zA-Z0-9][a-zA-Z0-9_.-]*/[a-zA-Z0-9][a-zA-Z0-9_.-]*``) so
+    pathological inputs (path traversal like ``../../etc/passwd``,
+    multi-colon URIs, trailing slashes, empty revisions) raise
+    :class:`ValueError` at the boundary instead of being forwarded to
+    :func:`huggingface_hub.snapshot_download` where a malformed value
+    could escape into the local filesystem cache.
     """
 
     if not is_hf_uri(uri):
@@ -167,14 +187,30 @@ def parse_hf_uri(uri: str) -> HFRef:
     if not body:
         raise ValueError(f"Empty hf:// URI body: {uri!r}")
     revision: str | None
+    if body.count(":") > 1:
+        raise ValueError(
+            f"hf:// URI carries multiple ':' separators; only owner/name:revision is allowed: {uri!r}"
+        )
     if ":" in body:
         repo_id, raw_revision = body.split(":", 1)
-        revision = raw_revision or None
+        if raw_revision == "":
+            raise ValueError(
+                f"hf:// URI has trailing ':' with empty revision: {uri!r}"
+            )
+        revision = raw_revision
     else:
         repo_id, revision = body, None
-    if "/" not in repo_id:
+    if repo_id.endswith("/"):
+        raise ValueError(f"hf:// URI repo_id has trailing slash: {uri!r}")
+    if not _HF_REPO_ID_RE.match(repo_id):
         raise ValueError(
-            f"hf:// URI must be 'owner/name', got {repo_id!r} from {uri!r}"
+            f"hf:// URI repo_id {repo_id!r} does not match owner/name "
+            f"format (alphanumeric start, [a-zA-Z0-9_.-]*); URI={uri!r}"
+        )
+    if revision is not None and not _HF_REVISION_RE.match(revision):
+        raise ValueError(
+            f"hf:// URI revision {revision!r} contains illegal characters "
+            f"(allowed: [a-zA-Z0-9._-]+); URI={uri!r}"
         )
     return HFRef(repo_id=repo_id, revision=revision, repo_type=repo_type)
 

@@ -57,7 +57,8 @@ The production stack runs on a single DigitalOcean droplet (8 GB / 4 vCPU, ~$48/
 - Hostname: `fedpulse.yusufizzetmurat.com`
 - Stack: Caddy reverse proxy + FastAPI backend + Next.js standalone frontend (all in `compose.prod.yml`)
 - HF Hub stores every model artefact; the droplet eager-pulls the hot path at boot and lazy-fetches the alternatives on first use
-- Deploy automation: `.github/workflows/deploy.yml` triggers on push to `main`. Required secrets: `DROPLET_SSH_KEY`, `HF_TOKEN`, `FRED_API_KEY`
+- Deploy automation: `.github/workflows/deploy.yml` triggers on push to `main` and blocks until `ci.yml` succeeds on the same sha. Required secrets: `DROPLET_SSH_KEY`, `HF_TOKEN`, `FRED_API_KEY`
+- HF artefact pushes run server-side via the manual `.github/workflows/hf-push.yml` workflow (workflow_dispatch) using `HF_TOKEN_WRITE`; the write-scoped token never leaves the GH secret store
 
 ## Executable contracts
 

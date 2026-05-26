@@ -10,6 +10,14 @@
     email {$ACME_EMAIL:admin@yusufizzetmurat.com}
     # On-demand TLS is disabled — the certificate is pre-provisioned
     # for the single hostname so cold-start latency stays low.
+
+    # Trust only private-range proxies (the docker network) for the
+    # X-Forwarded-* family. Without this an outside client could spoof
+    # the source IP on every request by sending its own X-Forwarded-For
+    # header. Caddy 2.7+ syntax.
+    servers {
+        trusted_proxies static private_ranges
+    }
 }
 
 fedpulse.yusufizzetmurat.com {
@@ -25,6 +33,13 @@ fedpulse.yusufizzetmurat.com {
         X-Content-Type-Options nosniff
         X-Frame-Options DENY
         Referrer-Policy strict-origin-when-cross-origin
+        # CSP intentionally allows ``'unsafe-inline'`` for script-src
+        # and style-src — Next.js' inline runtime script and the
+        # styled-jsx output both require it. The connect-src clause
+        # locks browser-side XHR to the same origin so a future
+        # /analyze response that smuggles a hostile script can't
+        # exfiltrate to an attacker-controlled domain.
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     }
 
     # Health probe — proxied directly so the deploy workflow can hit

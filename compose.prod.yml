@@ -11,7 +11,8 @@
 # supervisor only starts the matching process. Keeping one image
 # halves the bandwidth on every deploy and matches the per-droplet
 # hot-path model where both processes hold their own warm HF cache
-# slice.
+# slice. The hf-cache named volume is mounted on both services so the
+# 2-4 GB encoder bundles survive ``docker compose up --build``.
 
 services:
   backend:
@@ -19,6 +20,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_API_URL: https://fedpulse.yusufizzetmurat.com
     container_name: fed-pulse-backend
     restart: always
     env_file:
@@ -26,9 +29,11 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - FED_PULSE_SVC_MASK=backend
-      - FED_PULSE_REGISTRY_PREFER_HF=1
+      - HF_HOME=/home/fedpulse/.cache/huggingface
+      - HUGGINGFACE_HUB_CACHE=/home/fedpulse/.cache/huggingface
     volumes:
       - /etc/fed-pulse/data:/data
+      - hf-cache:/home/fedpulse/.cache/huggingface
     expose:
       - "8000"
     healthcheck:
@@ -43,13 +48,25 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_API_URL: https://fedpulse.yusufizzetmurat.com
     container_name: fed-pulse-frontend
     restart: always
+    # The FE entrypoint never touches HF Hub (FED_PULSE_SKIP_EAGER_PULL=1)
+    # so HF_TOKEN is not required, but threading the env file keeps the
+    # config surface symmetrical between services and lets a future
+    # FE-side artefact pull authenticate without re-plumbing secrets.
+    env_file:
+      - /etc/fed-pulse/.env
     environment:
       - NODE_ENV=production
       - FED_PULSE_SVC_MASK=frontend
       - FED_PULSE_SKIP_EAGER_PULL=1
       - NEXT_PUBLIC_API_URL=https://fedpulse.yusufizzetmurat.com
+      - HF_HOME=/home/fedpulse/.cache/huggingface
+      - HUGGINGFACE_HUB_CACHE=/home/fedpulse/.cache/huggingface
+    volumes:
+      - hf-cache:/home/fedpulse/.cache/huggingface
     expose:
       - "3000"
     depends_on:
@@ -74,3 +91,7 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  # Persists ~/.cache/huggingface between image rebuilds so the droplet
+  # does not re-pull 2-4 GB of encoder weights on every deploy. Owned by
+  # UID 10001 (the ``fedpulse`` user) inside the container.
+  hf-cache:
