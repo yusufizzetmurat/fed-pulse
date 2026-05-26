@@ -1,5 +1,7 @@
 import axios from "axios";
 import type {
+  AnalogsRequest,
+  AnalogsResponse,
   AnalyzeRequest,
   AnalyzeResult,
   ClassificationBreakdownResponse,
@@ -63,6 +65,21 @@ export async function postAnalyzeMarket(
     encoder_alias: null,
     checkpoint_path: null,
   }) as MarketReactionPanelResponse;
+}
+
+const ANALOGS_BUNDLE_ABSENT: AnalogsResponse = {
+  analogs: [],
+  index_size: 0,
+  encoder_alias: "",
+};
+
+export async function postAnalyzeAnalogs(
+  baseUrl: string,
+  request: AnalogsRequest,
+  signal?: AbortSignal,
+): Promise<AnalogsResponse> {
+  const response = await axios.post(`${baseUrl}/analyze/analogs`, request, { signal });
+  return (response.data ?? ANALOGS_BUNDLE_ABSENT) as AnalogsResponse;
 }
 
 export async function fetchTrainJob(baseUrl: string, jobId: string): Promise<TrainJobState> {

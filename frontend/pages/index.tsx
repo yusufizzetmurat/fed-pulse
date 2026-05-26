@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { AnalyzeForm } from "@/components/analyze/AnalyzeForm";
 import { CredibilityKpis } from "@/components/analyze/CredibilityKpis";
+import { HistoricalAnalogPanel } from "@/components/analyze/HistoricalAnalogPanel";
 import { MarketReactionPanel } from "@/components/analyze/MarketReactionPanel";
 import { MultiAxisInterpretation } from "@/components/analyze/MultiAxisInterpretation";
 import { PipelineTrace } from "@/components/analyze/PipelineTrace";
@@ -25,6 +26,7 @@ import {
   fetchHistory,
   fetchHistoryRun,
   postAnalyze,
+  postAnalyzeAnalogs,
   postAnalyzeMarket,
   resolveApiBaseUrl,
 } from "@/lib/analyze/api";
@@ -32,6 +34,7 @@ import { DEFAULT_TEXT } from "@/lib/analyze/constants";
 import { toStance } from "@/lib/analyze/format";
 import { useEvaluationCoverage } from "@/lib/analyze/useEvaluationCoverage";
 import type {
+  AnalogsResponse,
   AnalyzeRequest,
   AnalyzeResult,
   HistoryEntry,
@@ -87,6 +90,8 @@ export default function WorkspacePage() {
   const [result, setResult] = React.useState<AnalyzeResult | null>(null);
   const [baselineResult, setBaselineResult] = React.useState<AnalyzeResult | null>(null);
   const [marketPanel, setMarketPanel] = React.useState<MarketReactionPanelResponse | null>(null);
+  const [analogsPanel, setAnalogsPanel] = React.useState<AnalogsResponse | null>(null);
+  const [analogsLoading, setAnalogsLoading] = React.useState(false);
   const [struck, setStruck] = React.useState<Set<number>>(() => new Set());
   const [counterfactualLoading, setCounterfactualLoading] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
@@ -203,25 +208,37 @@ export default function WorkspacePage() {
   // second submit before the first market fetch resolves bumps the
   // seq; the late-arriving resolver checks the seq and skips state
   // commit if it does not match the most recent issued id. Mirrors
-  // the counterfactualSeqRef pattern below.
+  // the counterfactualSeqRef pattern below. The analogs panel uses
+  // the same guard so a stale slow-arriving retrieval response cannot
+  // overwrite the newest submit.
   const marketPanelSeqRef = React.useRef(0);
+  const analogsPanelSeqRef = React.useRef(0);
 
   const handleSubmit = async () => {
     setLoading(true);
     setStruck(new Set());
     marketPanelSeqRef.current += 1;
+    analogsPanelSeqRef.current += 1;
     const marketTicket = marketPanelSeqRef.current;
+    const analogsTicket = analogsPanelSeqRef.current;
+    setAnalogsLoading(true);
     try {
       // #317 finding #13: dispatch /analyze + /analyze/market in
       // parallel rather than sequentially -- the market panel does
       // not depend on the /analyze response payload. Halves the
       // user-visible latency on a submit click. Wrapped via
       // ``Promise.allSettled`` so a failure on the optional market
-      // panel does not abort the primary /analyze surface.
+      // panel does not abort the primary /analyze surface. The
+      // analogs fetch joins the same fan-out.
       const sharedRequest = { ...request, mask_sentence_indices: [] };
-      const [analyzeRes, marketRes] = await Promise.allSettled([
+      const [analyzeRes, marketRes, analogsRes] = await Promise.allSettled([
         postAnalyze(apiBaseUrl, sharedRequest),
         postAnalyzeMarket(apiBaseUrl, sharedRequest),
+        postAnalyzeAnalogs(apiBaseUrl, {
+          text: request.text,
+          k: 5,
+          as_of_date: request.date,
+        }),
       ]);
       if (analyzeRes.status === "fulfilled") {
         setResult(analyzeRes.value);
@@ -245,8 +262,16 @@ export default function WorkspacePage() {
           marketRes.status === "fulfilled" ? marketRes.value : null,
         );
       }
+      if (analogsTicket === analogsPanelSeqRef.current) {
+        setAnalogsPanel(
+          analogsRes.status === "fulfilled" ? analogsRes.value : null,
+        );
+      }
     } finally {
       setLoading(false);
+      if (analogsTicket === analogsPanelSeqRef.current) {
+        setAnalogsLoading(false);
+      }
     }
   };
 
@@ -270,7 +295,13 @@ export default function WorkspacePage() {
         // #317 finding #15: refetch the market panel alongside the
         // sentence-strike counterfactual so the per-head rates cards
         // reflect the masked input rather than staying stale on the
-        // baseline forward pass.
+        // baseline forward pass. The historical analog panel is
+        // intentionally NOT refetched here: ``AnalogsRequest`` has no
+        // ``mask_sentence_indices`` field, so a refetch would resend
+        // the same original text and produce the same top-k. The
+        // panel is contextual ("statements that sound like the one
+        // you pasted"), not attributional, so freezing it on the
+        // baseline retrieval is the right semantics under a strike.
         const sharedRequest = { ...request, mask_sentence_indices: indices };
         const [analyzeRes, marketRes] = await Promise.allSettled([
           postAnalyze(apiBaseUrl, sharedRequest),
@@ -445,6 +476,9 @@ export default function WorkspacePage() {
               {marketPanel && (marketPanel.rates.length > 0 || marketPanel.vol_regime) ? (
                 <MarketReactionPanel panel={marketPanel} />
               ) : null}
+
+              <HistoricalAnalogPanel analogs={analogsPanel} loading={analogsLoading} />
+
 
               {result.xai ? (
                 <SentenceStrikeXaiPanel

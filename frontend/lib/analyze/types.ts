@@ -251,6 +251,31 @@ export interface MarketReactionPanelResponse {
   checkpoint_path: string | null;
 }
 
+export type AnalogVolRegime = "calm" | "normal" | "high";
+
+export interface AnalogsRequest {
+  text: string;
+  k?: number;
+  as_of_date?: string | null;
+}
+
+export interface AnalogCard {
+  event_date: string;
+  similarity: number;
+  axis_stance: string | null;
+  // UI-only bucket — the backend deliberately withholds the raw
+  // ``forward_realized_vol_10d`` target so this label is the only
+  // post-event signal available. Never feed back into a model.
+  subsequent_vol_regime: AnalogVolRegime | null;
+  excerpt: string;
+}
+
+export interface AnalogsResponse {
+  analogs: AnalogCard[];
+  index_size: number;
+  encoder_alias: string;
+}
+
 export interface AnalyzeResult {
   sentiment?: SentimentResponse;
   prediction?: PredictionResponse;
