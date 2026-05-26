@@ -407,9 +407,25 @@ class ForecasterModel(nn.Module):
         # (close, vol) head and softplus post-processing.
         if self.output_mode == "classification":
             multi_task = self.head(pooled_step)
-            self._last_multi_task = {
+            stashed: dict[str, torch.Tensor] = {
                 key: tensor.detach() for key, tensor in multi_task.items()
             }
+            # #304 dual-head: when the regression head is mounted, the
+            # standard forward path must emit its scalar log(RV)
+            # prediction so the /analyze inference path and any caller
+            # that uses ``model(x)`` rather than ``forward_multi_task``
+            # can read it off ``_last_multi_task['log_rv']``. The
+            # ``_skip_regression_head`` runtime flag opts the training
+            # loop out of the regression head's forward at the dual +
+            # alpha=0 boundary so the alpha=0 byte-identity contract
+            # holds against pure classification.
+            if (
+                self.regression_head is not None
+                and not bool(getattr(self, "_skip_regression_head", False))
+            ):
+                log_rv_pred = self.regression_head(pooled_step).squeeze(-1)
+                stashed["log_rv"] = log_rv_pred.detach()
+            self._last_multi_task = stashed
             return multi_task["stance"]  # type: ignore[no-any-return]
         raw = self.head(pooled_step)
         close = raw[:, 0:1]
@@ -515,7 +531,18 @@ class ForecasterModel(nn.Module):
         # same call. ``(B, 1)`` -> ``(B,)`` so downstream MSE / metric
         # helpers can index without a redundant squeeze, matching the
         # factor branch convention.
-        if self.regression_head is not None:
+        #
+        # The ``_skip_regression_head`` runtime flag lets the training
+        # loop opt out of the regression head's forward computation
+        # entirely (used when ``head_mode='dual'`` is paired with
+        # ``regression_alpha=0.0`` so the regression head produces no
+        # gradient and the dual + alpha=0 boundary is byte-identical
+        # to the pure classification path; symmetric to the ``alpha=1``
+        # case which skips the classifier branch on the loss side).
+        if (
+            self.regression_head is not None
+            and not bool(getattr(self, "_skip_regression_head", False))
+        ):
             log_rv_pred = self.regression_head(pooled_step).squeeze(-1)
             multi_task["log_rv"] = log_rv_pred
         return multi_task

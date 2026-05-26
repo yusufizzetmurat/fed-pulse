@@ -94,7 +94,33 @@ def _parse_args() -> argparse.Namespace:
         default=["classification", "regression", "dual"],
         help="Subset of head modes to evaluate (defaults to all three).",
     )
+    parser.add_argument(
+        "--folds",
+        nargs="+",
+        default=None,
+        help=(
+            "Subset of walk-forward fold IDs to evaluate. Defaults to "
+            "every fold present in the training package's "
+            "fold_manifest_expanding_walk_forward.json."
+        ),
+    )
     return parser.parse_args()
+
+
+def _resolve_fold_ids(training_package_id: str, override: list[str] | None) -> list[str]:
+    if override:
+        return list(override)
+    from app.training.loaders import _read_fold_manifest, _resolve_training_package_dir
+
+    package_dir = _resolve_training_package_dir(training_package_id)
+    manifest = _read_fold_manifest(package_dir)
+    if not manifest:
+        raise RuntimeError(
+            "fold_manifest_expanding_walk_forward.json is empty / missing "
+            f"for training_package_id={training_package_id!r}; provide "
+            "--folds explicitly."
+        )
+    return sorted(manifest.keys())
 
 
 def _resolve_output_path(arg: Path | None) -> Path:
@@ -139,6 +165,7 @@ def _run_one_cell(
     seed: int,
     *,
     training_package_id: str,
+    fold_ids: list[str],
     epochs: int,
     regression_alpha: float,
     hidden_size: int,
@@ -149,10 +176,6 @@ def _run_one_cell(
     from app.training.loaders import load_walk_forward_split
     from app.training.loop import train_model
 
-    splits = load_walk_forward_split(
-        training_package_id=training_package_id,
-        rich_features=True,
-    )
     config = ModelConfig(
         output_mode="classification",
         head_mode=head_mode,
@@ -162,7 +185,12 @@ def _run_one_cell(
     )
 
     per_fold: list[dict[str, Any]] = []
-    for split in splits:
+    for fold_id in fold_ids:
+        split = load_walk_forward_split(
+            training_package_id=training_package_id,
+            fold_id=fold_id,
+            rich_features=True,
+        )
         result = train_model(
             model_config=config,
             train_sequence_groups=split.train,
@@ -195,6 +223,9 @@ def main() -> int:
     output_path = _resolve_output_path(args.output)
     print(f"[dual_head_comparison] writing -> {output_path}")
 
+    fold_ids = _resolve_fold_ids(args.training_package_id, args.folds)
+    print(f"[dual_head_comparison] folds={fold_ids}")
+
     trials: dict[str, list[dict[str, Any]]] = {mode: [] for mode in args.head_modes}
     for head_mode in args.head_modes:
         for seed in args.seeds:
@@ -208,6 +239,7 @@ def main() -> int:
                     head_mode,
                     seed,
                     training_package_id=args.training_package_id,
+                    fold_ids=fold_ids,
                     epochs=args.epochs,
                     regression_alpha=args.regression_alpha,
                     hidden_size=args.hidden_size,
@@ -235,6 +267,7 @@ def main() -> int:
     payload = {
         "head_modes": args.head_modes,
         "seeds": list(args.seeds),
+        "fold_ids": fold_ids,
         "epochs": args.epochs,
         "regression_alpha": args.regression_alpha,
         "training_package_id": args.training_package_id,

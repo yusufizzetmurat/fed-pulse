@@ -86,15 +86,39 @@ def test_zero_derived_text_features_zeros_sentiment_slot() -> None:
     assert torch.all(zeroed[..., 5] == x[..., 5])
 
 
+def test_zero_derived_text_features_zeros_full_derived_family_on_80dim() -> None:
+    """All derived-text slices [0], [10:25], [25:29], [29:35], [45:80] are zeroed."""
+
+    x = _make_rich_tensor(feat_dim=80)
+    zeroed, _aux = _zero_derived_text_features(x, None)
+    assert zeroed is not None
+    # Every derived-text slot is zero.
+    assert torch.all(zeroed[..., 0] == 0.0)
+    assert torch.all(zeroed[..., 10:25] == 0.0)
+    assert torch.all(zeroed[..., 25:29] == 0.0)
+    assert torch.all(zeroed[..., 29:35] == 0.0)
+    assert torch.all(zeroed[..., 45:80] == 0.0)
+    # Non-derived slices stay intact: market (1..6) + credibility (6:10) +
+    # realized_vol (35:37) + cross_asset (37:45).
+    assert torch.all(zeroed[..., 1:6] == x[..., 1:6])
+    assert torch.all(zeroed[..., 6:10] == x[..., 6:10])
+    assert torch.all(zeroed[..., 35:37] == x[..., 35:37])
+    assert torch.all(zeroed[..., 37:45] == x[..., 37:45])
+
+
 def test_zero_derived_text_features_zeros_multi_axis_slot_on_rich_tensor() -> None:
+    """The 35-dim rich tensor zeros every applicable slice up to [29:35]."""
+
     x = _make_rich_tensor()
     zeroed, _aux = _zero_derived_text_features(x, None)
     assert zeroed is not None
-    # Multi-axis slot [29:35] all zeroed.
+    # Sentiment + linguistic + MP-surprise + multi-axis blocks all zeroed.
+    assert torch.all(zeroed[..., 0] == 0.0)
+    assert torch.all(zeroed[..., 10:25] == 0.0)
+    assert torch.all(zeroed[..., 25:29] == 0.0)
     assert torch.all(zeroed[..., 29:35] == 0.0)
-    # Linguistic + MP-surprise families stay intact.
-    assert torch.all(zeroed[..., 10:25] == x[..., 10:25])
-    assert torch.all(zeroed[..., 25:29] == x[..., 25:29])
+    # Credibility block stays intact (not derived from text).
+    assert torch.all(zeroed[..., 6:10] == x[..., 6:10])
 
 
 def test_zero_derived_text_features_legacy_6dim_skips_multi_axis() -> None:

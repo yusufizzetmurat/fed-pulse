@@ -8,10 +8,14 @@ walk-forward fold protocol:
   flow into the recurrent core).
 - ``ablation``: ``use_derived_text_features=False`` -- the document-
   level encoder text path is the only text-derived signal.
-- ``replacement``: ``use_derived_text_features=False`` + pre-meeting
-  rates columns from #291. The replacement arm only runs when the
-  rates_panel.parquet artefact is available; otherwise the runner
-  skips it and documents the skip in the output JSON.
+- ``replacement``: ``use_derived_text_features=False`` plus the #291
+  pre-meeting rates columns. The arm runs only when
+  ``data/external/fred/rates_panel.parquet`` is on disk; otherwise it
+  reports ``skipped`` in the output JSON. Wiring the 12 pre-meeting
+  columns into the FeatureVector input slots that the ablation arm
+  zeros is a substantial loader refactor; the runner emits
+  ``replacement_arm: "deferred: pre-meeting wiring tracked in #320"``
+  and the comparison runs the two arms whose code paths exist today.
 
 The output JSON is keyed by configuration with per-fold macro-F1 +
 bootstrap CI numbers so the §16 finalization-roadmap table can read
@@ -39,13 +43,20 @@ from typing import Any
 from app.config import BACKEND_ROOT
 
 
-# The replacement arm pulls in #291 pre-meeting columns. When the
-# rates_panel.parquet artefact is missing (the canonical
-# pre-#312 corpus), the runner skips the replacement arm and documents
-# the skip on the output payload so the table can show "n/a -- #291 not
-# materialised".
+# The replacement arm pulls in #291 pre-meeting columns from
+# ``data/external/fred/rates_panel.parquet`` (the canonical post-#312
+# location). When the parquet is missing the runner skips the arm and
+# documents the skip on the output payload so the table can show
+# "n/a -- #291 not materialised".
 _REPLACEMENT_ARM_DATA = (
-    BACKEND_ROOT.parent / "data" / "processed" / "rates_panel.parquet"
+    BACKEND_ROOT.parent / "data" / "external" / "fred" / "rates_panel.parquet"
+)
+# The pre-meeting wiring needed to actually inject the 12 rates columns
+# into the FeatureVector slots that ``_zero_derived_text_features``
+# clears is tracked separately; the runner reports the deferral on the
+# manifest so downstream readers know which arm ran.
+_REPLACEMENT_ARM_DEFERRAL_TICKET = (
+    "deferred: pre-meeting wiring tracked in #320"
 )
 
 
@@ -96,6 +107,28 @@ def _parse_args() -> argparse.Namespace:
         default=11,
         help="Seed for the bootstrap RNG so the CI numbers reproduce.",
     )
+    parser.add_argument(
+        "--folds",
+        nargs="+",
+        default=None,
+        help=(
+            "Subset of walk-forward fold IDs to evaluate. Defaults to "
+            "every fold present in the training package's "
+            "fold_manifest_expanding_walk_forward.json."
+        ),
+    )
+    parser.add_argument(
+        "--replacement-arm-status",
+        type=str,
+        default=_REPLACEMENT_ARM_DEFERRAL_TICKET,
+        help=(
+            "Status string emitted on the manifest when the replacement "
+            "arm runs without wiring the pre-meeting columns. Set to "
+            "``ready`` once the FeatureVector loader carries the 12 "
+            "pre-meeting columns from #291 into the input slots that "
+            "``_zero_derived_text_features`` zeros."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -105,6 +138,22 @@ def _resolve_output_path(arg: Path | None) -> Path:
     base = BACKEND_ROOT.parent / "artifacts" / "experiments"
     base.mkdir(parents=True, exist_ok=True)
     return base / "derived_features_ablation.json"
+
+
+def _resolve_fold_ids(training_package_id: str, override: list[str] | None) -> list[str]:
+    if override:
+        return list(override)
+    from app.training.loaders import _read_fold_manifest, _resolve_training_package_dir
+
+    package_dir = _resolve_training_package_dir(training_package_id)
+    manifest = _read_fold_manifest(package_dir)
+    if not manifest:
+        raise RuntimeError(
+            "fold_manifest_expanding_walk_forward.json is empty / missing "
+            f"for training_package_id={training_package_id!r}; provide "
+            "--folds explicitly."
+        )
+    return sorted(manifest.keys())
 
 
 def _trial_metrics(summary: Any) -> dict[str, float | None]:
@@ -157,6 +206,7 @@ def _run_one_cell(
     seed: int,
     *,
     training_package_id: str,
+    fold_ids: list[str],
     epochs: int,
     hidden_size: int,
     use_derived: bool,
@@ -165,10 +215,6 @@ def _run_one_cell(
     from app.training.loaders import load_walk_forward_split
     from app.training.loop import train_model
 
-    splits = load_walk_forward_split(
-        training_package_id=training_package_id,
-        rich_features=True,
-    )
     config = ModelConfig(
         output_mode="classification",
         n_classes=3,
@@ -177,7 +223,12 @@ def _run_one_cell(
     )
 
     per_fold: list[dict[str, Any]] = []
-    for split in splits:
+    for fold_id in fold_ids:
+        split = load_walk_forward_split(
+            training_package_id=training_package_id,
+            fold_id=fold_id,
+            rich_features=True,
+        )
         result = train_model(
             model_config=config,
             train_sequence_groups=split.train,
@@ -232,8 +283,12 @@ def main() -> int:
     output_path = _resolve_output_path(args.output)
     print(f"[derived_features_ablation] writing -> {output_path}")
 
+    fold_ids = _resolve_fold_ids(args.training_package_id, args.folds)
+    print(f"[derived_features_ablation] folds={fold_ids}")
+
     trials: dict[str, list[dict[str, Any]]] = {}
     skipped: dict[str, str] = {}
+    replacement_arm_status: str | None = None
     for name, kwargs in _configurations():
         required = kwargs.pop("requires", None)
         if required is not None and not Path(required).exists():
@@ -247,6 +302,18 @@ def main() -> int:
                 flush=True,
             )
             continue
+        if name == "replacement":
+            # The arm is gated on the rates_panel.parquet being present.
+            # Wiring the 12 pre-meeting columns into the FeatureVector
+            # slots that the ablation zeros is tracked separately; the
+            # status string surfaces the deferral on the manifest so
+            # downstream readers can tell which arm code path ran.
+            replacement_arm_status = str(args.replacement_arm_status)
+            print(
+                f"[derived_features_ablation] replacement arm status: "
+                f"{replacement_arm_status}",
+                flush=True,
+            )
         trials[name] = []
         for seed in args.seeds:
             print(
@@ -259,6 +326,7 @@ def main() -> int:
                     name,
                     seed,
                     training_package_id=args.training_package_id,
+                    fold_ids=fold_ids,
                     epochs=args.epochs,
                     hidden_size=args.hidden_size,
                     **kwargs,
@@ -284,6 +352,7 @@ def main() -> int:
         "configurations": list(trials.keys()),
         "skipped": skipped,
         "seeds": list(args.seeds),
+        "fold_ids": fold_ids,
         "epochs": args.epochs,
         "bootstrap_samples": args.bootstrap_samples,
         "bootstrap_seed": args.bootstrap_seed,
@@ -291,6 +360,8 @@ def main() -> int:
         "trials": trials,
         "summary": summary,
     }
+    if replacement_arm_status is not None:
+        payload["replacement_arm"] = replacement_arm_status
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, indent=2, default=str))
     print(f"[derived_features_ablation] wrote {output_path}")

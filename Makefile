@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation
 
 help:
 	@echo "Targets:"
@@ -74,6 +74,10 @@ help:
 	@echo "  make forecaster-sweep-aggregate - Aggregate sweep trials into per-arch CIs"
 	@echo "  make regime-baseline-tiers     - Phase 9 V2 3-tier regime classifier (Market / +Rich / +Rich+NLP)"
 	@echo "  make forecaster-credibility-train - Single training run with credibility features on"
+	@echo "  make dual-head-comparison TRAINING_PACKAGE_ID=<id>"
+	@echo "                         - Three-way head-mode comparison (classification / regression / dual) across the official seed set"
+	@echo "  make derived-features-ablation TRAINING_PACKAGE_ID=<id>"
+	@echo "                         - Three-way derived-text-features ablation (baseline / ablation / replacement)"
 
 dev: dev-cpu
 
@@ -661,3 +665,29 @@ cross-asset:
 		python -m app.forecasting.cross_asset_response \
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--seed "$(SEED)"
+
+# #304 dual-head methodology runner. Runs the three head-mode
+# configurations (classification / regression / dual) across the
+# official seed set and a 40-epoch budget; aggregates per-fold
+# regime_f1_macro + regression_rmse_log_rv into a single comparison
+# JSON the §16 finalization-roadmap table reads.
+dual-head-comparison:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose --profile "$(FORECASTER_COMPOSE_PROFILE)" run --rm "$(FORECASTER_COMPOSE_SERVICE)" \
+		python -m scripts.run_dual_head_comparison \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		--seeds 11 29 47 71 97 \
+		--epochs 40
+
+# #309 derived-text-features ablation runner. Trains the forecaster
+# under baseline / ablation / replacement configurations across the
+# official seed set so the §16 table can quantify whether the
+# per-sentence derived text features carry forecaster-relevant signal
+# over the document-level encoder path.
+derived-features-ablation:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose --profile "$(FORECASTER_COMPOSE_PROFILE)" run --rm "$(FORECASTER_COMPOSE_SERVICE)" \
+		python -m scripts.run_derived_features_ablation \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		--seeds 11 29 47 71 97 \
+		--epochs 40

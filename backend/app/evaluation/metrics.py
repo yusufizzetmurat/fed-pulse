@@ -107,6 +107,15 @@ class TrainingRunSummary:
     text_encoder: str | None = None
     text_adapter_dim: int = 0
     text_pool_lambda_inv_days: float = 0.0
+    # #304 dual-head: per-fold log_rv standardiser fitted on the train
+    # slice only. ``None`` on head_mode='classification' runs (the
+    # default) so the regression byte-identity contract holds. When
+    # head_mode in {regression, dual}, the dict carries
+    # ``{"mean": float, "std": float}`` so downstream consumers can
+    # invert the standardised regression head output (multiply by std,
+    # add mean, then ``exp(...)`` to recover the original
+    # ``forward_realized_vol_10d`` units).
+    log_rv_scaler: dict[str, float] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
