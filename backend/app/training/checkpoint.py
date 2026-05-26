@@ -15,7 +15,13 @@ from app.models.config import (
     ModelConfig,
     RichFeatureScalerParams,
 )
-from app.models.lstm import ForecasterModel
+# Post-#336 the checkpoint helpers accept both research and serving
+# forecasters (they only touch ``nn.Module`` APIs and the shared
+# attribute surface from :class:`ForecasterBase`). Annotating against
+# the base widens the contract without breaking the legacy
+# ``ForecasterModel`` callers, which now alias to the research class.
+from app.models.forecaster_base import ForecasterBase
+from app.models.lstm import ForecasterModel  # noqa: F401 -- back-compat re-export
 
 
 def _checkpoint_input_size(payload: dict[str, Any]) -> int | None:
@@ -155,7 +161,7 @@ def _checkpoint_metadata(
     checkpoint_path: Path,
     *,
     runtime_mode: str = "fast",
-    model: ForecasterModel | None = None,
+    model: ForecasterBase | None = None,
     adaptation_summary: TrainingRunSummary | None = None,
 ) -> dict[str, Any]:
     model_config = (
@@ -269,7 +275,7 @@ def _restore_rng_state(state: dict[str, Any] | None) -> None:
 
 
 def _checkpoint_payload(
-    model: ForecasterModel,
+    model: ForecasterBase,
     summary: TrainingRunSummary,
     *,
     close_scale: float | None = None,
@@ -311,7 +317,7 @@ def _checkpoint_payload(
 
 
 def _save_model_checkpoint(
-    model: ForecasterModel,
+    model: ForecasterBase,
     checkpoint_path: Path,
     summary: TrainingRunSummary,
     *,
@@ -345,7 +351,7 @@ def _save_model_checkpoint(
         pass
 
 
-def _load_state_dict_loose(model: ForecasterModel, state_dict: dict[str, Any], source: str) -> None:
+def _load_state_dict_loose(model: ForecasterBase, state_dict: dict[str, Any], source: str) -> None:
     """Load a checkpoint non-strictly and surface any missing/unexpected keys."""
     result = model.load_state_dict(state_dict, strict=False)
     missing = list(getattr(result, "missing_keys", []) or [])
@@ -358,7 +364,7 @@ def _load_state_dict_loose(model: ForecasterModel, state_dict: dict[str, Any], s
 
 
 def _load_model_checkpoint(
-    model: ForecasterModel,
+    model: ForecasterBase,
     checkpoint_path: Path,
     device: torch.device,
 ) -> dict[str, Any] | None:
