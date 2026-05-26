@@ -115,10 +115,15 @@ def test_build_index_persists_parquet_embeddings_manifest(tmp_path: Path) -> Non
         "event_date",
         "text_hash",
         "axis_stance",
-        "forward_realized_vol_10d",
+        "subsequent_vol_regime",
         "excerpt",
     }
+    # Supervised target column must never land in the persisted bundle.
+    assert "forward_realized_vol_10d" not in persisted.columns
     assert persisted["axis_stance"].tolist() == ["dovish", "hawkish", "neutral"]
+    # Buckets pinned by VOL_REGIME_BUCKET_EDGES = (0.012, 0.020):
+    # 0.045 -> high, 0.022 -> high, 0.011 -> calm.
+    assert persisted["subsequent_vol_regime"].tolist() == ["high", "high", "calm"]
 
 
 def test_query_returns_top1_matching_known_keyword(tmp_path: Path) -> None:
@@ -144,7 +149,8 @@ def test_query_returns_top1_matching_known_keyword(tmp_path: Path) -> None:
     assert len(hits) == 3
     assert hits[0].event_date == "2022-09-21"
     assert hits[0].axis_stance == "hawkish"
-    assert hits[0].forward_realized_vol_10d == pytest.approx(0.022, rel=1e-5)
+    # 0.022 > VOL_REGIME_BUCKET_EDGES[1] (0.020) -> "high".
+    assert hits[0].subsequent_vol_regime == "high"
     assert hits[0].similarity == pytest.approx(1.0, abs=1e-5)
     # Strictly descending ordering by similarity.
     assert hits[0].similarity >= hits[1].similarity >= hits[2].similarity
@@ -306,6 +312,106 @@ def test_query_raises_on_dimension_mismatch(tmp_path: Path) -> None:
 def test_load_index_raises_when_bundle_is_missing(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="retrieval index incomplete"):
         ret_index.load_index(tmp_path / "does-not-exist")
+
+
+def test_query_self_match_suppression(tmp_path: Path) -> None:
+    """A query whose text_hash matches an indexed row drops the trivial hit.
+
+    The runtime singleton always passes the cleaned query's sha256 as
+    ``exclude_text_hash`` so submitting the literal text of an indexed
+    statement never returns the similarity ≈ 1.0 self-row.
+    """
+
+    rows = [
+        {
+            "event_date": "2024-03-20",
+            "event_kind": "statement",
+            "text": "FOO",
+            "axis_stance": "neutral",
+            "forward_realized_vol_10d": 0.011,
+            "horizon": 1,
+            "text_hash": hashlib.sha256(b"FOO").hexdigest(),
+        }
+    ]
+    events_parquet = _write_events_parquet(tmp_path, rows)
+    embed = _make_keyword_embedder(["foo"])
+    loaded = ret_index.build_index_from_events(
+        events_parquet=events_parquet,
+        encoder_alias="test_retrieval",
+        encoder_revision="rev1234",
+        embed_fn=embed,
+        training_package_id=None,
+        out_dir=tmp_path / "bundle",
+    )
+
+    query_vec = embed(["FOO"])[0]
+    exclude = ret_index.text_hash_for_query("FOO")
+    hits = ret_index.query(loaded, query_vec, k=5, exclude_text_hash=exclude)
+    assert hits == []
+
+
+def test_query_as_of_date_filters_strictly_backward(tmp_path: Path) -> None:
+    """Only rows with event_date < as_of_date stay in the candidate pool."""
+
+    rows = _fixture_statements()  # 2008-12-16, 2022-09-21, 2015-12-16
+    events_parquet = _write_events_parquet(tmp_path, rows)
+    embed = _make_keyword_embedder(["inflation", "recovery", "accommodation"])
+    loaded = ret_index.build_index_from_events(
+        events_parquet=events_parquet,
+        encoder_alias="test_retrieval",
+        encoder_revision="rev1234",
+        embed_fn=embed,
+        training_package_id=None,
+        out_dir=tmp_path / "bundle",
+    )
+
+    query_vec = embed(["inflation"])[0]
+    hits = ret_index.query(loaded, query_vec, k=5, as_of_date="2016-01-01")
+    dates = {hit.event_date for hit in hits}
+    assert dates <= {"2008-12-16", "2015-12-16"}
+    assert "2022-09-21" not in dates
+
+    # as_of_date earlier than every indexed row -> empty result (no
+    # padding from future rows).
+    early = ret_index.query(loaded, query_vec, k=5, as_of_date="2000-01-01")
+    assert early == []
+
+
+def test_build_index_persists_train_end_in_manifest(tmp_path: Path) -> None:
+    rows = _fixture_statements()
+    events_parquet = _write_events_parquet(tmp_path, rows)
+    embed = _make_keyword_embedder(["inflation", "recovery", "accommodation"])
+    ret_index.build_index_from_events(
+        events_parquet=events_parquet,
+        encoder_alias="test_retrieval",
+        encoder_revision="rev1234",
+        embed_fn=embed,
+        training_package_id="tp_test",
+        out_dir=tmp_path / "bundle",
+        train_end="2018-01-01",
+    )
+
+    manifest = json.loads((tmp_path / "bundle" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["train_end"] == "2018-01-01"
+    reloaded = ret_index.load_index(tmp_path / "bundle")
+    assert reloaded.train_end == "2018-01-01"
+
+
+def test_build_index_atomic_writes_leave_no_tmp_files(tmp_path: Path) -> None:
+    rows = _fixture_statements()
+    events_parquet = _write_events_parquet(tmp_path, rows)
+    embed = _make_keyword_embedder(["inflation", "recovery", "accommodation"])
+    ret_index.build_index_from_events(
+        events_parquet=events_parquet,
+        encoder_alias="test_retrieval",
+        encoder_revision="rev1234",
+        embed_fn=embed,
+        training_package_id=None,
+        out_dir=tmp_path / "bundle",
+    )
+
+    leftovers = list((tmp_path / "bundle").glob("*.tmp"))
+    assert leftovers == [], f"atomic-write tmp files leaked: {leftovers}"
 
 
 def test_build_index_excerpt_truncates_long_text(tmp_path: Path) -> None:

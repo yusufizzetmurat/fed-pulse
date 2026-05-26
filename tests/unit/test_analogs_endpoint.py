@@ -137,7 +137,9 @@ def test_analyze_analogs_returns_descending_similarity(
     # Top-1 must be the 2022 hawkish row because "inflation" dominates.
     assert analogs[0]["event_date"] == "2022-09-21"
     assert analogs[0]["axis_stance"] == "hawkish"
-    assert analogs[0]["forward_realized_vol_10d"] == pytest.approx(0.022, rel=1e-5)
+    # 0.022 > VOL_REGIME_BUCKET_EDGES[1] (0.020) -> "high"
+    assert analogs[0]["subsequent_vol_regime"] == "high"
+    assert "forward_realized_vol_10d" not in analogs[0]
     assert analogs[0]["similarity"] == pytest.approx(1.0, abs=1e-5)
     # Strictly descending by similarity.
     similarities = [card["similarity"] for card in analogs]
@@ -178,3 +180,71 @@ def test_analyze_analogs_validates_k_upper_bound(client: TestClient) -> None:
 def test_analyze_analogs_requires_text(client: TestClient) -> None:
     response = client.post("/analyze/analogs", json={"text": "", "k": 3})
     assert response.status_code == 422
+
+
+def test_analyze_analogs_503_does_not_leak_exception_text(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """An unexpected embedder error responds 503 with a sanitized detail.
+
+    The endpoint's exception arm must NOT echo internal exception text
+    (file paths, library internals) back to the client.
+    """
+
+    rows = _fixture_rows()
+    events_parquet = tmp_path / "events.parquet"
+    pd.DataFrame(rows).to_parquet(events_parquet, index=False)
+    embed = _make_keyword_embedder(["inflation", "recovery", "accommodation"])
+    loaded = ret_index.build_index_from_events(
+        events_parquet=events_parquet,
+        encoder_alias="test_retrieval",
+        encoder_revision="rev1234",
+        embed_fn=embed,
+        training_package_id="tp_test",
+        out_dir=tmp_path / "bundle",
+    )
+
+    secret_path = "/internal/secret/checkpoint/path"
+
+    def _exploding_embedder(texts: list[str]):
+        raise RuntimeError(f"boom at {secret_path}")
+
+    state = analogs_service.build_state_from_index(
+        loaded, embed_fn=_exploding_embedder, encoder_alias="test_retrieval"
+    )
+    analogs_service.install_state(state)
+
+    response = client.post(
+        "/analyze/analogs", json={"text": "anything", "k": 3}
+    )
+    assert response.status_code == 503
+    body = response.json()
+    # Sanitised detail field — no internal exception text / paths.
+    assert body.get("detail") == "Analog retrieval unavailable"
+    assert secret_path not in response.text
+    assert "RuntimeError" not in response.text
+    assert "Traceback" not in response.text
+
+
+def test_analyze_analogs_as_of_date_filters_future_rows(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """``as_of_date`` cuts the candidate pool to strict-backward rows."""
+
+    _install_fake_state(tmp_path)
+    # Fixture rows are 2008-12-16, 2022-09-21, 2015-12-16. Query as_of
+    # in 2016 must drop the 2022 row even though it dominates on
+    # "inflation".
+    response = client.post(
+        "/analyze/analogs",
+        json={
+            "text": "Inflation outlook remains elevated",
+            "k": 5,
+            "as_of_date": "2016-01-01",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    dates = {card["event_date"] for card in body["analogs"]}
+    assert "2022-09-21" not in dates
+    assert dates <= {"2008-12-16", "2015-12-16"}

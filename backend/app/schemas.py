@@ -1,6 +1,7 @@
-from typing import Any
+from datetime import date
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 _STRICT_REQUEST_CONFIG = ConfigDict(extra="forbid", strict=True, frozen=True)
@@ -603,17 +604,62 @@ class NextFomcForecastResponse(BaseModel):
 class AnalogsRequest(BaseModel):
     """Query a fine-tuned retrieval encoder for past FOMC statements that
     sound like ``text``. Returns top-``k`` analogs ordered by cosine
-    similarity together with the realised post-event volatility so the
-    caller can show "what regime followed each analog"."""
+    similarity together with a coarse post-event volatility regime label
+    so the caller can show "what regime followed each analog" without
+    exposing the underlying supervised target value."""
 
     model_config = _STRICT_REQUEST_CONFIG
 
     text: str = Field(..., min_length=1, description="Statement text to match against past FOMC statements.")
     k: int = Field(default=5, ge=1, le=20, description="Number of analogs to return (1-20).")
+    as_of_date: date | None = Field(
+        default=None,
+        description=(
+            "Strict-backward walk-forward boundary: only analogs with "
+            "``event_date < as_of_date`` are eligible. Default is no "
+            "boundary; for ML feature use always pass a date so the "
+            "retrieval set does not leak future statements into the "
+            "training fold."
+        ),
+    )
+
+    @field_validator("as_of_date", mode="before")
+    @classmethod
+    def _coerce_as_of_date(cls, value: Any) -> Any:
+        """Accept ISO ``YYYY-MM-DD`` strings under strict mode.
+
+        Pydantic strict mode rejects string -> date coercion by default,
+        but the JSON wire format only carries strings; this validator
+        parses the ISO form so callers do not need to pre-coerce the
+        value before posting.
+        """
+
+        if value is None or isinstance(value, date):
+            return value
+        if isinstance(value, str):
+            try:
+                return date.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError(
+                    f"as_of_date must be ISO YYYY-MM-DD, got {value!r}"
+                ) from exc
+        return value
 
 
 class AnalogCard(BaseModel):
-    """One historical analog returned by /analyze/analogs."""
+    """One historical analog returned by /analyze/analogs.
+
+    The card deliberately does NOT carry the raw
+    ``forward_realized_vol_10d`` target the project trains on — that
+    value is the supervised label and surfacing it as an API field
+    would tempt downstream consumers to feed it back into a model.
+    Instead the card exposes ``subsequent_vol_regime``, a coarse
+    ``calm`` / ``normal`` / ``high`` bucket pinned to the
+    ``VOL_REGIME_BUCKET_EDGES`` constant in ``app.retrieval.index``
+    (held-out 2000-2015 reference distribution). The bucket label is a
+    UI-only marker; treat it as informative for humans, not as a
+    feature for a downstream model.
+    """
 
     model_config = _FORBID_FROZEN_CONFIG
 
@@ -623,9 +669,12 @@ class AnalogCard(BaseModel):
         default=None,
         description="Stored stance label for the analog statement (hawkish / dovish / neutral). None when absent.",
     )
-    forward_realized_vol_10d: float | None = Field(
+    subsequent_vol_regime: Literal["calm", "normal", "high"] | None = Field(
         default=None,
-        description="Realised 10-trading-day forward volatility after the analog statement. None when missing.",
+        description=(
+            "Coarse post-event 10-day realised vol bucket — UI-only label, "
+            "NOT a model feature. Do not feed back into a downstream model."
+        ),
     )
     excerpt: str = Field(..., description="First ~280 characters of the analog statement.")
 

@@ -27,13 +27,21 @@ import logging
 import os
 import threading
 from dataclasses import dataclass
+from datetime import date as date_type
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from app.config import DATA_DIR
-from app.retrieval.index import AnalogHit, LoadedIndex, load_index, query
+from app.retrieval.index import (
+    MAX_TEXT_CHARS,
+    AnalogHit,
+    LoadedIndex,
+    load_index,
+    query,
+    text_hash_for_query,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -85,7 +93,13 @@ def _resolve_checkpoint_dir(bundle_dir: Path) -> Path:
 
 
 def bundle_available() -> bool:
-    """Lightweight check used by /analyze/analogs to short-circuit absent bundles."""
+    """Lightweight check used by /analyze/analogs to short-circuit absent bundles.
+
+    Called as the endpoint pre-flight in :mod:`app.main` so a permanently
+    absent bundle does not pay the full ``_load_state`` round-trip on
+    every request — the handler short-circuits to a clean 503 the moment
+    this returns ``False``.
+    """
 
     bundle = _resolve_bundle_dir()
     if not bundle.exists():
@@ -119,11 +133,19 @@ def _load_state() -> _AnalogsState | None:
 
     checkpoint_dir = _resolve_checkpoint_dir(bundle_dir)
     try:
-        from transformers import AutoModel, AutoTokenizer  # type: ignore[import-not-found]
-        import torch  # type: ignore[import-not-found]
+        from transformers import AutoModel, AutoTokenizer  # type: ignore[import-not-found,unused-ignore]
+        import torch  # type: ignore[import-not-found,unused-ignore]
 
-        tokenizer = AutoTokenizer.from_pretrained(str(checkpoint_dir))
-        model = AutoModel.from_pretrained(str(checkpoint_dir))
+        # local_files_only + trust_remote_code=False keep the load
+        # strictly offline: a malformed or missing directory raises here
+        # instead of silently triggering a HF Hub lookup that may hang
+        # in air-gapped environments or fetch an unrelated repo.
+        tokenizer = AutoTokenizer.from_pretrained(
+            str(checkpoint_dir), local_files_only=True, trust_remote_code=False
+        )
+        model = AutoModel.from_pretrained(
+            str(checkpoint_dir), local_files_only=True, trust_remote_code=False
+        )
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
         model.eval()
@@ -240,10 +262,12 @@ def encode_query(state: _AnalogsState, text: str) -> np.ndarray:
       :func:`build_state_from_index`) that ignores tokenization and
       returns the embedding directly from a Python callable.
 
-    Both paths return a 1-D ``(d,)`` ndarray.
+    Both paths return a 1-D ``(d,)`` ndarray. The query string is
+    truncated to ``MAX_TEXT_CHARS`` before tokenisation so a 10MB
+    payload never reaches the tokenizer.
     """
 
-    cleaned = (text or "").strip()
+    cleaned = (text or "").strip()[:MAX_TEXT_CHARS]
     if not cleaned:
         return np.zeros(state.index.embedding_dim or 1, dtype=np.float32)
 
@@ -272,19 +296,39 @@ def encode_query(state: _AnalogsState, text: str) -> np.ndarray:
     return pooled.reshape(-1).astype(np.float32, copy=False)
 
 
-def find_analogs(text: str, *, k: int = 5) -> dict[str, Any] | None:
+def find_analogs(
+    text: str,
+    *,
+    k: int = 5,
+    as_of_date: date_type | None = None,
+) -> dict[str, Any] | None:
     """Top-k retrieval entry point for ``POST /analyze/analogs``.
 
     Returns ``None`` when no bundle is loaded — the endpoint then
     responds with ``available=False``-equivalent shape (empty
     ``analogs`` list, ``index_size=0``).
+
+    ``as_of_date`` enforces a strict-backward walk-forward boundary at
+    query time (only rows with ``event_date < as_of_date`` are
+    eligible). Self-match suppression always runs: the sha256 of the
+    cleaned query text is computed and any candidate carrying that
+    text_hash is dropped, so a caller that submits the literal text of
+    an indexed statement never sees the trivial similarity ≈ 1.0 hit.
     """
 
     state = get_state()
     if state is None:
         return None
-    query_vec = encode_query(state, text)
-    hits = query(state.index, query_vec, k=k)
+    cleaned = (text or "").strip()[:MAX_TEXT_CHARS]
+    query_vec = encode_query(state, cleaned)
+    exclude_hash = text_hash_for_query(cleaned) if cleaned else None
+    hits = query(
+        state.index,
+        query_vec,
+        k=k,
+        as_of_date=as_of_date,
+        exclude_text_hash=exclude_hash,
+    )
     return {
         "encoder_alias": state.encoder_alias,
         "index_size": state.index.size,
@@ -300,7 +344,7 @@ def render_analog_cards(hits: list[AnalogHit]) -> list[dict[str, Any]]:
             "event_date": hit.event_date,
             "similarity": hit.similarity,
             "axis_stance": hit.axis_stance,
-            "forward_realized_vol_10d": hit.forward_realized_vol_10d,
+            "subsequent_vol_regime": hit.subsequent_vol_regime,
             "excerpt": hit.excerpt,
         }
         for hit in hits

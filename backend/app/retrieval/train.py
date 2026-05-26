@@ -34,7 +34,16 @@ Usage::
     python -m app.retrieval.train \\
         --events-parquet /data/processed/<pkg>/events.parquet \\
         --base-encoder-alias finbert_fed_adjacent_xbank_dapt \\
-        --epochs 1 --batch-size 16 --seed 11
+        --epochs 1 --batch-size 16 --seed 11 \\
+        --fold-id wf_fold_3
+
+The ``--train-end`` / ``--fold-id`` flags enforce a strict-backward
+walk-forward boundary at training time: rows with
+``event_date >= train_end`` are dropped BEFORE pair construction, so
+the encoder's weights never see future text relative to the
+walk-forward train slice. Pass either flag (not both); the resolved
+boundary is persisted into the retrieval manifest so the runtime
+query path can enforce the same cut.
 
 Sentence-transformers is loaded lazily so the import-time surface stays
 free of the heavy dependency — the runtime FastAPI worker never has to
@@ -50,6 +59,7 @@ import logging
 import os
 import random
 from dataclasses import dataclass
+from datetime import date as date_type
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -76,6 +86,8 @@ DEFAULT_BATCH_SIZE = 16
 DEFAULT_LEARNING_RATE = 2e-5
 DEFAULT_WARMUP_STEPS = 100
 DEFAULT_SEED = 11
+
+FOLD_MANIFEST_FILENAME = "fold_manifest_expanding_walk_forward.json"
 
 # The pair-build path treats statements as anchors and pairs each
 # statement with every other doc released on the same event_date.
@@ -118,15 +130,84 @@ def _clean_text(text: Any) -> str:
     return s[:MAX_TEXT_CHARS]
 
 
-def build_training_pairs(events: pd.DataFrame) -> list[TrainingPair]:  # noqa: C901 — flat column-validation guards keep the data contract greppable at the top of the function.
+def _validate_train_end(train_end: str | None) -> str | None:
+    """Normalise a train_end string to ISO ``YYYY-MM-DD`` form or ``None``."""
+
+    if train_end is None or str(train_end).strip() == "":
+        return None
+    text = str(train_end).strip()
+    try:
+        return date_type.fromisoformat(text).isoformat()
+    except ValueError as exc:
+        raise ValueError(
+            f"train_end {train_end!r} is not a valid ISO date (YYYY-MM-DD)"
+        ) from exc
+
+
+def resolve_train_end_from_fold(
+    *,
+    events_parquet: Path,
+    fold_id: str,
+) -> str:
+    """Look up a fold's ``train_end`` from the sibling fold manifest.
+
+    The fold manifest is expected at
+    ``events_parquet.parent / fold_manifest_expanding_walk_forward.json``
+    — the canonical training-package layout produced by
+    :mod:`app.data.training_package_builder`. Raises ``ValueError`` if
+    the manifest is missing or the fold_id is unknown.
+    """
+
+    manifest_path = events_parquet.parent / FOLD_MANIFEST_FILENAME
+    if not manifest_path.exists():
+        raise ValueError(
+            f"fold manifest not found at {manifest_path}; pass --train-end explicitly"
+        )
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    folds = payload.get("folds") or []
+    for fold in folds:
+        if fold.get("fold_id") == fold_id:
+            train_end = fold.get("train_end")
+            if not train_end:
+                raise ValueError(
+                    f"fold {fold_id!r} in {manifest_path} carries no train_end"
+                )
+            return str(train_end)
+    available = sorted(str(f.get("fold_id", "")) for f in folds)
+    raise ValueError(
+        f"fold_id {fold_id!r} not found in {manifest_path}; available: {available}"
+    )
+
+
+def _filter_events_by_train_end(events: pd.DataFrame, train_end: str) -> pd.DataFrame:
+    """Drop rows with ``event_date >= train_end`` — strict walk-forward cut."""
+
+    if "event_date" not in events.columns:
+        raise KeyError("events parquet missing 'event_date' column")
+    cutoff = pd.Timestamp(train_end).date().isoformat()
+    dates = events["event_date"].astype(str)
+    return events.loc[dates < cutoff].copy()
+
+
+def build_training_pairs(  # noqa: C901 — flat column-validation guards keep the data contract greppable at the top of the function.
+    events: pd.DataFrame,
+    *,
+    train_end: str | None = None,
+) -> list[TrainingPair]:
     """Materialise same-meeting (statement, sibling) pairs from events.parquet.
 
     Statements are the anchor population; their sibling minutes /
-    press_conference rows become positives. A meeting with no sibling
-    row contributes a degenerate (statement, statement) pair so the
-    encoder still sees the anchor — MNRL tolerates self-positives and
-    the empirical signal from the contrastive in-batch negatives
-    survives.
+    press_conference rows become positives. Meetings with no sibling
+    are dropped entirely — the pre-review build emitted a degenerate
+    ``(statement, statement)`` self-pair fallback, which teaches MNRL
+    to maximise self-similarity and amplifies the self-match problem
+    at retrieval time. Better to skip the meeting than to ship that
+    signal.
+
+    ``train_end`` (ISO date) enforces the walk-forward boundary at the
+    earliest possible step: rows with ``event_date >= train_end`` are
+    dropped BEFORE pair construction so the encoder never sees future
+    text. Pass ``None`` for unbounded training (smoke / debug only).
     """
 
     if "event_kind" not in events.columns:
@@ -139,6 +220,8 @@ def build_training_pairs(events: pd.DataFrame) -> list[TrainingPair]:  # noqa: C
         raise KeyError("events parquet missing 'text_hash' column")
 
     df = events.copy()
+    if train_end is not None:
+        df = _filter_events_by_train_end(df, train_end)
     df["event_kind"] = df["event_kind"].astype(str).str.lower()
     df["event_date"] = df["event_date"].astype(str)
     if "horizon" in df.columns:
@@ -156,7 +239,6 @@ def build_training_pairs(events: pd.DataFrame) -> list[TrainingPair]:  # noqa: C
             (df["event_date"] == anchor_date)
             & (df["event_kind"].isin(POSITIVE_KINDS))
         ]
-        added = False
         for _, sibling in siblings.iterrows():
             sibling_text = _clean_text(sibling.get("text"))
             if not sibling_text or sibling_text == anchor_text:
@@ -169,20 +251,10 @@ def build_training_pairs(events: pd.DataFrame) -> list[TrainingPair]:  # noqa: C
                     positive_kind=str(sibling.get("event_kind", "")),
                 )
             )
-            added = True
-        if not added:
-            # Self-pair fallback so the meeting still contributes a
-            # training row. SBERT's MNRL uses in-batch negatives so
-            # the self-positive's gradient signal flows through the
-            # remaining batch comparisons.
-            pairs.append(
-                TrainingPair(
-                    anchor=anchor_text,
-                    positive=anchor_text,
-                    anchor_date=anchor_date,
-                    positive_kind="self",
-                )
-            )
+        # Meetings whose only document is the statement contribute
+        # nothing — silently dropped. MNRL cannot learn from a
+        # (statement, statement) pair without ingraining a self-match
+        # bias at retrieval time.
     return pairs
 
 
@@ -211,7 +283,7 @@ def _build_sbert_model(repo: str, revision: str, *, max_seq_length: int):
     inference path can read with ``AutoModel`` + manual mean-pool.
     """
 
-    from sentence_transformers import SentenceTransformer, models  # type: ignore[import-not-found]
+    from sentence_transformers import SentenceTransformer, models  # type: ignore[import-not-found,attr-defined,unused-ignore]
 
     word_embedding = models.Transformer(
         repo, max_seq_length=max_seq_length, model_args={"revision": revision or None}
@@ -226,7 +298,7 @@ def _build_sbert_model(repo: str, revision: str, *, max_seq_length: int):
 
 
 def _build_input_examples(pairs: list[TrainingPair]):
-    from sentence_transformers import InputExample  # type: ignore[import-not-found]
+    from sentence_transformers import InputExample  # type: ignore[import-not-found,unused-ignore]
 
     return [InputExample(texts=[pair.anchor, pair.positive]) for pair in pairs]
 
@@ -263,29 +335,65 @@ def fine_tune_and_index(  # noqa: PLR0913 — keyword-only training-script knobs
     max_length: int = DEFAULT_MAX_LENGTH,
     seed: int = DEFAULT_SEED,
     training_package_id: str | None = None,
+    train_end: str | None = None,
+    fold_id: str | None = None,
 ) -> Path:
     """Train the retrieval encoder and persist the index alongside it.
 
     Returns the path to the saved checkpoint directory.
     """
 
+    if batch_size < 2:
+        # MNRL builds its negatives from the rest of the in-batch
+        # positives; a batch of 1 means there are no negatives and the
+        # loss silently degenerates to zero. Fail fast so a broken
+        # encoder never ships.
+        raise ValueError(
+            "MultipleNegativesRankingLoss requires batch_size >= 2; "
+            f"got batch_size={batch_size}"
+        )
+    if train_end is not None and fold_id is not None:
+        raise ValueError(
+            "--train-end and --fold-id are mutually exclusive; pass only one"
+        )
+
+    resolved_train_end: str | None
+    if fold_id is not None:
+        resolved_train_end = resolve_train_end_from_fold(
+            events_parquet=Path(events_parquet), fold_id=fold_id
+        )
+    else:
+        resolved_train_end = _validate_train_end(train_end)
+
     _set_all_seeds(seed)
     repo, revision = _resolve_base_repo(base_encoder_alias)
 
     events = pd.read_parquet(events_parquet)
-    pairs = build_training_pairs(events)
+    pairs = build_training_pairs(events, train_end=resolved_train_end)
     if not pairs:
         raise RuntimeError(
             f"events_parquet {events_parquet} yielded zero (statement, sibling) pairs; "
-            "verify the parquet carries statement + minutes rows."
+            "verify the parquet carries statement + minutes rows and the "
+            "train_end cutoff is not stripping every meeting."
         )
 
-    from torch.utils.data import DataLoader  # type: ignore[import-not-found]
-    from sentence_transformers import losses  # type: ignore[import-not-found]
+    import torch  # type: ignore[import-not-found,unused-ignore]
+    from torch.utils.data import DataLoader  # type: ignore[import-not-found,unused-ignore]
+    from sentence_transformers import losses  # type: ignore[import-not-found,attr-defined,unused-ignore]
 
     model = _build_sbert_model(repo, revision, max_seq_length=max_length)
     train_examples = _build_input_examples(pairs)
-    loader = DataLoader(train_examples, shuffle=True, batch_size=batch_size)
+    # Explicit generator so the shuffle order is reproducible — the
+    # ``--seed`` knob is otherwise effectively meaningless for batch
+    # ordering, which is the dominant source of contrastive-loss
+    # variance.
+    shuffle_generator = torch.Generator().manual_seed(int(seed))
+    loader = DataLoader(
+        train_examples,
+        shuffle=True,
+        batch_size=batch_size,
+        generator=shuffle_generator,
+    )
     loss = losses.MultipleNegativesRankingLoss(model)
 
     out_dir = Path(output_root) / run_name
@@ -293,11 +401,12 @@ def fine_tune_and_index(  # noqa: PLR0913 — keyword-only training-script knobs
     checkpoint_dir = out_dir / "checkpoint"
 
     _logger.info(
-        "retrieval_train_start base=%s pairs=%d epochs=%d batch_size=%d",
+        "retrieval_train_start base=%s pairs=%d epochs=%d batch_size=%d train_end=%s",
         base_encoder_alias,
         len(pairs),
         epochs,
         batch_size,
+        resolved_train_end,
     )
     model.fit(
         train_objectives=[(loader, loss)],
@@ -321,6 +430,7 @@ def fine_tune_and_index(  # noqa: PLR0913 — keyword-only training-script knobs
         embed_fn=_embed,
         training_package_id=training_package_id,
         out_dir=out_dir,
+        train_end=resolved_train_end,
     )
     _logger.info(
         "retrieval_train_done index_rows=%d dim=%d out_dir=%s",
@@ -342,6 +452,8 @@ def fine_tune_and_index(  # noqa: PLR0913 — keyword-only training-script knobs
         "training_package_id": training_package_id,
         "pair_count": len(pairs),
         "excerpt_chars": EXCERPT_CHARS,
+        "train_end": resolved_train_end,
+        "fold_id": fold_id,
         "saved_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     (out_dir / "training_args.json").write_text(
@@ -365,6 +477,25 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-length", type=int, default=DEFAULT_MAX_LENGTH)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--training-package-id", default=None)
+    parser.add_argument(
+        "--train-end",
+        default=None,
+        help=(
+            "ISO date (YYYY-MM-DD). Drop every event with event_date >= "
+            "train_end BEFORE pair construction so the encoder never sees "
+            "future text relative to the walk-forward train slice. Mutually "
+            "exclusive with --fold-id."
+        ),
+    )
+    parser.add_argument(
+        "--fold-id",
+        default=None,
+        help=(
+            "Resolve train_end from the sibling fold manifest "
+            "(fold_manifest_expanding_walk_forward.json) by fold_id "
+            "(e.g. wf_fold_3). Mutually exclusive with --train-end."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -383,6 +514,8 @@ def main() -> int:
         max_length=args.max_length,
         seed=args.seed,
         training_package_id=args.training_package_id,
+        train_end=args.train_end,
+        fold_id=args.fold_id,
     )
     print(f"[retrieval.train] saved checkpoint to {checkpoint}")
     return 0

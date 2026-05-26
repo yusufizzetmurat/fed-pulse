@@ -993,20 +993,41 @@ async def analyze_analogs(payload: AnalogsRequest) -> AnalogsResponse:
     bundle is present (fresh checkout, encoder not yet trained) the
     response is shaped with an empty ``analogs`` list and
     ``index_size=0`` so the frontend can render an empty state rather
-    than treating the call as a 5xx.
+    than treating the call as a 5xx. Unexpected failures surface as a
+    sanitized 503 — internal paths / exception text never leak to the
+    client.
     """
 
     from app.services import analogs as analogs_service
 
+    # Pre-flight: if the bundle is permanently absent on disk and no
+    # state has been installed (e.g. by the test suite), short-circuit
+    # rather than paying ``_load_state`` + log a cold-miss on every
+    # request.
+    if not analogs_service.bundle_available() and analogs_service.get_state() is None:
+        return AnalogsResponse(
+            analogs=[],
+            index_size=0,
+            encoder_alias=_DEFAULT_RETRIEVAL_ENCODER_ALIAS,
+        )
+
     try:
         result = await run_in_threadpool(
-            analogs_service.find_analogs, payload.text, k=payload.k
+            analogs_service.find_analogs,
+            payload.text,
+            k=payload.k,
+            as_of_date=payload.as_of_date,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:  # pragma: no cover — never let a downstream failure 500 the whole API
-        logger.warning("analyze_analogs_failed", exc_info=True)
-        raise HTTPException(status_code=503, detail=f"Analog retrieval unavailable: {exc}") from exc
+    except ValueError:
+        # Surface a client-safe message instead of echoing the raw
+        # exception text (file paths, library internals).
+        logger.warning("analyze_analogs_validation_failed", exc_info=True)
+        raise HTTPException(status_code=422, detail="Invalid analog query") from None
+    except Exception:  # never let a downstream failure 500 the whole API
+        logger.exception("analyze_analogs_failed")
+        raise HTTPException(
+            status_code=503, detail="Analog retrieval unavailable"
+        ) from None
 
     if result is None:
         return AnalogsResponse(
