@@ -92,6 +92,7 @@ from app.training.loop import (
     bootstrap_checkpoint,
     train_model,
 )
+from app.services.regime_bucketing import bucket_log_rv, derive_distribution
 
 torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = True
@@ -411,27 +412,36 @@ def build_market_reaction_panel(
 def build_regime_classification_card(
     sequence: list[FeatureVector],
 ) -> dict[str, Any] | None:
-    """Run the classifier on the inference window and emit the calibrated card.
+    """Run the regime head on the inference window and emit the card.
 
-    Returns ``None`` whenever any of the prerequisites is missing — the
-    active checkpoint is not in classification mode, the conformal
-    sidecar is absent, or the sidecar carries no
-    ``softmax_quantile``. The /analyze handler then leaves
+    Under ADR 0015 / #322 the regime card carries one of two surfaces:
+
+    * **Regression-canonical** (``head_mode in {"regression", "dual"}``):
+      the regression head's ``log_rv`` point is the source of truth.
+      ``argmax_class`` + ``distribution`` are recovered UI-side by
+      bucketing the point against the active checkpoint's
+      ``vol_regime_quantiles`` cutoffs (see
+      :mod:`app.services.regime_bucketing`); ``log_rv_lower`` /
+      ``log_rv_upper`` come from the 80% conformal residual on the
+      regression head when a manifest is on disk, falling back to a
+      fixed log-vol std otherwise. ``bucket_source = "regression"``.
+    * **Classification-only legacy** (``head_mode == "classification"``):
+      keep the pre-#322 path: softmax of the stance logits + APS
+      prediction set via the conformal ``softmax_quantile`` manifest.
+      ``log_rv_*`` are ``None`` and ``bucket_source = "classification"``.
+
+    Returns ``None`` whenever the active checkpoint is not in
+    classification ``output_mode`` (regression-output checkpoints emit
+    close/vol only, no regime axis), or when neither path can produce a
+    populated surface (e.g. classification ``head_mode`` with no
+    conformal sidecar on disk). The /analyze handler then leaves
     ``regime_classification`` at ``None`` on the response.
-
-    When all three are in place: build the inference tensor from the
-    last ``SEQUENCE_LENGTH`` bars, run the model forward, softmax the
-    logits, build the APS prediction set via the calibrated threshold,
-    and emit a serialisable card dict matching the
-    :class:`RegimeClassificationCard` schema.
     """
 
     model = _get_model()
     if str(getattr(model, "output_mode", "regression")) != "classification":
         return None
     manifest = _conformal_manifest_for(BEST_MODEL_PATH)
-    if manifest is None or getattr(manifest, "softmax_quantile", None) is None:
-        return None
 
     from app.evaluation.conformal import (
         format_class_set_label,
@@ -448,6 +458,134 @@ def build_regime_classification_card(
             dtype=torch.float32,
             device=device,
         )
+
+    head_mode = str(getattr(model, "head_mode", "classification") or "classification")
+
+    # Resolve the regression branch: only meaningful when the model
+    # carries a mounted ``regression_head`` AND the operator opted into
+    # regression / dual head_mode. The forward dispatch goes through
+    # ``forward_multi_task`` so we can read both the stance logits and
+    # the log_rv scalar off one pass; mirrors the
+    # ``build_market_reaction_panel`` pattern.
+    use_regression_path = (
+        head_mode in {"regression", "dual"}
+        and getattr(model, "regression_head", None) is not None
+    )
+
+    out_dict: dict[str, torch.Tensor] | None = None
+    if use_regression_path:
+        forward_multi = getattr(model, "forward_multi_task", None)
+        if forward_multi is not None:
+            try:
+                out_dict = forward_multi(x, **kwargs)
+            except RuntimeError:
+                # Text / chunks path is mounted but inputs not threaded
+                # in for this call; fall back to the classification
+                # surface so the card still serialises.
+                out_dict = None
+
+    log_rv_point: float | None = None
+    log_rv_lower: float | None = None
+    log_rv_upper: float | None = None
+    if out_dict is not None:
+        log_rv_payload = out_dict.get("log_rv")
+        if log_rv_payload is not None:
+            log_rv_point = float(log_rv_payload.squeeze().item())
+            # 80% conformal residual on the regression head. The
+            # manifest re-uses the existing ``residual_quantile_volatility``
+            # slot under the regression-canonical objective (same
+            # symmetric ± band convention as the close/vol series).
+            band_q: float | None = None
+            if manifest is not None:
+                raw_q = float(getattr(manifest, "residual_quantile_volatility", 0.0))
+                if raw_q > 0.0:
+                    band_q = raw_q
+            if band_q is not None:
+                log_rv_lower = log_rv_point - band_q
+                log_rv_upper = log_rv_point + band_q
+
+    cutoffs = get_vol_regime_quantiles()
+
+    # Regression-canonical card.
+    if log_rv_point is not None:
+        # Per-fold residual std on the log-vol regression head. Prefer
+        # the conformal-derived value (80%-band half-width divided by
+        # ``CONFIDENCE_Z_SCORE``); fall back to 0.3 when no manifest is
+        # on disk -- educated guess on log-vol residual std so the UI
+        # distribution still renders. Replaced by the conformal-derived
+        # value as soon as a manifest lands.
+        log_rv_std = 0.3
+        if manifest is not None:
+            raw_q = float(getattr(manifest, "residual_quantile_volatility", 0.0))
+            if raw_q > 0.0:
+                log_rv_std = raw_q / CONFIDENCE_Z_SCORE
+        bucket = bucket_log_rv(log_rv_point, cutoffs)
+        distribution = derive_distribution(log_rv_point, log_rv_std, cutoffs)
+        if bucket is not None and distribution is not None:
+            # Try to layer the existing conformal APS set on top of the
+            # regression-derived bucket. When the classifier sidecar is
+            # available we run the softmax path to recover the calibrated
+            # prediction set / coverage; otherwise collapse to a single-
+            # class set around the regression bucket so the field stays
+            # serialisable.
+            predicted_set: list[str]
+            set_label: str
+            set_size: int
+            coverage_val: float
+            if (
+                manifest is not None
+                and getattr(manifest, "softmax_quantile", None) is not None
+            ):
+                logits = model(x, **kwargs)
+                if logits.dim() == 2:
+                    probs_tensor = torch.softmax(logits, dim=-1).squeeze(0)
+                    probs = [float(p) for p in probs_tensor.tolist()]
+                    n_classes = len(probs)
+                    labels_local: tuple[str, ...] = VOL_REGIME_CLASS_LABELS
+                    if n_classes != len(labels_local):
+                        labels_local = tuple(
+                            labels_local[i] if i < len(labels_local) else f"class_{i}"
+                            for i in range(n_classes)
+                        )
+                    threshold = float(manifest.softmax_quantile)
+                    set_indices = predict_conformal_set(probs, threshold)
+                    predicted_set = [labels_local[i] for i in set_indices]
+                    set_label = format_class_set_label(set_indices, labels_local)
+                    set_size = len(set_indices)
+                    coverage_val = float(manifest.nominal_coverage)
+                else:
+                    predicted_set = [bucket]
+                    set_label = "{" + bucket + "}"
+                    set_size = 1
+                    coverage_val = float(getattr(manifest, "nominal_coverage", 0.0))
+            else:
+                predicted_set = [bucket]
+                set_label = "{" + bucket + "}"
+                set_size = 1
+                coverage_val = float(
+                    getattr(manifest, "nominal_coverage", 0.0)
+                ) if manifest is not None else 0.0
+            return {
+                "predicted_set": predicted_set,
+                "set_label": set_label,
+                "set_size": set_size,
+                "coverage": coverage_val,
+                "distribution": distribution,
+                "argmax_class": bucket,
+                "log_rv_point": log_rv_point,
+                "log_rv_lower": log_rv_lower,
+                "log_rv_upper": log_rv_upper,
+                "bucket_source": "regression",
+            }
+        # Fall through to the classification path when the regression
+        # bucket / distribution cannot be derived (e.g. cutoffs missing
+        # on a fresh cold-start checkpoint).
+
+    # Classification-only legacy path. Requires a softmax_quantile
+    # manifest to emit a calibrated card; otherwise return None so the
+    # /analyze handler leaves the field unset (matches pre-#322 contract).
+    if manifest is None or getattr(manifest, "softmax_quantile", None) is None:
+        return None
     logits = model(x, **kwargs)
     if logits.dim() != 2:
         return None
@@ -473,6 +611,10 @@ def build_regime_classification_card(
         "coverage": float(manifest.nominal_coverage),
         "distribution": {labels[i]: probs[i] for i in range(n_classes)},
         "argmax_class": labels[argmax_idx],
+        "log_rv_point": None,
+        "log_rv_lower": None,
+        "log_rv_upper": None,
+        "bucket_source": "classification",
     }
 
 

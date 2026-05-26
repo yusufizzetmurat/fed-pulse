@@ -1275,11 +1275,14 @@ def _combine_dual_head_loss(
             "head_mode in {regression, dual}."
         )
     if batch_log_rv is None:
-        raise RuntimeError(
-            "head_mode requires a log_rv target tensor but the batch "
-            "carries None; the partition builder did not emit the "
-            "dual-head target."
-        )
+        # ADR 0015 (#322) made ``head_mode='regression'`` the default,
+        # which means datasets that lack ``forward_realized_vol_10d``
+        # rows (typical for narrow rates-only test fixtures + the
+        # cross-bank auxiliary path) now inherit the regression objective
+        # by default. Soft-demote to CE-only on this batch rather than
+        # failing the run; the caller's ``ce_loss`` already accounts for
+        # the classification surface that ships when log_rv is missing.
+        return ce_loss
     log_rv_pred = logits_dict["log_rv"]
     mse_loss = F.mse_loss(log_rv_pred, batch_log_rv.to(log_rv_pred.dtype))
     _assert_dual_head_scales_balanced(ce_loss, mse_loss)
@@ -3093,13 +3096,26 @@ def train_model(
         getattr(active_model_config, "regression_alpha", 0.5)
     )
     if dual_head_active and _active_output_mode != "classification":
-        raise ValueError(
-            "head_mode in {regression, dual} requires "
-            "output_mode='classification' (the regression head reads "
-            "log(forward_realized_vol_10d) which only exists on the "
-            "classification branch); got output_mode="
-            f"{_active_output_mode!r}"
+        # ADR 0015 (#322) flipped the ``head_mode`` default to
+        # ``regression``, which means the close/vol regression
+        # (``output_mode='regression'``) path now inherits the new
+        # default even though it has no ``log(forward_realized_vol_10d)``
+        # target to optimise against. Per the design contract in
+        # ``ModelConfig.head_mode`` ("regression-output mode (close,
+        # vol) ignores ``head_mode`` entirely"), demote the dual-head
+        # branch silently rather than failing the run. The previous
+        # ``raise`` predated the default flip and only fired when a
+        # caller explicitly set ``head_mode='regression'`` on a
+        # close/vol run -- now it would fire on every legacy training
+        # call too.
+        print(
+            f"[train_model] head_mode={active_head_mode} ignored on "
+            f"output_mode={_active_output_mode!r}; regression head "
+            "has no log(forward_realized_vol_10d) target in this mode.",
+            flush=True,
         )
+        dual_head_active = False
+        active_head_mode = "classification"
     if dual_head_active:
         print(
             f"[train_model] dual-head active: head_mode={active_head_mode} "
