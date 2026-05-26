@@ -9,6 +9,11 @@ BACKEND_DIR = ROOT / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+# Repo root so ``from scripts.<module> import …`` resolves; ``scripts/``
+# carries an ``__init__.py`` marker so it imports as a regular package.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 
 def pytest_configure(config):
     config.addinivalue_line(

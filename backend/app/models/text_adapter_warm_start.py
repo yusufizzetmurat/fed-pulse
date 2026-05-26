@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import torch
 from torch import nn
@@ -58,7 +58,7 @@ class TextAdapterProxyClassifier(nn.Module):
 
     def forward(self, pooled: torch.Tensor) -> torch.Tensor:
         projected = self.adapter(pooled)
-        return self.classifier(projected)
+        return cast(torch.Tensor, self.classifier(projected))
 
 
 def _load_corpus_rows(corpus_path: Path) -> list[dict[str, Any]]:
@@ -94,7 +94,7 @@ def _load_corpus_rows(corpus_path: Path) -> list[dict[str, Any]]:
         import pandas as pd  # noqa: PLC0415 -- optional dependency
 
         frame = pd.read_parquet(corpus_path)
-        return frame.to_dict(orient="records")
+        return cast(list[dict[str, Any]], frame.to_dict(orient="records"))
     raise ValueError(
         f"warm-start corpus suffix not supported: {suffix!r} ({corpus_path})"
     )
@@ -198,7 +198,7 @@ def pretrain_text_adapter(
             optimiser.zero_grad(set_to_none=True)
             logits = model(pooled_tensor[batch_idx])
             loss = F.cross_entropy(logits, label_tensor[batch_idx])
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimiser.step()
             epoch_loss += float(loss.item())
             batch_count += 1
@@ -210,24 +210,25 @@ def pretrain_text_adapter(
         f"text_adapter.{key}": value.detach().cpu()
         for key, value in model.adapter.state_dict().items()
     }
-    payload = {
-        "state_dict": adapter_state,
-        "metadata": {
-            "in_dim": int(in_dim),
-            "adapter_dim": int(adapter_dim),
-            "epochs": int(epochs),
-            "batch_size": int(batch_size),
-            "learning_rate": float(learning_rate),
-            "seed": int(seed),
-            "n_samples": int(n_samples),
-            "n_classes": int(n_classes),
-            "final_epoch_loss": float(last_epoch_loss),
-            "task": "stance_proxy_classification",
-            "indices_sampled": int(indices.numel()),
-        },
+    metadata: dict[str, Any] = {
+        "in_dim": int(in_dim),
+        "adapter_dim": int(adapter_dim),
+        "epochs": int(epochs),
+        "batch_size": int(batch_size),
+        "learning_rate": float(learning_rate),
+        "seed": int(seed),
+        "n_samples": int(n_samples),
+        "n_classes": int(n_classes),
+        "final_epoch_loss": float(last_epoch_loss),
+        "task": "stance_proxy_classification",
+        "indices_sampled": int(indices.numel()),
     }
-    torch.save(payload, output_path_p)
-    return payload["metadata"]  # type: ignore[no-any-return]
+    checkpoint_payload: dict[str, Any] = {
+        "state_dict": adapter_state,
+        "metadata": metadata,
+    }
+    torch.save(checkpoint_payload, output_path_p)
+    return metadata
 
 
 def load_warm_start_into_adapter(

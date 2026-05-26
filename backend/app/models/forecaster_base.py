@@ -358,6 +358,7 @@ def prepare_recurrent_input(
             # consumes actual temporal text dynamics rather than the
             # broadcast-static replication of a single pooled vector.
             seq_len = x.shape[1]
+            assert text_embedding_per_bar is not None  # narrowed via use_per_bar
             per_bar = text_embedding_per_bar
             if per_bar.dim() != 3:
                 raise ValueError(

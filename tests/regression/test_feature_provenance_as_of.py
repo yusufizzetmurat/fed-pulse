@@ -264,6 +264,7 @@ def _audit_inventory_covers_every_field() -> set[str]:
         "rich_payload",
         "text_embedding_pooled",
         "text_embedding_missing",
+        "text_per_bar",
         "raw_text",
         "target_stance_idx",
         "target_stance_present",
