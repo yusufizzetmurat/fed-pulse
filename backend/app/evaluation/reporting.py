@@ -188,7 +188,7 @@ def with_without_fold(
     }
 
 
-def with_without_macro_release(
+def with_without_macro_release(  # noqa: PLR0913 — kw-only ablation surface; collapsing into a config dataclass would hurt call-site clarity
     records: Sequence[Record],
     *,
     is_macro_release_field: str = "is_macro_release",
@@ -270,7 +270,7 @@ class HonestHeadlineReport:
         }
 
 
-def four_variant_report(
+def four_variant_report(  # noqa: PLR0913 — kw-only headline-cell config; collapsing into a dataclass would hide the four-axes contract
     records: Sequence[Record],
     *,
     drop_fold_id: str = "wf_fold_4",
@@ -448,7 +448,7 @@ def _mean_of_fold_means(
     return sum(per_fold) / len(per_fold)
 
 
-def _bootstrap_macro_f1_ci(
+def _bootstrap_macro_f1_ci(  # noqa: PLR0913 — kw-only bootstrap config; collapsing would obscure the per-class API
     preds: Sequence[int],
     targets: Sequence[int],
     *,
