@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison text-path-ab reproduce-all push-artefacts deploy-prod-build
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison text-path-ab reproduce-all reproduce-smoke push-artefacts deploy-prod-build
 
 help:
 	@echo "Targets:"
@@ -82,6 +82,8 @@ help:
 	@echo "  make canonical-comparison TRAINING_PACKAGE_ID=<id>"
 	@echo "  make text-path-ab TRAINING_PACKAGE_ID=<id>"
 	@echo "                         - Canonical dual-head comparison (5 seeds x 40 epochs, regression-alpha=0.5, canonical output JSON)"
+	@echo "  make reproduce-smoke TRAINING_PACKAGE_ID=<id> [SEED=11]"
+	@echo "                         - 1-seed x 1-fold dual-head smoke + numerical-contract assertion (#335 CI guard)"
 
 dev: dev-cpu
 
@@ -152,6 +154,23 @@ reproduce-all:
 		backend bash -c '\
 			set -e && \
 			python scripts/reproduce_all.py'
+
+# Numerical-contract CI guard (#335). Runs a 1-seed x 1-fold smoke
+# variant of the canonical dual-head training and asserts the resulting
+# macro-F1 stays within the pinned tolerance in
+# ``tests/regression/reproducibility_reference.json``. Designed to run
+# on the ``ubuntu-latest`` GitHub runner without docker compose so the
+# ``reproduce-smoke`` workflow can call it directly. Gates on
+# ``TRAINING_PACKAGE_ID`` so a typo on the workflow input fails fast
+# instead of pulling the wrong artefact.
+reproduce-smoke:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	FED_PULSE_REPRODUCE_SMOKE=1 \
+	PYTHONPATH=backend \
+	python -m scripts.run_reproducibility_smoke \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		--seed "$(SEED)" \
+		--reference-path tests/regression/reproducibility_reference.json
 
 # One-time push of every canonical artefact to HF Hub. Runs the
 # idempotent uploader in dry-run by default so the operator can sanity
