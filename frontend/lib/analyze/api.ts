@@ -10,6 +10,7 @@ import type {
   HistoryQuery,
   HistoryRealizedBatchResponse,
   HistoryRealizedResponse,
+  MarketReactionPanelResponse,
   NextFomcForecastResponse,
   ResearchArtifactsResponse,
   SettingsCheckpointsResponse,
@@ -33,6 +34,19 @@ export async function postAnalyze(
 ): Promise<AnalyzeResult> {
   const response = await axios.post(`${baseUrl}/analyze`, request);
   return (response.data || {}) as AnalyzeResult;
+}
+
+export async function postAnalyzeMarket(
+  baseUrl: string,
+  request: AnalyzeRequest
+): Promise<MarketReactionPanelResponse> {
+  const response = await axios.post(`${baseUrl}/analyze/market`, request);
+  return (response.data || {
+    rates: [],
+    vol_regime: null,
+    encoder_alias: null,
+    checkpoint_path: null,
+  }) as MarketReactionPanelResponse;
 }
 
 export async function fetchTrainJob(baseUrl: string, jobId: string): Promise<TrainJobState> {

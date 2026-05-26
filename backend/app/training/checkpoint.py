@@ -181,6 +181,18 @@ def _checkpoint_metadata(
         "decay_rate": decay_rate,
         "chunk_attention": None,
     }
+    # #292 -- rates scalers + tertile edges live on training_summary so
+    # the inference path can invert the per-head standardiser. None when
+    # the checkpoint was trained without rates heads.
+    if isinstance(payload, dict):
+        ts = payload.get("training_summary")
+        if isinstance(ts, dict):
+            rates_scalers = ts.get("rates_scalers")
+            rates_edges = ts.get("rates_quantile_edges")
+            if rates_scalers:
+                metadata["rates_scalers"] = rates_scalers
+            if rates_edges:
+                metadata["rates_quantile_edges"] = rates_edges
     return metadata
 
 

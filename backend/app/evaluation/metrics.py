@@ -65,6 +65,16 @@ class EvaluationMetrics:
     regression_rmse_log_rv: float | None = None
     regression_mae_log_rv: float | None = None
     regression_loss: float | None = None
+    # #292 rates-complex per-head metrics. Keyed on the head short
+    # name (``2y`` / ``5y`` / ``terminal``); each value is a dict
+    # mirroring the regression-metric panel from
+    # :mod:`app.evaluation.regression_metrics`
+    # (``mae_bps`` / ``directional_accuracy`` / ``r_squared`` -> CI
+    # dicts) plus per-head row arrays
+    # (``predictions_bps`` / ``actuals_bps``) the conformal
+    # calibrator + the §16 comparison table read off. ``None`` when
+    # rates heads are inactive on the run.
+    rates_metrics: dict[str, dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -116,6 +126,18 @@ class TrainingRunSummary:
     # add mean, then ``exp(...)`` to recover the original
     # ``forward_realized_vol_10d`` units).
     log_rv_scaler: dict[str, float] | None = None
+    # #292 rates-complex per-head standardiser + quantile edges fitted
+    # on the train slice only. Persisted onto the run summary so the
+    # inference path (``services.forecaster``) can invert the
+    # standardised regression output back to raw bps and so the API
+    # response carries the per-head bps band in the natural finance
+    # unit. ``rates_scalers`` maps the head short name to a
+    # ``{"mean": float, "std": float}`` dict; ``rates_quantile_edges``
+    # maps it to a ``{"column": str, "lower": float, "upper": float,
+    # "n_train_rows": int}`` dict (the per-fold tertile cutoffs used
+    # by the auxiliary classification surface).
+    rates_scalers: dict[str, dict[str, float]] | None = None
+    rates_quantile_edges: dict[str, dict[str, float | int | str]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

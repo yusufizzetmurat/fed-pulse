@@ -191,7 +191,7 @@ def test_maybe_compile_model_is_noop_when_disabled() -> None:
 def test_unpack_batch_two_element() -> None:
     batch_x = torch.zeros((4, 5, 6))
     batch_y = torch.zeros((4, 2))
-    x, y, text, missing, mt_aux, log_rv = _unpack_batch((batch_x, batch_y))
+    x, y, text, missing, mt_aux, log_rv, _rates_idx = _unpack_batch((batch_x, batch_y))
     assert x is batch_x
     assert y is batch_y
     assert text is None
@@ -205,7 +205,7 @@ def test_unpack_batch_four_element() -> None:
     batch_y = torch.zeros((4, 2))
     text = torch.zeros((4, 8))
     missing = torch.zeros((4, 1))
-    x, y, t, m, mt_aux, log_rv = _unpack_batch((batch_x, batch_y, text, missing))
+    x, y, t, m, mt_aux, log_rv, _rates_idx = _unpack_batch((batch_x, batch_y, text, missing))
     assert t is text
     assert m is missing
     assert mt_aux is None

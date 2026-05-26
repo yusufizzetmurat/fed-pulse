@@ -233,6 +233,95 @@ class MultiAxisBlock(BaseModel):
     topic: MultiAxisTopicCard | None = None
 
 
+class RatesReactionCard(BaseModel):
+    """Per-rates-head market-reaction card surfaced on /analyze/market (#293).
+
+    The card carries the model's point prediction in basis points for one
+    rates head (``2y`` / ``5y`` / ``terminal``), the symmetric conformal
+    band derived from the val-fitted residual quantile, the directional
+    bucket (``easing`` / ``neutral`` / ``tightening``) the auxiliary
+    classifier emits, and the per-class probability distribution so the
+    frontend can render a probability bar alongside the headline number.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    head: str = Field(..., description="Head short name: 2y | 5y | terminal")
+    point_bps: float = Field(..., description="Point prediction in basis points.")
+    lower_bps: float | None = Field(
+        default=None,
+        description="Conformal band lower bound in bps. None when no calibration sidecar is present.",
+    )
+    upper_bps: float | None = Field(
+        default=None,
+        description="Conformal band upper bound in bps. None when no calibration sidecar is present.",
+    )
+    coverage: float | None = Field(
+        default=None,
+        description="Nominal conformal coverage (1 - alpha). None when bands are absent.",
+    )
+    directional_bucket: str = Field(
+        ...,
+        description="easing | neutral | tightening (argmax of the auxiliary classifier).",
+    )
+    bucket_probabilities: dict[str, float] = Field(
+        default_factory=dict,
+        description="Per-bucket softmax probabilities over (easing, neutral, tightening).",
+    )
+
+
+class VolRegimeReactionCard(BaseModel):
+    """Vol-regime card mirroring the rates card shape on /analyze/market (#293).
+
+    Carries the dual-head log(RV) regression prediction (or ``None`` when
+    the active checkpoint mounts only the classifier), the regime
+    classification distribution, and the calibrated APS prediction set
+    derived from the existing softmax_quantile.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    log_rv_point: float | None = Field(
+        default=None,
+        description=(
+            "Standardised log(forward realized vol) prediction from "
+            "the dual-head regression branch. None on classification-only "
+            "checkpoints."
+        ),
+    )
+    log_rv_lower: float | None = None
+    log_rv_upper: float | None = None
+    regime_label: str = Field(
+        ..., description="Argmax regime label: calm | normal | high.",
+    )
+    regime_probabilities: dict[str, float] = Field(
+        default_factory=dict,
+        description="Per-class softmax probabilities over the regime classes.",
+    )
+    predicted_set: list[str] = Field(
+        default_factory=list,
+        description="Calibrated APS prediction set (list of regime labels).",
+    )
+    coverage: float | None = None
+
+
+class MarketReactionPanel(BaseModel):
+    """Bundle of four reaction cards (#293).
+
+    Returned by ``POST /analyze/market``. Includes one card per mounted
+    rates head plus the existing vol-regime card. Heads not mounted on
+    the active checkpoint emit an empty ``rates`` list and ``None`` for
+    ``vol_regime`` so the frontend can render a graceful empty state.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    rates: list[RatesReactionCard] = Field(default_factory=list)
+    vol_regime: VolRegimeReactionCard | None = None
+    encoder_alias: str | None = None
+    checkpoint_path: str | None = None
+
+
 class RegimeClassificationCard(BaseModel):
     """Calibrated prediction-set output from the vol-regime classifier (#216).
 

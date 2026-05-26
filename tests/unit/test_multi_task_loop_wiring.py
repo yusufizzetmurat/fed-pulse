@@ -46,7 +46,7 @@ def test_make_partition_dataset_minimal_arity() -> None:
     loader = DataLoader(ds, batch_size=n, shuffle=False)
     batch = next(iter(loader))
     assert len(batch) == 2
-    bx, by, text, missing, aux, log_rv = _unpack_batch(batch)
+    bx, by, text, missing, aux, log_rv, _rates_idx = _unpack_batch(batch)
     assert bx.shape == x.shape
     assert by.shape == y.shape
     assert text is None
@@ -67,7 +67,7 @@ def test_make_partition_dataset_text_arity() -> None:
     loader = DataLoader(ds, batch_size=n, shuffle=False)
     batch = next(iter(loader))
     assert len(batch) == 4
-    bx, by, btext, bmissing, aux, log_rv = _unpack_batch(batch)
+    bx, by, btext, bmissing, aux, log_rv, _rates_idx = _unpack_batch(batch)
     assert bx.shape == x.shape
     assert btext is not None and btext.shape == text.shape
     assert bmissing is not None and bmissing.shape == text_missing.shape
@@ -86,7 +86,7 @@ def test_make_partition_dataset_multi_task_arity() -> None:
     loader = DataLoader(ds, batch_size=n, shuffle=False)
     batch = next(iter(loader))
     assert len(batch) == 8
-    bx, by, btext, bmissing, aux_out, log_rv = _unpack_batch(batch)
+    bx, by, btext, bmissing, aux_out, log_rv, _rates_idx = _unpack_batch(batch)
     assert btext is None
     assert bmissing is None
     assert aux_out is not None
@@ -109,7 +109,7 @@ def test_make_partition_dataset_text_plus_multi_task_arity() -> None:
     loader = DataLoader(ds, batch_size=n, shuffle=False)
     batch = next(iter(loader))
     assert len(batch) == 10
-    bx, by, btext, bmissing, aux_out, log_rv = _unpack_batch(batch)
+    bx, by, btext, bmissing, aux_out, log_rv, _rates_idx = _unpack_batch(batch)
     assert btext is not None
     assert aux_out is not None
     assert log_rv is None

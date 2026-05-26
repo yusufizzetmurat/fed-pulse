@@ -100,6 +100,14 @@ TEXT_ENCODER_CHOICES: tuple[str, ...] = (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _resolve_rates_heads_from_args(args: argparse.Namespace) -> tuple[str, ...]:
+    """Convert ``--rates-heads`` CLI choice into the ModelConfig tuple (#292)."""
+
+    from app.models.rates_heads import resolve_rates_heads
+
+    return resolve_rates_heads(getattr(args, "rates_heads", "none"))
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Train the quantitative forecaster from prepared local datasets."
@@ -596,6 +604,48 @@ def _parse_args() -> argparse.Namespace:
             "via the three-way comparison script."
         ),
     )
+    # #292 rates-complex heads. Default ``none`` keeps the pre-#292
+    # path byte-identical (no rates heads mount).
+    parser.add_argument(
+        "--rates-heads",
+        type=str,
+        choices=("none", "2y", "5y", "terminal", "all"),
+        default="none",
+        help=(
+            "Rates-complex regression-head selector (#292). ``none`` "
+            "(default) leaves the rates heads off entirely. ``2y`` / "
+            "``5y`` / ``terminal`` mount a single head; ``all`` mounts "
+            "every rates head alongside the existing vol-regime head. "
+            "Requires ``--output-mode=classification`` because the "
+            "per-fold target builder reuses the classification row "
+            "filter."
+        ),
+    )
+    parser.add_argument(
+        "--rates-head-mode",
+        type=str,
+        choices=("regression", "classification", "dual"),
+        default="regression",
+        help=(
+            "Per-head training mode for the rates heads (#292). "
+            "``regression`` (default) drives the head with MSE on the "
+            "raw bps target only. ``classification`` is the inverse: "
+            "cross-entropy on the per-fold tertile labels only. "
+            "``dual`` mixes both via "
+            "``rates_alpha * MSE + (1 - rates_alpha) * CE``."
+        ),
+    )
+    parser.add_argument(
+        "--rates-alpha",
+        type=float,
+        default=0.5,
+        help=(
+            "Weight on the regression term in the rates dual-head joint "
+            "loss (#292). Only consumed when ``--rates-head-mode=dual``. "
+            "``1.0`` collapses dual to regression-only at the loss "
+            "level; ``0.0`` collapses to classification-only."
+        ),
+    )
     # #309 derived-text-features ablation. Default ``on`` is byte-
     # identical to the pre-#309 path; ``off`` zeros the FeatureVector
     # slots populated by the per-sentence multi-axis classifier so the
@@ -1066,6 +1116,9 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         use_derived_text_features=(
             str(getattr(args, "use_derived_text_features", "on") or "on").lower() != "off"
         ),
+        rates_heads=_resolve_rates_heads_from_args(args),
+        rates_head_mode=str(getattr(args, "rates_head_mode", "regression") or "regression"),
+        rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
     )
 
 
@@ -1316,6 +1369,9 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                                 use_derived_text_features=(
                                     str(getattr(args, "use_derived_text_features", "on") or "on").lower() != "off"
                                 ),
+                                rates_heads=_resolve_rates_heads_from_args(args),
+                                rates_head_mode=str(getattr(args, "rates_head_mode", "regression") or "regression"),
+                                rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
                             ),
                             "learning_rate": float(hp["learning_rate"]),
                             "epochs": int(hp["epochs"]),
@@ -1422,6 +1478,9 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                         use_derived_text_features=(
                             str(getattr(args, "use_derived_text_features", "on") or "on").lower() != "off"
                         ),
+                        rates_heads=_resolve_rates_heads_from_args(args),
+                        rates_head_mode=str(getattr(args, "rates_head_mode", "regression") or "regression"),
+                        rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
                     ),
                     "learning_rate": float(learning_rate),
                     "epochs": int(epochs),

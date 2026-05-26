@@ -206,6 +206,145 @@ def _predict_next_point(model: ForecasterModel, sequence: list[FeatureVector]) -
 
 
 @torch.no_grad()
+def build_market_reaction_panel(
+    sequence: list[FeatureVector],
+) -> dict[str, Any] | None:
+    """Build the four-card market-reaction panel (#293).
+
+    Returns ``None`` when the active checkpoint mounts neither the
+    rates heads nor the vol-regime classifier (regression-mode only
+    checkpoint). Otherwise emits a payload mirroring
+    :class:`MarketReactionPanel`:
+
+    - One :class:`RatesReactionCard` per active rates head, carrying
+      the raw bps point prediction (after inverting the train-fitted
+      standardiser persisted onto the checkpoint), the conformal band
+      lower / upper in bps (when the sidecar has the per-head residual
+      quantile), the argmax bucket label, and the per-bucket softmax
+      probabilities.
+    - One :class:`VolRegimeReactionCard` carrying the regime
+      classification distribution + APS predicted set, plus the
+      dual-head log(RV) regression prediction when the checkpoint
+      mounts it.
+    """
+
+    model = _get_model()
+    if str(getattr(model, "output_mode", "regression")) != "classification":
+        return None
+    device = next(model.parameters()).device
+    window = build_lookback_sequence(sequence)
+    x = _build_inference_tensor(window, model, device)
+    kwargs: dict[str, torch.Tensor] = {}
+    if getattr(model, "credibility_features", False):
+        kwargs["credibility"] = torch.zeros(
+            (1, int(getattr(model, "credibility_dim", 4))),
+            dtype=torch.float32,
+            device=device,
+        )
+    forward_multi = getattr(model, "forward_multi_task", None)
+    if forward_multi is None:
+        return None
+    out_dict = forward_multi(x, **kwargs)
+
+    metadata = _model_artifact_metadata or {}
+    rates_scalers_payload = metadata.get("rates_scalers") or {}
+    rates_edges_payload = metadata.get("rates_quantile_edges") or {}
+    manifest = _conformal_manifest_for(BEST_MODEL_PATH)
+    rates_residuals = (
+        getattr(manifest, "rates_residual_quantiles", None) if manifest else None
+    ) or {}
+    coverage = (
+        float(getattr(manifest, "nominal_coverage", 0.0))
+        if manifest is not None
+        else None
+    )
+
+    # Rates cards.
+    from app.models.rates_heads import RATES_HEAD_LABEL_NAMES, RATES_HEAD_NAMES
+    from app.training.rates_targets import RatesHeadScaler, inverse_standardise_bps
+
+    rates_cards: list[dict[str, Any]] = []
+    active_rates = tuple(
+        str(name).lower()
+        for name in getattr(model, "rates_heads_active", ()) or ()
+    )
+    for name in active_rates:
+        if name not in RATES_HEAD_NAMES:
+            continue
+        pred_key = f"rates_{name}_bps"
+        cls_key = f"rates_{name}_cls_logits"
+        if pred_key not in out_dict:
+            continue
+        pred_std_tensor = out_dict[pred_key]
+        pred_std = float(pred_std_tensor.squeeze().item())
+        scaler_payload = rates_scalers_payload.get(name) if isinstance(rates_scalers_payload, dict) else None
+        if isinstance(scaler_payload, dict):
+            scaler = RatesHeadScaler(
+                mean=float(scaler_payload.get("mean", 0.0)),
+                std=float(scaler_payload.get("std", 1.0)),
+            )
+        else:
+            scaler = RatesHeadScaler(mean=0.0, std=1.0)
+        point_bps = inverse_standardise_bps(pred_std, scaler)
+        band_q: float | None = None
+        if isinstance(rates_residuals, dict) and name in rates_residuals:
+            band_q = float(rates_residuals[name])
+        lower_bps = point_bps - band_q if band_q is not None else None
+        upper_bps = point_bps + band_q if band_q is not None else None
+        # Aux classifier softmax + argmax bucket.
+        if cls_key in out_dict:
+            cls_logits = out_dict[cls_key].squeeze(0)
+            cls_probs = torch.softmax(cls_logits, dim=-1).tolist()
+        else:
+            cls_probs = [1.0 / 3.0] * 3
+        argmax_idx = max(range(len(cls_probs)), key=lambda i: cls_probs[i])
+        labels = RATES_HEAD_LABEL_NAMES
+        bucket = labels[argmax_idx] if argmax_idx < len(labels) else "neutral"
+        bucket_probs = {labels[i]: float(cls_probs[i]) for i in range(min(len(cls_probs), len(labels)))}
+        rates_cards.append(
+            {
+                "head": name,
+                "point_bps": float(point_bps),
+                "lower_bps": float(lower_bps) if lower_bps is not None else None,
+                "upper_bps": float(upper_bps) if upper_bps is not None else None,
+                "coverage": coverage if band_q is not None else None,
+                "directional_bucket": bucket,
+                "bucket_probabilities": bucket_probs,
+            }
+        )
+
+    # Vol-regime card: reuse the build_regime_classification_card surface
+    # but also lift the dual-head log_rv prediction off the same forward.
+    regime_payload = build_regime_classification_card(sequence)
+    vol_regime_card: dict[str, Any] | None = None
+    if regime_payload is not None:
+        log_rv_point: float | None = None
+        log_rv_payload = out_dict.get("log_rv")
+        if log_rv_payload is not None:
+            log_rv_point = float(log_rv_payload.squeeze().item())
+        vol_regime_card = {
+            "log_rv_point": log_rv_point,
+            "log_rv_lower": None,
+            "log_rv_upper": None,
+            "regime_label": str(regime_payload.get("argmax_class") or "normal"),
+            "regime_probabilities": {
+                str(k): float(v) for k, v in regime_payload.get("distribution", {}).items()
+            },
+            "predicted_set": list(regime_payload.get("predicted_set") or []),
+            "coverage": float(regime_payload.get("coverage") or 0.0) or None,
+        }
+
+    if not rates_cards and vol_regime_card is None:
+        return None
+    return {
+        "rates": rates_cards,
+        "vol_regime": vol_regime_card,
+        "encoder_alias": metadata.get("encoder_key"),
+        "checkpoint_path": str(BEST_MODEL_PATH),
+    }
+
+
+@torch.no_grad()
 def build_regime_classification_card(
     sequence: list[FeatureVector],
 ) -> dict[str, Any] | None:

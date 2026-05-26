@@ -158,7 +158,7 @@ ignore = [
 "app/services/decision_forecast.py" = ["PLR0913", "C901"]
 "app/services/document_parser.py" = ["C901"]
 "app/services/fomc_calendar.py" = ["C901"]
-"app/services/forecaster.py" = ["PLR0913"]
+"app/services/forecaster.py" = ["PLR0913", "C901"]
 "app/services/fred_client.py" = ["PLR0913"]
 "app/services/gemini_client.py" = ["PLR0913"]
 "app/services/market_data.py" = ["PLR0913", "C901"]
@@ -175,6 +175,7 @@ ignore = [
 "app/training/loop.py" = ["PLR0913", "C901"]
 "app/training/manifest.py" = ["PLR0913", "C901"]
 "app/training/batched_sweep.py" = ["PLR0913", "C901"]
+"app/training/rates_targets.py" = ["PLR0913", "C901"]
 
 [tool.coverage.run]
 branch = false

@@ -214,6 +214,36 @@ export interface RegimeClassificationResponse {
   argmax_class: string;
 }
 
+export type RatesHeadName = "2y" | "5y" | "terminal";
+export type RatesDirectionalBucket = "easing" | "neutral" | "tightening";
+
+export interface RatesReactionCard {
+  head: RatesHeadName;
+  point_bps: number;
+  lower_bps: number | null;
+  upper_bps: number | null;
+  coverage: number | null;
+  directional_bucket: RatesDirectionalBucket;
+  bucket_probabilities: Partial<Record<RatesDirectionalBucket, number>>;
+}
+
+export interface VolRegimeReactionCard {
+  log_rv_point: number | null;
+  log_rv_lower: number | null;
+  log_rv_upper: number | null;
+  regime_label: string;
+  regime_probabilities: Record<string, number>;
+  predicted_set: string[];
+  coverage: number | null;
+}
+
+export interface MarketReactionPanelResponse {
+  rates: RatesReactionCard[];
+  vol_regime: VolRegimeReactionCard | null;
+  encoder_alias: string | null;
+  checkpoint_path: string | null;
+}
+
 export interface AnalyzeResult {
   sentiment?: SentimentResponse;
   prediction?: PredictionResponse;

@@ -343,6 +343,32 @@ class ModelConfig:
     # the three-way comparison (baseline / ablation / replacement-with-
     # pre-meeting) in ``scripts/run_derived_features_ablation.py``.
     use_derived_text_features: bool = True
+    # #292 rates-complex heads. Tuple of head short-names (``"2y"`` /
+    # ``"5y"`` / ``"terminal"``) the training run should mount alongside
+    # the existing vol-regime head. Default ``()`` keeps the pre-#292
+    # path byte-identical: no rates heads mount, no rates loss
+    # contribution, no rates output on the inference path. Resolved from
+    # the ``--rates-heads`` CLI flag via :func:`resolve_rates_heads`.
+    rates_heads: tuple[str, ...] = ()
+    # Per-head training mode. ``regression`` (default) drives the head
+    # off MSE on the raw bps target only -- the aux classification
+    # surface still emits at inference time for the API response, but
+    # contributes no gradient. ``classification`` is the inverse:
+    # cross-entropy on the per-fold tertile labels only. ``dual`` mixes
+    # both terms via ``rates_alpha * MSE + (1 - rates_alpha) * CE_aux``.
+    # The mode applies uniformly to every mounted rates head; per-head
+    # mode-mixing was deferred so the CLI stays one knob deep. The
+    # field is a plain string (not enum) so checkpoint round-tripping
+    # via ``ModelConfig.from_model`` reads it back cleanly off the
+    # stashed module attribute.
+    rates_head_mode: str = "regression"
+    # Weight on the regression term in the rates dual-head joint loss.
+    # ``1.0`` collapses ``dual`` to regression-only at the loss level;
+    # ``0.0`` collapses it to classification-only. The CLI default 0.5
+    # picks an equal split so the comparison sweep starts on a balanced
+    # base; the ablation sweep can drive the boundary cases for the
+    # parity test.
+    rates_alpha: float = 0.5
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -395,6 +421,13 @@ class ModelConfig:
             use_derived_text_features=bool(
                 getattr(model, "use_derived_text_features", True)
             ),
+            rates_heads=tuple(
+                str(v) for v in getattr(model, "rates_heads", ()) or ()
+            ),
+            rates_head_mode=str(
+                getattr(model, "rates_head_mode", "regression") or "regression"
+            ),
+            rates_alpha=float(getattr(model, "rates_alpha", 0.5)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -590,6 +623,18 @@ class FeatureVector:
     # mapper consume the target-row value only. Default ``None`` so
     # regression-only callers stay byte-identical.
     forward_realized_vol_10d: float | None = None
+    # #292 rates-complex targets. Strict-forward 5-day yield change in
+    # basis points (raw bps; the loader emits the value the
+    # events.parquet column already carries). Populated by the
+    # training-package loader on the target row of each supervised
+    # sequence; the lookback bars stay at ``None`` so the per-fold
+    # ``_build_partition_rates_target`` helper can filter against the
+    # leading-target row the same way the vol-regime helper does.
+    # ``None`` on every legacy / non-rates path so the dataclass shape
+    # round-trips clean through the determinism regression contract.
+    target_yield_2y_change_5d: float | None = None
+    target_yield_5y_change_5d: float | None = None
+    target_terminal_rate_change_5d: float | None = None
     # Pooled text-embedding payload (PR #176 onward). Carries the
     # variable-length encoder-output vector (FinBERT 768, voyage-finance-2
     # 1024, BGE 1024, ...) materialised by the loader's softmax(-Delta t /

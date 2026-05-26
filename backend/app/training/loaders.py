@@ -1535,6 +1535,16 @@ def _load_package_sequences_with_metadata(
         forward_vol_value = _coerce_finite_float(
             row.get("forward_realized_vol_10d")
         )
+        # #292 rates-complex strict-forward 5d yield change targets.
+        # Each value rides on the same event row alongside
+        # forward_realized_vol_10d; the per-fold target builder
+        # (:func:`app.training.rates_targets.build_partition_rates_targets`)
+        # reads them off the target row of each supervised sequence.
+        rates_2y_value = _coerce_finite_float(row.get("yield_2y_change_5d"))
+        rates_5y_value = _coerce_finite_float(row.get("yield_5y_change_5d"))
+        rates_terminal_value = _coerce_finite_float(
+            row.get("terminal_rate_change_5d")
+        )
         # B1 (#212) LLM-features lookup -- one-hot block + missing flag
         # per event row. Lookup is built once per package outside the
         # loop. Hashes absent from the lookup (failed extraction or
@@ -1544,6 +1554,9 @@ def _load_package_sequences_with_metadata(
         llm_vector = llm_lookup.get(row_text_hash)
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
+            vector.target_yield_2y_change_5d = rates_2y_value
+            vector.target_yield_5y_change_5d = rates_5y_value
+            vector.target_terminal_rate_change_5d = rates_terminal_value
             if llm_vector is not None:
                 vector.llm_features = list(llm_vector)
                 vector.llm_features_missing = 0.0
@@ -2132,6 +2145,16 @@ def load_training_sequences_from_package(
         forward_vol_value = _coerce_finite_float(
             row.get("forward_realized_vol_10d")
         )
+        # #292 rates-complex strict-forward 5d yield change targets.
+        # Each value rides on the same event row alongside
+        # forward_realized_vol_10d; the per-fold target builder
+        # (:func:`app.training.rates_targets.build_partition_rates_targets`)
+        # reads them off the target row of each supervised sequence.
+        rates_2y_value = _coerce_finite_float(row.get("yield_2y_change_5d"))
+        rates_5y_value = _coerce_finite_float(row.get("yield_5y_change_5d"))
+        rates_terminal_value = _coerce_finite_float(
+            row.get("terminal_rate_change_5d")
+        )
         # B1 (#212) LLM-features lookup -- one-hot block + missing flag
         # per event row. Lookup is built once per package outside the
         # loop. Hashes absent from the lookup (failed extraction or
@@ -2141,6 +2164,9 @@ def load_training_sequences_from_package(
         llm_vector = llm_lookup.get(row_text_hash)
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
+            vector.target_yield_2y_change_5d = rates_2y_value
+            vector.target_yield_5y_change_5d = rates_5y_value
+            vector.target_terminal_rate_change_5d = rates_terminal_value
             if llm_vector is not None:
                 vector.llm_features = list(llm_vector)
                 vector.llm_features_missing = 0.0

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { AnalyzeForm } from "@/components/analyze/AnalyzeForm";
 import { CredibilityKpis } from "@/components/analyze/CredibilityKpis";
+import { MarketReactionPanel } from "@/components/analyze/MarketReactionPanel";
 import { MultiAxisInterpretation } from "@/components/analyze/MultiAxisInterpretation";
 import { PipelineTrace } from "@/components/analyze/PipelineTrace";
 import { RegimeHeadline } from "@/components/analyze/RegimeHeadline";
@@ -23,12 +24,19 @@ import {
   fetchHistory,
   fetchHistoryRun,
   postAnalyze,
+  postAnalyzeMarket,
   resolveApiBaseUrl,
 } from "@/lib/analyze/api";
 import { DEFAULT_TEXT } from "@/lib/analyze/constants";
 import { toStance } from "@/lib/analyze/format";
 import { useEvaluationCoverage } from "@/lib/analyze/useEvaluationCoverage";
-import type { AnalyzeRequest, AnalyzeResult, HistoryEntry, Horizon } from "@/lib/analyze/types";
+import type {
+  AnalyzeRequest,
+  AnalyzeResult,
+  HistoryEntry,
+  Horizon,
+  MarketReactionPanelResponse,
+} from "@/lib/analyze/types";
 import {
   DEFAULT_HORIZON,
   DEFAULT_SYMBOL,
@@ -77,6 +85,7 @@ export default function WorkspacePage() {
   const [request, setRequest] = React.useState<AnalyzeRequest>(defaultRequest);
   const [result, setResult] = React.useState<AnalyzeResult | null>(null);
   const [baselineResult, setBaselineResult] = React.useState<AnalyzeResult | null>(null);
+  const [marketPanel, setMarketPanel] = React.useState<MarketReactionPanelResponse | null>(null);
   const [struck, setStruck] = React.useState<Set<number>>(() => new Set());
   const [counterfactualLoading, setCounterfactualLoading] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
@@ -197,9 +206,23 @@ export default function WorkspacePage() {
       setResult(next);
       setBaselineResult(next);
       toast.success("Analysis complete");
+      // Fire the market panel fetch in parallel-after-analyze: a
+      // failure here is non-fatal (the panel is opt-in / requires a
+      // checkpoint with rates heads mounted), so a 4xx or 5xx degrades
+      // to a silent empty state rather than blowing up the workspace.
+      try {
+        const panel = await postAnalyzeMarket(apiBaseUrl, {
+          ...request,
+          mask_sentence_indices: [],
+        });
+        setMarketPanel(panel);
+      } catch {
+        setMarketPanel(null);
+      }
     } catch (err) {
       setResult(null);
       setBaselineResult(null);
+      setMarketPanel(null);
       const message =
         (err as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
         (err as Error).message ||
@@ -385,6 +408,10 @@ export default function WorkspacePage() {
                   />
                 )}
               </div>
+
+              {marketPanel && (marketPanel.rates.length > 0 || marketPanel.vol_regime) ? (
+                <MarketReactionPanel panel={marketPanel} />
+              ) : null}
 
               {result.xai ? (
                 <SentenceStrikeXaiPanel

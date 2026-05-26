@@ -311,6 +311,288 @@ _MULTI_TASK_AUX_KEYS: tuple[str, ...] = (
 )
 
 
+def _compute_rates_loss(
+    *,
+    logits_dict: dict[str, torch.Tensor],
+    rates_targets: "RatesPartitionTensors | None",
+    head_names: Sequence[str],
+    rates_head_mode: str,
+    rates_alpha: float,
+) -> torch.Tensor | None:
+    """Compute the per-rates-head loss contribution for one batch.
+
+    Returns ``None`` (no contribution) when no rates heads are mounted,
+    no rates targets ride on the batch, or every head's row mask is
+    empty. Per-head outputs from ``forward_multi_task`` ride on
+    ``logits_dict`` under the keys ``rates_<name>_bps`` (scalar tensor)
+    and ``rates_<name>_cls_logits`` (``(B, 3)`` tensor).
+
+    ``rates_head_mode`` mirrors the #304 dual-head selector:
+
+    - ``regression``: MSE on the standardised bps target only.
+    - ``classification``: cross-entropy on the per-fold tertile label.
+    - ``dual``: ``rates_alpha * MSE + (1 - rates_alpha) * CE`` mixing.
+
+    Per-head losses are summed across the mounted heads; rows whose
+    target mask is False contribute zero on both branches.
+    """
+
+    if not head_names or rates_targets is None:
+        return None
+    alpha = float(rates_alpha)
+    mode = str(rates_head_mode or "regression").lower()
+    if mode not in {"regression", "classification", "dual"}:
+        raise ValueError(
+            f"unsupported rates_head_mode={rates_head_mode!r}; "
+            "choose one of regression / classification / dual."
+        )
+    loss_accum: torch.Tensor | None = None
+    for name in head_names:
+        bundle = rates_targets.per_head.get(name)
+        if bundle is None:
+            continue
+        bps_pred_key = f"rates_{name}_bps"
+        cls_logits_key = f"rates_{name}_cls_logits"
+        if bps_pred_key not in logits_dict and cls_logits_key not in logits_dict:
+            continue
+        head_loss: torch.Tensor | None = None
+        if mode in {"regression", "dual"} and bps_pred_key in logits_dict:
+            bps_pred = logits_dict[bps_pred_key]
+            bps_target = bundle.bps_target.to(bps_pred.dtype).to(bps_pred.device)
+            bps_mask = bundle.bps_mask.to(bps_pred.device)
+            if bool(bps_mask.any().item()):
+                diff = (bps_pred - bps_target) * bps_mask.to(bps_pred.dtype)
+                # Mean over the masked rows only (sum / count) so the
+                # loss magnitude is invariant to the per-batch mask
+                # density.
+                denom = float(bps_mask.sum().item()) or 1.0
+                mse = (diff * diff).sum() / denom
+                head_loss = mse if mode == "regression" else alpha * mse
+        if mode in {"classification", "dual"} and cls_logits_key in logits_dict:
+            cls_logits = logits_dict[cls_logits_key]
+            cls_target = bundle.cls_target.to(cls_logits.device)
+            cls_mask = bundle.cls_mask.to(cls_logits.device)
+            if bool(cls_mask.any().item()):
+                # Replace masked rows with class 0 so cross_entropy stays
+                # finite; the mask zeros the row's contribution below.
+                safe_target = torch.where(
+                    cls_mask, cls_target, torch.zeros_like(cls_target)
+                )
+                per_row = F.cross_entropy(
+                    cls_logits, safe_target, reduction="none"
+                )
+                per_row = per_row * cls_mask.to(per_row.dtype)
+                denom = float(cls_mask.sum().item()) or 1.0
+                ce = per_row.sum() / denom
+                ce_weight = (1.0 - alpha) if mode == "dual" else 1.0
+                ce_contrib = ce_weight * ce
+                head_loss = (
+                    ce_contrib if head_loss is None else head_loss + ce_contrib
+                )
+        if head_loss is None:
+            continue
+        loss_accum = head_loss if loss_accum is None else loss_accum + head_loss
+    return loss_accum
+
+
+@dataclasses.dataclass
+class RatesPartitionTensors:
+    """Per-partition rates-head target tensors keyed by head name.
+
+    Each per-head bundle carries ``bps_target`` (standardised
+    regression target), ``bps_mask`` (bool row mask), ``cls_target``
+    (int64 3-class label), and ``cls_mask`` (bool row mask for the aux
+    classifier). Aggregated outside the loop so the training step can
+    index the same row order the DataLoader emits.
+    """
+
+    per_head: dict[str, "RatesHeadPartitionBundle"] = dataclasses.field(
+        default_factory=dict
+    )
+
+
+@dataclasses.dataclass
+class RatesHeadPartitionBundle:
+    """One rates head's per-partition tensors."""
+
+    bps_target: torch.Tensor
+    bps_mask: torch.Tensor
+    cls_target: torch.Tensor
+    cls_mask: torch.Tensor
+
+
+def _compute_rates_partition_metrics(
+    model: nn.Module,
+    *,
+    x: torch.Tensor,
+    rates_targets: "RatesPartitionTensors | None",
+    head_names: Sequence[str],
+    rates_scalers: dict[str, Any],
+    rates_edges: dict[str, Any],
+    device: torch.device,
+    batch_size: int = 64,
+) -> dict[str, dict[str, Any]] | None:
+    """Run the rates heads over a partition and compute per-head metrics.
+
+    Returns a dict keyed on head name; each value carries the
+    regression-metric panel from
+    :mod:`app.evaluation.regression_metrics` (mae_bps /
+    directional_accuracy / r_squared with block-bootstrap CIs) plus
+    the raw row-level ``predictions_bps`` / ``actuals_bps`` arrays so
+    the conformal calibrator + the §16 comparison table can read them
+    back without re-running the forward pass.
+
+    Falls through to ``None`` when no rates heads are mounted, no
+    rates targets ride on the partition, or the partition has zero
+    surviving rows. The helper builds its own mini-loader so the
+    inference forward stays out of the training step's hot path.
+    """
+
+    from app.evaluation.regression_metrics import regression_metric_panel
+    from app.training.rates_targets import RatesHeadScaler, inverse_standardise_bps
+
+    if not head_names or rates_targets is None or x is None:
+        return None
+    n_rows = int(x.size(0))
+    if n_rows == 0:
+        return None
+    underlying = model.module if hasattr(model, "module") else model
+    underlying = getattr(underlying, "_orig_mod", underlying)
+    forward_multi = getattr(underlying, "forward_multi_task", None)
+    if forward_multi is None:
+        return None
+    pred_buffers: dict[str, list[float]] = {name: [] for name in head_names}
+    actual_buffers: dict[str, list[float]] = {name: [] for name in head_names}
+    mask_buffers: dict[str, list[bool]] = {name: [] for name in head_names}
+    if isinstance(underlying, nn.Module):
+        underlying.eval()
+    with torch.no_grad():
+        for start in range(0, n_rows, batch_size):
+            stop = min(start + batch_size, n_rows)
+            batch_x = x[start:stop]
+            if batch_x.device != device:
+                batch_x = batch_x.to(device)
+            kwargs: dict[str, torch.Tensor] = {}
+            if getattr(underlying, "credibility_features", False):
+                kwargs["credibility"] = torch.zeros(
+                    (int(batch_x.size(0)), int(getattr(underlying, "credibility_dim", 4))),
+                    dtype=torch.float32,
+                    device=device,
+                )
+            out = forward_multi(batch_x, **kwargs)
+            for name in head_names:
+                pred_key = f"rates_{name}_bps"
+                if pred_key not in out:
+                    continue
+                pred_std = out[pred_key].detach().to("cpu")
+                bundle = rates_targets.per_head.get(name)
+                if bundle is None:
+                    continue
+                target_std = bundle.bps_target[start:stop]
+                mask = bundle.bps_mask[start:stop]
+                scaler_payload = rates_scalers.get(name)
+                if isinstance(scaler_payload, RatesHeadScaler):
+                    scaler = scaler_payload
+                elif isinstance(scaler_payload, dict):
+                    scaler = RatesHeadScaler(
+                        mean=float(scaler_payload.get("mean", 0.0)),
+                        std=float(scaler_payload.get("std", 1.0)),
+                    )
+                else:
+                    scaler = RatesHeadScaler(mean=0.0, std=1.0)
+                for i in range(int(batch_x.size(0))):
+                    pred_raw = inverse_standardise_bps(float(pred_std[i].item()), scaler)
+                    target_raw = inverse_standardise_bps(float(target_std[i].item()), scaler)
+                    is_masked = bool(mask[i].item())
+                    pred_buffers[name].append(pred_raw)
+                    actual_buffers[name].append(target_raw)
+                    mask_buffers[name].append(is_masked)
+    out_metrics: dict[str, dict[str, Any]] = {}
+    for name in head_names:
+        preds = pred_buffers[name]
+        actuals = actual_buffers[name]
+        masks = mask_buffers[name]
+        kept_pairs = [
+            (p, a) for p, a, m in zip(preds, actuals, masks) if m
+        ]
+        if not kept_pairs:
+            out_metrics[name] = {
+                "predictions_bps": [],
+                "actuals_bps": [],
+                "n_rows": 0,
+                "mae_bps": None,
+                "directional_accuracy": None,
+                "r_squared": None,
+            }
+            continue
+        kept_preds = [p for p, _ in kept_pairs]
+        kept_actuals = [a for _, a in kept_pairs]
+        # Block-bootstrap CIs for the three core metrics. Caller can
+        # ignore the CIs and use the point estimate alone if the §16
+        # table only renders a single number per head.
+        panel = regression_metric_panel(
+            predicted=kept_preds,
+            observed=kept_actuals,
+        )
+        out_metrics[name] = {
+            "predictions_bps": kept_preds,
+            "actuals_bps": kept_actuals,
+            "n_rows": len(kept_pairs),
+            "mae_bps": panel["mae_bps"].to_dict(),
+            "directional_accuracy": panel["directional_accuracy"].to_dict(),
+            "r_squared": panel["r_squared"].to_dict(),
+        }
+    return out_metrics
+
+
+def _build_rates_batch_loss(
+    *,
+    logits_dict: dict[str, torch.Tensor],
+    rates_targets_partition: "RatesPartitionTensors | None",
+    rates_index: torch.Tensor | None,
+    head_names: Sequence[str],
+    rates_head_mode: str,
+    rates_alpha: float,
+) -> torch.Tensor | None:
+    """Slice the per-batch rates targets and dispatch to the per-head loss.
+
+    ``rates_index`` is the per-row identity tensor the train DataLoader
+    yields; we use it to index into the partition-level target tensors
+    so each batch's loss reads the exact rows that produced the batch.
+    Returns ``None`` (no contribution) when rates heads are inactive or
+    the per-row mask is empty across every head.
+    """
+
+    if not head_names or rates_targets_partition is None or rates_index is None:
+        return None
+    # Slice the per-partition tensors down to the batch's row order so
+    # ``_compute_rates_loss`` sees a per-batch bundle of the right
+    # shape. Index lives on whatever device the dataset emitted; move
+    # to CPU first because the partition target tensors may also live
+    # on CPU regardless of the model device.
+    batch_index_cpu = rates_index.detach().to("cpu")
+    batch_bundles: dict[str, RatesHeadPartitionBundle] = {}
+    for name in head_names:
+        bundle = rates_targets_partition.per_head.get(name)
+        if bundle is None:
+            continue
+        batch_bundles[name] = RatesHeadPartitionBundle(
+            bps_target=bundle.bps_target.index_select(0, batch_index_cpu),
+            bps_mask=bundle.bps_mask.index_select(0, batch_index_cpu),
+            cls_target=bundle.cls_target.index_select(0, batch_index_cpu),
+            cls_mask=bundle.cls_mask.index_select(0, batch_index_cpu),
+        )
+    if not batch_bundles:
+        return None
+    return _compute_rates_loss(
+        logits_dict=logits_dict,
+        rates_targets=RatesPartitionTensors(per_head=batch_bundles),
+        head_names=head_names,
+        rates_head_mode=rates_head_mode,
+        rates_alpha=rates_alpha,
+    )
+
+
 def _make_partition_dataset(
     x: torch.Tensor,
     y: torch.Tensor,
@@ -318,6 +600,7 @@ def _make_partition_dataset(
     text_missing: torch.Tensor | None,
     mt_aux: dict[str, torch.Tensor] | None,
     log_rv: torch.Tensor | None = None,
+    rates_index: torch.Tensor | None = None,
 ) -> TensorDataset:
     """Pack one partition's tensors into a TensorDataset using a fixed contract.
 
@@ -361,6 +644,8 @@ def _make_partition_dataset(
             tensors.append(mt_aux[key])
     if log_rv is not None:
         tensors.append(log_rv)
+    if rates_index is not None:
+        tensors.append(rates_index)
     return TensorDataset(*tensors)
 
 
@@ -372,6 +657,7 @@ def _unpack_batch(
     torch.Tensor | None,
     torch.Tensor | None,
     dict[str, torch.Tensor] | None,
+    torch.Tensor | None,
     torch.Tensor | None,
 ]:
     """Decode a DataLoader batch into ``(x, y, text, text_missing, mt_aux, log_rv)``.
@@ -385,42 +671,64 @@ def _unpack_batch(
     """
 
     arity = len(batch)
+    # #292 -- the rates_index tensor may ride at the tail of every supported
+    # arity. The tensor is always 1-D ``int64`` while the other trailing
+    # slots (``log_rv``) are 1-D ``float32`` and the multi-task ``factor``
+    # is 1-D ``float32``. We detect the optional trailing rates_index by
+    # dtype on int64 + dim==1 + matching batch_size, and strip it before
+    # falling through to the legacy arity dispatch.
+    batch_list = list(batch)
+    batch_x_probe = batch_list[0]
+    batch_size_probe = int(batch_x_probe.size(0))
+    trailing_rates_index: torch.Tensor | None = None
+    if batch_list:
+        candidate = batch_list[-1]
+        if (
+            isinstance(candidate, torch.Tensor)
+            and candidate.dim() == 1
+            and candidate.dtype == torch.int64
+            and int(candidate.size(0)) == batch_size_probe
+            and len(batch_list) - 1 in {2, 3, 4, 5, 8, 9, 10, 11}
+        ):
+            trailing_rates_index = candidate
+            batch_list = batch_list[:-1]
+    arity = len(batch_list)
     if arity == 2:
-        batch_x, batch_y = batch
-        return batch_x, batch_y, None, None, None, None
+        batch_x, batch_y = batch_list
+        return batch_x, batch_y, None, None, None, None, trailing_rates_index
     if arity == 3:
-        batch_x, batch_y, batch_log_rv = batch
-        return batch_x, batch_y, None, None, None, batch_log_rv
+        batch_x, batch_y, batch_log_rv = batch_list
+        return batch_x, batch_y, None, None, None, batch_log_rv, trailing_rates_index
     if arity == 4:
-        batch_x, batch_y, batch_text, batch_text_missing = batch
-        return batch_x, batch_y, batch_text, batch_text_missing, None, None
+        batch_x, batch_y, batch_text, batch_text_missing = batch_list
+        return batch_x, batch_y, batch_text, batch_text_missing, None, None, trailing_rates_index
     if arity == 5:
-        batch_x, batch_y, batch_text, batch_text_missing, batch_log_rv = batch
-        return batch_x, batch_y, batch_text, batch_text_missing, None, batch_log_rv
+        batch_x, batch_y, batch_text, batch_text_missing, batch_log_rv = batch_list
+        return batch_x, batch_y, batch_text, batch_text_missing, None, batch_log_rv, trailing_rates_index
     if arity == 8:
-        batch_x = batch[0]
-        batch_y = batch[1]
-        mt_aux = {key: batch[2 + idx] for idx, key in enumerate(_MULTI_TASK_AUX_KEYS)}
-        return batch_x, batch_y, None, None, mt_aux, None
+        batch_x = batch_list[0]
+        batch_y = batch_list[1]
+        mt_aux = {key: batch_list[2 + idx] for idx, key in enumerate(_MULTI_TASK_AUX_KEYS)}
+        return batch_x, batch_y, None, None, mt_aux, None, trailing_rates_index
     if arity == 9:
-        batch_x = batch[0]
-        batch_y = batch[1]
-        mt_aux = {key: batch[2 + idx] for idx, key in enumerate(_MULTI_TASK_AUX_KEYS)}
-        return batch_x, batch_y, None, None, mt_aux, batch[8]
+        batch_x = batch_list[0]
+        batch_y = batch_list[1]
+        mt_aux = {key: batch_list[2 + idx] for idx, key in enumerate(_MULTI_TASK_AUX_KEYS)}
+        return batch_x, batch_y, None, None, mt_aux, batch_list[8], trailing_rates_index
     if arity == 10:
-        batch_x = batch[0]
-        batch_y = batch[1]
-        batch_text = batch[2]
-        batch_text_missing = batch[3]
-        mt_aux = {key: batch[4 + idx] for idx, key in enumerate(_MULTI_TASK_AUX_KEYS)}
-        return batch_x, batch_y, batch_text, batch_text_missing, mt_aux, None
+        batch_x = batch_list[0]
+        batch_y = batch_list[1]
+        batch_text = batch_list[2]
+        batch_text_missing = batch_list[3]
+        mt_aux = {key: batch_list[4 + idx] for idx, key in enumerate(_MULTI_TASK_AUX_KEYS)}
+        return batch_x, batch_y, batch_text, batch_text_missing, mt_aux, None, trailing_rates_index
     if arity == 11:
-        batch_x = batch[0]
-        batch_y = batch[1]
-        batch_text = batch[2]
-        batch_text_missing = batch[3]
-        mt_aux = {key: batch[4 + idx] for idx, key in enumerate(_MULTI_TASK_AUX_KEYS)}
-        return batch_x, batch_y, batch_text, batch_text_missing, mt_aux, batch[10]
+        batch_x = batch_list[0]
+        batch_y = batch_list[1]
+        batch_text = batch_list[2]
+        batch_text_missing = batch_list[3]
+        mt_aux = {key: batch_list[4 + idx] for idx, key in enumerate(_MULTI_TASK_AUX_KEYS)}
+        return batch_x, batch_y, batch_text, batch_text_missing, mt_aux, batch_list[10], trailing_rates_index
     raise ValueError(
         f"unexpected batch arity from DataLoader: {arity} "
         "(want 2, 3, 4, 5, 8, 9, 10, or 11)"
@@ -495,6 +803,8 @@ def _maybe_write_classification_conformal_manifest(
                 calibration_n=existing.calibration_n,
                 notes=existing.notes,
                 softmax_quantile=softmax_q,
+                rates_residual_quantiles=existing.rates_residual_quantiles,
+                rates_softmax_quantiles=existing.rates_softmax_quantiles,
             )
         except Exception:
             # Stale / unreadable sidecar — overwrite with a classification-only
@@ -521,6 +831,94 @@ def _maybe_write_classification_conformal_manifest(
     print(
         f"[conformal] calibrated softmax_quantile={softmax_q:.4f} "
         f"on n={len(class_scores)} val rows -> {sidecar.name}",
+        flush=True,
+    )
+
+
+def _maybe_write_rates_conformal_manifest(
+    best_val_metrics: "EvaluationMetrics | None",
+    checkpoint_target: Path,
+    *,
+    head_names: Sequence[str],
+) -> None:
+    """Fit per-rates-head residual + APS quantiles + merge onto the sidecar (#292).
+
+    Reads the per-head row-level ``predictions_bps`` / ``actuals_bps``
+    off ``EvaluationMetrics.rates_metrics`` and writes the calibrated
+    band half-width + the APS softmax_quantile back onto the same
+    ``.conformal.json`` sidecar the classification-side manifest was
+    written to above. The merge preserves every pre-#292 field.
+    """
+
+    if not head_names or best_val_metrics is None:
+        return
+    rates_metrics = getattr(best_val_metrics, "rates_metrics", None)
+    if not rates_metrics:
+        return
+
+    from app.evaluation.conformal import (
+        DEFAULT_CLASSIFICATION_ALPHA,
+        ConformalManifest,
+        calibrate_rates_regression_conformal,
+        load_manifest,
+        save_manifest,
+    )
+
+    rates_residuals: dict[str, float] = {}
+    for name in head_names:
+        head_block = rates_metrics.get(name) if isinstance(rates_metrics, dict) else None
+        if not isinstance(head_block, dict):
+            continue
+        preds = head_block.get("predictions_bps") or []
+        actuals = head_block.get("actuals_bps") or []
+        if len(preds) < 2 or len(actuals) < 2:
+            continue
+        try:
+            q = calibrate_rates_regression_conformal(
+                predictions_bps=preds,
+                actuals_bps=actuals,
+                alpha=DEFAULT_CLASSIFICATION_ALPHA,
+            )
+        except ValueError:
+            continue
+        rates_residuals[name] = float(q)
+    if not rates_residuals:
+        return
+
+    sidecar = Path(str(checkpoint_target.with_suffix("")) + ".conformal.json")
+    if sidecar.exists():
+        try:
+            existing = load_manifest(sidecar)
+        except Exception:
+            existing = None
+    else:
+        existing = None
+    base_kwargs: dict[str, Any] = {
+        "alpha": DEFAULT_CLASSIFICATION_ALPHA,
+        "nominal_coverage": 1.0 - DEFAULT_CLASSIFICATION_ALPHA,
+        "residual_quantile_close": 0.0,
+        "residual_quantile_volatility": 0.0,
+        "calibration_n": 0,
+    }
+    if existing is not None:
+        base_kwargs.update(
+            {
+                "alpha": existing.alpha,
+                "nominal_coverage": existing.nominal_coverage,
+                "residual_quantile_close": existing.residual_quantile_close,
+                "residual_quantile_volatility": existing.residual_quantile_volatility,
+                "calibration_n": existing.calibration_n,
+                "notes": existing.notes,
+                "softmax_quantile": existing.softmax_quantile,
+                "rates_softmax_quantiles": existing.rates_softmax_quantiles,
+            }
+        )
+    base_kwargs["rates_residual_quantiles"] = rates_residuals
+    manifest = ConformalManifest(**base_kwargs)
+    save_manifest(manifest, sidecar)
+    print(
+        f"[conformal] calibrated rates residual_quantiles={rates_residuals} "
+        f"-> {sidecar.name}",
         flush=True,
     )
 
@@ -1200,6 +1598,7 @@ def _evaluate_model(
                 batch_text_missing,
                 batch_mt_aux,
                 batch_log_rv,
+                _batch_rates_index,
             ) = _unpack_batch(batch)
             if multi_task_active and batch_mt_aux is None:
                 raise RuntimeError(
@@ -1748,6 +2147,25 @@ def train_model(
         or "classification"
     )
     dual_head_active = active_head_mode in {"regression", "dual"}
+    # #292 rates heads. Resolve the active set + mode/alpha so the
+    # per-partition target builders + the train-step loss helper see
+    # the same configuration. Empty tuple ⇒ no rates heads mount and
+    # the legacy partition build path stays byte-identical.
+    active_rates_heads: tuple[str, ...] = tuple(
+        str(name).lower()
+        for name in getattr(active_model_config, "rates_heads", ()) or ()
+    )
+    active_rates_head_mode = str(
+        getattr(active_model_config, "rates_head_mode", "regression")
+        or "regression"
+    )
+    active_rates_alpha = float(getattr(active_model_config, "rates_alpha", 0.5))
+    rates_heads_active = bool(active_rates_heads)
+    train_rates_targets: RatesPartitionTensors | None = None
+    val_rates_targets: RatesPartitionTensors | None = None
+    test_rates_targets: RatesPartitionTensors | None = None
+    rates_scalers: dict[str, Any] = {}
+    rates_edges: dict[str, Any] = {}
 
     if walk_forward_path:
         train_groups: list[list[FeatureVector]] = [list(group) for group in train_sequence_groups or []]
@@ -1859,6 +2277,32 @@ def train_model(
             train_log_rv, log_rv_scaler = _build_partition_log_rv_target(
                 train_groups, vol_regime_quantiles=fitted_quantiles
             )
+        # #292 rates heads -- per-partition targets fitted on train.
+        if rates_heads_active and active_output_mode == "classification":
+            from app.training.rates_targets import build_partition_rates_targets
+
+            (
+                bps_t,
+                bps_m,
+                cls_t,
+                cls_m,
+                rates_scalers,
+                rates_edges,
+            ) = build_partition_rates_targets(
+                train_groups,
+                head_names=active_rates_heads,
+            )
+            train_rates_targets = RatesPartitionTensors(
+                per_head={
+                    name: RatesHeadPartitionBundle(
+                        bps_target=bps_t[name],
+                        bps_mask=bps_m[name],
+                        cls_target=cls_t[name],
+                        cls_mask=cls_m[name],
+                    )
+                    for name in active_rates_heads
+                }
+            )
         # #309 derived-text-features ablation runs BEFORE the per-fold
         # rich-feature RobustScaler so the scaler's median for every
         # zeroed slot lands at 0 and the post-scaling slot stays a
@@ -1893,6 +2337,33 @@ def train_model(
                 vol_regime_quantiles=fitted_quantiles,
                 log_rv_scaler=log_rv_scaler,
             )
+        if rates_heads_active and active_output_mode == "classification":
+            from app.training.rates_targets import build_partition_rates_targets
+
+            (
+                v_bps_t,
+                v_bps_m,
+                v_cls_t,
+                v_cls_m,
+                _,
+                _,
+            ) = build_partition_rates_targets(
+                val_groups,
+                head_names=active_rates_heads,
+                scalers=rates_scalers,
+                edges_by_head=rates_edges,
+            )
+            val_rates_targets = RatesPartitionTensors(
+                per_head={
+                    name: RatesHeadPartitionBundle(
+                        bps_target=v_bps_t[name],
+                        bps_mask=v_bps_m[name],
+                        cls_target=v_cls_t[name],
+                        cls_mask=v_cls_m[name],
+                    )
+                    for name in active_rates_heads
+                }
+            )
         if not bool(getattr(active_model_config, "use_derived_text_features", True)):
             val_x, val_mt_aux = _zero_derived_text_features(val_x, val_mt_aux)  # type: ignore[assignment]
         val_x = apply_rich_feature_scaler_tensor(val_x, rich_feature_scaler)
@@ -1913,6 +2384,33 @@ def train_model(
                 test_groups,
                 vol_regime_quantiles=fitted_quantiles,
                 log_rv_scaler=log_rv_scaler,
+            )
+        if rates_heads_active and active_output_mode == "classification":
+            from app.training.rates_targets import build_partition_rates_targets
+
+            (
+                te_bps_t,
+                te_bps_m,
+                te_cls_t,
+                te_cls_m,
+                _,
+                _,
+            ) = build_partition_rates_targets(
+                test_groups,
+                head_names=active_rates_heads,
+                scalers=rates_scalers,
+                edges_by_head=rates_edges,
+            )
+            test_rates_targets = RatesPartitionTensors(
+                per_head={
+                    name: RatesHeadPartitionBundle(
+                        bps_target=te_bps_t[name],
+                        bps_mask=te_bps_m[name],
+                        cls_target=te_cls_t[name],
+                        cls_mask=te_cls_m[name],
+                    )
+                    for name in active_rates_heads
+                }
             )
         if not bool(getattr(active_model_config, "use_derived_text_features", True)):
             test_x, test_mt_aux = _zero_derived_text_features(test_x, test_mt_aux)  # type: ignore[assignment]
@@ -2172,8 +2670,23 @@ def train_model(
     # warnings still applies on CPU device.
     pin_memory = False
     loader_generator = make_generator(seed) if seed is not None else None
+    # #292 -- per-partition row-index tensors so the shuffled DataLoader
+    # batches can carry their per-row identity through. Built only when
+    # rates heads are active; the legacy path leaves the field None so
+    # ``_make_partition_dataset`` skips the trailing slot.
+    train_rates_index = (
+        torch.arange(int(train_x.size(0)), dtype=torch.int64, device=train_x.device)
+        if rates_heads_active and train_rates_targets is not None
+        else None
+    )
     train_dataset = _make_partition_dataset(
-        train_x, train_y, train_text_emb, train_text_missing, train_mt_aux, train_log_rv
+        train_x,
+        train_y,
+        train_text_emb,
+        train_text_missing,
+        train_mt_aux,
+        train_log_rv,
+        rates_index=train_rates_index,
     )
 
     # Early-stopping val loader: when the walk-forward branch supplied
@@ -2188,6 +2701,7 @@ def train_model(
         val_text_missing_used = train_text_missing
         val_mt_aux_used = train_mt_aux
         val_log_rv_used = train_log_rv
+        val_rates_targets_used = train_rates_targets
     else:
         val_x_used = val_x
         val_y_used = val_y
@@ -2195,7 +2709,13 @@ def train_model(
         val_text_missing_used = val_text_missing
         val_mt_aux_used = val_mt_aux
         val_log_rv_used = val_log_rv
+        val_rates_targets_used = val_rates_targets
 
+    val_rates_index = (
+        torch.arange(int(val_x_used.size(0)), dtype=torch.int64, device=val_x_used.device)
+        if rates_heads_active and val_rates_targets_used is not None
+        else None
+    )
     val_dataset = _make_partition_dataset(
         val_x_used,
         val_y_used,
@@ -2203,11 +2723,23 @@ def train_model(
         val_text_missing_used,
         val_mt_aux_used,
         val_log_rv_used,
+        rates_index=val_rates_index,
     )
 
     if test_x is not None and test_y is not None and len(test_x) > 0:
+        test_rates_index = (
+            torch.arange(int(test_x.size(0)), dtype=torch.int64, device=test_x.device)
+            if rates_heads_active and test_rates_targets is not None
+            else None
+        )
         test_dataset = _make_partition_dataset(
-            test_x, test_y, test_text_emb, test_text_missing, test_mt_aux, test_log_rv
+            test_x,
+            test_y,
+            test_text_emb,
+            test_text_missing,
+            test_mt_aux,
+            test_log_rv,
+            rates_index=test_rates_index,
         )
     else:
         test_dataset = None
@@ -2423,6 +2955,22 @@ def train_model(
             f"regression_alpha={regression_alpha}",
             flush=True,
         )
+    # #292 rates heads need the classification output_mode for the same
+    # reason dual_head does -- the per-fold rates targets ride on rows
+    # the classification helper filters against ``forward_realized_vol_10d``.
+    if rates_heads_active and _active_output_mode != "classification":
+        raise ValueError(
+            "rates_heads requires output_mode='classification' (the "
+            "per-fold rates target builder reuses the classification "
+            "row filter); got output_mode="
+            f"{_active_output_mode!r}"
+        )
+    if rates_heads_active:
+        print(
+            f"[train_model] rates_heads active: heads={list(active_rates_heads)} "
+            f"mode={active_rates_head_mode} alpha={active_rates_alpha}",
+            flush=True,
+        )
         # #304 alpha-boundary byte-identity. When the dual path is set
         # to alpha=0 the regression head's loss contribution drops to
         # zero; gating the head's forward computation as well keeps
@@ -2548,6 +3096,7 @@ def train_model(
                 batch_text_missing,
                 batch_mt_aux,
                 batch_log_rv,
+                batch_rates_index,
             ) = _unpack_batch(batch)
             # Tensors are already on the target device; the .to() calls
             # below were the hot kernel-launch source the perf rewrite
@@ -2627,15 +3176,30 @@ def train_model(
                         head_mode=active_head_mode,
                         regression_alpha=regression_alpha,
                     )
-                elif dual_head_active:
-                    # #304 dual-head fast path. Single-task classification
-                    # already drives stance via ``loss_fn(predictions,
-                    # batch_y)``; the dual-head retrofit needs the
-                    # ``log_rv`` head's MSE too, which requires the
-                    # multi-task dict (since the regression head lives
-                    # alongside the MultiTaskHead). Run
-                    # ``forward_multi_task`` so both heads share the
-                    # same backbone activations in this batch.
+                    rates_loss = _build_rates_batch_loss(
+                        logits_dict=logits_dict,
+                        rates_targets_partition=train_rates_targets,
+                        rates_index=batch_rates_index,
+                        head_names=active_rates_heads,
+                        rates_head_mode=active_rates_head_mode,
+                        rates_alpha=active_rates_alpha,
+                    )
+                    if rates_loss is not None:
+                        loss = loss + rates_loss
+                elif dual_head_active or rates_heads_active:
+                    # #304 dual-head + #292 rates heads fast path.
+                    # Single-task classification already drives stance
+                    # via ``loss_fn(predictions, batch_y)``; the
+                    # dual-head retrofit needs the ``log_rv`` head's
+                    # MSE too, which requires the multi-task dict (since
+                    # the regression head lives alongside the
+                    # MultiTaskHead). The rates heads share the same
+                    # backbone activations, so we route through
+                    # ``forward_multi_task`` whenever either feature is
+                    # active. The combiner short-circuits on
+                    # ``head_mode='classification'``, so the rates-only
+                    # path keeps the CE loss unchanged before adding the
+                    # rates contribution.
                     logits_dict = _run_train_forward_multi_task(
                         forward_model, batch_x, kwargs
                     )
@@ -2648,6 +3212,16 @@ def train_model(
                         head_mode=active_head_mode,
                         regression_alpha=regression_alpha,
                     )
+                    rates_loss = _build_rates_batch_loss(
+                        logits_dict=logits_dict,
+                        rates_targets_partition=train_rates_targets,
+                        rates_index=batch_rates_index,
+                        head_names=active_rates_heads,
+                        rates_head_mode=active_rates_head_mode,
+                        rates_alpha=active_rates_alpha,
+                    )
+                    if rates_loss is not None:
+                        loss = loss + rates_loss
                 else:
                     predictions, align_loss = _run_train_forward_and_align(
                         forward_model,
@@ -2807,6 +3381,42 @@ def train_model(
     else:
         test_metrics = best_val_metrics
 
+    # #292 rates-complex per-head metrics. Computed once on the test
+    # partition's tensors when rates heads are active so the per-trial
+    # JSON carries the MAE-bps / dir-acc / R² panel keyed by head.
+    rates_test_metrics_payload: dict[str, dict[str, Any]] | None = None
+    rates_val_metrics_payload: dict[str, dict[str, Any]] | None = None
+    if rates_heads_active and test_x is not None:
+        rates_test_metrics_payload = _compute_rates_partition_metrics(
+            work_model,
+            x=test_x,
+            rates_targets=test_rates_targets,
+            head_names=active_rates_heads,
+            rates_scalers=rates_scalers,
+            rates_edges=rates_edges,
+            device=device_obj,
+            batch_size=batch_size,
+        )
+        if rates_test_metrics_payload is not None:
+            test_metrics = dataclasses.replace(
+                test_metrics, rates_metrics=rates_test_metrics_payload
+            )
+    if rates_heads_active and val_x_used is not None:
+        rates_val_metrics_payload = _compute_rates_partition_metrics(
+            work_model,
+            x=val_x_used,
+            rates_targets=val_rates_targets_used,
+            head_names=active_rates_heads,
+            rates_scalers=rates_scalers,
+            rates_edges=rates_edges,
+            device=device_obj,
+            batch_size=batch_size,
+        )
+        if rates_val_metrics_payload is not None:
+            best_val_metrics = dataclasses.replace(
+                best_val_metrics, rates_metrics=rates_val_metrics_payload
+            )
+
     # ``metrics`` keeps the pre-PR semantics: the headline number the
     # downstream best-selection ranks by. On the walk-forward path
     # this is the held-out ``test_metrics``; on the legacy 80/20 path
@@ -2846,6 +3456,22 @@ def train_model(
             if log_rv_scaler is not None
             else None
         ),
+        rates_scalers=(
+            {
+                name: {"mean": float(s.mean), "std": float(s.std)}
+                for name, s in rates_scalers.items()
+            }
+            if rates_heads_active and rates_scalers
+            else None
+        ),
+        rates_quantile_edges=(
+            {
+                name: e.to_dict() if hasattr(e, "to_dict") else dict(e)
+                for name, e in rates_edges.items()
+            }
+            if rates_heads_active and rates_edges
+            else None
+        ),
     )
 
     if save_checkpoint:
@@ -2871,6 +3497,15 @@ def train_model(
         # calibrated prediction sets.
         _maybe_write_classification_conformal_manifest(
             best_val_metrics, checkpoint_target
+        )
+        # #292 -- per-head rates residual + softmax quantiles. Fitted
+        # on the val partition's rates predictions / targets so the
+        # inference path can emit a calibrated bps band + APS set per
+        # rates head. The helper merges into the existing sidecar
+        # written above so a single .conformal.json file carries the
+        # legacy vol-regime softmax_quantile AND every rates band.
+        _maybe_write_rates_conformal_manifest(
+            best_val_metrics, checkpoint_target, head_names=active_rates_heads
         )
         if encoder_lora_bundle is not None:
             # Round 5 (#244) sidecar: write only the LoRA adapter state
