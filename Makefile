@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison reproduce-all push-artefacts deploy-prod-build
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison text-path-ab reproduce-all push-artefacts deploy-prod-build
 
 help:
 	@echo "Targets:"
@@ -80,6 +80,7 @@ help:
 	@echo "  make rates-heads-sweep TRAINING_PACKAGE_ID=<id> [SEED=<seed>]"
 	@echo "                         - Three-way derived-text-features ablation (baseline / ablation / replacement)"
 	@echo "  make canonical-comparison TRAINING_PACKAGE_ID=<id>"
+	@echo "  make text-path-ab TRAINING_PACKAGE_ID=<id>"
 	@echo "                         - Canonical dual-head comparison (5 seeds x 40 epochs, regression-alpha=0.5, canonical output JSON)"
 
 dev: dev-cpu
@@ -756,4 +757,19 @@ canonical-comparison:
 		--output artifacts/experiments/dual_head_comparison_canonical.json \
 		--seeds 11 29 47 71 97 \
 		--epochs 40 \
+		--regression-alpha 0.5
+
+# #327 text-path A/B comparison. Runs the three configurations
+# (broadcast-static / per-bar / flat MLP) across the official seed set
+# and canonical fold protocol; emits a per-arm JSON the §6.15 wiki
+# table reads. Output lands at
+# ``artifacts/experiments/text_path_ab.json``.
+text-path-ab:
+	@if [ -z "$$TRAINING_PACKAGE_ID" ]; then echo "TRAINING_PACKAGE_ID required" >&2; exit 1; fi
+	docker compose run --rm backend python -m scripts.run_text_path_ab \
+		--training-package-id $$TRAINING_PACKAGE_ID \
+		--output artifacts/experiments/text_path_ab.json \
+		--seeds 11 29 47 71 97 \
+		--epochs 40 \
+		--head-mode dual \
 		--regression-alpha 0.5

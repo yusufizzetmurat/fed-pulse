@@ -409,6 +409,41 @@ def _parse_args() -> argparse.Namespace:
             "larger values spread the weight across all four."
         ),
     )
+    # #327 Arm A. ``scalar`` keeps the pre-#327 broadcast-static path
+    # (one pooled vector tiled across every lookback bar) byte-identical;
+    # ``embeddings`` mounts the encoder-pooler variant (Variant B / C);
+    # ``per_bar`` projects a per-bar pooled vector through the adapter
+    # so the recurrent core consumes actual temporal text dynamics.
+    parser.add_argument(
+        "--text-channel",
+        choices=("scalar", "embeddings", "per_bar"),
+        default="scalar",
+        help=(
+            "Text-feature delivery channel. ``scalar`` (default) tiles a "
+            "single pooled vector across every lookback bar -- the pre-"
+            "#327 broadcast-static path. ``per_bar`` (#327 Arm A) feeds "
+            "a per-bar pooled-text tensor so the recurrent core sees "
+            "actual temporal text dynamics. ``embeddings`` mounts the "
+            "chunk / LLM pooler variant."
+        ),
+    )
+    # #327 adapter warm-start. ``--text-adapter-warm-start <path>``
+    # loads a state_dict previously fit by
+    # ``app.models.text_adapter_warm_start.pretrain_text_adapter`` into
+    # the forecaster's ``text_adapter`` submodule at construction time,
+    # replacing the zero-init starting point with a stance-aware init.
+    parser.add_argument(
+        "--text-adapter-warm-start",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a text-adapter warm-start checkpoint. When set, the "
+            "forecaster loads the persisted adapter state_dict into its "
+            "``text_adapter`` submodule at construction time so the text "
+            "path has a stance-aware init from epoch 0. Produced by "
+            "``app.models.text_adapter_warm_start.pretrain_text_adapter``."
+        ),
+    )
     parser.add_argument(
         "--no-text-embeddings",
         dest="use_text_embeddings",
@@ -1092,6 +1127,7 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         head_hidden_size=args.head_hidden_size,
         architecture=args.architecture,
         credibility_features=bool(args.credibility_features),
+        text_channel=str(getattr(args, "text_channel", "scalar") or "scalar"),
         text_embedding_dim=_resolve_text_embedding_dim(args),
         text_adapter_dim=_resolved_text_adapter_dim(args),
         output_mode=output_mode,

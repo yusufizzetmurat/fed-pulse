@@ -95,9 +95,10 @@ class ForecasterBase(nn.Module):
                 "use_chunk_attention and use_llm_embeddings are mutually exclusive. "
                 "Set at most one to True."
             )
-        if text_channel not in {"scalar", "embeddings"}:
+        if text_channel not in {"scalar", "embeddings", "per_bar"}:
             raise ValueError(
-                f"Unknown text_channel: {text_channel!r}. Allowed: scalar, embeddings"
+                f"Unknown text_channel: {text_channel!r}. "
+                "Allowed: scalar, embeddings, per_bar"
             )
         self.model_type = model_type
         self.input_size = input_size
@@ -291,6 +292,7 @@ def prepare_recurrent_input(
     credibility: torch.Tensor | None = None,
     text_embedding: torch.Tensor | None = None,
     text_embedding_missing: torch.Tensor | None = None,
+    text_embedding_per_bar: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Apply the optional input-side transforms before the recurrent core.
 
@@ -346,6 +348,61 @@ def prepare_recurrent_input(
             raise RuntimeError(
                 "text_adapter not initialised but text-embedding path is active"
             )
+        use_per_bar = (
+            model.text_channel == "per_bar" and text_embedding_per_bar is not None
+        )
+        if use_per_bar:
+            # #327 Arm A. The per-bar layout carries one pooled vector
+            # per lookback bar (``(B, T, in_dim)``); each bar is
+            # projected through the same adapter so the recurrent core
+            # consumes actual temporal text dynamics rather than the
+            # broadcast-static replication of a single pooled vector.
+            seq_len = x.shape[1]
+            assert text_embedding_per_bar is not None  # narrowed via use_per_bar
+            per_bar = text_embedding_per_bar
+            if per_bar.dim() != 3:
+                raise ValueError(
+                    "text_embedding_per_bar must be a 3D tensor "
+                    f"(B, T, in_dim); got {tuple(per_bar.shape)}"
+                )
+            if per_bar.shape[1] != seq_len:
+                raise ValueError(
+                    "text_embedding_per_bar sequence length must match the "
+                    f"market input sequence ({seq_len}); got {per_bar.shape[1]}"
+                )
+            if per_bar.shape[-1] != model.text_embedding_dim:
+                raise ValueError(
+                    "text_embedding_per_bar last-dim must be "
+                    f"{model.text_embedding_dim}; got {per_bar.shape[-1]}"
+                )
+            # Flatten (B, T, in_dim) -> (B*T, in_dim) so the adapter
+            # forward path stays a single Linear+LN+GELU call regardless
+            # of the per-bar broadcast.
+            b, t, in_dim = per_bar.shape
+            projected = model.text_adapter(per_bar.reshape(b * t, in_dim))
+            projected = projected.reshape(b, t, -1)
+            if text_embedding_missing is None:
+                missing_column_bar = torch.zeros(
+                    (b, t, 1), dtype=projected.dtype, device=projected.device
+                )
+            else:
+                missing_column_bar = text_embedding_missing
+                if missing_column_bar.dim() == 2:
+                    # ``(B, T)`` broadcasts to a per-bar mask.
+                    missing_column_bar = missing_column_bar.unsqueeze(-1)
+                elif missing_column_bar.dim() == 1:
+                    # ``(B,)`` -- tile to per-bar.
+                    missing_column_bar = (
+                        missing_column_bar.view(-1, 1, 1).expand(-1, t, 1).contiguous()
+                    )
+                missing_column_bar = missing_column_bar.to(
+                    dtype=projected.dtype, device=projected.device
+                )
+            keep_mask_bar = (1.0 - missing_column_bar).clamp_(min=0.0, max=1.0)
+            projected = projected * keep_mask_bar
+            text_slot_bar = torch.cat([projected, missing_column_bar], dim=-1)
+            x = torch.cat([x, text_slot_bar], dim=-1)
+            return x
         if text_embedding is None:
             raise ValueError(
                 "forecaster requires `text_embedding` when text_adapter_dim > 0"

@@ -163,6 +163,7 @@ def _build_model(
     model_config: ModelConfig | dict[str, Any] | None = None,
     *,
     device: torch.device | None = None,
+    text_adapter_warm_start: str | None = None,
 ) -> ForecasterModel:
     # Local import keeps ``app.models.factory`` cold until training fires,
     # which keeps the FastAPI singleton import path narrow.
@@ -170,6 +171,21 @@ def _build_model(
 
     resolved_config = _coerce_model_config(model_config)
     model = build_forecaster(resolved_config)
+    if text_adapter_warm_start:
+        # #327 warm-start. Replace the text adapter's zero-init weights
+        # with a state_dict fit on the (pooled text -> stance) proxy
+        # task so the recurrent core sees a real gradient through the
+        # text path from epoch 0.
+        adapter = getattr(model, "text_adapter", None)
+        if adapter is not None:
+            from app.models.text_adapter_warm_start import (  # noqa: PLC0415
+                load_warm_start_into_adapter,
+            )
+
+            warm_meta = load_warm_start_into_adapter(
+                adapter, text_adapter_warm_start, strict=False
+            )
+            model.text_adapter_warm_start = warm_meta  # type: ignore[assignment]
     if device is not None:
         model = model.to(device)
     # The factory may return MultiModalForecasterModel under
@@ -2340,6 +2356,7 @@ def train_model(
     use_amp: bool = True,
     lr_schedule: str = "plateau",
     use_class_weights: bool = True,
+    text_adapter_warm_start: str | None = None,
 ) -> TrainingResult:
     # ``validation_split`` is the legacy kwarg name; ``validation_fraction``
     # is the canonical one across the CLI, the training loop, and the
@@ -2747,7 +2764,15 @@ def train_model(
             fallback_in_dim=fallback_text_in_dim,
         )
         if x is None or y is None:
-            model = copy.deepcopy(base_model).to(device_obj) if base_model is not None else _build_model(active_model_config, device=device_obj)
+            model = (
+                copy.deepcopy(base_model).to(device_obj)
+                if base_model is not None
+                else _build_model(
+                    active_model_config,
+                    device=device_obj,
+                    text_adapter_warm_start=text_adapter_warm_start,
+                )
+            )
             model.eval()
             return TrainingResult(
                 model=model,
@@ -2834,7 +2859,15 @@ def train_model(
     # Empty-tensor guard for the walk-forward branch. The legacy branch
     # already short-circuits above on (x, y) == (None, None).
     if walk_forward_path and (train_x is None or train_y is None):
-        model = copy.deepcopy(base_model).to(device_obj) if base_model is not None else _build_model(active_model_config, device=device_obj)
+        model = (
+            copy.deepcopy(base_model).to(device_obj)
+            if base_model is not None
+            else _build_model(
+                active_model_config,
+                device=device_obj,
+                text_adapter_warm_start=text_adapter_warm_start,
+            )
+        )
         model.eval()
         return TrainingResult(
             model=model,
@@ -3023,7 +3056,11 @@ def train_model(
     work_model = (
         copy.deepcopy(base_model).to(device_obj)
         if base_model is not None
-        else _build_model(active_model_config, device=device_obj)
+        else _build_model(
+            active_model_config,
+            device=device_obj,
+            text_adapter_warm_start=text_adapter_warm_start,
+        )
     )
     work_model.train()
     # AdamW best-practice param-group split (BERT-era convention).

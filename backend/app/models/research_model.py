@@ -177,6 +177,7 @@ class ForecasterResearchModel(ForecasterBase):
         credibility: torch.Tensor | None = None,
         text_embedding: torch.Tensor | None = None,
         text_embedding_missing: torch.Tensor | None = None,
+        text_embedding_per_bar: torch.Tensor | None = None,
     ) -> torch.Tensor:
         x = prepare_recurrent_input(
             self,
@@ -187,6 +188,7 @@ class ForecasterResearchModel(ForecasterBase):
             credibility=credibility,
             text_embedding=text_embedding,
             text_embedding_missing=text_embedding_missing,
+            text_embedding_per_bar=text_embedding_per_bar,
         )
         pooled_step = self._encode(x)
         if self.output_mode == "classification":
@@ -221,6 +223,7 @@ class ForecasterResearchModel(ForecasterBase):
         credibility: torch.Tensor | None = None,
         text_embedding: torch.Tensor | None = None,
         text_embedding_missing: torch.Tensor | None = None,
+        text_embedding_per_bar: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """Run the forward pass and return the full multi-task dict.
 
@@ -243,6 +246,7 @@ class ForecasterResearchModel(ForecasterBase):
             credibility=credibility,
             text_embedding=text_embedding,
             text_embedding_missing=text_embedding_missing,
+            text_embedding_per_bar=text_embedding_per_bar,
         )
         pooled_step = self._encode(x)
         multi_task: dict[str, torch.Tensor] = self.head(pooled_step)

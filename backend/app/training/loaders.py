@@ -2724,6 +2724,109 @@ def _build_text_embedding_tensors(
     return pooled_tensor, missing_tensor, in_dim
 
 
+def build_per_bar_text_tensor(
+    sequence_groups: Sequence[Sequence[FeatureVector]],
+    *,
+    fallback_in_dim: int = 0,
+    sequence_length: int = SEQUENCE_LENGTH,
+) -> tuple[torch.Tensor | None, torch.Tensor | None, int]:
+    """Materialise the per-bar text payload triple for issue #327 Arm A.
+
+    For each supervised window the helper emits a ``(num_windows, T,
+    in_dim)`` pooled tensor + a ``(num_windows, T)`` missing-flag
+    tensor where ``T = sequence_length``. The per-bar payload is read
+    off ``FeatureVector.text_per_bar`` when the loader populated it
+    upstream; otherwise the helper falls back to tile-replicating the
+    last prior bar's ``text_embedding_pooled`` across every bar in the
+    lookback so the broadcast-static path stays bit-equivalent to the
+    Arm A wiring (the parity test in
+    ``tests/unit/test_text_path_arms.py`` exercises this branch).
+
+    Returns ``(None, None, 0)`` when no sequence carries a pooled
+    embedding AND no ``fallback_in_dim`` is supplied; callers then
+    skip the per-bar kwarg on the model forward.
+    """
+
+    in_dim = 0
+    for sequence_group in sequence_groups:
+        for item in sequence_group:
+            per_bar = getattr(item, "text_per_bar", None)
+            if per_bar:
+                first_row = next((row for row in per_bar if row), None)
+                if first_row:
+                    in_dim = len(first_row)
+                    break
+            pooled = getattr(item, "text_embedding_pooled", None) or []
+            if pooled:
+                in_dim = len(pooled)
+                break
+        if in_dim:
+            break
+    if in_dim == 0:
+        if fallback_in_dim <= 0:
+            return None, None, 0
+        in_dim = int(fallback_in_dim)
+
+    per_bar_rows: list[list[list[float]]] = []
+    missing_rows: list[list[float]] = []
+    for sequence_group in sequence_groups:
+        if len(sequence_group) < sequence_length + 1:
+            continue
+        for idx in range(sequence_length, len(sequence_group)):
+            window = list(sequence_group[idx - sequence_length : idx])
+            per_bar_payload: list[list[float]] = []
+            missing_flags: list[float] = []
+            # Anchor the broadcast fallback to the last prior bar so the
+            # tile-replicate matches the broadcast-static path the
+            # baseline arm consumes.
+            anchor = sequence_group[idx - 1]
+            anchor_pooled = list(
+                getattr(anchor, "text_embedding_pooled", []) or []
+            )
+            anchor_missing = float(
+                getattr(anchor, "text_embedding_missing", 1.0)
+            )
+            if not anchor_pooled or len(anchor_pooled) != in_dim:
+                anchor_pooled = [0.0] * in_dim
+                anchor_missing = 1.0
+            window_per_bar = getattr(anchor, "text_per_bar", None)
+            for bar_idx, bar in enumerate(window):
+                bar_pooled: list[float] | None = None
+                bar_missing: float | None = None
+                if window_per_bar and bar_idx < len(window_per_bar):
+                    candidate = window_per_bar[bar_idx]
+                    if (
+                        isinstance(candidate, list)
+                        and len(candidate) == in_dim
+                    ):
+                        bar_pooled = [float(v) for v in candidate]
+                        bar_missing = 0.0
+                if bar_pooled is None:
+                    bar_pooled_attr = getattr(bar, "text_embedding_pooled", None)
+                    if (
+                        isinstance(bar_pooled_attr, list)
+                        and len(bar_pooled_attr) == in_dim
+                    ):
+                        bar_pooled = [float(v) for v in bar_pooled_attr]
+                        bar_missing = float(
+                            getattr(bar, "text_embedding_missing", 1.0)
+                        )
+                if bar_pooled is None:
+                    bar_pooled = list(anchor_pooled)
+                    bar_missing = anchor_missing
+                per_bar_payload.append(bar_pooled)
+                missing_flags.append(float(bar_missing or 0.0))
+            per_bar_rows.append(per_bar_payload)
+            missing_rows.append(missing_flags)
+
+    if not per_bar_rows:
+        return None, None, in_dim
+
+    per_bar_tensor = torch.tensor(per_bar_rows, dtype=torch.float32)
+    missing_tensor = torch.tensor(missing_rows, dtype=torch.float32)
+    return per_bar_tensor, missing_tensor, in_dim
+
+
 def _split_train_validation(
     x: torch.Tensor,
     y: torch.Tensor,

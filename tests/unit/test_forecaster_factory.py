@@ -23,7 +23,11 @@ def _fresh(seed: int = 11) -> None:
     torch.manual_seed(seed)
 
 
-def test_registry_lists_eight_architectures() -> None:
+def test_registry_lists_nine_architectures() -> None:
+    # #327 added ``flat_mlp`` as Arm B of the text-path A/B comparison.
+    # Older callers that iterate the registry to dispatch a recurrent
+    # core should filter out ``flat_mlp`` explicitly -- it has no
+    # recurrent core to dispatch.
     assert set(FORECASTER_ARCHITECTURES) == {
         "lstm",
         "lstm_attn",
@@ -33,6 +37,7 @@ def test_registry_lists_eight_architectures() -> None:
         "dlinear",
         "informer",
         "tft",
+        "flat_mlp",
     }
 
 
@@ -60,7 +65,12 @@ def test_each_architecture_emits_two_outputs(architecture: str) -> None:
     config = ModelConfig(architecture=architecture)
     model = build_forecaster(config)
     model.eval()
-    assert isinstance(model, ForecasterModel)
+    # ``flat_mlp`` is a research-only Arm B class that does not subclass
+    # ForecasterResearchModel (no recurrent core). The shape contract
+    # below still holds across all nine architectures, but the class
+    # check only applies to the eight recurrent variants.
+    if architecture != "flat_mlp":
+        assert isinstance(model, ForecasterModel)
     assert model.model_type == architecture
 
     batch = 4
