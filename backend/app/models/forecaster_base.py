@@ -12,6 +12,8 @@ serving class.
 
 from __future__ import annotations
 
+from typing import cast
+
 import torch
 from torch import nn
 
@@ -208,10 +210,10 @@ class ForecasterBase(nn.Module):
                     "recurrent_attention not initialised but lstm_attn variant is active"
                 )
             pooled_step, _ = self.recurrent_attention(output)
-            return pooled_step
+            return cast(torch.Tensor, pooled_step)
         if self.uses_mean_pool:
-            return output.mean(dim=1)
-        return output[:, -1, :]
+            return cast(torch.Tensor, output.mean(dim=1))
+        return cast(torch.Tensor, output[:, -1, :])
 
     @staticmethod
     def _build_recurrent_core(
