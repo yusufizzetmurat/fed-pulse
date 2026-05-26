@@ -1,0 +1,9 @@
+{
+  "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
+  "head_mode": "dual",
+  "metric": "regime_f1_macro",
+  "reference_value": 0.419,
+  "tolerance": 0.005,
+  "source_artefact": "backend/artifacts/experiments/dual_head_comparison_canonical.json",
+  "source_artefact_cell": "summary.dual.regime_f1_macro.mean"
+}
