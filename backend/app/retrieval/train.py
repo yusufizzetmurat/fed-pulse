@@ -68,7 +68,7 @@ import numpy as np
 import pandas as pd
 
 from app.config import DATA_DIR
-from app.models.registry import encoder_ref
+from app.models.registry import encoder_ref, resolve_by_role
 from app.retrieval.index import (
     EXCERPT_CHARS,
     MAX_TEXT_CHARS,
@@ -77,7 +77,23 @@ from app.retrieval.index import (
 
 _logger = logging.getLogger(__name__)
 
-DEFAULT_BASE_ENCODER_ALIAS = "finbert_fed_adjacent_xbank_dapt"
+
+def _default_retrieval_base_alias() -> str:
+    """Resolve the canonical ``role: retrieval`` encoder (ADR 0019).
+
+    Falls back to the historical hard-coded alias if the registry has
+    no ``role: retrieval`` tag (e.g. a future registry rewrite that
+    drops the role-tagging convention) so the retrieval entrypoint
+    keeps booting on legacy configs.
+    """
+
+    try:
+        return resolve_by_role("retrieval")
+    except KeyError:
+        return "finbert_fed_adjacent_xbank_dapt"
+
+
+DEFAULT_BASE_ENCODER_ALIAS = _default_retrieval_base_alias()
 DEFAULT_OUTPUT_ROOT = DATA_DIR / "artifacts" / "retrieval"
 DEFAULT_RUN_NAME = "finbert_fed_adjacent_xbank_dapt_retrieval"
 DEFAULT_MAX_LENGTH = 256
