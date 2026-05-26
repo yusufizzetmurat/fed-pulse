@@ -26,6 +26,7 @@ import dataclasses
 import logging
 import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date as date_type
 from pathlib import Path
@@ -196,7 +197,7 @@ def install_state(state: _AnalogsState) -> None:
 def build_state_from_index(
     index: LoadedIndex,
     *,
-    embed_fn,
+    embed_fn: Callable[[list[str]], Any],
     encoder_alias: str | None = None,
 ) -> _AnalogsState:
     """Convenience constructor for tests + smoke harnesses.
@@ -210,7 +211,7 @@ def build_state_from_index(
     """
 
     class _CallableModel:
-        def __init__(self, fn):
+        def __init__(self, fn: Callable[[list[str]], Any]) -> None:
             self._fn = fn
 
         def __call__(self, texts: list[str]) -> np.ndarray:
@@ -276,8 +277,8 @@ def encode_query(state: _AnalogsState, text: str) -> np.ndarray:
         out = state.model([cleaned])
         arr = np.asarray(out, dtype=np.float32)
         if arr.ndim == 2 and arr.shape[0] == 1:
-            return arr[0]
-        return arr.reshape(-1)
+            return np.asarray(arr[0], dtype=np.float32)
+        return np.asarray(arr.reshape(-1), dtype=np.float32)
 
     import torch
 
@@ -293,7 +294,7 @@ def encode_query(state: _AnalogsState, text: str) -> np.ndarray:
     with torch.no_grad():
         outputs = state.model(input_ids=input_ids, attention_mask=attention_mask)
     pooled = _mean_pool_last_hidden(outputs.last_hidden_state, attention_mask)
-    return pooled.reshape(-1).astype(np.float32, copy=False)
+    return np.asarray(pooled, dtype=np.float32).reshape(-1)
 
 
 def find_analogs(
