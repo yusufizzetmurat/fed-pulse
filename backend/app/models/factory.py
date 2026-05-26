@@ -178,7 +178,7 @@ def build_forecaster(
         # ``ModelConfig.from_model`` round-trips them onto the persisted
         # run summary the same way the recurrent path does.
         flat.encoder_lora = bool(resolved.encoder_lora)  # type: ignore[assignment]
-        flat.lora_curriculum_freeze_epoch = resolved.lora_curriculum_freeze_epoch
+        flat.lora_curriculum_freeze_epoch = resolved.lora_curriculum_freeze_epoch  # type: ignore[assignment]
         flat.multi_task_loss = bool(resolved.multi_task_loss)  # type: ignore[assignment]
         flat.multi_task_lambda_stance = float(resolved.multi_task_lambda_stance)  # type: ignore[assignment]
         flat.multi_task_lambda_factor = float(resolved.multi_task_lambda_factor)  # type: ignore[assignment]
