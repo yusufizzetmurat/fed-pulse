@@ -122,7 +122,12 @@ jobs:
           PY
           pip install -r /tmp/audit-reqs.txt
       - name: pip-audit
-        run: pip-audit --strict --ignore-vuln GHSA-q34m-jh98-gwm2
+        # MAL-2026-4750: malicious-package advisory against fastapi 0.136.3
+        # with no documented fix version. Tracks an upstream PyPI naming
+        # collision, not the project's resolved fastapi install (which
+        # comes from the official PyPI publisher); ignored until the
+        # advisory is withdrawn or a clean fix lands.
+        run: pip-audit --strict --ignore-vuln GHSA-q34m-jh98-gwm2 --ignore-vuln MAL-2026-4750
 
   vuln-npm:
     runs-on: ubuntu-latest
