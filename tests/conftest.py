@@ -8,3 +8,14 @@ BACKEND_DIR = ROOT / "backend"
 
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "slow: marks tests as slow (skip via -m 'not slow')",
+    )
+    config.addinivalue_line(
+        "markers",
+        "regression: marks tests that lock in the canonical training / serving contracts (run via -m regression)",
+    )
