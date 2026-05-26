@@ -564,6 +564,71 @@ def _parse_args() -> argparse.Namespace:
             "3-class head exhibits on single-seed runs."
         ),
     )
+    # #304 dual-head methodology. ``classification`` (default) is the
+    # pre-#304 byte-identical path; ``regression`` swaps in a log(RV)
+    # MSE head only; ``dual`` keeps both heads and trains the joint
+    # ``(1 - alpha) * CE + alpha * MSE`` loss.
+    parser.add_argument(
+        "--head-mode",
+        type=str,
+        choices=("classification", "regression", "dual"),
+        default="classification",
+        help=(
+            "Dual-head methodology selector (#304). ``classification`` "
+            "(default) keeps the pre-#304 3-class CE head as the only "
+            "output. ``regression`` mounts a "
+            "log(forward_realized_vol_10d) MSE head and drops the CE "
+            "contribution. ``dual`` keeps both heads and trains the joint "
+            "``(1 - alpha) * CE + alpha * MSE`` loss; requires "
+            "``--output-mode=classification``."
+        ),
+    )
+    parser.add_argument(
+        "--regression-alpha",
+        type=float,
+        default=0.5,
+        help=(
+            "Weight on the log(RV) MSE term in the dual-head joint loss "
+            "``(1 - alpha) * CE + alpha * MSE``. Only consumed when "
+            "``--head-mode=dual``; ``--head-mode=regression`` runs the "
+            "MSE alone and ``--head-mode=classification`` ignores the "
+            "value. Default 0.5 balances the two heads equally; tune "
+            "via the three-way comparison script."
+        ),
+    )
+    # #309 derived-text-features ablation. Default ``on`` is byte-
+    # identical to the pre-#309 path; ``off`` zeros the FeatureVector
+    # slots populated by the per-sentence multi-axis classifier so the
+    # forecaster head sees only the document-level encoder text path.
+    parser.add_argument(
+        "--use-derived-text-features",
+        dest="use_derived_text_features",
+        type=str,
+        choices=("on", "off"),
+        default="on",
+        help=(
+            "Toggle the per-sentence derived text features fed into the "
+            "forecaster head (#309). ``on`` (default) leaves the "
+            "FeatureVector slots populated as in the pre-#309 baseline. "
+            "``off`` zeros ``sentiment_score`` + the multi-axis stance / "
+            "certainty / topic slots so only the document-level encoder "
+            "path drives the forecaster. Used by "
+            "``scripts/run_derived_features_ablation.py`` for the three-way "
+            "comparison (baseline / ablation / replacement)."
+        ),
+    )
+    parser.add_argument(
+        "--no-derived-text-features",
+        dest="use_derived_text_features",
+        action="store_const",
+        const="off",
+        help=(
+            "Convenience alias for ``--use-derived-text-features=off``. "
+            "Mirrors the ``--no-time-decay`` / ``--no-class-weights`` "
+            "pattern so a sweep harness can flip the ablation with a "
+            "single boolean flag."
+        ),
+    )
     # Phase B (#227) LR schedule + sequence-length knobs.
     parser.add_argument(
         "--lr-schedule",
@@ -996,6 +1061,11 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
         multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
         class_weight_power=float(getattr(args, "class_weight_power", 1.0)),
+        head_mode=str(getattr(args, "head_mode", "classification") or "classification"),
+        regression_alpha=float(getattr(args, "regression_alpha", 0.5)),
+        use_derived_text_features=(
+            str(getattr(args, "use_derived_text_features", "on") or "on").lower() != "off"
+        ),
     )
 
 
@@ -1241,6 +1311,11 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                                 multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
                                 multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
                                 class_weight_power=float(getattr(args, "class_weight_power", 1.0)),
+                                head_mode=str(getattr(args, "head_mode", "classification") or "classification"),
+                                regression_alpha=float(getattr(args, "regression_alpha", 0.5)),
+                                use_derived_text_features=(
+                                    str(getattr(args, "use_derived_text_features", "on") or "on").lower() != "off"
+                                ),
                             ),
                             "learning_rate": float(hp["learning_rate"]),
                             "epochs": int(hp["epochs"]),
@@ -1342,6 +1417,11 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                         multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
                         multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
                         class_weight_power=float(getattr(args, "class_weight_power", 1.0)),
+                        head_mode=str(getattr(args, "head_mode", "classification") or "classification"),
+                        regression_alpha=float(getattr(args, "regression_alpha", 0.5)),
+                        use_derived_text_features=(
+                            str(getattr(args, "use_derived_text_features", "on") or "on").lower() != "off"
+                        ),
                     ),
                     "learning_rate": float(learning_rate),
                     "epochs": int(epochs),

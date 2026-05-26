@@ -56,6 +56,15 @@ class EvaluationMetrics:
     # ``gate_summary['n_rows']`` is the eval-partition row count the
     # summary was averaged over.
     gate_summary: dict[str, Any] | None = None
+    # #304 dual-head methodology surface. Populated whenever the
+    # forecaster carried a ``regression_head`` (``head_mode`` in
+    # ``regression`` / ``dual``). The pair is computed in log space --
+    # the head predicts ``log(forward_realized_vol_10d)`` and the
+    # target is the same -- so the units are dimensionless. ``None`` on
+    # classification-only runs so the legacy dataclass shape holds.
+    regression_rmse_log_rv: float | None = None
+    regression_mae_log_rv: float | None = None
+    regression_loss: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -98,6 +107,15 @@ class TrainingRunSummary:
     text_encoder: str | None = None
     text_adapter_dim: int = 0
     text_pool_lambda_inv_days: float = 0.0
+    # #304 dual-head: per-fold log_rv standardiser fitted on the train
+    # slice only. ``None`` on head_mode='classification' runs (the
+    # default) so the regression byte-identity contract holds. When
+    # head_mode in {regression, dual}, the dict carries
+    # ``{"mean": float, "std": float}`` so downstream consumers can
+    # invert the standardised regression head output (multiply by std,
+    # add mean, then ``exp(...)`` to recover the original
+    # ``forward_realized_vol_10d`` units).
+    log_rv_scaler: dict[str, float] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

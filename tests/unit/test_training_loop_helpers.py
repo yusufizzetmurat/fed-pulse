@@ -191,12 +191,13 @@ def test_maybe_compile_model_is_noop_when_disabled() -> None:
 def test_unpack_batch_two_element() -> None:
     batch_x = torch.zeros((4, 5, 6))
     batch_y = torch.zeros((4, 2))
-    x, y, text, missing, mt_aux = _unpack_batch((batch_x, batch_y))
+    x, y, text, missing, mt_aux, log_rv = _unpack_batch((batch_x, batch_y))
     assert x is batch_x
     assert y is batch_y
     assert text is None
     assert missing is None
     assert mt_aux is None
+    assert log_rv is None
 
 
 def test_unpack_batch_four_element() -> None:
@@ -204,15 +205,19 @@ def test_unpack_batch_four_element() -> None:
     batch_y = torch.zeros((4, 2))
     text = torch.zeros((4, 8))
     missing = torch.zeros((4, 1))
-    x, y, t, m, mt_aux = _unpack_batch((batch_x, batch_y, text, missing))
+    x, y, t, m, mt_aux, log_rv = _unpack_batch((batch_x, batch_y, text, missing))
     assert t is text
     assert m is missing
     assert mt_aux is None
+    assert log_rv is None
 
 
 def test_unpack_batch_rejects_unexpected_arity() -> None:
+    # Arity 3 / 5 / 9 / 11 became valid post-#304 (the dual-head log_rv
+    # slot composes with the prior shapes); pick 6 -- still
+    # unsupported -- so the negative-path coverage stays.
     with pytest.raises(ValueError, match="unexpected batch arity"):
-        _unpack_batch((torch.zeros(1), torch.zeros(1), torch.zeros(1)))
+        _unpack_batch(tuple(torch.zeros(1) for _ in range(6)))
 
 
 def test_evaluate_model_returns_inf_metrics_on_empty_loader() -> None:

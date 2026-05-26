@@ -76,6 +76,18 @@ class ForecasterModel(nn.Module):
         # path byte-identical.
         vol_regime_quantiles: tuple[float, ...] = (),
         vol_regime_target: str = "forward_realized_vol_10d",
+        # #304 dual-head methodology. ``classification`` (default) is the
+        # pre-#304 byte-identical path -- only the MultiTaskHead mounts
+        # and the CrossEntropy loss drives training. ``regression`` /
+        # ``dual`` mount a second linear head off the same pooled
+        # backbone output emitting a scalar log(RV) prediction; the
+        # training loop drives it with MSE on
+        # ``log(forward_realized_vol_10d)``. The classifier head still
+        # mounts in all three modes so the checkpoint shape stays
+        # stable and the existing conformal classification surface
+        # keeps working -- only the loss contribution and the persisted
+        # output dict differ across modes.
+        head_mode: str = "classification",
     ):
         """Forecaster LSTM with optional text-feature variants.
 
@@ -131,6 +143,11 @@ class ForecasterModel(nn.Module):
         if output_mode == "classification" and int(n_classes) < 2:
             raise ValueError(
                 f"output_mode='classification' requires n_classes >= 2; got {n_classes}"
+            )
+        if head_mode not in {"classification", "regression", "dual"}:
+            raise ValueError(
+                f"Unknown head_mode: {head_mode!r}. "
+                "Allowed: classification, regression, dual"
             )
         self.model_type = model_type
         self.input_size = input_size
@@ -243,6 +260,7 @@ class ForecasterModel(nn.Module):
         self.n_classes = int(n_classes)
         self.vol_regime_quantiles = tuple(float(v) for v in vol_regime_quantiles or ())
         self.vol_regime_target = str(vol_regime_target or "forward_realized_vol_10d")
+        self.head_mode = str(head_mode)
         if output_mode == "classification":
             self.head: nn.Module = MultiTaskHead(
                 hidden_size=hidden_size,
@@ -250,6 +268,25 @@ class ForecasterModel(nn.Module):
                 dropout=dropout,
                 stance_classes=self.n_classes,
             )
+            # #304 dual-head methodology. Mount the log(RV) regression
+            # head only when the operator explicitly opts into the
+            # dual-head or regression-only path; the default
+            # head_mode='classification' leaves it ``None`` so the
+            # state_dict shape stays byte-identical to pre-#304
+            # checkpoints. The head consumes the same pooled backbone
+            # output the MultiTaskHead does so the comparison across
+            # head_mode configurations measures only the head + loss
+            # contribution, not the backbone capacity.
+            if self.head_mode in {"regression", "dual"}:
+                self.regression_head: nn.Module | None = nn.Sequential(
+                    nn.LayerNorm(hidden_size),
+                    nn.Linear(hidden_size, head_hidden_size),
+                    nn.GELU(),
+                    nn.Dropout(dropout),
+                    nn.Linear(head_hidden_size, 1),
+                )
+            else:
+                self.regression_head = None
         else:
             self.head = nn.Sequential(
                 nn.LayerNorm(hidden_size),
@@ -258,6 +295,11 @@ class ForecasterModel(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(head_hidden_size, 2),
             )
+            # The #304 log(RV) head is only meaningful on the
+            # classification branch (which carries the
+            # forward_realized_vol_10d target); regression-output mode
+            # already emits (close, vol) and ignores head_mode entirely.
+            self.regression_head = None
 
     def forward(
         self,
@@ -365,9 +407,25 @@ class ForecasterModel(nn.Module):
         # (close, vol) head and softplus post-processing.
         if self.output_mode == "classification":
             multi_task = self.head(pooled_step)
-            self._last_multi_task = {
+            stashed: dict[str, torch.Tensor] = {
                 key: tensor.detach() for key, tensor in multi_task.items()
             }
+            # #304 dual-head: when the regression head is mounted, the
+            # standard forward path must emit its scalar log(RV)
+            # prediction so the /analyze inference path and any caller
+            # that uses ``model(x)`` rather than ``forward_multi_task``
+            # can read it off ``_last_multi_task['log_rv']``. The
+            # ``_skip_regression_head`` runtime flag opts the training
+            # loop out of the regression head's forward at the dual +
+            # alpha=0 boundary so the alpha=0 byte-identity contract
+            # holds against pure classification.
+            if (
+                self.regression_head is not None
+                and not bool(getattr(self, "_skip_regression_head", False))
+            ):
+                log_rv_pred = self.regression_head(pooled_step).squeeze(-1)
+                stashed["log_rv"] = log_rv_pred.detach()
+            self._last_multi_task = stashed
             return multi_task["stance"]  # type: ignore[no-any-return]
         raw = self.head(pooled_step)
         close = raw[:, 0:1]
@@ -465,7 +523,29 @@ class ForecasterModel(nn.Module):
             pooled_step = output.mean(dim=1)
         else:
             pooled_step = output[:, -1, :]
-        return self.head(pooled_step)  # type: ignore[no-any-return]
+        multi_task: dict[str, torch.Tensor] = self.head(pooled_step)
+        # #304 dual-head methodology. When the regression head is
+        # mounted (head_mode in {regression, dual}) emit the log(RV)
+        # scalar prediction alongside the four classification axes so
+        # the training loop's dual-head loss can pick it up off the
+        # same call. ``(B, 1)`` -> ``(B,)`` so downstream MSE / metric
+        # helpers can index without a redundant squeeze, matching the
+        # factor branch convention.
+        #
+        # The ``_skip_regression_head`` runtime flag lets the training
+        # loop opt out of the regression head's forward computation
+        # entirely (used when ``head_mode='dual'`` is paired with
+        # ``regression_alpha=0.0`` so the regression head produces no
+        # gradient and the dual + alpha=0 boundary is byte-identical
+        # to the pure classification path; symmetric to the ``alpha=1``
+        # case which skips the classifier branch on the loss side).
+        if (
+            self.regression_head is not None
+            and not bool(getattr(self, "_skip_regression_head", False))
+        ):
+            log_rv_pred = self.regression_head(pooled_step).squeeze(-1)
+            multi_task["log_rv"] = log_rv_pred
+        return multi_task
 
     def attention_diagnostics(
         self,
