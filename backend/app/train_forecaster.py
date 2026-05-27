@@ -368,6 +368,33 @@ def _parse_args() -> argparse.Namespace:
         action="store_false",
         help="Disable the macro-regime block + gate (no slot, no gate).",
     )
+    # #215 SEP dot-plot ingestion. Off by default so every existing
+    # sweep and the canonical determinism regression stay byte-identical;
+    # opting in attaches the 5-scalar SEP block (current-year /
+    # next-year / longer-run FFR median projections + current-year
+    # central-tendency range + release flag) to every supervised event
+    # and widens the recurrent core's input projection in lockstep. See
+    # ADR 0030.
+    parser.add_argument(
+        "--use-sep",
+        dest="use_sep",
+        action="store_true",
+        help=(
+            "Attach the 5-scalar SEP dot-plot block (FFR median projections "
+            "for current-year / next-year / longer-run + current-year "
+            "central-tendency range + release flag) to every event. "
+            "Forward-fills the most recent prior SEP on non-SEP meetings; "
+            "the release flag distinguishes fresh SEP meetings from "
+            "carry-forward rows. Default off; the per-bar feature size "
+            "widens by 6 (5 scalars + 1 missing flag) when on."
+        ),
+    )
+    parser.add_argument(
+        "--no-sep",
+        dest="use_sep",
+        action="store_false",
+        help="Disable the SEP dot-plot block (no slot, no widening).",
+    )
     parser.set_defaults(
         use_credibility=True,
         use_linguistic=True,
@@ -376,6 +403,7 @@ def _parse_args() -> argparse.Namespace:
         use_llm_features=False,
         use_retrieval_analogs=False,
         use_regime_conditioning=False,
+        use_sep=False,
     )
     # Phase 9 V2 (#195) classification dispatch. Default stays
     # ``regression`` so the existing ablation grid + determinism
@@ -1234,6 +1262,7 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
             getattr(args, "rates_target_mode", "raw") or "raw"
         ),
         use_regime_conditioning=bool(getattr(args, "use_regime_conditioning", False)),
+        use_sep=bool(getattr(args, "use_sep", False)),
     )
 
 
@@ -1493,6 +1522,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                                 use_regime_conditioning=bool(
                                     getattr(args, "use_regime_conditioning", False)
                                 ),
+                                use_sep=bool(getattr(args, "use_sep", False)),
                             ),
                             "learning_rate": float(hp["learning_rate"]),
                             "epochs": int(hp["epochs"]),
@@ -1608,6 +1638,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                         use_regime_conditioning=bool(
                             getattr(args, "use_regime_conditioning", False)
                         ),
+                        use_sep=bool(getattr(args, "use_sep", False)),
                     ),
                     "learning_rate": float(learning_rate),
                     "epochs": int(epochs),
@@ -2490,6 +2521,7 @@ def _run_sweep(
             "llm_features": bool(args.use_llm_features),
             "retrieval_analogs": bool(args.use_retrieval_analogs),
             "regime_conditioning": bool(args.use_regime_conditioning),
+            "sep": bool(args.use_sep),
         },
         "text_embeddings": {
             "encoder": text_encoder_arg,
@@ -2569,7 +2601,8 @@ def main() -> int:
             f"mp_surprise={args.use_mp_surprise}, multi_axis={args.use_multi_axis}, "
             f"llm_features={args.use_llm_features}, "
             f"retrieval_analogs={args.use_retrieval_analogs}, "
-            f"regime_conditioning={args.use_regime_conditioning})"
+            f"regime_conditioning={args.use_regime_conditioning}, "
+            f"sep={args.use_sep})"
         )
         # Multi-encoder mode loads one set of splits per alias so each
         # sweep cell can pull its arm's embeddings without re-walking
@@ -2626,6 +2659,7 @@ def main() -> int:
                         use_llm_features=bool(args.use_llm_features),
                         use_retrieval_analogs=bool(args.use_retrieval_analogs),
                         use_regime_conditioning=bool(args.use_regime_conditioning),
+                        use_sep=bool(args.use_sep),
                         text_encoder=encoder_arg,
                         text_adapter_dim=int(args.text_adapter_dim),
                         text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
@@ -2677,6 +2711,7 @@ def main() -> int:
                     use_llm_features=bool(args.use_llm_features),
                     use_retrieval_analogs=bool(args.use_retrieval_analogs),
                     use_regime_conditioning=bool(args.use_regime_conditioning),
+                    use_sep=bool(args.use_sep),
                     text_encoder=encoder_arg,
                     text_adapter_dim=int(args.text_adapter_dim),
                     text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),

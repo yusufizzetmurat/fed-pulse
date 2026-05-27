@@ -657,6 +657,98 @@ def _read_linguistic_lookup(package_dir: Path) -> dict[str, list[float]]:
     return lookup
 
 
+def _read_sep_projections_lookup(
+    package_dir: Path,
+) -> dict[str, dict[str, Any]]:
+    """Return ``meeting_date -> {ffr_median_*, ffr_central_tendency_*}``.
+
+    Looks first inside the training package and then under the canonical
+    location ``data/external/fred/sep_projections.parquet``. Date keys
+    are ``YYYY-MM-DD`` strings to match the SEP composer's
+    ``meeting_date`` field. Each value carries the five scalar columns
+    the composer reads (current-year median + next-year median +
+    longer-run median + current-year central-tendency upper/lower).
+
+    Returns an empty dict when no parquet is found. The composer then
+    returns ``None`` for every event and the loader collapses the slot
+    to the all-zeros + missing-flag-1.0 state (graceful degrade — the
+    code path stays live without the parquet on disk). See #215.
+    """
+
+    import pandas as pd
+
+    candidates = (
+        package_dir / "sep_projections.parquet",
+        DATA_DIR / "external" / "fred" / "sep_projections.parquet",
+    )
+    parquet_path: Path | None = None
+    for candidate in candidates:
+        if candidate.exists():
+            parquet_path = candidate
+            break
+    if parquet_path is None:
+        return {}
+    frame = pd.read_parquet(parquet_path)
+    if "meeting_date" not in frame.columns:
+        return {}
+    lookup: dict[str, dict[str, Any]] = {}
+    for record in frame.to_dict("records"):
+        meeting_raw = record.get("meeting_date")
+        if meeting_raw is None:
+            continue
+        meeting_str = str(meeting_raw)[:10]
+        if not meeting_str:
+            continue
+        lookup[meeting_str] = {
+            "meeting_date": meeting_str,
+            "ffr_median_current_year": _coerce_finite_float(
+                record.get("ffr_median_current_year")
+            ),
+            "ffr_median_next_year": _coerce_finite_float(
+                record.get("ffr_median_next_year")
+            ),
+            "ffr_median_longer_run": _coerce_finite_float(
+                record.get("ffr_median_longer_run")
+            ),
+            "ffr_central_tendency_upper_current": _coerce_finite_float(
+                record.get("ffr_central_tendency_upper_current")
+            ),
+            "ffr_central_tendency_lower_current": _coerce_finite_float(
+                record.get("ffr_central_tendency_lower_current")
+            ),
+        }
+    return lookup
+
+
+def _compute_sep_features_for_event(
+    *,
+    event_date: datetime.date,
+    sep_lookup: dict[str, dict[str, Any]],
+) -> list[float] | None:
+    """Per-event #215 SEP feature block -- strict-prior by construction.
+
+    Returns the 5-scalar block (current-year / next-year / longer-run
+    medians + central-tendency range + release flag) when the lookup
+    carries an SEP release on or before ``event_date``; returns ``None``
+    on cold-start (no eligible release). The caller treats ``None`` as
+    "no signal" and flips the missing flag to 1.0.
+
+    The composer reads strictly-prior or T-snapshot rows only; see
+    :mod:`app.training.sep_features` for the per-feature contract and
+    ``docs/feature-provenance-audit.md`` for the audit row.
+    """
+
+    from app.training.sep_features import compute_sep_features_for_event
+
+    features = compute_sep_features_for_event(
+        event_date=event_date,
+        sep_lookup=sep_lookup,
+    )
+    if features is None:
+        return None
+    return features.as_list()
+
+
 def _read_mp_surprise_lookup(
     package_dir: Path,
 ) -> dict[str, dict[str, float]]:
@@ -1493,6 +1585,7 @@ def _load_package_sequences_with_metadata(
     use_llm_features: bool = False,
     use_retrieval_analogs: bool = False,
     use_regime_conditioning: bool = False,
+    use_sep: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -1543,6 +1636,12 @@ def _load_package_sequences_with_metadata(
     # fire under ``--no-rich-features --rates-target-mode=fomc_attributable``.
     mp_surprise_lookup: dict[str, dict[str, float]] = _read_mp_surprise_lookup(
         package_dir
+    )
+    # #215 SEP dot-plot lookup. Loaded only when the opt-in flag fires so
+    # the legacy / opt-out path stays byte-identical to pre-#215 (a
+    # parquet on disk doesn't change behaviour unless --use-sep is set).
+    sep_lookup: dict[str, dict[str, Any]] = (
+        _read_sep_projections_lookup(package_dir) if use_sep else {}
     )
     llm_lookup: dict[str, list[float]] = {}
     if rich_features:
@@ -1766,6 +1865,19 @@ def _load_package_sequences_with_metadata(
             )
         else:
             regime_block_list = None
+        # #215 SEP dot-plot block. Gated by ``use_sep`` so the legacy
+        # path stays byte-identical when the flag is off; the helper
+        # composes the 5-scalar block off the SEP-projections lookup,
+        # forward-filling the most recent prior SEP on non-SEP meetings
+        # and stamping ``sep_release_flag=1.0`` only on the meeting that
+        # actually refreshed the projections.
+        if use_sep:
+            sep_block_list = _compute_sep_features_for_event(
+                event_date=event_date,
+                sep_lookup=sep_lookup,
+            )
+        else:
+            sep_block_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
             vector.target_yield_2y_change_5d = rates_2y_value
@@ -1800,6 +1912,18 @@ def _load_package_sequences_with_metadata(
             else:
                 vector.macro_regime_features = None
                 vector.macro_regime_features_missing = 1.0
+            # #215 SEP block broadcast onto every bar. Same conditional-
+            # emission contract as the regime block: a ``None`` slot
+            # keeps ``as_rich_list`` from appending anything, so the
+            # default flag-off path preserves byte-identical pre-#215
+            # per-bar feature size. The block is appended after the
+            # regime block when both are populated.
+            if sep_block_list is not None:
+                vector.sep_features = list(sep_block_list)
+                vector.sep_features_missing = 0.0
+            else:
+                vector.sep_features = None
+                vector.sep_features_missing = 1.0
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -1862,6 +1986,7 @@ def load_walk_forward_split(
     use_llm_features: bool = False,
     use_retrieval_analogs: bool = False,
     use_regime_conditioning: bool = False,
+    use_sep: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -1939,6 +2064,7 @@ def load_walk_forward_split(
         use_llm_features=use_llm_features,
         use_retrieval_analogs=use_retrieval_analogs,
         use_regime_conditioning=use_regime_conditioning,
+        use_sep=use_sep,
         text_encoder=text_encoder,
         text_adapter_dim=text_adapter_dim,
         text_pool_lambda_inv_days=text_pool_lambda_inv_days,
@@ -2059,6 +2185,7 @@ def load_training_sequences_from_package(
     use_llm_features: bool = False,
     use_retrieval_analogs: bool = False,
     use_regime_conditioning: bool = False,
+    use_sep: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -2214,6 +2341,11 @@ def load_training_sequences_from_package(
     # silently null every projection.
     mp_surprise_lookup: dict[str, dict[str, float]] = _read_mp_surprise_lookup(
         package_dir
+    )
+    # #215 SEP lookup (legacy loader path mirror -- see the matched site
+    # in ``_load_package_sequences_with_metadata``).
+    sep_lookup: dict[str, dict[str, Any]] = (
+        _read_sep_projections_lookup(package_dir) if use_sep else {}
     )
     llm_lookup: dict[str, list[float]] = {}
     if rich_features:
@@ -2451,6 +2583,14 @@ def load_training_sequences_from_package(
             )
         else:
             regime_block_list = None
+        # #215 SEP block (matched site to the walk-forward loader path).
+        if use_sep:
+            sep_block_list = _compute_sep_features_for_event(
+                event_date=event_date,
+                sep_lookup=sep_lookup,
+            )
+        else:
+            sep_block_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
             vector.target_yield_2y_change_5d = rates_2y_value
@@ -2481,6 +2621,16 @@ def load_training_sequences_from_package(
             else:
                 vector.macro_regime_features = None
                 vector.macro_regime_features_missing = 1.0
+            # #215 SEP block broadcast onto every bar (matched site to
+            # the walk-forward loader path). Same conditional-emission
+            # contract; flag off keeps the byte-identical pre-#215
+            # per-bar feature size.
+            if sep_block_list is not None:
+                vector.sep_features = list(sep_block_list)
+                vector.sep_features_missing = 0.0
+            else:
+                vector.sep_features = None
+                vector.sep_features_missing = 1.0
         if rich_features:
             _attach_rich_features(
                 vectors,
