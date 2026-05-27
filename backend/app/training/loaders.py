@@ -666,9 +666,12 @@ def _read_mp_surprise_lookup(
     location ``data/external/fred/mp_surprises.parquet``. Date keys are
     ``YYYY-MM-DD`` strings to match the event-row ``event_date`` column
     formatting. The lookup carries the four scalar columns the loader
-    forwards into the rich-feature vector; the boolean
-    ``is_intermeeting`` flag is left as a Python bool so the broadcaster
-    can encode it as 0.0 / 1.0 at the bar level.
+    forwards into the rich-feature vector, plus the ``ff_target_prior``
+    column (the strict-prior band midpoint published the day before
+    each meeting's announcement) that the #307 macro-regime conditioning
+    helper consumes when scoring the trailing-12-month policy cycle.
+    The boolean ``is_intermeeting`` flag is left as a Python bool so
+    the broadcaster can encode it as 0.0 / 1.0 at the bar level.
 
     Returns an empty dict when no parquet is found. Callers then emit
     zeros + a missing flag for every row.
@@ -701,6 +704,16 @@ def _read_mp_surprise_lookup(
         level = _coerce_finite_float(record.get("mp_surprise_level"))
         path_factor = _coerce_finite_float(record.get("mp_surprise_path_factor"))
         fed_info = _coerce_finite_float(record.get("fed_info_factor"))
+        # ``ff_target_prior`` is the strict-prior band midpoint observed
+        # the day before each meeting's announcement. The #307 macro-
+        # regime helper reads it across trailing meetings to score the
+        # 12-month policy-cycle direction. Stored as ``NaN`` (not
+        # ``None`` and not ``0.0``) when missing so the dict value-type
+        # stays ``float`` (mypy happy) and the regime helper can drop
+        # the row via its ``v != v`` check rather than misread a
+        # placeholder zero as a real zero-rate observation.
+        target_prior_raw = _coerce_finite_float(record.get("ff_target_prior"))
+        target_prior = float("nan") if target_prior_raw is None else target_prior_raw
         is_intermeeting_raw = record.get("is_intermeeting")
         if isinstance(is_intermeeting_raw, bool):
             is_intermeeting = 1.0 if is_intermeeting_raw else 0.0
@@ -714,6 +727,7 @@ def _read_mp_surprise_lookup(
             "mp_surprise_path_factor": 0.0 if path_factor is None else path_factor,
             "fed_info_factor": 0.0 if fed_info is None else fed_info,
             "mp_is_intermeeting": is_intermeeting,
+            "ff_target_prior": target_prior,
         }
     return lookup
 
@@ -1225,6 +1239,58 @@ def _compute_analog_features_for_event(
     return summary.as_list()
 
 
+def _compute_macro_regime_features_for_event(
+    *,
+    event_date: datetime.date,
+    bars: Sequence[dict[str, Any]],
+    mp_surprise_lookup: dict[str, dict[str, Any]],
+) -> list[float] | None:
+    """Per-event #307 macro-regime indicators -- strict-prior throughout.
+
+    Returns the 3-scalar block (policy-cycle phase, VIX-level regime,
+    term-spread sign) when the strict-prior inputs are available;
+    returns ``None`` only when no meaningful trailing data can be read
+    (cold-start of the corpus on every input axis). The caller treats
+    ``None`` as "no signal" and flips the missing flag to 1.0.
+
+    Each scalar lives in ``{-1.0, 0.0, +1.0}`` so the gating layer
+    downstream consumes them without per-fold rescaling. See
+    :mod:`app.training.regime_features` for the per-feature contract
+    and ``docs/feature-provenance-audit.md`` for the audit row.
+    """
+
+    from app.training.regime_features import compute_macro_regime_features
+
+    vix_values: list[float] = []
+    tnx_last: float | None = None
+    irx_last: float | None = None
+    for bar in bars:
+        v = bar.get("vix_close")
+        if v is not None:
+            try:
+                vix_values.append(float(v))
+            except (TypeError, ValueError):
+                pass
+    if bars:
+        last_bar = bars[-1]
+        try:
+            tnx_last = float(last_bar.get("tnx_close", 0.0))
+        except (TypeError, ValueError):
+            tnx_last = None
+        try:
+            irx_last = float(last_bar.get("irx_close", 0.0))
+        except (TypeError, ValueError):
+            irx_last = None
+    features = compute_macro_regime_features(
+        event_date=event_date,
+        mp_surprise_lookup=mp_surprise_lookup,
+        prior_bar_vix_values=vix_values,
+        t_minus_one_tnx_close=tnx_last,
+        t_minus_one_irx_close=irx_last,
+    )
+    return features.as_list()
+
+
 def _read_events_frame(package_dir: Path) -> "Any":
     import pandas as pd
 
@@ -1426,6 +1492,7 @@ def _load_package_sequences_with_metadata(
     use_multi_axis: bool = True,
     use_llm_features: bool = False,
     use_retrieval_analogs: bool = False,
+    use_regime_conditioning: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -1685,6 +1752,20 @@ def _load_package_sequences_with_metadata(
             )
         else:
             analog_features_list = None
+        # #307 macro-regime block. Gated by ``use_regime_conditioning`` so
+        # the legacy path stays byte-identical when the flag is off; the
+        # helper composes the three strict-prior scalars off the MP-
+        # surprise lookup (policy-cycle phase) and the per-event prior
+        # bars (VIX tertile + 10y-3m spread sign). No new I/O, the data
+        # is already in scope. See ADR 0029.
+        if use_regime_conditioning:
+            regime_block_list = _compute_macro_regime_features_for_event(
+                event_date=event_date,
+                bars=bars,
+                mp_surprise_lookup=mp_surprise_lookup,
+            )
+        else:
+            regime_block_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
             vector.target_yield_2y_change_5d = rates_2y_value
@@ -1707,6 +1788,18 @@ def _load_package_sequences_with_metadata(
             else:
                 vector.analog_features = None
                 vector.analog_features_missing = 1.0
+            # #307 macro-regime block broadcast onto every bar. When the
+            # flag is off, ``regime_block_list`` is ``None`` and the
+            # slot stays at the all-zeros + missing=1.0 default; the
+            # conditional emission in ``FeatureVector.as_rich_list``
+            # then skips appending the block entirely, preserving the
+            # byte-identical pre-#307 per-bar feature size.
+            if regime_block_list is not None:
+                vector.macro_regime_features = list(regime_block_list)
+                vector.macro_regime_features_missing = 0.0
+            else:
+                vector.macro_regime_features = None
+                vector.macro_regime_features_missing = 1.0
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -1768,6 +1861,7 @@ def load_walk_forward_split(
     use_multi_axis: bool = True,
     use_llm_features: bool = False,
     use_retrieval_analogs: bool = False,
+    use_regime_conditioning: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -1844,6 +1938,7 @@ def load_walk_forward_split(
         use_multi_axis=use_multi_axis,
         use_llm_features=use_llm_features,
         use_retrieval_analogs=use_retrieval_analogs,
+        use_regime_conditioning=use_regime_conditioning,
         text_encoder=text_encoder,
         text_adapter_dim=text_adapter_dim,
         text_pool_lambda_inv_days=text_pool_lambda_inv_days,
@@ -1963,6 +2058,7 @@ def load_training_sequences_from_package(
     use_multi_axis: bool = True,
     use_llm_features: bool = False,
     use_retrieval_analogs: bool = False,
+    use_regime_conditioning: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -2345,6 +2441,16 @@ def load_training_sequences_from_package(
             )
         else:
             analog_features_list = None
+        # #307 macro-regime block (matched site to the walk-forward
+        # loader path). Default off keeps the legacy path byte-identical.
+        if use_regime_conditioning:
+            regime_block_list = _compute_macro_regime_features_for_event(
+                event_date=event_date,
+                bars=bars,
+                mp_surprise_lookup=mp_surprise_lookup,
+            )
+        else:
+            regime_block_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
             vector.target_yield_2y_change_5d = rates_2y_value
@@ -2367,6 +2473,14 @@ def load_training_sequences_from_package(
             else:
                 vector.analog_features = None
                 vector.analog_features_missing = 1.0
+            # #307 macro-regime block broadcast onto every bar (see the
+            # matched walk-forward loader site for the full contract).
+            if regime_block_list is not None:
+                vector.macro_regime_features = list(regime_block_list)
+                vector.macro_regime_features_missing = 0.0
+            else:
+                vector.macro_regime_features = None
+                vector.macro_regime_features_missing = 1.0
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -2439,10 +2553,19 @@ def fit_rich_feature_scaler_tensor(
 
     if train_x is None or train_x.numel() == 0:
         return None
-    if train_x.shape[-1] != RICH_FEATURE_SIZE:
+    # #307 widens the per-bar tensor past ``RICH_FEATURE_SIZE`` when the
+    # macro-regime block is attached. The scaler still fits + transforms
+    # only the legacy ``[FEATURE_SIZE:RICH_FEATURE_SIZE]`` slice -- the
+    # regime block (three signed scalars in {-1, 0, +1}) is already in a
+    # tight range and rides the model gate at its raw scale. Any tensor
+    # narrower than ``RICH_FEATURE_SIZE`` is the legacy 6-feature path
+    # the determinism regression pins, so the scaler returns ``None`` and
+    # the legacy training path stays byte-identical.
+    if train_x.shape[-1] < RICH_FEATURE_SIZE:
         return None
 
-    flat = train_x.reshape(-1, RICH_FEATURE_SIZE)
+    input_dim = int(train_x.shape[-1])
+    flat = train_x.reshape(-1, input_dim)
     rich_block = flat[:, FEATURE_SIZE:RICH_FEATURE_SIZE].detach().cpu().numpy()
     medians = np.median(rich_block, axis=0)
     q1 = np.quantile(rich_block, 0.25, axis=0)
@@ -2473,7 +2596,12 @@ def apply_rich_feature_scaler_tensor(
 
     if scaler is None or x is None or x.numel() == 0:
         return x
-    if x.shape[-1] != RICH_FEATURE_SIZE:
+    # See ``fit_rich_feature_scaler_tensor``: the per-bar tensor widens
+    # past ``RICH_FEATURE_SIZE`` when the #307 macro-regime block is
+    # attached, but the scaler still transforms the legacy slice only.
+    # Tensors narrower than ``RICH_FEATURE_SIZE`` are the legacy
+    # 6-feature path the determinism regression pins.
+    if x.shape[-1] < RICH_FEATURE_SIZE:
         return x
 
     medians = torch.tensor(scaler.medians, dtype=x.dtype, device=x.device)

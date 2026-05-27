@@ -343,6 +343,31 @@ def _parse_args() -> argparse.Namespace:
         action="store_false",
         help="Disable the retrieval-analog block (zeros + missing=1.0).",
     )
+    # #307 macro-regime conditioning. Off by default so every existing
+    # sweep and the canonical determinism regression stay byte-identical;
+    # opting in attaches the 3-scalar strict-prior macro-regime block to
+    # every supervised event and mounts a multiplicative gating layer
+    # over the rich-feature slice that the regime indicators modulate.
+    # See ADR 0029.
+    parser.add_argument(
+        "--use-regime-conditioning",
+        dest="use_regime_conditioning",
+        action="store_true",
+        help=(
+            "Attach the 3-scalar macro-regime indicator block (policy-cycle "
+            "phase, VIX-level regime, term-spread sign) to every event and "
+            "mount the multiplicative gate over the rich-feature slice. "
+            "Default off; the gate is initialised so its output is 1.0 at "
+            "start of training, so a hot-flip without re-init still produces "
+            "a byte-identical forward pass."
+        ),
+    )
+    parser.add_argument(
+        "--no-regime-conditioning",
+        dest="use_regime_conditioning",
+        action="store_false",
+        help="Disable the macro-regime block + gate (no slot, no gate).",
+    )
     parser.set_defaults(
         use_credibility=True,
         use_linguistic=True,
@@ -350,6 +375,7 @@ def _parse_args() -> argparse.Namespace:
         use_multi_axis=True,
         use_llm_features=False,
         use_retrieval_analogs=False,
+        use_regime_conditioning=False,
     )
     # Phase 9 V2 (#195) classification dispatch. Default stays
     # ``regression`` so the existing ablation grid + determinism
@@ -1108,7 +1134,14 @@ def _resolved_input_size(args: argparse.Namespace) -> int:
     rich_on = bool(getattr(args, "rich_features", False))
     use_package_path = bool(getattr(args, "training_package_id", None))
     if rich_on and use_package_path:
-        return RICH_FEATURE_SIZE
+        # #307 widens the per-bar scalar slice past RICH_FEATURE_SIZE
+        # when ``--use-regime-conditioning`` is wired, so the model
+        # input projection mounts wide enough to consume the regime
+        # block + missing flag the loader appends past the legacy tail.
+        from app.models.config import rich_feature_size_with_regime
+        return rich_feature_size_with_regime(
+            bool(getattr(args, "use_regime_conditioning", False))
+        )
     return FEATURE_SIZE
 
 
@@ -1203,6 +1236,7 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         rates_target_mode=str(
             getattr(args, "rates_target_mode", "raw") or "raw"
         ),
+        use_regime_conditioning=bool(getattr(args, "use_regime_conditioning", False)),
     )
 
 
@@ -1459,6 +1493,9 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                                 rates_target_mode=str(
                                     getattr(args, "rates_target_mode", "raw") or "raw"
                                 ),
+                                use_regime_conditioning=bool(
+                                    getattr(args, "use_regime_conditioning", False)
+                                ),
                             ),
                             "learning_rate": float(hp["learning_rate"]),
                             "epochs": int(hp["epochs"]),
@@ -1570,6 +1607,9 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                         rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
                         rates_target_mode=str(
                             getattr(args, "rates_target_mode", "raw") or "raw"
+                        ),
+                        use_regime_conditioning=bool(
+                            getattr(args, "use_regime_conditioning", False)
                         ),
                     ),
                     "learning_rate": float(learning_rate),
@@ -2452,6 +2492,7 @@ def _run_sweep(
             "multi_axis": bool(args.use_multi_axis),
             "llm_features": bool(args.use_llm_features),
             "retrieval_analogs": bool(args.use_retrieval_analogs),
+            "regime_conditioning": bool(args.use_regime_conditioning),
         },
         "text_embeddings": {
             "encoder": text_encoder_arg,
@@ -2530,7 +2571,8 @@ def main() -> int:
             f"(credibility={args.use_credibility}, linguistic={args.use_linguistic}, "
             f"mp_surprise={args.use_mp_surprise}, multi_axis={args.use_multi_axis}, "
             f"llm_features={args.use_llm_features}, "
-            f"retrieval_analogs={args.use_retrieval_analogs})"
+            f"retrieval_analogs={args.use_retrieval_analogs}, "
+            f"regime_conditioning={args.use_regime_conditioning})"
         )
         # Multi-encoder mode loads one set of splits per alias so each
         # sweep cell can pull its arm's embeddings without re-walking
@@ -2586,6 +2628,7 @@ def main() -> int:
                         use_multi_axis=bool(args.use_multi_axis),
                         use_llm_features=bool(args.use_llm_features),
                         use_retrieval_analogs=bool(args.use_retrieval_analogs),
+                        use_regime_conditioning=bool(args.use_regime_conditioning),
                         text_encoder=encoder_arg,
                         text_adapter_dim=int(args.text_adapter_dim),
                         text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
@@ -2636,6 +2679,7 @@ def main() -> int:
                     use_multi_axis=bool(args.use_multi_axis),
                     use_llm_features=bool(args.use_llm_features),
                     use_retrieval_analogs=bool(args.use_retrieval_analogs),
+                    use_regime_conditioning=bool(args.use_regime_conditioning),
                     text_encoder=encoder_arg,
                     text_adapter_dim=int(args.text_adapter_dim),
                     text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),

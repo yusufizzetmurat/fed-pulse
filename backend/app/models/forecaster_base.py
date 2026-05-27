@@ -33,6 +33,8 @@ from app.models.config import (
     DEFAULT_INITIAL_DECAY_RATE,
     DEFAULT_NUM_LAYERS,
     FEATURE_SIZE,
+    RICH_FEATURE_SIZE,
+    RICH_MACRO_REGIME_DIM,
     SEQUENCE_LENGTH,
 )
 from app.models.dlinear import DLinear
@@ -84,6 +86,7 @@ class ForecasterBase(nn.Module):
         credibility_features: bool = False,
         text_embedding_dim: int = 0,
         text_adapter_dim: int = 0,
+        use_regime_conditioning: bool = False,
     ):
         super().__init__()
         if model_type not in _ALLOWED_MODEL_TYPES:
@@ -153,6 +156,28 @@ class ForecasterBase(nn.Module):
         # core broadcasts across every bar. The +1 (when active) is the
         # missing flag the loader emits when fewer than one prior
         # statement is available.
+        # #307 macro-regime conditioning. The gate is a small linear
+        # projection from the strict-prior regime block (3 scalars) onto
+        # a per-position multiplicative mask over the rich-feature slice
+        # ``[FEATURE_SIZE:RICH_FEATURE_SIZE]``. Initialised so the output
+        # is identically 1.0 at the start of training (weight and bias
+        # zero-init, ``2 * sigmoid(0) == 1.0``) so flipping the flag on
+        # without a model re-init still produces a byte-identical
+        # forward pass. The model only departs from the no-gate behaviour
+        # if the regime signal actually reduces the supervised loss.
+        # The block tail (positions past ``RICH_FEATURE_SIZE`` carrying
+        # the regime indicators + missing flag) is forwarded unchanged
+        # so the gate never gates its own conditioning input.
+        self.use_regime_conditioning = bool(use_regime_conditioning)
+        if self.use_regime_conditioning:
+            rich_slice_dim = RICH_FEATURE_SIZE - FEATURE_SIZE
+            self.regime_gate: nn.Linear | None = nn.Linear(
+                RICH_MACRO_REGIME_DIM, rich_slice_dim, bias=True
+            )
+            nn.init.zeros_(self.regime_gate.weight)
+            nn.init.zeros_(self.regime_gate.bias)
+        else:
+            self.regime_gate = None
         self.text_embedding_dim = int(text_embedding_dim or 0)
         self.text_adapter_dim = int(text_adapter_dim or 0)
         self._text_path_active = self.text_embedding_dim > 0 and self.text_adapter_dim > 0
@@ -306,6 +331,43 @@ def prepare_recurrent_input(
     ``ForecasterModel`` self-reference in error messages, so a single
     helper is a strict refactor.
     """
+    # #307 macro-regime conditioning gate. When wired, the per-bar tensor
+    # carries the regime block at its tail (3 scalars + 1 missing flag,
+    # positions ``[RICH_FEATURE_SIZE:RICH_FEATURE_SIZE + 4]``) by the
+    # loader's ``as_rich_list`` contract. The gate reads the 3 scalars,
+    # produces a per-position multiplicative mask over the legacy rich-
+    # feature slice ``[FEATURE_SIZE:RICH_FEATURE_SIZE]``, and applies it
+    # in place so the recurrent core sees a modulated rich-feature view.
+    # The mask is ``2 * sigmoid(linear(regime))``; the zero-init Linear
+    # makes the mask identically 1.0 at start of training, so the
+    # forward pass is byte-identical to the no-gate path until gradients
+    # push the gate off identity. The conditioning tail itself is left
+    # untouched and continues to flow into the recurrent core alongside
+    # the gated rich block -- the recurrent core therefore still sees
+    # which regime triggered the modulation, so its temporal dynamics can
+    # exploit the regime indicator on top of the gated mask.
+    regime_gate = getattr(model, "regime_gate", None)
+    if regime_gate is not None:
+        regime_dim_total = RICH_MACRO_REGIME_DIM + 1  # block + missing flag
+        if x.shape[-1] >= RICH_FEATURE_SIZE + regime_dim_total:
+            regime_input = x[..., -regime_dim_total:-1]
+            # Broadcast the per-bar regime block through the linear +
+            # sigmoid path. The bars within a sequence carry identical
+            # regime values (the loader broadcasts per event), so the
+            # gate output is constant across the time axis; we still
+            # compute it per bar so a future per-bar regime-shift loader
+            # path drops in without touching this branch.
+            gate_logits = regime_gate(regime_input)
+            gate = 2.0 * torch.sigmoid(gate_logits)
+            modulated = x[..., FEATURE_SIZE:RICH_FEATURE_SIZE] * gate
+            x = torch.cat(
+                [
+                    x[..., :FEATURE_SIZE],
+                    modulated,
+                    x[..., RICH_FEATURE_SIZE:],
+                ],
+                dim=-1,
+            )
     if model.use_time_decay:
         x = model.time_decay(x)
     _uses_pooler = model.use_chunk_attention or model.use_llm_embeddings
