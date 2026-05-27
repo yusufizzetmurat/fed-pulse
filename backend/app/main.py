@@ -259,14 +259,28 @@ def list_settings_checkpoints() -> SettingsCheckpointsResponse:
             collect_serving_forward_kwargs,
             read_sidecar,
         )
-
-        serving_kwargs: frozenset[str] = collect_serving_forward_kwargs(
-            ForecasterServingModel
-        ) or SERVING_FORWARD_KWARGS
     except Exception:  # pragma: no cover -- defensive
-        logger.warning("settings_checkpoints_serving_kwargs_probe_failed", exc_info=True)
-        serving_kwargs = frozenset()
+        # Hard import failure (genuinely broken env). Nothing to
+        # display; render every checkpoint row without a contract
+        # surface rather than mislabel the world.
+        logger.warning("settings_checkpoints_serving_kwargs_import_failed", exc_info=True)
+        serving_kwargs: frozenset[str] = frozenset()
         read_sidecar = None  # type: ignore[assignment]
+    else:
+        try:
+            serving_kwargs = (
+                collect_serving_forward_kwargs(ForecasterServingModel)
+                or SERVING_FORWARD_KWARGS
+            )
+        except Exception:  # pragma: no cover -- defensive
+            # Live-signature introspection failed but the imports landed.
+            # Fall back to the static constant per ADR 0025 so the
+            # settings page still renders meaningful supplied/required
+            # badges rather than painting every kwarg red.
+            logger.warning(
+                "settings_checkpoints_serving_kwargs_probe_failed", exc_info=True
+            )
+            serving_kwargs = SERVING_FORWARD_KWARGS
 
     for entry in sorted(MODELS_DIR.glob("*.pt"), key=lambda p: p.name):
         try:
