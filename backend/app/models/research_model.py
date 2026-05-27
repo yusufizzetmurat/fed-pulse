@@ -69,6 +69,7 @@ class ForecasterResearchModel(ForecasterBase):
         head_mode: str = "classification",
         rates_heads: tuple[str, ...] = (),
         use_regime_conditioning: bool = False,
+        use_sep: bool = False,
     ):
         if output_mode not in {"regression", "classification"}:
             raise ValueError(
@@ -102,6 +103,7 @@ class ForecasterResearchModel(ForecasterBase):
             text_embedding_dim=text_embedding_dim,
             text_adapter_dim=text_adapter_dim,
             use_regime_conditioning=use_regime_conditioning,
+            use_sep=use_sep,
         )
         # Head dispatch -- classification mounts the MultiTaskHead, the
         # optional log(RV) regression head, and the per-rates-head pair

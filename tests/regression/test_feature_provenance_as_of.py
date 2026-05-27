@@ -116,6 +116,10 @@ _SNAPSHOT_COLUMNS: tuple[str, ...] = (
     # itself rides on `macro_regime_features` (`list[float] | None`)
     # and is exempt below alongside the other list-payload fields.
     "macro_regime_features_missing",
+    # #215 SEP dot-plot missing flag. The 5-scalar block rides on
+    # `sep_features` (`list[float] | None`) and is exempt below
+    # alongside the other list-payload fields.
+    "sep_features_missing",
 )
 
 
@@ -286,6 +290,7 @@ def _audit_inventory_covers_every_field() -> set[str]:
         "llm_features",
         "analog_features",
         "macro_regime_features",
+        "sep_features",
         "rich_payload",
         "text_embedding_pooled",
         "text_embedding_missing",
