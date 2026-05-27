@@ -958,3 +958,36 @@ class TrajectoryResponse(BaseModel):
             "that the projection extrapolates beyond the fold."
         ),
     )
+    # Lift-vs-baseline badge fields (#332). Surface the verdict on
+    # whether the Transformer arm beats the strongest naive baseline
+    # (previous_stance / rolling_majority / small-LSTM) by >= 5pp
+    # directional accuracy on the canonical fold protocol. All three
+    # fields default to None / False so a bundle trained before #332
+    # remains back-compatible.
+    lift_vs_baseline: bool = Field(
+        default=False,
+        description=(
+            "True iff the Transformer arm beats the strongest naive "
+            "baseline (previous_stance / rolling_majority(3) / "
+            "small-LSTM) by >= 5pp directional accuracy on the "
+            "canonical fold protocol. False when the holdout slice is "
+            "empty, when the bundle predates #332, or when the lift "
+            "did not clear the threshold."
+        ),
+    )
+    delta_dir_acc: float | None = Field(
+        default=None,
+        description=(
+            "Transformer directional accuracy minus the strongest "
+            "naive baseline's directional accuracy. None when no "
+            "baseline comparison is available."
+        ),
+    )
+    baseline_used: str | None = Field(
+        default=None,
+        description=(
+            "Name of the strongest naive baseline the lift verdict "
+            "compared against. None when no baseline comparison is "
+            "available."
+        ),
+    )

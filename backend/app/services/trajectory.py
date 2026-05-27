@@ -48,6 +48,7 @@ NPZ_NAME = "embedding_index.npz"
 MODEL_NAME = "model.pt"
 MANIFEST_NAME = "manifest.json"
 CONFORMAL_NAME = "conformal.json"
+METRICS_NAME = "metrics.json"
 
 MAX_HISTORY_LENGTH = 60
 MAX_TEXT_CHARS = 4096
@@ -71,6 +72,13 @@ class _TrajectoryState:
     conformal_quantile: float | None
     conformal_alpha: float | None
     market_provider: Callable[[str], dict[str, float | None]] | None = None
+    # Lift-vs-baseline verdict (#332). Persisted to ``metrics.json``
+    # by the trainer; surfaced on the API envelope so the UI can render
+    # the "lift / no-lift" badge. All three default to None so a
+    # bundle trained before #332 reads through cleanly.
+    lift_vs_baseline: bool = False
+    delta_dir_acc: float | None = None
+    baseline_used: str | None = None
 
     @property
     def size(self) -> int:
@@ -138,6 +146,41 @@ def _load_npz_arrays(
     return embeddings, feature_mean, feature_std
 
 
+def _load_lift_check(bundle_dir: Path) -> tuple[bool, float | None, str | None]:
+    """Read the lift / no-lift verdict from the bundle's metrics.json (#332).
+
+    Returns ``(lift_vs_baseline, delta_dir_acc, baseline_used)``. A
+    missing / unreadable file degrades to ``(False, None, None)`` so
+    bundles trained before #332 surface a no-lift badge by default
+    instead of crashing the worker.
+    """
+
+    metrics_path = bundle_dir / METRICS_NAME
+    if not metrics_path.exists():
+        return False, None, None
+    try:
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except Exception:  # pragma: no cover
+        return False, None, None
+    lift_check = payload.get("lift_check") if isinstance(payload, dict) else None
+    if not isinstance(lift_check, dict):
+        return False, None, None
+    raw_lift = lift_check.get("lift_vs_baseline")
+    raw_delta = lift_check.get("delta_dir_acc")
+    raw_baseline = lift_check.get("baseline_used")
+    lift = bool(raw_lift) if raw_lift is not None else False
+    delta: float | None
+    if raw_delta is None:
+        delta = None
+    else:
+        try:
+            delta = float(raw_delta)
+        except (TypeError, ValueError):
+            delta = None
+    baseline_used = str(raw_baseline) if raw_baseline is not None else None
+    return lift, delta, baseline_used
+
+
 def _load_conformal(bundle_dir: Path) -> tuple[float | None, float | None]:
     conformal_path = bundle_dir / CONFORMAL_NAME
     if not conformal_path.exists():
@@ -184,6 +227,7 @@ def _load_state() -> _TrajectoryState | None:
         manifest = {}
 
     conformal_quantile, conformal_alpha = _load_conformal(bundle_dir)
+    lift_vs_baseline, delta_dir_acc, baseline_used = _load_lift_check(bundle_dir)
 
     return _TrajectoryState(
         model=model,
@@ -199,6 +243,9 @@ def _load_state() -> _TrajectoryState | None:
         bundle_dir=bundle_dir,
         conformal_quantile=conformal_quantile,
         conformal_alpha=conformal_alpha,
+        lift_vs_baseline=lift_vs_baseline,
+        delta_dir_acc=delta_dir_acc,
+        baseline_used=baseline_used,
     )
 
 
@@ -255,6 +302,9 @@ def build_state_for_tests(  # noqa: PLR0913 — keyword-only fixture knobs.
     conformal_quantile: float | None = None,
     conformal_alpha: float | None = None,
     market_provider: Callable[[str], dict[str, float | None]] | None = None,
+    lift_vs_baseline: bool = False,
+    delta_dir_acc: float | None = None,
+    baseline_used: str | None = None,
 ) -> _TrajectoryState:
     """Convenience constructor for tests / smoke harnesses."""
 
@@ -278,6 +328,9 @@ def build_state_for_tests(  # noqa: PLR0913 — keyword-only fixture knobs.
         conformal_quantile=conformal_quantile,
         conformal_alpha=conformal_alpha,
         market_provider=market_provider,
+        lift_vs_baseline=lift_vs_baseline,
+        delta_dir_acc=delta_dir_acc,
+        baseline_used=baseline_used,
     )
 
 
@@ -471,6 +524,9 @@ def project_trajectory(  # noqa: C901 — keep the branches inline so the data f
             "as_of_date": as_of_iso,
             "available": False,
             "warning": warning,
+            "lift_vs_baseline": bool(state.lift_vs_baseline),
+            "delta_dir_acc": state.delta_dir_acc,
+            "baseline_used": state.baseline_used,
         }
 
     padded_inputs, mask = pad_sequence(
@@ -520,6 +576,9 @@ def project_trajectory(  # noqa: C901 — keep the branches inline so the data f
         "as_of_date": as_of_iso,
         "available": True,
         "warning": warning,
+        "lift_vs_baseline": bool(state.lift_vs_baseline),
+        "delta_dir_acc": state.delta_dir_acc,
+        "baseline_used": state.baseline_used,
     }
 
 
