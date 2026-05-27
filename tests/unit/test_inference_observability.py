@@ -113,7 +113,9 @@ def test_settings_checkpoints_marks_legacy_absent_sidecar(tmp_path, monkeypatch)
     _write_toy_checkpoint(forecaster_ckpt)
     # No sidecar written -- pre-#341 legacy artefact.
 
-    monkeypatch.setattr(main_mod, "MODELS_DIR", models_dir)
+    import app.models.config as model_config_mod
+
+    monkeypatch.setattr(model_config_mod, "MODELS_DIR", models_dir)
     monkeypatch.setattr(
         forecaster_service, "BEST_MODEL_PATH", forecaster_ckpt
     )
