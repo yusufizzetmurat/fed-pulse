@@ -982,7 +982,12 @@ def persist_bundle(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only pe
         npz_arrays["pca_components"] = pca_components.astype(np.float32)
     _atomic_save_npz(npz_path, **npz_arrays)
 
-    save_model(model, config, out_dir / "model.pt")
+    save_model(
+        model,
+        config,
+        out_dir / "model.pt",
+        encoder_alias=encoder_alias,
+    )
 
     if metrics is not None:
         _atomic_write_text(
