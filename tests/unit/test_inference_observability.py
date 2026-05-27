@@ -277,9 +277,11 @@ def test_analyze_emits_structured_kwarg_log_line(monkeypatch, caplog):
     msg = matching[0].getMessage()
     assert "kwargs=" in msg
     assert "checkpoint=" in msg
+    assert "mode=" in msg
     # Regression-only toy model: no text path active -- kwargs list is
-    # empty (``kwargs= checkpoint=...``).
+    # empty (``kwargs= checkpoint=... mode=regression``).
     assert " kwargs= checkpoint=" in msg, msg
+    assert "mode=regression" in msg, msg
 
 
 def test_analyze_log_line_lists_kwargs_for_text_path(monkeypatch, caplog):
@@ -339,3 +341,55 @@ def test_analyze_log_line_lists_kwargs_for_text_path(monkeypatch, caplog):
     assert "credibility" in msg
     assert "text_embedding" in msg
     assert "text_embedding_missing" in msg
+
+
+def test_analyze_log_line_carries_output_mode(monkeypatch, caplog):
+    """The log line must include ``mode=<output_mode>`` so the operator
+    can distinguish "kwargs declared, forward invoked" (regression mode)
+    from "kwargs declared, forward short-circuited" (classification mode
+    -- the ``_predict_next_point`` early-return path)."""
+
+    model = _toy_serving_model()
+    # Flip the model into classification mode -- _predict_next_point
+    # will short-circuit to last-bar echo and NOT call the forward.
+    model.output_mode = "classification"  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(forecaster_service, "_model", model)
+    monkeypatch.setattr(forecaster_service, "_get_model", lambda: model)
+    monkeypatch.setattr(
+        forecaster_service,
+        "_conformal_manifest_for",
+        lambda _path: None,
+    )
+    monkeypatch.setattr(
+        forecaster_service,
+        "get_model_artifact_metadata",
+        lambda **_k: {},
+    )
+
+    from app.models.config import FeatureVector
+
+    vectors = [
+        FeatureVector(
+            date=f"2026-05-{day:02d}",
+            sentiment_score=0.0,
+            market_close=100.0,
+            market_volatility=0.01,
+        )
+        for day in range(1, 11)
+    ]
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=forecaster_service.__name__):
+        forecaster_service.forecast_quantitative_series(
+            vectors=vectors,
+            forecast_mode="fast",
+            horizon="1d",
+        )
+
+    matching = [
+        r for r in caplog.records if r.getMessage().startswith("analyze_serving_forward ")
+    ]
+    assert len(matching) == 1
+    msg = matching[0].getMessage()
+    assert "mode=classification" in msg, msg

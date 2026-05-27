@@ -723,8 +723,27 @@ async def analyze(payload: AnalyzeRequest):
         return response
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:  # pragma: no cover
+        # #342: contract-revalidation failures from _bootstrap_cold_start
+        # land here. Log the raw message but ship a structured detail
+        # carrying only the exception class -- the #341 review rule
+        # keeps raw str(exc) out of client-facing payloads.
+        logger.warning(
+            "analyze_runtime_error exception_class=%s detail=%s",
+            type(exc).__name__,
+            str(exc),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Analyze pipeline failed: serving runtime error",
+        ) from None
     except Exception as exc:  # pragma: no cover
-        raise HTTPException(status_code=500, detail=f"Analyze pipeline failed: {exc}") from exc
+        logger.exception(
+            "analyze_unexpected_exception exception_class=%s", type(exc).__name__
+        )
+        raise HTTPException(
+            status_code=500, detail="Analyze pipeline failed: unexpected error"
+        ) from None
 
 
 def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
@@ -771,12 +790,13 @@ def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
     # — without this reset the cold-start path would silently bind a
     # checkpoint whose sidecar declares an unknown kwarg.
     try:
-        from app.services import forecaster as forecaster_service
+        from app.services.forecaster import (
+            _get_model as _forecaster_get_model,
+            reset_singleton_for_revalidation,
+        )
 
-        with forecaster_service._model_lock:
-            forecaster_service._model = None
-            forecaster_service._model_artifact_metadata = None
-        forecaster_service._get_model()
+        reset_singleton_for_revalidation()
+        _forecaster_get_model()
     except RuntimeError:
         # Re-raise so the /analyze caller surfaces the contract failure
         # rather than swallowing it. ``/health`` already exposes the
@@ -1192,8 +1212,20 @@ async def analyze_market(payload: AnalyzeRequest) -> MarketReactionPanel:
     # fresh deploy hitting /analyze/market first does not surface
     # empty cards. Shared with /analyze via the _bootstrap_cold_start
     # helper.
+    # #342: cold-start now invokes the canonical loader for contract
+    # revalidation; a sidecar mismatch raises RuntimeError. Surface it
+    # symmetrically to /analyze — 503 with the structured-status detail
+    # (the message is a deliberate contract code, not raw exception
+    # text) so the operator sees the same shape on both endpoints.
     if not checkpoint_exists():
-        await run_in_threadpool(_bootstrap_cold_start, payload)
+        try:
+            await run_in_threadpool(_bootstrap_cold_start, payload)
+        except RuntimeError as exc:
+            logger.warning("analyze_market_cold_start_contract_mismatch detail=%s", str(exc))
+            raise HTTPException(
+                status_code=503,
+                detail="Market reaction panel unavailable: serving contract mismatch",
+            ) from None
 
     sentiment = analyze_text(payload.text)
     market_history = await run_in_threadpool(

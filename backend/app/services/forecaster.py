@@ -157,6 +157,24 @@ def get_contract_counters() -> dict[str, int]:
     return dict(_contract_counters)
 
 
+def reset_singleton_for_revalidation() -> None:
+    """#342: drop the cached singleton so the next ``_get_model`` cold-loads.
+
+    Used by ``_bootstrap_cold_start`` after the bootstrap-write path:
+    ``_set_singleton_after_train`` bypasses ``_validate_serving_contract``,
+    so the cold-start needs to round-trip through the canonical loader
+    to actually validate the freshly written sidecar. Lives here (not
+    in main.py) so the private singleton attributes stay encapsulated;
+    a future refactor of the storage shape only needs to update this
+    helper.
+    """
+
+    global _model, _model_artifact_metadata
+    with _model_lock:
+        _model = None
+        _model_artifact_metadata = None
+
+
 def _extract_missing_kwarg_from_typeerror(exc: TypeError) -> str | None:
     """Parse the kwarg name out of a python ``TypeError`` message.
 
@@ -570,14 +588,18 @@ def _log_serving_forward_kwargs(model: ForecasterServingModel) -> None:
     is greppable evidence of what the serving forward was called with
     on a given request. Format:
 
-        ``analyze_serving_forward kwargs=<a,b,c> checkpoint=<stem>``
+        ``analyze_serving_forward kwargs=<a,b,c> checkpoint=<stem> mode=<output_mode>``
 
     The kwargs list is empty (``kwargs=``) for the legacy 6-feature
     regression-only path; checkpoints with text + credibility + chunks
     paths active emit the full list. The checkpoint stem is taken from
     ``BEST_MODEL_PATH`` so the operator can correlate against the
-    settings inventory + the inference contract sidecar. One log line
-    per /analyze, NOT one per kwarg.
+    settings inventory + the inference contract sidecar. The ``mode``
+    field carries the active output_mode so a grep can distinguish
+    "kwargs declared but forward short-circuited" (classification-mode
+    request: ``_predict_next_point`` echoes the last bar without
+    calling forward) from "kwargs declared and forward invoked"
+    (regression mode). One log line per /analyze, NOT one per kwarg.
     """
 
     populated: list[str] = []
@@ -597,10 +619,13 @@ def _log_serving_forward_kwargs(model: ForecasterServingModel) -> None:
     except Exception:  # pragma: no cover -- defensive
         checkpoint_stem = ""
 
+    output_mode = str(getattr(model, "output_mode", "regression") or "regression")
+
     logger.info(
-        "analyze_serving_forward kwargs=%s checkpoint=%s",
+        "analyze_serving_forward kwargs=%s checkpoint=%s mode=%s",
         ",".join(populated),
         checkpoint_stem,
+        output_mode,
     )
 
 
