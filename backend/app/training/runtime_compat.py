@@ -59,7 +59,7 @@ def ensure_compile_safe() -> None:
     triton_module_name = "triton.compiler.compiler"
     try:
         module = importlib.import_module(triton_module_name)
-        getattr(module, "triton_key")
+        _ = module.triton_key  # noqa: F841 -- probe attribute presence
     except (ImportError, AttributeError):
         pass
     else:
