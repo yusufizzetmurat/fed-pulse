@@ -91,7 +91,7 @@ describe("RegimeHeadline regression-canonical surface (#338)", () => {
     expect(screen.getByText(/With fold-4/i)).toBeInTheDocument();
     expect(screen.getByText(/Without fold-4/i)).toBeInTheDocument();
     // Numbers from dual_head_comparison_canonical.json.
-    expect(screen.getByText(/F1 0\.419 ± 0\.071/)).toBeInTheDocument();
+    expect(screen.getByText(/F1 0\.419 ± 0\.070/)).toBeInTheDocument();
     expect(screen.getByText(/F1 0\.414 ± 0\.079/)).toBeInTheDocument();
   });
 
@@ -107,7 +107,7 @@ describe("RegimeHeadline regression-canonical surface (#338)", () => {
     expect(headlineEvidence.length).toBeGreaterThan(0);
     expect(headlineEvidence[0]).toHaveAttribute(
       "href",
-      expect.stringContaining("06-Deep-Learning-Roadmap"),
+      expect.stringContaining("06_Deep_Learning_Roadmap"),
     );
     expect(screen.getByRole("link", { name: /evidence · §6\.7/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /evidence · §6\.10/i })).toBeInTheDocument();

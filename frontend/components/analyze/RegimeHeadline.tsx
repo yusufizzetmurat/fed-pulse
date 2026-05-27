@@ -36,7 +36,7 @@ interface RegimeHeadlineProps {
 // load-bearing context.
 const FOLD4_DUAL_F1_WITH = 0.419;
 const FOLD4_DUAL_F1_WITHOUT = 0.414;
-const FOLD4_DUAL_F1_STD_WITH = 0.071;
+const FOLD4_DUAL_F1_STD_WITH = 0.070;
 const FOLD4_DUAL_F1_STD_WITHOUT = 0.079;
 const FOLD4_DUAL_RMSE_WITH = 1.004;
 const FOLD4_DUAL_RMSE_WITHOUT = 1.043;

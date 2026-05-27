@@ -9,7 +9,7 @@ describe("EvidenceLink", () => {
     const link = screen.getByRole("link", { name: /evidence · §6\.15/i });
     expect(link).toHaveAttribute(
       "href",
-      expect.stringContaining("github.com/yusufizzetmurat/fed-pulse/wiki/06-Deep-Learning-Roadmap"),
+      expect.stringContaining("github.com/yusufizzetmurat/fed-pulse/wiki/06_Deep_Learning_Roadmap"),
     );
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));

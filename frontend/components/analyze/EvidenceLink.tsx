@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 // without dots collapse into the front of the slug. To keep the
 // component honest we link the wiki page itself and let the small
 // section-tag chip carry the §6.x string for the reader.
-const WIKI_BASE = "https://github.com/yusufizzetmurat/fed-pulse/wiki/06-Deep-Learning-Roadmap";
+const WIKI_BASE = "https://github.com/yusufizzetmurat/fed-pulse/wiki/06_Deep_Learning_Roadmap";
 
 export interface EvidenceLinkProps {
   // §-prefixed section id like "6.7" or "6.15". Rendered verbatim
