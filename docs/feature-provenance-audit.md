@@ -66,6 +66,9 @@ itself a documented training target.
 | `target_yield_2y_change_5d` | `data.rates_event_features.forward_yield_change_bps` (t → t+5) | **`T+Δ`, future-derived** | none (target) | rates-head training target. Same broadcast-but-not-emitted pattern as `forward_realized_vol_10d`; not in `as_rich_list` output, only read off the target row by `app.training.rates_targets.build_partition_rates_targets`. |
 | `target_yield_5y_change_5d` | same as above (5y tenor) | **`T+Δ`, future-derived** | none (target) | rates-head training target; same storage / emission contract. |
 | `target_terminal_rate_change_5d` | same as above (terminal-rate proxy) | **`T+Δ`, future-derived** | none (target) | rates-head training target; same storage / emission contract. |
+| `target_yield_2y_change_5d_fomc_attributable` | 1-D projection of the observed 2y bps move onto `sign(mp_surprise_level)` (strict-prior, post-#350) | **`T+Δ`, future-derived** | none (target) | #305 surprise-decomposition target. Computed in `app.training.loaders` from the observed move scaled by the strict-prior surprise direction; `None` when `|mp_surprise_level| < 1.0 bp` (no-change meetings; direction ill-defined). Same broadcast-but-not-emitted contract as the raw siblings; only the target row is read by `build_partition_rates_targets`. See ADR 0027. |
+| `target_yield_5y_change_5d_fomc_attributable` | same as above (5y tenor) | **`T+Δ`, future-derived** | none (target) | #305 surprise-decomposition target; same storage / emission contract. |
+| `target_terminal_rate_change_5d_fomc_attributable` | same as above (terminal-rate proxy) | **`T+Δ`, future-derived** | none (target) | #305 surprise-decomposition target; same storage / emission contract. |
 | `text_embedding_pooled` | `loaders._compute_prior4_pooled_embedding` (softmax-weighted mean of the four most recent statements with date strictly `< T`) | `T-Δ` | none | the pool is the four prior statements only; the as-of document itself is excluded from the pool (`prior_text_hashes` are statement dates `< event_date`). |
 | `text_embedding_missing` | loader flag on the pooled-embedding lookup | n/a | none | structural mask, no leakage surface. |
 | `text_per_bar` | `loaders.build_per_bar_text_tensor` (per-bar pooled-text payload aligned to each lookback bar's date; falls back to tile-replicating `text_embedding_pooled` when no per-bar pool is attached) | `T-Δ` (prior FOMC docs only) | none | issue #327 Arm A. Each bar's row reads from the prior-N FOMC documents aligned to that bar's calendar date; bars are emitted on calendar dates strictly `< T` and the fallback reuses the pooled vector that is itself a function of prior statements only. Default `None` collapses the per-bar slot to the broadcast-zero path. |
@@ -132,7 +135,8 @@ keep-with-caveat alternative.
 No other `FeatureVector` column reads from a source post-dating
 `row.event_date` beyond the documented training-target columns
 (`forward_realized_vol_10d`, `target_yield_2y_change_5d`,
-`target_yield_5y_change_5d`, `target_terminal_rate_change_5d`).
+`target_yield_5y_change_5d`, `target_terminal_rate_change_5d`, and the
+three `_fomc_attributable` projections added under #305).
 
 ## Regression test
 
