@@ -685,6 +685,85 @@ def test_train_model_smoke_with_regime_conditioning_gate() -> None:
     assert result.summary.epochs_completed == 1
 
 
+def test_regime_gate_receives_non_zero_gradient() -> None:
+    """A backward pass through the model produces non-zero gate grads.
+
+    The #307 smoke pins the forward pass runs to completion and the
+    zero-init test pins the gate's t=0 output, but neither catches a
+    disconnected gradient path — a gate produced but never consumed by
+    the loss would leave ``regime_gate.weight.grad`` / ``regime_gate.bias.grad``
+    silently zero and both existing tests pass. Build the model directly,
+    run forward + backward on a fixture with a non-zero regime block,
+    and assert the gate's gradient tensors are non-zero. Skips the
+    optimizer + early-stopping path on purpose so the assertion measures
+    only the autograd wiring, not whichever epoch the best-val snapshot
+    landed on.
+    """
+
+    from app.models.config import ModelConfig
+    from app.models.factory import build_research_forecaster
+
+    config = ModelConfig(
+        input_size=RICH_FEATURE_SIZE,
+        output_mode="classification",
+        n_classes=3,
+        hidden_size=16,
+        head_hidden_size=8,
+        use_regime_conditioning=True,
+    )
+    model = build_research_forecaster(config)
+    gate = getattr(model, "regime_gate", None)
+    assert gate is not None, (
+        "use_regime_conditioning=True must mount a regime_gate Linear layer"
+    )
+
+    # Build a per-bar input that carries a non-zero regime block at the
+    # tail; this matches the loader's ``as_rich_list`` contract under
+    # ``--use-regime-conditioning``. The 4-wide tail is 3 regime scalars
+    # + 1 missing flag (set to 0.0 so the gate sees a real signal).
+    from app.models.config import (  # local import keeps the module-load
+        RICH_MACRO_REGIME_DIM,
+        RICH_MACRO_REGIME_MISSING_DIM,
+        SEQUENCE_LENGTH,
+    )
+
+    input_width = RICH_FEATURE_SIZE + RICH_MACRO_REGIME_DIM + RICH_MACRO_REGIME_MISSING_DIM
+    batch = torch.zeros((2, SEQUENCE_LENGTH, input_width))
+    # Non-zero rich-feature slice so the gate's multiplicative mask has
+    # something to scale; zero rich values would zero the regime gradient
+    # via the chain rule regardless of the wiring.
+    batch[..., :RICH_FEATURE_SIZE] = 0.1
+    # Non-zero regime block so ``regime_input`` flowing into the gate is
+    # not identically zero (which would zero the weight gradient by
+    # construction without saying anything about the wiring).
+    batch[..., RICH_FEATURE_SIZE] = 1.0
+    batch[..., RICH_FEATURE_SIZE + 1] = 0.0
+    batch[..., RICH_FEATURE_SIZE + 2] = -1.0
+    batch[..., RICH_FEATURE_SIZE + 3] = 0.0  # missing flag off
+
+    model.train()
+    logits = model(batch)
+    if isinstance(logits, tuple):
+        logits = logits[0]
+    target = torch.zeros(logits.shape[0], dtype=torch.long)
+    loss = torch.nn.functional.cross_entropy(logits, target)
+    loss.backward()
+
+    weight_grad = gate.weight.grad
+    bias_grad = gate.bias.grad
+    assert weight_grad is not None and bias_grad is not None, (
+        "regime_gate params received no gradient -- autograd path is severed"
+    )
+    assert float(weight_grad.detach().abs().sum().item()) > 0.0, (
+        "regime_gate.weight gradient is identically zero -- gate output is "
+        "not flowing into the loss"
+    )
+    assert float(bias_grad.detach().abs().sum().item()) > 0.0, (
+        "regime_gate.bias gradient is identically zero -- gate output is "
+        "not flowing into the loss"
+    )
+
+
 def test_gate_zero_init_is_identity_at_step_zero() -> None:
     """The zero-init gate produces an output of 1.0 at start of training.
 

@@ -1272,7 +1272,17 @@ def _compute_macro_regime_features_for_event(
             except (TypeError, ValueError):
                 pass
     if bars:
-        last_bar = bars[-1]
+        # Defensive sort by date string -- the events-builder serialises
+        # ``prior_bars`` in ascending-date order today, so ``bars[-1]`` is
+        # the strict-T-1 bar. The sort makes the contract self-enforcing:
+        # a future serialiser change (e.g., reverse-chrono for a frontend
+        # display path) would otherwise silently flip ``bars[-1]`` to the
+        # oldest bar and feed stale yields into the term-spread sign.
+        sortable = [b for b in bars if b.get("date")]
+        if sortable:
+            last_bar = max(sortable, key=lambda b: str(b.get("date", "")))
+        else:
+            last_bar = bars[-1]
         try:
             tnx_last = float(last_bar.get("tnx_close", 0.0))
         except (TypeError, ValueError):
