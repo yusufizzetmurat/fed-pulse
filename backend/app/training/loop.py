@@ -3787,6 +3787,28 @@ def train_model(
     if save_checkpoint:
         from app.training.checkpoint import _save_model_checkpoint
 
+        # #374: thread the active encoder alias + its registry-pinned
+        # ``inference_features`` tuple through to the sidecar. Without
+        # this the loader's ``contract.inference_features ⊆ registry``
+        # cross-check was ``∅ ⊆ ∅`` on every fresh checkpoint -- the
+        # arm was shipping documentation-only. ``text_encoder`` is the
+        # alias the trainer was driven against; the empty tuple
+        # fallback covers runs that do not register against the
+        # registry (legacy 6-feature only paths).
+        sidecar_encoder_alias: str | None = (
+            str(text_encoder) if text_encoder else None
+        )
+        sidecar_inference_features: tuple[str, ...] = ()
+        if sidecar_encoder_alias:
+            try:
+                from app.models.registry import encoder_ref
+
+                ref = encoder_ref(sidecar_encoder_alias)
+                if ref is not None:
+                    sidecar_inference_features = tuple(ref.inference_features)
+            except Exception:  # pragma: no cover -- defensive
+                sidecar_inference_features = ()
+
         # `close_scale` was fitted on this fold's training rows in
         # `_build_training_tensors`; persisting it on the checkpoint is what
         # lets inference (`services.forecaster._predict_next_point`) recover
@@ -3798,6 +3820,8 @@ def train_model(
             summary,
             close_scale=close_scale,
             rich_feature_scaler=rich_feature_scaler,
+            encoder_alias=sidecar_encoder_alias,
+            inference_features=sidecar_inference_features,
         )
         # Conformal calibration sidecar (#216). Classification-mode runs
         # write a manifest with the APS softmax_quantile fitted on the

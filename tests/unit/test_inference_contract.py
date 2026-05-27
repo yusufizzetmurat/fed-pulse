@@ -233,3 +233,115 @@ def test_loader_refuses_bind_on_contract_mismatch(tmp_path: Path, monkeypatch) -
     status = forecaster_service.get_serving_contract_status()
     assert status["status"] == "serving_signature_missing_kwargs"
     assert "nonexistent_kwarg" in status["missing_kwargs"]
+
+
+def test_loader_refuses_bind_on_registry_feature_mismatch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """#374: a checkpoint declaring an inference_feature the registry's
+    pinned encoder slot does not pin must be refused by ``_get_model``.
+
+    The pre-#374 trainer left ``inference_features=()`` on every fresh
+    sidecar, so the loader's ``contract ⊆ registry`` cross-check passed
+    trivially. With the trainer now threading the registry-resolved
+    tuple through, a sidecar whose ``inference_features`` add a feature
+    not pinned in ``registry.yaml::encoders[<alias>].inference_features``
+    is a wiring mismatch and must hard-refuse to bind."""
+
+    from app.evaluation.metrics import TrainingRunSummary
+    from app.training.checkpoint import _save_model_checkpoint
+    from app.services import forecaster as forecaster_service
+
+    model = _toy_serving_model()
+    ckpt_path = tmp_path / "forecaster.pt"
+    summary = TrainingRunSummary(
+        model_config=ModelConfig(input_size=FEATURE_SIZE, architecture="lstm"),
+        device="cpu",
+        epochs_requested=1,
+        epochs_completed=1,
+        batch_size=1,
+        learning_rate=1e-3,
+        validation_split=0.2,
+        early_stopping_patience=1,
+        sequence_groups=1,
+        total_windows=1,
+        train_windows=1,
+        validation_windows=0,
+        checkpoint_path=str(ckpt_path),
+        checkpoint_saved=True,
+        best_epoch=1,
+        metrics=None,
+    )
+    # ``bert_base`` declares ``inference_features: []`` in
+    # registry.yaml. A contract claiming ``text_embedding`` against
+    # that alias is the canonical wiring drift case.
+    _save_model_checkpoint(
+        model,
+        ckpt_path,
+        summary,
+        encoder_alias="bert_base",
+        inference_features=("text_embedding",),
+    )
+
+    monkeypatch.setattr(forecaster_service, "BEST_MODEL_PATH", ckpt_path)
+    monkeypatch.setattr(forecaster_service, "_model", None)
+    monkeypatch.setattr(forecaster_service, "_model_artifact_metadata", None)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        forecaster_service._get_model()
+    assert "inference contract" in str(excinfo.value).lower()
+
+    status = forecaster_service.get_serving_contract_status()
+    assert status["status"] == "registry_inference_features_mismatch"
+    assert "text_embedding" in status["extra_kwargs"]
+
+
+def test_loader_binds_when_contract_matches_registry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """#374 positive path: contract.inference_features ⊆ registry pinned
+    set must bind cleanly. ``finbert`` pins ``text_embedding`` +
+    ``text_embedding_missing`` in registry.yaml; a contract declaring a
+    strict subset (or the full set) is valid."""
+
+    from app.evaluation.metrics import TrainingRunSummary
+    from app.training.checkpoint import _save_model_checkpoint
+    from app.services import forecaster as forecaster_service
+
+    model = _toy_serving_model()
+    ckpt_path = tmp_path / "forecaster.pt"
+    summary = TrainingRunSummary(
+        model_config=ModelConfig(input_size=FEATURE_SIZE, architecture="lstm"),
+        device="cpu",
+        epochs_requested=1,
+        epochs_completed=1,
+        batch_size=1,
+        learning_rate=1e-3,
+        validation_split=0.2,
+        early_stopping_patience=1,
+        sequence_groups=1,
+        total_windows=1,
+        train_windows=1,
+        validation_windows=0,
+        checkpoint_path=str(ckpt_path),
+        checkpoint_saved=True,
+        best_epoch=1,
+        metrics=None,
+    )
+    _save_model_checkpoint(
+        model,
+        ckpt_path,
+        summary,
+        encoder_alias="finbert",
+        inference_features=("text_embedding",),
+    )
+
+    monkeypatch.setattr(forecaster_service, "BEST_MODEL_PATH", ckpt_path)
+    monkeypatch.setattr(forecaster_service, "_model", None)
+    monkeypatch.setattr(forecaster_service, "_model_artifact_metadata", None)
+
+    bound = forecaster_service._get_model()
+    assert bound is not None
+
+    status = forecaster_service.get_serving_contract_status()
+    assert status["status"] == "ok"
