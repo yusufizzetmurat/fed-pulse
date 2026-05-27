@@ -374,7 +374,7 @@ def _resolve_inference_text_embedding(
     if sequence:
         last = sequence[-1]
         raw = getattr(last, "text_embedding_pooled", None) or []
-        if isinstance(raw, (list, tuple)) and len(raw) == dim:
+        if isinstance(raw, (list, tuple)) and len(raw) == dim:  # noqa: UP038 — runtime tuple check; X|Y form breaks on isinstance for some older Python builds in the deploy image
             pooled = [float(v) for v in raw]
             missing_flag = float(getattr(last, "text_embedding_missing", 1.0))
     if not pooled:
