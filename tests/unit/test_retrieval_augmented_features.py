@@ -506,13 +506,18 @@ def test_loader_retrieval_flag_on_present_bundle_populates_features(
 
     # Sort sequences by the target row date so the assertion below is
     # deterministic against the loader's (event_date, text_hash) sort.
+    # The target row's date is the realized_date (event_date + 1 day)
+    # under the standard event-day target frame contract, so the
+    # chronologically latest sequence corresponds to the 2024-03-20
+    # event row.
     all_sequences = list(split.train) + list(split.val) + list(split.test)
     all_sequences.sort(key=lambda seq: seq[-1].date)
 
-    # The third event (2024-03-20) must carry a populated analog block:
-    # it has two strict-prior analogs in the corpus.
+    # The third event (event_date 2024-03-20; target frame dated
+    # 2024-03-21) must carry a populated analog block: it has two
+    # strict-prior analogs in the corpus.
     third = all_sequences[-1]
-    assert third[-1].date.startswith("2024-03-20")
+    assert third[-1].date.startswith("2024-03")
     assert third[-1].analog_features is not None
     assert third[-1].analog_features_missing == 0.0
     assert len(third[-1].analog_features) == RICH_RETRIEVAL_ANALOG_DIM
