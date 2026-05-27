@@ -7,7 +7,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { XaiResponse, XaiSentence, XaiTokenAttribution } from "@/lib/analyze/types";
+import type {
+  XaiPanelAttribution,
+  XaiResponse,
+  XaiSentence,
+  XaiTokenAttribution,
+} from "@/lib/analyze/types";
 
 interface XaiPanelProps {
   xai: XaiResponse;
@@ -79,8 +84,118 @@ function SentenceChip({ sentence }: { sentence: XaiSentence }) {
   );
 }
 
+function familyLabel(family: string): string {
+  // Cosmetic relabel — backend slice names are snake_case; render the
+  // human-readable form alongside the magnitude bars.
+  const map: Record<string, string> = {
+    market: "Market",
+    credibility: "Credibility",
+    linguistic: "Linguistic",
+    mp_surprise: "MP surprise",
+    multi_axis: "Multi-axis",
+    realized_vol: "Realised vol",
+    cross_asset: "Cross-asset",
+    llm: "LLM features",
+    trajectory_input: "Trajectory input",
+  };
+  return map[family] ?? family;
+}
+
+function panelLabel(panel: string): string {
+  if (panel === "regime") return "Vol regime";
+  if (panel.startsWith("rates_")) {
+    const head = panel.slice("rates_".length);
+    return `Rates · ${head}`;
+  }
+  if (panel === "trajectory") return "Trajectory";
+  return panel;
+}
+
+function unavailableCopy(reason: string | null): string {
+  switch (reason) {
+    case "not_classification_mode":
+      return "Panel inactive on the current checkpoint.";
+    case "head_not_mounted":
+      return "Head not mounted on the current checkpoint.";
+    case "no_multi_task_forward":
+      return "Model exposes no multi-task forward.";
+    case "inference_kwarg_missing":
+      return "Inference contract mismatch — operator follow-up.";
+    case "ig_runtime_error":
+    case "unexpected_exception":
+      return "Attribution runtime error.";
+    case "missing_stance_logits":
+    case "missing_logits":
+      return "Target logits missing from the forward dict.";
+    case "bundle_not_loaded":
+      return "Model bundle not loaded.";
+    default:
+      return "Explanation unavailable for this panel.";
+  }
+}
+
+export function PanelAttributionRow({ panel }: { panel: XaiPanelAttribution }) {
+  if (panel.unavailable) {
+    return (
+      <div
+        className="flex items-center justify-between rounded-md border border-dashed border-border bg-muted/30 px-3 py-2"
+        data-testid={`panel-attribution-${panel.panel}`}
+      >
+        <span className="text-xs font-medium">{panelLabel(panel.panel)}</span>
+        <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+          Explanation unavailable
+        </Badge>
+        <span className="ml-2 text-[11px] text-muted-foreground">
+          {unavailableCopy(panel.reason)}
+        </span>
+      </div>
+    );
+  }
+  // Scale magnitudes to (0, 1] inside this panel so the longest bar
+  // anchors at 100%. Sum is always >= 0 by construction.
+  const maxMagnitude = panel.families.reduce(
+    (acc, item) => Math.max(acc, Math.abs(item.magnitude)),
+    0,
+  );
+  const scaleFactor = maxMagnitude > 0 ? 1 / maxMagnitude : 0;
+  return (
+    <div className="space-y-2" data-testid={`panel-attribution-${panel.panel}`}>
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold">{panelLabel(panel.panel)}</span>
+        <span className="text-[10px] text-muted-foreground">
+          target: {panel.target} · IG n={panel.n_steps}
+        </span>
+      </div>
+      <div className="space-y-1">
+        {panel.families.map((family) => {
+          const width = Math.max(0, Math.min(1, Math.abs(family.magnitude) * scaleFactor)) * 100;
+          const direction = family.signed >= 0 ? "--hawkish" : "--dovish";
+          return (
+            <div key={family.family} className="grid grid-cols-[6rem_1fr_3rem] items-center gap-2">
+              <span className="text-[11px] text-muted-foreground">{familyLabel(family.family)}</span>
+              <div className="h-2 rounded bg-muted/40">
+                <div
+                  className="h-2 rounded"
+                  style={{
+                    width: `${width}%`,
+                    backgroundColor: `hsl(var(${direction}) / 0.7)`,
+                  }}
+                />
+              </div>
+              <span className="text-right font-mono text-[10px] text-muted-foreground">
+                {family.magnitude.toFixed(3)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function XaiPanel({ xai, previewMode }: XaiPanelProps) {
   const isEmpty = !xai.sentences.length;
+  const panels = xai.panels ?? [];
   return (
     <Card>
       <CardHeader>
@@ -98,7 +213,7 @@ export function XaiPanel({ xai, previewMode }: XaiPanelProps) {
           {xai.method ? ` Method: ${xai.method}.` : null}
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
         {isEmpty ? (
           <p className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-4 text-sm text-muted-foreground">
             No salient sentences detected. The attribution method found no tokens above the salience floor — common for very short
@@ -111,6 +226,16 @@ export function XaiPanel({ xai, previewMode }: XaiPanelProps) {
             ))}
           </p>
         )}
+        {panels.length > 0 ? (
+          <div className="space-y-3 border-t border-border pt-3" data-testid="panel-attributions">
+            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              Per-panel feature-family attribution · integrated gradients
+            </p>
+            {panels.map((panel) => (
+              <PanelAttributionRow key={panel.panel} panel={panel} />
+            ))}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

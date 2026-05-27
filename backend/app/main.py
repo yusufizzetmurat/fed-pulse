@@ -81,6 +81,7 @@ from app.services.forecaster import (
     bucket_realized_regime,
     build_feature_vectors,
     build_market_reaction_panel,
+    build_panel_attributions,
     build_regime_classification_card,
     checkpoint_exists,
     forecast_quantitative_series,
@@ -558,7 +559,21 @@ def _build_analyze_response(
     }
     if getattr(payload, "include_xai", False):
         attributions = attribute_text(payload.text)
-        response["xai"] = xai_to_response(attributions)
+        xai_block = xai_to_response(attributions)
+        # #297: layer per-panel integrated-gradients attribution on top
+        # of the existing sentence-level surface. Any panel that cannot
+        # be explained surfaces an ``unavailable`` payload; the helper
+        # itself never raises (every internal call is wrapped in a
+        # structured-degrade try/except). Guard the dispatch defensively
+        # so an IG runtime failure cannot break /analyze.
+        try:
+            panel_attributions = build_panel_attributions(history_vectors)
+        except Exception:  # noqa: BLE001 -- defensive: never break /analyze
+            logger.warning("xai_panel_attribution_failed", exc_info=True)
+            panel_attributions = []
+        if panel_attributions:
+            xai_block["panels"] = panel_attributions
+        response["xai"] = xai_block
     return response
 
 
