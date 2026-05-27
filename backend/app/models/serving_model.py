@@ -82,6 +82,7 @@ class ForecasterServingModel(ForecasterBase):
         vol_regime_target: str = "forward_realized_vol_10d",
         head_mode: str = "regression",
         rates_heads: tuple[str, ...] = (),
+        use_regime_conditioning: bool = False,
     ):
         if output_mode not in {"regression", "classification"}:
             raise ValueError(
@@ -110,6 +111,7 @@ class ForecasterServingModel(ForecasterBase):
             credibility_features=credibility_features,
             text_embedding_dim=text_embedding_dim,
             text_adapter_dim=text_adapter_dim,
+            use_regime_conditioning=use_regime_conditioning,
         )
         self.output_mode = output_mode
         self.n_classes = int(n_classes)
