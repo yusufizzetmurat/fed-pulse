@@ -36,6 +36,18 @@ from app.models.text_multi_axis_classifier import TextMultiAxisClassifier
 
 DEFAULT_CHECKPOINT_PATH = MODEL_CHECKPOINT_DIR / "text_multi_axis_best.pt"
 DEFAULT_MAX_LENGTH = 256
+
+# #393: structured surface for the inference-contract validation. The
+# /health endpoint reads this so an operator can grep "checkpoint
+# incompatible with serving signature" without parsing logs. Mirrors
+# the forecaster service's ``_serving_contract_status`` shape.
+_contract_status: dict[str, Any] = {
+    "status": "uninitialised",
+    "checkpoint_path": None,
+    "missing_kwargs": [],
+    "extra_kwargs": [],
+    "message": "",
+}
 # Below this factor-axis label coverage on the training pool, the
 # factor branch's tanh-bounded regression head has trained almost
 # exclusively on the masked-out path and emits effectively random
@@ -83,6 +95,100 @@ def checkpoint_exists() -> bool:
     return _resolve_checkpoint_path().exists()
 
 
+def _record_contract_status(
+    *,
+    status: str,
+    checkpoint_path: Any,
+    missing_kwargs: tuple[str, ...] = (),
+    extra_kwargs: tuple[str, ...] = (),
+    message: str = "",
+) -> None:
+    _contract_status.update(
+        {
+            "status": str(status),
+            "checkpoint_path": str(checkpoint_path) if checkpoint_path else None,
+            "missing_kwargs": list(missing_kwargs),
+            "extra_kwargs": list(extra_kwargs),
+            "message": str(message),
+        }
+    )
+
+
+def get_serving_contract_status() -> dict[str, Any]:
+    """Return the cached contract-validation surface (#393).
+
+    A status of ``ok`` means the checkpoint's declared kwargs are a
+    subset of the multi-axis classifier's forward signature; a
+    ``serving_signature_missing_kwargs`` / ``sidecar_absent`` status
+    surfaces the legacy-vs-mismatch dispatch the forecaster sidecar
+    documents. Callers receive a shallow copy so the cache cannot be
+    mutated.
+    """
+
+    return dict(_contract_status)
+
+
+def _validate_contract(checkpoint_path: Path) -> tuple[bool, str]:
+    """Cross-check the multi-axis sidecar against the forward signature.
+
+    Returns ``(ok, status)``. ``ok=False`` means the loader must
+    refuse to bind. A missing sidecar degrades to ``ok=True`` with
+    status ``sidecar_absent`` so pre-#393 multi-axis checkpoints keep
+    binding (matches the forecaster soft-legacy behaviour).
+    """
+
+    from app.training.inference_contract import (
+        collect_serving_forward_kwargs,
+        read_sidecar,
+        validate_against_serving,
+    )
+
+    contract = read_sidecar(checkpoint_path)
+    if contract is None:
+        _record_contract_status(
+            status="sidecar_absent",
+            checkpoint_path=checkpoint_path,
+            message=(
+                "no inference_contract.json sidecar next to checkpoint; "
+                "treating as pre-#393 legacy artefact"
+            ),
+        )
+        return True, "sidecar_absent"
+
+    serving_kwargs = collect_serving_forward_kwargs(TextMultiAxisClassifier)
+    validation = validate_against_serving(
+        contract,
+        serving_kwargs=serving_kwargs,
+    )
+    if not validation.ok:
+        _record_contract_status(
+            status=validation.status,
+            checkpoint_path=checkpoint_path,
+            missing_kwargs=validation.missing_kwargs,
+            extra_kwargs=validation.extra_kwargs,
+            message=validation.message,
+        )
+        _logger.error(
+            "multi_axis_inference_contract_mismatch path=%s status=%s missing=%s extra=%s",
+            checkpoint_path,
+            validation.status,
+            list(validation.missing_kwargs),
+            list(validation.extra_kwargs),
+        )
+        return False, validation.status
+
+    _record_contract_status(
+        status="ok",
+        checkpoint_path=checkpoint_path,
+        message="inference contract matches multi-axis classifier signature",
+    )
+    _logger.info(
+        "multi_axis_inference_contract_ok path=%s",
+        checkpoint_path,
+    )
+    return True, "ok"
+
+
 def _load_state() -> _ClassifierState | None:
     """Build the singleton from the checkpoint payload.
 
@@ -96,6 +202,18 @@ def _load_state() -> _ClassifierState | None:
     path = _resolve_checkpoint_path()
     if not path.exists():
         return None
+    # #393: validate the inference-contract sidecar before doing any
+    # state-dict load. A sidecar declaring kwargs the forward
+    # signature does not accept is a hard refusal -- raise so the
+    # serving layer surfaces a structured error rather than silently
+    # binding a mismatched checkpoint. A missing sidecar (pre-#393
+    # artefact) degrades to the legacy "load anyway" path.
+    ok, status = _validate_contract(path)
+    if not ok:
+        raise RuntimeError(
+            "multi_axis checkpoint inference contract incompatible with "
+            f"serving signature: {status}"
+        )
     try:
         payload = torch.load(path, map_location="cpu", weights_only=False)
     except Exception:
@@ -246,6 +364,11 @@ def reset_classifier() -> None:
     global _state
     with _state_lock:
         _state = None
+    _record_contract_status(
+        status="uninitialised",
+        checkpoint_path=None,
+        message="",
+    )
 
 
 @torch.no_grad()
