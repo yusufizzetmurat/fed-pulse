@@ -150,7 +150,33 @@ register_error_handlers(app)
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    """Liveness probe + serving-contract status (#341).
+
+    The probe always returns ``status: "ok"`` (uvicorn is up and
+    serving). The ``inference_contract`` block surfaces the structured
+    state of the active forecaster checkpoint's contract validation --
+    ``ok`` when the sidecar matches the serving signature,
+    ``sidecar_absent`` on a legacy artefact, and a structured failure
+    code otherwise. Counters track structured-error increments so an
+    operator can spot a stuck contract without parsing logs.
+    """
+
+    try:
+        from app.services.forecaster import (
+            get_contract_counters,
+            get_serving_contract_status,
+        )
+
+        contract = get_serving_contract_status()
+        counters = get_contract_counters()
+    except Exception:  # pragma: no cover -- defensive
+        contract = {"status": "unknown"}
+        counters = {}
+    return {
+        "status": "ok",
+        "inference_contract": contract,
+        "inference_contract_counters": counters,
+    }
 
 
 _SYMBOLS_FALLBACK: list[dict[str, str]] = [
@@ -420,6 +446,19 @@ def _build_analyze_response(
             forecast["series"]["realized_close"] = [float(point["close"]) for point in realized]
             forecast["series"]["realized_volatility"] = [float(point["volatility_5d"]) for point in realized]
 
+    regime_payload = _safe_regime_classification(history_vectors)
+    # #341: structured-status payloads carry a ``status`` key and never
+    # the full card shape. Split into the legacy card slot (None when
+    # degraded) + the sibling status surface so the response stays
+    # serialisable against the AnalyzeResponse schema.
+    regime_card: dict[str, Any] | None = None
+    regime_status: dict[str, Any] | None = None
+    if isinstance(regime_payload, dict) and regime_payload.get("status") and (
+        "predicted_set" not in regime_payload
+    ):
+        regime_status = regime_payload
+    else:
+        regime_card = regime_payload
     response: dict[str, Any] = {
         "sentiment": sentiment,
         "prediction": forecast["prediction"],
@@ -427,7 +466,8 @@ def _build_analyze_response(
         "model": forecast["model"],
         "series": forecast["series"],
         "multi_axis": _build_multi_axis_block(payload.text, sentiment),
-        "regime_classification": _safe_regime_classification(history_vectors),
+        "regime_classification": regime_card,
+        "regime_classification_status": regime_status,
     }
     if getattr(payload, "include_xai", False):
         attributions = attribute_text(payload.text)
@@ -439,15 +479,87 @@ def _safe_regime_classification(history_vectors: list[Any]) -> dict[str, Any] | 
     """Wrap ``build_regime_classification_card`` so a failure never breaks /analyze.
 
     The card is opt-in by checkpoint flavour and manifest presence; any
-    exception inside the inference + calibrated-set path degrades to
-    ``None`` rather than 500ing the whole response.
+    exception inside the inference + calibrated-set path degrades to a
+    surfaced structured payload rather than 500ing the whole response.
+
+    #341 structured surface. Three branches:
+
+    1. **Not classification mode.** The active checkpoint emits no
+       regime card by contract -- legitimate ``None`` with
+       ``status="not_classification_mode"`` so the operator can
+       distinguish "model deliberately mute" from "model crashed
+       silently".
+    2. **Inference kwarg missing.** The forward path raised
+       :class:`TypeError` (e.g. the call site passed a kwarg the
+       checkpoint did not declare in its inference contract sidecar,
+       or omitted one the model requires). Surfaces
+       ``status="inference_kwarg_missing"`` + the missing kwarg name
+       parsed from the exception, increments the module-level counter,
+       and logs at WARNING.
+    3. **Unexpected exception.** Anything else: structured payload
+       with the exception class name + WARNING log + counter
+       increment. The /analyze response stays serialisable so the
+       frontend can render an "evidence unavailable" badge.
     """
 
+    from app.services import forecaster as _forecaster_service
+
     try:
-        return build_regime_classification_card(history_vectors)
-    except Exception:  # pragma: no cover — defensive, see #216 follow-up
-        logger.warning("regime_classification_card_failed", exc_info=True)
-        return None
+        result = build_regime_classification_card(history_vectors)
+    except TypeError as exc:
+        _forecaster_service._contract_counters[
+            "regime_classification_inference_kwarg_missing"
+        ] += 1
+        missing = _extract_missing_kwarg_from_typeerror(exc)
+        logger.warning(
+            "regime_classification_inference_kwarg_missing kwarg=%s detail=%s",
+            missing,
+            str(exc),
+        )
+        return {
+            "status": "inference_kwarg_missing",
+            "missing_kwarg": missing,
+            "detail": str(exc),
+        }
+    except Exception as exc:  # pragma: no cover — defensive, see #216 follow-up
+        _forecaster_service._contract_counters[
+            "regime_classification_unexpected_exception"
+        ] += 1
+        logger.warning(
+            "regime_classification_card_failed exception_class=%s",
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return {
+            "status": "unexpected_exception",
+            "exception_class": type(exc).__name__,
+            "detail": str(exc),
+        }
+    if result is None:
+        return {"status": "not_classification_mode"}
+    return result
+
+
+def _extract_missing_kwarg_from_typeerror(exc: TypeError) -> str | None:
+    """Parse a python ``TypeError`` for the offending kwarg name.
+
+    Python emits messages like ``forward_multi_task() missing 1
+    required keyword-only argument: 'text_embedding'`` or
+    ``forward_multi_task() got an unexpected keyword argument
+    'foo'``. We pull the quoted name out; on no-match we return
+    ``None`` rather than guess.
+    """
+
+    import re
+
+    message = str(exc)
+    match = re.search(r"keyword[- ]?(?:only )?argument[s]?:?\s*['\"]([^'\"]+)['\"]", message)
+    if match:
+        return match.group(1)
+    match = re.search(r"unexpected keyword argument\s*['\"]([^'\"]+)['\"]", message)
+    if match:
+        return match.group(1)
+    return None
 
 
 def _build_multi_axis_block(
@@ -1030,6 +1142,20 @@ async def analyze_market(payload: AnalyzeRequest) -> MarketReactionPanel:
             status_code=503, detail="Market reaction panel unavailable"
         ) from None
     if result is None:
+        return MarketReactionPanel(rates=[], vol_regime=None)
+    # #341: ``build_market_reaction_panel`` now returns a structured
+    # status payload on the soft-error paths instead of bare None. The
+    # status field is mutually exclusive with the panel fields -- a
+    # status-only payload renders as an empty panel surface on the
+    # frontend, so we collapse it to the legacy empty-panel response
+    # here. The structured detail is logged at the service layer; the
+    # client gets an honest "no evidence" panel without a 5xx.
+    if isinstance(result, dict) and "rates" not in result and result.get("status"):
+        logger.info(
+            "market_reaction_panel_status status=%s detail=%s",
+            result.get("status"),
+            result.get("detail"),
+        )
         return MarketReactionPanel(rates=[], vol_regime=None)
     cards = [RatesReactionCard(**row) for row in result.get("rates", [])]
     vol_regime_payload = result.get("vol_regime")

@@ -193,10 +193,16 @@ def test_analyze_market_handles_builder_exception(
 def test_build_market_reaction_panel_returns_none_on_regression_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A regression-mode model emits None so the API surfaces an empty panel."""
+    """A regression-mode model has no rates / vol-regime cards to emit.
+
+    #341 promoted the previous bare-None to a structured payload
+    carrying ``status="not_classification_mode"`` so the operator can
+    grep the response for the soft-degrade branch; the /analyze
+    route handler collapses this to an empty MarketReactionPanel."""
 
     class _DummyModel:
         output_mode = "regression"
+        rates_heads_active = ()
 
         def parameters(self):  # pragma: no cover -- not invoked on regression path
             return iter([torch.zeros(1)])
@@ -212,7 +218,8 @@ def test_build_market_reaction_panel_returns_none_on_regression_model(
             )
         ]
     )
-    assert out is None
+    assert isinstance(out, dict)
+    assert out["status"] == "not_classification_mode"
 
 
 # ---------------------------------------------------------------------------
