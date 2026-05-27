@@ -22,6 +22,8 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+import { EvidenceLink } from "@/components/analyze/EvidenceLink";
 
 export type TrajectoryStance = "hawkish" | "dovish" | "neutral";
 
@@ -47,6 +49,12 @@ export interface TrajectoryResponse {
   history_length?: number;
   train_end?: string | null;
   as_of_date?: string;
+  // #332 lift verdict. True iff the Transformer beats the strongest
+  // naive baseline (previous_stance / rolling_majority / 1×16 LSTM)
+  // by ≥ 5pp directional accuracy. Pre-#332 bundles default to false.
+  lift_vs_baseline?: boolean;
+  delta_dir_acc?: number | null;
+  baseline_used?: string | null;
 }
 
 interface TrajectoryPanelProps {
@@ -259,20 +267,44 @@ export function TrajectoryPanel({
       }))
     : [];
 
+  const liftEstablished = data.lift_vs_baseline === true;
+  const hasLiftSignal =
+    data.lift_vs_baseline != null || data.delta_dir_acc != null || data.baseline_used != null;
   return (
-    <Card>
+    <Card className={cn(!liftEstablished && hasLiftSignal ? "opacity-90" : undefined)}>
       <CardHeader>
         <CardDescription className="flex items-center gap-1.5">
           <Compass className="h-3.5 w-3.5" />
           Hawkish / Dovish trajectory
         </CardDescription>
-        <CardTitle className="flex items-center justify-between">
+        <CardTitle className="flex items-center justify-between gap-2">
           <span>Last {total} meetings · {data.architecture ?? "lstm"}</span>
-          {data.train_end ? (
-            <Badge variant="outline" className="numeric text-[10px]">
-              train_end · {data.train_end}
-            </Badge>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            {data.train_end ? (
+              <Badge variant="outline" className="numeric text-[10px]">
+                train_end · {data.train_end}
+              </Badge>
+            ) : null}
+            {hasLiftSignal && !liftEstablished ? (
+              <Badge
+                variant="outline"
+                className="text-[10px] uppercase tracking-wide"
+                title={
+                  data.delta_dir_acc != null && data.baseline_used
+                    ? `Δ dir-acc vs ${data.baseline_used} = ${(data.delta_dir_acc * 100).toFixed(1)}pp; needs ≥ 5pp.`
+                    : "Lift over naive baselines not yet established (#332)."
+                }
+              >
+                no lift over baseline · §6.17
+              </Badge>
+            ) : null}
+            {liftEstablished ? (
+              <Badge variant="dovish" className="text-[10px] uppercase tracking-wide">
+                lift +{((data.delta_dir_acc ?? 0) * 100).toFixed(1)}pp
+              </Badge>
+            ) : null}
+            <EvidenceLink section="6.17" label="Trajectory baselines + parameter cap" />
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">

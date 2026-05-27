@@ -397,6 +397,32 @@ class RegimeClassificationCard(BaseModel):
     )
 
 
+class InferenceStatusSurface(BaseModel):
+    """Structured error surface for the per-card inference helpers (#341).
+
+    Sibling of :class:`RegimeClassificationCard` on the /analyze
+    response. Populated when the card-build helper degrades through
+    one of three structured branches:
+
+    - ``not_classification_mode`` -- the active checkpoint emits no
+      regime card by contract. Legitimate; UI renders the card as
+      absent.
+    - ``inference_kwarg_missing`` -- the serving call site fed (or
+      omitted) a kwarg the checkpoint did not declare in its
+      inference contract sidecar. Operator-facing bug.
+    - ``unexpected_exception`` -- anything else; ``exception_class``
+      carries the class name and ``detail`` the message so the
+      operator can grep for it without parsing logs.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    status: str
+    missing_kwarg: str | None = None
+    exception_class: str | None = None
+    detail: str | None = None
+
+
 class AnalyzeResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
@@ -409,6 +435,12 @@ class AnalyzeResponse(BaseModel):
     credibility: CredibilityResponse | None = None
     multi_axis: MultiAxisBlock | None = None
     regime_classification: RegimeClassificationCard | None = None
+    # #341 sibling status surface so an operator can grep the JSON
+    # response for the structured error branch when the regime card
+    # degrades. Mutually exclusive with ``regime_classification``
+    # being populated -- either the card lands, or this field carries
+    # the structured reason.
+    regime_classification_status: InferenceStatusSurface | None = None
 
 
 class HistoryEntry(BaseModel):
@@ -557,6 +589,13 @@ class SettingsCheckpoint(BaseModel):
     currently loaded from. The diagnostic fields (output_mode,
     encoder_alias, conformal_sidecar_present) only populate on the
     active forecaster + active multi-axis entries.
+
+    #342: ``required_kwargs`` mirrors the inference-contract sidecar
+    (empty list when no sidecar — pre-#341 legacy artefact).
+    ``supplied_at_inference`` maps each declared kwarg to the live
+    serving wiring; mismatches drive the red-badge surface on the
+    settings page. ``inference_contract_status`` is ``"sidecar_absent"``
+    for legacy checkpoints, otherwise ``"present"``.
     """
 
     model_config = _FORBID_FROZEN_CONFIG
@@ -570,6 +609,9 @@ class SettingsCheckpoint(BaseModel):
     output_mode: str | None = None
     encoder_alias: str | None = None
     conformal_sidecar_present: bool | None = None
+    required_kwargs: list[str] = Field(default_factory=list)
+    supplied_at_inference: dict[str, bool] = Field(default_factory=dict)
+    inference_contract_status: str | None = None
 
 
 class SettingsCheckpointsResponse(BaseModel):

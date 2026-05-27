@@ -214,6 +214,17 @@ export interface RegimeClassificationResponse {
   coverage: number;
   distribution: Record<string, number>;
   argmax_class: string;
+  // #322 / #338: dual-head regression branch on standardised log(RV).
+  // Null when the active checkpoint mounts the classifier only — the
+  // UI then falls back to the classifier surface as the primary read.
+  log_rv_point?: number | null;
+  log_rv_lower?: number | null;
+  log_rv_upper?: number | null;
+  // Declares which head produced argmax_class: "regression" means the
+  // 3-class label was bucketed UI-side from log_rv_point against the
+  // active checkpoint's vol_regime_quantiles cutoffs; "classification"
+  // means the label came from the 3-class softmax head's argmax.
+  bucket_source?: "regression" | "classification";
 }
 
 export type RatesHeadName = "2y" | "5y" | "terminal";
@@ -343,6 +354,14 @@ export interface SettingsCheckpoint {
   output_mode?: string | null;
   encoder_alias?: string | null;
   conformal_sidecar_present?: boolean | null;
+  // #342: inference contract surfaces. ``required_kwargs`` mirrors the
+  // sidecar; ``supplied_at_inference`` maps each declared kwarg to a
+  // boolean for the live serving wiring. Empty / undefined when the
+  // checkpoint pre-dates the #341 contract — ``inference_contract_status``
+  // discriminates ``"sidecar_absent"`` (legacy) from ``"present"``.
+  required_kwargs?: string[];
+  supplied_at_inference?: Record<string, boolean>;
+  inference_contract_status?: string | null;
 }
 
 export interface SettingsCheckpointsResponse {

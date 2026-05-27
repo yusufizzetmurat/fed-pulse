@@ -9,6 +9,7 @@ encoders:
     description: Base BERT, used for the NLP-row comparison and continued pretraining.
     repo_aliases:
       - bert-base-uncased
+    inference_features: []
 
   finbert:
     repo: ProsusAI/finbert
@@ -16,6 +17,9 @@ encoders:
     gated: false
     task: classification
     description: Araci's FinBERT.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
 
   finbert_tone:
     repo: yiyanghkust/finbert-tone
@@ -23,6 +27,7 @@ encoders:
     gated: false
     task: classification
     description: FinBERT-tone.
+    inference_features: []
 
   finbert_fomc:
     repo: ZiweiChen/FinBERT-FOMC
@@ -30,6 +35,7 @@ encoders:
     gated: false
     task: classification
     description: FinBERT fine-tuned on FOMC minutes (Chen et al. 2023).
+    inference_features: []
 
   fomc_roberta:
     repo: gtfintechlab/FOMC-RoBERTa
@@ -37,6 +43,7 @@ encoders:
     gated: false
     task: classification
     description: gtfintechlab FOMC-RoBERTa. Flagged data-contaminated against TDW; kept for audit only.
+    inference_features: []
 
   fomc_roberta_any_exp:
     repo: gtfintechlab/fomc-roberta-any-exp
@@ -57,6 +64,7 @@ encoders:
       becomes reachable AND the audit verdict flips to clean, OR
       a replacement encoder (e.g. ProsusAI/finbert) is wired into
       the dashboard fallback chain.
+    inference_features: []
 
   distilbert_sst2:
     repo: distilbert/distilbert-base-uncased-finetuned-sst-2-english
@@ -66,6 +74,7 @@ encoders:
     description: Fallback when FOMC-RoBERTa fails to load.
     repo_aliases:
       - distilbert-base-uncased-finetuned-sst-2-english
+    inference_features: []
 
   distilbert_base_uncased:
     repo: distilbert/distilbert-base-uncased
@@ -75,6 +84,7 @@ encoders:
     description: Lightweight BERT used in the bake-off as a cheap baseline.
     repo_aliases:
       - distilbert-base-uncased
+    inference_features: []
 
   deberta_v3_base:
     repo: microsoft/deberta-v3-base
@@ -82,6 +92,7 @@ encoders:
     gated: false
     task: masked_lm
     description: DeBERTa v3 base — bake-off entry to test a non-BERT-family encoder.
+    inference_features: []
 
   bge_large_en_v15:
     repo: BAAI/bge-large-en-v1.5
@@ -89,6 +100,7 @@ encoders:
     gated: false
     task: sentence_embedding
     description: BGE large English v1.5. Sentence-embedding encoder for the embedding-cache bake-off lane.
+    inference_features: []
 
   nomic_embed_text_v15:
     repo: nomic-ai/nomic-embed-text-v1.5
@@ -96,6 +108,7 @@ encoders:
     gated: false
     task: sentence_embedding
     description: Nomic embed text v1.5. Sentence-embedding encoder; second bake-off entry alongside BGE.
+    inference_features: []
 
   voyage_finance_2:
     repo: voyageai/voyage-finance-2
@@ -110,6 +123,7 @@ encoders:
       ``app.data.embedding_cache``. ``VOYAGE_API_KEY`` must be set;
       Voyage does not publish a checkpoint sha, so the revision field
       pins the model name itself.
+    inference_features: []
 
   finbert_fed_adjacent:
     repo: /data/artifacts/continued_pretraining/finbert_fed_adjacent_20260515T104824Z_s11/checkpoint
@@ -123,6 +137,9 @@ encoders:
       ``data/raw/embeddings/finbert_fed_adjacent_20260515T104.parquet``. The
       bake-off CLI now treats this encoder as runnable; cross-bank-supervised
       variants ride under ``finbert_fed_adjacent_xbank``.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
 
   bert_base_fed_adjacent:
     repo: local/bert-base-fed-adjacent
@@ -135,6 +152,9 @@ encoders:
       finbert. Run via ``make finbert-fed-adjacent-pretrain-bert-control``; the
       bake-off pairs the two checkpoints so we can isolate the contribution of
       the FinBERT prior versus the BIS substrate alone.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
 
   finbert_fomc_only:
     repo: local/finbert-fomc-only
@@ -156,6 +176,9 @@ encoders:
       against the cross-bank DAPT encoder, so the FOMC-only DAPT
       substrate keeps the headline classifier role and the cross-bank
       DAPT encoder owns the retrieval role only.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
 
   finbert_bis_only:
     repo: local/finbert-bis-only
@@ -169,6 +192,9 @@ encoders:
       by ``make finbert-bis-only-pretrain``. Revision empty until the
       first GPU run lands a checkpoint; same unpinned-local guard as
       ``finbert_fomc_only`` applies.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
 
   finbert_fed_adjacent_xbank:
     repo: /data/artifacts/phase3/finetune_batch_20260519T190604Z/finbert_fed_adjacent_s11/hf_checkpoints
@@ -186,6 +212,9 @@ encoders:
       stance head); the remaining four seeds are kept on disk under
       ``finetune_batch_20260519T190604Z/finbert_fed_adjacent_s{29,47,71,97}``
       for reproducibility but the embedding cache builds against s11.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
 
   finbert_fed_adjacent_xbank_dapt:
     repo: /data/artifacts/continued_pretraining/finbert_fed_adjacent_xbank_dapt_20260525T185524Z_s11/checkpoint
@@ -210,6 +239,9 @@ encoders:
       supervised + DAPT layers null on the headline classifier target,
       so this encoder owns the retrieval role only; the classifier role
       is held by ``finbert_fomc_only``.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
 
   finbert_fed_adjacent_xbank_aux_stance_masked:
     repo: /data/artifacts/text_multi_axis/text_multi_axis_20260525T105459Z/hf_checkpoints
@@ -228,6 +260,9 @@ encoders:
       certainty 0.984 (val_loss=0.0922). Pin holds the encoder backbone
       + tokenizer saved alongside the singleton inference checkpoint at
       ``backend/models/text_multi_axis_best.pt``.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
 
   finbert_fed_adjacent_xbank_aux_weighted:
     repo: /data/artifacts/text_multi_axis/text_multi_axis_20260525T110428Z/hf_checkpoints
@@ -244,6 +279,9 @@ encoders:
       ``finbert_fed_adjacent_xbank_aux_stance_masked`` that re-litigates
       the Phase C substitute-not-complement prior. Validation accuracy
       at the best epoch: stance 0.978 / certainty 0.984 (val_loss=0.0974).
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
 
   finbert_fed_adjacent_xbank_dapt_retrieval:
     repo: /data/artifacts/retrieval/finbert_fed_adjacent_xbank_dapt_retrieval/checkpoint
@@ -264,6 +302,9 @@ encoders:
       same unpinned-local guard as ``finbert_fomc_only`` applies.
       Deployability lane (#302) will mirror the checkpoint to HF Hub
       in a follow-up — this PR keeps the artefact local.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
 
   trajectory_lstm:
     repo: /data/artifacts/trajectory/trajectory_lstm/model.pt
@@ -280,6 +321,7 @@ encoders:
       neutral). Produced by ``python -m app.trajectory.train
       --architecture lstm``; revision stays empty until the first
       GPU run lands a pinned checkpoint.
+    inference_features: []
 
   trajectory_transformer:
     repo: /data/artifacts/trajectory/trajectory_transformer/model.pt
@@ -295,6 +337,7 @@ encoders:
       ``python -m app.trajectory.train --architecture transformer``;
       revision stays empty until the first GPU run lands a pinned
       checkpoint.
+    inference_features: []
 
 # HF Hub mirror of every artefact the inference container needs to boot.
 # Local paths in ``encoders:`` above stay primary (the dev stack keeps
@@ -312,6 +355,9 @@ artefacts:
     description: |
       Canonical hot-path encoder — cross-bank DAPT-extended FinBERT
       substrate. Boot-time eager pull on the droplet entrypoint.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
 
   encoder_finbert_fomc:
     # Upstream third-party repo — we don't host our own copy. The pinned
@@ -322,18 +368,27 @@ artefacts:
     revision: "7754dd1d88da18e8b1d51cc1656496858ce19aae"
     eager: false
     description: Upstream third-party FinBERT-FOMC. Lazy-fetched for the bake-off comparison.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
 
   encoder_finbert_fed_adjacent:
     hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent
     revision: "332e31e166e859deba81535bfeec410b3c6e7023"
     eager: false
     description: DAPT encoder over BIS speeches + Fed-adjacent auxiliary corpus.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
 
   encoder_finbert_fed_adjacent_xbank:
     hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent-xbank
     revision: "178fcfaa70f7949bd4b703f36e4c45746e279bce"
     eager: false
     description: Bundle A cross-bank auxiliary supervised variant.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
 
   forecaster_canonical:
     hf_uri: hf://yusufizzetmurat/fed-pulse-forecaster
@@ -342,12 +397,20 @@ artefacts:
     description: |
       Canonical multi-head forecaster checkpoint (#292). Loaded into
       ``backend/models/forecaster_best.pt`` on first boot.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
+      - credibility
 
   rates_heads_canonical:
     hf_uri: hf://yusufizzetmurat/fed-pulse-rates-heads
     revision: "0a76dabb67006b532e376d9b4dd69b8ad172e7d7"
     eager: true
     description: Multi-target rates heads checkpoint (#292/#293).
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
+      - credibility
 
   retrieval_bundle:
     hf_uri: hf://yusufizzetmurat/fed-pulse-retrieval
@@ -356,6 +419,7 @@ artefacts:
     description: |
       Retrieval bundle for /analyze/analogs — embedding_index.parquet +
       embeddings.npy + manifest produced by ``python -m app.retrieval.train``.
+    inference_features: []
 
   trajectory_bundle:
     hf_uri: hf://yusufizzetmurat/fed-pulse-trajectory
@@ -364,6 +428,7 @@ artefacts:
     description: |
       Trajectory bundle for /analyze/trajectory — LSTM checkpoint +
       2D embeddings + manifest produced by ``python -m app.trajectory.train``.
+    inference_features: []
 
   training_package:
     hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-training-package
@@ -373,6 +438,7 @@ artefacts:
       Canonical training package for ``make reproduce-all``. Pulled to
       ``data/processed/canonical/`` via
       ``huggingface_hub.snapshot_download(repo_type='dataset')``.
+    inference_features: []
 
   embedding_caches:
     hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-embedding-caches
@@ -381,6 +447,7 @@ artefacts:
     description: |
       Per-encoder embedding caches lazy-fetched on first use by
       ``app.data.embedding_cache.ensure_local``.
+    inference_features: []
 
 # Integrity pin for the B1 (#212) LLM-as-features cache. The cache is the
 # authoritative artefact for the §6.6 Tier 4 / Tier 5 experiments — the

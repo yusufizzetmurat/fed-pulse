@@ -70,12 +70,24 @@ machines.
 No look-ahead
 -------------
 
+The surprise quantities (``mp_surprise_level``, ``mp_surprise_path_factor``,
+``fed_info_factor``) are built from **strictly-prior** inputs only. The
+per-feature provenance audit (#324, ``docs/feature-provenance-audit.md``)
+flagged the prior ``[T-1, T+1]`` Cieslak-Vissing-Jorgensen window as a
+``T+Δ`` leak for a forecaster scoring at ``T``; issue #350 dropped the
+``T+1`` leg and reformulated the three columns against strict-prior
+expectations. See ``docs/adr/0024-mp-surprise-strict-prior-replacement.md``
+for the methodology footnote (the construction is no longer the literal
+CVJ post-event quantity).
+
 ``pre_event_curve`` reads the last trading-day yield strictly before
-``event_date``; ``post_event_curve`` reads the first trading-day yield
-strictly after ``event_date``. The two-day window absorbs same-day
-announcement noise and matches Cieslak-Vissing-Jorgensen 2021 (table 2,
-"announcement window"). The contract is enforced by an assertion in
-:func:`_pre_post_yields`.
+``event_date``. ``post_event_curve`` remains on the parquet as a
+diagnostic-only column for the cross-asset response builder
+(``backend/app/forecasting/cross_asset_response.py``), which evaluates the
+post-event response at meeting ``N`` to project onto meeting ``N+1`` — a
+different time-axis than the volatility-forecaster leak this module's
+core columns previously embedded. The no-look-ahead contract for the
+diagnostic post leg is enforced by the same strict inequality as before.
 
 CLI
 ---
@@ -494,6 +506,87 @@ def _pre_post_yields(
     return (pre_value, post_value, pre_date, post_date)
 
 
+# Trailing-window radius used for the strict-prior curve-drift and SPX-return
+# substitutions introduced by #350. Five trading days is the conventional
+# horizon at which the rates / equity panels carry a non-degenerate signal
+# without re-baselining the underlying lock JSON.
+STRICT_PRIOR_TRAILING_TDAYS = 5
+
+
+def _strictly_prior_pre_and_trailing_yield(
+    on_date: _dt.date,
+    series_map: Mapping[_dt.date, float],
+    *,
+    trailing_tdays: int = STRICT_PRIOR_TRAILING_TDAYS,
+    trading_days: Sequence[_dt.date] | None = None,
+) -> tuple[float | None, float | None, _dt.date | None, _dt.date | None]:
+    """Return ``(pre_value, trail_value, pre_date, trail_date)`` -- strict prior only.
+
+    ``pre`` is the last trading-day yield strictly before ``on_date``
+    (the same anchor :func:`_pre_post_yields` uses for its pre leg).
+    ``trail`` is the trading-day yield ``trailing_tdays`` trading days
+    earlier than ``pre`` (still strictly before ``on_date``). Both
+    anchors are observable at ``T-Δ`` for ``T = on_date``; the strict
+    inequality is enforced by the same bisect-into-trading-days walk
+    as :func:`_pre_post_yields`.
+
+    Used by the #350 strict-prior reformulation of the level / path
+    surprise quantities. See ``docs/adr/0024-mp-surprise-strict-prior-replacement.md``.
+    """
+
+    if trading_days is None:
+        trading_days = sorted(series_map.keys())
+    n_tdays = len(trading_days)
+    if n_tdays == 0:
+        return (None, None, None, None)
+
+    import bisect as _bisect
+
+    idx = _bisect.bisect_left(trading_days, on_date)
+    pre_value: float | None = None
+    pre_date: _dt.date | None = None
+    pre_idx: int | None = None
+    for step in range(STRICT_PRIOR_TRAILING_TDAYS + trailing_tdays):
+        i = idx - 1 - step
+        if i < 0:
+            break
+        cand = trading_days[i]
+        if cand >= on_date:
+            continue
+        if cand in series_map:
+            pre_value = series_map[cand]
+            pre_date = cand
+            pre_idx = i
+            break
+
+    if pre_idx is None:
+        return (None, None, None, None)
+
+    trail_value: float | None = None
+    trail_date: _dt.date | None = None
+    # Walk backwards another `trailing_tdays` trading-day slots from the
+    # pre anchor. We require the trail anchor to sit strictly before
+    # ``on_date`` (it does by construction since ``pre`` already does).
+    for step in range(trailing_tdays, trailing_tdays + STRICT_PRIOR_TRAILING_TDAYS + 1):
+        i = pre_idx - step
+        if i < 0:
+            break
+        cand = trading_days[i]
+        if cand >= on_date or cand >= pre_date:
+            continue
+        if cand in series_map:
+            trail_value = series_map[cand]
+            trail_date = cand
+            break
+
+    if pre_date is not None and trail_date is not None:
+        assert trail_date < pre_date < on_date, (
+            "strict-prior contract violated: "
+            f"trail={trail_date} pre={pre_date} on={on_date}"
+        )
+    return (pre_value, trail_value, pre_date, trail_date)
+
+
 # ---------------------------------------------------------------------------
 # PCA path factor
 # ---------------------------------------------------------------------------
@@ -639,25 +732,32 @@ def _spx_return_on(
     spx_close_by_date: Mapping[_dt.date, float],
     *,
     radius_days: int = SPX_LOOKUP_RADIUS_DAYS,
+    trailing_calendar_days: int = 7,
 ) -> tuple[float | None, str]:
-    """Approximate the daily SPX return centred on ``event_date``.
+    """Strict-prior trailing SPX return through ``event_date - 1``.
 
-    Returns ``(daily_return_pct, source_flag)`` where ``source_flag`` is
-    one of:
+    Returns ``(trailing_return_pct, source_flag)`` where ``source_flag`` is:
 
-    - ``"daily_window_proxy"`` -- the standard daily close-to-close
-      return computed over a ``[t-1, t+1]`` close window. This is the
-      documented approximation; intraday ``+/-30 min`` data is out of
-      scope.
-    - ``"unavailable"`` -- no SPX data inside the radius. The caller
-      writes ``fed_info_factor = None`` (NOT zero) and stamps
-      ``fed_info_factor_source = "unavailable"`` so the row is
+    - ``"strict_prior_trailing"`` -- the close-to-close return computed
+      over ``[t - trailing_calendar_days - radius, t - 1]``. Both
+      endpoints carry calendar dates strictly before ``event_date``, so
+      the return is observable at ``T-Δ`` and cannot bleed post-event
+      information into the residual.
+    - ``"unavailable"`` -- no SPX data inside the strict-prior window.
+      The caller writes ``fed_info_factor = None`` (NOT zero) and stamps
+      ``fed_info_factor_source = "unavailable"`` so the row stays
       distinguishable from a real-but-tiny residual.
 
-    We never claim a CVJ-style intraday measurement; the flag is the
-    transparency mechanism.
+    Reformulation rationale (#350): the original close-to-close return
+    on ``[T-1, T+1]`` was the daily-window proxy for the Cieslak-Vissing-
+    Jorgensen 2021 ``±30 min`` SPX leg. That window leaks ``T+1`` into
+    the input side of the volatility forecaster. The strict-prior
+    trailing return preserves the equity-information channel the
+    residual needs while keeping every observation dated strictly before
+    ``event_date``. The methodology shift is footnoted in ADR-0024.
     """
 
+    # Pre anchor: most recent close strictly before ``event_date``.
     pre_close: float | None = None
     pre_date: _dt.date | None = None
     for offset in range(1, radius_days + 1):
@@ -666,19 +766,29 @@ def _spx_return_on(
             pre_close = spx_close_by_date[d]
             pre_date = d
             break
-    post_close: float | None = None
-    post_date: _dt.date | None = None
-    for offset in range(1, radius_days + 1):
-        d = event_date + _dt.timedelta(days=offset)
-        if d in spx_close_by_date:
-            post_close = spx_close_by_date[d]
-            post_date = d
-            break
-    if pre_close is None or post_close is None or pre_close <= 0:
+    # Trail anchor: close ~``trailing_calendar_days`` further back, still
+    # strictly before ``event_date``.
+    trail_close: float | None = None
+    trail_date: _dt.date | None = None
+    if pre_date is not None:
+        start_offset = trailing_calendar_days
+        for offset in range(start_offset, start_offset + radius_days + 1):
+            d = pre_date - _dt.timedelta(days=offset)
+            if d >= event_date:
+                continue
+            if d in spx_close_by_date and d < pre_date:
+                trail_close = spx_close_by_date[d]
+                trail_date = d
+                break
+    if pre_close is None or trail_close is None or trail_close <= 0:
         return (None, "unavailable")
-    assert pre_date is not None and post_date is not None
-    daily_return = (post_close - pre_close) / pre_close
-    return (daily_return, "daily_window_proxy")
+    assert pre_date is not None and trail_date is not None
+    assert trail_date < pre_date < event_date, (
+        "strict-prior SPX contract violated: "
+        f"trail={trail_date} pre={pre_date} event={event_date}"
+    )
+    trailing_return = (pre_close - trail_close) / trail_close
+    return (trailing_return, "strict_prior_trailing")
 
 
 def _fit_fed_info_factor(
@@ -907,12 +1017,23 @@ def build_mp_surprises(
         nxt = sorted_meeting_dates[i + 1] if i + 1 < len(sorted_meeting_dates) else None
         next_meeting_date_by_event[d] = nxt
 
+    # Per-meeting per-tenor strict-prior trailing yield drifts (#350).
+    # ``per_meeting_trail_drift_bps[ed][tenor]`` = (pre - trail) * 100,
+    # the curve's trailing 5-trading-day drift through the pre-event
+    # anchor. Strictly observable at ``T-Δ``. Replaces the leaky
+    # ``(post - pre) * 100`` change that anchored the prior CVJ-style
+    # construction at every tenor.
+    per_meeting_trail_drift_bps: dict[_dt.date, dict[int, float | None]] = {}
+
     for m in meetings:
         ed = m.meeting_date
-        # Curves at five tenors.
+        # Curves at five tenors. ``pre_event_curve`` is strictly-prior;
+        # ``post_event_curve`` is preserved as a diagnostic-only column
+        # for the cross-asset response builder (post-T evaluation, not a
+        # forecaster input).
         pre_curve: list[CurvePoint] = []
         post_curve: list[CurvePoint] = []
-        deltas_at_tenor: dict[int, float | None] = {}
+        trail_drift_at_tenor: dict[int, float | None] = {}
         for tenor in CURVE_TENORS_MONTHS:
             s_map = curve_maps[tenor]
             pre, post, _, _ = _pre_post_yields(
@@ -922,15 +1043,20 @@ def build_mp_surprises(
             )
             pre_curve.append(CurvePoint(months_ahead=tenor, implied_rate=pre if pre is not None else float("nan")))
             post_curve.append(CurvePoint(months_ahead=tenor, implied_rate=post if post is not None else float("nan")))
-            if pre is None or post is None:
-                deltas_at_tenor[tenor] = None
+            # Strict-prior trailing drift: replaces the leaky post-leg
+            # contribution to the surprise-level and PCA-path inputs.
+            pre_v, trail_v, _, _ = _strictly_prior_pre_and_trailing_yield(
+                ed,
+                s_map,
+                trading_days=trading_days_sorted,
+            )
+            if pre_v is None or trail_v is None:
+                trail_drift_at_tenor[tenor] = None
             else:
-                # Convert from percent to basis points (1% = 100 bps).
-                deltas_at_tenor[tenor] = (post - pre) * 100.0
+                trail_drift_at_tenor[tenor] = (pre_v - trail_v) * 100.0
         per_meeting_curves_pre[ed] = pre_curve
         per_meeting_curves_post[ed] = post_curve
-        per_meeting_delta_level[ed] = deltas_at_tenor[1]
-        per_meeting_delta_path[ed] = [deltas_at_tenor[t] for t in PATH_TENORS_MONTHS]
+        per_meeting_trail_drift_bps[ed] = trail_drift_at_tenor
 
         # Targets: prior = day before announcement (already published target band);
         # after = effective once announcement lands. We look back to the previous
@@ -965,37 +1091,85 @@ def build_mp_surprises(
         per_meeting_target_prior[ed] = (prior_target, prior_src)
         per_meeting_target_after[ed] = (after_target, after_src)
 
-    # ---- Pass 2: PCA fit on residual curve shape ----
+    # ---- Pass 1b: strict-prior surprise quantities (#350) ----
+    #
+    # ``per_meeting_delta_level`` and ``per_meeting_delta_path`` now hold
+    # the strict-prior reformulation:
+    #
+    # * ``delta_level[ed]`` = ``actual_target_change_bps - pre_implied_1m_bps``
+    #   where ``actual_target_change_bps = (ff_target_after - ff_target_prior) * 100``
+    #   and ``pre_implied_1m_bps = (pre_yield_1m - ff_target_prior) * 100``
+    #   is observable at T-1.
+    # * ``delta_path[ed]`` per tenor in PATH_TENORS_MONTHS = the
+    #   trailing 5-trading-day curve drift on that tenor through T-1.
+    #
+    # Both quantities are observable strictly before ``event_date`` for
+    # every input except ``ff_target_after`` (the announcement itself,
+    # observable at T -- this is the only T-snapshot input and is what
+    # the "surprise" decomposition is defined against).
+    for m in meetings:
+        ed = m.meeting_date
+        prior_target, _ = per_meeting_target_prior[ed]
+        after_target, _ = per_meeting_target_after[ed]
+        # 1m strict-prior yield reused as the pre-implied next-move proxy.
+        pre_1m_curve_value: float | None = None
+        for p in per_meeting_curves_pre[ed]:
+            if p.months_ahead == 1:
+                if p.implied_rate == p.implied_rate:  # NaN-safe
+                    pre_1m_curve_value = float(p.implied_rate)
+                break
+        if (
+            prior_target is None
+            or after_target is None
+            or pre_1m_curve_value is None
+        ):
+            per_meeting_delta_level[ed] = None
+        else:
+            actual_change_bps = (float(after_target) - float(prior_target)) * 100.0
+            pre_implied_bps = (pre_1m_curve_value - float(prior_target)) * 100.0
+            per_meeting_delta_level[ed] = actual_change_bps - pre_implied_bps
+        # Path inputs: trailing strict-prior drift per PATH_TENORS_MONTHS.
+        trail_drifts = per_meeting_trail_drift_bps[ed]
+        per_meeting_delta_path[ed] = [trail_drifts[t] for t in PATH_TENORS_MONTHS]
+
+    # ---- Pass 2: PCA fit on strict-prior trailing curve shape ----
+    # The fit input is now the trailing curve drift (T-1 minus T-1-5td)
+    # at the 1m tenor and the PATH_TENORS_MONTHS tenors. We residualise
+    # the path tenors against the 1m trailing drift -- the level proxy
+    # for the PCA fit only (the persisted ``mp_surprise_level`` column
+    # is the strict-prior actual-vs-implied surprise computed above).
     fit_levels: list[float] = []
     fit_paths: list[list[float]] = []
     for m in meetings:
         ed = m.meeting_date
-        lvl = per_meeting_delta_level[ed]
-        path = per_meeting_delta_path[ed]
-        if lvl is None or any(v is None for v in path):
+        trail_drifts = per_meeting_trail_drift_bps[ed]
+        trail_1m = trail_drifts.get(1)
+        path_drifts = [trail_drifts.get(t) for t in PATH_TENORS_MONTHS]
+        if trail_1m is None or any(v is None for v in path_drifts):
             continue
-        fit_levels.append(float(lvl))
-        fit_paths.append([float(v) for v in path])  # type: ignore[arg-type]
+        fit_levels.append(float(trail_1m))
+        fit_paths.append([float(v) for v in path_drifts])  # type: ignore[arg-type]
     path_model = _fit_path_factor_model(fit_levels, fit_paths)
 
-    # ---- Pass 3: fed-info factor regression on SPX returns ----
+    # ---- Pass 3: fed-info factor regression on strict-prior SPX returns ----
+    #
+    # #350: the Alpha Vantage ±30 min intraday route is **rejected** here
+    # because the 14:00-14:30 ET half is post-announcement and leaks
+    # ``T+`` into the residual. The ``spx_intraday_returns`` argument is
+    # retained on the signature for backwards compatibility but is
+    # ignored when present; we keep the strict-prior trailing close-to-
+    # close return as the only fed-info input. See ADR-0024.
+    if spx_intraday_returns:
+        # Diagnostic only -- do not consume the leaky intraday values.
+        _ = dict(spx_intraday_returns)
     spx_lookup = spx_close_by_date or {}
-    intraday_lookup = dict(spx_intraday_returns or {})
     levels_for_fit: list[float] = []
     spx_for_fit: list[float] = []
     spx_returns_per_meeting: dict[_dt.date, tuple[float | None, str]] = {}
     for m in meetings:
         ed = m.meeting_date
         lvl = per_meeting_delta_level[ed]
-        # Prefer the Alpha Vantage intraday ±30 min return when the
-        # backfill cache covers the event. Falls through to the daily
-        # close-to-close proxy when intraday is missing.
-        intraday_value = intraday_lookup.get(ed.isoformat())
-        if intraday_value is not None:
-            ret: float | None = float(intraday_value)
-            source = "alphavantage_intraday_30min"
-        else:
-            ret, source = _spx_return_on(ed, spx_lookup)
+        ret, source = _spx_return_on(ed, spx_lookup)
         spx_returns_per_meeting[ed] = (ret, source)
         if lvl is None or ret is None:
             continue
@@ -1012,7 +1186,15 @@ def build_mp_surprises(
         prior_target, prior_src = per_meeting_target_prior[ed]
         after_target, after_src = per_meeting_target_after[ed]
         lvl = per_meeting_delta_level[ed]
-        path_factor = _apply_path_factor(path_model, lvl, per_meeting_delta_path[ed])
+        # Project the persisted PCA eigenvector onto this meeting's
+        # trailing-curve-drift residual. The path factor is now a strict-
+        # prior shape signal, not a post-event curve response.
+        trail_drifts = per_meeting_trail_drift_bps[ed]
+        path_factor = _apply_path_factor(
+            path_model,
+            trail_drifts.get(1),
+            per_meeting_delta_path[ed],
+        )
         ret, ret_src = spx_returns_per_meeting[ed]
         if ret is None or lvl is None:
             fed_info_factor: float | None = None

@@ -108,6 +108,7 @@ ignore = [
 "backend/app/services/scraper_testimonies.py" = ["C901"]
 "backend/app/services/text_encoder.py" = ["C901", "PLR0913"]
 "backend/app/train_forecaster.py" = ["PLR0913", "C901"]
+"backend/app/training/checkpoint.py" = ["PLR0913"]
 "backend/app/training/loaders.py" = ["PLR0913", "C901"]
 "backend/app/training/loop.py" = ["PLR0913", "C901"]
 "backend/app/training/manifest.py" = ["PLR0913", "C901"]

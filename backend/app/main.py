@@ -150,7 +150,33 @@ register_error_handlers(app)
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    """Liveness probe + serving-contract status (#341).
+
+    The probe always returns ``status: "ok"`` (uvicorn is up and
+    serving). The ``inference_contract`` block surfaces the structured
+    state of the active forecaster checkpoint's contract validation --
+    ``ok`` when the sidecar matches the serving signature,
+    ``sidecar_absent`` on a legacy artefact, and a structured failure
+    code otherwise. Counters track structured-error increments so an
+    operator can spot a stuck contract without parsing logs.
+    """
+
+    try:
+        from app.services.forecaster import (
+            get_contract_counters,
+            get_serving_contract_status,
+        )
+
+        contract = get_serving_contract_status()
+        counters = get_contract_counters()
+    except Exception:  # pragma: no cover -- defensive
+        contract = {"status": "unknown"}
+        counters = {}
+    return {
+        "status": "ok",
+        "inference_contract": contract,
+        "inference_contract_counters": counters,
+    }
 
 
 _SYMBOLS_FALLBACK: list[dict[str, str]] = [
@@ -220,6 +246,42 @@ def list_settings_checkpoints() -> SettingsCheckpointsResponse:
     except Exception:  # pragma: no cover
         logger.warning("settings_checkpoints_multi_axis_probe_failed", exc_info=True)
 
+    # #342: snapshot the live serving forward signature once per request
+    # so each row can mark each declared kwarg as supplied / not supplied
+    # without re-introspecting the model class on every iteration. The
+    # source of truth is the model class the loader binds — falls back to
+    # the static SERVING_FORWARD_KWARGS constant when the import path is
+    # not available (defensive; the import should always succeed).
+    try:
+        from app.models.serving_model import ForecasterServingModel
+        from app.training.inference_contract import (
+            SERVING_FORWARD_KWARGS,
+            collect_serving_forward_kwargs,
+            read_sidecar,
+        )
+    except Exception:  # pragma: no cover -- defensive
+        # Hard import failure (genuinely broken env). Nothing to
+        # display; render every checkpoint row without a contract
+        # surface rather than mislabel the world.
+        logger.warning("settings_checkpoints_serving_kwargs_import_failed", exc_info=True)
+        serving_kwargs: frozenset[str] = frozenset()
+        read_sidecar = None  # type: ignore[assignment]
+    else:
+        try:
+            serving_kwargs = (
+                collect_serving_forward_kwargs(ForecasterServingModel)
+                or SERVING_FORWARD_KWARGS
+            )
+        except Exception:  # pragma: no cover -- defensive
+            # Live-signature introspection failed but the imports landed.
+            # Fall back to the static constant per ADR 0025 so the
+            # settings page still renders meaningful supplied/required
+            # badges rather than painting every kwarg red.
+            logger.warning(
+                "settings_checkpoints_serving_kwargs_probe_failed", exc_info=True
+            )
+            serving_kwargs = SERVING_FORWARD_KWARGS
+
     for entry in sorted(MODELS_DIR.glob("*.pt"), key=lambda p: p.name):
         try:
             stat = entry.stat()
@@ -232,6 +294,24 @@ def list_settings_checkpoints() -> SettingsCheckpointsResponse:
         sidecar_present: bool | None = None
         if role == "forecaster":
             sidecar_present = entry.with_suffix(".conformal.json").exists()
+
+        required_kwargs: list[str] = []
+        supplied: dict[str, bool] = {}
+        contract_status: str | None = None
+        if role == "forecaster" and read_sidecar is not None:
+            try:
+                contract = read_sidecar(entry)
+            except Exception:  # pragma: no cover -- defensive
+                contract = None
+            if contract is None:
+                contract_status = "sidecar_absent"
+            else:
+                contract_status = "present"
+                required_kwargs = [str(k) for k in contract.required_kwargs]
+                supplied = {
+                    name: (name in serving_kwargs) for name in required_kwargs
+                }
+
         items.append(
             SettingsCheckpoint(
                 filename=entry.name,
@@ -247,6 +327,9 @@ def list_settings_checkpoints() -> SettingsCheckpointsResponse:
                     else active_multi_axis_alias if is_active_multi_axis else None
                 ),
                 conformal_sidecar_present=sidecar_present,
+                required_kwargs=required_kwargs,
+                supplied_at_inference=supplied,
+                inference_contract_status=contract_status,
             )
         )
 
@@ -420,6 +503,19 @@ def _build_analyze_response(
             forecast["series"]["realized_close"] = [float(point["close"]) for point in realized]
             forecast["series"]["realized_volatility"] = [float(point["volatility_5d"]) for point in realized]
 
+    regime_payload = _safe_regime_classification(history_vectors)
+    # #341: structured-status payloads carry a ``status`` key and never
+    # the full card shape. Split into the legacy card slot (None when
+    # degraded) + the sibling status surface so the response stays
+    # serialisable against the AnalyzeResponse schema.
+    regime_card: dict[str, Any] | None = None
+    regime_status: dict[str, Any] | None = None
+    if isinstance(regime_payload, dict) and regime_payload.get("status") and (
+        "predicted_set" not in regime_payload
+    ):
+        regime_status = regime_payload
+    else:
+        regime_card = regime_payload
     response: dict[str, Any] = {
         "sentiment": sentiment,
         "prediction": forecast["prediction"],
@@ -427,7 +523,8 @@ def _build_analyze_response(
         "model": forecast["model"],
         "series": forecast["series"],
         "multi_axis": _build_multi_axis_block(payload.text, sentiment),
-        "regime_classification": _safe_regime_classification(history_vectors),
+        "regime_classification": regime_card,
+        "regime_classification_status": regime_status,
     }
     if getattr(payload, "include_xai", False):
         attributions = attribute_text(payload.text)
@@ -439,15 +536,86 @@ def _safe_regime_classification(history_vectors: list[Any]) -> dict[str, Any] | 
     """Wrap ``build_regime_classification_card`` so a failure never breaks /analyze.
 
     The card is opt-in by checkpoint flavour and manifest presence; any
-    exception inside the inference + calibrated-set path degrades to
-    ``None`` rather than 500ing the whole response.
+    exception inside the inference + calibrated-set path degrades to a
+    surfaced structured payload rather than 500ing the whole response.
+
+    #341 structured surface. Three branches:
+
+    1. **Not classification mode.** The active checkpoint emits no
+       regime card by contract -- legitimate ``None`` with
+       ``status="not_classification_mode"`` so the operator can
+       distinguish "model deliberately mute" from "model crashed
+       silently".
+    2. **Inference kwarg missing.** The forward path raised
+       :class:`TypeError` (e.g. the call site passed a kwarg the
+       checkpoint did not declare in its inference contract sidecar,
+       or omitted one the model requires). Surfaces
+       ``status="inference_kwarg_missing"`` + the missing kwarg name
+       parsed from the exception, increments the module-level counter,
+       and logs at WARNING.
+    3. **Unexpected exception.** Anything else: structured payload
+       with the exception class name + WARNING log + counter
+       increment. The /analyze response stays serialisable so the
+       frontend can render an "evidence unavailable" badge.
     """
 
+    from app.services import forecaster as _forecaster_service
+
     try:
-        return build_regime_classification_card(history_vectors)
-    except Exception:  # pragma: no cover — defensive, see #216 follow-up
-        logger.warning("regime_classification_card_failed", exc_info=True)
-        return None
+        result = build_regime_classification_card(history_vectors)
+    except TypeError as exc:
+        _forecaster_service._contract_counters[
+            "regime_classification_inference_kwarg_missing"
+        ] += 1
+        missing = _extract_missing_kwarg_from_typeerror(exc)
+        logger.warning(
+            "regime_classification_inference_kwarg_missing kwarg=%s detail=%s",
+            missing,
+            str(exc),
+        )
+        return {
+            "status": "inference_kwarg_missing",
+            "missing_kwarg": missing,
+        }
+    except Exception as exc:  # pragma: no cover — defensive, see #216 follow-up
+        _forecaster_service._contract_counters[
+            "regime_classification_unexpected_exception"
+        ] += 1
+        logger.warning(
+            "regime_classification_card_failed exception_class=%s detail=%s",
+            type(exc).__name__,
+            str(exc),
+            exc_info=True,
+        )
+        return {
+            "status": "unexpected_exception",
+            "exception_class": type(exc).__name__,
+        }
+    if result is None:
+        return {"status": "not_classification_mode"}
+    return result
+
+
+def _extract_missing_kwarg_from_typeerror(exc: TypeError) -> str | None:
+    """Parse a python ``TypeError`` for the offending kwarg name.
+
+    Python emits messages like ``forward_multi_task() missing 1
+    required keyword-only argument: 'text_embedding'`` or
+    ``forward_multi_task() got an unexpected keyword argument
+    'foo'``. We pull the quoted name out; on no-match we return
+    ``None`` rather than guess.
+    """
+
+    import re
+
+    message = str(exc)
+    match = re.search(r"keyword[- ]?(?:only )?argument[s]?:?\s*['\"]([^'\"]+)['\"]", message)
+    if match:
+        return match.group(1)
+    match = re.search(r"unexpected keyword argument\s*['\"]([^'\"]+)['\"]", message)
+    if match:
+        return match.group(1)
+    return None
 
 
 def _build_multi_axis_block(
@@ -569,8 +737,27 @@ async def analyze(payload: AnalyzeRequest):
         return response
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:  # pragma: no cover
+        # #342: contract-revalidation failures from _bootstrap_cold_start
+        # land here. Log the raw message but ship a structured detail
+        # carrying only the exception class -- the #341 review rule
+        # keeps raw str(exc) out of client-facing payloads.
+        logger.warning(
+            "analyze_runtime_error exception_class=%s detail=%s",
+            type(exc).__name__,
+            str(exc),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Analyze pipeline failed: serving runtime error",
+        ) from None
     except Exception as exc:  # pragma: no cover
-        raise HTTPException(status_code=500, detail=f"Analyze pipeline failed: {exc}") from exc
+        logger.exception(
+            "analyze_unexpected_exception exception_class=%s", type(exc).__name__
+        )
+        raise HTTPException(
+            status_code=500, detail="Analyze pipeline failed: unexpected error"
+        ) from None
 
 
 def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
@@ -578,6 +765,18 @@ def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
 
     Synchronous — invoked via ``run_in_threadpool`` from the async
     handler so the long-running fit does not block the event loop.
+
+    #342: once the bootstrap writes a fresh checkpoint, we drop the
+    in-process singleton + re-invoke the same loader the /analyze path
+    uses (``_get_model`` -> ``_validate_serving_contract``). That way a
+    bootstrap whose freshly written sidecar declares kwargs the serving
+    forward does not accept raises ``RuntimeError`` here rather than
+    silently binding via ``_set_singleton_after_train``. The cold-start
+    boot is then loud-fail: the /analyze caller surfaces a 500 with the
+    structured incompatibility reason and ``/health`` picks up the
+    contract status. Bypasses the reset for legacy artefacts (no
+    sidecar) because the validation degrades to ``sidecar_absent`` and
+    binds normally.
     """
 
     warmup_sentiment = analyze_text(payload.text)
@@ -598,6 +797,28 @@ def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
         learning_rate=4e-4,
         early_stopping_patience=8,
     )
+    # #342: drop the post-train singleton + force a cold load through
+    # the canonical loader so the contract validation actually runs on
+    # the freshly written sidecar. ``_set_singleton_after_train`` writes
+    # ``_model`` directly without crossing ``_validate_serving_contract``
+    # — without this reset the cold-start path would silently bind a
+    # checkpoint whose sidecar declares an unknown kwarg.
+    try:
+        from app.services.forecaster import (
+            _get_model as _forecaster_get_model,
+            reset_singleton_for_revalidation,
+        )
+
+        reset_singleton_for_revalidation()
+        _forecaster_get_model()
+    except RuntimeError:
+        # Re-raise so the /analyze caller surfaces the contract failure
+        # rather than swallowing it. ``/health`` already exposes the
+        # structured reason via ``get_serving_contract_status``.
+        raise
+    except Exception:  # pragma: no cover -- defensive
+        logger.warning("cold_start_contract_revalidation_failed", exc_info=True)
+        raise
 
 
 def _record_history(request: AnalyzeRequest, response: dict[str, Any]) -> None:
@@ -1005,8 +1226,20 @@ async def analyze_market(payload: AnalyzeRequest) -> MarketReactionPanel:
     # fresh deploy hitting /analyze/market first does not surface
     # empty cards. Shared with /analyze via the _bootstrap_cold_start
     # helper.
+    # #342: cold-start now invokes the canonical loader for contract
+    # revalidation; a sidecar mismatch raises RuntimeError. Surface it
+    # symmetrically to /analyze — 503 with the structured-status detail
+    # (the message is a deliberate contract code, not raw exception
+    # text) so the operator sees the same shape on both endpoints.
     if not checkpoint_exists():
-        await run_in_threadpool(_bootstrap_cold_start, payload)
+        try:
+            await run_in_threadpool(_bootstrap_cold_start, payload)
+        except RuntimeError as exc:
+            logger.warning("analyze_market_cold_start_contract_mismatch detail=%s", str(exc))
+            raise HTTPException(
+                status_code=503,
+                detail="Market reaction panel unavailable: serving contract mismatch",
+            ) from None
 
     sentiment = analyze_text(payload.text)
     market_history = await run_in_threadpool(
@@ -1030,6 +1263,20 @@ async def analyze_market(payload: AnalyzeRequest) -> MarketReactionPanel:
             status_code=503, detail="Market reaction panel unavailable"
         ) from None
     if result is None:
+        return MarketReactionPanel(rates=[], vol_regime=None)
+    # #341: ``build_market_reaction_panel`` now returns a structured
+    # status payload on the soft-error paths instead of bare None. The
+    # status field is mutually exclusive with the panel fields -- a
+    # status-only payload renders as an empty panel surface on the
+    # frontend, so we collapse it to the legacy empty-panel response
+    # here. The structured detail is logged at the service layer; the
+    # client gets an honest "no evidence" panel without a 5xx.
+    if isinstance(result, dict) and "rates" not in result and result.get("status"):
+        logger.info(
+            "market_reaction_panel_status status=%s detail=%s",
+            result.get("status"),
+            result.get("detail"),
+        )
         return MarketReactionPanel(rates=[], vol_regime=None)
     cards = [RatesReactionCard(**row) for row in result.get("rates", [])]
     vol_regime_payload = result.get("vol_regime")

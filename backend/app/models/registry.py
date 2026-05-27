@@ -54,6 +54,14 @@ class EncoderRef:
     # placeholder rows. Two tagged entries ship: ``classifier`` for the
     # headline substrate, ``retrieval`` for the retrieval base.
     role: str | None = None
+    # Inference-feature aliases the encoder contributes to a serving
+    # forecaster (#341). Empty tuple for encoders that have never been
+    # threaded into the serving forward path (bake-off siblings,
+    # placeholder rows). The serving loader cross-checks the
+    # checkpoint's inference contract against this set so a registry
+    # that drops a feature mid-flight refuses to bind a checkpoint
+    # trained against the old declaration.
+    inference_features: tuple[str, ...] = ()
 
 
 @lru_cache(maxsize=1)
@@ -66,6 +74,7 @@ def load_registry(path: Path | None = None) -> dict[str, EncoderRef]:
         if not isinstance(fields, dict):
             continue
         raw_role = fields.get("role")
+        raw_features = fields.get("inference_features") or ()
         ref = EncoderRef(
             alias=alias,
             repo=str(fields["repo"]),
@@ -74,6 +83,7 @@ def load_registry(path: Path | None = None) -> dict[str, EncoderRef]:
             task=str(fields.get("task", "classification")),
             description=str(fields.get("description", "")),
             role=str(raw_role) if raw_role is not None else None,
+            inference_features=tuple(str(v) for v in raw_features),
         )
         by_repo[ref.repo] = ref
         by_repo[ref.alias] = ref
@@ -161,6 +171,10 @@ class ArtefactRef:
     revision: str
     eager: bool
     description: str
+    # #341: inference-feature aliases the artefact contributes when the
+    # serving container binds it. Empty for non-forecaster artefacts
+    # (training package, embedding caches, retrieval bundle).
+    inference_features: tuple[str, ...] = ()
 
 
 @lru_cache(maxsize=1)
@@ -172,12 +186,14 @@ def load_artefacts(path: Path | None = None) -> dict[str, ArtefactRef]:
     for name, fields in block.items():
         if not isinstance(fields, dict):
             continue
+        raw_features = fields.get("inference_features") or ()
         out[name] = ArtefactRef(
             name=name,
             hf_uri=str(fields["hf_uri"]),
             revision=str(fields.get("revision") or ""),
             eager=bool(fields.get("eager", False)),
             description=str(fields.get("description", "")),
+            inference_features=tuple(str(v) for v in raw_features),
         )
     return out
 

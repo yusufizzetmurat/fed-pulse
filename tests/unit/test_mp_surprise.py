@@ -239,17 +239,29 @@ def test_pandemic_emergency_cut_2020_03_15(
     )
     assert artifacts.rows_written == 2
     pandemic = artifacts.frame[artifacts.frame["event_date"] == "2020-03-15"].iloc[0]
-    # The level surprise should be a large negative bps move (we injected -50 bp at the 1m tenor).
+    # #350: ``mp_surprise_level`` is now the strict-prior surprise:
+    # ``actual_target_change_bps - pre_implied_next_move_bps`` where the
+    # pre-implied leg is ``(pre_yield_1m - ff_target_prior) * 100``. In
+    # this fixture the 1m yield sits at 0.10% on T-1 against a 0.375%
+    # mid-band, so the curve already priced a ~27.5 bp cut; the actual
+    # cut of 25 bp leaves a tiny residual near zero. The methodology
+    # change is locked here against the leaky -50 bp post-window reading
+    # the prior CVJ-style construction produced. See ADR-0024.
     level = float(pandemic["mp_surprise_level"])
-    assert level < -25.0, f"expected sharp negative level surprise, got {level} bps"
-    assert level > -100.0, f"expected ~-50 bp level surprise, got {level} bps"
+    assert -10.0 < level < 10.0, (
+        f"strict-prior level surprise should be near zero on a "
+        f"fully-priced cut, got {level} bps"
+    )
     assert bool(pandemic["is_intermeeting"]) is True
     assert pandemic["methodology"] == mp_surprise.METHODOLOGY_OIS_PROXY
     # Target after should fall to the 0.00-0.25 % band midpoint.
     assert float(pandemic["ff_target_after"]) == pytest.approx(0.125, abs=1e-6)
-    # Fed-info factor should be sign-consistent with the level (or null).
-    fi = pandemic["fed_info_factor"]
-    assert fi is not None
+    # Fed-info factor must derive from a strictly-prior SPX leg now.
+    src = pandemic["fed_info_factor_source"]
+    assert src in {"strict_prior_trailing", "unavailable", "level_missing"}, (
+        f"unexpected fed_info_factor_source {src!r} -- the #350 reformulation "
+        "rejects the leaky daily_window_proxy / alphavantage_intraday_30min routes."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -280,9 +292,14 @@ def test_2008_10_08_emergency_cut_documented_as_outside_default_range() -> None:
     start = _dt.date(2008, 9, 15)
     end = _dt.date(2008, 11, 30)
     payloads = _build_fred_payloads(start - _dt.timedelta(days=14), end + _dt.timedelta(days=7))
-    # Hand-craft single-target rates so 2008-10-07 = 2.0%, 2008-10-09 = 1.5%
-    # The 1m yield series we already built is flat across this range; we
-    # rewire it so 1m falls 50 bp across the cut.
+    # Hand-craft single-target rates so 2008-10-07 = 2.0%, 2008-10-08 = 1.5%.
+    # FRED's DFEDTAR series publishes the new target on the announcement
+    # day in the post-2003 schedule; the #350 strict-prior reformulation
+    # reads ``ff_target_after`` directly from ``event_date`` (preferring
+    # the on-day value over the lookahead). The 1m yield series stays at
+    # 1.80% through T-1 and falls only after the announcement, so the
+    # surprise is genuinely actual-vs-pre-implied. Path tenors mirror the
+    # 1m drop so the path factor stays near zero.
     days = (end - start + _dt.timedelta(days=22)).days
     base = start - _dt.timedelta(days=14)
     new_obs: list[tuple[str, float | None]] = []
@@ -291,7 +308,7 @@ def test_2008_10_08_emergency_cut_documented_as_outside_default_range() -> None:
         v = 1.80 if d < _dt.date(2008, 10, 9) else 1.30
         new_obs.append((d.isoformat(), v))
     payloads["DGS1MO"] = _series_response("DGS1MO", new_obs)
-    # Bump path tenors by the same -50 bp shift so the path factor stays near zero.
+    # Path tenors fall by the same -50 bp shift after the announcement.
     for sid, base_val in (("DGS3MO", 1.85), ("DGS6MO", 1.95), ("DGS1", 2.20), ("DGS2", 2.50)):
         obs2 = []
         for i in range(days):
@@ -299,11 +316,13 @@ def test_2008_10_08_emergency_cut_documented_as_outside_default_range() -> None:
             v = base_val if d < _dt.date(2008, 10, 9) else base_val - 0.50
             obs2.append((d.isoformat(), v))
         payloads[sid] = _series_response(sid, obs2)
-    # Single-target rate (pre-band era).
+    # Single-target rate (pre-band era): published target reads 2.0% up
+    # through 2008-10-07 (T-1) and 1.5% from 2008-10-08 (announcement
+    # day) onward.
     single_obs: list[tuple[str, float | None]] = []
     for i in range(days):
         d = base + _dt.timedelta(days=i)
-        v = 2.0 if d < _dt.date(2008, 10, 9) else 1.5
+        v = 2.0 if d < _dt.date(2008, 10, 8) else 1.5
         single_obs.append((d.isoformat(), v))
     payloads["DFEDTAR"] = _series_response("DFEDTAR", single_obs)
     payloads["DFEDTARU"] = _series_response("DFEDTARU", [])
@@ -331,8 +350,17 @@ def test_2008_10_08_emergency_cut_documented_as_outside_default_range() -> None:
     )
     row = artifacts.frame.iloc[0]
     level = float(row["mp_surprise_level"])
-    assert level == pytest.approx(-50.0, abs=10.0), (
-        f"2008-10-08 emergency cut should give ~-50 bp level surprise, got {level}"
+    # #350 strict-prior reformulation: ``mp_surprise_level`` is the
+    # actual-target-change minus the pre-implied next-move on T-1. The
+    # fixture leaves the 1m yield at 1.80% on T-1 against a 2.00% target
+    # (pre-implied = -20 bp), then the announcement moves the target to
+    # 1.50% (actual = -50 bp), so the surprise is -30 bp. Under the old
+    # construction this was -50 bp -- the literal post-event 1m yield
+    # change -- which leaked T+1 data. The methodology shift is locked
+    # here and footnoted in ADR-0024.
+    assert level == pytest.approx(-30.0, abs=10.0), (
+        f"2008-10-08 strict-prior level surprise should be ~-30 bp "
+        f"(actual -50 minus pre-implied -20), got {level}"
     )
     assert bool(row["is_intermeeting"]) is True
 
@@ -709,3 +737,123 @@ def test_dataframe_value_hash_roundtrips_through_parquet(
         spx_close_by_date=spx_map,
     )
     assert mp_surprise.dataframe_value_hash(artifacts_2.frame) == in_memory_hash
+
+
+# ---------------------------------------------------------------------------
+# 11. Strict-prior construction contract (#350)
+# ---------------------------------------------------------------------------
+
+
+def test_strictly_prior_pre_and_trailing_yield_enforces_strict_inequality() -> None:
+    """The new strict-prior helper must return dates strictly before ``on_date``.
+
+    The level/path surprise reformulation under #350 reads the pre-event
+    yield and a trailing anchor 5 trading days earlier. Both anchors are
+    observable at ``T-Δ`` for ``T = on_date``; the strict inequality
+    contract is the gate that closes the leaky ``T+1`` post-leg the
+    audit (#324) flagged.
+    """
+
+    base = _dt.date(2024, 1, 1)
+    trading_days = [
+        base + _dt.timedelta(days=i) for i in range(120) if (base + _dt.timedelta(days=i)).weekday() < 5
+    ]
+    series_map = {d: 0.10 + i * 0.001 for i, d in enumerate(trading_days)}
+    on = _dt.date(2024, 3, 6)
+    pre, trail, pre_d, trail_d = mp_surprise._strictly_prior_pre_and_trailing_yield(
+        on,
+        series_map,
+        trading_days=trading_days,
+    )
+    assert pre is not None and trail is not None
+    assert pre_d is not None and trail_d is not None
+    assert trail_d < pre_d < on, (
+        f"strict-prior contract violated: trail={trail_d} pre={pre_d} on={on}"
+    )
+    # The default trailing window is 5 trading days; assert the gap is
+    # at least that many calendar days (trading-day spacing varies
+    # across weekends but never drops below 5 calendar days for a 5td
+    # walk on a Mon-Fri schedule).
+    assert (pre_d - trail_d).days >= 5
+
+
+def test_spx_strict_prior_trailing_uses_only_pre_event_closes() -> None:
+    """``_spx_return_on`` must never read SPX closes dated >= event_date.
+
+    The strict-prior trailing return uses two anchors: ``pre`` (the
+    closest close < event_date) and ``trail`` (~7 calendar days earlier
+    than ``pre``, still < event_date). Both endpoints carry calendar
+    dates strictly before the announcement; the close-to-close return
+    is the strict-prior equity signal the fed-info residual is fit
+    against under the #350 reformulation.
+    """
+
+    event_date = _dt.date(2024, 3, 20)
+    # Strict-prior closes only; nothing post-event in the lookup map.
+    closes = {
+        event_date - _dt.timedelta(days=10): 5000.0,
+        event_date - _dt.timedelta(days=9): 5010.0,
+        event_date - _dt.timedelta(days=1): 5100.0,
+    }
+    ret, source = mp_surprise._spx_return_on(event_date, closes)
+    assert ret is not None
+    assert source == "strict_prior_trailing"
+    # If the post-event close is the *only* available "pre" anchor (which
+    # the old [T-1, T+1] construction relied on), the strict-prior path
+    # must NOT use it.
+    leaky_only = {event_date + _dt.timedelta(days=1): 5200.0}
+    ret_leaky, source_leaky = mp_surprise._spx_return_on(event_date, leaky_only)
+    assert ret_leaky is None
+    assert source_leaky == "unavailable"
+
+
+def test_intraday_returns_argument_is_ignored_under_strict_prior(
+    monkeypatch: pytest.MonkeyPatch,
+    small_calendar: Path,
+    fred_cache: Path,
+) -> None:
+    """The Alpha Vantage intraday route is rejected under #350.
+
+    The ``spx_intraday_returns`` mapping is retained on the
+    ``build_mp_surprises`` signature for backwards compatibility but is
+    ignored at runtime because the ±30 min window around the FOMC
+    announcement leaks ``T+`` data (the 14:00-14:30 ET half is post-
+    announcement). The contract here is: passing a non-empty intraday
+    map must NOT bump any ``fed_info_factor_source`` row to
+    ``alphavantage_intraday_30min``.
+    """
+
+    monkeypatch.setenv("FRED_API_KEY", "test-key")
+    start = _dt.date(2010, 1, 1)
+    end = _dt.date(2020, 12, 31)
+    payloads = _build_fred_payloads(start - _dt.timedelta(days=14), end + _dt.timedelta(days=7))
+    transport = _mock_transport(payloads)
+    responses = mp_surprise._hydrate_fred_responses(
+        start=start - _dt.timedelta(days=14),
+        end=end + _dt.timedelta(days=7),
+        cache_dir=fred_cache,
+        transport=transport,
+    )
+    # Strict-prior trailing SPX coverage for both meetings (T-7..T-1).
+    def _trailing_closes_for(d: _dt.date) -> dict[_dt.date, float]:
+        return {
+            d - _dt.timedelta(days=8): 4000.0,
+            d - _dt.timedelta(days=1): 4100.0,
+        }
+
+    spx_map: dict[_dt.date, float] = {}
+    for d in (_dt.date(2014, 3, 19), _dt.date(2020, 3, 15)):
+        spx_map.update(_trailing_closes_for(d))
+    intraday = {"2014-03-19": 0.01, "2020-03-15": -0.10}
+    artifacts = mp_surprise.build_mp_surprises(
+        start=start,
+        end=end,
+        fred_responses=responses,
+        fomc_calendar_path=small_calendar,
+        spx_close_by_date=spx_map,
+        spx_intraday_returns=intraday,
+    )
+    for source in artifacts.frame["fed_info_factor_source"].tolist():
+        assert source != "alphavantage_intraday_30min", (
+            f"#350: intraday route must be ignored, got {source!r}"
+        )
