@@ -190,9 +190,28 @@ export interface XaiSentence {
   topTokens: XaiTokenAttribution[];
 }
 
+export interface XaiFeatureFamilyAttribution {
+  family: string;
+  magnitude: number;
+  signed: number;
+}
+
+export interface XaiPanelAttribution {
+  panel: string;
+  target: string;
+  families: XaiFeatureFamilyAttribution[];
+  n_steps: number;
+  unavailable: boolean;
+  reason: string | null;
+}
+
 export interface XaiResponse {
   sentences: XaiSentence[];
   method?: string;
+  // #297: per-panel integrated-gradients attribution. Populated only
+  // when `include_xai=true` on the request AND the active checkpoint
+  // surfaces at least one panel that admits explanation.
+  panels?: XaiPanelAttribution[];
 }
 
 export interface CredibilityResponse {
