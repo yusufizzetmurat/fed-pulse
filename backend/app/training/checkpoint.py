@@ -323,6 +323,8 @@ def _save_model_checkpoint(
     *,
     close_scale: float | None = None,
     rich_feature_scaler: RichFeatureScalerParams | None = None,
+    encoder_alias: str | None = None,
+    inference_features: tuple[str, ...] = (),
 ) -> None:
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
@@ -334,6 +336,33 @@ def _save_model_checkpoint(
         ),
         checkpoint_path,
     )
+    # #341: per-checkpoint inference contract sidecar. Lives next to the
+    # ``.pt`` file so a downstream serving loader can refuse to bind a
+    # checkpoint whose required kwargs the live serving signature does
+    # not satisfy. The sidecar write is a soft step -- a failure here
+    # logs + degrades so the training run still succeeds, but the
+    # default is to emit one on every save so the deployed model and
+    # the published model stay in lockstep.
+    try:
+        from app.training.inference_contract import (
+            derive_contract,
+            write_sidecar,
+        )
+
+        contract = derive_contract(
+            model,
+            encoder_alias=encoder_alias,
+            inference_features=tuple(inference_features),
+        )
+        write_sidecar(contract, checkpoint_path)
+    except Exception:  # pragma: no cover -- never let sidecar break training
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "inference_contract_sidecar_write_failed path=%s",
+            checkpoint_path,
+            exc_info=True,
+        )
     try:
         from app.audit import append_audit_entry, hash_file
         from app.logging import current_run_id

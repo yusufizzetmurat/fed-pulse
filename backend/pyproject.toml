@@ -171,6 +171,7 @@ ignore = [
 "app/services/scraper_testimonies.py" = ["C901"]
 "app/services/text_encoder.py" = ["C901", "PLR0913"]
 "app/train_forecaster.py" = ["PLR0913", "C901"]
+"app/training/checkpoint.py" = ["PLR0913"]
 "app/training/loaders.py" = ["PLR0913", "C901"]
 "app/training/loop.py" = ["PLR0913", "C901"]
 "app/training/manifest.py" = ["PLR0913", "C901"]

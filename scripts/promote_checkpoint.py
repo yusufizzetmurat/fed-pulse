@@ -105,6 +105,34 @@ def promote_research_checkpoint_to_serving(
 
     serving_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(promoted_payload, serving_path)
+    # #341: every checkpoint write path -- including promotion -- emits
+    # the inference contract sidecar. Promoted artefacts inherit the
+    # required-kwarg set from the freshly built serving instance (which
+    # mirrors the research model's runtime gates). A source-side sidecar
+    # next to ``research_path`` is preferred when present (it carries
+    # the encoder_alias / inference_features the trainer wired in);
+    # otherwise the promoted-side derivation is the floor.
+    try:
+        from app.training.inference_contract import (
+            derive_contract,
+            read_sidecar,
+            write_sidecar,
+        )
+
+        source_contract = read_sidecar(research_path)
+        if source_contract is not None:
+            promoted_contract = source_contract
+        else:
+            promoted_contract = derive_contract(serving)
+        write_sidecar(promoted_contract, serving_path)
+    except Exception:  # pragma: no cover -- never let sidecar break promotion
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "inference_contract_sidecar_write_failed_in_promotion path=%s",
+            serving_path,
+            exc_info=True,
+        )
     return serving_path
 
 

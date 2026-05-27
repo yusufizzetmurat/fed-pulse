@@ -397,6 +397,32 @@ class RegimeClassificationCard(BaseModel):
     )
 
 
+class InferenceStatusSurface(BaseModel):
+    """Structured error surface for the per-card inference helpers (#341).
+
+    Sibling of :class:`RegimeClassificationCard` on the /analyze
+    response. Populated when the card-build helper degrades through
+    one of three structured branches:
+
+    - ``not_classification_mode`` -- the active checkpoint emits no
+      regime card by contract. Legitimate; UI renders the card as
+      absent.
+    - ``inference_kwarg_missing`` -- the serving call site fed (or
+      omitted) a kwarg the checkpoint did not declare in its
+      inference contract sidecar. Operator-facing bug.
+    - ``unexpected_exception`` -- anything else; ``exception_class``
+      carries the class name and ``detail`` the message so the
+      operator can grep for it without parsing logs.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    status: str
+    missing_kwarg: str | None = None
+    exception_class: str | None = None
+    detail: str | None = None
+
+
 class AnalyzeResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
@@ -409,6 +435,12 @@ class AnalyzeResponse(BaseModel):
     credibility: CredibilityResponse | None = None
     multi_axis: MultiAxisBlock | None = None
     regime_classification: RegimeClassificationCard | None = None
+    # #341 sibling status surface so an operator can grep the JSON
+    # response for the structured error branch when the regime card
+    # degrades. Mutually exclusive with ``regime_classification``
+    # being populated -- either the card lands, or this field carries
+    # the structured reason.
+    regime_classification_status: InferenceStatusSurface | None = None
 
 
 class HistoryEntry(BaseModel):

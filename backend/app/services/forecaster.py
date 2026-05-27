@@ -108,6 +108,169 @@ _model: ForecasterServingModel | None = None
 _model_artifact_metadata: dict[str, Any] | None = None
 _model_lock = threading.Lock()
 
+# #341: structured surface for the loader's contract validation. The
+# /health endpoint reads this to surface "checkpoint incompatible with
+# serving signature" without 5xx'ing the request path. Populated by
+# ``_get_model`` on the cold-load path; stays at the optimistic default
+# until the first /analyze (or until a /health probe fires
+# ``ensure_serving_contract_validated``).
+_serving_contract_status: dict[str, Any] = {
+    "status": "uninitialised",
+    "checkpoint_path": None,
+    "missing_kwargs": [],
+    "extra_kwargs": [],
+    "message": "",
+}
+
+# #341: in-process counters so an operator can grep the structured
+# error surface without standing up Prometheus. Kept module-level so
+# the FastAPI test client and the /health endpoint can read the same
+# numbers a long-running production process accumulates. Reset on
+# process restart by design -- the structured logs alongside the
+# increment are the durable record.
+_contract_counters: dict[str, int] = {
+    "regime_classification_inference_kwarg_missing": 0,
+    "regime_classification_unexpected_exception": 0,
+    "market_reaction_inference_kwarg_missing": 0,
+    "market_reaction_unexpected_exception": 0,
+}
+
+
+def get_serving_contract_status() -> dict[str, Any]:
+    """Return the cached contract-validation surface for /health.
+
+    The cold-load path in ``_get_model`` writes into the module-level
+    ``_serving_contract_status`` dict; this helper returns a shallow
+    copy so callers cannot mutate the cache. A status of ``ok`` means
+    the checkpoint's declared kwargs are a subset of the serving
+    signature; ``serving_signature_missing_kwargs`` /
+    ``registry_inference_features_mismatch`` means the loader refused
+    to bind and ``_model`` is still ``None``.
+    """
+
+    return dict(_serving_contract_status)
+
+
+def get_contract_counters() -> dict[str, int]:
+    """Return a snapshot of the structured-error increment counters."""
+
+    return dict(_contract_counters)
+
+
+def _extract_missing_kwarg_from_typeerror(exc: TypeError) -> str | None:
+    """Parse the kwarg name out of a python ``TypeError`` message.
+
+    Mirrors :func:`app.main._extract_missing_kwarg_from_typeerror`; lives
+    here so the forecaster service has a local helper for its own
+    structured surface and the two functions stay in lockstep.
+    """
+
+    import re
+
+    message = str(exc)
+    match = re.search(
+        r"keyword[- ]?(?:only )?argument[s]?:?\s*['\"]([^'\"]+)['\"]", message
+    )
+    if match:
+        return match.group(1)
+    match = re.search(
+        r"unexpected keyword argument\s*['\"]([^'\"]+)['\"]", message
+    )
+    if match:
+        return match.group(1)
+    return None
+
+
+def _record_contract_status(
+    *,
+    status: str,
+    checkpoint_path: Any,
+    missing_kwargs: tuple[str, ...] = (),
+    extra_kwargs: tuple[str, ...] = (),
+    message: str = "",
+) -> None:
+    _serving_contract_status.update(
+        {
+            "status": str(status),
+            "checkpoint_path": str(checkpoint_path) if checkpoint_path else None,
+            "missing_kwargs": list(missing_kwargs),
+            "extra_kwargs": list(extra_kwargs),
+            "message": str(message),
+        }
+    )
+
+
+def _validate_serving_contract(
+    payload: Any,
+    checkpoint_path: Path,
+) -> tuple[bool, str]:
+    """Cross-check the sidecar against the serving signature + registry.
+
+    Returns ``(ok, status)``. ``ok=False`` means the serving loader
+    must refuse to bind the checkpoint. Falsy payload / missing
+    sidecar degrades to ``ok=True`` with status ``"sidecar_absent"``
+    so pre-#341 checkpoints continue to load -- the contract is a soft
+    surface for legacy artefacts and a hard surface for any checkpoint
+    written under the #341 contract.
+    """
+
+    from app.training.inference_contract import (
+        read_sidecar,
+        validate_against_serving,
+    )
+
+    contract = read_sidecar(checkpoint_path)
+    if contract is None:
+        _record_contract_status(
+            status="sidecar_absent",
+            checkpoint_path=checkpoint_path,
+            message=(
+                "no inference_contract.json sidecar next to checkpoint; "
+                "treating as pre-#341 legacy artefact"
+            ),
+        )
+        return True, "sidecar_absent"
+
+    registry_features: tuple[str, ...] | None = None
+    if contract.encoder_alias:
+        try:
+            from app.models.registry import encoder_ref
+
+            ref = encoder_ref(contract.encoder_alias)
+            if ref is not None:
+                registry_features = tuple(ref.inference_features)
+        except Exception:  # noqa: BLE001 -- defensive
+            registry_features = None
+
+    validation = validate_against_serving(
+        contract,
+        serving_model_cls=ForecasterServingModel,
+        registry_inference_features=registry_features,
+    )
+    if not validation.ok:
+        _record_contract_status(
+            status=validation.status,
+            checkpoint_path=checkpoint_path,
+            missing_kwargs=validation.missing_kwargs,
+            extra_kwargs=validation.extra_kwargs,
+            message=validation.message,
+        )
+        logger.error(
+            "checkpoint_inference_contract_mismatch path=%s status=%s missing=%s extra=%s",
+            checkpoint_path,
+            validation.status,
+            list(validation.missing_kwargs),
+            list(validation.extra_kwargs),
+        )
+        return False, validation.status
+
+    _record_contract_status(
+        status="ok",
+        checkpoint_path=checkpoint_path,
+        message="inference contract matches serving signature",
+    )
+    return True, "ok"
+
 
 def _get_model() -> ForecasterServingModel:
     """Resolve the cached serving singleton; cold-load from disk if absent.
@@ -135,6 +298,17 @@ def _get_model() -> ForecasterServingModel:
 
             device = _resolve_device()
             payload = _read_checkpoint_payload(BEST_MODEL_PATH, device)
+            # #341: contract validation runs BEFORE state-dict load so a
+            # mismatched sidecar refuses to bind instead of allowing a
+            # partial bind + a later RuntimeError on /analyze. Pre-#341
+            # checkpoints with no sidecar degrade to "sidecar_absent"
+            # + ok=True so the legacy serving fleet keeps working.
+            ok, _status = _validate_serving_contract(payload, BEST_MODEL_PATH)
+            if not ok:
+                raise RuntimeError(
+                    "checkpoint inference contract incompatible with serving "
+                    f"signature: {_status}"
+                )
             raw_config = (
                 payload.get("model_config") if isinstance(payload, dict) else None
             )
@@ -144,7 +318,7 @@ def _get_model() -> ForecasterServingModel:
                 _load_state_dict_loose(
                     model, payload["model_state_dict"], str(BEST_MODEL_PATH)
                 )
-            model.eval()
+            model.eval()  # set inference mode
             _model = model
             _model_artifact_metadata = _checkpoint_metadata(
                 payload, BEST_MODEL_PATH, model=model
@@ -479,7 +653,11 @@ def build_market_reaction_panel(
     # long as the rates heads are mounted; the vol-regime card remains
     # gated on classification via build_regime_classification_card.
     if output_mode != "classification" and not active_rates:
-        return None
+        # #341: structured "not classification mode" surface so the
+        # operator can distinguish "model deliberately mute" from
+        # "model crashed silently". The frontend treats any payload
+        # without a "rates" key as an absent panel.
+        return {"status": "not_classification_mode"}
     device = next(model.parameters()).device
     window = build_lookback_sequence(sequence)
     x = _build_inference_tensor(window, model, device)
@@ -513,15 +691,60 @@ def build_market_reaction_panel(
         kwargs["elapsed_days"] = elapsed_days.to(device)
     forward_multi = getattr(model, "forward_multi_task", None)
     if forward_multi is None:
-        return None
+        return {
+            "status": "not_classification_mode",
+            "detail": "model has no forward_multi_task method",
+        }
     try:
         out_dict = forward_multi(x, **kwargs)
-    except RuntimeError:
-        # The text / chunks path is mounted but the caller did not
-        # supply the embedding. Surface a None panel rather than
-        # bubbling a 5xx -- the route handler converts to an empty
-        # response.
-        return None
+    except TypeError as exc:
+        # #341 structured surface (b): the call site populated kwargs
+        # the checkpoint did not declare (or omitted a required one).
+        # Increment the counter, log at WARNING, return a structured
+        # payload instead of bare None so the operator can grep for
+        # the bug.
+        _contract_counters["market_reaction_inference_kwarg_missing"] += 1
+        missing = _extract_missing_kwarg_from_typeerror(exc)
+        logger.warning(
+            "market_reaction_inference_kwarg_missing kwarg=%s detail=%s",
+            missing,
+            str(exc),
+        )
+        return {
+            "status": "inference_kwarg_missing",
+            "missing_kwarg": missing,
+        }
+    except RuntimeError as exc:
+        # #341 structured surface (c-bis): RuntimeError is the
+        # text/chunks-path mounted-but-not-threaded shape from
+        # ``prepare_recurrent_input``. Surface it as a structured
+        # unexpected exception (NOT bare None) so the symptom is
+        # visible on /analyze + greppable in logs. The raw exception
+        # message stays in the WARNING log only -- it can carry
+        # tensor-shape detail / file paths that should not ship to
+        # the client.
+        _contract_counters["market_reaction_unexpected_exception"] += 1
+        logger.warning(
+            "market_reaction_runtime_error detail=%s",
+            str(exc),
+            exc_info=True,
+        )
+        return {
+            "status": "unexpected_exception",
+            "exception_class": "RuntimeError",
+        }
+    except Exception as exc:  # noqa: BLE001 -- structured surface for c
+        _contract_counters["market_reaction_unexpected_exception"] += 1
+        logger.warning(
+            "market_reaction_unexpected_exception exception_class=%s detail=%s",
+            type(exc).__name__,
+            str(exc),
+            exc_info=True,
+        )
+        return {
+            "status": "unexpected_exception",
+            "exception_class": type(exc).__name__,
+        }
 
     metadata = _model_artifact_metadata or {}
     rates_scalers_payload = metadata.get("rates_scalers") or {}
@@ -634,7 +857,13 @@ def build_market_reaction_panel(
             }
 
     if not rates_cards and vol_regime_card is None:
-        return None
+        # #341: structured-status payload instead of bare ``None`` so
+        # the contract surface is symmetric with the regime-card path.
+        # ``no_active_heads`` fires when the forward succeeded but
+        # nothing surfaced (no rates heads mounted + classification
+        # head off). The route handler collapses any status payload
+        # to an empty MarketReactionPanel; no schema impact.
+        return {"status": "no_active_heads"}
     return {
         "rates": rates_cards,
         "vol_regime": vol_regime_card,
