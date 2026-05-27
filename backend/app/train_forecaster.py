@@ -1128,20 +1128,17 @@ def _resolved_input_size(args: argparse.Namespace) -> int:
     ``--data-dir`` code path is unaffected. The text-embedding adapter
     slot is widened separately inside ``ForecasterModel`` via
     ``text_adapter_dim`` so this scalar size stays at 35 even when
-    text embeddings are on.
+    text embeddings are on. The #307 macro-regime tail is added at the
+    model layer (``ForecasterBase`` widens ``lstm_input_size`` by the
+    regime tail when ``use_regime_conditioning=True``), mirroring the
+    text-adapter convention; this helper returns ``RICH_FEATURE_SIZE``
+    regardless of the regime flag so the two paths never double-widen.
     """
 
     rich_on = bool(getattr(args, "rich_features", False))
     use_package_path = bool(getattr(args, "training_package_id", None))
     if rich_on and use_package_path:
-        # #307 widens the per-bar scalar slice past RICH_FEATURE_SIZE
-        # when ``--use-regime-conditioning`` is wired, so the model
-        # input projection mounts wide enough to consume the regime
-        # block + missing flag the loader appends past the legacy tail.
-        from app.models.config import rich_feature_size_with_regime
-        return rich_feature_size_with_regime(
-            bool(getattr(args, "use_regime_conditioning", False))
-        )
+        return RICH_FEATURE_SIZE
     return FEATURE_SIZE
 
 
