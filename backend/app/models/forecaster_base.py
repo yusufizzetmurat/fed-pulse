@@ -36,6 +36,8 @@ from app.models.config import (
     RICH_FEATURE_SIZE,
     RICH_MACRO_REGIME_DIM,
     RICH_MACRO_REGIME_MISSING_DIM,
+    RICH_SEP_DIM,
+    RICH_SEP_MISSING_DIM,
     SEQUENCE_LENGTH,
 )
 from app.models.dlinear import DLinear
@@ -88,6 +90,7 @@ class ForecasterBase(nn.Module):
         text_embedding_dim: int = 0,
         text_adapter_dim: int = 0,
         use_regime_conditioning: bool = False,
+        use_sep: bool = False,
     ):
         super().__init__()
         if model_type not in _ALLOWED_MODEL_TYPES:
@@ -192,6 +195,19 @@ class ForecasterBase(nn.Module):
             self.regime_gate = None
             regime_tail_dim = 0
         self.regime_tail_dim = regime_tail_dim
+        # #215 SEP dot-plot block. The loader appends
+        # ``RICH_SEP_DIM + RICH_SEP_MISSING_DIM`` extra scalars past the
+        # regime tail on every per-bar tensor when ``--use-sep`` is on
+        # (see ``FeatureVector.as_rich_list``). The recurrent core must
+        # absorb the widened input; the SEP block is a feature-only
+        # contribution with no architectural gate so the only wiring is
+        # the input-projection width here.
+        self.use_sep = bool(use_sep)
+        if self.use_sep:
+            sep_tail_dim = RICH_SEP_DIM + RICH_SEP_MISSING_DIM
+        else:
+            sep_tail_dim = 0
+        self.sep_tail_dim = sep_tail_dim
         self.text_embedding_dim = int(text_embedding_dim or 0)
         self.text_adapter_dim = int(text_adapter_dim or 0)
         self._text_path_active = self.text_embedding_dim > 0 and self.text_adapter_dim > 0
@@ -215,6 +231,7 @@ class ForecasterBase(nn.Module):
             + self.credibility_dim
             + text_path_dim
             + regime_tail_dim
+            + sep_tail_dim
         )
         self.lstm_input_size = lstm_input_size
         lstm_dropout = dropout if num_layers > 1 else 0.0

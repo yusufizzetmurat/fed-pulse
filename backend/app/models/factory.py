@@ -160,6 +160,7 @@ def build_forecaster(
             "rates_alpha",
             "rates_target_mode",
             "use_regime_conditioning",
+            "use_sep",
         ):
             flat_kwargs.pop(drop, None)
         flat_rates_heads = tuple(
@@ -290,6 +291,12 @@ def build_forecaster(
     # mounts at build time when the flag is on. Default ``False`` keeps
     # the no-gate forward byte-identical for every existing checkpoint.
     use_regime_conditioning_flag = bool(kwargs.pop("use_regime_conditioning", False))
+    # #215 SEP dot-plot toggle. Forwarded to the model constructor (both
+    # research and serving classes accept it via the shared ``ForecasterBase``
+    # super().__init__) so the recurrent core widens its input projection
+    # at build time when the flag is on. Default ``False`` keeps every
+    # existing checkpoint byte-identical.
+    use_sep_flag = bool(kwargs.pop("use_sep", False))
     model: ForecasterResearchModel | ForecasterServingModel
     if role == "serving":
         # Serving construction trims the loss-side / sweep-side knobs the
@@ -301,6 +308,7 @@ def build_forecaster(
             model_type=architecture,
             rates_heads=rates_heads_tuple,
             use_regime_conditioning=use_regime_conditioning_flag,
+            use_sep=use_sep_flag,
             **kwargs,
         )
     else:
@@ -308,6 +316,7 @@ def build_forecaster(
             model_type=architecture,
             rates_heads=rates_heads_tuple,
             use_regime_conditioning=use_regime_conditioning_flag,
+            use_sep=use_sep_flag,
             **kwargs,
         )
     # mypy reads ``nn.Module`` attribute writes as ``Tensor | Module``;

@@ -94,6 +94,16 @@ RICH_RETRIEVAL_ANALOG_MISSING_DIM = 1
 # keeps the byte-identical pre-#307 per-bar feature size. See ADR 0029.
 RICH_MACRO_REGIME_DIM = 3
 RICH_MACRO_REGIME_MISSING_DIM = 1
+# #215 Summary of Economic Projections (SEP) dot-plot block. Five scalars
+# (current-year / next-year / longer-run median FFR projections + the
+# current-year central-tendency range + a release flag) plus a paired
+# missing flag. Opt-in via ``--use-sep``; the block is appended past
+# ``RICH_FEATURE_SIZE`` (and past the regime block when both are on) by
+# ``as_rich_list`` only when the loader populates ``sep_features``, so
+# the legacy default path keeps the byte-identical pre-#215 per-bar
+# feature size. See ADR 0030.
+RICH_SEP_DIM = 5
+RICH_SEP_MISSING_DIM = 1
 RICH_EXTRA_FEATURE_SIZE = (
     RICH_CREDIBILITY_DIM
     + RICH_LINGUISTIC_DIM
@@ -174,6 +184,19 @@ RICH_MACRO_REGIME_MISSING_SLICE = slice(
     RICH_MACRO_REGIME_SLICE.stop,
     RICH_MACRO_REGIME_SLICE.stop + RICH_MACRO_REGIME_MISSING_DIM,
 )
+# #215 SEP block slice positions. The block sits past the regime block
+# in the conditional-emit order (regime, then SEP) so a checkpoint
+# trained with only the regime flag on retains the same input width
+# when SEP is off — and vice versa. ``as_rich_list`` keeps the
+# documented order: market | rich | regime? | sep?.
+RICH_SEP_SLICE = slice(
+    RICH_MACRO_REGIME_MISSING_SLICE.stop,
+    RICH_MACRO_REGIME_MISSING_SLICE.stop + RICH_SEP_DIM,
+)
+RICH_SEP_MISSING_SLICE = slice(
+    RICH_SEP_SLICE.stop,
+    RICH_SEP_SLICE.stop + RICH_SEP_MISSING_DIM,
+)
 
 # Multi-task head (#78) axis cardinalities and canonical label maps.
 # The multi-task head emits four branches; the cardinalities are pinned
@@ -242,6 +265,37 @@ def rich_feature_size_with_regime(use_regime: bool) -> int:
     if not bool(use_regime):
         return RICH_FEATURE_SIZE
     return RICH_FEATURE_SIZE + RICH_MACRO_REGIME_DIM + RICH_MACRO_REGIME_MISSING_DIM
+
+
+def rich_feature_size_with_sep(use_sep: bool) -> int:
+    """Return the per-bar rich-feature size with only the #215 SEP block.
+
+    ``use_sep=False`` returns the legacy ``RICH_FEATURE_SIZE`` so the
+    pre-#215 path is byte-identical. ``use_sep=True`` adds
+    ``RICH_SEP_DIM + RICH_SEP_MISSING_DIM`` for the SEP block appended
+    at the end of ``as_rich_list``.
+    """
+
+    if not bool(use_sep):
+        return RICH_FEATURE_SIZE
+    return RICH_FEATURE_SIZE + RICH_SEP_DIM + RICH_SEP_MISSING_DIM
+
+
+def rich_feature_size_with_blocks(*, use_regime: bool, use_sep: bool) -> int:
+    """Combined helper: the per-bar size with regime and SEP block flags.
+
+    The two blocks are independent — both can be on, both off, or one
+    of the two on. ``as_rich_list`` appends them in a fixed order
+    (regime first, then SEP) so a downstream caller iterating slices
+    knows where each block sits without ambiguity.
+    """
+
+    size = RICH_FEATURE_SIZE
+    if bool(use_regime):
+        size += RICH_MACRO_REGIME_DIM + RICH_MACRO_REGIME_MISSING_DIM
+    if bool(use_sep):
+        size += RICH_SEP_DIM + RICH_SEP_MISSING_DIM
+    return size
 
 
 FORECAST_CONFIDENCE_LEVEL = 0.8
@@ -488,6 +542,13 @@ class ModelConfig:
     # start of training, which keeps the OFF behaviour byte-identical
     # when the flag is later flipped without a re-init. See ADR 0029.
     use_regime_conditioning: bool = False
+    # #215 SEP dot-plot opt-in. Default ``False`` keeps the per-bar
+    # feature size byte-identical to pre-#215. When ``True`` the model
+    # factory widens the recurrent core's input projection by
+    # ``RICH_SEP_DIM + RICH_SEP_MISSING_DIM`` to absorb the SEP tail
+    # the loader appends past ``RICH_FEATURE_SIZE`` (and past the
+    # regime block when both flags are on). See ADR 0030.
+    use_sep: bool = False
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -553,6 +614,7 @@ class ModelConfig:
             use_regime_conditioning=bool(
                 getattr(model, "use_regime_conditioning", False)
             ),
+            use_sep=bool(getattr(model, "use_sep", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -764,6 +826,19 @@ class FeatureVector:
     # per-feature row in ``docs/feature-provenance-audit.md``.
     macro_regime_features: list[float] | None = None
     macro_regime_features_missing: float = 1.0
+    # #215 Summary of Economic Projections (SEP) dot-plot block. Five
+    # scalars (current-year / next-year / longer-run median FFR
+    # projections + the current-year central-tendency range + a release
+    # flag distinguishing fresh SEP meetings from forward-filled rows)
+    # plus a paired missing flag. Default ``None`` keeps the regression /
+    # legacy paths byte-identical: ``as_rich_list`` does NOT append the
+    # block when this slot is empty, so the per-bar feature size stays
+    # at the legacy ``RICH_FEATURE_SIZE`` width (or the regime-widened
+    # width when ``--use-regime-conditioning`` is on). The loader sets
+    # the slot only when ``--use-sep`` is on. See ADR 0030 and the
+    # per-feature row in ``docs/feature-provenance-audit.md``.
+    sep_features: list[float] | None = None
+    sep_features_missing: float = 1.0
     rich_payload: bool = False
     # Phase 9 V2 (#195) classification target. The forward 10-trading-day
     # realised volatility lives on the target row (the last vector in
@@ -998,6 +1073,24 @@ class FeatureVector:
                     RICH_MACRO_REGIME_DIM - len(regime_block)
                 )
             out = out + regime_block + [float(self.macro_regime_features_missing)]
+        # #215 SEP dot-plot block. Appended after the regime block so
+        # the two are independent: a checkpoint trained with one flag
+        # on still loads cleanly when the other is off, because the
+        # block widths past ``RICH_FEATURE_SIZE`` are additive in the
+        # documented order (regime, then SEP). The conditional append
+        # is the structural lock that keeps the default ``--no-sep``
+        # path identical to existing callers iterating slices inside
+        # ``[0:RICH_FEATURE_SIZE]`` (or inside the regime-widened width
+        # when ``--use-regime-conditioning`` is on). See ADR 0030.
+        if self.sep_features is not None:
+            sep_block = [
+                float(v) for v in self.sep_features[:RICH_SEP_DIM]
+            ]
+            if len(sep_block) < RICH_SEP_DIM:
+                sep_block = sep_block + [0.0] * (
+                    RICH_SEP_DIM - len(sep_block)
+                )
+            out = out + sep_block + [float(self.sep_features_missing)]
         return out
 
 
