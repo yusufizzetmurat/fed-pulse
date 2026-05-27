@@ -1284,24 +1284,27 @@ async def analyze_market(payload: AnalyzeRequest) -> MarketReactionPanel:
             detail="Market reaction panel unavailable: cold-start failed",
         ) from None
 
+    # Request-shape errors (bad date string from the client, etc.) must
+    # surface as 422 via the registered ``_value_error_handler`` so the
+    # contract tests + the frontend toast layer keep their existing
+    # validation semantics; only true server-side failures collapse to
+    # the structured 503 below.
+    sentiment = analyze_text(payload.text)
+    market_history = await run_in_threadpool(
+        fetch_market_history,
+        target_date=payload.date,
+        symbol=payload.symbol,
+        history_length=30,
+    )
+    history_vectors = build_feature_vectors(
+        market_history,
+        sentiment_score=float(sentiment["score"]),
+        document_date=payload.date,
+    )
     try:
-        sentiment = analyze_text(payload.text)
-        market_history = await run_in_threadpool(
-            fetch_market_history,
-            target_date=payload.date,
-            symbol=payload.symbol,
-            history_length=30,
-        )
-        history_vectors = build_feature_vectors(
-            market_history,
-            sentiment_score=float(sentiment["score"]),
-            document_date=payload.date,
-        )
         result = await run_in_threadpool(
             build_market_reaction_panel, history_vectors
         )
-    except HTTPException:
-        raise
     except Exception:  # pragma: no cover -- defensive
         logger.exception("analyze_market_failed")
         raise HTTPException(
