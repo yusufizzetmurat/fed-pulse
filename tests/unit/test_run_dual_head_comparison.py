@@ -250,6 +250,127 @@ def test_dual_head_runner_opt_in_threads_through(monkeypatch):
     assert model_config.use_regime_conditioning is True
 
 
+# ---------------------------------------------------------------------------
+# #401 follow-up: auto-activate rates heads when rates_target_mode != raw.
+# Without rates heads mounted, --rates-target-mode is a no-op and the
+# canonical-comparison sweep produces byte-identical output to the default.
+# ---------------------------------------------------------------------------
+
+
+def test_dual_head_runner_default_off_leaves_rates_heads_empty(monkeypatch):
+    """Default ``rates_target_mode='raw'`` must keep ``rates_heads=()``.
+
+    Pre-#401 canonical sweep is byte-identical -- no auto-activation.
+    """
+
+    pytest.importorskip("torch", reason="train_model import path needs torch")
+    from scripts import run_dual_head_comparison as runner
+
+    captured = _capture_calls(monkeypatch, runner)
+
+    runner._run_one_cell(
+        "dual",
+        seed=11,
+        training_package_id="tp_dummy",
+        fold_ids=["fold_001"],
+        epochs=1,
+        regression_alpha=0.5,
+        hidden_size=64,
+    )
+
+    train_kwargs = captured["train_calls"][0]
+    model_config = train_kwargs["model_config"]
+    assert model_config.rates_heads == ()
+
+
+def test_dual_head_runner_fomc_attributable_auto_activates_rates_heads(monkeypatch):
+    """``rates_target_mode='fomc_attributable'`` must mount canonical heads."""
+
+    pytest.importorskip("torch", reason="train_model import path needs torch")
+    from app.models.rates_heads import RATES_HEAD_NAMES
+    from scripts import run_dual_head_comparison as runner
+
+    captured = _capture_calls(monkeypatch, runner)
+
+    runner._run_one_cell(
+        "dual",
+        seed=11,
+        training_package_id="tp_dummy",
+        fold_ids=["fold_001"],
+        epochs=1,
+        regression_alpha=0.5,
+        hidden_size=64,
+        rates_target_mode="fomc_attributable",
+    )
+
+    train_kwargs = captured["train_calls"][0]
+    model_config = train_kwargs["model_config"]
+    assert model_config.rates_heads == tuple(RATES_HEAD_NAMES)
+    assert model_config.rates_target_mode == "fomc_attributable"
+
+
+def test_per_family_runner_default_off_leaves_rates_heads_empty(monkeypatch):
+    pytest.importorskip("torch", reason="train_model import path needs torch")
+    from scripts import run_per_family_ablation as runner
+
+    captured = _capture_calls(monkeypatch, runner)
+
+    args = SimpleNamespace(
+        training_package_id="tp_dummy",
+        text_encoder="finbert_fed_adjacent",
+        head_mode="dual",
+        regression_alpha=0.5,
+        hidden_size=64,
+        epochs=1,
+        rates_target_mode="raw",
+        use_retrieval_analogs=False,
+        use_regime_conditioning=False,
+    )
+    runner._run_one_cell(
+        "baseline",
+        frozenset(),
+        11,
+        args,
+        fold_ids=["fold_001"],
+    )
+
+    train_kwargs = captured["train_calls"][0]
+    model_config = train_kwargs["model_config"]
+    assert model_config.rates_heads == ()
+
+
+def test_per_family_runner_fomc_attributable_auto_activates_rates_heads(monkeypatch):
+    pytest.importorskip("torch", reason="train_model import path needs torch")
+    from app.models.rates_heads import RATES_HEAD_NAMES
+    from scripts import run_per_family_ablation as runner
+
+    captured = _capture_calls(monkeypatch, runner)
+
+    args = SimpleNamespace(
+        training_package_id="tp_dummy",
+        text_encoder="finbert_fed_adjacent",
+        head_mode="dual",
+        regression_alpha=0.5,
+        hidden_size=64,
+        epochs=1,
+        rates_target_mode="fomc_attributable",
+        use_retrieval_analogs=False,
+        use_regime_conditioning=False,
+    )
+    runner._run_one_cell(
+        "baseline",
+        frozenset(),
+        11,
+        args,
+        fold_ids=["fold_001"],
+    )
+
+    train_kwargs = captured["train_calls"][0]
+    model_config = train_kwargs["model_config"]
+    assert model_config.rates_heads == tuple(RATES_HEAD_NAMES)
+    assert model_config.rates_target_mode == "fomc_attributable"
+
+
 def test_per_family_runner_default_off_byte_identity(monkeypatch):
     pytest.importorskip("torch", reason="train_model import path needs torch")
     from scripts import run_per_family_ablation as runner
