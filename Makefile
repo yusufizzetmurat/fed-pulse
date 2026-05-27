@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison text-path-ab reproduce-all reproduce-smoke push-artefacts deploy-prod-build
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison text-path-ab per-family-ablation reproduce-all reproduce-smoke push-artefacts deploy-prod-build
 
 help:
 	@echo "Targets:"
@@ -82,6 +82,8 @@ help:
 	@echo "  make canonical-comparison TRAINING_PACKAGE_ID=<id>"
 	@echo "  make text-path-ab TRAINING_PACKAGE_ID=<id>"
 	@echo "                         - Canonical dual-head comparison (5 seeds x 40 epochs, regression-alpha=0.5, canonical output JSON)"
+	@echo "  make per-family-ablation TRAINING_PACKAGE_ID=<id>"
+	@echo "                         - Per-family rich-feature ablation (#334; backs the §6 substitution-finding table)"
 	@echo "  make reproduce-smoke TRAINING_PACKAGE_ID=<id> [SEED=11]"
 	@echo "                         - 1-seed x 1-fold dual-head smoke + numerical-contract assertion (#335 CI guard)"
 
@@ -788,6 +790,21 @@ text-path-ab:
 	docker compose run --rm backend python -m scripts.run_text_path_ab \
 		--training-package-id $$TRAINING_PACKAGE_ID \
 		--output artifacts/experiments/text_path_ab.json \
+		--seeds 11 29 47 71 97 \
+		--epochs 40 \
+		--head-mode dual \
+		--regression-alpha 0.5
+
+# #334 per-family rich-feature ablation runner. Zeros each rich-feature
+# family one at a time (linguistic / credibility / mp_surprise /
+# multi_axis / realised_vol / cross_asset / llm_features) plus a
+# cumulative chain that drops text -> text+market-aux -> everything-
+# except-legacy-market. Backs the §6 substitution-finding table.
+per-family-ablation:
+	@if [ -z "$$TRAINING_PACKAGE_ID" ]; then echo "TRAINING_PACKAGE_ID required" >&2; exit 1; fi
+	docker compose run --rm backend python -m scripts.run_per_family_ablation \
+		--training-package-id $$TRAINING_PACKAGE_ID \
+		--output artifacts/experiments/per_family_ablation.json \
 		--seeds 11 29 47 71 97 \
 		--epochs 40 \
 		--head-mode dual \
