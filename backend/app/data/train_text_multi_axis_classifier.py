@@ -1069,6 +1069,29 @@ def _save_checkpoint(  # noqa: PLR0913 — kw-only checkpoint envelope; collapsi
         "saved_at_utc": datetime.now(timezone.utc).isoformat(),
     }
     torch.save(payload, path)
+    # #393: emit the per-checkpoint inference-contract sidecar so the
+    # multi-axis serving loader can refuse to bind a checkpoint whose
+    # declared forward kwargs the live serving signature does not
+    # accept. Mirrors the #341 forecaster sidecar pattern: a failure
+    # here logs + degrades so the training run still succeeds but the
+    # default is to emit one on every save.
+    try:
+        from app.training.inference_contract import (
+            derive_multi_axis_contract,
+            write_sidecar,
+        )
+
+        contract = derive_multi_axis_contract(
+            model,
+            encoder_alias=str(getattr(args, "encoder_alias", "")) or None,
+        )
+        write_sidecar(contract, path)
+    except Exception:  # pragma: no cover -- never let sidecar break training
+        _logger.warning(
+            "inference_contract_sidecar_write_failed path=%s",
+            path,
+            exc_info=True,
+        )
     _logger.info(
         "checkpoint_written path=%s factor_coverage=%.4f", path, factor_coverage
     )

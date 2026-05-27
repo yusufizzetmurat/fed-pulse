@@ -77,6 +77,15 @@ RICH_CROSS_ASSET_DIM = 8
 # failed or the document was too short to assess.
 RICH_LLM_FEATURE_DIM = 35
 RICH_LLM_FEATURE_MISSING_DIM = 1
+# #306 retrieval-augmented features. Per-event summary stats over the
+# top-K analog hits from the on-disk retrieval index (#294). 5 contextual
+# scalars + 1 missing flag. The scalars are contextual (similarity
+# scores + stance agreement, both of which are T-snapshot text-level
+# signals) — the analog's post-event vol-regime is NOT a feature here
+# because admitting it would be a label leak via similarity. See ADR
+# 0028 and the per-feature row in docs/feature-provenance-audit.md.
+RICH_RETRIEVAL_ANALOG_DIM = 5
+RICH_RETRIEVAL_ANALOG_MISSING_DIM = 1
 RICH_EXTRA_FEATURE_SIZE = (
     RICH_CREDIBILITY_DIM
     + RICH_LINGUISTIC_DIM
@@ -86,6 +95,8 @@ RICH_EXTRA_FEATURE_SIZE = (
     + RICH_CROSS_ASSET_DIM
     + RICH_LLM_FEATURE_DIM
     + RICH_LLM_FEATURE_MISSING_DIM
+    + RICH_RETRIEVAL_ANALOG_DIM
+    + RICH_RETRIEVAL_ANALOG_MISSING_DIM
 )
 RICH_FEATURE_SIZE = FEATURE_SIZE + RICH_EXTRA_FEATURE_SIZE
 
@@ -130,6 +141,17 @@ RICH_LLM_FEATURE_SLICE = slice(
 RICH_LLM_FEATURE_MISSING_SLICE = slice(
     RICH_LLM_FEATURE_SLICE.stop,
     RICH_LLM_FEATURE_SLICE.stop + RICH_LLM_FEATURE_MISSING_DIM,
+)
+# #306 retrieval-augmented analog summary block. 5 contextual scalars
+# + 1 missing flag. Position appended after the LLM-features block so
+# the pre-#306 slice offsets are byte-identical.
+RICH_RETRIEVAL_ANALOG_SLICE = slice(
+    RICH_LLM_FEATURE_MISSING_SLICE.stop,
+    RICH_LLM_FEATURE_MISSING_SLICE.stop + RICH_RETRIEVAL_ANALOG_DIM,
+)
+RICH_RETRIEVAL_ANALOG_MISSING_SLICE = slice(
+    RICH_RETRIEVAL_ANALOG_SLICE.stop,
+    RICH_RETRIEVAL_ANALOG_SLICE.stop + RICH_RETRIEVAL_ANALOG_MISSING_DIM,
 )
 
 # Multi-task head (#78) axis cardinalities and canonical label maps.
@@ -566,8 +588,8 @@ class FeatureVector:
     that slice and is back-compat with every pre-PR-#173 inference and
     training path.
 
-    The trailing fields carry the rich-feature input (``RICH_FEATURE_SIZE
-    = 35``) added in PR #173. They are populated by
+    The trailing fields carry the rich-feature input added in PR #173
+    (and extended subsequently). They are populated by
     ``app.training.loaders.load_training_sequences_from_package`` when
     ``rich_features=True``; on the legacy path they stay at their
     documented defaults so ``as_list`` and ``as_rich_list`` agree on
@@ -664,6 +686,19 @@ class FeatureVector:
     # block + a missing flag of 1.0).
     llm_features: list[float] | None = None
     llm_features_missing: float = 1.0
+    # #306 retrieval-augmented summary stats over the top-K analog hits
+    # from the on-disk retrieval index (#294). Five contextual scalars
+    # — similarity moments + stance-agreement + above-floor count — plus
+    # a paired missing flag. Default ``None`` keeps the regression /
+    # legacy paths byte-identical: ``as_rich_list`` emits an all-zeros
+    # block + ``analog_features_missing=1.0`` when this slot is empty,
+    # which is also the contract when the retrieval bundle is absent on
+    # disk (graceful degrade for ops without the retrieval bundle). The
+    # analog's post-event observed move is NOT in this block — only
+    # contextual (similarity + stance-agreement) summary stats. See ADR
+    # 0028 and the per-feature row in ``docs/feature-provenance-audit.md``.
+    analog_features: list[float] | None = None
+    analog_features_missing: float = 1.0
     rich_payload: bool = False
     # Phase 9 V2 (#195) classification target. The forward 10-trading-day
     # realised volatility lives on the target row (the last vector in
@@ -852,6 +887,23 @@ class FeatureVector:
             if len(llm_block) < RICH_LLM_FEATURE_DIM:
                 llm_block = llm_block + [0.0] * (RICH_LLM_FEATURE_DIM - len(llm_block))
         llm_missing = [float(self.llm_features_missing)]
+        # #306 retrieval-augmented analog summary block. When
+        # ``analog_features`` is ``None`` (legacy path, opt-out, or
+        # retrieval bundle absent on disk) the whole slot collapses to
+        # zeros and the missing flag stays at its 1.0 default. The
+        # loader sets the flag to 0.0 only on rows that received a
+        # populated top-K retrieval result.
+        if self.analog_features is None:
+            analog_block = [0.0] * RICH_RETRIEVAL_ANALOG_DIM
+        else:
+            analog_block = [
+                float(v) for v in self.analog_features[:RICH_RETRIEVAL_ANALOG_DIM]
+            ]
+            if len(analog_block) < RICH_RETRIEVAL_ANALOG_DIM:
+                analog_block = analog_block + [0.0] * (
+                    RICH_RETRIEVAL_ANALOG_DIM - len(analog_block)
+                )
+        analog_missing = [float(self.analog_features_missing)]
         return (
             market
             + credibility
@@ -862,6 +914,8 @@ class FeatureVector:
             + cross_asset
             + llm_block
             + llm_missing
+            + analog_block
+            + analog_missing
         )
 
 

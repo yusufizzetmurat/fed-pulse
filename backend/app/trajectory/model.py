@@ -432,7 +432,13 @@ def _final_real_position(outputs: Any, mask: Any | None, torch_mod: Any) -> Any:
 # --- Persistence ------------------------------------------------------------
 
 
-def save_model(model: Any, config: TrajectoryConfig, path: Path) -> None:
+def save_model(
+    model: Any,
+    config: TrajectoryConfig,
+    path: Path,
+    *,
+    encoder_alias: str | None = None,
+) -> None:
     """Persist a model + its config to a single ``.pt`` file.
 
     Writes via ``torch.save`` to a sibling ``.tmp`` path and renames so
@@ -442,6 +448,12 @@ def save_model(model: Any, config: TrajectoryConfig, path: Path) -> None:
     ``torch.load(weights_only=True)`` — eliminating the pickle-RCE
     surface that would otherwise be reachable via the
     ``FED_PULSE_TRAJECTORY_DIR`` env override.
+
+    ``encoder_alias`` (#393) threads the registry context into the
+    inference-contract sidecar emitted next to the ``.pt`` file. The
+    serving loader cross-references the alias against ``registry.yaml``
+    so a checkpoint trained on an encoder the registry no longer pins
+    refuses to bind.
     """
 
     import os
@@ -463,6 +475,30 @@ def save_model(model: Any, config: TrajectoryConfig, path: Path) -> None:
         tmp,
     )
     os.replace(tmp, path)
+    # #393: per-checkpoint inference contract sidecar. Mirrors the
+    # #341 forecaster sidecar pattern -- a failure here logs + degrades
+    # so a training run still succeeds, but the default is to emit one
+    # on every save so the deployed trajectory model and the published
+    # bundle stay in lockstep.
+    try:
+        from app.training.inference_contract import (
+            derive_trajectory_contract,
+            write_sidecar,
+        )
+
+        contract = derive_trajectory_contract(
+            model,
+            encoder_alias=encoder_alias,
+        )
+        write_sidecar(contract, path)
+    except Exception:  # pragma: no cover -- never let sidecar break training
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "inference_contract_sidecar_write_failed path=%s",
+            path,
+            exc_info=True,
+        )
 
 
 def _json_dumps(payload: dict[str, Any]) -> str:
