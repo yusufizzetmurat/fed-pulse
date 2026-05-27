@@ -42,9 +42,9 @@ itself a documented training target.
 | `credibility_market_implied_gap` | `features.credibility.market_implied_gap(sep_terminal, ois_terminal)` | `T (snapshot)` | none | both inputs are scalars defined on the FOMC release day; SEP terminal is part of the released package, OIS terminal is the day's close. Placeholder `0.0` on most rows today. |
 | `credibility_months_since_reversal` | `features.credibility.months_since_last_reversal` over `_stance_history_series` (`parsed <= as_of`) | `T-Δ`+`T (snapshot)` | none | counts months on the stance sequence up to and including `T`. |
 | `linguistic_features` (15-dim LDA + densities + pivot_distance) | `features.linguistic` LDA fit, keyed by `text_hash` | `T (snapshot)` per-document, **package-wide LDA fit** | low | per-row topic distribution is the as-of document's own signal. The LDA model itself is fit on the full package corpus (cross-split), so the fitted topic basis is informed by future text. Acceptable under standard topic-model practice but flagged. |
-| `mp_surprise_level` | `data.mp_surprise._pre_post_yields` (post = first trading day `> T`) | **`T+Δ` post-event yields** | med | Cieslak-Vissing-Jorgensen 2021 surprise quantity: `post_yield − pre_yield` over a `[T-1, T+1]` window. Mechanically a function of `T+1` data. Documented as the literature-standard surprise; treated as a feature observable "shortly after the announcement", which is post-`T` information for a forecaster scoring at `T`. **Follow-up #350 opened.** |
-| `mp_surprise_path_factor` | same as `mp_surprise_level` (PCA path factor over post-event tenors) | **`T+Δ`** | med | same construction as `mp_surprise_level`, PCA-residualised. **Follow-up #350 covers this column.** |
-| `fed_info_factor` | `data.mp_surprise._spx_return_on` (SPX return on `[T-1, T+1]` window) | **`T+Δ`** | med | residual of the target-rate move against an SPX-return regression centred on `T`; the SPX leg is a `T+1`-minus-`T-1` return. **Follow-up #350 covers this column.** |
+| `mp_surprise_level` | `data.mp_surprise.build_mp_surprises` (actual target change minus pre-implied next move at T-1) | `T (snapshot)` for `ff_target_after`; `T-Δ` for the pre-implied leg | none | Strict-prior reformulation under #350 (ADR-0024). `level = (ff_target_after − ff_target_prior) * 100 − (pre_yield_1m_T-1 − ff_target_prior) * 100`. The only input observable at `T` (not `T-Δ`) is the announcement itself (`ff_target_after`), which is the realised decision the surprise is defined against. No `T+Δ` reads. Methodology footnote: this is no longer the literal Cieslak-Vissing-Jorgensen post-event quantity. |
+| `mp_surprise_path_factor` | `data.mp_surprise.build_mp_surprises` (PCA on strict-prior trailing curve drift at PATH_TENORS_MONTHS) | `T-Δ` | none | Strict-prior reformulation under #350. PCA is fit on `(pre_yield − pre_yield_trail_5td) * 100` per tenor, residualised against the 1m trailing drift. Inputs are all yields published strictly before `event_date`. Methodology footnote: replaces the literature `post_curve − pre_curve` PC1 with a strict-prior trailing-curve PC1. |
+| `fed_info_factor` | `data.mp_surprise._spx_return_on` (strict-prior trailing SPX return through T-1) | `T-Δ` | none | Strict-prior reformulation under #350. Residual of `mp_surprise_level` against `alpha + beta * pre_trailing_spx_return` where `pre_trailing_spx_return` is the close-to-close return over `[T - ~7 calendar days, T - 1]`. The leaky `[T-1, T+1]` daily-window proxy and the Alpha Vantage ±30 min intraday route (rejected at runtime) are both removed. Methodology footnote: no longer the CVJ ±30 min equity-information channel. |
 | `mp_is_intermeeting` | `data.mp_surprise` calendar lookup on `T` | `T (snapshot)` | none | boolean flag derived from the FOMC calendar entry for `T`. |
 | `stance_hawk` / `stance_dove` / `stance_neutral` / `stance_missing` | `loaders._attach_rich_features` from `event_row.axis_stance` | `T (snapshot)` | none | one-hot of the document's own stance label. |
 | `time_label_forward` | `event_row.axis_time_label` (gtfintechlab cross-bank rows only) | `T (snapshot)` | none | document-level indicator from the released text. |
@@ -90,28 +90,44 @@ boundary.
 
 ## Leaks found
 
-Three columns read from post-event data by construction: `mp_surprise_level`,
-`mp_surprise_path_factor`, and `fed_info_factor`. All three are built from
-a `[T-1, T+1]` window centred on the announcement (`backend/app/data/mp_surprise.py`
-`_pre_post_yields` and `_spx_return_on`). They are the canonical
-Cieslak-Vissing-Jorgensen 2021 / Kuttner 2001 surprise quantities used as
-**features** in the existing FeatureVector layout.
+Originally three columns read from post-event data by construction:
+`mp_surprise_level`, `mp_surprise_path_factor`, and `fed_info_factor`.
+All three were built from a `[T-1, T+1]` window centred on the
+announcement (`backend/app/data/mp_surprise.py` `_pre_post_yields` and
+`_spx_return_on`). They were the canonical Cieslak-Vissing-Jorgensen
+2021 / Kuttner 2001 surprise quantities used as **features** in the
+FeatureVector layout.
 
 For a forecaster predicting `forward_realized_vol_10d` over `[T, T+10]`,
 treating these `T+1`-derived quantities as known-at-`T` features is the
 same class of leak the strict-forward target fix addressed on the
 output side: a small mechanical overlap that the model can latch onto.
-The overlap is one day (`T+1` post-window close, one of the ten forward
-returns the target integrates), not the full forward window, so the
-expected lift from closing this path is bounded but real.
 
-A follow-up issue has been filed to scope the ADR + canonical-cell
-re-baseline for the three MP-surprise columns. This audit PR does **not**
-re-baseline; it only flags the leak and ships the regression test for
-the rest of the column surface.
+**Resolved under #350 (ADR-0024).** All three columns now read from
+strictly-prior inputs:
 
-- Follow-up: **#350** — *#324 follow-up: mp_surprise / fed_info_factor
-  leak path needs ADR + canonical re-baseline.*
+- `mp_surprise_level` = `actual_target_change_bps - pre_implied_next_move_bps`
+  where the pre-implied leg is `(pre_yield_1m_T-1 - ff_target_prior) * 100`.
+  Only the announced policy decision (`ff_target_after`) is observable
+  at `T`; every other input is `T-Δ`.
+- `mp_surprise_path_factor` is the PCA-residualised trailing curve drift
+  (`pre_yield − pre_yield_trail_5td`) at PATH_TENORS_MONTHS, fit and
+  applied on strict-prior anchors only.
+- `fed_info_factor` is the residual of the strict-prior `mp_surprise_level`
+  against a strict-prior trailing SPX return (close-to-close over
+  `[T - ~7d, T - 1]`).
+
+The Alpha Vantage ±30 min intraday route is rejected at runtime under
+#350 because the 14:00-14:30 ET half is post-announcement. The
+`spx_intraday_returns` argument remains on the builder signature for
+backwards compatibility but is ignored.
+
+Methodology footnote: the literature mapping shifts. The original
+construction was the canonical CVJ post-event surprise; the strict-prior
+reformulation is a *different* quantity (actual-vs-pre-implied at T-1
+rather than post-pre across the announcement window). ADR-0024 records
+this decision and the rationale for choosing drop-T+1 over the
+keep-with-caveat alternative.
 
 No other `FeatureVector` column reads from a source post-dating
 `row.event_date` beyond the documented training-target columns
@@ -126,6 +142,14 @@ synthetic training package, loads the supervised sequences via
 column on every lookback row of every sequence: no scalar feature reads
 from a source post-dating `event_date`. The MP-surprise / fed-info
 columns are zeroed on the fixture (no `mp_surprises.parquet` shipped)
-so the contract holds package-wide; the leak path identified above is a
-methodology concern at the source-data level, not a per-row loader bug,
-and is tracked under the follow-up issue.
+so the per-bar contract holds package-wide.
+
+The source-data construction for `mp_surprise_level`,
+`mp_surprise_path_factor`, and `fed_info_factor` is exercised separately
+by `test_mp_surprise_columns_read_strictly_before_event_date` (added
+under #350) which builds a synthetic `mp_surprises` row through
+`app.data.mp_surprise.build_mp_surprises` and asserts the strict-prior
+contract on the pre/trail yield helper and the SPX return helper. The
+test also locks the rejection of the leaky Alpha Vantage intraday
+route. Per-unit-test coverage on the strict-prior construction lives in
+`tests/unit/test_mp_surprise.py` (cases 11+).
