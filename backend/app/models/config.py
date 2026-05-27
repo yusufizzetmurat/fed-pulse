@@ -86,6 +86,14 @@ RICH_LLM_FEATURE_MISSING_DIM = 1
 # 0028 and the per-feature row in docs/feature-provenance-audit.md.
 RICH_RETRIEVAL_ANALOG_DIM = 5
 RICH_RETRIEVAL_ANALOG_MISSING_DIM = 1
+# #307 macro-regime conditioning block. Three signed scalars in {-1, 0, +1}
+# (policy-cycle phase, VIX-level regime, term-spread sign) plus a paired
+# missing flag. Opt-in via ``--use-regime-conditioning``; the block is
+# appended past ``RICH_FEATURE_SIZE`` by ``as_rich_list`` only when the
+# loader populates ``macro_regime_features``, so the legacy default path
+# keeps the byte-identical pre-#307 per-bar feature size. See ADR 0029.
+RICH_MACRO_REGIME_DIM = 3
+RICH_MACRO_REGIME_MISSING_DIM = 1
 RICH_EXTRA_FEATURE_SIZE = (
     RICH_CREDIBILITY_DIM
     + RICH_LINGUISTIC_DIM
@@ -153,6 +161,19 @@ RICH_RETRIEVAL_ANALOG_MISSING_SLICE = slice(
     RICH_RETRIEVAL_ANALOG_SLICE.stop,
     RICH_RETRIEVAL_ANALOG_SLICE.stop + RICH_RETRIEVAL_ANALOG_MISSING_DIM,
 )
+# #307 macro-regime block. Sits past ``RICH_FEATURE_SIZE`` and is only
+# emitted when ``FeatureVector.macro_regime_features`` is populated;
+# the default per-bar feature size therefore stays at the legacy
+# ``RICH_FEATURE_SIZE`` width and a downstream caller iterating slices
+# inside ``[0:RICH_FEATURE_SIZE]`` never sees the new block.
+RICH_MACRO_REGIME_SLICE = slice(
+    RICH_RETRIEVAL_ANALOG_MISSING_SLICE.stop,
+    RICH_RETRIEVAL_ANALOG_MISSING_SLICE.stop + RICH_MACRO_REGIME_DIM,
+)
+RICH_MACRO_REGIME_MISSING_SLICE = slice(
+    RICH_MACRO_REGIME_SLICE.stop,
+    RICH_MACRO_REGIME_SLICE.stop + RICH_MACRO_REGIME_MISSING_DIM,
+)
 
 # Multi-task head (#78) axis cardinalities and canonical label maps.
 # The multi-task head emits four branches; the cardinalities are pinned
@@ -203,6 +224,25 @@ def rich_feature_size_with_text(text_adapter_dim: int) -> int:
             f"text_adapter_dim must be a positive integer; got {text_adapter_dim}"
         )
     return RICH_FEATURE_SIZE + int(text_adapter_dim) + 1
+
+
+def rich_feature_size_with_regime(use_regime: bool) -> int:
+    """Return the per-bar rich-feature size with the #307 regime block.
+
+    ``use_regime=False`` returns the legacy ``RICH_FEATURE_SIZE`` so the
+    pre-#307 path is byte-identical. ``use_regime=True`` adds
+    ``RICH_MACRO_REGIME_DIM + RICH_MACRO_REGIME_MISSING_DIM`` for the
+    macro-regime block appended at the end of ``as_rich_list``.
+
+    The model factory reads this through ``ModelConfig.use_regime_conditioning``
+    so the input projection widens in lockstep with the loader's
+    decision to attach a populated block per event.
+    """
+
+    if not bool(use_regime):
+        return RICH_FEATURE_SIZE
+    return RICH_FEATURE_SIZE + RICH_MACRO_REGIME_DIM + RICH_MACRO_REGIME_MISSING_DIM
+
 
 FORECAST_CONFIDENCE_LEVEL = 0.8
 CONFIDENCE_Z_SCORE = 1.2816  # Approximate central 80% interval
@@ -437,6 +477,17 @@ class ModelConfig:
     # mode-mixing was deferred so the CLI stays one knob deep. See ADR
     # 0027 and :mod:`app.training.rates_targets`.
     rates_target_mode: str = "raw"
+    # #307 macro-regime conditioning toggle. ``False`` (default) keeps
+    # the pre-#307 path byte-identical: the loader leaves
+    # ``FeatureVector.macro_regime_features`` at ``None`` and
+    # ``as_rich_list`` does not append the regime block. ``True`` wires
+    # the strict-prior 3-scalar block onto every supervised sequence and
+    # mounts a multiplicative gating layer that modulates the text-
+    # derived rich-feature slices on the input side of the recurrent
+    # core. The gate is initialised so its output is identically 1.0 at
+    # start of training, which keeps the OFF behaviour byte-identical
+    # when the flag is later flipped without a re-init. See ADR 0029.
+    use_regime_conditioning: bool = False
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -498,6 +549,9 @@ class ModelConfig:
             rates_alpha=float(getattr(model, "rates_alpha", 0.5)),
             rates_target_mode=str(
                 getattr(model, "rates_target_mode", "raw") or "raw"
+            ),
+            use_regime_conditioning=bool(
+                getattr(model, "use_regime_conditioning", False)
             ),
         )
 
@@ -699,6 +753,17 @@ class FeatureVector:
     # 0028 and the per-feature row in ``docs/feature-provenance-audit.md``.
     analog_features: list[float] | None = None
     analog_features_missing: float = 1.0
+    # #307 macro-regime conditioning block. Three signed scalars
+    # (``policy_cycle_phase_score`` / ``vix_level_regime_score`` /
+    # ``term_spread_sign``) plus a paired missing flag. Default
+    # ``None`` keeps the regression / legacy paths byte-identical:
+    # ``as_rich_list`` does NOT append the block when this slot is
+    # empty, so the per-bar feature size stays at the legacy
+    # ``RICH_FEATURE_SIZE`` width. The loader sets the slot only when
+    # ``--use-regime-conditioning`` is on. See ADR 0029 and the
+    # per-feature row in ``docs/feature-provenance-audit.md``.
+    macro_regime_features: list[float] | None = None
+    macro_regime_features_missing: float = 1.0
     rich_payload: bool = False
     # Phase 9 V2 (#195) classification target. The forward 10-trading-day
     # realised volatility lives on the target row (the last vector in
@@ -904,7 +969,7 @@ class FeatureVector:
                     RICH_RETRIEVAL_ANALOG_DIM - len(analog_block)
                 )
         analog_missing = [float(self.analog_features_missing)]
-        return (
+        out = (
             market
             + credibility
             + linguistic
@@ -917,6 +982,23 @@ class FeatureVector:
             + analog_block
             + analog_missing
         )
+        # #307 macro-regime conditioning block. Appended only when the
+        # loader populated ``macro_regime_features``; otherwise the
+        # per-bar feature size stays at the legacy ``RICH_FEATURE_SIZE``
+        # width, byte-identical to pre-#307. The conditional append is
+        # the structural lock that keeps the default ``--no-regime-conditioning``
+        # path identical to existing callers iterating slices inside
+        # ``[0:RICH_FEATURE_SIZE]``. See ADR 0029.
+        if self.macro_regime_features is not None:
+            regime_block = [
+                float(v) for v in self.macro_regime_features[:RICH_MACRO_REGIME_DIM]
+            ]
+            if len(regime_block) < RICH_MACRO_REGIME_DIM:
+                regime_block = regime_block + [0.0] * (
+                    RICH_MACRO_REGIME_DIM - len(regime_block)
+                )
+            out = out + regime_block + [float(self.macro_regime_features_missing)]
+        return out
 
 
 def build_lookback_sequence(vectors: Iterable[FeatureVector], length: int = SEQUENCE_LENGTH) -> list[FeatureVector]:
