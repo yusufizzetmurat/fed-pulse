@@ -104,6 +104,60 @@ def _parse_args() -> argparse.Namespace:
             "fold_manifest_expanding_walk_forward.json."
         ),
     )
+    # #305 rates-head target derivation. Mirrors the same flag on
+    # ``app.train_forecaster`` (name + choices + default). ``raw`` keeps
+    # this runner byte-identical to the pre-#305 canonical sweep.
+    parser.add_argument(
+        "--rates-target-mode",
+        type=str,
+        choices=("raw", "fomc_attributable"),
+        default="raw",
+        help=(
+            "Rates-head target derivation. ``raw`` (default) keeps the "
+            "observed ``yield_<tenor>_change_5d`` bps move; "
+            "``fomc_attributable`` predicts the 1-D projection onto the "
+            "strict-prior policy-surprise direction. See ADR 0027."
+        ),
+    )
+    # #306 retrieval-augmented input features. Off by default so the
+    # canonical sweep stays byte-identical.
+    parser.add_argument(
+        "--use-retrieval-analogs",
+        dest="use_retrieval_analogs",
+        action="store_true",
+        help=(
+            "Attach the 5-dim retrieval-analog summary block to every "
+            "supervised event. Default off."
+        ),
+    )
+    parser.add_argument(
+        "--no-retrieval-analogs",
+        dest="use_retrieval_analogs",
+        action="store_false",
+        help="Disable the retrieval-analog block (default).",
+    )
+    # #307 macro-regime conditioning. Off by default so the canonical
+    # sweep stays byte-identical.
+    parser.add_argument(
+        "--use-regime-conditioning",
+        dest="use_regime_conditioning",
+        action="store_true",
+        help=(
+            "Attach the 3-scalar macro-regime indicator block and mount "
+            "the multiplicative gate over the rich-feature slice. "
+            "Default off."
+        ),
+    )
+    parser.add_argument(
+        "--no-regime-conditioning",
+        dest="use_regime_conditioning",
+        action="store_false",
+        help="Disable the macro-regime block + gate (default).",
+    )
+    parser.set_defaults(
+        use_retrieval_analogs=False,
+        use_regime_conditioning=False,
+    )
     return parser.parse_args()
 
 
@@ -169,6 +223,9 @@ def _run_one_cell(
     epochs: int,
     regression_alpha: float,
     hidden_size: int,
+    rates_target_mode: str = "raw",
+    use_retrieval_analogs: bool = False,
+    use_regime_conditioning: bool = False,
 ) -> dict[str, Any]:
     # Imports happen here so the script is importable without a torch
     # install (useful for doc-only environments).
@@ -183,6 +240,8 @@ def _run_one_cell(
         regression_alpha=regression_alpha,
         n_classes=3,
         hidden_size=hidden_size,
+        rates_target_mode=rates_target_mode,
+        use_regime_conditioning=use_regime_conditioning,
     )
 
     per_fold: list[dict[str, Any]] = []
@@ -191,6 +250,8 @@ def _run_one_cell(
             training_package_id=training_package_id,
             fold_id=fold_id,
             rich_features=True,
+            use_retrieval_analogs=use_retrieval_analogs,
+            use_regime_conditioning=use_regime_conditioning,
         )
         result = train_model(
             model_config=config,
@@ -244,6 +305,9 @@ def main() -> int:
                     epochs=args.epochs,
                     regression_alpha=args.regression_alpha,
                     hidden_size=args.hidden_size,
+                    rates_target_mode=str(args.rates_target_mode),
+                    use_retrieval_analogs=bool(args.use_retrieval_analogs),
+                    use_regime_conditioning=bool(args.use_regime_conditioning),
                 )
             )
 
@@ -272,6 +336,9 @@ def main() -> int:
         "epochs": args.epochs,
         "regression_alpha": args.regression_alpha,
         "training_package_id": args.training_package_id,
+        "rates_target_mode": str(args.rates_target_mode),
+        "use_retrieval_analogs": bool(args.use_retrieval_analogs),
+        "use_regime_conditioning": bool(args.use_regime_conditioning),
         "trials": trials,
         "summary": summary,
     }

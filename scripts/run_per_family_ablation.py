@@ -240,6 +240,65 @@ def _parse_args() -> argparse.Namespace:
             "Defaults to the canonical FOMC encoder."
         ),
     )
+    # #305 rates-head target derivation. Mirrors the flag on
+    # ``app.train_forecaster``; default ``raw`` keeps the per-family
+    # ablation byte-identical to the pre-#305 path.
+    parser.add_argument(
+        "--rates-target-mode",
+        type=str,
+        choices=("raw", "fomc_attributable"),
+        default="raw",
+        help=(
+            "Rates-head target derivation. ``raw`` (default) keeps the "
+            "observed yield change in bps; ``fomc_attributable`` "
+            "projects onto the strict-prior policy-surprise direction. "
+            "See ADR 0027."
+        ),
+    )
+    # #306 retrieval-augmented input features. The per-family ablation
+    # zeros document-level rich-feature families directly on the loaded
+    # FeatureVector slices; the retrieval-analog block lives in a
+    # separate per-bar slot, so the families and the analog block are
+    # orthogonal -- a cell that zeros ``linguistic`` does NOT zero the
+    # analog summary scalars, and ``zero_llm`` likewise leaves the
+    # analog block intact. Enabling the flag widens the per-bar feature
+    # surface for every cell in the sweep.
+    parser.add_argument(
+        "--use-retrieval-analogs",
+        dest="use_retrieval_analogs",
+        action="store_true",
+        help=(
+            "Attach the 5-dim retrieval-analog summary block. Default "
+            "off; the block is orthogonal to per-family zeroing."
+        ),
+    )
+    parser.add_argument(
+        "--no-retrieval-analogs",
+        dest="use_retrieval_analogs",
+        action="store_false",
+        help="Disable the retrieval-analog block (default).",
+    )
+    # #307 macro-regime conditioning. Off by default so the per-family
+    # ablation stays byte-identical to the pre-#307 path.
+    parser.add_argument(
+        "--use-regime-conditioning",
+        dest="use_regime_conditioning",
+        action="store_true",
+        help=(
+            "Attach the 3-scalar macro-regime block and mount the "
+            "multiplicative gate over the rich-feature slice. Default off."
+        ),
+    )
+    parser.add_argument(
+        "--no-regime-conditioning",
+        dest="use_regime_conditioning",
+        action="store_false",
+        help="Disable the macro-regime block + gate (default).",
+    )
+    parser.set_defaults(
+        use_retrieval_analogs=False,
+        use_regime_conditioning=False,
+    )
     return parser.parse_args()
 
 
@@ -422,6 +481,10 @@ def _run_one_cell(
         regression_alpha=float(args.regression_alpha),
         n_classes=3,
         hidden_size=int(args.hidden_size),
+        rates_target_mode=str(getattr(args, "rates_target_mode", "raw")),
+        use_regime_conditioning=bool(
+            getattr(args, "use_regime_conditioning", False)
+        ),
     )
 
     per_fold: list[dict[str, Any]] = []
@@ -431,6 +494,12 @@ def _run_one_cell(
             fold_id=fold_id,
             rich_features=True,
             text_encoder=str(args.text_encoder),
+            use_retrieval_analogs=bool(
+                getattr(args, "use_retrieval_analogs", False)
+            ),
+            use_regime_conditioning=bool(
+                getattr(args, "use_regime_conditioning", False)
+            ),
             **flags["loader"],
         )
         # Pre-scaler-fit zeroing for the per-bar families that the
@@ -558,6 +627,9 @@ def main() -> int:
         "bootstrap_seed": int(args.bootstrap_seed),
         "training_package_id": args.training_package_id,
         "text_encoder": str(args.text_encoder),
+        "rates_target_mode": str(args.rates_target_mode),
+        "use_retrieval_analogs": bool(args.use_retrieval_analogs),
+        "use_regime_conditioning": bool(args.use_regime_conditioning),
         "post_350_status": str(args.post_350_status),
         "cumulative_chain": [
             {"label": label, "families": list(families)}

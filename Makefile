@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison text-path-ab per-family-ablation reproduce-all reproduce-smoke push-artefacts deploy-prod-build
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation reproduce-all reproduce-smoke push-artefacts deploy-prod-build
 
 help:
 	@echo "Targets:"
@@ -779,6 +779,44 @@ canonical-comparison:
 		--seeds 11 29 47 71 97 \
 		--epochs 40 \
 		--regression-alpha 0.5
+
+# #305 opt-in variant. Same canonical sweep with the FOMC-attributable
+# rates target. Output path is distinct so a #305 sweep can run
+# concurrently with the canonical sweep without overwriting it.
+canonical-comparison-fomc-attributable:
+	@if [ -z "$$TRAINING_PACKAGE_ID" ]; then echo "TRAINING_PACKAGE_ID required" >&2; exit 1; fi
+	docker compose run --rm backend python -m scripts.run_dual_head_comparison \
+		--training-package-id $$TRAINING_PACKAGE_ID \
+		--output artifacts/experiments/dual_head_comparison_post_305.json \
+		--seeds 11 29 47 71 97 \
+		--epochs 40 \
+		--regression-alpha 0.5 \
+		--rates-target-mode fomc_attributable
+
+# #306 opt-in variant. Attaches the 5-dim retrieval-analog summary
+# block to every supervised event. Distinct output path.
+canonical-comparison-retrieval-analogs:
+	@if [ -z "$$TRAINING_PACKAGE_ID" ]; then echo "TRAINING_PACKAGE_ID required" >&2; exit 1; fi
+	docker compose run --rm backend python -m scripts.run_dual_head_comparison \
+		--training-package-id $$TRAINING_PACKAGE_ID \
+		--output artifacts/experiments/dual_head_comparison_post_306.json \
+		--seeds 11 29 47 71 97 \
+		--epochs 40 \
+		--regression-alpha 0.5 \
+		--use-retrieval-analogs
+
+# #307 opt-in variant. Attaches the 3-scalar macro-regime block and
+# mounts the multiplicative gate over the rich-feature slice. Distinct
+# output path.
+canonical-comparison-regime-conditioning:
+	@if [ -z "$$TRAINING_PACKAGE_ID" ]; then echo "TRAINING_PACKAGE_ID required" >&2; exit 1; fi
+	docker compose run --rm backend python -m scripts.run_dual_head_comparison \
+		--training-package-id $$TRAINING_PACKAGE_ID \
+		--output artifacts/experiments/dual_head_comparison_post_307.json \
+		--seeds 11 29 47 71 97 \
+		--epochs 40 \
+		--regression-alpha 0.5 \
+		--use-regime-conditioning
 
 # #327 text-path A/B comparison. Runs the three configurations
 # (broadcast-static / per-bar / flat MLP) across the official seed set
