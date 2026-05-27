@@ -1,9 +1,11 @@
 import asyncio
+import fcntl
 import io
 import json
 import logging
+import os
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -112,7 +114,54 @@ COLD_START_HISTORY_LENGTH = 252
 # "no Access-Control-Allow-Origin". Serialising the cold-start with an
 # asyncio lock + a checkpoint re-check inside the critical section keeps
 # only one bootstrap in flight per process.
+#
+# #383: the asyncio lock only serialises within one process. Prod runs
+# uvicorn with multiple workers, so we also wrap the bootstrap in an
+# OS-level ``fcntl.flock`` (see ``_bootstrap_cold_start``). The asyncio
+# lock stays as the cheap in-process guard; the file lock is the
+# cross-process safety net.
 _cold_start_lock = asyncio.Lock()
+
+
+def _bootstrap_lock_path() -> Path:
+    """Sentinel-file path for the cross-process bootstrap lock.
+
+    Resolved lazily because ``BEST_MODEL_PATH`` is imported from a
+    config module that some test paths monkeypatch.
+    """
+
+    from app.services.forecaster import BEST_MODEL_PATH
+
+    return Path(str(BEST_MODEL_PATH) + ".bootstrap.lock")
+
+
+@contextmanager
+def _bootstrap_file_lock(lock_path: Path):
+    """Acquire an exclusive ``fcntl.flock`` on a sentinel file.
+
+    Contract:
+      * Only one process at a time holds the lock; runners-up block
+        until the leader releases it, then observe the checkpoint and
+        skip the bootstrap on the re-check.
+      * The lock file is a dedicated sentinel — not the checkpoint
+        itself — so a half-written checkpoint can never masquerade as
+        "already bootstrapped".
+      * ``try/finally`` releases the lock on every path, including
+        exceptions raised inside the bootstrap.
+      * POSIX-only (``fcntl`` exists on macOS and Linux). The s6
+        deploy is POSIX, so this matches the prod runtime.
+    """
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 async def _ensure_cold_start(payload: "AnalyzeRequest") -> None:
@@ -812,6 +861,16 @@ def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
     Synchronous — invoked via ``run_in_threadpool`` from the async
     handler so the long-running fit does not block the event loop.
 
+    #383: the body runs under an exclusive ``fcntl.flock`` on a
+    sentinel file next to ``BEST_MODEL_PATH``. Composes with the
+    process-local ``_cold_start_lock``: the asyncio lock is the cheap
+    in-process guard; the file lock is the cross-process safety net so
+    uvicorn can run with ``--workers > 1`` without two workers racing
+    on the same checkpoint write. We re-check ``checkpoint_exists``
+    inside the file lock so the runner-up (which blocked on
+    ``LOCK_EX`` until the leader finished) observes the freshly
+    written checkpoint and returns without re-training.
+
     #342: once the bootstrap writes a fresh checkpoint, we drop the
     in-process singleton + re-invoke the same loader the /analyze path
     uses (``_get_model`` -> ``_validate_serving_contract``). That way a
@@ -825,46 +884,52 @@ def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
     binds normally.
     """
 
-    warmup_sentiment = analyze_text(payload.text)
-    warmup_history = fetch_market_history(
-        target_date=payload.date,
-        symbol=payload.symbol,
-        history_length=COLD_START_HISTORY_LENGTH,
-    )
-    warmup_vectors = build_feature_vectors(
-        warmup_history,
-        sentiment_score=float(warmup_sentiment["score"]),
-        document_date=payload.date,
-    )
-    bootstrap_checkpoint(
-        vectors=warmup_vectors,
-        epochs=60,
-        batch_size=64,
-        learning_rate=4e-4,
-        early_stopping_patience=8,
-    )
-    # #342: drop the post-train singleton + force a cold load through
-    # the canonical loader so the contract validation actually runs on
-    # the freshly written sidecar. ``_set_singleton_after_train`` writes
-    # ``_model`` directly without crossing ``_validate_serving_contract``
-    # — without this reset the cold-start path would silently bind a
-    # checkpoint whose sidecar declares an unknown kwarg.
-    try:
-        from app.services.forecaster import (
-            _get_model as _forecaster_get_model,
-            reset_singleton_for_revalidation,
-        )
+    with _bootstrap_file_lock(_bootstrap_lock_path()):
+        # Runner-up path: the leader wrote the checkpoint while we
+        # waited on ``LOCK_EX``. Skip the retrain entirely.
+        if checkpoint_exists():
+            return
 
-        reset_singleton_for_revalidation()
-        _forecaster_get_model()
-    except RuntimeError:
-        # Re-raise so the /analyze caller surfaces the contract failure
-        # rather than swallowing it. ``/health`` already exposes the
-        # structured reason via ``get_serving_contract_status``.
-        raise
-    except Exception:  # pragma: no cover -- defensive
-        logger.warning("cold_start_contract_revalidation_failed", exc_info=True)
-        raise
+        warmup_sentiment = analyze_text(payload.text)
+        warmup_history = fetch_market_history(
+            target_date=payload.date,
+            symbol=payload.symbol,
+            history_length=COLD_START_HISTORY_LENGTH,
+        )
+        warmup_vectors = build_feature_vectors(
+            warmup_history,
+            sentiment_score=float(warmup_sentiment["score"]),
+            document_date=payload.date,
+        )
+        bootstrap_checkpoint(
+            vectors=warmup_vectors,
+            epochs=60,
+            batch_size=64,
+            learning_rate=4e-4,
+            early_stopping_patience=8,
+        )
+        # #342: drop the post-train singleton + force a cold load through
+        # the canonical loader so the contract validation actually runs on
+        # the freshly written sidecar. ``_set_singleton_after_train`` writes
+        # ``_model`` directly without crossing ``_validate_serving_contract``
+        # — without this reset the cold-start path would silently bind a
+        # checkpoint whose sidecar declares an unknown kwarg.
+        try:
+            from app.services.forecaster import (
+                _get_model as _forecaster_get_model,
+                reset_singleton_for_revalidation,
+            )
+
+            reset_singleton_for_revalidation()
+            _forecaster_get_model()
+        except RuntimeError:
+            # Re-raise so the /analyze caller surfaces the contract failure
+            # rather than swallowing it. ``/health`` already exposes the
+            # structured reason via ``get_serving_contract_status``.
+            raise
+        except Exception:  # pragma: no cover -- defensive
+            logger.warning("cold_start_contract_revalidation_failed", exc_info=True)
+            raise
 
 
 def _record_history(request: AnalyzeRequest, response: dict[str, Any]) -> None:
