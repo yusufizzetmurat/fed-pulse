@@ -1,4 +1,4 @@
-"""Per-fold rates-head target / scaler helpers (#292).
+"""Per-fold rates-head target / scaler helpers (#292, #305).
 
 The three rates heads (``2y`` / ``5y`` / ``terminal``) consume a strict-
 forward 5-day yield change in basis points read off the FeatureVector
@@ -6,6 +6,18 @@ target row. Each fold fits an independent per-head standardiser on the
 train slice (a ``(mean, std)`` pair); val and test partitions reuse the
 train-fitted scaler so no look-ahead leaks into the standardisation
 step.
+
+Two target modes are wired (#305):
+
+- ``raw`` (default, byte-identical to the pre-#305 path): the head
+  predicts the observed ``yield_<tenor>_change_5d`` move in bps.
+- ``fomc_attributable``: the head predicts the FOMC-attributable
+  component of the observed move, defined as the 1-D projection of the
+  observed move onto the strict-prior policy-surprise direction
+  ``sign(mp_surprise_level)``. When the surprise magnitude is below
+  :data:`SURPRISE_DIRECTION_EPSILON_BPS` (no-change meeting; direction
+  ill-defined) the target is marked missing rather than coerced to zero.
+  See :func:`fomc_attributable_projection` and ADR 0027.
 
 The aux 3-class classification surface (easing / neutral / tightening)
 is bucketed against per-fold tertile edges fitted on the same train
@@ -41,6 +53,66 @@ from app.models.rates_heads import (
 )
 
 
+# Canonical literal for the per-head target derivation. ``raw`` keeps the
+# pre-#305 contract (predict the observed bps move); ``fomc_attributable``
+# projects the observed move onto the strict-prior policy-surprise
+# direction (see :func:`fomc_attributable_projection` + ADR 0027).
+RATES_TARGET_MODES: tuple[str, ...] = ("raw", "fomc_attributable")
+DEFAULT_RATES_TARGET_MODE: str = "raw"
+
+# Minimum absolute mp_surprise_level (in bps) below which the surprise
+# direction is treated as ill-defined and the FOMC-attributable target
+# is marked missing. 1 bp is well below the FOMC's 25-bp standard move
+# and an order of magnitude above floating-point noise in the strict-
+# prior implied-move proxy that anchors the level construction.
+SURPRISE_DIRECTION_EPSILON_BPS: float = 1.0
+
+
+def fomc_attributable_projection(
+    observed_move_bps: float | None,
+    mp_surprise_level_bps: float | None,
+    *,
+    epsilon_bps: float = SURPRISE_DIRECTION_EPSILON_BPS,
+) -> float | None:
+    """Project the observed rates move onto the policy-surprise direction.
+
+    The Kuttner-style 1-D projection:
+
+    - ``u = sign(mp_surprise_level)`` is the strict-prior surprise
+      direction (post-#350 / ADR 0024 construction; the surprise is the
+      actual policy decision minus the implied next-move proxy at
+      ``T-1``).
+    - ``projected = observed_move_bps * u`` is the scalar coefficient
+      of the projection in bps, signed positive when the observed move
+      agrees with the surprise direction and negative when it opposes
+      it.
+
+    Returns ``None`` (target missing) when:
+
+    - either input is ``None`` / non-finite, or
+    - ``|mp_surprise_level| < epsilon_bps`` (no-change meeting; the
+      direction is ill-defined and zero would be a label, not a no-op).
+
+    The missing case is the load-bearing edge — coercing it to zero
+    would inject a fake "no-attributable-move" label on every pause
+    meeting and bias the regression toward the origin.
+    """
+
+    if observed_move_bps is None or mp_surprise_level_bps is None:
+        return None
+    try:
+        obs = float(observed_move_bps)
+        surp = float(mp_surprise_level_bps)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(obs) or not math.isfinite(surp):
+        return None
+    if abs(surp) < float(epsilon_bps):
+        return None
+    sign = 1.0 if surp > 0.0 else -1.0
+    return obs * sign
+
+
 @dataclass(frozen=True)
 class RatesHeadScaler:
     """Standardiser (``mean`` / ``std`` in bps) for one rates head.
@@ -59,6 +131,8 @@ class RatesHeadScaler:
 def _gather_rates_values_for_group(
     group: Sequence[FeatureVector],
     head_name: str,
+    *,
+    target_mode: str = DEFAULT_RATES_TARGET_MODE,
 ) -> list[float]:
     """Walk a sequence group and emit every supervised row's rates value.
 
@@ -68,6 +142,12 @@ def _gather_rates_values_for_group(
     target's ``forward_realized_vol_10d`` is null; for every kept group
     emit one value per row at index >= ``SEQUENCE_LENGTH`` whose
     forward-vol survives the filter.
+
+    ``target_mode`` selects between the raw observed move
+    (``target_<column>`` field) and the FOMC-attributable projection
+    (``target_<column>_fomc_attributable`` field). Missing values
+    (``None`` or non-finite) emit ``math.nan`` so the partition builder
+    can mask them out row-by-row.
     """
 
     if len(group) < SEQUENCE_LENGTH + 1:
@@ -78,7 +158,7 @@ def _gather_rates_values_for_group(
         isinstance(leading_vol, float) and leading_vol != leading_vol
     ):
         return []
-    field = _rates_field_for(head_name)
+    field = _rates_field_for(head_name, target_mode=target_mode)
     out: list[float] = []
     for idx in range(SEQUENCE_LENGTH, len(group)):
         target_row = group[idx]
@@ -103,8 +183,18 @@ def _gather_rates_values_for_group(
     return out
 
 
-def _rates_field_for(head_name: str) -> str:
-    """Return the FeatureVector field carrying the bps target."""
+def _rates_field_for(
+    head_name: str,
+    *,
+    target_mode: str = DEFAULT_RATES_TARGET_MODE,
+) -> str:
+    """Return the FeatureVector field carrying the per-head bps target.
+
+    ``target_mode='raw'`` returns ``target_<column>`` (the observed
+    bps move). ``target_mode='fomc_attributable'`` returns
+    ``target_<column>_fomc_attributable`` (the surprise-projected
+    scalar). Anything else raises ``ValueError``.
+    """
 
     name = str(head_name).lower()
     if name not in RATES_HEAD_TARGET_COLUMNS:
@@ -112,7 +202,16 @@ def _rates_field_for(head_name: str) -> str:
             f"unknown rates head name {head_name!r}; "
             f"expected one of {RATES_HEAD_NAMES}"
         )
-    return f"target_{RATES_HEAD_TARGET_COLUMNS[name]}"
+    mode = str(target_mode).lower()
+    if mode not in RATES_TARGET_MODES:
+        raise ValueError(
+            f"unsupported rates_target_mode={target_mode!r}; "
+            f"expected one of {RATES_TARGET_MODES}"
+        )
+    base = f"target_{RATES_HEAD_TARGET_COLUMNS[name]}"
+    if mode == "fomc_attributable":
+        return f"{base}_fomc_attributable"
+    return base
 
 
 def fit_rates_scaler(values: Sequence[float]) -> RatesHeadScaler:
@@ -144,6 +243,7 @@ def build_partition_rates_targets(
     head_names: Sequence[str],
     scalers: dict[str, RatesHeadScaler] | None = None,
     edges_by_head: dict[str, QuantileBinEdges] | None = None,
+    target_mode: str = DEFAULT_RATES_TARGET_MODE,
 ) -> tuple[
     dict[str, torch.Tensor],
     dict[str, torch.Tensor],
@@ -187,6 +287,12 @@ def build_partition_rates_targets(
                 f"unknown rates head name {name!r}; "
                 f"expected one of {RATES_HEAD_NAMES}"
             )
+    mode = str(target_mode).lower()
+    if mode not in RATES_TARGET_MODES:
+        raise ValueError(
+            f"unsupported rates_target_mode={target_mode!r}; "
+            f"expected one of {RATES_TARGET_MODES}"
+        )
 
     # Per-head row-wise raw values, with NaN holes for missing rows.
     raw_by_head: dict[str, list[float]] = {name: [] for name in head_list}
@@ -195,7 +301,7 @@ def build_partition_rates_targets(
         # the same row position for head B, keeping the per-head tensors
         # row-aligned with each other and with ``y``.
         per_head_rows: dict[str, list[float]] = {
-            name: _gather_rates_values_for_group(group, name)
+            name: _gather_rates_values_for_group(group, name, target_mode=mode)
             for name in head_list
         }
         if not per_head_rows:
@@ -280,8 +386,12 @@ def inverse_standardise_bps(
 
 
 __all__ = (
+    "DEFAULT_RATES_TARGET_MODE",
+    "RATES_TARGET_MODES",
     "RatesHeadScaler",
+    "SURPRISE_DIRECTION_EPSILON_BPS",
     "build_partition_rates_targets",
     "fit_rates_scaler",
+    "fomc_attributable_projection",
     "inverse_standardise_bps",
 )
