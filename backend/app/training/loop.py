@@ -2464,6 +2464,12 @@ def train_model(
         or "regression"
     )
     active_rates_alpha = float(getattr(active_model_config, "rates_alpha", 0.5))
+    # #305 per-head target derivation. ``raw`` (default) keeps the
+    # observed bps move; ``fomc_attributable`` reads the strict-prior
+    # surprise-projected scalar from the matching FeatureVector field.
+    active_rates_target_mode = str(
+        getattr(active_model_config, "rates_target_mode", "raw") or "raw"
+    )
     rates_heads_active = bool(active_rates_heads)
     train_rates_targets: RatesPartitionTensors | None = None
     val_rates_targets: RatesPartitionTensors | None = None
@@ -2595,6 +2601,7 @@ def train_model(
             ) = build_partition_rates_targets(
                 train_groups,
                 head_names=active_rates_heads,
+                target_mode=active_rates_target_mode,
             )
             train_rates_targets = RatesPartitionTensors(
                 per_head={
@@ -2656,6 +2663,7 @@ def train_model(
                 head_names=active_rates_heads,
                 scalers=rates_scalers,
                 edges_by_head=rates_edges,
+                target_mode=active_rates_target_mode,
             )
             val_rates_targets = RatesPartitionTensors(
                 per_head={
@@ -2704,6 +2712,7 @@ def train_model(
                 head_names=active_rates_heads,
                 scalers=rates_scalers,
                 edges_by_head=rates_edges,
+                target_mode=active_rates_target_mode,
             )
             test_rates_targets = RatesPartitionTensors(
                 per_head={
