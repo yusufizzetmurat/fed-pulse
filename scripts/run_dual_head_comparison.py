@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import BACKEND_ROOT
+from app.training.runtime_compat import ensure_compile_safe
 
 
 def _parse_args() -> argparse.Namespace:
@@ -281,6 +282,7 @@ def _run_one_cell(
 
 
 def main() -> int:
+    ensure_compile_safe()
     args = _parse_args()
     output_path = _resolve_output_path(args.output)
     print(f"[dual_head_comparison] writing -> {output_path}")

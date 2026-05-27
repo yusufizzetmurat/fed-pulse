@@ -83,6 +83,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import BACKEND_ROOT
+from app.training.runtime_compat import ensure_compile_safe
 
 
 # Canonical family order. The per-family cell labels follow
@@ -553,6 +554,7 @@ def _run_one_cell(
 
 
 def main() -> int:
+    ensure_compile_safe()
     args = _parse_args()
     output_path = _resolve_output_path(args.output)
     print(f"[per_family_ablation] writing -> {output_path}")
