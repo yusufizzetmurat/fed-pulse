@@ -434,20 +434,23 @@ def _standardise_embedding(
     )
 
 
-def project_trajectory(  # noqa: C901 — keep the branches inline so the data flow stays readable.
+def build_trajectory_inputs(
     state: _TrajectoryState,
     *,
     as_of_date: date_type,
     history_length: int = DEFAULT_HISTORY_LENGTH,
-) -> dict[str, Any]:
-    """Run inference + assemble the response payload.
+) -> tuple[list[dict[str, Any]], "Any | None", "Any | None", str, str | None]:
+    """Slice + pad the trajectory history into the model's forward inputs.
 
-    Returns a dict matching the API shape — the FastAPI handler wraps
-    it with the typed response model. ``history`` is the most-recent
-    ``history_length`` real meetings with their 2D anchors and stance
-    labels; ``projected_next`` carries the predicted class
-    distribution + a confidence band derived from the conformal
-    softmax quantile (when the bundle ships one).
+    Extracted from :func:`project_trajectory` so callers that only need
+    the inputs tensor (e.g. the XAI panel-attribution dispatcher in
+    :mod:`app.services.forecaster`) do not have to re-implement the
+    history-slice + scaler + pad pipeline.
+
+    Returns ``(history_markers, inputs_tensor, mask_tensor, as_of_iso,
+    warning)``. ``inputs_tensor`` and ``mask_tensor`` are ``None`` when
+    the strict-backward window contains no eligible meetings — the
+    caller then surfaces a "no history" payload.
     """
 
     import torch
@@ -514,6 +517,46 @@ def project_trajectory(  # noqa: C901 — keep the branches inline so the data f
         )
 
     if not embeddings_window:
+        return history_markers, None, None, as_of_iso, warning
+
+    padded_inputs, mask = pad_sequence(
+        embeddings_window,
+        market_blocks,
+        history_length=history_length,
+    )
+    inputs_tensor = torch.tensor(
+        padded_inputs[np.newaxis, ...], dtype=torch.float32
+    )
+    mask_tensor = torch.tensor(mask[np.newaxis, ...], dtype=torch.bool)
+    return history_markers, inputs_tensor, mask_tensor, as_of_iso, warning
+
+
+def project_trajectory(
+    state: _TrajectoryState,
+    *,
+    as_of_date: date_type,
+    history_length: int = DEFAULT_HISTORY_LENGTH,
+) -> dict[str, Any]:
+    """Run inference + assemble the response payload.
+
+    Returns a dict matching the API shape — the FastAPI handler wraps
+    it with the typed response model. ``history`` is the most-recent
+    ``history_length`` real meetings with their 2D anchors and stance
+    labels; ``projected_next`` carries the predicted class
+    distribution + a confidence band derived from the conformal
+    softmax quantile (when the bundle ships one).
+    """
+
+    import torch
+
+    history_length = max(1, min(int(history_length), MAX_HISTORY_LENGTH))
+    history_markers, inputs_tensor, mask_tensor, as_of_iso, warning = (
+        build_trajectory_inputs(
+            state, as_of_date=as_of_date, history_length=history_length
+        )
+    )
+
+    if inputs_tensor is None or mask_tensor is None:
         return {
             "history": history_markers,
             "projected_next": None,
@@ -528,17 +571,6 @@ def project_trajectory(  # noqa: C901 — keep the branches inline so the data f
             "delta_dir_acc": state.delta_dir_acc,
             "baseline_used": state.baseline_used,
         }
-
-    padded_inputs, mask = pad_sequence(
-        embeddings_window,
-        market_blocks,
-        history_length=history_length,
-    )
-
-    inputs_tensor = torch.tensor(
-        padded_inputs[np.newaxis, ...], dtype=torch.float32
-    )
-    mask_tensor = torch.tensor(mask[np.newaxis, ...], dtype=torch.bool)
 
     state.model.eval()
     with torch.no_grad():
@@ -600,6 +632,7 @@ __all__ = [
     "MAX_HISTORY_LENGTH",
     "STANCE_CLASSES",
     "build_state_for_tests",
+    "build_trajectory_inputs",
     "bundle_available",
     "get_state",
     "install_state",

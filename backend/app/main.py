@@ -567,7 +567,9 @@ def _build_analyze_response(
         # structured-degrade try/except). Guard the dispatch defensively
         # so an IG runtime failure cannot break /analyze.
         try:
-            panel_attributions = build_panel_attributions(history_vectors)
+            panel_attributions = build_panel_attributions(
+                history_vectors, as_of_date=payload.date
+            )
         except Exception:  # noqa: BLE001 -- defensive: never break /analyze
             logger.warning("xai_panel_attribution_failed", exc_info=True)
             panel_attributions = []
