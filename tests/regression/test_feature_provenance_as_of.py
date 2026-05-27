@@ -112,6 +112,10 @@ _SNAPSHOT_COLUMNS: tuple[str, ...] = (
     # list[float] | None slot and is exempt below alongside the other
     # list-payload fields.
     "analog_features_missing",
+    # #307 macro-regime conditioning missing flag. The 3-scalar block
+    # itself rides on `macro_regime_features` (`list[float] | None`)
+    # and is exempt below alongside the other list-payload fields.
+    "macro_regime_features_missing",
 )
 
 
@@ -281,6 +285,7 @@ def _audit_inventory_covers_every_field() -> set[str]:
         "linguistic_features",
         "llm_features",
         "analog_features",
+        "macro_regime_features",
         "rich_payload",
         "text_embedding_pooled",
         "text_embedding_missing",

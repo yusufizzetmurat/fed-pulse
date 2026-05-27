@@ -707,11 +707,13 @@ def _read_mp_surprise_lookup(
         # ``ff_target_prior`` is the strict-prior band midpoint observed
         # the day before each meeting's announcement. The #307 macro-
         # regime helper reads it across trailing meetings to score the
-        # 12-month policy-cycle direction. Stored as ``None`` (not
-        # 0.0) when missing so the regime helper can drop the row from
-        # the trailing window rather than misread a placeholder zero as
-        # a real zero-rate observation.
-        target_prior = _coerce_finite_float(record.get("ff_target_prior"))
+        # 12-month policy-cycle direction. Stored as ``NaN`` (not
+        # ``None`` and not ``0.0``) when missing so the dict value-type
+        # stays ``float`` (mypy happy) and the regime helper can drop
+        # the row via its ``v != v`` check rather than misread a
+        # placeholder zero as a real zero-rate observation.
+        target_prior_raw = _coerce_finite_float(record.get("ff_target_prior"))
+        target_prior = float("nan") if target_prior_raw is None else target_prior_raw
         is_intermeeting_raw = record.get("is_intermeeting")
         if isinstance(is_intermeeting_raw, bool):
             is_intermeeting = 1.0 if is_intermeeting_raw else 0.0
