@@ -345,3 +345,58 @@ def test_loader_binds_when_contract_matches_registry(
 
     status = forecaster_service.get_serving_contract_status()
     assert status["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# #374: trainer-side resolution helper. The previous two tests bypassed
+# the resolution and hand-fed ``encoder_alias`` + ``inference_features``
+# straight into ``_save_model_checkpoint``. These cover the helper that
+# the live trainer call site uses so a regression in the resolution
+# logic (e.g. the ``"none"`` sentinel leaking into the sidecar) trips
+# at unit-test time instead of inside a real training run.
+
+
+def test_resolve_sidecar_registry_handle_returns_registry_features() -> None:
+    """A registered encoder alias resolves to ``(alias, tuple(features))``."""
+
+    from app.training.loop import resolve_sidecar_registry_handle
+
+    alias, features = resolve_sidecar_registry_handle("finbert")
+    assert alias == "finbert"
+    assert "text_embedding" in features
+
+
+def test_resolve_sidecar_registry_handle_none_returns_empty() -> None:
+    """``None`` and the sentinel ``"none"`` collapse to ``(None, ())``."""
+
+    from app.training.loop import resolve_sidecar_registry_handle
+
+    assert resolve_sidecar_registry_handle(None) == (None, ())
+    assert resolve_sidecar_registry_handle("none") == (None, ())
+
+
+def test_resolve_sidecar_registry_handle_unknown_alias_returns_empty_tuple() -> None:
+    """An alias unknown to the registry keeps the alias but empties features."""
+
+    from app.training.loop import resolve_sidecar_registry_handle
+
+    alias, features = resolve_sidecar_registry_handle("not_a_real_encoder")
+    assert alias == "not_a_real_encoder"
+    assert features == ()
+
+
+def test_resolve_sidecar_registry_handle_handles_registry_exception(
+    monkeypatch,
+) -> None:
+    """A raising ``encoder_ref`` falls back to an empty feature tuple."""
+
+    import app.models.registry as registry_module
+    from app.training.loop import resolve_sidecar_registry_handle
+
+    def _boom(_alias: str):
+        raise RuntimeError("registry on fire")
+
+    monkeypatch.setattr(registry_module, "encoder_ref", _boom)
+    alias, features = resolve_sidecar_registry_handle("finbert")
+    assert alias == "finbert"
+    assert features == ()

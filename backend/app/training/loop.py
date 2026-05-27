@@ -65,6 +65,39 @@ def _resolve_device(device: str | torch.device | None = None) -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def resolve_sidecar_registry_handle(
+    text_encoder: str | None,
+) -> tuple[str | None, tuple[str, ...]]:
+    """Resolve the alias + ``inference_features`` tuple for the sidecar.
+
+    #374 arms the loader's ``contract.inference_features ⊆ registry``
+    cross-check by threading the live encoder alias + its registry-
+    pinned ``inference_features`` through to the freshly written
+    sidecar. Without this hand-off every fresh checkpoint shipped with
+    ``inference_features=()`` and the cross-check passed trivially.
+
+    The CLI normalises ``"none"`` to ``None`` upstream, but direct
+    ``train_model`` callers can pass the sentinel through. Treat both
+    as "no text encoder" so the sidecar carries ``encoder_alias=None``
+    rather than the literal ``"none"`` (which would silently re-
+    disable the cross-check at load time). An alias unknown to the
+    registry falls back to an empty feature tuple.
+    """
+
+    if text_encoder is None or str(text_encoder) == "none":
+        return None, ()
+    alias = str(text_encoder)
+    try:
+        from app.models.registry import encoder_ref
+
+        ref = encoder_ref(alias)
+    except Exception:  # pragma: no cover -- defensive
+        return alias, ()
+    if ref is None:
+        return alias, ()
+    return alias, tuple(ref.inference_features)
+
+
 def _resolve_validation_fraction(
     validation_fraction: float | None,
     validation_split: float | None,
@@ -3787,27 +3820,9 @@ def train_model(
     if save_checkpoint:
         from app.training.checkpoint import _save_model_checkpoint
 
-        # #374: thread the active encoder alias + its registry-pinned
-        # ``inference_features`` tuple through to the sidecar. Without
-        # this the loader's ``contract.inference_features ⊆ registry``
-        # cross-check was ``∅ ⊆ ∅`` on every fresh checkpoint -- the
-        # arm was shipping documentation-only. ``text_encoder`` is the
-        # alias the trainer was driven against; the empty tuple
-        # fallback covers runs that do not register against the
-        # registry (legacy 6-feature only paths).
-        sidecar_encoder_alias: str | None = (
-            str(text_encoder) if text_encoder else None
+        sidecar_encoder_alias, sidecar_inference_features = (
+            resolve_sidecar_registry_handle(text_encoder)
         )
-        sidecar_inference_features: tuple[str, ...] = ()
-        if sidecar_encoder_alias:
-            try:
-                from app.models.registry import encoder_ref
-
-                ref = encoder_ref(sidecar_encoder_alias)
-                if ref is not None:
-                    sidecar_inference_features = tuple(ref.inference_features)
-            except Exception:  # pragma: no cover -- defensive
-                sidecar_inference_features = ()
 
         # `close_scale` was fitted on this fold's training rows in
         # `_build_training_tensors`; persisting it on the checkpoint is what
