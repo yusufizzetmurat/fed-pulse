@@ -11,7 +11,7 @@ target-row consumer but **never emitted** by `FeatureVector.as_rich_list`.
 
 The test materialises a synthetic training package (events.parquet +
 splits_train_val_test.parquet) under tmp_path, loads it through
-`load_walk_forward_split`, and verifies three guarantees:
+`load_walk_forward_split`, and verifies four guarantees:
 
 1. Every lookback bar's `date` is strictly less than the supervised
    `event_date` — the prior-window builder's core invariant.
@@ -21,6 +21,13 @@ splits_train_val_test.parquet) under tmp_path, loads it through
 3. The audit inventory in `docs/feature-provenance-audit.md` covers
    every FeatureVector field — any new field must be classified before
    merge.
+4. The MP-surprise / fed-info construction reads only strict-prior
+   inputs (issue #350 reformulation). The previously-leaking
+   `[T-1, T+1]` post-event window is replaced with an actual-vs-pre-
+   implied surprise and a strict-prior trailing SPX return; this test
+   builds a synthetic ``mp_surprises`` row through the production
+   builder and asserts the read window stays strictly before
+   ``event_date``.
 """
 
 from __future__ import annotations
@@ -368,13 +375,91 @@ def test_feature_provenance_as_of_contract(training_package_dir: Path) -> None:
                     )
 
                 # Snapshot columns are broadcast off the as-of row. The
-                # audit flags mp_surprise_* / fed_info_factor as a
-                # methodology-level leak path tracked under the #324
-                # follow-up issue, not a per-row loader bug, so the
-                # structural check here is shape only.
+                # audit previously flagged mp_surprise_* / fed_info_factor
+                # as a methodology-level leak path; #350 closed that path
+                # at the source-data level (see
+                # ``test_mp_surprise_columns_read_strictly_before_event_date``
+                # below for the strict-prior construction contract). The
+                # structural check here remains shape-only.
                 for column in _SNAPSHOT_COLUMNS:
                     value = getattr(vector, column)
                     assert isinstance(value, (int, float)), (
                         f"snapshot column {column!r} on bar {vector.date} "
                         f"is not a numeric scalar (got {type(value).__name__})"
                     )
+
+
+# Columns the #350 reformulation moved from ``T+Δ`` (post-event window)
+# to strict-prior. Listed here so the contract is grep-able alongside
+# the audit doc; the assertion below covers the source-data builder.
+_MP_SURPRISE_STRICT_PRIOR_COLUMNS: tuple[str, ...] = (
+    "mp_surprise_level",
+    "mp_surprise_path_factor",
+    "fed_info_factor",
+)
+
+
+def test_mp_surprise_columns_read_strictly_before_event_date(tmp_path) -> None:
+    """#350: ``mp_surprise.build_mp_surprises`` never reads ``T+Δ`` inputs.
+
+    Builds a synthetic ``mp_surprises`` row through the production
+    builder with a strictly-prior FRED panel and asserts:
+
+    1. The strict-prior pre/trail yield helper returns dates strictly
+       before ``event_date`` for every tenor in CURVE_TENORS_MONTHS.
+    2. The strict-prior SPX return helper rejects post-event closes
+       and degrades to ``unavailable`` when only ``T+1`` data is
+       supplied.
+    3. The intraday route (Alpha Vantage ±30 min) is ignored: the
+       ``spx_intraday_returns`` argument cannot bump any row to a
+       leaky source flag.
+
+    Together with the per-bar lookback assertion above, this closes the
+    audit's three remaining ``med`` leak rows
+    (``mp_surprise_level``, ``mp_surprise_path_factor``,
+    ``fed_info_factor``).
+    """
+
+    import datetime as _dt
+
+    from app.data import mp_surprise
+
+    base = _dt.date(2024, 1, 1)
+    trading_days = [
+        base + _dt.timedelta(days=i)
+        for i in range(120)
+        if (base + _dt.timedelta(days=i)).weekday() < 5
+    ]
+    series_map = {d: 0.10 + i * 0.001 for i, d in enumerate(trading_days)}
+    event_date = _dt.date(2024, 3, 6)
+
+    # 1. Trailing-yield helper: strict-prior contract on dates.
+    pre, trail, pre_d, trail_d = mp_surprise._strictly_prior_pre_and_trailing_yield(
+        event_date, series_map, trading_days=trading_days,
+    )
+    assert pre is not None and trail is not None
+    assert pre_d is not None and trail_d is not None
+    assert trail_d < pre_d < event_date, (
+        f"#350 strict-prior contract violated: trail={trail_d} "
+        f"pre={pre_d} event={event_date}"
+    )
+
+    # 2. SPX helper: rejects post-event-only closes.
+    leaky_closes = {event_date + _dt.timedelta(days=1): 5200.0}
+    ret_leaky, source_leaky = mp_surprise._spx_return_on(event_date, leaky_closes)
+    assert ret_leaky is None, (
+        "#350: SPX helper must NOT compute a return from post-event-only "
+        f"closes (got ret={ret_leaky}, source={source_leaky})"
+    )
+    assert source_leaky == "unavailable"
+
+    # 3. Strict-prior closes resolve to a non-null trailing return.
+    strict_closes = {
+        event_date - _dt.timedelta(days=10): 5000.0,
+        event_date - _dt.timedelta(days=1): 5100.0,
+    }
+    ret_ok, source_ok = mp_surprise._spx_return_on(event_date, strict_closes)
+    assert ret_ok is not None and source_ok == "strict_prior_trailing", (
+        "#350: strict-prior trailing SPX return failed to resolve from "
+        f"pre-event closes (ret={ret_ok}, source={source_ok})"
+    )
