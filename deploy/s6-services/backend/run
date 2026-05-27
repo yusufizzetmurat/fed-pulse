@@ -3,8 +3,13 @@
 # file the backend writes into the /data bind mount or /home/fedpulse
 # HF cache then lands under UID 10001 on the host rather than root.
 cd /app/backend
+# Single worker: the #379 cold-start lock is ``asyncio.Lock`` and only
+# serialises within one process. Multi-worker bootstrap coordination
+# needs an OS-level file lock (tracked as a follow-up); pin
+# ``--workers 1`` until then so the race the lock guards stays in one
+# process.
 exec s6-setuidgid fedpulse /opt/venv/bin/uvicorn app.main:app \
     --host 0.0.0.0 \
     --port 8000 \
-    --workers 2 \
+    --workers 1 \
     --no-access-log

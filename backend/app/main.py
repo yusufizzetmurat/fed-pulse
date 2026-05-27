@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import logging
@@ -99,6 +100,35 @@ logger = logging.getLogger(__name__)
 # bootstrap history when /analyze fires against a host that has no
 # checkpoint on disk yet (first run after a fresh clone).
 COLD_START_HISTORY_LENGTH = 252
+
+# #379: the frontend fans out /analyze, /analyze/market and /analyze/analogs
+# in parallel via Promise.allSettled. On a fresh boot all three race into
+# ``_bootstrap_cold_start`` — two concurrent writers on the same checkpoint
+# file can produce a half-written artefact, and the second loader then
+# raises an opaque deserialisation error that escapes the route's narrow
+# ``RuntimeError`` catch. ``ServerErrorMiddleware`` then returns a bare
+# 500 outside the CORS layer, surfacing in the browser as ERR_FAILED /
+# "no Access-Control-Allow-Origin". Serialising the cold-start with an
+# asyncio lock + a checkpoint re-check inside the critical section keeps
+# only one bootstrap in flight per process.
+_cold_start_lock = asyncio.Lock()
+
+
+async def _ensure_cold_start(payload: "AnalyzeRequest") -> None:
+    """Run ``_bootstrap_cold_start`` at most once across concurrent callers.
+
+    The lock is acquired only when the checkpoint is missing; the
+    fast-path (warm process) takes zero locks. Inside the critical
+    section we re-check ``checkpoint_exists`` so the runner-up does not
+    re-train against the artefact the leader just wrote.
+    """
+
+    if checkpoint_exists():
+        return
+    async with _cold_start_lock:
+        if checkpoint_exists():
+            return
+        await run_in_threadpool(_bootstrap_cold_start, payload)
 
 
 @asynccontextmanager
@@ -713,10 +743,11 @@ async def analyze(payload: AnalyzeRequest):
     the thread pool so the event loop stays responsive under load."""
 
     try:
-        if not checkpoint_exists():
-            # Cold-start bootstrap: a fresh clone has no checkpoint on disk yet,
-            # so seed one against a 252-day window before the first inference.
-            await run_in_threadpool(_bootstrap_cold_start, payload)
+        # Cold-start bootstrap: a fresh clone has no checkpoint on disk yet,
+        # so seed one against a 252-day window before the first inference.
+        # Serialised across the /analyze, /analyze/market and /analyze/analogs
+        # fan-out via ``_ensure_cold_start`` -- #379.
+        await _ensure_cold_start(payload)
 
         masked_text = _apply_sentence_mask(payload.text, payload.mask_sentence_indices)
         run_payload = (
@@ -1231,16 +1262,33 @@ async def analyze_market(payload: AnalyzeRequest) -> MarketReactionPanel:
     # symmetrically to /analyze — 503 with the structured-status detail
     # (the message is a deliberate contract code, not raw exception
     # text) so the operator sees the same shape on both endpoints.
-    if not checkpoint_exists():
-        try:
-            await run_in_threadpool(_bootstrap_cold_start, payload)
-        except RuntimeError as exc:
-            logger.warning("analyze_market_cold_start_contract_mismatch detail=%s", str(exc))
-            raise HTTPException(
-                status_code=503,
-                detail="Market reaction panel unavailable: serving contract mismatch",
-            ) from None
+    # #379: route every unhandled exception path through HTTPException
+    # so the response stays inside the CORS-wrapped ExceptionMiddleware
+    # layer; ServerErrorMiddleware (outside CORS) was returning bare
+    # 500s without Access-Control-Allow-Origin on cold-start races.
+    try:
+        await _ensure_cold_start(payload)
+    except RuntimeError as exc:
+        logger.warning("analyze_market_cold_start_contract_mismatch detail=%s", str(exc))
+        raise HTTPException(
+            status_code=503,
+            detail="Market reaction panel unavailable: serving contract mismatch",
+        ) from None
+    except Exception as exc:  # pragma: no cover -- cold-start race fallback
+        logger.exception(
+            "analyze_market_cold_start_unexpected exception_class=%s",
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Market reaction panel unavailable: cold-start failed",
+        ) from None
 
+    # Request-shape errors (bad date string from the client, etc.) must
+    # surface as 422 via the registered ``_value_error_handler`` so the
+    # contract tests + the frontend toast layer keep their existing
+    # validation semantics; only true server-side failures collapse to
+    # the structured 503 below.
     sentiment = analyze_text(payload.text)
     market_history = await run_in_threadpool(
         fetch_market_history,
