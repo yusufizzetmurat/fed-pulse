@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 from app.config import DATA_DIR as DEFAULT_DATA_DIR
 from app.services.market_data import fetch_market_snapshot
-from app.services.sentiment import analyze_text
+from app.services.text_encoder import analyze_text
 
 RAW_DOCUMENT_FILES = ("fomc_statements.json", "fomc_minutes.json")
 DEFAULT_SYMBOLS = ("^GSPC", "^VIX", "DX-Y.NYB", "^TNX", "BTC-USD")

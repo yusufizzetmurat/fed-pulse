@@ -10,13 +10,17 @@ across the codebase import from here.
 from __future__ import annotations
 
 import copy
+import logging
 import math
 import threading
+from datetime import date as _date_cls
 from pathlib import Path
 from collections.abc import Iterable
 from typing import Any
 
 import torch
+
+logger = logging.getLogger(__name__)
 
 from app.evaluation.metrics import (
     EvaluationMetrics,
@@ -229,6 +233,162 @@ def _build_inference_tensor(
     return torch.tensor([rows], dtype=torch.float32, device=device)
 
 
+def _resolve_inference_credibility(
+    model: ForecasterServingModel,
+    *,
+    sequence: list[FeatureVector],
+    device: torch.device,
+) -> torch.Tensor:
+    """Build the credibility kwarg for one /analyze forward pass.
+
+    Issue #339 finding #4: training-time loaders feed real per-row credibility
+    vectors via ``app.services.credibility_loader.load_credibility_for_run``,
+    but ``/analyze`` was passing ``torch.zeros(...)``. This helper pulls the
+    as-of date off the last lookback bar and consults the live loader, falling
+    back to zeros only when the loader raises (e.g. missing FRED cache on a
+    fresh checkout) so the inference path never 5xx's on a missing artefact.
+    """
+
+    dim = int(getattr(model, "credibility_dim", 4))
+    zero_vec = torch.zeros((1, dim), dtype=torch.float32, device=device)
+    if not sequence:
+        return zero_vec
+    last = sequence[-1]
+    as_of = str(getattr(last, "date", "")).strip()
+    if not as_of:
+        return zero_vec
+    try:
+        vec = compute_credibility_for_inference(as_of)
+    except Exception:  # pragma: no cover -- defensive
+        logger.warning("credibility_inference_loader_failed as_of=%s", as_of, exc_info=True)
+        return zero_vec
+    if vec is None:
+        return zero_vec
+    if vec.dim() == 1:
+        vec = vec.unsqueeze(0)
+    if vec.shape[-1] != dim:
+        logger.warning(
+            "credibility_inference_dim_mismatch expected=%d got=%d as_of=%s",
+            dim,
+            int(vec.shape[-1]),
+            as_of,
+        )
+        return zero_vec
+    return vec.to(dtype=torch.float32, device=device)
+
+
+def compute_credibility_for_inference(
+    event_date: _date_cls | str,
+) -> torch.Tensor | None:
+    """Live credibility loader wrapper for inference paths.
+
+    Returns a ``(1, 4)`` float tensor matching the
+    :class:`CredibilityVector` axis ordering, or ``None`` when the
+    loader's inputs are absent. Mirrors the training-time call in
+    ``app.data.event_dataset_builder._safe_credibility`` so the
+    forecaster sees the same axis layout at /analyze as it did during
+    training.
+
+    The encoder embedding cache + FRED cache paths are resolved off the
+    canonical encoder alias from the registry; both degrade silently to
+    the loader's zero-default when missing.
+    """
+
+    from app.services.credibility_loader import load_credibility_for_run
+    from app.services.fred_client import DEFAULT_CACHE_DIR as _FRED_CACHE_DIR
+    from app.config import DATA_DIR
+
+    if isinstance(event_date, _date_cls):
+        as_of_ts = event_date.isoformat()
+    else:
+        as_of_ts = str(event_date)[:10]
+    if not as_of_ts:
+        return None
+
+    # Best-effort embedding cache lookup; if the file is absent the
+    # drift axis degrades to 0.0 inside the loader.
+    embedding_path: Path | None = None
+    try:
+        from app.models.registry import encoder_ref
+
+        ref = encoder_ref("finbert_fed_adjacent_xbank_dapt")
+        if ref is not None and ref.revision:
+            candidate = (
+                DATA_DIR
+                / "raw"
+                / "embeddings"
+                / f"finbert_fed_adjacent_xbank_dapt_{ref.revision[:14]}.parquet"
+            )
+            if candidate.exists():
+                embedding_path = candidate
+    except Exception:  # pragma: no cover -- defensive
+        embedding_path = None
+
+    fred_cache_dir = _FRED_CACHE_DIR if Path(_FRED_CACHE_DIR).exists() else None
+
+    try:
+        vector = load_credibility_for_run(
+            as_of_ts=as_of_ts,
+            embedding_path=embedding_path,
+            stance_by_date=(),
+            fred_response=None,
+            fred_cache_dir=fred_cache_dir,
+        )
+    except (ValueError, FileNotFoundError):
+        return None
+    return torch.tensor([vector.as_list()], dtype=torch.float32)
+
+
+def _resolve_inference_text_embedding(
+    model: ForecasterServingModel,
+    *,
+    sequence: list[FeatureVector],
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build the ``text_embedding`` + ``text_embedding_missing`` kwargs.
+
+    Issue #339 finding #1: training fed pooled prior-N statement
+    embeddings via the time-decay adapter, but ``/analyze`` never threaded
+    them through ``forward_multi_task``. Without inputs the forward path
+    raised ``ValueError("text_embedding when text_adapter_dim > 0")`` and
+    the regime card silently fell to ``None`` on the canonical
+    checkpoint.
+
+    Pull the pooled vector + missing flag off the last
+    :class:`FeatureVector`'s ``text_embedding_pooled`` / ``text_embedding_missing``
+    fields (the loader anchors this on the target-row bar; mirror the
+    training-time contract at inference). Wrong shape or empty payload
+    -> zero tensor + ``missing=1`` so the adapter's keep-mask zeros the
+    slot and the model sees an unambiguous "no text" signal rather than
+    raising.
+    """
+
+    dim = int(getattr(model, "text_embedding_dim", 0))
+    if dim <= 0:
+        return (
+            torch.zeros((1, 0), dtype=torch.float32, device=device),
+            torch.ones((1, 1), dtype=torch.float32, device=device),
+        )
+    pooled: list[float] = []
+    missing_flag = 1.0
+    if sequence:
+        last = sequence[-1]
+        raw = getattr(last, "text_embedding_pooled", None) or []
+        if isinstance(raw, (list, tuple)) and len(raw) == dim:
+            pooled = [float(v) for v in raw]
+            missing_flag = float(getattr(last, "text_embedding_missing", 1.0))
+    if not pooled:
+        return (
+            torch.zeros((1, dim), dtype=torch.float32, device=device),
+            torch.ones((1, 1), dtype=torch.float32, device=device),
+        )
+    text_embedding = torch.tensor([pooled], dtype=torch.float32, device=device)
+    text_embedding_missing = torch.tensor(
+        [[missing_flag]], dtype=torch.float32, device=device
+    )
+    return text_embedding, text_embedding_missing
+
+
 def _predict_next_point(model: ForecasterServingModel, sequence: list[FeatureVector]) -> tuple[float, float]:
     # Classification-mode checkpoints emit ``(B, n_classes)`` logits
     # from ``forward()`` (the stance branch under the MultiTaskHead);
@@ -248,16 +408,22 @@ def _predict_next_point(model: ForecasterServingModel, sequence: list[FeatureVec
     x = _build_inference_tensor(sequence, model, device)
     kwargs: dict[str, torch.Tensor] = {}
     if getattr(model, "credibility_features", False):
-        # Inference-side credibility uses a zero vector by default; the live
-        # vtasca + FRED loader (services.credibility_loader) populates real
-        # numbers in the training loop and at /analyze when the caller wires it
-        # in. Zero is the neutral "all axes unknown" reading from
-        # CredibilityVector — safe for forecast inference.
-        kwargs["credibility"] = torch.zeros(
-            (1, int(getattr(model, "credibility_dim", 4))),
-            dtype=torch.float32,
-            device=device,
+        # #339 finding #4: pull the live four-axis credibility vector
+        # via the FRED + drift loader. Zero-fallback only when the
+        # loader raises (missing FRED cache on a fresh checkout).
+        kwargs["credibility"] = _resolve_inference_credibility(
+            model, sequence=sequence, device=device
         )
+    if getattr(model, "_text_path_active", False):
+        # #339 finding #1: mirror the training-time text-embedding
+        # contract -- pooled prior-N statement vector + missing flag --
+        # so the regression-only forward path consumes the same input
+        # shape it was trained against.
+        text_embedding, text_embedding_missing = _resolve_inference_text_embedding(
+            model, sequence=sequence, device=device
+        )
+        kwargs["text_embedding"] = text_embedding
+        kwargs["text_embedding_missing"] = text_embedding_missing
     with torch.no_grad():
         out = model(x, **kwargs).squeeze(0)
     close_scale = float((_model_artifact_metadata or {}).get("close_scale", DEFAULT_CLOSE_SCALE))
@@ -319,17 +485,26 @@ def build_market_reaction_panel(
     x = _build_inference_tensor(window, model, device)
     kwargs: dict[str, torch.Tensor] = {}
     if getattr(model, "credibility_features", False):
-        kwargs["credibility"] = torch.zeros(
-            (1, int(getattr(model, "credibility_dim", 4))),
-            dtype=torch.float32,
-            device=device,
+        # #339 finding #4: pull live credibility (zero-fallback only on
+        # loader failure) instead of zero-defaulting on every call.
+        kwargs["credibility"] = _resolve_inference_credibility(
+            model, sequence=window, device=device
         )
-    # #317 finding #17: forward the text path inputs through to
-    # forward_multi_task on text-mounted checkpoints. The model's
-    # forward path raises ``RuntimeError("text path active but inputs
-    # missing")`` if these are absent.
-    if getattr(model, "_text_path_active", False) and text_embedding is not None:
-        kwargs["text_embedding"] = text_embedding.to(device)
+    # #317 finding #17 + #339 finding #1: forward the text path inputs
+    # through to forward_multi_task on text-mounted checkpoints. Use
+    # the explicit ``text_embedding`` argument when the caller threads
+    # one in; otherwise resolve from the last lookback bar's pooled
+    # vector + missing flag so the canonical checkpoint's regime card
+    # stops silently rendering None.
+    if getattr(model, "_text_path_active", False):
+        if text_embedding is not None:
+            kwargs["text_embedding"] = text_embedding.to(device)
+        else:
+            inferred_text, inferred_missing = _resolve_inference_text_embedding(
+                model, sequence=window, device=device
+            )
+            kwargs["text_embedding"] = inferred_text
+            kwargs["text_embedding_missing"] = inferred_missing
     if (
         getattr(model, "use_chunk_attention", False)
         or getattr(model, "use_llm_embeddings", False)
@@ -513,11 +688,22 @@ def build_regime_classification_card(
     x = _build_inference_tensor(window, model, device)
     kwargs: dict[str, torch.Tensor] = {}
     if getattr(model, "credibility_features", False):
-        kwargs["credibility"] = torch.zeros(
-            (1, int(getattr(model, "credibility_dim", 4))),
-            dtype=torch.float32,
-            device=device,
+        # #339 finding #4: live credibility kwarg (zero fallback on
+        # loader failure only).
+        kwargs["credibility"] = _resolve_inference_credibility(
+            model, sequence=window, device=device
         )
+    if getattr(model, "_text_path_active", False):
+        # #339 finding #1: thread the pooled text embedding +
+        # missing-flag pair through ``forward_multi_task`` so the
+        # canonical checkpoint's regime card renders instead of
+        # silently falling to ``None`` via the try/except in
+        # ``_safe_regime_classification``.
+        text_embedding, text_embedding_missing = _resolve_inference_text_embedding(
+            model, sequence=window, device=device
+        )
+        kwargs["text_embedding"] = text_embedding
+        kwargs["text_embedding_missing"] = text_embedding_missing
 
     head_mode = str(getattr(model, "head_mode", "classification") or "classification")
 

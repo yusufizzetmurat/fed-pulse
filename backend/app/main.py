@@ -91,7 +91,7 @@ from app.services.market_data import (
     fetch_market_snapshot,
     fetch_realized_forward,
 )
-from app.services.sentiment import analyze_text
+from app.services.text_encoder import analyze_text
 
 logger = logging.getLogger(__name__)
 
