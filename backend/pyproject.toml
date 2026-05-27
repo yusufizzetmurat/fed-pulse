@@ -119,6 +119,7 @@ ignore = [
 "app/data/event_dataset_builder.py" = ["PLR0913", "C901"]
 "app/data/finetune_batch.py" = ["PLR0913", "C901"]
 "app/data/finetune_pilot.py" = ["PLR0913", "C901"]
+"app/data/finetune_pilot_b2.py" = ["PLR0913", "C901"]
 "app/data/generate_baseline_run_specs.py" = ["PLR0913"]
 "app/data/ingest_sources.py" = ["PLR0913", "C901"]
 "app/data/label_normalization.py" = ["PLR0913"]
