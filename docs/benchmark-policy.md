@@ -105,3 +105,12 @@ Policy:
 2. Cite the contaminated number as a **ceiling reference** in the discussion chapter only — labelled as "upper-bound for what's achievable on this corpus given likely contamination".
 3. The encoder may stay in `finetune_batch.ENCODERS` for completeness, but the published table must use only independent encoders (BERT-base, FinBERT, FinBERT-FOMC, DistilBERT, DeBERTa-v3).
 4. Any future encoder whose pretraining mixture overlaps with this project's training rows falls under the same exclusion rule. Add a one-line entry to the deny-list in `finetune_batch.py` and document the rationale in `06_Deep_Learning_Roadmap.md`.
+
+### `gtfintechlab/fomc-roberta-any-exp` audit (2026-05-27, #339)
+
+The dashboard sentiment service has carried `gtfintechlab/fomc-roberta-any-exp` as its primary HF fallback (`PRIMARY_HF_MODEL_ID` in `backend/app/services/text_encoder.py`). Two findings from the encoder-parity audit:
+
+1. The repository is not resolvable on the Hugging Face Hub: `HfApi.model_info('gtfintechlab/fomc-roberta-any-exp')` returns 404 under an authenticated token, and the gtfintechlab org listing does not surface the name. The dashboard has therefore been falling through to `distilbert/distilbert-base-uncased-finetuned-sst-2-english` (POSITIVE / NEGATIVE labels, not hawkish / dovish / neutral) the entire time the registry pin claimed otherwise.
+2. The `-any-exp` name structure follows the gtfintechlab Trillion Dollar Words family. Absent an upstream model card declaring an independent training corpus, the conservative call is to inherit the sibling's R-13 contamination flag.
+
+Verdict: deny-list. The key `gtfintechlab_fomc_roberta_any_exp` joins `gtfintechlab_fomc_roberta` in `finetune_batch.CONTAMINATED_ENCODER_KEYS` and is excluded from the headline NLP table. The registry `revision: main` value is intentionally left as a non-reproducible marker so that future readers see "the audit happened and the encoder is gated, not pinned"; the encoder must not be served until either the upstream repo becomes reachable with a clean training-corpus declaration, or a replacement encoder is wired into the dashboard fallback chain.

@@ -43,7 +43,20 @@ encoders:
     revision: main
     gated: true
     task: classification
-    description: Gated checkpoint used by the dashboard sentiment service. Pin to a SHA after the next authenticated load.
+    description: |
+      Sibling of ``gtfintechlab/FOMC-RoBERTa``. Audited 2026-05-27
+      (#339): the repo does not resolve on the Hugging Face Hub
+      (404 even with an authenticated token), and gtfintechlab
+      published the Trillion Dollar Words corpus this project
+      ingests as ``hf_fomc_communication``. Treated as inheriting
+      the R-13 contamination flag against TDW and added to the
+      ``CONTAMINATED_ENCODER_KEYS`` deny-list in
+      ``finetune_batch.py``. ``revision: main`` is intentionally
+      kept as a non-reproducible marker rather than pinned — the
+      encoder must not be served until either the upstream repo
+      becomes reachable AND the audit verdict flips to clean, OR
+      a replacement encoder (e.g. ProsusAI/finbert) is wired into
+      the dashboard fallback chain.
 
   distilbert_sst2:
     repo: distilbert/distilbert-base-uncased-finetuned-sst-2-english

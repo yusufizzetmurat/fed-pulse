@@ -27,7 +27,7 @@ The question this codebase tries to answer is whether fusing FOMC text with mark
 ```
 Browser  ─POST /analyze─▶  FastAPI (backend/app/main.py)
                               │
-                              ├─ sentiment           services/sentiment.py     ─▶ HF classifier (services/text_encoder.py)
+                              ├─ sentiment           services/text_encoder.py  ─▶ multi-axis stance head (else chunked HF classifier)
                               ├─ market history     services/market_data.py   ─▶ yfinance
                               ├─ feature vectors    services/forecaster.py    ─▶ 6-feature sequence
                               ├─ forecast           services/forecaster.py    ─▶ checkpoint inference / quick / real train

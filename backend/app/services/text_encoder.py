@@ -258,6 +258,91 @@ def encode_chunks(text: str, classifier: Any = None) -> list[ChunkEncoding]:
     return encodings
 
 
+def analyze_text(text: str) -> dict[str, Any]:
+    """Score ``text`` for stance + (when an OOD manifest is available)
+    attach energy-based OOD diagnostics to the response.
+
+    Issue #339 deliverable #2: the legacy ``app.services.sentiment``
+    module was retired in favour of routing every caller through this
+    function. When a :class:`TextMultiAxisClassifier` checkpoint is
+    available (``app.services.multi_axis_classifier``), its stance head
+    is the source of truth so the response carries the same per-axis
+    prediction the model card publishes; otherwise the legacy chunked
+    classifier remains the fallback. Returned shape stays
+    ``{label, score, raw[]}`` so the /analyze + prepare_training_data
+    + attention_ablation surfaces stay drop-in.
+    """
+
+    text_value = text or ""
+    response = _stance_from_multi_axis(text_value)
+    if response is None:
+        response = aggregate_label(encode_chunks(text_value))
+
+    manifest_path = resolve_ood_manifest_path()
+    if manifest_path is None:
+        return response
+
+    # Lazy import: keep torch + numpy out of the import-only path.
+    from app.evaluation.ood import load_manifest, score_text as score_text_ood
+
+    manifest = load_manifest(manifest_path)
+    if manifest is None:
+        return response
+
+    classifier = get_classifier()
+    chunks = split_into_chunks(text_value, classifier=classifier)
+    ood = score_text_ood(
+        text_value, classifier=classifier, manifest=manifest, chunks=chunks
+    )
+    response["ood_energy"] = ood.get("ood_energy")
+    response["ood_threshold"] = ood.get("ood_threshold")
+    response["is_in_distribution"] = ood.get("is_in_distribution")
+    return response
+
+
+def _stance_from_multi_axis(text: str) -> dict[str, Any] | None:
+    """Prefer the multi-axis stance head when a checkpoint is loaded.
+
+    Returns the legacy ``{label, score, raw[]}`` dict shape so the
+    /analyze surface and downstream callers do not need to special-case
+    the source. ``None`` means "no checkpoint, fall back to the chunked
+    classifier" rather than "no signal".
+    """
+
+    text_value = (text or "").strip()
+    if not text_value:
+        return None
+    try:
+        from app.services.multi_axis_classifier import (
+            checkpoint_exists as _ma_checkpoint_exists,
+            score_text as _ma_score_text,
+        )
+    except Exception:  # pragma: no cover -- defensive
+        return None
+    if not _ma_checkpoint_exists():
+        return None
+    try:
+        block = _ma_score_text(text_value)
+    except Exception:  # pragma: no cover -- never let inference crash
+        _logger.warning("multi_axis_stance_route_failed", exc_info=True)
+        return None
+    if not block:
+        return None
+    stance = block.get("stance") if isinstance(block, dict) else None
+    if not stance:
+        return None
+    distribution = stance.get("distribution") or {}
+    raw = [
+        {"label": str(name), "score": float(score)}
+        for name, score in distribution.items()
+    ]
+    return {
+        "label": str(stance.get("label", "")),
+        "score": float(stance.get("confidence", 0.0) or 0.0),
+        "raw": raw,
+    }
+
+
 def aggregate_label(encodings: list[ChunkEncoding]) -> dict[str, Any]:
     if not encodings:
         return {"label": "UNKNOWN", "score": 0.0, "raw": []}

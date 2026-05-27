@@ -15,7 +15,7 @@ feature is not used.
 
 Mirrors the singleton patterns used by
 :mod:`app.services.multi_axis_classifier` and
-:mod:`app.services.sentiment` — thread-safe lazy init, a ``reset``
+:mod:`app.services.text_encoder` — thread-safe lazy init, a ``reset``
 hook for the test suite, and a graceful "not available" state so a
 missing checkpoint never crashes the worker.
 """
