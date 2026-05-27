@@ -685,6 +685,57 @@ def test_train_model_smoke_with_regime_conditioning_gate() -> None:
     assert result.summary.epochs_completed == 1
 
 
+def test_regime_gate_weights_move_under_sgd() -> None:
+    """One epoch of SGD actually nudges the gate weights off init.
+
+    The #307 smoke pins the forward pass runs to completion and the
+    zero-init test pins the gate's t=0 output, but neither catches a
+    disconnected gradient path — gate produced but never consumed by
+    the loss would leave ``regime_gate.weight`` / ``regime_gate.bias``
+    pinned at zeros forever and both existing tests pass. Snapshot the
+    gate params pre-train, run one epoch, and assert the post-train
+    norm-delta is non-zero so a future wiring regression that bypasses
+    the gate fires here.
+    """
+
+    groups = [[_dummy_feature_vector(day=i + 1, vol=0.01 + 0.001 * i) for i in range(40)]]
+    config = ModelConfig(
+        input_size=RICH_FEATURE_SIZE,
+        output_mode="classification",
+        n_classes=3,
+        hidden_size=16,
+        head_hidden_size=8,
+        use_regime_conditioning=True,
+    )
+    result = train_model(
+        model_config=config,
+        train_sequence_groups=groups,
+        val_sequence_groups=groups,
+        test_sequence_groups=groups,
+        epochs=1,
+        batch_size=8,
+        seed=11,
+        save_checkpoint=False,
+        use_compile=False,
+        use_amp=False,
+    )
+    gate = getattr(result.model, "regime_gate", None)
+    assert gate is not None, (
+        "use_regime_conditioning=True must mount a regime_gate Linear layer"
+    )
+    # Pre-train state is zero-init by construction (see
+    # ``test_gate_zero_init_is_identity_at_step_zero``). Any non-zero
+    # post-train norm therefore proves SGD touched the gate params.
+    weight_delta = float(gate.weight.detach().norm().item())
+    bias_delta = float(gate.bias.detach().norm().item())
+    assert weight_delta > 0.0, (
+        "regime_gate.weight unchanged after 1 epoch -- gradient path likely disconnected"
+    )
+    assert bias_delta > 0.0, (
+        "regime_gate.bias unchanged after 1 epoch -- gradient path likely disconnected"
+    )
+
+
 def test_gate_zero_init_is_identity_at_step_zero() -> None:
     """The zero-init gate produces an output of 1.0 at start of training.
 
