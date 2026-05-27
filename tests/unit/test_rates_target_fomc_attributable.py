@@ -428,3 +428,59 @@ def test_train_model_smoke_rates_target_mode_raw_default() -> None:
     assert result.summary.epochs_completed == 1
     persisted_config = ModelConfig.from_model(result.model)
     assert persisted_config.rates_target_mode == "raw"
+
+
+def test_loader_mp_surprise_lookup_loaded_regardless_of_rich_features(
+    monkeypatch,
+) -> None:
+    """The mp_surprise lookup feeds the fomc-attributable rates-target
+    projection on every event, not just on rich-feature input columns.
+    A pre-#305-style guard that only loaded the lookup under
+    ``rich_features=True`` would silently null every projection when
+    a caller passed ``--no-rich-features --rates-target-mode=fomc_attributable``,
+    leaving the rates heads to train on zero rows with no error. Pin
+    the contract so a future loader refactor cannot regress it.
+    """
+
+    import app.training.loaders as loaders
+
+    call_log: list[str] = []
+
+    original = loaders._read_mp_surprise_lookup
+
+    def _spy(package_dir):
+        call_log.append(str(package_dir))
+        return original(package_dir)
+
+    monkeypatch.setattr(loaders, "_read_mp_surprise_lookup", _spy)
+
+    # Inspect both loader entry points by AST -- a full end-to-end
+    # invocation needs a real training package on disk. The contract
+    # we are pinning is "the lookup load site is outside the
+    # rich_features guard", which is statically observable in the
+    # source. The spy above is here so a future test that swaps in a
+    # fixture package can drop the source-string assertion and rely
+    # on the call log instead.
+    src = (
+        __import__("pathlib").Path(loaders.__file__).read_text(encoding="utf-8")
+    )
+    # The unconditional lookup call must appear in both
+    # `_load_package_sequences_with_metadata` and the legacy
+    # `load_training_sequences_from_package` loader, NOT inside an
+    # `if rich_features:` block above them.
+    assert src.count("_read_mp_surprise_lookup(") >= 3, (
+        "expected at least 3 references to _read_mp_surprise_lookup "
+        "(definition + two unconditional loader call sites)"
+    )
+    # Heuristic guard: there must NOT be a sequence where the
+    # rich_features block contains a `_read_mp_surprise_lookup` call.
+    rich_blocks = src.split("if rich_features:")
+    for block in rich_blocks[1:]:
+        # only inspect the block immediately following the guard
+        snippet = block.split("\n\n", 1)[0]
+        assert "_read_mp_surprise_lookup" not in snippet, (
+            "_read_mp_surprise_lookup must not live inside an "
+            "`if rich_features:` block -- the fomc-attributable target "
+            "projection depends on the lookup being loaded "
+            "unconditionally"
+        )

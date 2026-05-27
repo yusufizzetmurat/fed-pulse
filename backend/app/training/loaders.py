@@ -1419,11 +1419,19 @@ def _load_package_sequences_with_metadata(
         )
 
     linguistic_lookup: dict[str, list[float]] = {}
-    mp_surprise_lookup: dict[str, dict[str, float]] = {}
+    # The mp_surprise lookup feeds two consumers: rich-feature input
+    # columns (gated by ``rich_features``) AND the fomc-attributable
+    # rates-target projection (always computed; the trainer reads it
+    # off the FeatureVector only when ``rates_target_mode`` opts in).
+    # Loading it unconditionally costs one cheap parquet read and
+    # prevents the silent all-None projection that would otherwise
+    # fire under ``--no-rich-features --rates-target-mode=fomc_attributable``.
+    mp_surprise_lookup: dict[str, dict[str, float]] = _read_mp_surprise_lookup(
+        package_dir
+    )
     llm_lookup: dict[str, list[float]] = {}
     if rich_features:
         linguistic_lookup = _read_linguistic_lookup(package_dir)
-        mp_surprise_lookup = _read_mp_surprise_lookup(package_dir)
         if use_llm_features:
             llm_lookup = _load_llm_feature_lookup(training_package_id)
 
@@ -2028,11 +2036,17 @@ def load_training_sequences_from_package(
     # left empty -- ``_attach_rich_features`` is skipped entirely so
     # the legacy 6-dim path is undisturbed.
     linguistic_lookup: dict[str, list[float]] = {}
-    mp_surprise_lookup: dict[str, dict[str, float]] = {}
+    # See the matching note on `_load_package_sequences_with_metadata`:
+    # the mp_surprise lookup feeds both rich-feature input columns
+    # (gated) and the fomc-attributable rates-target projection (always
+    # computed). Load unconditionally so `--no-rich-features` does not
+    # silently null every projection.
+    mp_surprise_lookup: dict[str, dict[str, float]] = _read_mp_surprise_lookup(
+        package_dir
+    )
     llm_lookup: dict[str, list[float]] = {}
     if rich_features:
         linguistic_lookup = _read_linguistic_lookup(package_dir)
-        mp_surprise_lookup = _read_mp_surprise_lookup(package_dir)
         if use_llm_features:
             llm_lookup = _load_llm_feature_lookup(training_package_id)
 
