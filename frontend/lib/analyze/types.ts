@@ -343,6 +343,14 @@ export interface SettingsCheckpoint {
   output_mode?: string | null;
   encoder_alias?: string | null;
   conformal_sidecar_present?: boolean | null;
+  // #342: inference contract surfaces. ``required_kwargs`` mirrors the
+  // sidecar; ``supplied_at_inference`` maps each declared kwarg to a
+  // boolean for the live serving wiring. Empty / undefined when the
+  // checkpoint pre-dates the #341 contract — ``inference_contract_status``
+  // discriminates ``"sidecar_absent"`` (legacy) from ``"present"``.
+  required_kwargs?: string[];
+  supplied_at_inference?: Record<string, boolean>;
+  inference_contract_status?: string | null;
 }
 
 export interface SettingsCheckpointsResponse {

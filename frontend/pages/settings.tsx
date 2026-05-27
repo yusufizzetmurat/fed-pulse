@@ -71,6 +71,15 @@ function roleLabel(role: string): string {
 }
 
 function CheckpointRow({ checkpoint }: { checkpoint: SettingsCheckpoint }) {
+  // #342: render the inference-contract surface. Legacy checkpoints
+  // (no sidecar) carry ``inference_contract_status === "sidecar_absent"``
+  // and render with a neutral "legacy" badge. Post-#341 checkpoints
+  // carry one badge per declared kwarg; the badge goes red when the
+  // serving wiring does not supply that kwarg, neutral otherwise.
+  const contractStatus = checkpoint.inference_contract_status ?? null;
+  const requiredKwargs = checkpoint.required_kwargs ?? [];
+  const supplied = checkpoint.supplied_at_inference ?? {};
+
   return (
     <li
       className="flex flex-col gap-2 rounded-md border border-border bg-background/50 p-3 sm:flex-row sm:items-start sm:justify-between"
@@ -128,6 +137,52 @@ function CheckpointRow({ checkpoint }: { checkpoint: SettingsCheckpoint }) {
               </>
             ) : null}
           </div>
+          {checkpoint.role === "forecaster" && contractStatus ? (
+            <div
+              className="flex flex-wrap items-center gap-1.5 pt-1"
+              aria-label="inference contract kwargs"
+            >
+              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                inference contract:
+              </span>
+              {contractStatus === "sidecar_absent" ? (
+                <Badge
+                  variant="outline"
+                  className="text-[10px] text-muted-foreground"
+                  data-testid="contract-legacy-badge"
+                >
+                  legacy
+                </Badge>
+              ) : requiredKwargs.length === 0 ? (
+                <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                  no required kwargs
+                </Badge>
+              ) : (
+                requiredKwargs.map((name) => {
+                  const isSupplied = supplied[name] === true;
+                  return (
+                    <Badge
+                      key={name}
+                      variant={isSupplied ? "outline" : "hawkish"}
+                      className="text-[10px] numeric"
+                      data-testid={
+                        isSupplied
+                          ? `contract-kwarg-ok-${name}`
+                          : `contract-kwarg-missing-${name}`
+                      }
+                      title={
+                        isSupplied
+                          ? `${name} is supplied by the serving wiring`
+                          : `${name} declared by the checkpoint sidecar but NOT supplied by the serving wiring`
+                      }
+                    >
+                      {name}
+                    </Badge>
+                  );
+                })
+              )}
+            </div>
+          ) : null}
         </div>
       </div>
     </li>

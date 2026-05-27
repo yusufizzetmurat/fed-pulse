@@ -157,6 +157,24 @@ def get_contract_counters() -> dict[str, int]:
     return dict(_contract_counters)
 
 
+def reset_singleton_for_revalidation() -> None:
+    """#342: drop the cached singleton so the next ``_get_model`` cold-loads.
+
+    Used by ``_bootstrap_cold_start`` after the bootstrap-write path:
+    ``_set_singleton_after_train`` bypasses ``_validate_serving_contract``,
+    so the cold-start needs to round-trip through the canonical loader
+    to actually validate the freshly written sidecar. Lives here (not
+    in main.py) so the private singleton attributes stay encapsulated;
+    a future refactor of the storage shape only needs to update this
+    helper.
+    """
+
+    global _model, _model_artifact_metadata
+    with _model_lock:
+        _model = None
+        _model_artifact_metadata = None
+
+
 def _extract_missing_kwarg_from_typeerror(exc: TypeError) -> str | None:
     """Parse the kwarg name out of a python ``TypeError`` message.
 
@@ -561,6 +579,54 @@ def _resolve_inference_text_embedding(
         [[missing_flag]], dtype=torch.float32, device=device
     )
     return text_embedding, text_embedding_missing
+
+
+def _log_serving_forward_kwargs(model: ForecasterServingModel) -> None:
+    """#342: structured INFO line describing the per-request kwarg set.
+
+    Mirrors the kwarg gates in ``_predict_next_point`` so the log line
+    is greppable evidence of what the serving forward was called with
+    on a given request. Format:
+
+        ``analyze_serving_forward kwargs=<a,b,c> checkpoint=<stem> mode=<output_mode>``
+
+    The kwargs list is empty (``kwargs=``) for the legacy 6-feature
+    regression-only path; checkpoints with text + credibility + chunks
+    paths active emit the full list. The checkpoint stem is taken from
+    ``BEST_MODEL_PATH`` so the operator can correlate against the
+    settings inventory + the inference contract sidecar. The ``mode``
+    field carries the active output_mode so a grep can distinguish
+    "kwargs declared but forward short-circuited" (classification-mode
+    request: ``_predict_next_point`` echoes the last bar without
+    calling forward) from "kwargs declared and forward invoked"
+    (regression mode). One log line per /analyze, NOT one per kwarg.
+    """
+
+    populated: list[str] = []
+    if bool(getattr(model, "credibility_features", False)):
+        populated.append("credibility")
+    if bool(getattr(model, "_text_path_active", False)):
+        populated.append("text_embedding")
+        populated.append("text_embedding_missing")
+    if bool(getattr(model, "use_chunk_attention", False)) or bool(
+        getattr(model, "use_llm_embeddings", False)
+    ):
+        populated.append("chunks")
+        populated.append("elapsed_days")
+
+    try:
+        checkpoint_stem = Path(BEST_MODEL_PATH).stem
+    except Exception:  # pragma: no cover -- defensive
+        checkpoint_stem = ""
+
+    output_mode = str(getattr(model, "output_mode", "regression") or "regression")
+
+    logger.info(
+        "analyze_serving_forward kwargs=%s checkpoint=%s mode=%s",
+        ",".join(populated),
+        checkpoint_stem,
+        output_mode,
+    )
 
 
 def _predict_next_point(model: ForecasterServingModel, sequence: list[FeatureVector]) -> tuple[float, float]:
@@ -1314,6 +1380,16 @@ def forecast_quantitative_series(
     # adaptation surface.
     model = _get_model()
     training_result = None
+
+    # #342: emit one structured INFO line per request listing the kwargs
+    # the serving forward will be called with on this request. Operators
+    # can ``grep analyze_serving_forward | awk`` for drift between the
+    # sidecar-declared required kwargs and what the call site actually
+    # populates. The list is computed by mirroring the kwarg gates in
+    # ``_predict_next_point`` (the canonical serving forward call site)
+    # so the log line is the request-level intent, not a per-step
+    # repetition.
+    _log_serving_forward_kwargs(model)
 
     history_vectors = vectors[-30:]
     history_timestamps = [item.date for item in history_vectors]

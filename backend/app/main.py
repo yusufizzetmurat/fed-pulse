@@ -246,6 +246,42 @@ def list_settings_checkpoints() -> SettingsCheckpointsResponse:
     except Exception:  # pragma: no cover
         logger.warning("settings_checkpoints_multi_axis_probe_failed", exc_info=True)
 
+    # #342: snapshot the live serving forward signature once per request
+    # so each row can mark each declared kwarg as supplied / not supplied
+    # without re-introspecting the model class on every iteration. The
+    # source of truth is the model class the loader binds — falls back to
+    # the static SERVING_FORWARD_KWARGS constant when the import path is
+    # not available (defensive; the import should always succeed).
+    try:
+        from app.models.serving_model import ForecasterServingModel
+        from app.training.inference_contract import (
+            SERVING_FORWARD_KWARGS,
+            collect_serving_forward_kwargs,
+            read_sidecar,
+        )
+    except Exception:  # pragma: no cover -- defensive
+        # Hard import failure (genuinely broken env). Nothing to
+        # display; render every checkpoint row without a contract
+        # surface rather than mislabel the world.
+        logger.warning("settings_checkpoints_serving_kwargs_import_failed", exc_info=True)
+        serving_kwargs: frozenset[str] = frozenset()
+        read_sidecar = None  # type: ignore[assignment]
+    else:
+        try:
+            serving_kwargs = (
+                collect_serving_forward_kwargs(ForecasterServingModel)
+                or SERVING_FORWARD_KWARGS
+            )
+        except Exception:  # pragma: no cover -- defensive
+            # Live-signature introspection failed but the imports landed.
+            # Fall back to the static constant per ADR 0025 so the
+            # settings page still renders meaningful supplied/required
+            # badges rather than painting every kwarg red.
+            logger.warning(
+                "settings_checkpoints_serving_kwargs_probe_failed", exc_info=True
+            )
+            serving_kwargs = SERVING_FORWARD_KWARGS
+
     for entry in sorted(MODELS_DIR.glob("*.pt"), key=lambda p: p.name):
         try:
             stat = entry.stat()
@@ -258,6 +294,24 @@ def list_settings_checkpoints() -> SettingsCheckpointsResponse:
         sidecar_present: bool | None = None
         if role == "forecaster":
             sidecar_present = entry.with_suffix(".conformal.json").exists()
+
+        required_kwargs: list[str] = []
+        supplied: dict[str, bool] = {}
+        contract_status: str | None = None
+        if role == "forecaster" and read_sidecar is not None:
+            try:
+                contract = read_sidecar(entry)
+            except Exception:  # pragma: no cover -- defensive
+                contract = None
+            if contract is None:
+                contract_status = "sidecar_absent"
+            else:
+                contract_status = "present"
+                required_kwargs = [str(k) for k in contract.required_kwargs]
+                supplied = {
+                    name: (name in serving_kwargs) for name in required_kwargs
+                }
+
         items.append(
             SettingsCheckpoint(
                 filename=entry.name,
@@ -273,6 +327,9 @@ def list_settings_checkpoints() -> SettingsCheckpointsResponse:
                     else active_multi_axis_alias if is_active_multi_axis else None
                 ),
                 conformal_sidecar_present=sidecar_present,
+                required_kwargs=required_kwargs,
+                supplied_at_inference=supplied,
+                inference_contract_status=contract_status,
             )
         )
 
@@ -680,8 +737,27 @@ async def analyze(payload: AnalyzeRequest):
         return response
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:  # pragma: no cover
+        # #342: contract-revalidation failures from _bootstrap_cold_start
+        # land here. Log the raw message but ship a structured detail
+        # carrying only the exception class -- the #341 review rule
+        # keeps raw str(exc) out of client-facing payloads.
+        logger.warning(
+            "analyze_runtime_error exception_class=%s detail=%s",
+            type(exc).__name__,
+            str(exc),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Analyze pipeline failed: serving runtime error",
+        ) from None
     except Exception as exc:  # pragma: no cover
-        raise HTTPException(status_code=500, detail=f"Analyze pipeline failed: {exc}") from exc
+        logger.exception(
+            "analyze_unexpected_exception exception_class=%s", type(exc).__name__
+        )
+        raise HTTPException(
+            status_code=500, detail="Analyze pipeline failed: unexpected error"
+        ) from None
 
 
 def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
@@ -689,6 +765,18 @@ def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
 
     Synchronous — invoked via ``run_in_threadpool`` from the async
     handler so the long-running fit does not block the event loop.
+
+    #342: once the bootstrap writes a fresh checkpoint, we drop the
+    in-process singleton + re-invoke the same loader the /analyze path
+    uses (``_get_model`` -> ``_validate_serving_contract``). That way a
+    bootstrap whose freshly written sidecar declares kwargs the serving
+    forward does not accept raises ``RuntimeError`` here rather than
+    silently binding via ``_set_singleton_after_train``. The cold-start
+    boot is then loud-fail: the /analyze caller surfaces a 500 with the
+    structured incompatibility reason and ``/health`` picks up the
+    contract status. Bypasses the reset for legacy artefacts (no
+    sidecar) because the validation degrades to ``sidecar_absent`` and
+    binds normally.
     """
 
     warmup_sentiment = analyze_text(payload.text)
@@ -709,6 +797,28 @@ def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
         learning_rate=4e-4,
         early_stopping_patience=8,
     )
+    # #342: drop the post-train singleton + force a cold load through
+    # the canonical loader so the contract validation actually runs on
+    # the freshly written sidecar. ``_set_singleton_after_train`` writes
+    # ``_model`` directly without crossing ``_validate_serving_contract``
+    # — without this reset the cold-start path would silently bind a
+    # checkpoint whose sidecar declares an unknown kwarg.
+    try:
+        from app.services.forecaster import (
+            _get_model as _forecaster_get_model,
+            reset_singleton_for_revalidation,
+        )
+
+        reset_singleton_for_revalidation()
+        _forecaster_get_model()
+    except RuntimeError:
+        # Re-raise so the /analyze caller surfaces the contract failure
+        # rather than swallowing it. ``/health`` already exposes the
+        # structured reason via ``get_serving_contract_status``.
+        raise
+    except Exception:  # pragma: no cover -- defensive
+        logger.warning("cold_start_contract_revalidation_failed", exc_info=True)
+        raise
 
 
 def _record_history(request: AnalyzeRequest, response: dict[str, Any]) -> None:
@@ -1116,8 +1226,20 @@ async def analyze_market(payload: AnalyzeRequest) -> MarketReactionPanel:
     # fresh deploy hitting /analyze/market first does not surface
     # empty cards. Shared with /analyze via the _bootstrap_cold_start
     # helper.
+    # #342: cold-start now invokes the canonical loader for contract
+    # revalidation; a sidecar mismatch raises RuntimeError. Surface it
+    # symmetrically to /analyze — 503 with the structured-status detail
+    # (the message is a deliberate contract code, not raw exception
+    # text) so the operator sees the same shape on both endpoints.
     if not checkpoint_exists():
-        await run_in_threadpool(_bootstrap_cold_start, payload)
+        try:
+            await run_in_threadpool(_bootstrap_cold_start, payload)
+        except RuntimeError as exc:
+            logger.warning("analyze_market_cold_start_contract_mismatch detail=%s", str(exc))
+            raise HTTPException(
+                status_code=503,
+                detail="Market reaction panel unavailable: serving contract mismatch",
+            ) from None
 
     sentiment = analyze_text(payload.text)
     market_history = await run_in_threadpool(

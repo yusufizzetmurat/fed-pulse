@@ -589,6 +589,13 @@ class SettingsCheckpoint(BaseModel):
     currently loaded from. The diagnostic fields (output_mode,
     encoder_alias, conformal_sidecar_present) only populate on the
     active forecaster + active multi-axis entries.
+
+    #342: ``required_kwargs`` mirrors the inference-contract sidecar
+    (empty list when no sidecar — pre-#341 legacy artefact).
+    ``supplied_at_inference`` maps each declared kwarg to the live
+    serving wiring; mismatches drive the red-badge surface on the
+    settings page. ``inference_contract_status`` is ``"sidecar_absent"``
+    for legacy checkpoints, otherwise ``"present"``.
     """
 
     model_config = _FORBID_FROZEN_CONFIG
@@ -602,6 +609,9 @@ class SettingsCheckpoint(BaseModel):
     output_mode: str | None = None
     encoder_alias: str | None = None
     conformal_sidecar_present: bool | None = None
+    required_kwargs: list[str] = Field(default_factory=list)
+    supplied_at_inference: dict[str, bool] = Field(default_factory=dict)
+    inference_contract_status: str | None = None
 
 
 class SettingsCheckpointsResponse(BaseModel):
