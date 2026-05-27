@@ -3225,6 +3225,12 @@ def train_model(
     # identical to the single-task path on rows where only stance is
     # supervised.
     multi_task_loss_fn: nn.Module | None = None
+    # #273 per-axis class weights captured here so the run summary +
+    # checkpoint payload can persist them alongside the lambdas; resume
+    # then reads back the exact loss config the run trained under.
+    # ``None`` on multi_task_loss=False runs (the default) so the
+    # checkpoint contract on every pre-#273 caller stays byte-identical.
+    multi_task_class_weights_payload: dict[str, Any] | None = None
     if multi_task_loss_active and _active_output_mode == "classification":
         from app.models.config import (
             MULTI_TASK_CERTAINTY_CLASSES,
@@ -3261,6 +3267,26 @@ def train_model(
             lambda_certainty=float(getattr(active_model_config, "multi_task_lambda_certainty", 0.3)),
             lambda_topic=float(getattr(active_model_config, "multi_task_lambda_topic", 0.3)),
         ).to(device_obj)
+        # Stash the per-axis weights + lambdas on a plain dict so the
+        # TrainingRunSummary -> torch.save round-trip carries them onto
+        # the checkpoint payload. Tensors are detached to CPU so the
+        # serialised form is portable; the resume path can rebuild the
+        # MultiTaskLoss module by reading these back.
+        multi_task_class_weights_payload = {
+            "stance": (
+                class_weight_tensor.detach().cpu().tolist()
+                if class_weight_tensor is not None
+                else None
+            ),
+            "certainty": certainty_weight.detach().cpu().tolist(),
+            "topic": topic_weight.detach().cpu().tolist(),
+            "lambdas": {
+                "stance": float(multi_task_loss_fn.lambda_stance),
+                "factor": float(multi_task_loss_fn.lambda_factor),
+                "certainty": float(multi_task_loss_fn.lambda_certainty),
+                "topic": float(multi_task_loss_fn.lambda_topic),
+            },
+        }
         print(
             "[train_model] multi_task_loss active: "
             f"lambda_stance={multi_task_loss_fn.lambda_stance} "
@@ -3824,6 +3850,7 @@ def train_model(
             if rates_heads_active and rates_edges
             else None
         ),
+        multi_task_class_weights=multi_task_class_weights_payload,
     )
 
     if save_checkpoint:
