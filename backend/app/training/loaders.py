@@ -1581,6 +1581,29 @@ def _load_package_sequences_with_metadata(
         rates_terminal_value = _coerce_finite_float(
             row.get("terminal_rate_change_5d")
         )
+        # #305 FOMC-attributable rates targets. Compute the 1-D
+        # projection of each observed bps move onto the strict-prior
+        # surprise direction ``sign(mp_surprise_level)``. The level is
+        # read off the strict-prior mp_surprises lookup so the target
+        # is leak-clean by construction (ADR 0024 / #350). No-change
+        # meetings (|surprise| < epsilon) emit ``None`` so the
+        # partition builder masks the row instead of writing a zero
+        # label. See ADR 0027 for the projection definition.
+        from app.training.rates_targets import fomc_attributable_projection
+
+        mp_level_lookup = mp_surprise_lookup.get(event_date_str[:10], {})
+        mp_level_for_projection = _coerce_finite_float(
+            mp_level_lookup.get("mp_surprise_level")
+        )
+        rates_2y_attributable = fomc_attributable_projection(
+            rates_2y_value, mp_level_for_projection
+        )
+        rates_5y_attributable = fomc_attributable_projection(
+            rates_5y_value, mp_level_for_projection
+        )
+        rates_terminal_attributable = fomc_attributable_projection(
+            rates_terminal_value, mp_level_for_projection
+        )
         # B1 (#212) LLM-features lookup -- one-hot block + missing flag
         # per event row. Lookup is built once per package outside the
         # loop. Hashes absent from the lookup (failed extraction or
@@ -1593,6 +1616,11 @@ def _load_package_sequences_with_metadata(
             vector.target_yield_2y_change_5d = rates_2y_value
             vector.target_yield_5y_change_5d = rates_5y_value
             vector.target_terminal_rate_change_5d = rates_terminal_value
+            vector.target_yield_2y_change_5d_fomc_attributable = rates_2y_attributable
+            vector.target_yield_5y_change_5d_fomc_attributable = rates_5y_attributable
+            vector.target_terminal_rate_change_5d_fomc_attributable = (
+                rates_terminal_attributable
+            )
             if llm_vector is not None:
                 vector.llm_features = list(llm_vector)
                 vector.llm_features_missing = 0.0
@@ -2191,6 +2219,23 @@ def load_training_sequences_from_package(
         rates_terminal_value = _coerce_finite_float(
             row.get("terminal_rate_change_5d")
         )
+        # #305 FOMC-attributable projections (see ADR 0027 + the matched
+        # block above on the walk-forward loader path).
+        from app.training.rates_targets import fomc_attributable_projection
+
+        mp_level_lookup = mp_surprise_lookup.get(event_date_str[:10], {})
+        mp_level_for_projection = _coerce_finite_float(
+            mp_level_lookup.get("mp_surprise_level")
+        )
+        rates_2y_attributable = fomc_attributable_projection(
+            rates_2y_value, mp_level_for_projection
+        )
+        rates_5y_attributable = fomc_attributable_projection(
+            rates_5y_value, mp_level_for_projection
+        )
+        rates_terminal_attributable = fomc_attributable_projection(
+            rates_terminal_value, mp_level_for_projection
+        )
         # B1 (#212) LLM-features lookup -- one-hot block + missing flag
         # per event row. Lookup is built once per package outside the
         # loop. Hashes absent from the lookup (failed extraction or
@@ -2203,6 +2248,11 @@ def load_training_sequences_from_package(
             vector.target_yield_2y_change_5d = rates_2y_value
             vector.target_yield_5y_change_5d = rates_5y_value
             vector.target_terminal_rate_change_5d = rates_terminal_value
+            vector.target_yield_2y_change_5d_fomc_attributable = rates_2y_attributable
+            vector.target_yield_5y_change_5d_fomc_attributable = rates_5y_attributable
+            vector.target_terminal_rate_change_5d_fomc_attributable = (
+                rates_terminal_attributable
+            )
             if llm_vector is not None:
                 vector.llm_features = list(llm_vector)
                 vector.llm_features_missing = 0.0
