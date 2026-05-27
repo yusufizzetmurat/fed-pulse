@@ -83,6 +83,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import BACKEND_ROOT
+from app.training.runtime_compat import ensure_compile_safe
 
 
 # Canonical family order. The per-family cell labels follow
@@ -310,6 +311,23 @@ def _resolve_output_path(arg: Path | None) -> Path:
     return base / "per_family_ablation.json"
 
 
+def _resolved_rates_heads_for_payload(rates_target_mode: str) -> list[str]:
+    """Surface the auto-activated rates-head set in the output JSON.
+
+    Mirrors the auto-activation policy inside ``_run_one_cell``: when
+    ``--rates-target-mode != raw`` we mount the canonical rates head set
+    so the per-family ablation actually exercises the flag. The payload
+    records the resolved tuple so readers can confirm the run was
+    distinct from the ``raw`` baseline.
+    """
+
+    from app.models.rates_heads import RATES_HEAD_NAMES
+
+    if rates_target_mode != "raw":
+        return list(RATES_HEAD_NAMES)
+    return []
+
+
 def _resolve_fold_ids(training_package_id: str, override: list[str] | None) -> list[str]:
     if override:
         return list(override)
@@ -469,10 +487,22 @@ def _run_one_cell(
     """Train + evaluate one (cell, seed) cell across every fold."""
 
     from app.models.config import ModelConfig, RICH_FEATURE_SIZE
+    from app.models.rates_heads import RATES_HEAD_NAMES
     from app.training.loaders import load_walk_forward_split
     from app.training.loop import train_model
 
     flags = _cell_flags(zero_set)
+
+    rates_target_mode = str(getattr(args, "rates_target_mode", "raw"))
+    # #401 follow-up: ``--rates-target-mode`` is a no-op unless at least
+    # one rates head is mounted. The per-family ablation runner does not
+    # expose a ``--rates-heads`` flag (it sweeps rich-feature families,
+    # not rates heads), so we auto-activate the canonical set when the
+    # operator opts into ``fomc_attributable``. ``raw`` (default) leaves
+    # ``rates_heads=()`` so the pre-#401 ablation stays byte-identical.
+    rates_heads = (
+        tuple(RATES_HEAD_NAMES) if rates_target_mode != "raw" else ()
+    )
 
     config = ModelConfig(
         input_size=RICH_FEATURE_SIZE,
@@ -481,7 +511,8 @@ def _run_one_cell(
         regression_alpha=float(args.regression_alpha),
         n_classes=3,
         hidden_size=int(args.hidden_size),
-        rates_target_mode=str(getattr(args, "rates_target_mode", "raw")),
+        rates_heads=rates_heads,
+        rates_target_mode=rates_target_mode,
         use_regime_conditioning=bool(
             getattr(args, "use_regime_conditioning", False)
         ),
@@ -553,6 +584,7 @@ def _run_one_cell(
 
 
 def main() -> int:
+    ensure_compile_safe()
     args = _parse_args()
     output_path = _resolve_output_path(args.output)
     print(f"[per_family_ablation] writing -> {output_path}")
@@ -562,6 +594,11 @@ def main() -> int:
 
     cells = _resolve_cells(args.cells)
     print(f"[per_family_ablation] cells={[c[0] for c in cells]}")
+    if str(args.rates_target_mode) != "raw":
+        print(
+            "[per_family_ablation] auto-activating rates heads for "
+            f"rates_target_mode={args.rates_target_mode}"
+        )
 
     trials: dict[str, list[dict[str, Any]]] = {}
     for cell_label, zero_set in cells:
@@ -628,6 +665,9 @@ def main() -> int:
         "training_package_id": args.training_package_id,
         "text_encoder": str(args.text_encoder),
         "rates_target_mode": str(args.rates_target_mode),
+        "rates_heads": _resolved_rates_heads_for_payload(
+            str(args.rates_target_mode)
+        ),
         "use_retrieval_analogs": bool(args.use_retrieval_analogs),
         "use_regime_conditioning": bool(args.use_regime_conditioning),
         "post_350_status": str(args.post_350_status),

@@ -630,7 +630,10 @@ def _dummy_feature_vector(*, day: int, vol: float) -> FeatureVector:
     """In-memory FeatureVector with a populated regime block.
 
     Mirrors the retrieval-features smoke fixture so the training loop
-    runs against an in-memory group with no parquet I/O.
+    runs against an in-memory group with no parquet I/O. ``rich_payload``
+    is set so the tensoriser routes through ``as_rich_list`` and the
+    regime tail actually reaches the recurrent core -- the post-#307
+    follow-up regression below depends on that wiring.
     """
 
     fv = FeatureVector(
@@ -642,6 +645,7 @@ def _dummy_feature_vector(*, day: int, vol: float) -> FeatureVector:
         volatility_change=0.0,
         elapsed_time=0.0,
         forward_realized_vol_10d=vol,
+        rich_payload=True,
     )
     fv.macro_regime_features = [1.0, 0.0, -1.0]
     fv.macro_regime_features_missing = 0.0
@@ -659,6 +663,7 @@ def test_train_model_smoke_with_regime_conditioning_gate() -> None:
 
     groups = [[_dummy_feature_vector(day=i + 1, vol=0.01 + 0.001 * i) for i in range(40)]]
     config = ModelConfig(
+        input_size=RICH_FEATURE_SIZE,
         output_mode="classification",
         n_classes=3,
         hidden_size=16,
@@ -725,3 +730,162 @@ def test_no_gate_mounts_without_flag() -> None:
     )
     model = build_research_forecaster(config)
     assert getattr(model, "regime_gate", None) is None
+
+
+# ---------------------------------------------------------------------------
+# Post-#307 shape-contract regression: the LSTM width must absorb the
+# regime tail the loader appends on every per-bar tensor when the flag
+# is on. The pre-fix path mounted the recurrent core at
+# ``RICH_FEATURE_SIZE`` and crashed at ``self.lstm(x)`` with
+# ``RuntimeError: input.size(-1) must be equal to input_size. Expected
+# 87, got 91`` on the canonical sweep (``run_dual_head_comparison.py``).
+# These tests instantiate the model the same way the sweep runner does
+# -- not via stubbing -- so the contract is verified end-to-end.
+# ---------------------------------------------------------------------------
+
+
+def test_research_model_lstm_width_includes_regime_tail() -> None:
+    """The recurrent core widens by the regime tail when the flag is on.
+
+    The loader's ``as_rich_list`` appends ``RICH_MACRO_REGIME_DIM + 1``
+    extra scalars past ``RICH_FEATURE_SIZE`` on every per-bar tensor
+    when conditioning is on; the LSTM constructor must accept that
+    widened input, otherwise the canonical sweep crashes with the
+    87-vs-91 shape mismatch reported on top of #307.
+    """
+
+    from app.models.config import ModelConfig
+    from app.models.factory import build_research_forecaster
+
+    config = ModelConfig(
+        input_size=RICH_FEATURE_SIZE,
+        output_mode="classification",
+        n_classes=3,
+        hidden_size=16,
+        head_hidden_size=8,
+        use_regime_conditioning=True,
+    )
+    model = build_research_forecaster(config)
+    expected_width = (
+        RICH_FEATURE_SIZE
+        + RICH_MACRO_REGIME_DIM
+        + RICH_MACRO_REGIME_MISSING_DIM
+    )
+    assert model.lstm_input_size == expected_width
+    # The recurrent core must consume the widened width; reading the
+    # ``input_size`` off the LSTM (``nn.LSTM`` exposes it directly) and
+    # off the TCN / Informer / DLinear cores (``self.input_size``)
+    # covers every architecture wired through ``ForecasterBase``.
+    core = model.recurrent_core
+    core_width = getattr(core, "input_size", None)
+    assert core_width == expected_width
+
+
+def test_research_model_lstm_width_unchanged_when_flag_off() -> None:
+    """Default OFF byte-identity: LSTM width stays at ``input_size``.
+
+    Pins the deliberate #307 design that the recurrent core sees
+    exactly the legacy ``RICH_FEATURE_SIZE`` width when conditioning
+    is off; flipping the flag on must never widen any other path.
+    """
+
+    from app.models.config import ModelConfig
+    from app.models.factory import build_research_forecaster
+
+    config = ModelConfig(
+        input_size=RICH_FEATURE_SIZE,
+        output_mode="classification",
+        n_classes=3,
+        hidden_size=16,
+        head_hidden_size=8,
+    )
+    model = build_research_forecaster(config)
+    assert model.lstm_input_size == RICH_FEATURE_SIZE
+    assert getattr(model.recurrent_core, "input_size", None) == RICH_FEATURE_SIZE
+
+
+def _rich_feature_vector(
+    *,
+    day: int,
+    vol: float,
+    regime_block: list[float] | None = (1.0, 0.0, -1.0),  # type: ignore[assignment]
+) -> FeatureVector:
+    """In-memory FeatureVector matching the loader's rich-payload shape.
+
+    Sets ``rich_payload=True`` so ``_build_training_tensors`` routes
+    through ``as_rich_list`` (the 91-wide path when the regime block is
+    populated) -- mirrors the per-bar tensor the canonical training
+    package emits via ``load_walk_forward_split``. The previous #307
+    smoke test mounted ``as_list`` instead (6 dims, regime stripped),
+    which is why the LSTM width mismatch never surfaced.
+    """
+
+    fv = FeatureVector(
+        date=str(_dt.date(2025, 1, 1) + _dt.timedelta(days=day - 1)),
+        sentiment_score=0.0,
+        market_close=100.0 + day * 0.5,
+        market_volatility=0.01,
+        close_change_pct=0.0,
+        volatility_change=0.0,
+        elapsed_time=0.0,
+        forward_realized_vol_10d=vol,
+        rich_payload=True,
+    )
+    if regime_block is not None:
+        fv.macro_regime_features = list(regime_block)
+        fv.macro_regime_features_missing = 0.0
+    return fv
+
+
+def test_train_model_forward_does_not_raise_on_regime_tail() -> None:
+    """Canonical-sweep reproduction: rich + regime tensors flow through train_model.
+
+    Reproduces the crash reported on top of #307 (``RuntimeError:
+    input.size(-1) must be equal to input_size. Expected 87, got 91``)
+    on the pre-fix code path. Constructs the model with
+    ``input_size=RICH_FEATURE_SIZE`` -- exactly what
+    ``scripts/run_dual_head_comparison.py`` passes -- and pipes the
+    91-wide rich+regime per-bar tensors through ``train_model``. With
+    the fix the LSTM widens by the regime tail and the forward pass
+    runs to completion; without it the call would raise the shape
+    mismatch.
+    """
+
+    groups = [
+        [
+            _rich_feature_vector(day=i + 1, vol=0.01 + 0.001 * i)
+            for i in range(40)
+        ]
+    ]
+    # Confirm the fixture actually emits the 91-wide per-bar tensor the
+    # sweep loader produces; without this guard a regression that
+    # silently strips the regime block would still pass the train_model
+    # call below.
+    expected_per_bar_width = (
+        RICH_FEATURE_SIZE
+        + RICH_MACRO_REGIME_DIM
+        + RICH_MACRO_REGIME_MISSING_DIM
+    )
+    assert len(groups[0][0].as_rich_list()) == expected_per_bar_width
+
+    config = ModelConfig(
+        input_size=RICH_FEATURE_SIZE,
+        output_mode="classification",
+        n_classes=3,
+        hidden_size=16,
+        head_hidden_size=8,
+        use_regime_conditioning=True,
+    )
+    result = train_model(
+        model_config=config,
+        train_sequence_groups=groups,
+        val_sequence_groups=groups,
+        test_sequence_groups=groups,
+        epochs=1,
+        batch_size=8,
+        seed=13,
+        save_checkpoint=False,
+        use_compile=False,
+        use_amp=False,
+    )
+    assert result.summary.epochs_completed == 1

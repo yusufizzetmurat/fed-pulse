@@ -42,3 +42,7 @@ What this does **not** validate:
 - Full-epoch training quality (use `make train-batch` for that — see `CLAUDE.md`).
 - The bake-off comparisons (those need the per-encoder embedding caches, which lazy-fetch separately via `app.data.embedding_cache.ensure_local`).
 - The frontend dashboard (that runs against the deployed container; see `docs/deploy.md`).
+
+## Troubleshooting
+
+- The canonical sweep runners (`scripts/run_dual_head_comparison.py`, `scripts/run_per_family_ablation.py`, `scripts/run_reproducibility_smoke.py`) auto-fall-back to eager mode on environments where `torch.compile` can't import a working triton; `TORCHDYNAMO_DISABLE=1` is the manual override.

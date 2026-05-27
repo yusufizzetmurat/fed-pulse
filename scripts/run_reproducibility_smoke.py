@@ -29,6 +29,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BACKEND_DIR = REPO_ROOT / "backend"
 
+# Make ``app.training.runtime_compat`` importable so the smoke runner can
+# probe for a broken-triton inductor build up-front and set
+# ``TORCHDYNAMO_DISABLE=1`` in the env before spawning the trainer
+# subprocess. The child inherits the env mutation via ``{**os.environ}``.
+sys.path.insert(0, str(BACKEND_DIR))
+from app.training.runtime_compat import ensure_compile_safe  # noqa: E402
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -186,6 +193,7 @@ def _extract_regime_f1_macro(report_path: Path) -> float:
 
 
 def main() -> int:
+    ensure_compile_safe()
     args = _parse_args()
     _pull_training_package(args.training_package_id)
     _run_smoke_training(

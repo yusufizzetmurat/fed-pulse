@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import BACKEND_ROOT
+from app.training.runtime_compat import ensure_compile_safe
 
 
 def _parse_args() -> argparse.Namespace:
@@ -214,6 +215,32 @@ def _summary_stats(values: list[float]) -> dict[str, float] | None:
     }
 
 
+def _resolve_auto_rates_heads(
+    rates_target_mode: str,
+    rates_heads: tuple[str, ...] | None,
+) -> tuple[str, ...]:
+    """Auto-activate the canonical rates-head set under FOMC-attributable.
+
+    ``--rates-target-mode`` only steers the rates heads' supervised
+    target; it has no observable effect unless at least one rates head
+    is mounted. The canonical-comparison sweep does not expose a
+    ``--rates-heads`` flag (it sweeps head_modes, not rates heads), so
+    when the operator opts the runner into ``fomc_attributable`` we
+    mount the same canonical set (``2y``, ``5y``, ``terminal``) the
+    ``make rates-heads-sweep`` target uses. ``raw`` (default) keeps
+    ``rates_heads=()`` so the pre-#401 canonical sweep stays
+    byte-identical.
+    """
+
+    from app.models.rates_heads import RATES_HEAD_NAMES
+
+    if rates_heads:
+        return tuple(rates_heads)
+    if rates_target_mode != "raw":
+        return tuple(RATES_HEAD_NAMES)
+    return ()
+
+
 def _run_one_cell(
     head_mode: str,
     seed: int,
@@ -233,6 +260,7 @@ def _run_one_cell(
     from app.training.loaders import load_walk_forward_split
     from app.training.loop import train_model
 
+    rates_heads = _resolve_auto_rates_heads(rates_target_mode, rates_heads=None)
     config = ModelConfig(
         input_size=RICH_FEATURE_SIZE,
         output_mode="classification",
@@ -240,6 +268,7 @@ def _run_one_cell(
         regression_alpha=regression_alpha,
         n_classes=3,
         hidden_size=hidden_size,
+        rates_heads=rates_heads,
         rates_target_mode=rates_target_mode,
         use_regime_conditioning=use_regime_conditioning,
     )
@@ -281,12 +310,18 @@ def _run_one_cell(
 
 
 def main() -> int:
+    ensure_compile_safe()
     args = _parse_args()
     output_path = _resolve_output_path(args.output)
     print(f"[dual_head_comparison] writing -> {output_path}")
 
     fold_ids = _resolve_fold_ids(args.training_package_id, args.folds)
     print(f"[dual_head_comparison] folds={fold_ids}")
+    if str(args.rates_target_mode) != "raw":
+        print(
+            "[dual_head_comparison] auto-activating rates heads for "
+            f"rates_target_mode={args.rates_target_mode}"
+        )
 
     trials: dict[str, list[dict[str, Any]]] = {mode: [] for mode in args.head_modes}
     for head_mode in args.head_modes:
@@ -337,6 +372,9 @@ def main() -> int:
         "regression_alpha": args.regression_alpha,
         "training_package_id": args.training_package_id,
         "rates_target_mode": str(args.rates_target_mode),
+        "rates_heads": list(
+            _resolve_auto_rates_heads(str(args.rates_target_mode), rates_heads=None)
+        ),
         "use_retrieval_analogs": bool(args.use_retrieval_analogs),
         "use_regime_conditioning": bool(args.use_regime_conditioning),
         "trials": trials,
