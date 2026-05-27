@@ -164,6 +164,72 @@ def derive_contract(
     )
 
 
+# #393: non-forecaster artefacts (multi-axis classifier, trajectory
+# bundle) share the same sidecar surface as the forecaster but have
+# their own forward signatures. The helpers below derive the per-
+# artefact contract from the live module so the save site does not
+# have to hand-write the kwarg list. ``InferenceContract`` itself stays
+# artefact-agnostic; the validation logic is shared via
+# :func:`validate_against_serving` and the loaders provide the serving
+# model class so the kwarg-superset check runs against the right
+# signature.
+
+
+def derive_multi_axis_contract(
+    model: Any,
+    *,
+    encoder_alias: str | None = None,
+    inference_features: tuple[str, ...] = (),
+) -> InferenceContract:
+    """Contract for the multi-axis classifier checkpoint (#393).
+
+    The serving call site in
+    :func:`app.services.multi_axis_classifier.score_text` populates
+    ``input_ids`` + ``attention_mask`` from a tokeniser; both are
+    declared required so a future drift (e.g. a forward refactor that
+    drops one) is rejected at boot rather than silently zeroing the
+    attention mask.
+    """
+
+    required: tuple[str, ...] = ("input_ids", "attention_mask")
+    return InferenceContract(
+        schema_version=SIDECAR_SCHEMA_VERSION,
+        model_class=type(model).__name__,
+        required_kwargs=required,
+        optional_kwargs=(),
+        inference_features=tuple(inference_features),
+        encoder_alias=encoder_alias,
+    )
+
+
+def derive_trajectory_contract(
+    model: Any,
+    *,
+    encoder_alias: str | None = None,
+    inference_features: tuple[str, ...] = (),
+) -> InferenceContract:
+    """Contract for the trajectory bundle checkpoint (#393).
+
+    Both trajectory architectures (LSTM + Transformer) expose
+    ``forward(inputs, mask=None)``. ``inputs`` is the positional
+    history tensor; ``mask`` rides the optional slot because the
+    serving call site in
+    :func:`app.services.trajectory.project_trajectory` always supplies
+    it but the model accepts ``None``.
+    """
+
+    required: tuple[str, ...] = ("inputs",)
+    optional: tuple[str, ...] = ("mask",)
+    return InferenceContract(
+        schema_version=SIDECAR_SCHEMA_VERSION,
+        model_class=type(model).__name__,
+        required_kwargs=required,
+        optional_kwargs=optional,
+        inference_features=tuple(inference_features),
+        encoder_alias=encoder_alias,
+    )
+
+
 def write_sidecar(contract: InferenceContract, checkpoint_path: Path) -> Path:
     """Persist ``contract`` to ``<checkpoint_path>.inference_contract.json``.
 
@@ -328,6 +394,8 @@ __all__ = [
     "SIDECAR_SUFFIX",
     "collect_serving_forward_kwargs",
     "derive_contract",
+    "derive_multi_axis_contract",
+    "derive_trajectory_contract",
     "read_sidecar",
     "sidecar_path_for",
     "validate_against_serving",

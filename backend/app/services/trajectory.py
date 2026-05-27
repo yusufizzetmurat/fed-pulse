@@ -88,6 +88,112 @@ class _TrajectoryState:
 _state: _TrajectoryState | None = None
 _state_lock = threading.Lock()
 
+# #393: structured surface for the inference-contract validation. The
+# /health endpoint reads this so an operator can see whether the
+# loaded bundle's forward kwargs match the trajectory model's serving
+# signature. Mirrors the forecaster service's status shape.
+_contract_status: dict[str, Any] = {
+    "status": "uninitialised",
+    "checkpoint_path": None,
+    "missing_kwargs": [],
+    "extra_kwargs": [],
+    "message": "",
+}
+
+
+def _record_contract_status(
+    *,
+    status: str,
+    checkpoint_path: Any,
+    missing_kwargs: tuple[str, ...] = (),
+    extra_kwargs: tuple[str, ...] = (),
+    message: str = "",
+) -> None:
+    _contract_status.update(
+        {
+            "status": str(status),
+            "checkpoint_path": str(checkpoint_path) if checkpoint_path else None,
+            "missing_kwargs": list(missing_kwargs),
+            "extra_kwargs": list(extra_kwargs),
+            "message": str(message),
+        }
+    )
+
+
+def get_serving_contract_status() -> dict[str, Any]:
+    """Return the cached contract-validation surface (#393).
+
+    A status of ``ok`` means the bundle's declared kwargs are a
+    subset of the loaded trajectory model's forward signature; a
+    ``serving_signature_missing_kwargs`` / ``sidecar_absent`` status
+    surfaces the legacy-vs-mismatch dispatch the forecaster sidecar
+    documents. Callers receive a shallow copy so the cache cannot be
+    mutated.
+    """
+
+    return dict(_contract_status)
+
+
+def _validate_contract(checkpoint_path: Path, model: Any) -> tuple[bool, str]:
+    """Cross-check the trajectory sidecar against the model's forward.
+
+    Returns ``(ok, status)``. ``ok=False`` means the loader must
+    refuse to bind. A missing sidecar degrades to ``ok=True`` with
+    status ``sidecar_absent`` so pre-#393 trajectory bundles keep
+    binding (matches the forecaster soft-legacy behaviour).
+    """
+
+    from app.training.inference_contract import (
+        collect_serving_forward_kwargs,
+        read_sidecar,
+        validate_against_serving,
+    )
+
+    contract = read_sidecar(checkpoint_path)
+    if contract is None:
+        _record_contract_status(
+            status="sidecar_absent",
+            checkpoint_path=checkpoint_path,
+            message=(
+                "no inference_contract.json sidecar next to checkpoint; "
+                "treating as pre-#393 legacy bundle"
+            ),
+        )
+        return True, "sidecar_absent"
+
+    serving_kwargs = collect_serving_forward_kwargs(type(model))
+    validation = validate_against_serving(
+        contract,
+        serving_kwargs=serving_kwargs,
+    )
+    if not validation.ok:
+        _record_contract_status(
+            status=validation.status,
+            checkpoint_path=checkpoint_path,
+            missing_kwargs=validation.missing_kwargs,
+            extra_kwargs=validation.extra_kwargs,
+            message=validation.message,
+        )
+        _logger.error(
+            "trajectory_inference_contract_mismatch path=%s status=%s missing=%s extra=%s",
+            checkpoint_path,
+            validation.status,
+            list(validation.missing_kwargs),
+            list(validation.extra_kwargs),
+        )
+        return False, validation.status
+
+    _record_contract_status(
+        status="ok",
+        checkpoint_path=checkpoint_path,
+        message="inference contract matches trajectory model signature",
+    )
+    _logger.info(
+        "trajectory_inference_contract_ok path=%s",
+        checkpoint_path,
+    )
+    return True, "ok"
+
 
 def _resolve_bundle_dir() -> Path:
     override = (os.environ.get("FED_PULSE_TRAJECTORY_DIR") or "").strip()
@@ -221,6 +327,19 @@ def _load_state() -> _TrajectoryState | None:
         )
         return None
 
+    # #393: validate the inference-contract sidecar against the loaded
+    # trajectory model's forward signature. A sidecar declaring kwargs
+    # the forward does not accept is a hard refusal -- raise so the
+    # serving layer surfaces a structured error rather than silently
+    # binding a mismatched bundle. A missing sidecar (pre-#393 bundle)
+    # degrades to the legacy "load anyway" path.
+    ok, status = _validate_contract(bundle_dir / MODEL_NAME, model)
+    if not ok:
+        raise RuntimeError(
+            "trajectory bundle inference contract incompatible with "
+            f"serving signature: {status}"
+        )
+
     try:
         manifest = json.loads((bundle_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
     except Exception:  # pragma: no cover
@@ -278,6 +397,11 @@ def reset_state() -> None:
     global _state
     with _state_lock:
         _state = None
+    _record_contract_status(
+        status="uninitialised",
+        checkpoint_path=None,
+        message="",
+    )
 
 
 def install_state(state: _TrajectoryState) -> None:
