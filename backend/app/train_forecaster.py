@@ -317,12 +317,39 @@ def _parse_args() -> argparse.Namespace:
         action="store_false",
         help="Disable the LLM-features block (zeros + missing=1.0).",
     )
+    # #306 retrieval-augmented input features. Off by default so every
+    # existing sweep and the canonical determinism regression stay
+    # byte-identical; opting in flips the loader to query the on-disk
+    # retrieval index (#294) for top-K analogs per event and write a
+    # 5-dim contextual summary block (similarity moments + stance
+    # agreement + above-floor count) onto every bar of the sequence.
+    # The analog's post-event observed move is NOT in the block. See
+    # ADR 0028.
+    parser.add_argument(
+        "--use-retrieval-analogs",
+        dest="use_retrieval_analogs",
+        action="store_true",
+        help=(
+            "Attach the 5-dim retrieval-analog summary block (similarity "
+            "moments + stance-agreement + above-floor count) to every "
+            "event by querying the on-disk retrieval index with a "
+            "strict-backward as_of_date filter. Default off; the per-bar "
+            "feature size widens by 6 (5 scalars + 1 missing flag) when on."
+        ),
+    )
+    parser.add_argument(
+        "--no-retrieval-analogs",
+        dest="use_retrieval_analogs",
+        action="store_false",
+        help="Disable the retrieval-analog block (zeros + missing=1.0).",
+    )
     parser.set_defaults(
         use_credibility=True,
         use_linguistic=True,
         use_mp_surprise=True,
         use_multi_axis=True,
         use_llm_features=False,
+        use_retrieval_analogs=False,
     )
     # Phase 9 V2 (#195) classification dispatch. Default stays
     # ``regression`` so the existing ablation grid + determinism
@@ -2424,6 +2451,7 @@ def _run_sweep(
             "mp_surprise": bool(args.use_mp_surprise),
             "multi_axis": bool(args.use_multi_axis),
             "llm_features": bool(args.use_llm_features),
+            "retrieval_analogs": bool(args.use_retrieval_analogs),
         },
         "text_embeddings": {
             "encoder": text_encoder_arg,
@@ -2501,7 +2529,8 @@ def main() -> int:
             f"Rich features: {'on' if args.rich_features else 'off'} "
             f"(credibility={args.use_credibility}, linguistic={args.use_linguistic}, "
             f"mp_surprise={args.use_mp_surprise}, multi_axis={args.use_multi_axis}, "
-            f"llm_features={args.use_llm_features})"
+            f"llm_features={args.use_llm_features}, "
+            f"retrieval_analogs={args.use_retrieval_analogs})"
         )
         # Multi-encoder mode loads one set of splits per alias so each
         # sweep cell can pull its arm's embeddings without re-walking
@@ -2556,6 +2585,7 @@ def main() -> int:
                         use_mp_surprise=bool(args.use_mp_surprise),
                         use_multi_axis=bool(args.use_multi_axis),
                         use_llm_features=bool(args.use_llm_features),
+                        use_retrieval_analogs=bool(args.use_retrieval_analogs),
                         text_encoder=encoder_arg,
                         text_adapter_dim=int(args.text_adapter_dim),
                         text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
@@ -2605,6 +2635,7 @@ def main() -> int:
                     use_mp_surprise=bool(args.use_mp_surprise),
                     use_multi_axis=bool(args.use_multi_axis),
                     use_llm_features=bool(args.use_llm_features),
+                    use_retrieval_analogs=bool(args.use_retrieval_analogs),
                     text_encoder=encoder_arg,
                     text_adapter_dim=int(args.text_adapter_dim),
                     text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
