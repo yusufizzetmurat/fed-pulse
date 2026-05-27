@@ -219,17 +219,18 @@ def _record_contract_status(
 
 
 def _validate_serving_contract(
-    payload: Any,
     checkpoint_path: Path,
 ) -> tuple[bool, str]:
     """Cross-check the sidecar against the serving signature + registry.
 
     Returns ``(ok, status)``. ``ok=False`` means the serving loader
-    must refuse to bind the checkpoint. Falsy payload / missing
-    sidecar degrades to ``ok=True`` with status ``"sidecar_absent"``
-    so pre-#341 checkpoints continue to load -- the contract is a soft
-    surface for legacy artefacts and a hard surface for any checkpoint
-    written under the #341 contract.
+    must refuse to bind the checkpoint. A missing sidecar degrades to
+    ``ok=True`` with status ``"sidecar_absent"`` so pre-#341
+    checkpoints continue to load -- the contract is a soft surface for
+    legacy artefacts and a hard surface for any checkpoint written
+    under the #341 contract. (#374: the prior ``payload`` parameter
+    was never read; the sidecar is what we validate, not the .pt
+    payload.)
     """
 
     from app.training.inference_contract import (
@@ -321,7 +322,7 @@ def _get_model() -> ForecasterServingModel:
             # partial bind + a later RuntimeError on /analyze. Pre-#341
             # checkpoints with no sidecar degrade to "sidecar_absent"
             # + ok=True so the legacy serving fleet keeps working.
-            ok, _status = _validate_serving_contract(payload, BEST_MODEL_PATH)
+            ok, _status = _validate_serving_contract(BEST_MODEL_PATH)
             if not ok:
                 raise RuntimeError(
                     "checkpoint inference contract incompatible with serving "
