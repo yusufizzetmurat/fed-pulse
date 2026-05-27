@@ -83,6 +83,7 @@ class ForecasterServingModel(ForecasterBase):
         head_mode: str = "regression",
         rates_heads: tuple[str, ...] = (),
         use_regime_conditioning: bool = False,
+        use_sep: bool = False,
     ):
         if output_mode not in {"regression", "classification"}:
             raise ValueError(
@@ -112,6 +113,7 @@ class ForecasterServingModel(ForecasterBase):
             text_embedding_dim=text_embedding_dim,
             text_adapter_dim=text_adapter_dim,
             use_regime_conditioning=use_regime_conditioning,
+            use_sep=use_sep,
         )
         self.output_mode = output_mode
         self.n_classes = int(n_classes)

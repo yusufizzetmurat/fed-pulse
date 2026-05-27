@@ -35,9 +35,10 @@ def ensure_compile_safe() -> None:
     Probes ``triton.compiler.compiler.triton_key`` -- the exact attribute
     torch 2.4.x's inductor backend imports on its first compile call. If
     the probe fails (``ImportError`` or ``AttributeError``), sets
-    ``TORCHDYNAMO_DISABLE=1`` in the process environment, calls
-    ``torch._dynamo.disable()`` if available, and emits a single
-    structured WARNING line so operators can grep for it in the pod log.
+    ``TORCHDYNAMO_DISABLE=1`` in the process environment and emits a
+    single structured WARNING line so operators can grep for it in the
+    pod log. The env var is the load-bearing piece -- inductor re-reads
+    it on every compile attempt.
 
     The helper is idempotent: the second call is a no-op. It also
     respects an existing operator override -- if ``TORCHDYNAMO_DISABLE``
@@ -75,20 +76,6 @@ def ensure_compile_safe() -> None:
         f"triton_module={resolved}",
         flush=True,
     )
-
-    try:
-        import torch._dynamo as _dynamo  # noqa: WPS433
-    except Exception:
-        return
-    disable = getattr(_dynamo, "disable", None)
-    if callable(disable):
-        try:
-            disable()
-        except Exception:
-            # ``torch._dynamo.disable`` exists in a couple of shapes
-            # across torch versions; if the call fails we still have
-            # the env var set, which is the load-bearing half.
-            pass
 
 
 def _reset_for_testing() -> None:

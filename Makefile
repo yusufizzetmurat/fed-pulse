@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation reproduce-all reproduce-smoke push-artefacts deploy-prod-build
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation finetune-pilot-b2 reproduce-all reproduce-smoke push-artefacts deploy-prod-build
 
 help:
 	@echo "Targets:"
@@ -84,6 +84,8 @@ help:
 	@echo "                         - Canonical dual-head comparison (5 seeds x 40 epochs, regression-alpha=0.5, canonical output JSON)"
 	@echo "  make per-family-ablation TRAINING_PACKAGE_ID=<id>"
 	@echo "                         - Per-family rich-feature ablation (#334; backs the §6 substitution-finding table)"
+	@echo "  make finetune-pilot-b2 TRAINING_PACKAGE_ID=<id> [ENCODER_ALIAS=<alias>]"
+	@echo "                         - B2 end-to-end fine-tune on vol-regime (#213; AutoModelForSequenceClassification, 5 seeds x 4 folds x 5 epochs)"
 	@echo "  make reproduce-smoke TRAINING_PACKAGE_ID=<id> [SEED=11]"
 	@echo "                         - 1-seed x 1-fold dual-head smoke + numerical-contract assertion (#335 CI guard)"
 
@@ -847,3 +849,21 @@ per-family-ablation:
 		--epochs 40 \
 		--head-mode dual \
 		--regression-alpha 0.5
+
+# #213 B2 end-to-end fine-tune harness. Fine-tunes
+# AutoModelForSequenceClassification directly on FOMC document text
+# against the per-fold vol_regime_10d 3-class label. The encoder
+# defaults to the classifier-role alias per ADR 0019; override via
+# ENCODER_ALIAS=<alias>. Output lands at
+# ``artifacts/experiments/finetune_pilot_b2.json``.
+finetune-pilot-b2:
+	@if [ -z "$$TRAINING_PACKAGE_ID" ]; then echo "TRAINING_PACKAGE_ID required" >&2; exit 1; fi
+	docker compose run --rm backend python -m app.data.finetune_pilot_b2 \
+		--training-package-id $$TRAINING_PACKAGE_ID \
+		--output artifacts/experiments/finetune_pilot_b2.json \
+		--seeds 11 29 47 71 97 \
+		--epochs 5 \
+		--train-batch-size 16 \
+		--learning-rate 2e-5 \
+		--weight-decay 0.01 \
+		$(if $(ENCODER_ALIAS),--encoder-alias $(ENCODER_ALIAS),)
