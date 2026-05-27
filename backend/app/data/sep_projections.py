@@ -72,16 +72,19 @@ DEFAULT_LOCK_KEY = "sep_projections"
 DEFAULT_FIXTURE_CSV = DATA_DIR / "external" / "sep_projections.csv"
 
 # FRED series IDs the operator uses on path (a). The current-year /
-# next-year / longer-run medians are published as separate quarterly
-# series; the central tendency upper / lower bounds for the current
-# year are paired series. Names follow the FRED catalogue convention
-# for the SEP republished medians.
+# Live FRED series IDs the SEP loader pulls. The longer-run median
+# uses ``FEDTARMDLR`` (the published longer-run median across SEP
+# vintages); the range high / low bounds are the full all-participants
+# spread (range, not central tendency). FRED does not publish a single
+# multi-vintage "next-year median" series — that would require pulling
+# the year-specific FEDTARMD<YY> series and pivoting per event_date,
+# which is out of scope for this PR; the slot is dropped (#215 follow-
+# up #411). Names below match what FRED actually publishes.
 DEFAULT_FRED_SERIES_IDS: dict[str, str] = {
     "ffr_median_current_year": "FEDTARMD",
-    "ffr_median_next_year": "FEDTARMDLM",
-    "ffr_median_longer_run": "FEDTARRM",
-    "ffr_central_tendency_upper_current": "FEDTARRH",
-    "ffr_central_tendency_lower_current": "FEDTARRL",
+    "ffr_median_longer_run": "FEDTARMDLR",
+    "ffr_range_upper_current": "FEDTARRH",
+    "ffr_range_lower_current": "FEDTARRL",
 }
 
 # Parquet column order. The training-package loader reads these
@@ -90,10 +93,9 @@ DEFAULT_FRED_SERIES_IDS: dict[str, str] = {
 COLUMN_ORDER: tuple[str, ...] = (
     "meeting_date",
     "ffr_median_current_year",
-    "ffr_median_next_year",
     "ffr_median_longer_run",
-    "ffr_central_tendency_upper_current",
-    "ffr_central_tendency_lower_current",
+    "ffr_range_upper_current",
+    "ffr_range_lower_current",
     "source",
     "data_version",
 )
@@ -110,23 +112,21 @@ class SepReleaseRow:
 
     meeting_date: _dt.date
     ffr_median_current_year: float | None
-    ffr_median_next_year: float | None
     ffr_median_longer_run: float | None
-    ffr_central_tendency_upper_current: float | None
-    ffr_central_tendency_lower_current: float | None
+    ffr_range_upper_current: float | None
+    ffr_range_lower_current: float | None
     source: str
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "meeting_date": self.meeting_date.isoformat(),
             "ffr_median_current_year": _clean_float(self.ffr_median_current_year),
-            "ffr_median_next_year": _clean_float(self.ffr_median_next_year),
             "ffr_median_longer_run": _clean_float(self.ffr_median_longer_run),
-            "ffr_central_tendency_upper_current": _clean_float(
-                self.ffr_central_tendency_upper_current
+            "ffr_range_upper_current": _clean_float(
+                self.ffr_range_upper_current
             ),
-            "ffr_central_tendency_lower_current": _clean_float(
-                self.ffr_central_tendency_lower_current
+            "ffr_range_lower_current": _clean_float(
+                self.ffr_range_lower_current
             ),
             "source": self.source,
         }
@@ -198,9 +198,8 @@ def load_fixture_csv(
     """Read SEP releases from a CSV fixture.
 
     Columns: ``meeting_date``, ``ffr_median_current_year``,
-    ``ffr_median_next_year``, ``ffr_median_longer_run``,
-    ``ffr_central_tendency_upper_current``,
-    ``ffr_central_tendency_lower_current``. Header row required.
+    ``ffr_median_longer_run``, ``ffr_range_upper_current``,
+    ``ffr_range_lower_current``. Header row required.
 
     Returns an empty list when the fixture does not exist. The test
     suite injects a synthetic fixture; production builds use the FRED
@@ -224,13 +223,12 @@ def load_fixture_csv(
                     ffr_median_current_year=_clean_float(
                         row.get("ffr_median_current_year")
                     ),
-                    ffr_median_next_year=_clean_float(row.get("ffr_median_next_year")),
                     ffr_median_longer_run=_clean_float(row.get("ffr_median_longer_run")),
-                    ffr_central_tendency_upper_current=_clean_float(
-                        row.get("ffr_central_tendency_upper_current")
+                    ffr_range_upper_current=_clean_float(
+                        row.get("ffr_range_upper_current")
                     ),
-                    ffr_central_tendency_lower_current=_clean_float(
-                        row.get("ffr_central_tendency_lower_current")
+                    ffr_range_lower_current=_clean_float(
+                        row.get("ffr_range_lower_current")
                     ),
                     source="fixture_csv",
                 )
@@ -274,25 +272,21 @@ def build_from_fred_responses(
             ffr_median_current_year=_value_on_or_before(
                 maps.get("ffr_median_current_year", {}), md
             ),
-            ffr_median_next_year=_value_on_or_before(
-                maps.get("ffr_median_next_year", {}), md
-            ),
             ffr_median_longer_run=_value_on_or_before(
                 maps.get("ffr_median_longer_run", {}), md
             ),
-            ffr_central_tendency_upper_current=_value_on_or_before(
-                maps.get("ffr_central_tendency_upper_current", {}), md
+            ffr_range_upper_current=_value_on_or_before(
+                maps.get("ffr_range_upper_current", {}), md
             ),
-            ffr_central_tendency_lower_current=_value_on_or_before(
-                maps.get("ffr_central_tendency_lower_current", {}), md
+            ffr_range_lower_current=_value_on_or_before(
+                maps.get("ffr_range_lower_current", {}), md
             ),
             source="fred",
         )
-        # Drop a row if every scalar is missing; one of the medians at
-        # minimum is required to be a useful row.
+        # Drop a row if both medians are missing; one of them at
+        # minimum is required for the row to be useful.
         if (
             row.ffr_median_current_year is None
-            and row.ffr_median_next_year is None
             and row.ffr_median_longer_run is None
         ):
             continue

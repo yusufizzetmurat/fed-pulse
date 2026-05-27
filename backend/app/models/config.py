@@ -102,7 +102,7 @@ RICH_MACRO_REGIME_MISSING_DIM = 1
 # ``as_rich_list`` only when the loader populates ``sep_features``, so
 # the legacy default path keeps the byte-identical pre-#215 per-bar
 # feature size. See ADR 0030.
-RICH_SEP_DIM = 5
+RICH_SEP_DIM = 4
 RICH_SEP_MISSING_DIM = 1
 RICH_EXTRA_FEATURE_SIZE = (
     RICH_CREDIBILITY_DIM

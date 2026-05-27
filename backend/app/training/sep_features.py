@@ -1,22 +1,30 @@
 """Summary of Economic Projections (SEP) dot-plot features (#215).
 
-Five strict-prior scalars per supervised FOMC event:
+Four strict-prior scalars per supervised FOMC event, drawn from the
+SEP series FRED actually publishes:
 
-- ``sep_ffr_median_current_year`` -- the FOMC's median fed-funds-rate
-  projection for the current calendar-year end. Quarterly cadence
-  (March / June / September / December meetings).
-- ``sep_ffr_median_next_year`` -- median FFR projection for the next
-  calendar-year end.
+- ``sep_ffr_median_current_year`` -- median FFR projection for the
+  current calendar-year end (``FEDTARMD``). Quarterly cadence (March /
+  June / September / December meetings).
 - ``sep_ffr_median_longer_run`` -- median longer-run FFR projection
-  (the FOMC's neutral-rate estimate).
-- ``sep_ffr_central_tendency_range_current`` -- upper minus lower of
-  the central tendency for the current-year projection. A dispersion
-  measure capturing how tightly the Committee's views cluster.
+  (``FEDTARMDLR``); the FOMC's neutral-rate estimate.
+- ``sep_ffr_range_current`` -- upper minus lower of the full
+  all-participants range for the current-year projection
+  (``FEDTARRH`` - ``FEDTARRL``). Dispersion measure capturing how
+  tightly the Committee's views cluster. The two FRED series are full
+  range bounds (not central-tendency bounds, which trim three high
+  and three low and would require ``FEDTARCT*`` series this loader
+  does not currently pull).
 - ``sep_release_flag`` -- ``1.0`` when the supervised meeting itself
   released a fresh SEP (March / June / September / December); ``0.0``
-  when the values are forward-filled from a prior SEP meeting. Lets the
-  model learn the interaction between "fresh projections" and the
+  when the values are forward-filled from a prior SEP meeting. Lets
+  the model learn the interaction between "fresh projections" and the
   reaction to the released document.
+
+Per-event median for the next calendar year is NOT included. FRED does
+not publish a single multi-vintage "next-year median" series; that
+slot would require year-specific FEDTARMD<YY> pulls pivoted per event
+date. Tracked as a follow-up to #215.
 
 Provenance contract -- ``T (snapshot)`` for SEP-release meetings,
 ``T-Δ`` for forward-filled meetings. The SEP is released simultaneously
@@ -41,18 +49,16 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 
-# Number of SEP scalars (excluding the release flag) the composer emits
-# per event. The release flag is appended as a sixth slot inside the
-# rich-feature payload so the model can learn the interaction without
-# needing a separate paired-flag column. The ``RICH_SEP_DIM`` constant
-# on ``app.models.config`` is the single source of truth; this alias
+# Number of values the SEP composer emits per event, including the
+# release flag in the last slot. The ``RICH_SEP_DIM`` constant on
+# ``app.models.config`` is the single source of truth; this alias
 # gives the helper a local name.
-SEP_FEATURE_DIM: int = 5
+SEP_FEATURE_DIM: int = 4
 
 
 @dataclass(frozen=True)
 class SepProjections:
-    """One SEP release's reported medians + central-tendency dispersion.
+    """One SEP release's reported medians + range dispersion.
 
     Field units are percentage points (e.g. ``5.375`` = 5.375%). The
     dataclass is frozen so a builder cannot accidentally mutate a
@@ -61,26 +67,25 @@ class SepProjections:
 
     meeting_date: datetime.date
     ffr_median_current_year: float | None
-    ffr_median_next_year: float | None
     ffr_median_longer_run: float | None
-    ffr_central_tendency_upper_current: float | None
-    ffr_central_tendency_lower_current: float | None
+    ffr_range_upper_current: float | None
+    ffr_range_lower_current: float | None
 
-    def central_tendency_range_current(self) -> float | None:
-        """Upper minus lower of the current-year central tendency.
+    def range_current(self) -> float | None:
+        """Upper minus lower of the current-year all-participants range.
 
-        Returns ``None`` when either bound is missing so the loader's
-        ``_coerce_float`` chain stamps a 0.0 without poisoning the
-        dispersion signal with an inferred-zero spread.
+        Returns ``None`` when either bound is missing so the composer
+        stamps a 0.0 without poisoning the dispersion signal with an
+        inferred-zero spread.
         """
 
         if (
-            self.ffr_central_tendency_upper_current is None
-            or self.ffr_central_tendency_lower_current is None
+            self.ffr_range_upper_current is None
+            or self.ffr_range_lower_current is None
         ):
             return None
-        return float(self.ffr_central_tendency_upper_current) - float(
-            self.ffr_central_tendency_lower_current
+        return float(self.ffr_range_upper_current) - float(
+            self.ffr_range_lower_current
         )
 
 
@@ -88,23 +93,21 @@ class SepProjections:
 class SepFeatures:
     """Per-event SEP feature block, as the loader writes onto a FeatureVector.
 
-    The first five slots are the scalar SEP statistics; the sixth is
-    the release flag. ``as_list`` returns the six-element list the
+    The first three slots are the scalar SEP statistics; the fourth is
+    the release flag. ``as_list`` returns the four-element list the
     loader broadcasts onto every bar of the supervised sequence.
     """
 
     ffr_median_current_year: float
-    ffr_median_next_year: float
     ffr_median_longer_run: float
-    ffr_central_tendency_range_current: float
+    ffr_range_current: float
     sep_release_flag: float
 
     def as_list(self) -> list[float]:
         return [
             float(self.ffr_median_current_year),
-            float(self.ffr_median_next_year),
             float(self.ffr_median_longer_run),
-            float(self.ffr_central_tendency_range_current),
+            float(self.ffr_range_current),
             float(self.sep_release_flag),
         ]
 
@@ -144,13 +147,12 @@ def _projection_from_record(record: Mapping[str, Any]) -> SepProjections | None:
     return SepProjections(
         meeting_date=md,
         ffr_median_current_year=_coerce_float(record.get("ffr_median_current_year")),
-        ffr_median_next_year=_coerce_float(record.get("ffr_median_next_year")),
         ffr_median_longer_run=_coerce_float(record.get("ffr_median_longer_run")),
-        ffr_central_tendency_upper_current=_coerce_float(
-            record.get("ffr_central_tendency_upper_current")
+        ffr_range_upper_current=_coerce_float(
+            record.get("ffr_range_upper_current")
         ),
-        ffr_central_tendency_lower_current=_coerce_float(
-            record.get("ffr_central_tendency_lower_current")
+        ffr_range_lower_current=_coerce_float(
+            record.get("ffr_range_lower_current")
         ),
     )
 
@@ -194,12 +196,11 @@ def compute_sep_features_for_event(
     eligible.sort(key=lambda p: p.meeting_date)
     latest = eligible[-1]
     release_flag = 1.0 if latest.meeting_date == event_date else 0.0
-    range_current = latest.central_tendency_range_current()
+    range_current = latest.range_current()
     return SepFeatures(
         ffr_median_current_year=float(latest.ffr_median_current_year or 0.0),
-        ffr_median_next_year=float(latest.ffr_median_next_year or 0.0),
         ffr_median_longer_run=float(latest.ffr_median_longer_run or 0.0),
-        ffr_central_tendency_range_current=float(range_current or 0.0),
+        ffr_range_current=float(range_current or 0.0),
         sep_release_flag=release_flag,
     )
 

@@ -660,14 +660,14 @@ def _read_linguistic_lookup(package_dir: Path) -> dict[str, list[float]]:
 def _read_sep_projections_lookup(
     package_dir: Path,
 ) -> dict[str, dict[str, Any]]:
-    """Return ``meeting_date -> {ffr_median_*, ffr_central_tendency_*}``.
+    """Return ``meeting_date -> {ffr_median_*, ffr_range_*}``.
 
     Looks first inside the training package and then under the canonical
     location ``data/external/fred/sep_projections.parquet``. Date keys
     are ``YYYY-MM-DD`` strings to match the SEP composer's
-    ``meeting_date`` field. Each value carries the five scalar columns
-    the composer reads (current-year median + next-year median +
-    longer-run median + current-year central-tendency upper/lower).
+    ``meeting_date`` field. Each value carries the four scalar columns
+    the composer reads (current-year median + longer-run median +
+    current-year range upper/lower).
 
     Returns an empty dict when no parquet is found. The composer then
     returns ``None`` for every event and the loader collapses the slot
@@ -704,17 +704,14 @@ def _read_sep_projections_lookup(
             "ffr_median_current_year": _coerce_finite_float(
                 record.get("ffr_median_current_year")
             ),
-            "ffr_median_next_year": _coerce_finite_float(
-                record.get("ffr_median_next_year")
-            ),
             "ffr_median_longer_run": _coerce_finite_float(
                 record.get("ffr_median_longer_run")
             ),
-            "ffr_central_tendency_upper_current": _coerce_finite_float(
-                record.get("ffr_central_tendency_upper_current")
+            "ffr_range_upper_current": _coerce_finite_float(
+                record.get("ffr_range_upper_current")
             ),
-            "ffr_central_tendency_lower_current": _coerce_finite_float(
-                record.get("ffr_central_tendency_lower_current")
+            "ffr_range_lower_current": _coerce_finite_float(
+                record.get("ffr_range_lower_current")
             ),
         }
     return lookup

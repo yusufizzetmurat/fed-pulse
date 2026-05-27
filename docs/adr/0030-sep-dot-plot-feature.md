@@ -25,17 +25,18 @@ The methodology contribution is the structural addition: we add the SEP — the 
 
 ## Decision
 
-Add an opt-in `--use-sep` flag on `app.train_forecaster`. Default OFF — when off the new fields stay `None` and `FeatureVector.as_rich_list()` does NOT append the SEP block; the per-bar feature size on the legacy / opt-out path is byte-identical to pre-#215. When ON, the loader writes a 5-scalar SEP block (plus a paired missing flag) onto every bar of every supervised sequence, and the model factory widens the recurrent core's input projection by `RICH_SEP_DIM + RICH_SEP_MISSING_DIM` in lockstep.
+Add an opt-in `--use-sep` flag on `app.train_forecaster`. Default OFF — when off the new fields stay `None` and `FeatureVector.as_rich_list()` does NOT append the SEP block; the per-bar feature size on the legacy / opt-out path is byte-identical to pre-#215. When ON, the loader writes a 4-scalar SEP block (plus a paired missing flag) onto every bar of every supervised sequence, and the model factory widens the recurrent core's input projection by `RICH_SEP_DIM + RICH_SEP_MISSING_DIM` in lockstep.
 
-### Feature block — five scalars + a release flag
+### Feature block — four scalars + a release flag
 
 | Feature | Strict-prior construction |
 | --- | --- |
-| `sep_ffr_median_current_year` | The FOMC's median projection for the current calendar-year-end fed funds rate, as published in the SEP table released at the meeting. Forward-filled on non-SEP meetings from the most recent prior release. |
-| `sep_ffr_median_next_year` | Median FFR projection for next calendar-year-end. Same forward-fill rule. |
-| `sep_ffr_median_longer_run` | Median longer-run FFR projection — the Committee's neutral-rate estimate. Same forward-fill rule. |
-| `sep_ffr_central_tendency_range_current` | Upper minus lower of the central tendency for the current year. A dispersion measure: small range means the Committee's views cluster tightly; wide range means substantial disagreement. |
+| `sep_ffr_median_current_year` | The FOMC's median projection for the current calendar-year-end fed funds rate, as published in the SEP table released at the meeting. FRED series `FEDTARMD`. Forward-filled on non-SEP meetings from the most recent prior release. |
+| `sep_ffr_median_longer_run` | Median longer-run FFR projection — the Committee's neutral-rate estimate. FRED series `FEDTARMDLR`. Same forward-fill rule. |
+| `sep_ffr_range_current` | Upper minus lower of the all-participants full range for the current-year projection (FRED series `FEDTARRH` − `FEDTARRL`). A dispersion measure: small range means views cluster tightly; wide range means substantial disagreement. These are full range bounds, not central-tendency bounds — central tendency trims three high and three low and would require the separate `FEDTARCT*` series this loader does not currently pull. |
 | `sep_release_flag` | `1.0` on the March / June / September / December meeting that released the SEP itself; `0.0` on non-SEP meetings where the values are forward-filled. Lets the model learn the interaction between a fresh SEP and the reaction to the released document. |
+
+Median for the next calendar-year-end is intentionally NOT in the block. FRED does not publish a single multi-vintage "next-year median" series; that slot would require pulling year-specific `FEDTARMD<YY>` series and pivoting per event date. Tracked as a follow-up to #215.
 
 Plus a paired `sep_features_missing` flag (`1.0` when `--use-sep` is off or when the SEP parquet is absent on disk; `0.0` when the slot is populated).
 

@@ -43,14 +43,13 @@ from app.training.sep_features import (  # noqa: E402
 )
 
 
-def _row(meeting_date: str, *, cy: float, ny: float, lr: float, hi: float, lo: float) -> dict:
+def _row(meeting_date: str, *, cy: float, lr: float, hi: float, lo: float) -> dict:
     return {
         "meeting_date": meeting_date,
         "ffr_median_current_year": cy,
-        "ffr_median_next_year": ny,
         "ffr_median_longer_run": lr,
-        "ffr_central_tendency_upper_current": hi,
-        "ffr_central_tendency_lower_current": lo,
+        "ffr_range_upper_current": hi,
+        "ffr_range_lower_current": lo,
     }
 
 
@@ -59,17 +58,16 @@ def test_sep_release_meeting_sets_flag_one() -> None:
 
     event_date = _dt.date(2024, 3, 20)
     lookup = {
-        "2023-12-13": _row("2023-12-13", cy=5.4, ny=4.6, lr=2.5, hi=5.6, lo=5.4),
-        "2024-03-20": _row("2024-03-20", cy=4.6, ny=3.9, lr=2.6, hi=4.9, lo=4.4),
+        "2023-12-13": _row("2023-12-13", cy=5.4, lr=2.5, hi=5.6, lo=5.4),
+        "2024-03-20": _row("2024-03-20", cy=4.6, lr=2.6, hi=4.9, lo=4.4),
     }
     out = compute_sep_features_for_event(event_date=event_date, sep_lookup=lookup)
     assert out is not None
     # The matched release is the supervised event's own SEP; the values
     # are observable from the document released at T.
     assert out.ffr_median_current_year == pytest.approx(4.6)
-    assert out.ffr_median_next_year == pytest.approx(3.9)
     assert out.ffr_median_longer_run == pytest.approx(2.6)
-    assert out.ffr_central_tendency_range_current == pytest.approx(0.5)
+    assert out.ffr_range_current == pytest.approx(0.5)
     assert out.sep_release_flag == 1.0
 
 
@@ -78,17 +76,16 @@ def test_sep_forward_fill_on_non_sep_meeting_sets_flag_zero() -> None:
 
     event_date = _dt.date(2024, 5, 1)  # not an SEP meeting (May)
     lookup = {
-        "2023-12-13": _row("2023-12-13", cy=5.4, ny=4.6, lr=2.5, hi=5.6, lo=5.4),
-        "2024-03-20": _row("2024-03-20", cy=4.6, ny=3.9, lr=2.6, hi=4.9, lo=4.4),
+        "2023-12-13": _row("2023-12-13", cy=5.4, lr=2.5, hi=5.6, lo=5.4),
+        "2024-03-20": _row("2024-03-20", cy=4.6, lr=2.6, hi=4.9, lo=4.4),
     }
     out = compute_sep_features_for_event(event_date=event_date, sep_lookup=lookup)
     assert out is not None
     # The matched release is the March SEP -- the most recent prior.
     # Values carry forward; release flag reads 0.0.
     assert out.ffr_median_current_year == pytest.approx(4.6)
-    assert out.ffr_median_next_year == pytest.approx(3.9)
     assert out.ffr_median_longer_run == pytest.approx(2.6)
-    assert out.ffr_central_tendency_range_current == pytest.approx(0.5)
+    assert out.ffr_range_current == pytest.approx(0.5)
     assert out.sep_release_flag == 0.0
 
 
@@ -97,7 +94,7 @@ def test_sep_cold_start_returns_none() -> None:
 
     event_date = _dt.date(2010, 1, 27)
     lookup = {
-        "2012-03-13": _row("2012-03-13", cy=0.25, ny=0.5, lr=4.25, hi=0.5, lo=0.0),
+        "2012-03-13": _row("2012-03-13", cy=0.25, lr=4.25, hi=0.5, lo=0.0),
     }
     out = compute_sep_features_for_event(event_date=event_date, sep_lookup=lookup)
     assert out is None
@@ -108,10 +105,10 @@ def test_sep_strict_prior_filter_drops_future_releases() -> None:
 
     event_date = _dt.date(2024, 1, 31)  # non-SEP meeting (January)
     lookup = {
-        "2023-12-13": _row("2023-12-13", cy=5.4, ny=4.6, lr=2.5, hi=5.6, lo=5.4),
+        "2023-12-13": _row("2023-12-13", cy=5.4, lr=2.5, hi=5.6, lo=5.4),
         # March 2024 SEP post-dates the supervised event; the composer
         # must NOT see it as the matched release.
-        "2024-03-20": _row("2024-03-20", cy=4.6, ny=3.9, lr=2.6, hi=4.9, lo=4.4),
+        "2024-03-20": _row("2024-03-20", cy=4.6, lr=2.6, hi=4.9, lo=4.4),
     }
     out = compute_sep_features_for_event(event_date=event_date, sep_lookup=lookup)
     assert out is not None
@@ -121,16 +118,16 @@ def test_sep_strict_prior_filter_drops_future_releases() -> None:
     assert out.sep_release_flag == 0.0
 
 
-def test_sep_central_tendency_range_missing_one_bound_collapses_to_zero() -> None:
+def test_sep_range_missing_one_bound_collapses_to_zero() -> None:
     """Either bound missing -> the range computation degrades to 0.0."""
 
     event_date = _dt.date(2024, 3, 20)
     lookup = {
-        "2024-03-20": _row("2024-03-20", cy=4.6, ny=3.9, lr=2.6, hi=4.9, lo=None),
+        "2024-03-20": _row("2024-03-20", cy=4.6, lr=2.6, hi=4.9, lo=None),
     }
     out = compute_sep_features_for_event(event_date=event_date, sep_lookup=lookup)
     assert out is not None
-    assert out.ffr_central_tendency_range_current == 0.0
+    assert out.ffr_range_current == 0.0
 
 
 def test_sep_features_as_list_layout() -> None:
@@ -138,28 +135,26 @@ def test_sep_features_as_list_layout() -> None:
 
     fv = SepFeatures(
         ffr_median_current_year=4.6,
-        ffr_median_next_year=3.9,
         ffr_median_longer_run=2.6,
-        ffr_central_tendency_range_current=0.5,
+        ffr_range_current=0.5,
         sep_release_flag=1.0,
     )
     payload = fv.as_list()
     assert len(payload) == SEP_FEATURE_DIM
-    assert payload == [4.6, 3.9, 2.6, 0.5, 1.0]
+    assert payload == [4.6, 2.6, 0.5, 1.0]
 
 
-def test_sep_projections_central_tendency_range_missing_input() -> None:
-    """``SepProjections.central_tendency_range_current`` returns ``None`` cleanly."""
+def test_sep_projections_range_missing_input() -> None:
+    """``SepProjections.range_current`` returns ``None`` cleanly."""
 
     proj = SepProjections(
         meeting_date=_dt.date(2024, 3, 20),
         ffr_median_current_year=4.6,
-        ffr_median_next_year=3.9,
         ffr_median_longer_run=2.6,
-        ffr_central_tendency_upper_current=None,
-        ffr_central_tendency_lower_current=4.4,
+        ffr_range_upper_current=None,
+        ffr_range_lower_current=4.4,
     )
-    assert proj.central_tendency_range_current() is None
+    assert proj.range_current() is None
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +198,7 @@ def test_as_rich_list_populated_appends_sep_block() -> None:
     only-SEP-on case slices at the dynamic offset below.
     """
 
-    block = [4.6, 3.9, 2.6, 0.5, 1.0]
+    block = [4.6, 2.6, 0.5, 1.0]
     fv = FeatureVector(
         date="2024-03-20",
         sentiment_score=0.0,
@@ -274,7 +269,7 @@ def test_sep_block_appends_after_regime_block_when_both_on() -> None:
     """Combined emission: regime first, then SEP, past ``RICH_FEATURE_SIZE``."""
 
     regime = [1.0, 0.0, -1.0]
-    sep = [4.6, 3.9, 2.6, 0.5, 1.0]
+    sep = [4.6, 2.6, 0.5, 1.0]
     fv = FeatureVector(
         date="2024-03-20",
         sentiment_score=0.0,
@@ -454,26 +449,23 @@ def loader_package(tmp_path: Path, monkeypatch) -> Path:
         {
             "meeting_date": "2023-12-13",
             "ffr_median_current_year": 5.4,
-            "ffr_median_next_year": 4.6,
             "ffr_median_longer_run": 2.5,
-            "ffr_central_tendency_upper_current": 5.6,
-            "ffr_central_tendency_lower_current": 5.4,
+            "ffr_range_upper_current": 5.6,
+            "ffr_range_lower_current": 5.4,
         },
         {
             "meeting_date": "2024-03-20",
             "ffr_median_current_year": 4.6,
-            "ffr_median_next_year": 3.9,
             "ffr_median_longer_run": 2.6,
-            "ffr_central_tendency_upper_current": 4.9,
-            "ffr_central_tendency_lower_current": 4.4,
+            "ffr_range_upper_current": 4.9,
+            "ffr_range_lower_current": 4.4,
         },
         {
             "meeting_date": "2024-12-18",
             "ffr_median_current_year": 4.4,
-            "ffr_median_next_year": 3.4,
             "ffr_median_longer_run": 3.0,
-            "ffr_central_tendency_upper_current": 4.6,
-            "ffr_central_tendency_lower_current": 4.4,
+            "ffr_range_upper_current": 4.6,
+            "ffr_range_lower_current": 4.4,
         },
     ]
     pd.DataFrame(sep_rows).to_parquet(
@@ -812,11 +804,11 @@ def test_sep_parquet_fixture_csv_round_trips(tmp_path: Path) -> None:
 
     csv_path = tmp_path / "sep_projections.csv"
     csv_path.write_text(
-        "meeting_date,ffr_median_current_year,ffr_median_next_year,"
-        "ffr_median_longer_run,ffr_central_tendency_upper_current,"
-        "ffr_central_tendency_lower_current\n"
-        "2024-03-20,4.625,3.875,2.625,4.875,4.375\n"
-        "2024-06-12,5.125,4.125,2.750,5.250,4.875\n",
+        "meeting_date,ffr_median_current_year,"
+        "ffr_median_longer_run,ffr_range_upper_current,"
+        "ffr_range_lower_current\n"
+        "2024-03-20,4.625,2.625,4.875,4.375\n"
+        "2024-06-12,5.125,2.750,5.250,4.875\n",
         encoding="utf-8",
     )
     rows = load_fixture_csv(csv_path)
@@ -829,8 +821,7 @@ def test_sep_parquet_fixture_csv_round_trips(tmp_path: Path) -> None:
     # numeric column the parquet schema requires.
     assert set(DEFAULT_FRED_SERIES_IDS.keys()) == {
         "ffr_median_current_year",
-        "ffr_median_next_year",
         "ffr_median_longer_run",
-        "ffr_central_tendency_upper_current",
-        "ffr_central_tendency_lower_current",
+        "ffr_range_upper_current",
+        "ffr_range_lower_current",
     }
