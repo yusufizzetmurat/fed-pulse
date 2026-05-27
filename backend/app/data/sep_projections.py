@@ -401,7 +401,6 @@ def update_sources_lock(
     parquet_path: Path,
     parquet_sha256: str,
     series_ids: Mapping[str, str],
-    lock_key: str = DEFAULT_LOCK_KEY,
 ) -> None:
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     existing: dict[str, Any] = {}
@@ -417,7 +416,7 @@ def update_sources_lock(
         "fred_series": sorted(set(series_ids.values())),
         "retrieved_at_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(),
     }
-    existing[lock_key] = entry
+    existing[DEFAULT_LOCK_KEY] = entry
     lock_path.write_text(json.dumps(existing, indent=2, sort_keys=True), encoding="utf-8")
 
 
