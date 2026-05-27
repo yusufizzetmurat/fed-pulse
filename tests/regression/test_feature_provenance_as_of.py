@@ -106,6 +106,12 @@ _SNAPSHOT_COLUMNS: tuple[str, ...] = (
     "certain_label_certain",
     "stance_missing",
     "llm_features_missing",
+    # #306 retrieval-augmented summary: the analog-features missing
+    # flag is structural (presence of the retrieval bundle on disk).
+    # The five-scalar block itself rides on the `analog_features`
+    # list[float] | None slot and is exempt below alongside the other
+    # list-payload fields.
+    "analog_features_missing",
 )
 
 
@@ -274,6 +280,7 @@ def _audit_inventory_covers_every_field() -> set[str]:
         "text_embedding",
         "linguistic_features",
         "llm_features",
+        "analog_features",
         "rich_payload",
         "text_embedding_pooled",
         "text_embedding_missing",

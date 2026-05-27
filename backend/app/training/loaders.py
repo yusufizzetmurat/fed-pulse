@@ -1178,6 +1178,53 @@ def _attach_rich_features(
         vector.rich_payload = True
 
 
+def _compute_analog_features_for_event(
+    *,
+    event_text: str,
+    event_date: datetime.date,
+    event_stance: Any,
+) -> list[float] | None:
+    """Per-event retrieval query + derived summary block (#306).
+
+    Calls the runtime ``app.services.analogs`` singleton with a strict-
+    backward ``as_of_date=event_date`` filter so only analog rows whose
+    indexed ``event_date`` is strictly less than the supervised event
+    enter the top-K. Returns ``None`` when the retrieval bundle is
+    absent on disk (graceful degrade — the loader then leaves every
+    event in the all-zeros + missing-flag-1.0 state); returns the
+    derived 5-dim feature list otherwise.
+
+    The block is contextual only: similarity moments + stance-agreement
+    score. The analog's post-event observed move is NOT in the block —
+    admitting it would be a label leak via similarity. See ADR 0028 and
+    the row in ``docs/feature-provenance-audit.md``.
+    """
+
+    from app.training.retrieval_features import (
+        compute_analog_summary_features,
+        lookup_analog_hits,
+    )
+
+    hits = lookup_analog_hits(text=event_text, event_date=event_date)
+    if hits is None:
+        # Bundle absent on disk; the caller emits zeros + missing=1.0.
+        return None
+    if not hits:
+        # Bundle present but no row clears the strict-backward
+        # ``analog_event_date < event_date`` cutoff (first event in the
+        # corpus). Same all-zeros + missing-flag-1.0 contract as the
+        # absent-bundle case so the model sees a consistent "no
+        # retrieval signal" representation in both branches.
+        return None
+    stance = (
+        str(event_stance).strip().lower()
+        if isinstance(event_stance, str) and str(event_stance).strip()
+        else None
+    )
+    summary = compute_analog_summary_features(hits, event_stance=stance)
+    return summary.as_list()
+
+
 def _read_events_frame(package_dir: Path) -> "Any":
     import pandas as pd
 
@@ -1378,6 +1425,7 @@ def _load_package_sequences_with_metadata(
     use_mp_surprise: bool = True,
     use_multi_axis: bool = True,
     use_llm_features: bool = False,
+    use_retrieval_analogs: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -1619,6 +1667,24 @@ def _load_package_sequences_with_metadata(
         # missing=1.0 state so the rich-feature input shape stays
         # constant regardless of extraction coverage.
         llm_vector = llm_lookup.get(row_text_hash)
+        # #306 retrieval-augmented analog summary block. The lookup is
+        # gated by ``use_retrieval_analogs`` so the legacy path stays
+        # byte-identical when the flag is off; the helper enforces the
+        # strict-backward ``analog_event_date < event_date`` filter on
+        # the retrieval call so an analog row whose own event_date ties
+        # or post-dates the supervised event is never eligible. A bundle
+        # absent on disk returns ``None`` and the loader collapses every
+        # event to the all-zeros + missing-flag-1.0 state (graceful
+        # degrade). See ADR 0028.
+        if use_retrieval_analogs:
+            event_text = str(row.get("text", "") or "")
+            analog_features_list = _compute_analog_features_for_event(
+                event_text=event_text,
+                event_date=event_date,
+                event_stance=row.get("axis_stance"),
+            )
+        else:
+            analog_features_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
             vector.target_yield_2y_change_5d = rates_2y_value
@@ -1635,6 +1701,12 @@ def _load_package_sequences_with_metadata(
             else:
                 vector.llm_features = None
                 vector.llm_features_missing = 1.0
+            if analog_features_list is not None:
+                vector.analog_features = list(analog_features_list)
+                vector.analog_features_missing = 0.0
+            else:
+                vector.analog_features = None
+                vector.analog_features_missing = 1.0
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -1695,6 +1767,7 @@ def load_walk_forward_split(
     use_mp_surprise: bool = True,
     use_multi_axis: bool = True,
     use_llm_features: bool = False,
+    use_retrieval_analogs: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -1770,6 +1843,7 @@ def load_walk_forward_split(
         use_mp_surprise=use_mp_surprise,
         use_multi_axis=use_multi_axis,
         use_llm_features=use_llm_features,
+        use_retrieval_analogs=use_retrieval_analogs,
         text_encoder=text_encoder,
         text_adapter_dim=text_adapter_dim,
         text_pool_lambda_inv_days=text_pool_lambda_inv_days,
@@ -1888,6 +1962,7 @@ def load_training_sequences_from_package(
     use_mp_surprise: bool = True,
     use_multi_axis: bool = True,
     use_llm_features: bool = False,
+    use_retrieval_analogs: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -2257,6 +2332,19 @@ def load_training_sequences_from_package(
         # missing=1.0 state so the rich-feature input shape stays
         # constant regardless of extraction coverage.
         llm_vector = llm_lookup.get(row_text_hash)
+        # #306 per-event retrieval (see matched block in
+        # `_load_package_sequences_with_metadata`). Gated by
+        # ``use_retrieval_analogs``; absent bundle returns None and
+        # collapses to all-zeros + missing-flag-1.0 (graceful degrade).
+        if use_retrieval_analogs:
+            event_text_legacy = str(row.get("text", "") or "")
+            analog_features_list = _compute_analog_features_for_event(
+                event_text=event_text_legacy,
+                event_date=event_date,
+                event_stance=row.get("axis_stance"),
+            )
+        else:
+            analog_features_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
             vector.target_yield_2y_change_5d = rates_2y_value
@@ -2273,6 +2361,12 @@ def load_training_sequences_from_package(
             else:
                 vector.llm_features = None
                 vector.llm_features_missing = 1.0
+            if analog_features_list is not None:
+                vector.analog_features = list(analog_features_list)
+                vector.analog_features_missing = 0.0
+            else:
+                vector.analog_features = None
+                vector.analog_features_missing = 1.0
         if rich_features:
             _attach_rich_features(
                 vectors,
