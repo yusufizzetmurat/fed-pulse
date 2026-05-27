@@ -230,14 +230,14 @@ register_error_handlers(app)
 
 @app.get("/health")
 def health_check():
-    """Liveness probe + serving-contract status (#341).
+    """Liveness probe + serving-contract status (#341, extended in #393).
 
     The probe always returns ``status: "ok"`` (uvicorn is up and
-    serving). The ``inference_contract`` block surfaces the structured
-    state of the active forecaster checkpoint's contract validation --
-    ``ok`` when the sidecar matches the serving signature,
-    ``sidecar_absent`` on a legacy artefact, and a structured failure
-    code otherwise. Counters track structured-error increments so an
+    serving). Each serving artefact (forecaster + multi-axis classifier
+    + trajectory bundle) surfaces a structured contract block: ``ok``
+    when the sidecar matches the serving signature, ``sidecar_absent``
+    on a legacy artefact, and a structured failure code otherwise.
+    Forecaster counters track structured-error increments so an
     operator can spot a stuck contract without parsing logs.
     """
 
@@ -252,10 +252,28 @@ def health_check():
     except Exception:  # pragma: no cover -- defensive
         contract = {"status": "unknown"}
         counters = {}
+    try:
+        from app.services.multi_axis_classifier import (
+            get_serving_contract_status as _multi_axis_contract,
+        )
+
+        multi_axis_contract = _multi_axis_contract()
+    except Exception:  # pragma: no cover -- defensive
+        multi_axis_contract = {"status": "unknown"}
+    try:
+        from app.services.trajectory import (
+            get_serving_contract_status as _trajectory_contract,
+        )
+
+        trajectory_contract = _trajectory_contract()
+    except Exception:  # pragma: no cover -- defensive
+        trajectory_contract = {"status": "unknown"}
     return {
         "status": "ok",
         "inference_contract": contract,
         "inference_contract_counters": counters,
+        "multi_axis_classifier_contract": multi_axis_contract,
+        "trajectory_contract": trajectory_contract,
     }
 
 
