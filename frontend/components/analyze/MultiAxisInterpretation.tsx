@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { KpiTile } from "@/components/ui/kpi-tile";
 import { stanceLabel } from "@/lib/analyze/format";
 import type { MultiAxisResponse, MultiAxisStance } from "@/lib/analyze/types";
+import { EvidenceLink } from "@/components/analyze/EvidenceLink";
 
 interface MultiAxisInterpretationProps {
   multiAxis: MultiAxisResponse;
@@ -50,6 +51,11 @@ function FactorTile({
 }) {
   const value = factor.value;
   const tone = value > 0.05 ? "up" : value < -0.05 ? "down" : "neutral";
+  // §6.13 / #328: the factor axis carries near-zero label coverage on
+  // the canonical training pool, and the backend gates the card off
+  // when coverage falls below 0.01. If a card still arrives here the
+  // checkpoint stamped a non-zero coverage — render but flag the axis
+  // as low-confidence so the surface does not oversell it.
   return (
     <KpiTile
       label="Factor"
@@ -65,7 +71,7 @@ function FactorTile({
       tone={tone}
       sparkline={history}
       sparklineTone={tone}
-      caption="GSS forward-guidance vs target-shock axis"
+      caption="GSS forward-guidance vs target-shock · low-coverage axis (§6.13)"
     />
   );
 }
@@ -138,13 +144,26 @@ export function MultiAxisInterpretation({
   }
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {multiAxis.stance ? <StanceTile stance={multiAxis.stance} history={stanceHistory} /> : null}
-      {multiAxis.factor ? <FactorTile factor={multiAxis.factor} history={factorHistory} /> : null}
-      {multiAxis.certainty ? (
-        <CertaintyTile certainty={multiAxis.certainty} history={certaintyHistory} />
-      ) : null}
-      {multiAxis.topic ? <TopicTile topic={multiAxis.topic} /> : null}
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+          Multi-axis interpretation
+        </Badge>
+        <EvidenceLink section="6.13" label="Multi-task null + factor-axis gate (#328)" />
+        {!multiAxis.factor ? (
+          <Badge variant="outline" className="text-[10px]" title="Per §6.13 / #328 the factor card is gated off when training-pool coverage falls below 0.01.">
+            factor · gated off (null result)
+          </Badge>
+        ) : null}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {multiAxis.stance ? <StanceTile stance={multiAxis.stance} history={stanceHistory} /> : null}
+        {multiAxis.factor ? <FactorTile factor={multiAxis.factor} history={factorHistory} /> : null}
+        {multiAxis.certainty ? (
+          <CertaintyTile certainty={multiAxis.certainty} history={certaintyHistory} />
+        ) : null}
+        {multiAxis.topic ? <TopicTile topic={multiAxis.topic} /> : null}
+      </div>
     </div>
   );
 }

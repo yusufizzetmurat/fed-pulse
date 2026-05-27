@@ -17,6 +17,7 @@ import type {
   AnalogVolRegime,
   AnalogsResponse,
 } from "@/lib/analyze/types";
+import { EvidenceLink } from "@/components/analyze/EvidenceLink";
 
 const VOL_REGIME_ORDER: AnalogVolRegime[] = ["calm", "normal", "high"];
 
@@ -182,9 +183,12 @@ export function HistoricalAnalogPanel({
   topK = DEFAULT_TOP_K,
 }: HistoricalAnalogPanelProps) {
   const headerBadge = (
-    <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-      Historical analog panel
-    </Badge>
+    <div className="flex flex-wrap items-center gap-2">
+      <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+        Historical analog panel
+      </Badge>
+      <EvidenceLink section="6.16" label="Retrieval supervision rebuild · recall@k" />
+    </div>
   );
 
   if (loading) {
