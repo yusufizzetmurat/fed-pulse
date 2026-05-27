@@ -685,20 +685,24 @@ def test_train_model_smoke_with_regime_conditioning_gate() -> None:
     assert result.summary.epochs_completed == 1
 
 
-def test_regime_gate_weights_move_under_sgd() -> None:
-    """One epoch of SGD actually nudges the gate weights off init.
+def test_regime_gate_receives_non_zero_gradient() -> None:
+    """A backward pass through the model produces non-zero gate grads.
 
     The #307 smoke pins the forward pass runs to completion and the
     zero-init test pins the gate's t=0 output, but neither catches a
-    disconnected gradient path — gate produced but never consumed by
-    the loss would leave ``regime_gate.weight`` / ``regime_gate.bias``
-    pinned at zeros forever and both existing tests pass. Snapshot the
-    gate params pre-train, run one epoch, and assert the post-train
-    norm-delta is non-zero so a future wiring regression that bypasses
-    the gate fires here.
+    disconnected gradient path — a gate produced but never consumed by
+    the loss would leave ``regime_gate.weight.grad`` / ``regime_gate.bias.grad``
+    silently zero and both existing tests pass. Build the model directly,
+    run forward + backward on a fixture with a non-zero regime block,
+    and assert the gate's gradient tensors are non-zero. Skips the
+    optimizer + early-stopping path on purpose so the assertion measures
+    only the autograd wiring, not whichever epoch the best-val snapshot
+    landed on.
     """
 
-    groups = [[_dummy_feature_vector(day=i + 1, vol=0.01 + 0.001 * i) for i in range(40)]]
+    from app.models.config import ModelConfig
+    from app.models.factory import build_research_forecaster
+
     config = ModelConfig(
         input_size=RICH_FEATURE_SIZE,
         output_mode="classification",
@@ -707,32 +711,56 @@ def test_regime_gate_weights_move_under_sgd() -> None:
         head_hidden_size=8,
         use_regime_conditioning=True,
     )
-    result = train_model(
-        model_config=config,
-        train_sequence_groups=groups,
-        val_sequence_groups=groups,
-        test_sequence_groups=groups,
-        epochs=1,
-        batch_size=8,
-        seed=11,
-        save_checkpoint=False,
-        use_compile=False,
-        use_amp=False,
-    )
-    gate = getattr(result.model, "regime_gate", None)
+    model = build_research_forecaster(config)
+    gate = getattr(model, "regime_gate", None)
     assert gate is not None, (
         "use_regime_conditioning=True must mount a regime_gate Linear layer"
     )
-    # Pre-train state is zero-init by construction (see
-    # ``test_gate_zero_init_is_identity_at_step_zero``). Any non-zero
-    # post-train norm therefore proves SGD touched the gate params.
-    weight_delta = float(gate.weight.detach().norm().item())
-    bias_delta = float(gate.bias.detach().norm().item())
-    assert weight_delta > 0.0, (
-        "regime_gate.weight unchanged after 1 epoch -- gradient path likely disconnected"
+
+    # Build a per-bar input that carries a non-zero regime block at the
+    # tail; this matches the loader's ``as_rich_list`` contract under
+    # ``--use-regime-conditioning``. The 4-wide tail is 3 regime scalars
+    # + 1 missing flag (set to 0.0 so the gate sees a real signal).
+    from app.models.config import (  # local import keeps the module-load
+        RICH_MACRO_REGIME_DIM,
+        RICH_MACRO_REGIME_MISSING_DIM,
+        SEQUENCE_LENGTH,
     )
-    assert bias_delta > 0.0, (
-        "regime_gate.bias unchanged after 1 epoch -- gradient path likely disconnected"
+
+    input_width = RICH_FEATURE_SIZE + RICH_MACRO_REGIME_DIM + RICH_MACRO_REGIME_MISSING_DIM
+    batch = torch.zeros((2, SEQUENCE_LENGTH, input_width))
+    # Non-zero rich-feature slice so the gate's multiplicative mask has
+    # something to scale; zero rich values would zero the regime gradient
+    # via the chain rule regardless of the wiring.
+    batch[..., :RICH_FEATURE_SIZE] = 0.1
+    # Non-zero regime block so ``regime_input`` flowing into the gate is
+    # not identically zero (which would zero the weight gradient by
+    # construction without saying anything about the wiring).
+    batch[..., RICH_FEATURE_SIZE] = 1.0
+    batch[..., RICH_FEATURE_SIZE + 1] = 0.0
+    batch[..., RICH_FEATURE_SIZE + 2] = -1.0
+    batch[..., RICH_FEATURE_SIZE + 3] = 0.0  # missing flag off
+
+    model.train()
+    logits = model(batch)
+    if isinstance(logits, tuple):
+        logits = logits[0]
+    target = torch.zeros(logits.shape[0], dtype=torch.long)
+    loss = torch.nn.functional.cross_entropy(logits, target)
+    loss.backward()
+
+    weight_grad = gate.weight.grad
+    bias_grad = gate.bias.grad
+    assert weight_grad is not None and bias_grad is not None, (
+        "regime_gate params received no gradient -- autograd path is severed"
+    )
+    assert float(weight_grad.detach().abs().sum().item()) > 0.0, (
+        "regime_gate.weight gradient is identically zero -- gate output is "
+        "not flowing into the loss"
+    )
+    assert float(bias_grad.detach().abs().sum().item()) > 0.0, (
+        "regime_gate.bias gradient is identically zero -- gate output is "
+        "not flowing into the loss"
     )
 
 
