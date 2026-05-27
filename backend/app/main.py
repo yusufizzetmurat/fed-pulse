@@ -519,21 +519,20 @@ def _safe_regime_classification(history_vectors: list[Any]) -> dict[str, Any] | 
         return {
             "status": "inference_kwarg_missing",
             "missing_kwarg": missing,
-            "detail": str(exc),
         }
     except Exception as exc:  # pragma: no cover — defensive, see #216 follow-up
         _forecaster_service._contract_counters[
             "regime_classification_unexpected_exception"
         ] += 1
         logger.warning(
-            "regime_classification_card_failed exception_class=%s",
+            "regime_classification_card_failed exception_class=%s detail=%s",
             type(exc).__name__,
+            str(exc),
             exc_info=True,
         )
         return {
             "status": "unexpected_exception",
             "exception_class": type(exc).__name__,
-            "detail": str(exc),
         }
     if result is None:
         return {"status": "not_classification_mode"}

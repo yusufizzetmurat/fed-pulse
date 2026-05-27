@@ -713,14 +713,16 @@ def build_market_reaction_panel(
         return {
             "status": "inference_kwarg_missing",
             "missing_kwarg": missing,
-            "detail": str(exc),
         }
     except RuntimeError as exc:
         # #341 structured surface (c-bis): RuntimeError is the
         # text/chunks-path mounted-but-not-threaded shape from
         # ``prepare_recurrent_input``. Surface it as a structured
         # unexpected exception (NOT bare None) so the symptom is
-        # visible on /analyze + greppable in logs.
+        # visible on /analyze + greppable in logs. The raw exception
+        # message stays in the WARNING log only -- it can carry
+        # tensor-shape detail / file paths that should not ship to
+        # the client.
         _contract_counters["market_reaction_unexpected_exception"] += 1
         logger.warning(
             "market_reaction_runtime_error detail=%s",
@@ -730,19 +732,18 @@ def build_market_reaction_panel(
         return {
             "status": "unexpected_exception",
             "exception_class": "RuntimeError",
-            "detail": str(exc),
         }
     except Exception as exc:  # noqa: BLE001 -- structured surface for c
         _contract_counters["market_reaction_unexpected_exception"] += 1
         logger.warning(
-            "market_reaction_unexpected_exception exception_class=%s",
+            "market_reaction_unexpected_exception exception_class=%s detail=%s",
             type(exc).__name__,
+            str(exc),
             exc_info=True,
         )
         return {
             "status": "unexpected_exception",
             "exception_class": type(exc).__name__,
-            "detail": str(exc),
         }
 
     metadata = _model_artifact_metadata or {}
@@ -856,7 +857,13 @@ def build_market_reaction_panel(
             }
 
     if not rates_cards and vol_regime_card is None:
-        return None
+        # #341: structured-status payload instead of bare ``None`` so
+        # the contract surface is symmetric with the regime-card path.
+        # ``no_active_heads`` fires when the forward succeeded but
+        # nothing surfaced (no rates heads mounted + classification
+        # head off). The route handler collapses any status payload
+        # to an empty MarketReactionPanel; no schema impact.
+        return {"status": "no_active_heads"}
     return {
         "rates": rates_cards,
         "vol_regime": vol_regime_card,
