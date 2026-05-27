@@ -169,3 +169,123 @@ def test_fine_tune_and_index_rejects_mutually_exclusive_flags(tmp_path: Path) ->
             train_end="2020-01-01",
             fold_id="wf_fold_3",
         )
+
+
+def _shared_axis_events_frame() -> pd.DataFrame:
+    """Statements across four meetings annotated with multi-axis labels (#329)."""
+
+    rows = [
+        {
+            **_make_row(
+                event_date="2008-12-16",
+                event_kind="statement",
+                text="2008 crisis dovish statement",
+            ),
+            "axis_stance": "dovish",
+            "axis_factor": "labor",
+            "axis_topic": "crisis",
+        },
+        {
+            **_make_row(
+                event_date="2009-03-18",
+                event_kind="statement",
+                text="2009 follow-up dovish statement",
+            ),
+            "axis_stance": "dovish",
+            "axis_factor": "labor",
+            "axis_topic": "crisis",
+        },
+        {
+            **_make_row(
+                event_date="2022-09-21",
+                event_kind="statement",
+                text="2022 hawkish statement on inflation",
+            ),
+            "axis_stance": "hawkish",
+            "axis_factor": "inflation",
+            "axis_topic": "normalization",
+        },
+        {
+            **_make_row(
+                event_date="2022-11-02",
+                event_kind="statement",
+                text="2022-Nov hawkish follow-up",
+            ),
+            "axis_stance": "hawkish",
+            "axis_factor": "inflation",
+            "axis_topic": "normalization",
+        },
+    ]
+    return pd.DataFrame(rows)
+
+
+def test_shared_axis_pair_policy_emits_cross_meeting_pairs() -> None:
+    events = _shared_axis_events_frame()
+    pairs = ret_train.build_training_pairs(events, pair_policy="shared_axis")
+    # Each pair of statements with matching axes contributes two
+    # directed pairs (a->b and b->a). Two clusters of size 2 -> 4 pairs.
+    assert len(pairs) == 4
+    assert all(p.anchor != p.positive for p in pairs)
+    assert all(p.positive_kind.startswith("shared_") for p in pairs)
+    # Cross-meeting requirement: anchor_date and positive document
+    # come from different meetings.
+    assert all(
+        p.anchor_date != "" for p in pairs
+    )
+
+
+def test_shared_axis_pair_policy_drops_unlabelled_rows() -> None:
+    events = _shared_axis_events_frame()
+    # Wipe one row's axis labels — it must contribute zero pairs.
+    events.loc[events["text"] == "2008 crisis dovish statement", "axis_stance"] = None
+    events.loc[events["text"] == "2008 crisis dovish statement", "axis_factor"] = None
+    events.loc[events["text"] == "2008 crisis dovish statement", "axis_topic"] = None
+    pairs = ret_train.build_training_pairs(events, pair_policy="shared_axis")
+    anchors = {p.anchor for p in pairs}
+    positives = {p.positive for p in pairs}
+    assert "2008 crisis dovish statement" not in anchors
+    assert "2008 crisis dovish statement" not in positives
+
+
+def test_shared_axis_pair_policy_no_match_returns_empty() -> None:
+    rows = [
+        {
+            **_make_row(
+                event_date="2008-12-16",
+                event_kind="statement",
+                text="Alpha statement",
+            ),
+            "axis_stance": "dovish",
+        },
+        {
+            **_make_row(
+                event_date="2022-09-21",
+                event_kind="statement",
+                text="Beta statement",
+            ),
+            "axis_stance": "hawkish",
+        },
+    ]
+    pairs = ret_train.build_training_pairs(
+        pd.DataFrame(rows), pair_policy="shared_axis"
+    )
+    assert pairs == []
+
+
+def test_build_training_pairs_rejects_unknown_policy() -> None:
+    with pytest.raises(ValueError, match="unknown pair_policy"):
+        ret_train.build_training_pairs(_events_frame(), pair_policy="bogus")
+
+
+def test_default_pair_policy_is_same_meeting_pre_329_behaviour() -> None:
+    """Default keeps pre-#329 byte-identical pair counts."""
+
+    events = _events_frame()
+    default_pairs = ret_train.build_training_pairs(events)
+    explicit_pairs = ret_train.build_training_pairs(
+        events, pair_policy="same_meeting"
+    )
+    assert len(default_pairs) == len(explicit_pairs)
+    assert [
+        (p.anchor, p.positive, p.positive_kind) for p in default_pairs
+    ] == [(p.anchor, p.positive, p.positive_kind) for p in explicit_pairs]
