@@ -133,6 +133,8 @@ def _run_smoke_training(
         "1",
         "--head-mode",
         "dual",
+        "--output-mode",
+        "classification",
         "--folds",
         fold_id,
         "--protocol",

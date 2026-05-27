@@ -1,9 +1,14 @@
 {
   "training_package_id": "tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0",
   "head_mode": "dual",
+  "output_mode": "classification",
+  "seed": 11,
+  "fold_id": "wf_fold_1",
+  "epochs": 1,
   "metric": "regime_f1_macro",
-  "reference_value": 0.419,
+  "reference_value": 0.142857,
   "tolerance": 0.005,
-  "source_artefact": "backend/artifacts/experiments/dual_head_comparison_canonical.json",
-  "source_artefact_cell": "summary.dual.regime_f1_macro.mean"
+  "source_artefact": "1-seed x 1-fold x 1-epoch smoke run (deterministic CPU torch)",
+  "source_artefact_cell": "trials[0].summary.test_metrics.regime_f1_macro (cold-start single-cell, not the canonical-sweep mean)",
+  "rationale": "Determinism contract — not an accuracy benchmark. The canonical headline (5-seed x 5-fold x 40-epoch sweep mean = 0.419) lives in dual_head_comparison_canonical.json. This file pins the deterministic single-cell value the smoke must reproduce on every push to dev so a future training-pipeline change cannot silently drift the trainer's numerical surface."
 }
