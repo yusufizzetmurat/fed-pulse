@@ -142,9 +142,9 @@ class ForecasterModel(nn.Module):
                 "use_chunk_attention and use_llm_embeddings are mutually exclusive. "
                 "Set at most one to True."
             )
-        if text_channel not in {"scalar", "embeddings"}:
+        if text_channel not in {"scalar", "embeddings", "per_bar"}:
             raise ValueError(
-                f"Unknown text_channel: {text_channel!r}. Allowed: scalar, embeddings"
+                f"Unknown text_channel: {text_channel!r}. Allowed: scalar, embeddings, per_bar"
             )
         if output_mode not in {"regression", "classification"}:
             raise ValueError(
