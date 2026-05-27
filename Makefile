@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep reproduce-all push-artefacts deploy-prod-build
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison text-path-ab reproduce-all reproduce-smoke push-artefacts deploy-prod-build
 
 help:
 	@echo "Targets:"
@@ -79,6 +79,11 @@ help:
 	@echo "  make derived-features-ablation TRAINING_PACKAGE_ID=<id>"
 	@echo "  make rates-heads-sweep TRAINING_PACKAGE_ID=<id> [SEED=<seed>]"
 	@echo "                         - Three-way derived-text-features ablation (baseline / ablation / replacement)"
+	@echo "  make canonical-comparison TRAINING_PACKAGE_ID=<id>"
+	@echo "  make text-path-ab TRAINING_PACKAGE_ID=<id>"
+	@echo "                         - Canonical dual-head comparison (5 seeds x 40 epochs, regression-alpha=0.5, canonical output JSON)"
+	@echo "  make reproduce-smoke TRAINING_PACKAGE_ID=<id> [SEED=11]"
+	@echo "                         - 1-seed x 1-fold dual-head smoke + numerical-contract assertion (#335 CI guard)"
 
 dev: dev-cpu
 
@@ -150,6 +155,23 @@ reproduce-all:
 			set -e && \
 			python scripts/reproduce_all.py'
 
+# Numerical-contract CI guard (#335). Runs a 1-seed x 1-fold smoke
+# variant of the canonical dual-head training and asserts the resulting
+# macro-F1 stays within the pinned tolerance in
+# ``tests/regression/reproducibility_reference.json``. Designed to run
+# on the ``ubuntu-latest`` GitHub runner without docker compose so the
+# ``reproduce-smoke`` workflow can call it directly. Gates on
+# ``TRAINING_PACKAGE_ID`` so a typo on the workflow input fails fast
+# instead of pulling the wrong artefact.
+reproduce-smoke:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	FED_PULSE_REPRODUCE_SMOKE=1 \
+	PYTHONPATH=backend \
+	python -m scripts.run_reproducibility_smoke \
+		--training-package-id "$(TRAINING_PACKAGE_ID)" \
+		--seed "$(SEED)" \
+		--reference-path tests/regression/reproducibility_reference.json
+
 # One-time push of every canonical artefact to HF Hub. Runs the
 # idempotent uploader in dry-run by default so the operator can sanity
 # check the plan before flipping --all on. See
@@ -181,11 +203,17 @@ train-text-multi-axis-classifier:
 		--learning-rate $(LEARNING_RATE)
 
 # Forecaster architecture sweep. The default target runs the
-# rich-feature path (35-dim per-bar input) across all eight registered
+# rich-feature path (35-dim per-bar input) across the seven canonical
 # architectures (lstm, lstm_attn, gru, tcn, transformer, dlinear,
-# informer, tft) x the official 5-seed set {11, 29, 47, 71, 97}, so the
+# informer) x the official 5-seed set {11, 29, 47, 71, 97}, so the
 # forecaster sees the four feature families the data pipeline already
 # ships (credibility, linguistic, MP-surprise, multi-axis) on every bar.
+#
+# TFT is excluded from the canonical sweep targets per ADR 0020 (the
+# generic classifier head strips the native quantile-output + Variable
+# Selection Network inductive bias). The ``tft`` identifier and module
+# are kept for back-compat with existing checkpoints; opt back in by
+# passing ``--architectures tft`` explicitly on the trainer command line.
 #
 # The default target draws a random subset of HP combos from the full
 # cross-product (--random-search-samples=50, seed=42) and runs eight
@@ -243,7 +271,7 @@ forecaster-sweep:
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--sweep \
 		--rich-features \
-		--architectures lstm lstm_attn gru tcn transformer dlinear informer tft \
+		--architectures lstm lstm_attn gru tcn transformer dlinear informer \
 		--seeds 11 29 47 71 97 \
 		--folds wf_fold_1 wf_fold_2 wf_fold_3 wf_fold_4 \
 		--hidden-sizes 32 64 128 \
@@ -273,7 +301,7 @@ forecaster-sweep-exhaustive:
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--sweep \
 		--rich-features \
-		--architectures lstm lstm_attn gru tcn transformer dlinear informer tft \
+		--architectures lstm lstm_attn gru tcn transformer dlinear informer \
 		--seeds 11 29 47 71 97 \
 		--hidden-sizes 32 64 128 \
 		--num-layers-grid 1 2 3 \
@@ -300,7 +328,7 @@ forecaster-sweep-shuffled-control:
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		--sweep \
 		--rich-features \
-		--architectures lstm lstm_attn gru tcn transformer dlinear informer tft \
+		--architectures lstm lstm_attn gru tcn transformer dlinear informer \
 		--seeds 11 29 47 71 97 \
 		--hidden-sizes 64 \
 		--num-layers-grid 2 \
@@ -735,3 +763,32 @@ rates-heads-sweep:
 		python -m scripts.run_rates_heads_sweep \
 		--training-package-id "$(TRAINING_PACKAGE_ID)" \
 		$(if $(SEED),--seeds $(SEED),--seeds 11 29 47 71 97)
+
+# #322 canonical dual-head comparison. Pins the regression-alpha,
+# output path, seed set, and epoch budget the §16 finalization-roadmap
+# table reads, so the canonical run is reproducible without remembering
+# the flag combination. Output lands at
+# ``artifacts/experiments/dual_head_comparison_canonical.json``.
+canonical-comparison:
+	@if [ -z "$$TRAINING_PACKAGE_ID" ]; then echo "TRAINING_PACKAGE_ID required" >&2; exit 1; fi
+	docker compose run --rm backend python -m scripts.run_dual_head_comparison \
+		--training-package-id $$TRAINING_PACKAGE_ID \
+		--output artifacts/experiments/dual_head_comparison_canonical.json \
+		--seeds 11 29 47 71 97 \
+		--epochs 40 \
+		--regression-alpha 0.5
+
+# #327 text-path A/B comparison. Runs the three configurations
+# (broadcast-static / per-bar / flat MLP) across the official seed set
+# and canonical fold protocol; emits a per-arm JSON the §6.15 wiki
+# table reads. Output lands at
+# ``artifacts/experiments/text_path_ab.json``.
+text-path-ab:
+	@if [ -z "$$TRAINING_PACKAGE_ID" ]; then echo "TRAINING_PACKAGE_ID required" >&2; exit 1; fi
+	docker compose run --rm backend python -m scripts.run_text_path_ab \
+		--training-package-id $$TRAINING_PACKAGE_ID \
+		--output artifacts/experiments/text_path_ab.json \
+		--seeds 11 29 47 71 97 \
+		--epochs 40 \
+		--head-mode dual \
+		--regression-alpha 0.5

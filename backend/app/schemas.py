@@ -368,6 +368,33 @@ class RegimeClassificationCard(BaseModel):
     coverage: float
     distribution: dict[str, float]
     argmax_class: str
+    log_rv_point: float | None = Field(
+        default=None,
+        description=(
+            "Regression-head point prediction in standardised log(forward "
+            "realized vol) space, or None on a classification-only checkpoint. "
+            "See ADR 0015 / #322."
+        ),
+    )
+    log_rv_lower: float | None = Field(
+        default=None,
+        description=(
+            "80% conformal-band lower bound around log_rv_point (matches the "
+            "existing close/vol band convention). None when no conformal "
+            "manifest is on disk or the regression head is not active."
+        ),
+    )
+    log_rv_upper: float | None = Field(default=None, description="See log_rv_lower; upper bound.")
+    bucket_source: Literal["regression", "classification"] = Field(
+        default="classification",
+        description=(
+            "Declares which head produced argmax_class: 'regression' means "
+            "the 3-class label was bucketed UI-side from log_rv_point against "
+            "the active checkpoint's vol_regime_quantiles cutoffs (see "
+            "app.services.regime_bucketing); 'classification' means the "
+            "label came from the 3-class softmax head's argmax."
+        ),
+    )
 
 
 class AnalyzeResponse(BaseModel):
@@ -929,5 +956,38 @@ class TrajectoryResponse(BaseModel):
             "Optional non-fatal advisory — set when ``as_of_date`` is "
             "beyond the bundle's ``train_end`` so the caller can flag "
             "that the projection extrapolates beyond the fold."
+        ),
+    )
+    # Lift-vs-baseline badge fields (#332). Surface the verdict on
+    # whether the Transformer arm beats the strongest naive baseline
+    # (previous_stance / rolling_majority / small-LSTM) by >= 5pp
+    # directional accuracy on the canonical fold protocol. All three
+    # fields default to None / False so a bundle trained before #332
+    # remains back-compatible.
+    lift_vs_baseline: bool = Field(
+        default=False,
+        description=(
+            "True iff the Transformer arm beats the strongest naive "
+            "baseline (previous_stance / rolling_majority(3) / "
+            "small-LSTM) by >= 5pp directional accuracy on the "
+            "canonical fold protocol. False when the holdout slice is "
+            "empty, when the bundle predates #332, or when the lift "
+            "did not clear the threshold."
+        ),
+    )
+    delta_dir_acc: float | None = Field(
+        default=None,
+        description=(
+            "Transformer directional accuracy minus the strongest "
+            "naive baseline's directional accuracy. None when no "
+            "baseline comparison is available."
+        ),
+    )
+    baseline_used: str | None = Field(
+        default=None,
+        description=(
+            "Name of the strongest naive baseline the lift verdict "
+            "compared against. None when no baseline comparison is "
+            "available."
         ),
     )

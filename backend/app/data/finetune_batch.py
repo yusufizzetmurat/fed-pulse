@@ -41,6 +41,21 @@ ENCODERS: dict[str, str] = {
     "bge_large_en_v15": "BAAI/bge-large-en-v1.5",
     "nomic_embed_text_v15": "nomic-ai/nomic-embed-text-v1.5",
 }
+
+# Encoders flagged as data-contaminated against the project's training rows
+# (TDW corpus ingested as ``hf_fomc_communication``). Excluded from the
+# headline NLP-row comparison table per ``docs/benchmark-policy.md
+# §Contamination Handling``. ``gtfintechlab/FOMC-RoBERTa`` is the original
+# R-13 entry. ``gtfintechlab/fomc-roberta-any-exp`` is its sibling; the
+# 2026-05-27 audit (#339) found the repo unreachable on the Hub (404 even
+# authenticated) and treated it as inheriting the gtfintechlab TDW
+# provenance, so it joins the deny-list pending an upstream clean-pin.
+CONTAMINATED_ENCODER_KEYS: frozenset[str] = frozenset(
+    {
+        "gtfintechlab_fomc_roberta",
+        "gtfintechlab_fomc_roberta_any_exp",
+    }
+)
 OFFICIAL_SEEDS: tuple[int, ...] = (11, 29, 47, 71, 97)
 
 

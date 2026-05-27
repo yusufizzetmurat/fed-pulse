@@ -41,6 +41,11 @@ data/raw/*
 data/external/*
 !data/external/macro_releases.csv
 !data/external/macro_releases.csv.lock.json
+!data/external/sealed_holdout/
+data/external/sealed_holdout/*
+!data/external/sealed_holdout/fomc_2025.jsonl
+!data/external/sealed_holdout/AUDIT_TOKEN
+!data/external/sealed_holdout/README.md
 /backend/models/
 *.pt
 *.pth

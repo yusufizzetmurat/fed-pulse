@@ -1,0 +1,60 @@
+name: reproduce-smoke
+
+# Numerical-contract guard for `make reproduce-all` (#335).
+#
+# Runs a 1-seed x 1-fold smoke variant of the canonical dual-head
+# training on every merge to `dev` and asserts the resulting macro-F1
+# stays within +/- 0.005 of the pinned reference value in
+# `tests/regression/reproducibility_reference.json`. The reference cell
+# is anchored at
+# `backend/artifacts/experiments/dual_head_comparison_canonical.json`
+# (cell `summary.dual.regime_f1_macro.mean`).
+#
+# CPU-only on `ubuntu-latest`: the 1-seed x 1-fold smoke is light
+# enough that the cloud-GPU runner is not required. Falls back to a
+# clear failure if `HF_TOKEN` is unavailable (the smoke pulls the
+# canonical training package from HF Hub via `scripts/reproduce_all.py`).
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+concurrency:
+  group: reproduce-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reproduce-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: false
+    env:
+      TRAINING_PACKAGE_ID: tp_v3_macro_aug_2026_05_25_fwd_strict_sentiment_market_core_v1.1_epv1_v1.0
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      PYTHONPATH: backend
+    steps:
+      - name: checkout
+        uses: actions/checkout@v6
+
+      - name: setup python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: install backend deps
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]"
+
+      - name: verify reference cell is well-formed
+        run: |
+          pytest tests/regression/test_reproducibility_reference.py -q
+
+      - name: run reproducibility smoke
+        run: |
+          make reproduce-smoke \
+            TRAINING_PACKAGE_ID="${TRAINING_PACKAGE_ID}" \
+            SEED=11

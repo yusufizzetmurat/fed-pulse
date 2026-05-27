@@ -771,6 +771,7 @@ def test_checkpoint_payload_records_effective_cross_bank_under_fed_only(
         metrics={"val_loss": 0.0},
         args=args,
         class_weights={},
+        factor_coverage=0.0,
     )
     payload = torch.load(ckpt_path, weights_only=False)
     ta = payload["training_args"]
@@ -780,6 +781,9 @@ def test_checkpoint_payload_records_effective_cross_bank_under_fed_only(
     # fed_only the cross-bank pool is empty so the arm reduces to off.
     assert ta["effective_cross_bank_supervision"] == "off"
     assert ta["gtfintechlab_fed_only"] is True
+    # The #328 factor-coverage stamp rides on every checkpoint so the
+    # inference service can gate the factor card on it.
+    assert ta["factor_coverage"] == 0.0
 
 
 def test_checkpoint_payload_effective_matches_raw_when_not_fed_only(
@@ -799,9 +803,13 @@ def test_checkpoint_payload_effective_matches_raw_when_not_fed_only(
         metrics={"val_loss": 0.0},
         args=args,
         class_weights={},
+        factor_coverage=0.25,
     )
     payload = torch.load(ckpt_path, weights_only=False)
     ta = payload["training_args"]
     assert ta["cross_bank_supervision"] == "weighted"
     assert ta["effective_cross_bank_supervision"] == "weighted"
     assert ta["gtfintechlab_fed_only"] is False
+    # The trainer rounds-trips whatever coverage the caller computed
+    # onto the payload — the gate decision lives on the inference side.
+    assert ta["factor_coverage"] == 0.25

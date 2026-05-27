@@ -1,4 +1,10 @@
-export type ForecastMode = "fast" | "quick_train" | "real_train";
+// Issue #336 dead-code sweep: the quick_train / real_train members are
+// retired (the backend dropped both adaptation paths in #265). The
+// union is kept narrow to the only runtime mode the /analyze handler
+// still accepts. Persisted history rows can still carry stale strings
+// via the `forecast_mode` column on HistoryEntry, which is typed as a
+// plain `string` so the listing renders rows from before the sweep.
+export type ForecastMode = "fast";
 export type Horizon = "1d" | "3d" | "5d" | "10d";
 export type SymbolValue = string;
 
@@ -6,10 +12,6 @@ export interface AnalyzeRequest {
   text: string;
   date: string;
   symbol: SymbolValue;
-  // forecast_mode is retired from the frontend (#265). Field is optional
-  // so older history rows still type-check; new requests omit it and the
-  // backend defaults to "fast".
-  forecast_mode?: ForecastMode;
   horizon: Horizon;
   include_realized: boolean;
   include_xai?: boolean;

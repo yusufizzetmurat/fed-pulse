@@ -68,7 +68,7 @@ import numpy as np
 import pandas as pd
 
 from app.config import DATA_DIR
-from app.models.registry import encoder_ref
+from app.models.registry import encoder_ref, resolve_by_role
 from app.retrieval.index import (
     EXCERPT_CHARS,
     MAX_TEXT_CHARS,
@@ -77,7 +77,23 @@ from app.retrieval.index import (
 
 _logger = logging.getLogger(__name__)
 
-DEFAULT_BASE_ENCODER_ALIAS = "finbert_fed_adjacent_xbank_dapt"
+
+def _default_retrieval_base_alias() -> str:
+    """Resolve the canonical ``role: retrieval`` encoder (ADR 0019).
+
+    Falls back to the historical hard-coded alias if the registry has
+    no ``role: retrieval`` tag (e.g. a future registry rewrite that
+    drops the role-tagging convention) so the retrieval entrypoint
+    keeps booting on legacy configs.
+    """
+
+    try:
+        return resolve_by_role("retrieval")
+    except KeyError:
+        return "finbert_fed_adjacent_xbank_dapt"
+
+
+DEFAULT_BASE_ENCODER_ALIAS = _default_retrieval_base_alias()
 DEFAULT_OUTPUT_ROOT = DATA_DIR / "artifacts" / "retrieval"
 DEFAULT_RUN_NAME = "finbert_fed_adjacent_xbank_dapt_retrieval"
 DEFAULT_MAX_LENGTH = 256
@@ -97,6 +113,21 @@ FOLD_MANIFEST_FILENAME = "fold_manifest_expanding_walk_forward.json"
 # content. Adding "speech" / "testimony" stays a follow-up — they are
 # released by individual speakers, not the committee.
 POSITIVE_KINDS = ("minutes", "press_conference")
+
+# Pair-policy menu for ``build_training_pairs`` (#329). ``same_meeting``
+# is the pre-#329 default and preserves the original MNRL contract
+# byte-identical. ``shared_axis`` is the rebuild policy that draws
+# positives from statements which share an axis_stance / axis_factor /
+# axis_topic label across different meetings — supervision that
+# targets cross-meeting semantic similarity rather than
+# same-meeting-ness.
+PAIR_POLICIES = ("same_meeting", "shared_axis")
+DEFAULT_PAIR_POLICY = "same_meeting"
+
+# Axis columns the shared-axis policy reads from the events parquet.
+# Order matters: when more than one axis matches, the first hit wins
+# so the recorded ``positive_kind`` is deterministic across reruns.
+SHARED_AXIS_COLUMNS = ("axis_stance", "axis_factor", "axis_topic")
 
 
 @dataclass(frozen=True)
@@ -193,22 +224,46 @@ def build_training_pairs(  # noqa: C901 — flat column-validation guards keep t
     events: pd.DataFrame,
     *,
     train_end: str | None = None,
+    pair_policy: str = DEFAULT_PAIR_POLICY,
 ) -> list[TrainingPair]:
-    """Materialise same-meeting (statement, sibling) pairs from events.parquet.
+    """Materialise (anchor, positive) pairs from events.parquet.
 
-    Statements are the anchor population; their sibling minutes /
-    press_conference rows become positives. Meetings with no sibling
-    are dropped entirely — the pre-review build emitted a degenerate
-    ``(statement, statement)`` self-pair fallback, which teaches MNRL
-    to maximise self-similarity and amplifies the self-match problem
-    at retrieval time. Better to skip the meeting than to ship that
-    signal.
+    Two pair-construction policies share this entry point so the CLI
+    can flip between them without re-routing every caller:
+
+    * ``same_meeting`` (default, pre-#329 behaviour). Anchors are FOMC
+      statements; positives are the minutes / press_conference rows
+      released on the same ``event_date``. Meetings with no sibling
+      are dropped silently — the pre-review build emitted a degenerate
+      ``(statement, statement)`` self-pair fallback, which teaches MNRL
+      to maximise self-similarity and amplifies the self-match problem
+      at retrieval time.
+
+    * ``shared_axis`` (#329 rebuild). Anchors are statements; positives
+      are statements from a DIFFERENT meeting that share at least one
+      multi-axis label (``axis_stance`` / ``axis_factor`` /
+      ``axis_topic``). The first matching axis wins so
+      ``positive_kind`` is deterministic across reruns. Rows missing
+      every axis label are skipped (cannot match anyone); rows whose
+      axis value is empty / NaN are treated as unlabelled and excluded
+      from that axis's match set. The contrastive signal targets
+      cross-meeting semantic similarity rather than
+      same-meeting-ness, which the #329 hand-labelled recall@k probes
+      flagged as the original MNRL recipe's failure mode. Hard
+      negatives stay implicit: MNRL's in-batch contrast treats every
+      other positive as a negative, so a batch that mixes axes
+      delivers a different-axis hop for free.
 
     ``train_end`` (ISO date) enforces the walk-forward boundary at the
     earliest possible step: rows with ``event_date >= train_end`` are
     dropped BEFORE pair construction so the encoder never sees future
     text. Pass ``None`` for unbounded training (smoke / debug only).
     """
+
+    if pair_policy not in PAIR_POLICIES:
+        raise ValueError(
+            f"unknown pair_policy {pair_policy!r}; expected one of {PAIR_POLICIES}"
+        )
 
     if "event_kind" not in events.columns:
         raise KeyError("events parquet missing 'event_kind' column")
@@ -228,6 +283,12 @@ def build_training_pairs(  # noqa: C901 — flat column-validation guards keep t
         df = df.sort_values(["event_date", "event_kind", "horizon"])
     df = df.drop_duplicates(subset=["text_hash"], keep="first").reset_index(drop=True)
 
+    if pair_policy == "same_meeting":
+        return _build_same_meeting_pairs(df)
+    return _build_shared_axis_pairs(df)
+
+
+def _build_same_meeting_pairs(df: pd.DataFrame) -> list[TrainingPair]:
     statements = df[df["event_kind"] == "statement"]
     pairs: list[TrainingPair] = []
     for _, anchor_row in statements.iterrows():
@@ -255,6 +316,112 @@ def build_training_pairs(  # noqa: C901 — flat column-validation guards keep t
         # nothing — silently dropped. MNRL cannot learn from a
         # (statement, statement) pair without ingraining a self-match
         # bias at retrieval time.
+    return pairs
+
+
+def _normalise_axis_value(value: Any) -> str | None:
+    """Coerce an axis cell to a non-empty lowercased string or ``None``.
+
+    Treats NaN, empty strings, and the literal ``"none"`` / ``"nan"``
+    tokens as unlabelled so a malformed parquet does not collapse every
+    unlabelled row into one giant pseudo-class.
+    """
+
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip().lower()
+    if not text or text in ("none", "nan", "null"):
+        return None
+    return text
+
+
+def _build_shared_axis_pairs(df: pd.DataFrame) -> list[TrainingPair]:  # noqa: C901 — single-pass three-axis pair builder; collapsing the three axis loops would hide the policy
+    """Shared-axis pair builder for the #329 rebuild policy.
+
+    Walks the statement rows once to bucket text_hashes by
+    ``(axis_name, axis_value)`` keys, then iterates anchors and emits
+    one pair per (anchor, candidate) where the candidate sits in the
+    same axis bucket AND was released at a DIFFERENT meeting. Same-day
+    matches are filtered so the policy does not silently revert to
+    same-meeting supervision on axes where every meeting carries the
+    same label.
+    """
+
+    available_axes = [
+        col for col in SHARED_AXIS_COLUMNS if col in df.columns
+    ]
+    if not available_axes:
+        return []
+
+    statements = df[df["event_kind"] == "statement"].reset_index(drop=True)
+    if statements.empty:
+        return []
+
+    # Pre-index the statement population by axis bucket. Each bucket
+    # entry is (row_index, axis_value) so the anchor loop can look up
+    # candidates in O(1) without scanning the full frame each time.
+    buckets: dict[str, dict[str, list[int]]] = {axis: {} for axis in available_axes}
+    axis_values_by_row: list[dict[str, str | None]] = []
+    for idx, row in statements.iterrows():
+        row_axes: dict[str, str | None] = {}
+        for axis in available_axes:
+            value = _normalise_axis_value(row.get(axis))
+            row_axes[axis] = value
+            if value is not None:
+                buckets[axis].setdefault(value, []).append(int(idx))
+        axis_values_by_row.append(row_axes)
+
+    pairs: list[TrainingPair] = []
+    emitted_pairs: set[tuple[int, int]] = set()
+    for anchor_idx in range(len(statements)):
+        anchor_row = statements.iloc[anchor_idx]
+        anchor_text = _clean_text(anchor_row.get("text"))
+        if not anchor_text:
+            continue
+        anchor_date = str(anchor_row.get("event_date", ""))
+        anchor_axes = axis_values_by_row[anchor_idx]
+
+        # First-axis-wins: walk axes in declared order and stamp the
+        # pair with the first matching axis name. Subsequent axes
+        # cannot re-emit the same (anchor, candidate) — the
+        # ``emitted_pairs`` guard makes positive_kind deterministic
+        # across reruns and bounds the per-anchor pair count.
+        for axis in available_axes:
+            anchor_value = anchor_axes.get(axis)
+            if anchor_value is None:
+                continue
+            candidates = buckets[axis].get(anchor_value, [])
+            for candidate_idx in candidates:
+                if candidate_idx == anchor_idx:
+                    continue
+                pair_key = (anchor_idx, candidate_idx)
+                if pair_key in emitted_pairs:
+                    continue
+                candidate_row = statements.iloc[candidate_idx]
+                candidate_date = str(candidate_row.get("event_date", ""))
+                # Different-meeting requirement: shared-axis is about
+                # cross-meeting semantic similarity, not within-meeting
+                # rephrasing. Same-day matches collapse the policy back
+                # onto same-meeting supervision.
+                if candidate_date == anchor_date:
+                    continue
+                candidate_text = _clean_text(candidate_row.get("text"))
+                if not candidate_text or candidate_text == anchor_text:
+                    continue
+                emitted_pairs.add(pair_key)
+                pairs.append(
+                    TrainingPair(
+                        anchor=anchor_text,
+                        positive=candidate_text,
+                        anchor_date=anchor_date,
+                        positive_kind=f"shared_{axis}",
+                    )
+                )
     return pairs
 
 
@@ -337,12 +504,17 @@ def fine_tune_and_index(  # noqa: PLR0913 — keyword-only training-script knobs
     training_package_id: str | None = None,
     train_end: str | None = None,
     fold_id: str | None = None,
+    pair_policy: str = DEFAULT_PAIR_POLICY,
 ) -> Path:
     """Train the retrieval encoder and persist the index alongside it.
 
     Returns the path to the saved checkpoint directory.
     """
 
+    if pair_policy not in PAIR_POLICIES:
+        raise ValueError(
+            f"unknown pair_policy {pair_policy!r}; expected one of {PAIR_POLICIES}"
+        )
     if batch_size < 2:
         # MNRL builds its negatives from the rest of the in-batch
         # positives; a batch of 1 means there are no negatives and the
@@ -369,12 +541,18 @@ def fine_tune_and_index(  # noqa: PLR0913 — keyword-only training-script knobs
     repo, revision = _resolve_base_repo(base_encoder_alias)
 
     events = pd.read_parquet(events_parquet)
-    pairs = build_training_pairs(events, train_end=resolved_train_end)
+    pairs = build_training_pairs(
+        events,
+        train_end=resolved_train_end,
+        pair_policy=pair_policy,
+    )
     if not pairs:
         raise RuntimeError(
-            f"events_parquet {events_parquet} yielded zero (statement, sibling) pairs; "
-            "verify the parquet carries statement + minutes rows and the "
-            "train_end cutoff is not stripping every meeting."
+            f"events_parquet {events_parquet} yielded zero pairs under "
+            f"pair_policy={pair_policy!r}; verify the parquet carries the "
+            "expected rows (statement + minutes for same_meeting, "
+            "axis_* labels for shared_axis) and the train_end cutoff is "
+            "not stripping every meeting."
         )
 
     import torch  # type: ignore[import-not-found,unused-ignore]
@@ -401,12 +579,13 @@ def fine_tune_and_index(  # noqa: PLR0913 — keyword-only training-script knobs
     checkpoint_dir = out_dir / "checkpoint"
 
     _logger.info(
-        "retrieval_train_start base=%s pairs=%d epochs=%d batch_size=%d train_end=%s",
+        "retrieval_train_start base=%s pairs=%d epochs=%d batch_size=%d train_end=%s pair_policy=%s",
         base_encoder_alias,
         len(pairs),
         epochs,
         batch_size,
         resolved_train_end,
+        pair_policy,
     )
     model.fit(
         train_objectives=[(loader, loss)],
@@ -454,6 +633,7 @@ def fine_tune_and_index(  # noqa: PLR0913 — keyword-only training-script knobs
         "excerpt_chars": EXCERPT_CHARS,
         "train_end": resolved_train_end,
         "fold_id": fold_id,
+        "pair_policy": pair_policy,
         "saved_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     (out_dir / "training_args.json").write_text(
@@ -496,6 +676,19 @@ def _parse_args() -> argparse.Namespace:
             "(e.g. wf_fold_3). Mutually exclusive with --train-end."
         ),
     )
+    parser.add_argument(
+        "--pair-policy",
+        default=DEFAULT_PAIR_POLICY,
+        choices=list(PAIR_POLICIES),
+        help=(
+            "Pair-construction policy (#329). 'same_meeting' (default) "
+            "uses minutes / press_conference rows released on the "
+            "anchor's event_date — the pre-#329 recipe. 'shared_axis' "
+            "draws positives from cross-meeting statements sharing an "
+            "axis_stance / axis_factor / axis_topic label and targets "
+            "cross-meeting semantic similarity directly."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -516,6 +709,7 @@ def main() -> int:
         training_package_id=args.training_package_id,
         train_end=args.train_end,
         fold_id=args.fold_id,
+        pair_policy=args.pair_policy,
     )
     print(f"[retrieval.train] saved checkpoint to {checkpoint}")
     return 0

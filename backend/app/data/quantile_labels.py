@@ -11,11 +11,22 @@ fold and assigns one of three labels to every row in the fold:
 - ``neutral`` (= ``0``) — change in ``[33rd, 67th)``
 - ``tightening`` (= ``+1``) — change at or above the 67th percentile
 
-The bin edges are computed strictly from the train slice (no
-look-ahead) and the edge pair is persisted alongside the fold's metadata
-so the training-package reader and the conformal calibrator both see
-the same boundaries. The 33/67 quantiles match the convention pinned by
+The bin edges are computed per fold from that fold's train slice and
+the edge pair is persisted alongside the fold's metadata so the
+training-package reader and the conformal calibrator both see the
+same boundaries. The 33/67 quantiles match the convention pinned by
 the existing vol-regime classifier (calm / normal / high).
+
+The per-fold fit is leakage-irrelevant rather than leakage-protective:
+the tertile boundary is a property of the underlying volatility
+distribution, not of the train split. The §15 data-integrity audit
+confirms the cutoffs move by ~4-7% relative across the five
+walk-forward folds (q33 = 0.0063 -> 0.0067, q67 = 0.0099 -> 0.0103),
+so a single global cutoff on the pooled distribution yields nearly
+identical class assignments. Per-fold fitting is preserved for
+contract symmetry with the rest of the train-only statistics block
+(scalers, class weights) — it is not the mechanism that keeps the
+labelling protocol honest.
 """
 
 from __future__ import annotations

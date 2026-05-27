@@ -21,8 +21,16 @@ _TRAIN_FORECASTER_PATH = (
 _CONFIG_PATH = (
     Path(__file__).resolve().parents[2] / "backend" / "app" / "models" / "config.py"
 )
+# Post-#336 the input-prep + the time-decay kwarg live on the shared
+# backbone (``forecaster_base.py``). The lstm.py module survives as a
+# back-compat shim; the canonical owner of ``use_time_decay`` is the
+# base class.
 _LSTM_PATH = (
-    Path(__file__).resolve().parents[2] / "backend" / "app" / "models" / "lstm.py"
+    Path(__file__).resolve().parents[2]
+    / "backend"
+    / "app"
+    / "models"
+    / "forecaster_base.py"
 )
 
 
@@ -53,7 +61,13 @@ def test_forecaster_model_still_owns_the_time_decay_kwarg() -> None:
     source = _read(_LSTM_PATH)
     assert "use_time_decay: bool = True" in source
     assert "self.use_time_decay = bool(use_time_decay)" in source
-    assert "if self.use_time_decay:" in source
+    # Post-#336 the guarded branch reads the flag off the model
+    # reference passed to ``prepare_recurrent_input``; either spelling
+    # is acceptable.
+    assert (
+        "if self.use_time_decay:" in source
+        or "if model.use_time_decay:" in source
+    )
 
 
 def test_train_forecaster_exposes_no_time_decay_flag() -> None:

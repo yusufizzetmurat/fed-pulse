@@ -75,7 +75,7 @@ ALL_VARIANT_NAMES: list[str] = [
     "variant_a_plus_b",
     "variant_a_plus_c",
 ]
-from app.services.sentiment import analyze_text
+from app.services.text_encoder import analyze_text
 
 
 @dataclass

@@ -214,6 +214,36 @@ FORECASTER_ARCHITECTURES: tuple[str, ...] = (
     "dlinear",
     "informer",
     "tft",
+    # #327 Arm B. ``flat_mlp`` drops the sequence wrap on the text path
+    # entirely: the recurrent core is replaced by a flat MLP head that
+    # consumes ``[pooled_market_window || pooled_text_adapter || rich]``
+    # so the broadcast-static framing of the text path has an honest
+    # comparator. Wires through :class:`app.models.flat_mlp.ForecasterFlatMLP`.
+    "flat_mlp",
+)
+
+# Architectures excluded from the canonical sweep targets. See ADR 0020
+# (``docs/adr/0020-tft-architecture-comparison-exclusion.md``) and the
+# footnote on ``fed-pulse.wiki/06_Deep_Learning_Roadmap.md §6.7`` for
+# the rationale. TFT's published recipe routes predictions through its
+# native quantile output + Variable Selection Network; the in-repo
+# encoder pools to a generic classifier head, which strips the
+# inductive bias the architecture is designed around. The 0.3803 row
+# from §6.6 is retained as historical record only. A faithful
+# quantile-head reimplementation is filed as a STRETCH follow-up.
+#
+# The architecture identifier stays in ``FORECASTER_ARCHITECTURES`` so
+# existing checkpoints that recorded ``architecture='tft'`` continue to
+# load and the ``TFTEncoder`` module remains importable; new sweeps
+# should iterate ``CANONICAL_SWEEP_ARCHITECTURES`` instead.
+TFT_EXCLUSION_REASON: str = (
+    "TFT excluded from canonical architecture sweep per ADR 0020 "
+    "(generic classifier head strips the native quantile-output + "
+    "Variable Selection Network inductive bias). Faithful "
+    "quantile-head reimplementation is a STRETCH-tier follow-up."
+)
+CANONICAL_SWEEP_ARCHITECTURES: tuple[str, ...] = tuple(
+    arch for arch in FORECASTER_ARCHITECTURES if arch != "tft"
 )
 
 
@@ -320,18 +350,25 @@ class ModelConfig:
     # rare classes, mitigating the class-1 collapse the 3-class vol-regime
     # head exhibits on single-seed runs.
     class_weight_power: float = 1.0
-    # #304 dual-head methodology. ``classification`` (default) keeps the
-    # existing 3-class CrossEntropy head as the only output and is
-    # byte-identical to the pre-#304 path. ``regression`` swaps in a
-    # ``log(forward_realized_vol_10d)`` MSE head only (the classifier
-    # still mounts so the checkpoint shape is stable but its loss
-    # contribution is dropped). ``dual`` keeps both heads and trains
-    # the joint loss ``(1 - regression_alpha) * CE + regression_alpha * MSE``.
-    # The regression head is only meaningful when ``output_mode ==
-    # "classification"`` because that branch carries the
-    # ``forward_realized_vol_10d`` target; regression-output mode
+    # #304 dual-head methodology, recanonicalised under ADR 0015 (#322),
+    # with the empirical refinement per the dual-head three-way
+    # comparison (`artifacts/experiments/dual_head_comparison_canonical.json`,
+    # 2026-05-27). ``dual`` (default) trains the joint loss
+    # ``(1 - regression_alpha) * CE + regression_alpha * MSE`` so the
+    # 3-class CE head and the ``log(forward_realized_vol_10d)`` MSE head
+    # share a backbone; the sweep showed dual matches classification
+    # macro-F1 (0.419 vs 0.417) while shipping the regression band the
+    # canonical surface needs. ``regression`` trains the log-RV MSE head
+    # only — kept for the comparison sweep and for ablation, but on this
+    # corpus loses ~20pp macro-F1 vs classification on the UI-bucketed
+    # label space. ``classification`` keeps the legacy 3-class
+    # CrossEntropy head as the sole supervised signal and is retained
+    # for back-compat with pre-#322 checkpoints and the cross-objective
+    # ablation. The regression head is only meaningful when
+    # ``output_mode == "classification"`` because that branch carries
+    # the ``forward_realized_vol_10d`` target; regression-output mode
     # (close, vol) ignores ``head_mode`` entirely.
-    head_mode: str = "classification"
+    head_mode: str = "dual"
     regression_alpha: float = 0.5
     # #309 derived-text-features ablation. ``True`` (default) keeps the
     # FeatureVector's per-bar ``sentiment_score`` slot and the multi-axis
@@ -416,7 +453,7 @@ class ModelConfig:
             multi_task_lambda_certainty=float(getattr(model, "multi_task_lambda_certainty", 0.3)),
             multi_task_lambda_topic=float(getattr(model, "multi_task_lambda_topic", 0.3)),
             class_weight_power=float(getattr(model, "class_weight_power", 1.0)),
-            head_mode=str(getattr(model, "head_mode", "classification") or "classification"),
+            head_mode=str(getattr(model, "head_mode", "dual") or "dual"),
             regression_alpha=float(getattr(model, "regression_alpha", 0.5)),
             use_derived_text_features=bool(
                 getattr(model, "use_derived_text_features", True)
@@ -647,6 +684,17 @@ class FeatureVector:
     # ``TextEmbeddingAdapter`` so the scalar slice stays at 35 dims.
     text_embedding_pooled: list[float] = field(default_factory=list)
     text_embedding_missing: float = 1.0
+    # #327 Arm A. Per-bar pooled-text payload (``seq_len`` rows each of
+    # encoder-native width). Default ``None`` keeps the broadcast-static
+    # path (``text_channel='scalar'`` / ``'embeddings'``) byte-identical:
+    # the loader only populates this slot when ``text_channel='per_bar'``
+    # is wired, in which case each entry carries a per-day pool over the
+    # prior-N FOMC documents aligned to that bar's calendar date. The
+    # length is enforced to match the lookback the loader emits the
+    # sequence under; ``None`` collapses the per-bar slot at model
+    # forward time to the same broadcast-zero path the embedding adapter
+    # walks when the missing flag fires.
+    text_per_bar: list[list[float]] | None = None
     # Round 5 (#244) LoRA path raw text. Populated by the loader on the
     # target-row bar of each sequence only when ``encoder_lora=True`` is
     # threaded into the package-loading call. The other 20 lookback

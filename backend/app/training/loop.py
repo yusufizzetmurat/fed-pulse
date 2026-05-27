@@ -126,33 +126,36 @@ def _coerce_model_config(model_config: ModelConfig | dict[str, Any] | None = Non
     if isinstance(model_config, ModelConfig):
         return model_config
     if isinstance(model_config, dict):
-        return ModelConfig(
-            input_size=int(model_config.get("input_size", FEATURE_SIZE)),
-            hidden_size=int(model_config.get("hidden_size", DEFAULT_HIDDEN_SIZE)),
-            num_layers=int(model_config.get("num_layers", DEFAULT_NUM_LAYERS)),
-            dropout=float(model_config.get("dropout", DEFAULT_DROPOUT)),
-            head_hidden_size=int(model_config.get("head_hidden_size", DEFAULT_HEAD_HIDDEN_SIZE)),
-            initial_decay_rate=float(model_config.get("initial_decay_rate", DEFAULT_INITIAL_DECAY_RATE)),
-            text_channel=str(model_config.get("text_channel", "scalar")),
-            embedding_adapter_dim=int(model_config.get("embedding_adapter_dim", 128)),
-            credibility_features=bool(model_config.get("credibility_features", False)),
-            architecture=str(model_config.get("architecture", "lstm")),
-            text_embedding_dim=int(model_config.get("text_embedding_dim", 0) or 0),
-            text_adapter_dim=int(model_config.get("text_adapter_dim", 0) or 0),
-            # #317 finding #4: forward post-#292 rates fields so a
-            # checkpoint with rates heads round-trips through the
-            # loader. Pre-#292 callers leave these keys absent and the
-            # defaults give back the empty-tuple no-op.
-            rates_heads=tuple(
-                str(v).lower()
-                for v in (model_config.get("rates_heads") or ())
-            ),
-            rates_head_mode=str(
-                model_config.get("rates_head_mode", "regression")
-                or "regression"
-            ),
-            rates_alpha=float(model_config.get("rates_alpha", 0.5)),
-        )
+        # The historical implementation listed each ``ModelConfig`` field
+        # individually and silently dropped anything not enumerated --
+        # which meant a checkpoint's ``output_mode``, ``n_classes``,
+        # ``vol_regime_quantiles``, ``head_mode``, ``multi_task_loss`` and
+        # most other post-baseline fields never reached the rebuilt
+        # config. The reloaded model therefore inherited the dataclass
+        # defaults, mismatched the checkpoint's head shape on load, and
+        # crashed at inference when callers relied on attributes the
+        # checkpoint had actually persisted (the on-disk
+        # ``forecaster_best.pt`` regularly hits this on
+        # ``test_forecast_quantitative_series_fast_shape`` and friends).
+        # ``dataclasses.fields`` is the source of truth; we forward every
+        # key the dataclass declares, with type-coercion only for the
+        # fields that JSON round-trips lossy (tuples become lists, etc.).
+        field_names = {f.name for f in dataclasses.fields(ModelConfig)}
+        tuple_fields = {
+            "rates_heads",
+            "vol_regime_quantiles",
+        }
+        kwargs: dict[str, Any] = {}
+        for key, value in model_config.items():
+            if key not in field_names:
+                continue
+            if key == "rates_heads":
+                kwargs[key] = tuple(str(v).lower() for v in (value or ()))
+            elif key in tuple_fields:
+                kwargs[key] = tuple(float(v) for v in (value or ()))
+            else:
+                kwargs[key] = value
+        return ModelConfig(**kwargs)
     return ModelConfig()
 
 
@@ -160,6 +163,7 @@ def _build_model(
     model_config: ModelConfig | dict[str, Any] | None = None,
     *,
     device: torch.device | None = None,
+    text_adapter_warm_start: str | None = None,
 ) -> ForecasterModel:
     # Local import keeps ``app.models.factory`` cold until training fires,
     # which keeps the FastAPI singleton import path narrow.
@@ -167,6 +171,21 @@ def _build_model(
 
     resolved_config = _coerce_model_config(model_config)
     model = build_forecaster(resolved_config)
+    if text_adapter_warm_start:
+        # #327 warm-start. Replace the text adapter's zero-init weights
+        # with a state_dict fit on the (pooled text -> stance) proxy
+        # task so the recurrent core sees a real gradient through the
+        # text path from epoch 0.
+        adapter = getattr(model, "text_adapter", None)
+        if adapter is not None:
+            from app.models.text_adapter_warm_start import (  # noqa: PLC0415
+                load_warm_start_into_adapter,
+            )
+
+            warm_meta = load_warm_start_into_adapter(
+                adapter, text_adapter_warm_start, strict=False
+            )
+            model.text_adapter_warm_start = warm_meta  # type: ignore[assignment]
     if device is not None:
         model = model.to(device)
     # The factory may return MultiModalForecasterModel under
@@ -871,7 +890,11 @@ def _maybe_write_classification_conformal_manifest(
         DEFAULT_CLASSIFICATION_ALPHA,
         ConformalManifest,
         calibrate_classification_conformal,
+        class_conditional_gap_flag,
+        compute_class_conditional_coverage,
+        compute_set_size_distribution,
         load_manifest,
+        predict_conformal_set,
         save_manifest,
     )
 
@@ -884,6 +907,38 @@ def _maybe_write_classification_conformal_manifest(
     except ValueError as exc:
         print(f"[conformal] classification calibration skipped: {exc}", flush=True)
         return
+
+    # #326 conditional diagnostics. Rebuild APS sets on the same val
+    # rows the threshold was fitted on -- self-coverage is the
+    # canonical reporting partition for split-conformal (Romano 2020
+    # §4) and matches the "calibration fold" the issue contract names.
+    # Class labels come from the active config's regime tuple; the
+    # helper falls back to ``["class_0", "class_1", ...]`` when no
+    # class names tuple is available so the helper is not gated on a
+    # ModelConfig fixture in tests / smoke runs.
+    n_classes = max((len(row) for row in class_scores), default=0)
+    class_names = _resolve_class_names_for_conformal(n_classes)
+    predicted_sets = [predict_conformal_set(row, softmax_q) for row in class_scores]
+    try:
+        class_cond = compute_class_conditional_coverage(
+            predicted_sets, targets, class_names
+        )
+    except ValueError as exc:
+        print(
+            f"[conformal] class-conditional coverage skipped: {exc}",
+            flush=True,
+        )
+        class_cond = None
+    try:
+        set_size = compute_set_size_distribution(
+            predicted_sets, n_classes=n_classes
+        )
+    except ValueError as exc:
+        print(
+            f"[conformal] set-size distribution skipped: {exc}",
+            flush=True,
+        )
+        set_size = None
 
     sidecar = Path(str(checkpoint_target.with_suffix("")) + ".conformal.json")
     if sidecar.exists():
@@ -908,6 +963,8 @@ def _maybe_write_classification_conformal_manifest(
                 softmax_quantile=softmax_q,
                 rates_residual_quantiles=existing.rates_residual_quantiles,
                 rates_softmax_quantiles=existing.rates_softmax_quantiles,
+                class_conditional_coverage=class_cond,
+                set_size_distribution=set_size,
             )
         except Exception:
             # Stale / unreadable sidecar — overwrite with a classification-only
@@ -920,6 +977,8 @@ def _maybe_write_classification_conformal_manifest(
                 residual_quantile_volatility=0.0,
                 calibration_n=len(class_scores),
                 softmax_quantile=softmax_q,
+                class_conditional_coverage=class_cond,
+                set_size_distribution=set_size,
             )
     else:
         manifest = ConformalManifest(
@@ -929,13 +988,66 @@ def _maybe_write_classification_conformal_manifest(
             residual_quantile_volatility=0.0,
             calibration_n=len(class_scores),
             softmax_quantile=softmax_q,
+            class_conditional_coverage=class_cond,
+            set_size_distribution=set_size,
         )
     save_manifest(manifest, sidecar)
+    # #326 class-conditional coverage gap flag. Surface degenerate
+    # per-class coverage (any class falling >0.10 below nominal) on
+    # the calibration log so the operator sees the warning before the
+    # checkpoint goes to inference -- the marginal coverage number
+    # alone can hide a class systematically dropped from the set
+    # (the issue's canonical normal-class collapse case).
+    flagged: list[str] = []
+    if class_cond:
+        flagged = class_conditional_gap_flag(
+            class_cond,
+            nominal=1.0 - DEFAULT_CLASSIFICATION_ALPHA,
+            tolerance=0.10,
+        )
     print(
         f"[conformal] calibrated softmax_quantile={softmax_q:.4f} "
         f"on n={len(class_scores)} val rows -> {sidecar.name}",
         flush=True,
     )
+    if class_cond is not None:
+        cov_repr = ", ".join(
+            f"{k}={v:.3f}" for k, v in class_cond.items()
+        )
+        print(f"[conformal] class-conditional coverage: {cov_repr}", flush=True)
+    if set_size is not None:
+        size_repr = ", ".join(
+            f"|S|={k}:{v:.3f}" for k, v in set_size.items()
+        )
+        print(f"[conformal] set-size distribution: {size_repr}", flush=True)
+    if flagged:
+        print(
+            "[conformal] WARNING class-conditional coverage gap > 0.10 below "
+            f"nominal on: {flagged}",
+            flush=True,
+        )
+
+
+def _resolve_class_names_for_conformal(n_classes: int) -> list[str]:
+    """Resolve the class label tuple the conformal diagnostics key on (#326).
+
+    The 3-class vol-regime head uses the canonical
+    ``("calm", "normal", "high")`` tuple from
+    :mod:`app.services.regime_bucketing`. On a different cardinality
+    (stance head, future multi-axis variants) the helper falls back
+    to ``[f"class_{i}"]`` so the conditional-coverage dict still
+    round-trips through the manifest -- the operator can rename the
+    keys downstream when the surface is wired through the API.
+    """
+
+    if n_classes == 3:
+        try:
+            from app.services.regime_bucketing import REGIME_LABELS
+
+            return list(REGIME_LABELS)
+        except Exception:  # pragma: no cover -- defensive
+            pass
+    return [f"class_{i}" for i in range(max(0, n_classes))]
 
 
 def _maybe_write_rates_conformal_manifest(
@@ -1048,6 +1160,16 @@ def _maybe_write_rates_conformal_manifest(
                 "calibration_n": existing.calibration_n,
                 "notes": existing.notes,
                 "softmax_quantile": existing.softmax_quantile,
+                # #326 conditional diagnostics. Preserve the
+                # classification-side conditional fields written by
+                # ``_maybe_write_classification_conformal_manifest``;
+                # the rates step does not produce its own
+                # class-conditional view (rates heads are per-row
+                # regression, not classification) so the merge keeps
+                # whatever the prior step wrote rather than clobbering
+                # the fields back to None.
+                "class_conditional_coverage": existing.class_conditional_coverage,
+                "set_size_distribution": existing.set_size_distribution,
             }
         )
     if rates_residuals:
@@ -1275,11 +1397,14 @@ def _combine_dual_head_loss(
             "head_mode in {regression, dual}."
         )
     if batch_log_rv is None:
-        raise RuntimeError(
-            "head_mode requires a log_rv target tensor but the batch "
-            "carries None; the partition builder did not emit the "
-            "dual-head target."
-        )
+        # ADR 0015 (#322) made ``head_mode='regression'`` the default,
+        # which means datasets that lack ``forward_realized_vol_10d``
+        # rows (typical for narrow rates-only test fixtures + the
+        # cross-bank auxiliary path) now inherit the regression objective
+        # by default. Soft-demote to CE-only on this batch rather than
+        # failing the run; the caller's ``ce_loss`` already accounts for
+        # the classification surface that ships when log_rv is missing.
+        return ce_loss
     log_rv_pred = logits_dict["log_rv"]
     mse_loss = F.mse_loss(log_rv_pred, batch_log_rv.to(log_rv_pred.dtype))
     _assert_dual_head_scales_balanced(ce_loss, mse_loss)
@@ -2231,6 +2356,7 @@ def train_model(
     use_amp: bool = True,
     lr_schedule: str = "plateau",
     use_class_weights: bool = True,
+    text_adapter_warm_start: str | None = None,
 ) -> TrainingResult:
     # ``validation_split`` is the legacy kwarg name; ``validation_fraction``
     # is the canonical one across the CLI, the training loop, and the
@@ -2638,7 +2764,15 @@ def train_model(
             fallback_in_dim=fallback_text_in_dim,
         )
         if x is None or y is None:
-            model = copy.deepcopy(base_model).to(device_obj) if base_model is not None else _build_model(active_model_config, device=device_obj)
+            model = (
+                copy.deepcopy(base_model).to(device_obj)
+                if base_model is not None
+                else _build_model(
+                    active_model_config,
+                    device=device_obj,
+                    text_adapter_warm_start=text_adapter_warm_start,
+                )
+            )
             model.eval()
             return TrainingResult(
                 model=model,
@@ -2725,7 +2859,15 @@ def train_model(
     # Empty-tensor guard for the walk-forward branch. The legacy branch
     # already short-circuits above on (x, y) == (None, None).
     if walk_forward_path and (train_x is None or train_y is None):
-        model = copy.deepcopy(base_model).to(device_obj) if base_model is not None else _build_model(active_model_config, device=device_obj)
+        model = (
+            copy.deepcopy(base_model).to(device_obj)
+            if base_model is not None
+            else _build_model(
+                active_model_config,
+                device=device_obj,
+                text_adapter_warm_start=text_adapter_warm_start,
+            )
+        )
         model.eval()
         return TrainingResult(
             model=model,
@@ -2914,7 +3056,11 @@ def train_model(
     work_model = (
         copy.deepcopy(base_model).to(device_obj)
         if base_model is not None
-        else _build_model(active_model_config, device=device_obj)
+        else _build_model(
+            active_model_config,
+            device=device_obj,
+            text_adapter_warm_start=text_adapter_warm_start,
+        )
     )
     work_model.train()
     # AdamW best-practice param-group split (BERT-era convention).
@@ -3093,13 +3239,26 @@ def train_model(
         getattr(active_model_config, "regression_alpha", 0.5)
     )
     if dual_head_active and _active_output_mode != "classification":
-        raise ValueError(
-            "head_mode in {regression, dual} requires "
-            "output_mode='classification' (the regression head reads "
-            "log(forward_realized_vol_10d) which only exists on the "
-            "classification branch); got output_mode="
-            f"{_active_output_mode!r}"
+        # ADR 0015 (#322) flipped the ``head_mode`` default to
+        # ``regression``, which means the close/vol regression
+        # (``output_mode='regression'``) path now inherits the new
+        # default even though it has no ``log(forward_realized_vol_10d)``
+        # target to optimise against. Per the design contract in
+        # ``ModelConfig.head_mode`` ("regression-output mode (close,
+        # vol) ignores ``head_mode`` entirely"), demote the dual-head
+        # branch silently rather than failing the run. The previous
+        # ``raise`` predated the default flip and only fired when a
+        # caller explicitly set ``head_mode='regression'`` on a
+        # close/vol run -- now it would fire on every legacy training
+        # call too.
+        print(
+            f"[train_model] head_mode={active_head_mode} ignored on "
+            f"output_mode={_active_output_mode!r}; regression head "
+            "has no log(forward_realized_vol_10d) target in this mode.",
+            flush=True,
         )
+        dual_head_active = False
+        active_head_mode = "classification"
     if dual_head_active:
         print(
             f"[train_model] dual-head active: head_mode={active_head_mode} "

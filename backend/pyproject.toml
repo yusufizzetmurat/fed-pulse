@@ -169,8 +169,7 @@ ignore = [
 "app/services/scraper_regional_research.py" = ["C901"]
 "app/services/scraper_speeches.py" = ["C901"]
 "app/services/scraper_testimonies.py" = ["C901"]
-"app/services/sentiment.py" = ["C901"]
-"app/services/text_encoder.py" = ["PLR0913"]
+"app/services/text_encoder.py" = ["C901", "PLR0913"]
 "app/train_forecaster.py" = ["PLR0913", "C901"]
 "app/training/loaders.py" = ["PLR0913", "C901"]
 "app/training/loop.py" = ["PLR0913", "C901"]
@@ -255,4 +254,5 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 markers = [
   "slow: marks tests as slow (skip via -m 'not slow')",
+  "regression: marks tests that lock in the canonical training / serving contracts (run via -m regression)",
 ]

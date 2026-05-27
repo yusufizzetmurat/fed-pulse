@@ -195,6 +195,7 @@ def test_train_and_persist_manifest_carries_train_end_and_fold_id(
         embed_fn=_toy_embedder,
         holdout_share=0.0,
         calibration_share=0.0,
+        enforce_param_cap=False,  # toy 4-dim embedder + 4x64 transformer exceeds the #332 cap; legit override for trainer wiring tests.
     )
     manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["train_end"] == "2020-01-01"
@@ -481,6 +482,7 @@ def test_train_and_persist_manifest_includes_parameter_count(tmp_path: Path) -> 
         embed_fn=_toy_embedder,
         holdout_share=0.0,
         calibration_share=0.0,
+        enforce_param_cap=False,  # toy 4-dim embedder + 4x64 transformer exceeds the #332 cap; legit override for trainer wiring tests.
     )
     manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
     assert "model_parameter_count" in manifest

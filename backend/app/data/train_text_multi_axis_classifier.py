@@ -52,8 +52,28 @@ from app.training.loss import MultiTaskLoss
 _logger = logging.getLogger(__name__)
 
 DEFAULT_CHECKPOINT_PATH = MODEL_CHECKPOINT_DIR / "text_multi_axis_best.pt"
-DEFAULT_ENCODER_ALIAS = "finbert_fed_adjacent"
 DEFAULT_ARTIFACT_ROOT = DATA_DIR / "artifacts" / "text_multi_axis"
+
+
+def _default_classifier_encoder_alias() -> str:
+    """Resolve the canonical ``role: classifier`` encoder (ADR 0019).
+
+    Falls back to the historical hard-coded alias when the registry has
+    no ``role: classifier`` tag so the classifier training CLI keeps
+    booting on legacy configs (mirrors the retrieval entrypoint).
+    """
+
+    # Late import to avoid pulling the full registry yaml at module
+    # import time on environments that only need the dataclasses.
+    from app.models.registry import resolve_by_role
+
+    try:
+        return resolve_by_role("classifier")
+    except KeyError:
+        return "finbert_fed_adjacent"
+
+
+DEFAULT_ENCODER_ALIAS = _default_classifier_encoder_alias()
 
 
 @dataclass
@@ -962,13 +982,33 @@ def _save_hf_encoder_directory(
     tokenizer.save_pretrained(str(checkpoint_dir))
 
 
-def _save_checkpoint(
+def _factor_coverage_fraction(rows: list[_AxisRow]) -> float:
+    """Fraction of supervised rows that carried a populated factor label.
+
+    Issue #328: the inference service uses this stamp to gate the
+    factor card on the /analyze response. A canonical training pool
+    today carries 0 % factor coverage (the gss_factor source rows are
+    not joined into the events.parquet aggregation), so the regression
+    head emits effectively-random values; gating the response on the
+    persisted coverage is how the surface stops rendering noise as a
+    prediction. An empty row list returns 0.0 so a misconfigured run
+    that produces no rows still trips the gate.
+    """
+
+    if not rows:
+        return 0.0
+    populated = sum(1 for r in rows if bool(r.masks.get("factor", False)))
+    return populated / len(rows)
+
+
+def _save_checkpoint(  # noqa: PLR0913 — kw-only checkpoint envelope; collapsing the metadata kwargs into a single dataclass would obscure the persisted fields
     model: TextMultiAxisClassifier,
     *,
     path: Path,
     metrics: dict[str, float],
     args: argparse.Namespace,
     class_weights: dict[str, torch.Tensor],
+    factor_coverage: float,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -1016,11 +1056,22 @@ def _save_checkpoint(
                 if bool(getattr(args, "gtfintechlab_fed_only", False))
                 else str(getattr(args, "cross_bank_supervision", "off"))
             ),
+            # Issue #328: persist the fraction of train rows that
+            # carried a populated ``axis_factor`` label so the
+            # inference service can gate the factor card on it.
+            # Coverage < threshold (default 0.01) drops the card
+            # from the /analyze response — the factor branch has
+            # trained almost exclusively on the masked-out path on
+            # those checkpoints and its outputs are noise. ADR 0018
+            # captures the decision.
+            "factor_coverage": float(factor_coverage),
         },
         "saved_at_utc": datetime.now(timezone.utc).isoformat(),
     }
     torch.save(payload, path)
-    _logger.info("checkpoint_written path=%s", path)
+    _logger.info(
+        "checkpoint_written path=%s factor_coverage=%.4f", path, factor_coverage
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1081,6 +1132,17 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     class_weights = _build_axis_class_weights(train_rows)
+    # Compute factor coverage on the train slice (the supervision the
+    # head actually trained on, not the whole corpus). Persisted onto
+    # the checkpoint payload so the inference service can gate the
+    # factor card on it (#328 / ADR 0018).
+    factor_coverage = _factor_coverage_fraction(train_rows)
+    _logger.info(
+        "factor_axis_coverage train_rows=%d populated=%d coverage=%.4f",
+        len(train_rows),
+        sum(1 for r in train_rows if bool(r.masks.get("factor", False))),
+        factor_coverage,
+    )
 
     from transformers import AutoTokenizer
 
@@ -1174,6 +1236,7 @@ def main(argv: list[str] | None = None) -> int:
                 metrics=best_metrics,
                 args=args,
                 class_weights=class_weights,
+                factor_coverage=factor_coverage,
             )
             _save_hf_encoder_directory(model, tokenizer, hf_checkpoint_dir)
             print(f"[multi_axis] hf checkpoint saved to {hf_checkpoint_dir}")

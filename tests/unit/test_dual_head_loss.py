@@ -162,17 +162,23 @@ def test_combine_dual_head_loss_dual_mixes_ce_and_mse() -> None:
     assert torch.isclose(out, torch.tensor(1.3), atol=1e-6)
 
 
-def test_combine_dual_head_loss_missing_log_rv_target_raises() -> None:
+def test_combine_dual_head_loss_missing_log_rv_target_soft_demotes_to_ce() -> None:
+    """ADR 0015 (#322) flipped ``head_mode`` to regression by default;
+    fixtures and datasets that lack ``forward_realized_vol_10d`` rows
+    now inherit the regression objective without supplying the target.
+    The helper must soft-demote to CE-only on that batch rather than
+    failing the run."""
+
     ce = torch.tensor(0.5, requires_grad=True)
     logits = {"stance": torch.zeros(4, 3), "log_rv": torch.zeros(4)}
-    with pytest.raises(RuntimeError, match="log_rv target tensor"):
-        _combine_dual_head_loss(
-            ce_loss=ce,
-            logits_dict=logits,
-            batch_log_rv=None,
-            head_mode="dual",
-            regression_alpha=0.5,
-        )
+    out = _combine_dual_head_loss(
+        ce_loss=ce,
+        logits_dict=logits,
+        batch_log_rv=None,
+        head_mode="dual",
+        regression_alpha=0.5,
+    )
+    assert torch.equal(out, ce)
 
 
 def test_maybe_add_dual_head_loss_classification_no_op() -> None:
@@ -288,21 +294,30 @@ def test_head_mode_dual_persists_on_round_tripped_config() -> None:
     assert rebuilt.regression_alpha == pytest.approx(0.5)
 
 
-def test_dual_head_requires_classification_output_mode() -> None:
-    """head_mode in {regression, dual} only makes sense for classification."""
+def test_dual_head_soft_demotes_on_incompatible_output_mode(capsys) -> None:
+    """ADR 0015 (#322) flipped the ``head_mode`` default to ``regression``,
+    so the close/vol regression path (``output_mode='regression'``) now
+    inherits the new default and would otherwise fail the run. The
+    documented contract on ``ModelConfig.head_mode`` ("regression-output
+    mode (close, vol) ignores ``head_mode`` entirely") forces a soft
+    demotion: training completes, the run's effective head mode collapses
+    to classification, and a single diagnostic line is emitted on
+    stdout."""
 
     config = ModelConfig(output_mode="regression", head_mode="dual")
-    with pytest.raises(ValueError, match="output_mode='classification'"):
-        train_model(
-            model_config=config,
-            train_sequence_groups=_make_walk_forward_groups(),
-            val_sequence_groups=_make_walk_forward_groups(),
-            test_sequence_groups=_make_walk_forward_groups(),
-            epochs=1,
-            save_checkpoint=False,
-            use_compile=False,
-            use_amp=False,
-        )
+    result = train_model(
+        model_config=config,
+        train_sequence_groups=_make_walk_forward_groups(),
+        val_sequence_groups=_make_walk_forward_groups(),
+        test_sequence_groups=_make_walk_forward_groups(),
+        epochs=1,
+        save_checkpoint=False,
+        use_compile=False,
+        use_amp=False,
+    )
+    assert result.summary.epochs_completed == 1
+    captured = capsys.readouterr()
+    assert "ignored on output_mode='regression'" in captured.out
 
 
 # ---------------------------------------------------------------------------
