@@ -184,11 +184,14 @@ RICH_MACRO_REGIME_MISSING_SLICE = slice(
     RICH_MACRO_REGIME_SLICE.stop,
     RICH_MACRO_REGIME_SLICE.stop + RICH_MACRO_REGIME_MISSING_DIM,
 )
-# #215 SEP block slice positions. The block sits past the regime block
-# in the conditional-emit order (regime, then SEP) so a checkpoint
-# trained with only the regime flag on retains the same input width
-# when SEP is off — and vice versa. ``as_rich_list`` keeps the
-# documented order: market | rich | regime? | sep?.
+# #215 SEP block slice positions. The constants describe where the SEP
+# block lands when BOTH the regime and SEP blocks are populated -- i.e.
+# past the regime tail in the both-on path. ``as_rich_list`` keeps the
+# documented order: market | rich | regime? | sep?. When only SEP is
+# populated (regime off), the block sits at
+# ``[RICH_FEATURE_SIZE : RICH_FEATURE_SIZE + RICH_SEP_DIM]`` instead;
+# callers iterating the SEP block on the only-SEP-on path should slice
+# at the dynamic offset.
 RICH_SEP_SLICE = slice(
     RICH_MACRO_REGIME_MISSING_SLICE.stop,
     RICH_MACRO_REGIME_MISSING_SLICE.stop + RICH_SEP_DIM,

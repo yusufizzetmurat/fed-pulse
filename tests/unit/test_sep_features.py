@@ -175,8 +175,6 @@ from app.models.config import (  # noqa: E402
     RICH_MACRO_REGIME_MISSING_DIM,
     RICH_SEP_DIM,
     RICH_SEP_MISSING_DIM,
-    RICH_SEP_SLICE,
-    RICH_SEP_MISSING_SLICE,
     rich_feature_size_with_blocks,
     rich_feature_size_with_sep,
 )
@@ -196,7 +194,14 @@ def test_as_rich_list_default_omits_sep_block() -> None:
 
 
 def test_as_rich_list_populated_appends_sep_block() -> None:
-    """A populated SEP slot appends the block past ``RICH_FEATURE_SIZE``."""
+    """A populated SEP slot appends the block past ``RICH_FEATURE_SIZE``.
+
+    When only ``sep_features`` is populated (no regime block) the SEP
+    block lands at positions ``[RICH_FEATURE_SIZE : RICH_FEATURE_SIZE +
+    RICH_SEP_DIM]``. The module-level ``RICH_SEP_SLICE`` constant is
+    defined for the both-on case and sits past the regime tail; the
+    only-SEP-on case slices at the dynamic offset below.
+    """
 
     block = [4.6, 3.9, 2.6, 0.5, 1.0]
     fv = FeatureVector(
@@ -210,8 +215,8 @@ def test_as_rich_list_populated_appends_sep_block() -> None:
     rich = fv.as_rich_list()
     expected_width = RICH_FEATURE_SIZE + RICH_SEP_DIM + RICH_SEP_MISSING_DIM
     assert len(rich) == expected_width
-    assert rich[RICH_SEP_SLICE] == block
-    assert rich[RICH_SEP_MISSING_SLICE] == [0.0]
+    assert rich[RICH_FEATURE_SIZE : RICH_FEATURE_SIZE + RICH_SEP_DIM] == block
+    assert rich[RICH_FEATURE_SIZE + RICH_SEP_DIM] == 0.0
 
 
 def test_rich_feature_size_with_sep_helper() -> None:
@@ -258,7 +263,11 @@ def test_short_sep_payload_zero_pads() -> None:
         sep_features_missing=0.0,
     )
     rich = fv.as_rich_list()
-    assert rich[RICH_SEP_SLICE] == [4.6, 3.9] + [0.0] * (RICH_SEP_DIM - 2)
+    # SEP-only path: block sits at ``[RICH_FEATURE_SIZE : ...]``.
+    assert (
+        rich[RICH_FEATURE_SIZE : RICH_FEATURE_SIZE + RICH_SEP_DIM]
+        == [4.6, 3.9] + [0.0] * (RICH_SEP_DIM - 2)
+    )
 
 
 def test_sep_block_appends_after_regime_block_when_both_on() -> None:
@@ -519,28 +528,48 @@ def test_loader_sep_flag_on_populates_block_with_forward_fill(loader_package: Pa
     assert split.train
 
     expected_width = rich_feature_size_with_sep(True)
-    by_event_date: dict[str, list[float]] = {}
+    # Each sequence's lookback bar 0 carries the supervised event's
+    # SEP block (broadcast onto every bar by the loader); the target
+    # row's date is the day after the event so we read the block off
+    # the prior-window bars and key by the implied event date instead.
+    sep_by_first_bar_date: dict[str, list[float]] = {}
     for partition in (split.train, split.val, split.test):
         for sequence in partition:
-            target = sequence[-1]
-            event_date_key = target.date[:10]
             for vector in sequence:
                 assert vector.sep_features is not None
                 assert vector.sep_features_missing == 0.0
                 assert len(vector.sep_features) == RICH_SEP_DIM
                 assert len(vector.as_rich_list()) == expected_width
-            by_event_date[event_date_key] = list(target.sep_features)
+            # First lookback bar's date is ``event_date - SEQUENCE_LENGTH``
+            # in the synthetic fixture; the SEP block on every bar is the
+            # block the loader computed for the supervised event. Read
+            # from the last lookback bar (most recent prior bar) to key
+            # by something deterministic.
+            anchor = sequence[-2]
+            sep_by_first_bar_date[anchor.date[:10]] = list(anchor.sep_features)
 
+    # The synthetic fixture's prior-bar window ends at ``event_date - 1``,
+    # so the last lookback bar's date is one day before the supervised
+    # event. Map back to event dates via the documented offset.
+    keys_sorted = sorted(sep_by_first_bar_date.keys())
+    assert len(keys_sorted) == 3, (
+        f"fixture must produce 3 supervised sequences; got {keys_sorted}"
+    )
+    # Order: 2024-03-19 (March event), 2024-04-30 (May event),
+    # 2024-12-17 (December event).
+    march_block = sep_by_first_bar_date[keys_sorted[0]]
+    may_block = sep_by_first_bar_date[keys_sorted[1]]
+    december_block = sep_by_first_bar_date[keys_sorted[2]]
     # March: own release. ``release_flag`` (last scalar) = 1.0;
     # current-year median = 4.6.
-    assert by_event_date["2024-03-20"][0] == pytest.approx(4.6)
-    assert by_event_date["2024-03-20"][-1] == 1.0
+    assert march_block[0] == pytest.approx(4.6)
+    assert march_block[-1] == 1.0
     # May: forward-fill from March. Values match March; ``release_flag`` = 0.0.
-    assert by_event_date["2024-05-01"][0] == pytest.approx(4.6)
-    assert by_event_date["2024-05-01"][-1] == 0.0
+    assert may_block[0] == pytest.approx(4.6)
+    assert may_block[-1] == 0.0
     # December: own release. Values match December; ``release_flag`` = 1.0.
-    assert by_event_date["2024-12-18"][0] == pytest.approx(4.4)
-    assert by_event_date["2024-12-18"][-1] == 1.0
+    assert december_block[0] == pytest.approx(4.4)
+    assert december_block[-1] == 1.0
 
 
 def test_loader_sep_absent_parquet_collapses_to_missing(tmp_path: Path, monkeypatch) -> None:
@@ -559,13 +588,26 @@ def test_loader_sep_absent_parquet_collapses_to_missing(tmp_path: Path, monkeypa
     rows = [
         _make_event_row(
             event_date="2024-03-20",
-            text="Statement text.",
+            text="Statement text March.",
             axis_stance="neutral",
             base_close=4500.0,
         ),
+        _make_event_row(
+            event_date="2024-06-12",
+            text="Statement text June.",
+            axis_stance="neutral",
+            base_close=4600.0,
+        ),
     ]
     pd.DataFrame(rows).to_parquet(package_dir / "events.parquet", index=False)
-    split_rows = [{"text_hash": rows[0]["text_hash"], "split_tag": "train"}]
+    # Split-tag the second event as test so the loader's "empty test
+    # partition" guard is satisfied; the absent-parquet behaviour
+    # we are pinning is independent of which partition the events
+    # land in.
+    split_rows = [
+        {"text_hash": rows[0]["text_hash"], "split_tag": "train"},
+        {"text_hash": rows[1]["text_hash"], "split_tag": "test"},
+    ]
     pd.DataFrame(split_rows).to_parquet(
         package_dir / "splits_train_val_test.parquet", index=False
     )
