@@ -246,6 +246,28 @@ def list_settings_checkpoints() -> SettingsCheckpointsResponse:
     except Exception:  # pragma: no cover
         logger.warning("settings_checkpoints_multi_axis_probe_failed", exc_info=True)
 
+    # #342: snapshot the live serving forward signature once per request
+    # so each row can mark each declared kwarg as supplied / not supplied
+    # without re-introspecting the model class on every iteration. The
+    # source of truth is the model class the loader binds — falls back to
+    # the static SERVING_FORWARD_KWARGS constant when the import path is
+    # not available (defensive; the import should always succeed).
+    try:
+        from app.models.serving_model import ForecasterServingModel
+        from app.training.inference_contract import (
+            SERVING_FORWARD_KWARGS,
+            collect_serving_forward_kwargs,
+            read_sidecar,
+        )
+
+        serving_kwargs: frozenset[str] = collect_serving_forward_kwargs(
+            ForecasterServingModel
+        ) or SERVING_FORWARD_KWARGS
+    except Exception:  # pragma: no cover -- defensive
+        logger.warning("settings_checkpoints_serving_kwargs_probe_failed", exc_info=True)
+        serving_kwargs = frozenset()
+        read_sidecar = None  # type: ignore[assignment]
+
     for entry in sorted(MODELS_DIR.glob("*.pt"), key=lambda p: p.name):
         try:
             stat = entry.stat()
@@ -258,6 +280,24 @@ def list_settings_checkpoints() -> SettingsCheckpointsResponse:
         sidecar_present: bool | None = None
         if role == "forecaster":
             sidecar_present = entry.with_suffix(".conformal.json").exists()
+
+        required_kwargs: list[str] = []
+        supplied: dict[str, bool] = {}
+        contract_status: str | None = None
+        if role == "forecaster" and read_sidecar is not None:
+            try:
+                contract = read_sidecar(entry)
+            except Exception:  # pragma: no cover -- defensive
+                contract = None
+            if contract is None:
+                contract_status = "sidecar_absent"
+            else:
+                contract_status = "present"
+                required_kwargs = [str(k) for k in contract.required_kwargs]
+                supplied = {
+                    name: (name in serving_kwargs) for name in required_kwargs
+                }
+
         items.append(
             SettingsCheckpoint(
                 filename=entry.name,
@@ -273,6 +313,9 @@ def list_settings_checkpoints() -> SettingsCheckpointsResponse:
                     else active_multi_axis_alias if is_active_multi_axis else None
                 ),
                 conformal_sidecar_present=sidecar_present,
+                required_kwargs=required_kwargs,
+                supplied_at_inference=supplied,
+                inference_contract_status=contract_status,
             )
         )
 
@@ -689,6 +732,18 @@ def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
 
     Synchronous — invoked via ``run_in_threadpool`` from the async
     handler so the long-running fit does not block the event loop.
+
+    #342: once the bootstrap writes a fresh checkpoint, we drop the
+    in-process singleton + re-invoke the same loader the /analyze path
+    uses (``_get_model`` -> ``_validate_serving_contract``). That way a
+    bootstrap whose freshly written sidecar declares kwargs the serving
+    forward does not accept raises ``RuntimeError`` here rather than
+    silently binding via ``_set_singleton_after_train``. The cold-start
+    boot is then loud-fail: the /analyze caller surfaces a 500 with the
+    structured incompatibility reason and ``/health`` picks up the
+    contract status. Bypasses the reset for legacy artefacts (no
+    sidecar) because the validation degrades to ``sidecar_absent`` and
+    binds normally.
     """
 
     warmup_sentiment = analyze_text(payload.text)
@@ -709,6 +764,27 @@ def _bootstrap_cold_start(payload: AnalyzeRequest) -> None:
         learning_rate=4e-4,
         early_stopping_patience=8,
     )
+    # #342: drop the post-train singleton + force a cold load through
+    # the canonical loader so the contract validation actually runs on
+    # the freshly written sidecar. ``_set_singleton_after_train`` writes
+    # ``_model`` directly without crossing ``_validate_serving_contract``
+    # — without this reset the cold-start path would silently bind a
+    # checkpoint whose sidecar declares an unknown kwarg.
+    try:
+        from app.services import forecaster as forecaster_service
+
+        with forecaster_service._model_lock:
+            forecaster_service._model = None
+            forecaster_service._model_artifact_metadata = None
+        forecaster_service._get_model()
+    except RuntimeError:
+        # Re-raise so the /analyze caller surfaces the contract failure
+        # rather than swallowing it. ``/health`` already exposes the
+        # structured reason via ``get_serving_contract_status``.
+        raise
+    except Exception:  # pragma: no cover -- defensive
+        logger.warning("cold_start_contract_revalidation_failed", exc_info=True)
+        raise
 
 
 def _record_history(request: AnalyzeRequest, response: dict[str, Any]) -> None:

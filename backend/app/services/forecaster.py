@@ -563,6 +563,47 @@ def _resolve_inference_text_embedding(
     return text_embedding, text_embedding_missing
 
 
+def _log_serving_forward_kwargs(model: ForecasterServingModel) -> None:
+    """#342: structured INFO line describing the per-request kwarg set.
+
+    Mirrors the kwarg gates in ``_predict_next_point`` so the log line
+    is greppable evidence of what the serving forward was called with
+    on a given request. Format:
+
+        ``analyze_serving_forward kwargs=<a,b,c> checkpoint=<stem>``
+
+    The kwargs list is empty (``kwargs=``) for the legacy 6-feature
+    regression-only path; checkpoints with text + credibility + chunks
+    paths active emit the full list. The checkpoint stem is taken from
+    ``BEST_MODEL_PATH`` so the operator can correlate against the
+    settings inventory + the inference contract sidecar. One log line
+    per /analyze, NOT one per kwarg.
+    """
+
+    populated: list[str] = []
+    if bool(getattr(model, "credibility_features", False)):
+        populated.append("credibility")
+    if bool(getattr(model, "_text_path_active", False)):
+        populated.append("text_embedding")
+        populated.append("text_embedding_missing")
+    if bool(getattr(model, "use_chunk_attention", False)) or bool(
+        getattr(model, "use_llm_embeddings", False)
+    ):
+        populated.append("chunks")
+        populated.append("elapsed_days")
+
+    try:
+        checkpoint_stem = Path(BEST_MODEL_PATH).stem
+    except Exception:  # pragma: no cover -- defensive
+        checkpoint_stem = ""
+
+    logger.info(
+        "analyze_serving_forward kwargs=%s checkpoint=%s",
+        ",".join(populated),
+        checkpoint_stem,
+    )
+
+
 def _predict_next_point(model: ForecasterServingModel, sequence: list[FeatureVector]) -> tuple[float, float]:
     # Classification-mode checkpoints emit ``(B, n_classes)`` logits
     # from ``forward()`` (the stance branch under the MultiTaskHead);
@@ -1314,6 +1355,16 @@ def forecast_quantitative_series(
     # adaptation surface.
     model = _get_model()
     training_result = None
+
+    # #342: emit one structured INFO line per request listing the kwargs
+    # the serving forward will be called with on this request. Operators
+    # can ``grep analyze_serving_forward | awk`` for drift between the
+    # sidecar-declared required kwargs and what the call site actually
+    # populates. The list is computed by mirroring the kwarg gates in
+    # ``_predict_next_point`` (the canonical serving forward call site)
+    # so the log line is the request-level intent, not a per-step
+    # repetition.
+    _log_serving_forward_kwargs(model)
 
     history_vectors = vectors[-30:]
     history_timestamps = [item.date for item in history_vectors]
