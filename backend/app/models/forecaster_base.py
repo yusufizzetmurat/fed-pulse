@@ -35,6 +35,7 @@ from app.models.config import (
     FEATURE_SIZE,
     RICH_FEATURE_SIZE,
     RICH_MACRO_REGIME_DIM,
+    RICH_MACRO_REGIME_MISSING_DIM,
     SEQUENCE_LENGTH,
 )
 from app.models.dlinear import DLinear
@@ -176,8 +177,21 @@ class ForecasterBase(nn.Module):
             )
             nn.init.zeros_(self.regime_gate.weight)
             nn.init.zeros_(self.regime_gate.bias)
+            # The loader appends ``RICH_MACRO_REGIME_DIM + RICH_MACRO_REGIME_MISSING_DIM``
+            # extra scalars past ``RICH_FEATURE_SIZE`` on every per-bar
+            # tensor when conditioning is on (see ``FeatureVector.as_rich_list``).
+            # The gate modulates the legacy rich-feature slice in place,
+            # but the regime tail itself flows past unchanged into the
+            # recurrent core so the temporal dynamics still see the
+            # indicator that triggered the modulation. The LSTM width
+            # therefore widens by the regime tail; without this the core
+            # would be built at ``RICH_FEATURE_SIZE`` and reject the
+            # 91-wide tensor the loader actually produces.
+            regime_tail_dim = RICH_MACRO_REGIME_DIM + RICH_MACRO_REGIME_MISSING_DIM
         else:
             self.regime_gate = None
+            regime_tail_dim = 0
+        self.regime_tail_dim = regime_tail_dim
         self.text_embedding_dim = int(text_embedding_dim or 0)
         self.text_adapter_dim = int(text_adapter_dim or 0)
         self._text_path_active = self.text_embedding_dim > 0 and self.text_adapter_dim > 0
@@ -200,6 +214,7 @@ class ForecasterBase(nn.Module):
             + self.chunk_projection_dim
             + self.credibility_dim
             + text_path_dim
+            + regime_tail_dim
         )
         self.lstm_input_size = lstm_input_size
         lstm_dropout = dropout if num_layers > 1 else 0.0
