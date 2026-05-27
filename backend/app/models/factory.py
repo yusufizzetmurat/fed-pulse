@@ -158,6 +158,7 @@ def build_forecaster(
             "use_derived_text_features",
             "rates_head_mode",
             "rates_alpha",
+            "rates_target_mode",
         ):
             flat_kwargs.pop(drop, None)
         flat_rates_heads = tuple(
@@ -190,6 +191,12 @@ def build_forecaster(
         flat.rates_heads = flat_rates_heads  # type: ignore[assignment]
         flat.rates_head_mode = str(resolved.rates_head_mode or "regression")  # type: ignore[assignment]
         flat.rates_alpha = float(resolved.rates_alpha)  # type: ignore[assignment]
+        # #305 round-trip the rates target derivation onto the persisted
+        # run summary so the checkpoint records which target the heads
+        # were trained against.
+        flat.rates_target_mode = str(
+            getattr(resolved, "rates_target_mode", "raw") or "raw"
+        )  # type: ignore[assignment]
         return flat
 
     kwargs = resolved.to_dict()
@@ -235,6 +242,9 @@ def build_forecaster(
         kwargs.pop("rates_head_mode", "regression") or "regression"
     )
     rates_alpha_value = float(kwargs.pop("rates_alpha", 0.5))
+    rates_target_mode_value = str(
+        kwargs.pop("rates_target_mode", "raw") or "raw"
+    )
     # #317 finding #8: fail fast at the factory rather than silently
     # zeroing rates_heads when output_mode='regression'. The operator
     # gets a clear error message instead of a checkpoint that
@@ -314,6 +324,9 @@ def build_forecaster(
     model.rates_heads = rates_heads_tuple  # type: ignore[assignment]
     model.rates_head_mode = rates_head_mode_value  # type: ignore[assignment]
     model.rates_alpha = rates_alpha_value  # type: ignore[assignment]
+    # #305 round-trip the rates target derivation onto the built module
+    # so ``ModelConfig.from_model`` recovers it on resume / inference.
+    model.rates_target_mode = rates_target_mode_value  # type: ignore[assignment]
     return model
 
 

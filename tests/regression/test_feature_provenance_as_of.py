@@ -78,6 +78,12 @@ _TARGET_ONLY_COLUMNS: tuple[str, ...] = (
     "target_yield_2y_change_5d",
     "target_yield_5y_change_5d",
     "target_terminal_rate_change_5d",
+    # #305 FOMC-attributable projections of the three forward 5d rates
+    # moves. Same target-only contract as the raw siblings; only the
+    # event row carries the projected scalar.
+    "target_yield_2y_change_5d_fomc_attributable",
+    "target_yield_5y_change_5d_fomc_attributable",
+    "target_terminal_rate_change_5d_fomc_attributable",
 )
 
 # Columns declared `T (snapshot)` — document-level signals broadcast to

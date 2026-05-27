@@ -681,6 +681,24 @@ def _parse_args() -> argparse.Namespace:
             "level; ``0.0`` collapses to classification-only."
         ),
     )
+    parser.add_argument(
+        "--rates-target-mode",
+        type=str,
+        choices=("raw", "fomc_attributable"),
+        default="raw",
+        help=(
+            "Rates-head target derivation (#305). ``raw`` (default) "
+            "keeps the observed ``yield_<tenor>_change_5d`` bps move "
+            "as the supervised target, byte-identical to the pre-#305 "
+            "path. ``fomc_attributable`` predicts the 1-D projection "
+            "of the observed move onto the strict-prior policy-surprise "
+            "direction ``sign(mp_surprise_level)`` — the FOMC-"
+            "attributable component of the move (Kuttner-style, post-"
+            "#350 strict-prior construction). No-change meetings (where "
+            "the surprise magnitude is below the 1-bp epsilon) mark "
+            "the target as missing rather than zero. See ADR 0027."
+        ),
+    )
     # #309 derived-text-features ablation. Default ``on`` is byte-
     # identical to the pre-#309 path; ``off`` zeros the FeatureVector
     # slots populated by the per-sentence multi-axis classifier so the
@@ -1155,6 +1173,9 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         rates_heads=_resolve_rates_heads_from_args(args),
         rates_head_mode=str(getattr(args, "rates_head_mode", "regression") or "regression"),
         rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
+        rates_target_mode=str(
+            getattr(args, "rates_target_mode", "raw") or "raw"
+        ),
     )
 
 
@@ -1408,6 +1429,9 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                                 rates_heads=_resolve_rates_heads_from_args(args),
                                 rates_head_mode=str(getattr(args, "rates_head_mode", "regression") or "regression"),
                                 rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
+                                rates_target_mode=str(
+                                    getattr(args, "rates_target_mode", "raw") or "raw"
+                                ),
                             ),
                             "learning_rate": float(hp["learning_rate"]),
                             "epochs": int(hp["epochs"]),
@@ -1517,6 +1541,9 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                         rates_heads=_resolve_rates_heads_from_args(args),
                         rates_head_mode=str(getattr(args, "rates_head_mode", "regression") or "regression"),
                         rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
+                        rates_target_mode=str(
+                            getattr(args, "rates_target_mode", "raw") or "raw"
+                        ),
                     ),
                     "learning_rate": float(learning_rate),
                     "epochs": int(epochs),

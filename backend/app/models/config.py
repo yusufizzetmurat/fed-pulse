@@ -406,6 +406,15 @@ class ModelConfig:
     # base; the ablation sweep can drive the boundary cases for the
     # parity test.
     rates_alpha: float = 0.5
+    # #305 rates-head target derivation. ``raw`` (default, byte-identical
+    # to the pre-#305 path) predicts the observed
+    # ``yield_<tenor>_change_5d`` move in bps. ``fomc_attributable``
+    # predicts the 1-D projection of the observed move onto the
+    # strict-prior policy-surprise direction ``sign(mp_surprise_level)``.
+    # The mode applies uniformly to every mounted rates head; per-head
+    # mode-mixing was deferred so the CLI stays one knob deep. See ADR
+    # 0027 and :mod:`app.training.rates_targets`.
+    rates_target_mode: str = "raw"
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -465,6 +474,9 @@ class ModelConfig:
                 getattr(model, "rates_head_mode", "regression") or "regression"
             ),
             rates_alpha=float(getattr(model, "rates_alpha", 0.5)),
+            rates_target_mode=str(
+                getattr(model, "rates_target_mode", "raw") or "raw"
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -672,6 +684,19 @@ class FeatureVector:
     target_yield_2y_change_5d: float | None = None
     target_yield_5y_change_5d: float | None = None
     target_terminal_rate_change_5d: float | None = None
+    # #305 FOMC-attributable rates targets. Strict-forward 5-day yield
+    # change projected onto the strict-prior policy-surprise direction
+    # ``sign(mp_surprise_level)``. ``None`` on no-change meetings (where
+    # the surprise magnitude is below ``SURPRISE_DIRECTION_EPSILON_BPS``
+    # and the direction is ill-defined); ``None`` on every legacy /
+    # non-rates path so the dataclass shape round-trips clean through
+    # the determinism regression contract. Populated by the
+    # training-package loader on the target row alongside the raw
+    # ``target_yield_*_change_5d`` columns; the per-fold target builder
+    # reads one or the other based on ``ModelConfig.rates_target_mode``.
+    target_yield_2y_change_5d_fomc_attributable: float | None = None
+    target_yield_5y_change_5d_fomc_attributable: float | None = None
+    target_terminal_rate_change_5d_fomc_attributable: float | None = None
     # Pooled text-embedding payload (PR #176 onward). Carries the
     # variable-length encoder-output vector (FinBERT 768, voyage-finance-2
     # 1024, BGE 1024, ...) materialised by the loader's softmax(-Delta t /
