@@ -150,11 +150,57 @@ class XaiSentenceAttribution(BaseModel):
     topTokens: list[XaiTokenAttribution] = Field(default_factory=list)
 
 
+class XaiFeatureFamilyAttribution(BaseModel):
+    """One feature-family bar on a panel attribution chart (#297).
+
+    Emitted under :class:`XaiPanelAttribution.families`. ``magnitude`` is
+    the L1 attribution sum across all features in the family (always
+    non-negative); ``signed`` is the sum-with-sign so the frontend can
+    colour the bar by direction.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    family: str
+    magnitude: float
+    signed: float
+
+
+class XaiPanelAttribution(BaseModel):
+    """Integrated-gradients attribution for one /analyze panel (#297).
+
+    Returned under :class:`XaiResponse.panels`. One entry per active
+    panel (regime, rates_2y/5y/terminal, trajectory). ``unavailable``
+    flips to True when the panel cannot be explained (panel not active
+    on the checkpoint, kwarg mismatch, runtime error); the frontend
+    then renders the "explanation unavailable" badge rather than an
+    empty bar chart.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    panel: str
+    target: str
+    families: list[XaiFeatureFamilyAttribution] = Field(default_factory=list)
+    n_steps: int = Field(
+        default=0,
+        description="Integrated-gradients integration step count used to compute this panel's attribution.",
+    )
+    unavailable: bool = False
+    reason: str | None = None
+
+
 class XaiResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     method: str = "keyword_salience_v1"
     sentences: list[XaiSentenceAttribution] = Field(default_factory=list)
+    # #297: per-panel integrated-gradients attribution. Populated when
+    # ``include_xai=true`` on the request AND the active checkpoint
+    # surfaces at least one panel that can be explained. Per-panel
+    # ``unavailable`` flags carry the structured reason when the panel
+    # is present on the checkpoint but the attribution call degrades.
+    panels: list[XaiPanelAttribution] = Field(default_factory=list)
 
 
 class CredibilityResponse(BaseModel):
