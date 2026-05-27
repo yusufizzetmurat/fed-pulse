@@ -36,7 +36,7 @@ Five scalars, in the slice order documented on `RICH_RETRIEVAL_ANALOG_SLICE`:
 | `analog_mean_similarity` | mean cosine similarity over the top-K |
 | `analog_similarity_dispersion` | population std of the top-K similarities (clamped `>= 0`; population not sample so the value is defined at `n=1`) |
 | `analog_count_above_floor` | count of hits with similarity `>= 0.40`, normalised against `top_k` so the value sits in `[0, 1]` |
-| `analog_max_stance_score` | fraction of analogs whose canonical `axis_stance` matches the current event's stance |
+| `analog_stance_agreement_fraction` | fraction of analogs whose canonical `axis_stance` matches the current event's stance |
 
 Plus a paired `analog_features_missing` flag (1.0 when the retrieval bundle is absent on disk, the flag is off, or the lookup returns an empty hit list; otherwise 0.0).
 
@@ -56,7 +56,7 @@ The loader threads each event's own `event_date` (not a fold boundary, not a rel
 
 The analog's post-event observed move (`forward_realized_vol_10d` or the `subsequent_vol_regime` bucket the index exposes) is **not** in the feature block. Admitting it would be a label leak via similarity: two near-identical past statements share most of the surprise direction and a non-trivial fraction of the post-event vol response, so a feature that admitted the analog's outcome would let the forecaster read a lossy copy of its own target through the cosine-similarity gate. The block is therefore restricted to contextual stats over the retrieval result (similarity moments + stance-agreement count); the analog's outcome is excluded by construction.
 
-The per-feature row in `docs/feature-provenance-audit.md` classifies the block as strict-prior. The analog event dates are strict-prior by the index-query cutoff above; the current-event stance read driving the `analog_max_stance_score` numerator is `T (snapshot)` — observable from the released FOMC text on `T` itself, identical to how the existing `stance_hawk` / `stance_dove` / `stance_neutral` block is classified.
+The per-feature row in `docs/feature-provenance-audit.md` classifies the block as strict-prior. The analog event dates are strict-prior by the index-query cutoff above; the current-event stance read driving the `analog_stance_agreement_fraction` numerator is `T (snapshot)` — observable from the released FOMC text on `T` itself, identical to how the existing `stance_hawk` / `stance_dove` / `stance_neutral` block is classified.
 
 ### Per-fold standardisation
 

@@ -93,7 +93,7 @@ def test_compute_analog_features_known_values() -> None:
     assert out.analog_mean_similarity == pytest.approx(mean_sim)
     assert out.analog_similarity_dispersion == pytest.approx(expected_disp)
     assert out.analog_count_above_floor == pytest.approx(2.0 / 3.0)
-    assert out.analog_max_stance_score == pytest.approx(2.0 / 3.0)
+    assert out.analog_stance_agreement_fraction == pytest.approx(2.0 / 3.0)
 
 
 def test_compute_analog_features_single_hit_zero_dispersion() -> None:
@@ -105,7 +105,7 @@ def test_compute_analog_features_single_hit_zero_dispersion() -> None:
     )
     assert out.analog_similarity_dispersion == pytest.approx(0.0)
     # Stance agreement: 1 of 1 matches.
-    assert out.analog_max_stance_score == pytest.approx(1.0)
+    assert out.analog_stance_agreement_fraction == pytest.approx(1.0)
     # Above-floor count normalised against top_k=3, not n=1.
     assert out.analog_count_above_floor == pytest.approx(1.0 / 3.0)
 
@@ -125,7 +125,7 @@ def test_compute_analog_features_unknown_event_stance_collapses_score() -> None:
 
     hits = [_Hit(0.9, "hawkish"), _Hit(0.8, "hawkish")]
     out = compute_analog_summary_features(hits, event_stance=None)
-    assert out.analog_max_stance_score == 0.0
+    assert out.analog_stance_agreement_fraction == 0.0
     # Similarity stats still compute fine.
     assert out.analog_max_similarity == pytest.approx(0.9)
 

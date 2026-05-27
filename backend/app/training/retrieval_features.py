@@ -74,7 +74,7 @@ class AnalogSummaryFeatures:
     analog_mean_similarity: float
     analog_similarity_dispersion: float
     analog_count_above_floor: float
-    analog_max_stance_score: float
+    analog_stance_agreement_fraction: float
 
     def as_list(self) -> list[float]:
         return [
@@ -82,7 +82,7 @@ class AnalogSummaryFeatures:
             float(self.analog_mean_similarity),
             float(self.analog_similarity_dispersion),
             float(self.analog_count_above_floor),
-            float(self.analog_max_stance_score),
+            float(self.analog_stance_agreement_fraction),
         ]
 
 
@@ -127,7 +127,7 @@ def compute_analog_summary_features(
             analog_mean_similarity=0.0,
             analog_similarity_dispersion=0.0,
             analog_count_above_floor=0.0,
-            analog_max_stance_score=0.0,
+            analog_stance_agreement_fraction=0.0,
         )
 
     sims = [float(getattr(h, "similarity", 0.0)) for h in hits]
@@ -138,7 +138,7 @@ def compute_analog_summary_features(
             analog_mean_similarity=0.0,
             analog_similarity_dispersion=0.0,
             analog_count_above_floor=0.0,
-            analog_max_stance_score=0.0,
+            analog_stance_agreement_fraction=0.0,
         )
 
     n = len(finite_sims)
@@ -177,7 +177,7 @@ def compute_analog_summary_features(
         analog_mean_similarity=float(s_mean),
         analog_similarity_dispersion=float(s_disp),
         analog_count_above_floor=float(count_above_norm),
-        analog_max_stance_score=float(stance_score),
+        analog_stance_agreement_fraction=float(stance_score),
     )
 
 
