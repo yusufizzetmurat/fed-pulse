@@ -241,8 +241,15 @@ def run_demo(args: DemoArgs) -> int:
         _capture(page, output_dir, "statement_decomposition", timestamp)
 
         # ---- Step 3: market reaction. ---------------------------------
-        _wait_panel(page, "Market reaction", args.wait_timeout_ms)
-        _capture(page, output_dir, "market_reaction", timestamp)
+        # Cold-start dev backends produce a regression-only checkpoint;
+        # the market panel then collapses to an "evidence unavailable"
+        # state and the heading text never paints. Skip + log rather
+        # than hard-fail so the rest of the capture still runs.
+        try:
+            _wait_panel(page, "Market reaction", args.wait_timeout_ms)
+            _capture(page, output_dir, "market_reaction", timestamp)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[demo]   market_reaction panel skipped: {exc}")
 
         # ---- Step 4: historical analogs. ------------------------------
         try:

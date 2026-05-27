@@ -219,17 +219,18 @@ def _record_contract_status(
 
 
 def _validate_serving_contract(
-    payload: Any,
     checkpoint_path: Path,
 ) -> tuple[bool, str]:
     """Cross-check the sidecar against the serving signature + registry.
 
     Returns ``(ok, status)``. ``ok=False`` means the serving loader
-    must refuse to bind the checkpoint. Falsy payload / missing
-    sidecar degrades to ``ok=True`` with status ``"sidecar_absent"``
-    so pre-#341 checkpoints continue to load -- the contract is a soft
-    surface for legacy artefacts and a hard surface for any checkpoint
-    written under the #341 contract.
+    must refuse to bind the checkpoint. A missing sidecar degrades to
+    ``ok=True`` with status ``"sidecar_absent"`` so pre-#341
+    checkpoints continue to load -- the contract is a soft surface for
+    legacy artefacts and a hard surface for any checkpoint written
+    under the #341 contract. (#374: the prior ``payload`` parameter
+    was never read; the sidecar is what we validate, not the .pt
+    payload.)
     """
 
     from app.training.inference_contract import (
@@ -321,7 +322,7 @@ def _get_model() -> ForecasterServingModel:
             # partial bind + a later RuntimeError on /analyze. Pre-#341
             # checkpoints with no sidecar degrade to "sidecar_absent"
             # + ok=True so the legacy serving fleet keeps working.
-            ok, _status = _validate_serving_contract(payload, BEST_MODEL_PATH)
+            ok, _status = _validate_serving_contract(BEST_MODEL_PATH)
             if not ok:
                 raise RuntimeError(
                     "checkpoint inference contract incompatible with serving "
@@ -670,6 +671,77 @@ def _predict_next_point(model: ForecasterServingModel, sequence: list[FeatureVec
     pred_close = float(out[0].item()) * close_scale
     pred_vol = float(out[1].item())
     return pred_close, pred_vol
+
+
+def build_panel_attributions(
+    sequence: list[FeatureVector],
+    *,
+    n_steps: int | None = None,
+) -> list[dict[str, Any]]:
+    """Compute integrated-gradients attribution for every active panel (#297).
+
+    Returns a list of :class:`app.services.xai_attribution.PanelAttribution`
+    dicts, one per active panel. The function never raises; each panel
+    call site degrades into an ``unavailable`` payload with a structured
+    reason so the /analyze response stays serialisable.
+
+    The function is intentionally NOT wrapped in ``@torch.no_grad`` --
+    integrated gradients needs to backprop against the input tensor.
+    The internal helpers detach the input before flipping
+    ``requires_grad`` on the interpolated copy, so this does not leak
+    grad onto the model parameters.
+
+    Step count is resolved via :func:`resolve_n_steps` (env override
+    ``FED_PULSE_IG_N_STEPS``; explicit kwarg wins). Bounded at
+    :data:`xai_attribution.MAX_N_STEPS` so the /analyze latency budget
+    stays inside the ADR 0026 target.
+    """
+
+    from app.services.xai_attribution import (
+        attribute_rates_panel,
+        attribute_regime_panel,
+        resolve_n_steps,
+    )
+
+    panels: list[dict[str, Any]] = []
+    try:
+        model = _get_model()
+    except Exception as exc:  # noqa: BLE001 -- defensive: cold start, missing checkpoint
+        logger.warning(
+            "xai_panel_get_model_failed exception_class=%s",
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return panels
+
+    steps = resolve_n_steps(n_steps)
+    device = next(model.parameters()).device
+    window = build_lookback_sequence(sequence)
+    x = _build_inference_tensor(window, model, device)
+    kwargs: dict[str, torch.Tensor] = {}
+    if getattr(model, "credibility_features", False):
+        kwargs["credibility"] = _resolve_inference_credibility(
+            model, sequence=window, device=device
+        )
+    if getattr(model, "_text_path_active", False):
+        text_embedding, text_embedding_missing = _resolve_inference_text_embedding(
+            model, sequence=window, device=device
+        )
+        kwargs["text_embedding"] = text_embedding
+        kwargs["text_embedding_missing"] = text_embedding_missing
+
+    output_mode = str(getattr(model, "output_mode", "regression"))
+    if output_mode == "classification":
+        regime = attribute_regime_panel(model, x, forward_kwargs=kwargs, n_steps=steps)
+        panels.append(regime.to_dict())
+
+    for name in tuple(getattr(model, "rates_heads_active", ()) or ()):
+        rates = attribute_rates_panel(
+            model, x, head_name=str(name), forward_kwargs=kwargs, n_steps=steps
+        )
+        panels.append(rates.to_dict())
+
+    return panels
 
 
 @torch.no_grad()
