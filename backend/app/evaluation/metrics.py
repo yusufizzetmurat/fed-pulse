@@ -138,6 +138,17 @@ class TrainingRunSummary:
     # by the auxiliary classification surface).
     rates_scalers: dict[str, dict[str, float]] | None = None
     rates_quantile_edges: dict[str, dict[str, float | int | str]] | None = None
+    # #273 multi-task loss. ``None`` on every pre-#273 run and on
+    # multi_task_loss=False runs (the default). When the joint loss is
+    # active the dict carries the per-axis class-weight vectors fitted on
+    # the train slice plus the four lambda coefficients the
+    # ``MultiTaskLoss`` module was constructed with, so a resume from the
+    # checkpoint reads back the exact loss config the run trained under.
+    # Schema: ``{"stance": [...], "certainty": [...], "topic": [...],
+    # "lambdas": {"stance": float, "factor": float, "certainty": float,
+    # "topic": float}}``. The factor axis is a regression branch with no
+    # class weights, so it appears only under ``lambdas``.
+    multi_task_class_weights: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
