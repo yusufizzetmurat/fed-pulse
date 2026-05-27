@@ -39,14 +39,15 @@ Integrated gradients (Sundararajan et al. 2017) over the per-bar feature tensor,
 
 One target per panel, picked so the IG run explains the scalar the panel actually renders on the UI:
 
-| Panel       | Target                                  | Forward call            |
-| ----------- | --------------------------------------- | ----------------------- |
-| `regime`    | argmax-class stance logit (scalar)      | `forward_multi_task`    |
-| `rates_2y`  | `rates_2y_bps` regression scalar        | `forward_multi_task`    |
-| `rates_5y`  | `rates_5y_bps` regression scalar        | `forward_multi_task`    |
-| `rates_terminal` | `rates_terminal_bps` regression scalar | `forward_multi_task` |
+| Panel        | Target                                       | Forward call                            |
+| ------------ | -------------------------------------------- | --------------------------------------- |
+| `regime`     | argmax-class stance logit (scalar)           | `forward_multi_task`                    |
+| `rates_2y`   | `rates_2y_bps` regression scalar             | `forward_multi_task`                    |
+| `rates_5y`   | `rates_5y_bps` regression scalar             | `forward_multi_task`                    |
+| `rates_terminal` | `rates_terminal_bps` regression scalar   | `forward_multi_task`                    |
+| `trajectory` | argmax next-stance logit (scalar)            | trajectory bundle `model(inputs, mask)` |
 
-Trajectory is deferred — see non-goals.
+The trajectory dispatch reads the runtime singleton (`app.services.trajectory.get_state`), reuses `build_trajectory_inputs` to assemble the model's `(B, T, embedding_dim + market_dim)` input tensor + boolean mask, then runs `attribute_trajectory_panel`. A missing bundle, an empty strict-backward history window, or an invalid `as_of_date` all degrade into structured `unavailable` payloads (`bundle_not_loaded`, `trajectory_history_empty`, `invalid_as_of_date`) so the trajectory entry is always present on the panel list, even when the model could not be exercised.
 
 The argmax index is resolved once on the clean input under `torch.no_grad` so the integration tracks a stable target across alpha steps. Targeting a stance class index that flipped mid-integration would emit attribution against a moving target and the per-family bars would be uninterpretable.
 
@@ -99,6 +100,5 @@ Each branch logs at WARNING with `exception_class=…` (no `str(exc)` on the cli
 
 ## Punts / explicit non-goals
 
-* **Trajectory panel attribution.** `attribute_trajectory_panel` is implemented and tested in isolation but the live route does not dispatch through it — the trajectory singleton lives in a sibling service (`app.services.trajectory`) with its own bundle + input contract, and wiring the dispatch end-to-end is out of scope for this PR. The kernel stays on disk so the follow-up only needs to add the dispatch + an integration test. Filed for #297 follow-up.
 * **SHAP value calibration story.** The IG magnitudes are not directly comparable across panels (each panel's target has a different scale: stance logits ~ O(1), bps predictions ~ O(10²)). The frontend normalises each panel chart independently; a cross-panel normalisation would need a calibration pass we do not have time to ship under #297. The per-panel bars are interpretable in isolation, which is the use case the surface supports.
 * **Gradient-through-encoder text attribution.** As above; the keyword salience continues to drive the sentence-highlight surface. A future ADR may revisit if the trained encoder shrinks enough to make a per-request backward pass feasible.

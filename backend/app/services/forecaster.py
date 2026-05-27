@@ -677,6 +677,7 @@ def build_panel_attributions(
     sequence: list[FeatureVector],
     *,
     n_steps: int | None = None,
+    as_of_date: _date_cls | str | None = None,
 ) -> list[dict[str, Any]]:
     """Compute integrated-gradients attribution for every active panel (#297).
 
@@ -741,7 +742,103 @@ def build_panel_attributions(
         )
         panels.append(rates.to_dict())
 
+    # #385: dispatch through the trajectory IG runner. The trajectory
+    # model lives in a sibling singleton with its own bundle + input
+    # contract; we resolve the bundle here, build the model's forward
+    # inputs via the shared helper, then call the runner. Any failure
+    # surface (missing bundle, no eligible history, kernel error)
+    # degrades into an ``unavailable`` PanelAttribution rather than
+    # bubbling out.
+    trajectory_panel = _build_trajectory_panel(
+        as_of_date=as_of_date, steps=steps
+    )
+    panels.append(trajectory_panel.to_dict())
+
     return panels
+
+
+def _build_trajectory_panel(
+    *,
+    as_of_date: "_date_cls | str | None",
+    steps: int,
+) -> "Any":
+    """Resolve the trajectory bundle + run the IG runner, with structured
+    degrade for every failure mode. Returns a :class:`PanelAttribution`.
+    """
+
+    from app.services.xai_attribution import (
+        PanelAttribution,
+        attribute_trajectory_panel,
+    )
+
+    panel = "trajectory"
+    target = "next_stance_argmax"
+
+    def _unavailable(reason: str) -> "PanelAttribution":
+        return PanelAttribution(
+            panel=panel,
+            target=target,
+            families=[],
+            n_steps=steps,
+            unavailable=True,
+            reason=reason,
+        )
+
+    try:
+        from app.services import trajectory as trajectory_service
+    except Exception as exc:  # noqa: BLE001 -- defensive
+        logger.warning(
+            "xai_trajectory_import_failed exception_class=%s",
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return _unavailable("bundle_not_loaded")
+
+    try:
+        state = trajectory_service.get_state()
+    except Exception as exc:  # noqa: BLE001 -- defensive
+        logger.warning(
+            "xai_trajectory_get_state_failed exception_class=%s",
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return _unavailable("bundle_not_loaded")
+
+    if state is None:
+        return _unavailable("bundle_not_loaded")
+
+    # Resolve as_of_date. Prefer the explicit kwarg threaded from the
+    # /analyze handler; otherwise fall back to today so the helper is
+    # callable standalone (and the trajectory state's strict-backward
+    # slice still selects a meaningful window).
+    if as_of_date is None:
+        resolved_date = _date_cls.today()
+    elif isinstance(as_of_date, _date_cls):
+        resolved_date = as_of_date
+    else:
+        try:
+            resolved_date = _date_cls.fromisoformat(str(as_of_date)[:10])
+        except ValueError:
+            return _unavailable("invalid_as_of_date")
+
+    try:
+        _, inputs_tensor, mask_tensor, _, _ = trajectory_service.build_trajectory_inputs(
+            state, as_of_date=resolved_date
+        )
+    except Exception as exc:  # noqa: BLE001 -- defensive
+        logger.warning(
+            "xai_trajectory_input_build_failed exception_class=%s",
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return _unavailable("trajectory_input_unavailable")
+
+    if inputs_tensor is None or mask_tensor is None:
+        return _unavailable("trajectory_history_empty")
+
+    return attribute_trajectory_panel(
+        state.model, inputs_tensor, mask=mask_tensor, n_steps=steps
+    )
 
 
 @torch.no_grad()
