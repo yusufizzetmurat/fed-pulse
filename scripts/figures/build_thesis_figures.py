@@ -392,7 +392,7 @@ def build_cross_bank_table(header: ReproducibilityHeader, output_dir: Path) -> P
     caption = (
         "Cross-bank transfer ladder. Same Transformer cell (h=128, layers=2, "
         "dropout=0.2, lr=1e-3, weight-decay=1e-3, text-adapter-dim=128) on "
-        "tp_v3_macro_aug_2026_05_25_fwd_strict_v1.1_epv1_v1.0; encoder swapped "
+        f"{CANONICAL_TP_ID}; encoder swapped "
         "row-by-row. Every cross-bank-touched variant lands below the FOMC-only "
         "baseline CI, replicating the substitute-not-complement prior. "
         f"{header.render()}"
