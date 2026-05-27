@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation finetune-pilot-b2 reproduce-all reproduce-smoke push-artefacts deploy-prod-build
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation finetune-pilot-b2 cross-source-transfer reproduce-all reproduce-smoke push-artefacts deploy-prod-build
 
 help:
 	@echo "Targets:"
@@ -86,6 +86,8 @@ help:
 	@echo "                         - Per-family rich-feature ablation (#334; backs the §6 substitution-finding table)"
 	@echo "  make finetune-pilot-b2 TRAINING_PACKAGE_ID=<id> [ENCODER_ALIAS=<alias>]"
 	@echo "                         - B2 end-to-end fine-tune on vol-regime (#213; AutoModelForSequenceClassification, 5 seeds x 4 folds x 5 epochs)"
+	@echo "  make cross-source-transfer TRAINING_PACKAGE_ID=<id> ENCODER_CHECKPOINTS=alias=path[,alias=path]"
+	@echo "                         - Cross-source transfer matrix (#72 + #83; inference-only per source_type stratum)"
 	@echo "  make reproduce-smoke TRAINING_PACKAGE_ID=<id> [SEED=11]"
 	@echo "                         - 1-seed x 1-fold dual-head smoke + numerical-contract assertion (#335 CI guard)"
 
@@ -867,3 +869,12 @@ finetune-pilot-b2:
 		--learning-rate 2e-5 \
 		--weight-decay 0.01 \
 		$(if $(ENCODER_ALIAS),--encoder-alias $(ENCODER_ALIAS),)
+
+cross-source-transfer:
+	@if [ -z "$$TRAINING_PACKAGE_ID" ]; then echo "TRAINING_PACKAGE_ID required" >&2; exit 1; fi
+	@if [ -z "$$ENCODER_CHECKPOINTS" ]; then echo "ENCODER_CHECKPOINTS required (alias=path[,alias=path])" >&2; exit 1; fi
+	docker compose run --rm backend python -m app.evaluation.cross_source_transfer \
+		--training-package-id $$TRAINING_PACKAGE_ID \
+		--encoder-checkpoints "$$ENCODER_CHECKPOINTS" \
+		$(if $(SOURCE_TYPES),--source-types "$(SOURCE_TYPES)",) \
+		$(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)

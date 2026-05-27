@@ -141,6 +141,7 @@ ignore = [
 "app/evaluation/bootstrap.py" = ["PLR0913", "C901"]
 "app/evaluation/conformal.py" = ["PLR0913"]
 "app/evaluation/cross_bank_transfer.py" = ["PLR0913"]
+"app/evaluation/cross_source_transfer.py" = ["PLR0913"]
 "app/evaluation/metrics.py" = ["PLR0913"]
 "app/evaluation/multi_axis_table.py" = ["PLR0913"]
 "app/evaluation/regime_aggregator.py" = ["PLR0913", "C901"]
