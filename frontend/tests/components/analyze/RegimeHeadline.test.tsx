@@ -13,6 +13,14 @@ const REGIME: RegimeClassificationResponse = {
   argmax_class: "normal",
 };
 
+const REGIME_WITH_BAND: RegimeClassificationResponse = {
+  ...REGIME,
+  log_rv_point: -0.25,
+  log_rv_lower: -0.85,
+  log_rv_upper: 0.35,
+  bucket_source: "regression",
+};
+
 describe("RegimeHeadline coverage chip", () => {
   it("shows the run-level coverage badge when no empirical figure is provided", () => {
     render(<RegimeHeadline regime={REGIME} symbol="^GSPC" documentDate="2024-09-18" />);
@@ -57,6 +65,51 @@ describe("RegimeHeadline coverage chip", () => {
       />,
     );
     expect(screen.queryByText(/empirical/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/80% coverage/i)).toBeInTheDocument();
+    expect(screen.getByText(/80% coverage · set size 2/i)).toBeInTheDocument();
+  });
+});
+
+describe("RegimeHeadline regression-canonical surface (#338)", () => {
+  it("leads with the log(RV) regression band when the dual-head fields are populated", () => {
+    render(<RegimeHeadline regime={REGIME_WITH_BAND} symbol="^GSPC" documentDate="2024-09-18" />);
+    expect(screen.getByText(/log\(RV\) regression band/i)).toBeInTheDocument();
+    expect(screen.getByText(/-0\.250/)).toBeInTheDocument();
+    expect(screen.getByText(/band \[-0\.850, 0\.350\]/)).toBeInTheDocument();
+    expect(screen.getByText(/normal bucket/i)).toBeInTheDocument();
+    expect(screen.getByText(/bucket source · regression/i)).toBeInTheDocument();
+  });
+
+  it("falls back to the classifier-led surface when no log_rv_point is present", () => {
+    render(<RegimeHeadline regime={REGIME} symbol="^GSPC" documentDate="2024-09-18" />);
+    expect(screen.queryByText(/log\(RV\) regression band/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Vol-regime prediction set/i)).toBeInTheDocument();
+    expect(screen.getByText(/argmax · 45\.0%/i)).toBeInTheDocument();
+  });
+
+  it("ships the fold-4 with/without callout on every render", () => {
+    render(<RegimeHeadline regime={REGIME_WITH_BAND} symbol="^GSPC" documentDate="2024-09-18" />);
+    expect(screen.getByText(/With fold-4/i)).toBeInTheDocument();
+    expect(screen.getByText(/Without fold-4/i)).toBeInTheDocument();
+    // Numbers from dual_head_comparison_canonical.json.
+    expect(screen.getByText(/F1 0\.419 ± 0\.071/)).toBeInTheDocument();
+    expect(screen.getByText(/F1 0\.414 ± 0\.079/)).toBeInTheDocument();
+  });
+
+  it("demotes per-class softmax + predicted set to a foldable section", () => {
+    render(<RegimeHeadline regime={REGIME_WITH_BAND} symbol="^GSPC" documentDate="2024-09-18" />);
+    const summary = screen.getByText(/Per-class softmax \+ calibrated set/i);
+    expect(summary.tagName.toLowerCase()).toBe("summary");
+  });
+
+  it("renders evidence links to the §6 backing sections", () => {
+    render(<RegimeHeadline regime={REGIME_WITH_BAND} symbol="^GSPC" documentDate="2024-09-18" />);
+    const headlineEvidence = screen.getAllByRole("link", { name: /evidence · §6\.15/i });
+    expect(headlineEvidence.length).toBeGreaterThan(0);
+    expect(headlineEvidence[0]).toHaveAttribute(
+      "href",
+      expect.stringContaining("06-Deep-Learning-Roadmap"),
+    );
+    expect(screen.getByRole("link", { name: /evidence · §6\.7/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /evidence · §6\.10/i })).toBeInTheDocument();
   });
 });
