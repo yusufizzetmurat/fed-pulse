@@ -158,6 +158,7 @@ def build_forecaster(
             "use_derived_text_features",
             "rates_head_mode",
             "rates_alpha",
+            "rates_target_mode",
         ):
             flat_kwargs.pop(drop, None)
         flat_rates_heads = tuple(

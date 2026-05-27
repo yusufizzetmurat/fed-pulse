@@ -192,17 +192,33 @@ def _make_walk_forward_groups(
     *,
     populate_fomc: bool = True,
 ) -> list[list[FeatureVector]]:
+    """Build a walk-forward group whose supervised rows (i >= 20) span
+    both signs of the raw bps move, so the standardiser fit under
+    ``raw`` and ``fomc_attributable`` modes lands on materially different
+    means (abs() collapses the negatives onto positives).
+    """
+
+    def _raw_2y(i: int) -> float:
+        # i in [20, 29] -> values [-9, -7, ..., 9]; mean 0, mean(|.|) = 5.
+        return float(2 * (i - 24) - 1)
+
+    def _raw_5y(i: int) -> float:
+        return float(1.5 * (i - 24) - 2)
+
+    def _raw_terminal(i: int) -> float:
+        return float((i - 24) - 1)
+
     return [
         [
             _dummy_feature_vector(
                 day=i + 1,
                 vol=0.01 + 0.001 * i,
-                raw_2y=float(2 * i - 20),
-                raw_5y=float(1.5 * i - 15),
-                raw_terminal=float(i - 10),
-                fomc_2y=float(abs(2 * i - 20)) if populate_fomc else None,
-                fomc_5y=float(abs(1.5 * i - 15)) if populate_fomc else None,
-                fomc_terminal=float(abs(i - 10)) if populate_fomc else None,
+                raw_2y=_raw_2y(i),
+                raw_5y=_raw_5y(i),
+                raw_terminal=_raw_terminal(i),
+                fomc_2y=abs(_raw_2y(i)) if populate_fomc else None,
+                fomc_5y=abs(_raw_5y(i)) if populate_fomc else None,
+                fomc_terminal=abs(_raw_terminal(i)) if populate_fomc else None,
             )
             for i in range(n)
         ]
@@ -259,9 +275,10 @@ def test_build_partition_rates_targets_fomc_attributable_uses_train_scaler() -> 
 def test_build_partition_rates_targets_fomc_attributable_masks_missing_rows() -> None:
     """Rows whose projected target is None are masked out, not coerced to zero.
 
-    Builds a group whose first half carries a valid projection and
-    whose second half has no surprise direction (None); the resulting
-    bps_mask must be True only on the populated rows.
+    Builds a group whose first 5 emitted rows carry a valid projection
+    and whose last 5 emitted rows have no surprise direction (None);
+    the resulting bps_mask must be True only on the populated rows so
+    the per-fold scaler ignores the missing entries.
     """
 
     groups = [
@@ -270,6 +287,8 @@ def test_build_partition_rates_targets_fomc_attributable_masks_missing_rows() ->
                 day=i + 1,
                 vol=0.01 + 0.001 * i,
                 raw_2y=float(2 * i - 20),
+                # Supervised rows are i in [20, 29]; populate the first
+                # five (i in [20, 24]) and leave the rest as None.
                 fomc_2y=float(abs(2 * i - 20)) if i < 25 else None,
             )
             for i in range(30)
@@ -279,10 +298,10 @@ def test_build_partition_rates_targets_fomc_attributable_masks_missing_rows() ->
         groups, head_names=("2y",), target_mode="fomc_attributable"
     )
     mask = bps_mask["2y"]
-    # First N rows populated; remaining masked False.
     populated = int(mask.sum().item())
-    assert populated > 0
-    assert populated < mask.numel()
+    # Five rows populated, five masked False.
+    assert populated == 5
+    assert int(mask.numel()) == 10
 
 
 # ---------------------------------------------------------------------------
