@@ -1,3 +1,4 @@
+import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import {
@@ -9,7 +10,9 @@ import {
   Github,
   History as HistoryIcon,
   LineChart,
+  Menu,
   Settings as SettingsIcon,
+  X,
 } from "lucide-react";
 
 import { SkipLink } from "@/components/shell/skip-link";
@@ -36,6 +39,18 @@ function isActive(currentPath: string, href: string): boolean {
 export function Header() {
   const router = useRouter();
   const currentPath = (router.asPath || "/").split("?")[0];
+  const [mobileOpen, setMobileOpen] = React.useState(false);
+
+  // Auto-close the mobile menu on route change so a tap on a nav item
+  // doesn't leave the panel hanging over the new page.
+  React.useEffect(() => {
+    const events = router.events;
+    if (!events) return;
+    const handler = () => setMobileOpen(false);
+    events.on("routeChangeStart", handler);
+    return () => events.off("routeChangeStart", handler);
+  }, [router.events]);
+
   return (
     <>
       <SkipLink />
@@ -48,7 +63,10 @@ export function Header() {
           >
             <Activity className="h-4 w-4 text-primary" aria-hidden="true" />
             <span>Fed Pulse</span>
-            <Badge variant="outline" className="ml-1 text-[10px] uppercase tracking-wide">
+            <Badge
+              variant="outline"
+              className="ml-1 hidden text-[10px] uppercase tracking-wide sm:inline-flex"
+            >
               Volatility Regime
             </Badge>
           </Link>
@@ -105,8 +123,54 @@ export function Header() {
               </Link>
             </Button>
             <ThemeToggle />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 sm:hidden"
+              aria-label={mobileOpen ? "Close navigation menu" : "Open navigation menu"}
+              aria-expanded={mobileOpen}
+              aria-controls="mobile-nav-panel"
+              onClick={() => setMobileOpen((open) => !open)}
+            >
+              {mobileOpen ? (
+                <X className="h-4 w-4" aria-hidden="true" />
+              ) : (
+                <Menu className="h-4 w-4" aria-hidden="true" />
+              )}
+            </Button>
           </div>
         </div>
+        {mobileOpen ? (
+          <nav
+            id="mobile-nav-panel"
+            aria-label="Primary mobile"
+            className="border-t border-border bg-background sm:hidden"
+          >
+            <ul className="container flex flex-col gap-1 py-3">
+              {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+                const active = isActive(currentPath, href);
+                return (
+                  <li key={href}>
+                    <Link
+                      href={href}
+                      aria-current={active ? "page" : undefined}
+                      className={cn(
+                        "flex min-h-[44px] items-center gap-3 rounded-md px-3 text-sm font-medium",
+                        active
+                          ? "bg-secondary text-foreground"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                      )}
+                    >
+                      <Icon className="h-4 w-4" aria-hidden="true" />
+                      {label}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
+        ) : null}
       </header>
     </>
   );
