@@ -104,6 +104,13 @@ def _metrics_from_payload(payload: dict[str, Any] | None) -> EvaluationMetrics |
                 regime_loss=_opt_float("regime_loss"),
                 classification_breakdown=breakdown,
                 rates_metrics=rates_metrics,
+                # #304 dual-head regression surface. Pre-#304
+                # checkpoints leave these absent; the defaults give
+                # back ``None`` so the legacy contract holds.
+                regression_rmse_log_rv=_opt_float("regression_rmse_log_rv"),
+                regression_mae_log_rv=_opt_float("regression_mae_log_rv"),
+                regression_loss=_opt_float("regression_loss"),
+                regression_r2_log_rv=_opt_float("regression_r2_log_rv"),
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -158,6 +165,13 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             # checkpoints leave the key absent and the default collapses
             # to the raw column.
             vol_target_mode=str(raw.get("vol_target_mode", "raw") or "raw"),
+            # #304 dual-head: forward head_mode + regression_alpha so a
+            # dual-head checkpoint rehydrates the same head config the
+            # run trained against. Pre-#304 checkpoints leave the keys
+            # absent and the defaults collapse to the canonical config
+            # the ModelConfig dataclass ships with.
+            head_mode=str(raw.get("head_mode", "dual") or "dual"),
+            regression_alpha=float(raw.get("regression_alpha", 0.5)),
             # #423: mirror the #292 rates-fields landing for the #273
             # multi-task loss knob + the four per-axis lambda fields.
             # Pre-#273 checkpoints leave these absent and the defaults
