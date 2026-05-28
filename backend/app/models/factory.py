@@ -163,6 +163,7 @@ def build_forecaster(
             "vol_target_mode",
             "use_regime_conditioning",
             "use_sep",
+            "use_press_conf",
         ):
             flat_kwargs.pop(drop, None)
         flat_rates_heads = tuple(
@@ -332,6 +333,12 @@ def build_forecaster(
     # at build time when the flag is on. Default ``False`` keeps every
     # existing checkpoint byte-identical.
     use_sep_flag = bool(kwargs.pop("use_sep", False))
+    # #214 FOMC press-conference Q&A toggle. Forwarded to the model
+    # constructor so the recurrent core widens its input projection by
+    # the single-scalar press-conf tail at build time when the flag is
+    # on. Default ``False`` keeps every existing checkpoint
+    # byte-identical (no tail dim, no extra LoRA concat on the loader).
+    use_press_conf_flag = bool(kwargs.pop("use_press_conf", False))
     model: ForecasterResearchModel | ForecasterServingModel
     if role == "serving":
         # Serving construction trims the loss-side / sweep-side knobs the
@@ -345,6 +352,7 @@ def build_forecaster(
             rates_aux_classification=rates_aux_classification_flag,
             use_regime_conditioning=use_regime_conditioning_flag,
             use_sep=use_sep_flag,
+            use_press_conf=use_press_conf_flag,
             **kwargs,
         )
     else:
@@ -354,6 +362,7 @@ def build_forecaster(
             rates_aux_classification=rates_aux_classification_flag,
             use_regime_conditioning=use_regime_conditioning_flag,
             use_sep=use_sep_flag,
+            use_press_conf=use_press_conf_flag,
             **kwargs,
         )
     # mypy reads ``nn.Module`` attribute writes as ``Tensor | Module``;

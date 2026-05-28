@@ -104,6 +104,18 @@ RICH_MACRO_REGIME_MISSING_DIM = 1
 # feature size. See ADR 0030.
 RICH_SEP_DIM = 4
 RICH_SEP_MISSING_DIM = 1
+# #214 FOMC press conference Q&A block. One scalar carries the
+# ``has_press_conf`` covariate-shift flag (1.0 on FOMC events whose Q&A
+# transcript landed in the press-conf lookup, 0.0 on pre-2011 events and
+# every other event_kind where the joint corpus does not apply). The flag
+# IS the missingness signal — zero-imputation is the canonical handling
+# of the pre-2011 era under route 1 of #214 (a separate fold split was
+# rejected because it would fragment the walk-forward protocol). The
+# block sits past the SEP tail in ``as_rich_list`` and is appended only
+# when the loader populates ``press_conf_features`` under
+# ``--use-press-conf``, so the default flag-off path stays byte-identical
+# to pre-#214. See ADR 0037.
+RICH_PRESS_CONF_DIM = 1
 RICH_EXTRA_FEATURE_SIZE = (
     RICH_CREDIBILITY_DIM
     + RICH_LINGUISTIC_DIM
@@ -200,6 +212,17 @@ RICH_SEP_MISSING_SLICE = slice(
     RICH_SEP_SLICE.stop,
     RICH_SEP_SLICE.stop + RICH_SEP_MISSING_DIM,
 )
+# #214 press-conf block slice (one scalar, no missing flag — the flag is
+# itself the missingness signal). When the block is populated it sits
+# past the regime + SEP tails per the documented append order
+# (market | rich | regime? | sep? | press_conf?). When the
+# regime / SEP flags are off the press-conf block lands at the dynamic
+# offset their absence opens up; callers iterating the press-conf block
+# should compute the offset off the active flag tuple.
+RICH_PRESS_CONF_SLICE = slice(
+    RICH_SEP_MISSING_SLICE.stop,
+    RICH_SEP_MISSING_SLICE.stop + RICH_PRESS_CONF_DIM,
+)
 
 # Multi-task head (#78) axis cardinalities and canonical label maps.
 # The multi-task head emits four branches; the cardinalities are pinned
@@ -284,13 +307,20 @@ def rich_feature_size_with_sep(use_sep: bool) -> int:
     return RICH_FEATURE_SIZE + RICH_SEP_DIM + RICH_SEP_MISSING_DIM
 
 
-def rich_feature_size_with_blocks(*, use_regime: bool, use_sep: bool) -> int:
-    """Combined helper: the per-bar size with regime and SEP block flags.
+def rich_feature_size_with_blocks(
+    *,
+    use_regime: bool,
+    use_sep: bool,
+    use_press_conf: bool = False,
+) -> int:
+    """Combined helper: the per-bar size with regime, SEP, and press-conf block flags.
 
-    The two blocks are independent — both can be on, both off, or one
-    of the two on. ``as_rich_list`` appends them in a fixed order
-    (regime first, then SEP) so a downstream caller iterating slices
-    knows where each block sits without ambiguity.
+    The blocks are independent — every subset can be active. ``as_rich_list``
+    appends them in a fixed order (regime, then SEP, then press_conf) so
+    a downstream caller iterating slices knows where each block sits
+    without ambiguity. Adding new optional blocks to this helper without
+    bumping the legacy ``RICH_FEATURE_SIZE`` is the structural lock that
+    keeps default-off paths byte-identical across feature additions.
     """
 
     size = RICH_FEATURE_SIZE
@@ -298,6 +328,8 @@ def rich_feature_size_with_blocks(*, use_regime: bool, use_sep: bool) -> int:
         size += RICH_MACRO_REGIME_DIM + RICH_MACRO_REGIME_MISSING_DIM
     if bool(use_sep):
         size += RICH_SEP_DIM + RICH_SEP_MISSING_DIM
+    if bool(use_press_conf):
+        size += RICH_PRESS_CONF_DIM
     return size
 
 
@@ -574,6 +606,17 @@ class ModelConfig:
     # the loader appends past ``RICH_FEATURE_SIZE`` (and past the
     # regime block when both flags are on). See ADR 0030.
     use_sep: bool = False
+    # #214 FOMC press conference Q&A opt-in. Default ``False`` keeps the
+    # per-bar feature size byte-identical to pre-#214. When ``True`` the
+    # loader joins the press-conf lookup onto every supervised statement
+    # event: the ``has_press_conf`` scalar fires on FOMC events with a
+    # locatable Q&A transcript (post-2011 era), and the LoRA path
+    # concatenates the Q&A text onto the statement's ``raw_text`` so the
+    # encoder sees a joint statement-plus-Q&A document under route 1 of
+    # the #214 scope brief. Pre-2011 events get a zero-imputed flag —
+    # the covariate-shift handling rejected fragmenting the walk-forward
+    # fold protocol for an era-specific subset. See ADR 0037.
+    use_press_conf: bool = False
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -607,7 +650,7 @@ class ModelConfig:
             use_time_decay=bool(getattr(model, "use_time_decay", True)),
             encoder_lora=bool(getattr(model, "encoder_lora", False)),
             lora_curriculum_freeze_epoch=(
-                int(getattr(model, "lora_curriculum_freeze_epoch"))
+                int(model.lora_curriculum_freeze_epoch)
                 if getattr(model, "lora_curriculum_freeze_epoch", None) is not None
                 else None
             ),
@@ -646,6 +689,7 @@ class ModelConfig:
                 getattr(model, "use_regime_conditioning", False)
             ),
             use_sep=bool(getattr(model, "use_sep", False)),
+            use_press_conf=bool(getattr(model, "use_press_conf", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -870,6 +914,21 @@ class FeatureVector:
     # per-feature row in ``docs/feature-provenance-audit.md``.
     sep_features: list[float] | None = None
     sep_features_missing: float = 1.0
+    # #214 FOMC press conference Q&A block. One scalar (``has_press_conf``)
+    # that fires on FOMC events with a locatable Q&A transcript and
+    # zero-imputes for pre-2011 events / every other event_kind. The
+    # block doubles as its own missingness flag — the covariate shift
+    # between the pre-2011 (no scheduled press conf) and post-2011 eras
+    # is the entire signal the scalar carries, and a separate
+    # ``*_missing`` would just be its complement. Default ``None`` keeps
+    # the regression / legacy paths byte-identical: ``as_rich_list`` does
+    # NOT append the block when this slot is empty, so the per-bar
+    # feature size stays at the legacy ``RICH_FEATURE_SIZE`` width (or
+    # the regime / SEP-widened width when those flags are on). The
+    # loader sets the slot only when ``--use-press-conf`` is on. See
+    # ADR 0037 and the per-feature row in
+    # ``docs/feature-provenance-audit.md``.
+    press_conf_features: list[float] | None = None
     rich_payload: bool = False
     # Phase 9 V2 (#195) classification target. The forward 10-trading-day
     # realised volatility lives on the target row (the last vector in
@@ -1009,7 +1068,7 @@ class FeatureVector:
             float(self.elapsed_time) / 30.0,
         ]
 
-    def as_rich_list(self, close_scale: float = DEFAULT_CLOSE_SCALE) -> list[float]:
+    def as_rich_list(self, close_scale: float = DEFAULT_CLOSE_SCALE) -> list[float]:  # noqa: C901
         """Emit the full 35-dim per-bar feature vector.
 
         Layout matches the slice constants at the top of this module
@@ -1134,6 +1193,22 @@ class FeatureVector:
                     RICH_SEP_DIM - len(sep_block)
                 )
             out = out + sep_block + [float(self.sep_features_missing)]
+        # #214 FOMC press conference Q&A block. Appended past the SEP
+        # tail under the documented append order (regime, then SEP, then
+        # press_conf). Conditional append is the structural lock that
+        # keeps the default ``--no-press-conf`` path byte-identical to
+        # pre-#214; the single ``has_press_conf`` scalar is the entire
+        # block — the missingness flag is folded into the same slot
+        # because the covariate-shift signal is the scalar itself.
+        if self.press_conf_features is not None:
+            press_conf_block = [
+                float(v) for v in self.press_conf_features[:RICH_PRESS_CONF_DIM]
+            ]
+            if len(press_conf_block) < RICH_PRESS_CONF_DIM:
+                press_conf_block = press_conf_block + [0.0] * (
+                    RICH_PRESS_CONF_DIM - len(press_conf_block)
+                )
+            out = out + press_conf_block
         return out
 
 

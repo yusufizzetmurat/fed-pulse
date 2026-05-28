@@ -717,6 +717,89 @@ def _read_sep_projections_lookup(
     return lookup
 
 
+def _read_press_conf_qa_lookup(
+    package_dir: Path,
+) -> dict[str, dict[str, Any]]:
+    """Return ``event_date -> {qa_text, prepared_remarks_text, has_press_conf}``.
+
+    Reads the #214 FOMC press-conference Q&A corpus from either the
+    training package or the canonical location
+    ``data/external/fomc_press_conferences/qa_lookup.parquet``. The
+    parquet is produced by the press-conference scraper's
+    ``build_qa_lookup`` helper; absence on disk collapses to an empty
+    dict and the loader treats every event as ``has_press_conf=0``
+    (pre-2011 covariate-shift handling under route 1 of #214 — see
+    ADR 0037).
+
+    Date keys are ``YYYY-MM-DD`` strings matching the events.parquet
+    ``event_date`` column. ``qa_text`` and ``prepared_remarks_text`` may
+    be empty on rows where the PDF Q&A boundary was not locatable; the
+    ``has_press_conf`` flag still fires for the covariate-shift
+    distinction (the press conference happened, the text just did not
+    survive the split heuristic). The loader treats empty ``qa_text``
+    as "no LoRA-side text to concat", and the static-cache path sees
+    the same scalar flag regardless.
+    """
+
+    import pandas as pd
+
+    candidates = (
+        package_dir / "qa_lookup.parquet",
+        DATA_DIR / "external" / "fomc_press_conferences" / "qa_lookup.parquet",
+    )
+    parquet_path: Path | None = None
+    for candidate in candidates:
+        if candidate.exists():
+            parquet_path = candidate
+            break
+    if parquet_path is None:
+        return {}
+    frame = pd.read_parquet(parquet_path)
+    if "event_date" not in frame.columns:
+        return {}
+    lookup: dict[str, dict[str, Any]] = {}
+    for record in frame.to_dict("records"):
+        event_raw = record.get("event_date")
+        if event_raw is None:
+            continue
+        event_str = str(event_raw)[:10]
+        if not event_str:
+            continue
+        lookup[event_str] = {
+            "qa_text": str(record.get("qa_text") or ""),
+            "prepared_remarks_text": str(record.get("prepared_remarks_text") or ""),
+            "has_press_conf": 1.0
+            if str(record.get("has_press_conf") or "0") not in ("0", "0.0", "", "False", "false")
+            else 0.0,
+        }
+    return lookup
+
+
+def _compute_press_conf_features_for_event(
+    *,
+    event_date_str: str,
+    press_conf_lookup: dict[str, dict[str, Any]],
+) -> list[float]:
+    """Per-event #214 press-conf feature block.
+
+    Returns the single-element ``[has_press_conf]`` block. The press-conf
+    lookup is keyed on the supervised event's ISO date; a hit emits
+    ``1.0`` (Q&A transcript landed in the joint corpus for this event),
+    a miss emits ``0.0`` (pre-2011 era or otherwise no press conference
+    on this date — the canonical zero-impute handling per ADR 0037).
+
+    Unlike the regime / SEP composers this helper always returns a
+    populated list rather than ``None``: the caller is expected to set
+    the slot unconditionally when ``--use-press-conf`` is on so the
+    covariate-shift flag is present on every row in the joint corpus.
+    """
+
+    record = press_conf_lookup.get(event_date_str[:10])
+    if not record:
+        return [0.0]
+    return [float(record.get("has_press_conf", 0.0))]
+
+
 def _compute_sep_features_for_event(
     *,
     event_date: datetime.date,
@@ -1593,6 +1676,7 @@ def _load_package_sequences_with_metadata(
     use_retrieval_analogs: bool = False,
     use_regime_conditioning: bool = False,
     use_sep: bool = False,
+    use_press_conf: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -1649,6 +1733,15 @@ def _load_package_sequences_with_metadata(
     # parquet on disk doesn't change behaviour unless --use-sep is set).
     sep_lookup: dict[str, dict[str, Any]] = (
         _read_sep_projections_lookup(package_dir) if use_sep else {}
+    )
+    # #214 FOMC press-conference Q&A lookup. Loaded only when the opt-in
+    # flag fires so the legacy path stays byte-identical to pre-#214 (a
+    # parquet on disk doesn't change behaviour unless --use-press-conf
+    # is set). Empty dict when no parquet is found — the loader then
+    # treats every event as ``has_press_conf=0`` and the LoRA path
+    # leaves ``raw_text`` at the statement text alone.
+    press_conf_lookup: dict[str, dict[str, Any]] = (
+        _read_press_conf_qa_lookup(package_dir) if use_press_conf else {}
     )
     llm_lookup: dict[str, list[float]] = {}
     if rich_features:
@@ -1896,6 +1989,19 @@ def _load_package_sequences_with_metadata(
             )
         else:
             sep_block_list = None
+        # #214 FOMC press-conf Q&A block. Composed unconditionally when
+        # the flag is on so pre-2011 events land with ``has_press_conf=0``
+        # and post-2011 events with a Q&A transcript land with
+        # ``has_press_conf=1`` — the zero-impute covariate-shift handling
+        # rejected fragmenting the walk-forward fold protocol for an
+        # era-specific subset (see ADR 0037).
+        if use_press_conf:
+            press_conf_block_list = _compute_press_conf_features_for_event(
+                event_date_str=event_date_str,
+                press_conf_lookup=press_conf_lookup,
+            )
+        else:
+            press_conf_block_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
             vector.forward_realized_vol_10d_garch_baseline = garch_baseline_value
@@ -1944,6 +2050,16 @@ def _load_package_sequences_with_metadata(
             else:
                 vector.sep_features = None
                 vector.sep_features_missing = 1.0
+            # #214 press-conf Q&A block broadcast onto every bar. When
+            # the flag is off, ``press_conf_block_list`` is ``None`` and
+            # the slot stays at the default; the conditional emission
+            # in ``FeatureVector.as_rich_list`` then skips appending the
+            # block entirely, preserving the byte-identical pre-#214
+            # per-bar feature size.
+            if press_conf_block_list is not None:
+                vector.press_conf_features = list(press_conf_block_list)
+            else:
+                vector.press_conf_features = None
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -1987,6 +2103,23 @@ def _load_package_sequences_with_metadata(
             # learns gradients w.r.t. the event's actual content
             # (statement / minutes / press conference / scrape).
             row_text = str(row.get("text", "") or "").strip()
+            # #214 route 1: when the press-conf opt-in is on AND the
+            # supervised event is the FOMC statement, concat the
+            # same-date Q&A onto the statement text so the LoRA
+            # encoder sees a single joint document per route 1 of the
+            # scope brief. The press conference itself rides on a
+            # separate event_kind row in events.parquet and is left
+            # untouched (the encoder learns the Q&A signal off the
+            # statement row's joint text, not by training twice on the
+            # same Q&A). The append is conditional on a non-empty
+            # ``qa_text`` lookup hit; missing-Q&A statement rows
+            # collapse to the byte-identical pre-#214 raw_text.
+            if use_press_conf and str(row.get("event_kind", "")) == "statement":
+                pc_record = press_conf_lookup.get(event_date_str[:10])
+                if pc_record:
+                    qa_text = str(pc_record.get("qa_text") or "").strip()
+                    if qa_text:
+                        row_text = f"{row_text}\n\n{qa_text}" if row_text else qa_text
             if vectors:
                 vectors[-1].raw_text = row_text
         results.append((vectors, row_text_hash, event_date_str[:10]))
@@ -2007,6 +2140,7 @@ def load_walk_forward_split(
     use_retrieval_analogs: bool = False,
     use_regime_conditioning: bool = False,
     use_sep: bool = False,
+    use_press_conf: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -2085,6 +2219,7 @@ def load_walk_forward_split(
         use_retrieval_analogs=use_retrieval_analogs,
         use_regime_conditioning=use_regime_conditioning,
         use_sep=use_sep,
+        use_press_conf=use_press_conf,
         text_encoder=text_encoder,
         text_adapter_dim=text_adapter_dim,
         text_pool_lambda_inv_days=text_pool_lambda_inv_days,
@@ -2206,6 +2341,7 @@ def load_training_sequences_from_package(
     use_retrieval_analogs: bool = False,
     use_regime_conditioning: bool = False,
     use_sep: bool = False,
+    use_press_conf: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -2366,6 +2502,13 @@ def load_training_sequences_from_package(
     # in ``_load_package_sequences_with_metadata``).
     sep_lookup: dict[str, dict[str, Any]] = (
         _read_sep_projections_lookup(package_dir) if use_sep else {}
+    )
+    # #214 press-conf Q&A lookup mirror on the legacy loader path. Same
+    # contract as the metadata loader: empty dict when the parquet is
+    # absent on disk, so the composer collapses every event to
+    # ``has_press_conf=0``.
+    press_conf_lookup: dict[str, dict[str, Any]] = (
+        _read_press_conf_qa_lookup(package_dir) if use_press_conf else {}
     )
     llm_lookup: dict[str, list[float]] = {}
     if rich_features:
@@ -2619,6 +2762,19 @@ def load_training_sequences_from_package(
             )
         else:
             sep_block_list = None
+        # #214 FOMC press-conf Q&A block. Composed unconditionally when
+        # the flag is on so pre-2011 events land with ``has_press_conf=0``
+        # and post-2011 events with a Q&A transcript land with
+        # ``has_press_conf=1`` — the zero-impute covariate-shift handling
+        # rejected fragmenting the walk-forward fold protocol for an
+        # era-specific subset (see ADR 0037).
+        if use_press_conf:
+            press_conf_block_list = _compute_press_conf_features_for_event(
+                event_date_str=event_date_str,
+                press_conf_lookup=press_conf_lookup,
+            )
+        else:
+            press_conf_block_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
             vector.forward_realized_vol_10d_garch_baseline = garch_baseline_value
@@ -2661,6 +2817,16 @@ def load_training_sequences_from_package(
             else:
                 vector.sep_features = None
                 vector.sep_features_missing = 1.0
+            # #214 press-conf Q&A block broadcast onto every bar. When
+            # the flag is off, ``press_conf_block_list`` is ``None`` and
+            # the slot stays at the default; the conditional emission
+            # in ``FeatureVector.as_rich_list`` then skips appending the
+            # block entirely, preserving the byte-identical pre-#214
+            # per-bar feature size.
+            if press_conf_block_list is not None:
+                vector.press_conf_features = list(press_conf_block_list)
+            else:
+                vector.press_conf_features = None
         if rich_features:
             _attach_rich_features(
                 vectors,

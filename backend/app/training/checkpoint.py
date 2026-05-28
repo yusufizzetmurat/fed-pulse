@@ -195,6 +195,12 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             multi_task_lambda_topic=float(
                 raw.get("multi_task_lambda_topic", 0.3)
             ),
+            # #214: mirror the press-conf opt-in onto the checkpoint
+            # round-trip so a run trained under ``--use-press-conf``
+            # rehydrates with the same input projection. Pre-#214
+            # checkpoints leave the key absent and the default collapses
+            # to the byte-identical no-press-conf path.
+            use_press_conf=bool(raw.get("use_press_conf", False)),
         )
     return ModelConfig()
 

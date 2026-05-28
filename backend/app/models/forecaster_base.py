@@ -36,6 +36,7 @@ from app.models.config import (
     RICH_FEATURE_SIZE,
     RICH_MACRO_REGIME_DIM,
     RICH_MACRO_REGIME_MISSING_DIM,
+    RICH_PRESS_CONF_DIM,
     RICH_SEP_DIM,
     RICH_SEP_MISSING_DIM,
     SEQUENCE_LENGTH,
@@ -69,7 +70,7 @@ _ALLOWED_MODEL_TYPES = frozenset({
 class ForecasterBase(nn.Module):
     """Shared backbone: recurrent core + optional text / credibility adapters."""
 
-    def __init__(
+    def __init__(  # noqa: C901
         self,
         input_size: int = FEATURE_SIZE,
         hidden_size: int = DEFAULT_HIDDEN_SIZE,
@@ -91,6 +92,7 @@ class ForecasterBase(nn.Module):
         text_adapter_dim: int = 0,
         use_regime_conditioning: bool = False,
         use_sep: bool = False,
+        use_press_conf: bool = False,
     ):
         super().__init__()
         if model_type not in _ALLOWED_MODEL_TYPES:
@@ -208,6 +210,21 @@ class ForecasterBase(nn.Module):
         else:
             sep_tail_dim = 0
         self.sep_tail_dim = sep_tail_dim
+        # #214 press-conf Q&A scalar. Single dim (``has_press_conf``)
+        # appended past the SEP tail on every per-bar tensor when the
+        # press-conf flag is on (see ``FeatureVector.as_rich_list``). No
+        # architectural gate — the flag is a covariate-shift indicator
+        # the recurrent core can read directly, and the joint statement-
+        # plus-Q&A text on the LoRA path is where the encoder side of
+        # the methodology lands. The input projection widens by one dim
+        # so the legacy pre-#214 forward pass stays byte-identical when
+        # the flag is off.
+        self.use_press_conf = bool(use_press_conf)
+        if self.use_press_conf:
+            press_conf_tail_dim = RICH_PRESS_CONF_DIM
+        else:
+            press_conf_tail_dim = 0
+        self.press_conf_tail_dim = press_conf_tail_dim
         self.text_embedding_dim = int(text_embedding_dim or 0)
         self.text_adapter_dim = int(text_adapter_dim or 0)
         self._text_path_active = self.text_embedding_dim > 0 and self.text_adapter_dim > 0
@@ -232,6 +249,7 @@ class ForecasterBase(nn.Module):
             + text_path_dim
             + regime_tail_dim
             + sep_tail_dim
+            + press_conf_tail_dim
         )
         self.lstm_input_size = lstm_input_size
         lstm_dropout = dropout if num_layers > 1 else 0.0
