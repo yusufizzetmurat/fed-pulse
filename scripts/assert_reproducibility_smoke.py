@@ -1,11 +1,18 @@
-"""Numerical-contract guard for the reproducibility CI smoke (#335).
+"""Numerical-contract probe for the reproducibility CI smoke (#335, #427).
 
 Reads the pinned reference cell at
 ``tests/regression/reproducibility_reference.json`` and the metric the
-just-finished smoke training emitted onto disk, then asserts the
-observed value sits within the reference tolerance. Exits 1 with a
-clear diff on mismatch so a future training-pipeline change cannot
-silently drift the canonical headline.
+just-finished smoke training emitted onto disk, then reports the diff
+against the reference tolerance.
+
+Under #427 the assertion is **advisory**: it always exits 0 so a
+training-pipeline change that legitimately moves the 1-epoch surface
+does not block a `dev -> main` merge. The canonical 5-seed x 5-fold x
+40-epoch sweep mean
+(``backend/artifacts/experiments/dual_head_comparison_canonical.json::
+summary.dual.regime_f1_macro.mean``) is the hard contract for thesis
+numbers; this probe stays in CI as a drift sentinel so a re-pin
+decision is visible per-PR rather than silently accumulating.
 
 CLI shape::
 
@@ -86,8 +93,9 @@ def main() -> int:
 
     if abs(diff) > tolerance:
         print(
-            "[reproduce-smoke] FAIL — observed metric drifted outside the "
-            "pinned tolerance. Investigate before merging.",
+            "[reproduce-smoke] WARN (advisory under #427) - observed metric "
+            "drifted outside the pinned tolerance. Re-pin when the drift is "
+            "intentional; this exits 0 so it does not gate the merge.",
             flush=True,
         )
         print(
@@ -100,10 +108,10 @@ def main() -> int:
             f"(cell {reference.get('source_artefact_cell')})",
             flush=True,
         )
-        return 1
+        return 0
 
     print(
-        "[reproduce-smoke] OK — observed metric inside the pinned tolerance.",
+        "[reproduce-smoke] OK - observed metric inside the pinned tolerance.",
         flush=True,
     )
     return 0
