@@ -181,7 +181,7 @@ export function TrajectoryPanel({
             title="Trajectory model isn't loaded."
             description={
               error
-                ? "Check the Settings page for the active checkpoint."
+                ? `Check the Settings page for the active checkpoint. Backend reported: ${error}`
                 : "Check the Settings page for the active checkpoint."
             }
           />

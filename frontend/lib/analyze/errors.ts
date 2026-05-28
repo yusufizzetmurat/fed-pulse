@@ -5,7 +5,7 @@
 // Keeping the mapping in one place means a new fetch site only has to
 // remember to call ``categorizeError`` rather than reinvent the rule.
 
-export type ErrorCategory = "model_unavailable" | "bad_input" | "network";
+export type ErrorCategory = "model_unavailable" | "bad_input" | "network" | "not_found";
 
 interface AxiosLikeError {
   response?: {
@@ -17,8 +17,9 @@ interface AxiosLikeError {
   code?: string;
 }
 
-const MODEL_UNAVAILABLE_STATUSES = new Set([404, 409, 500, 502, 503, 504]);
+const MODEL_UNAVAILABLE_STATUSES = new Set([409, 500, 502, 503, 504]);
 const BAD_INPUT_STATUSES = new Set([400, 422]);
+const NOT_FOUND_STATUSES = new Set([404]);
 
 const NETWORK_CODES = new Set([
   "ERR_NETWORK",
@@ -30,6 +31,7 @@ const NETWORK_CODES = new Set([
 
 const MODEL_UNAVAILABLE_COPY = "Model unavailable. Try again later or check the Settings page.";
 const NETWORK_COPY = "Network error. Check your connection and try again.";
+const NOT_FOUND_COPY = "Not found.";
 const FALLBACK_COPY = "Something went wrong. Try again.";
 
 export function categorizeError(err: unknown): { category: ErrorCategory; message: string } {
@@ -62,6 +64,16 @@ export function categorizeError(err: unknown): { category: ErrorCategory; messag
           typeof detail === "string" && detail.trim().length > 0
             ? detail
             : "Request rejected. Check the inputs and try again.",
+      };
+    }
+    if (NOT_FOUND_STATUSES.has(status)) {
+      const detail = axiosErr.response?.data?.detail;
+      return {
+        category: "not_found",
+        message:
+          typeof detail === "string" && detail.trim().length > 0
+            ? detail
+            : NOT_FOUND_COPY,
       };
     }
     if (MODEL_UNAVAILABLE_STATUSES.has(status)) {
