@@ -3900,6 +3900,30 @@ def train_model(
             best_val_metrics = dataclasses.replace(
                 best_val_metrics, rates_metrics=rates_val_metrics_payload
             )
+        # #292 per-head training-log breakdown. Emitted once per run on
+        # the val partition so the operator sees MAE-bps / dir-acc / R²
+        # per mounted head without parsing the per-trial JSON. Wrapped in
+        # try/except so a malformed payload never breaks the training
+        # exit path.
+        if rates_val_metrics_payload:
+            for head_name in active_rates_heads:
+                payload = rates_val_metrics_payload.get(head_name)
+                if not isinstance(payload, dict):
+                    continue
+                try:
+                    mae = payload.get("mae_bps") or {}
+                    r2 = payload.get("r_squared") or {}
+                    dir_acc = payload.get("directional_accuracy") or {}
+                    print(
+                        f"[rates] head={head_name} "
+                        f"n={payload.get('n_rows', 0)} "
+                        f"mae_bps={mae.get('point')} "
+                        f"r2={r2.get('point')} "
+                        f"dir_acc={dir_acc.get('point')}",
+                        flush=True,
+                    )
+                except Exception:  # pragma: no cover — print is diagnostic
+                    pass
 
     # ``metrics`` keeps the pre-PR semantics: the headline number the
     # downstream best-selection ranks by. On the walk-forward path

@@ -101,10 +101,40 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _resolve_rates_heads_from_args(args: argparse.Namespace) -> tuple[str, ...]:
-    """Convert ``--rates-heads`` CLI choice into the ModelConfig tuple (#292)."""
+    """Convert ``--rates-heads`` / ``--targets`` CLI choice into the ModelConfig tuple (#292).
 
-    from app.models.rates_heads import resolve_rates_heads
+    Two surfaces resolve to the same internal tuple. ``--targets``
+    accepts the canonical comma-separated form
+    ``regime,rates_2y,rates_terminal`` and is the public knob the
+    multi-target training surface advertises; ``--rates-heads`` keeps
+    the legacy short-name selector (``none``/``2y``/``5y``/
+    ``terminal``/``all``) so pre-#292 scripts and existing sweep
+    configs keep working untouched. When both are supplied,
+    ``--targets`` wins because the explicit list is more specific than
+    the alias.
+    """
 
+    from app.models.rates_heads import RATES_HEAD_NAMES, resolve_rates_heads
+
+    targets_raw = getattr(args, "targets", None)
+    if targets_raw:
+        cleaned = [tok.strip().lower() for tok in str(targets_raw).split(",") if tok.strip()]
+        active: list[str] = []
+        valid_tokens = {"regime"} | {f"rates_{name}" for name in RATES_HEAD_NAMES}
+        for tok in cleaned:
+            if tok not in valid_tokens:
+                raise ValueError(
+                    f"unknown target {tok!r} in --targets; choose from "
+                    f"{sorted(valid_tokens)}"
+                )
+            if tok == "regime":
+                # The regime head is always mounted on a classification
+                # output; the rates tuple stays untouched.
+                continue
+            short = tok[len("rates_"):]
+            if short not in active:
+                active.append(short)
+        return tuple(active)
     return resolve_rates_heads(getattr(args, "rates_heads", "none"))
 
 
@@ -723,6 +753,36 @@ def _parse_args() -> argparse.Namespace:
     # #292 rates-complex heads. Default ``none`` keeps the pre-#292
     # path byte-identical (no rates heads mount).
     parser.add_argument(
+        "--targets",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated list of heads to mount on the shared "
+            "encoder (#292). Tokens: ``regime`` (always implied when "
+            "``--output-mode=classification``), ``rates_2y``, "
+            "``rates_5y``, ``rates_terminal``. Example: "
+            "``--targets regime,rates_2y,rates_terminal`` mounts the "
+            "vol-regime classifier alongside the 2y + terminal rates "
+            "regression heads. Overrides ``--rates-heads`` when both are "
+            "passed."
+        ),
+    )
+    parser.add_argument(
+        "--rates-classification-heads",
+        dest="rates_aux_classification",
+        action="store_true",
+        default=False,
+        help=(
+            "Mount the auxiliary 3-class direction classifier "
+            "(easing / neutral / tightening) alongside each rates "
+            "regression head (#292). Default OFF mounts the regression "
+            "heads only and the response surface emits the bps point + "
+            "interval with a null directional bucket. Required when "
+            "``--rates-head-mode`` is ``classification`` or ``dual`` "
+            "(the CE term has no head to land on otherwise)."
+        ),
+    )
+    parser.add_argument(
         "--rates-heads",
         type=str,
         choices=("none", "2y", "5y", "terminal", "all"),
@@ -1280,6 +1340,7 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         ),
         rates_heads=_resolve_rates_heads_from_args(args),
         rates_head_mode=str(getattr(args, "rates_head_mode", "regression") or "regression"),
+        rates_aux_classification=bool(getattr(args, "rates_aux_classification", False)),
         rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
         rates_target_mode=str(
             getattr(args, "rates_target_mode", "raw") or "raw"
@@ -1541,6 +1602,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                                 ),
                                 rates_heads=_resolve_rates_heads_from_args(args),
                                 rates_head_mode=str(getattr(args, "rates_head_mode", "regression") or "regression"),
+                                rates_aux_classification=bool(getattr(args, "rates_aux_classification", False)),
                                 rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
                                 rates_target_mode=str(
                                     getattr(args, "rates_target_mode", "raw") or "raw"
@@ -1660,6 +1722,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                         ),
                         rates_heads=_resolve_rates_heads_from_args(args),
                         rates_head_mode=str(getattr(args, "rates_head_mode", "regression") or "regression"),
+                        rates_aux_classification=bool(getattr(args, "rates_aux_classification", False)),
                         rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
                         rates_target_mode=str(
                             getattr(args, "rates_target_mode", "raw") or "raw"

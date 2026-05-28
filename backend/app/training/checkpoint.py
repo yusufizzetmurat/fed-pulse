@@ -158,6 +158,9 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             rates_head_mode=str(
                 raw.get("rates_head_mode", "regression") or "regression"
             ),
+            rates_aux_classification=bool(
+                raw.get("rates_aux_classification", False)
+            ),
             rates_alpha=float(raw.get("rates_alpha", 0.5)),
             # #435: forward the new vol-target-mode so a checkpoint trained
             # under --vol-target-mode=garch_residual rehydrates with the

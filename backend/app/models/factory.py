@@ -157,6 +157,7 @@ def build_forecaster(
             "regression_alpha",
             "use_derived_text_features",
             "rates_head_mode",
+            "rates_aux_classification",
             "rates_alpha",
             "rates_target_mode",
             "vol_target_mode",
@@ -193,6 +194,7 @@ def build_forecaster(
         flat.use_derived_text_features = bool(resolved.use_derived_text_features)  # type: ignore[assignment]
         flat.rates_heads = flat_rates_heads  # type: ignore[assignment]
         flat.rates_head_mode = str(resolved.rates_head_mode or "regression")  # type: ignore[assignment]
+        flat.rates_aux_classification = bool(resolved.rates_aux_classification)  # type: ignore[assignment]
         flat.rates_alpha = float(resolved.rates_alpha)  # type: ignore[assignment]
         # #305 round-trip the rates target derivation onto the persisted
         # run summary so the checkpoint records which target the heads
@@ -250,6 +252,9 @@ def build_forecaster(
     rates_head_mode_value = str(
         kwargs.pop("rates_head_mode", "regression") or "regression"
     )
+    rates_aux_classification_flag = bool(
+        kwargs.pop("rates_aux_classification", False)
+    )
     rates_alpha_value = float(kwargs.pop("rates_alpha", 0.5))
     rates_target_mode_value = str(
         kwargs.pop("rates_target_mode", "raw") or "raw"
@@ -270,6 +275,22 @@ def build_forecaster(
             "rates_heads can only be mounted alongside "
             "output_mode='classification' (current: 'regression'). "
             "Pass --output-mode classification or --rates-heads none."
+        )
+    # The CE term in the rates loss needs an aux classifier to land on.
+    # Reject the joint-loss configuration where the classifier was
+    # explicitly disabled but the loss mode still expects CE; surface
+    # the misconfiguration early instead of silently dropping the term.
+    if (
+        rates_heads_tuple
+        and rates_head_mode_value in {"classification", "dual"}
+        and not rates_aux_classification_flag
+    ):
+        raise ValueError(
+            f"rates_head_mode={rates_head_mode_value!r} requires "
+            "--rates-classification-heads (the CE term has no aux head "
+            "to land on otherwise). Either pass "
+            "--rates-classification-heads or set "
+            "--rates-head-mode=regression."
         )
     # Phase 9 V2 (#195) fields all forwarded: ``output_mode`` /
     # ``n_classes`` drive the head shape; ``vol_regime_quantiles`` /
@@ -321,6 +342,7 @@ def build_forecaster(
         model = ForecasterServingModel(
             model_type=architecture,
             rates_heads=rates_heads_tuple,
+            rates_aux_classification=rates_aux_classification_flag,
             use_regime_conditioning=use_regime_conditioning_flag,
             use_sep=use_sep_flag,
             **kwargs,
@@ -329,6 +351,7 @@ def build_forecaster(
         model = ForecasterResearchModel(
             model_type=architecture,
             rates_heads=rates_heads_tuple,
+            rates_aux_classification=rates_aux_classification_flag,
             use_regime_conditioning=use_regime_conditioning_flag,
             use_sep=use_sep_flag,
             **kwargs,
@@ -355,6 +378,7 @@ def build_forecaster(
     # trips them onto the persisted run summary.
     model.rates_heads = rates_heads_tuple  # type: ignore[assignment]
     model.rates_head_mode = rates_head_mode_value  # type: ignore[assignment]
+    model.rates_aux_classification = rates_aux_classification_flag
     model.rates_alpha = rates_alpha_value  # type: ignore[assignment]
     # #305 round-trip the rates target derivation onto the built module
     # so ``ModelConfig.from_model`` recovers it on resume / inference.
