@@ -622,6 +622,7 @@ def _build_analyze_response(
         "series": forecast["series"],
         "multi_axis": _build_multi_axis_block(payload.text, sentiment),
         "regime_classification": regime_card,
+        "regime_regression": _build_regime_regression_block(regime_card),
         "regime_classification_status": regime_status,
     }
     if getattr(payload, "include_xai", False):
@@ -644,6 +645,43 @@ def _build_analyze_response(
             xai_block["panels"] = panel_attributions
         response["xai"] = xai_block
     return response
+
+
+def _build_regime_regression_block(
+    regime_card: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Derive the sibling ``regime_regression`` block from the classification card (#304).
+
+    The dual-head retrofit keeps the classification card as the
+    product-facing surface and exposes the regression head's point
+    estimate + 90% conformal interval as a standalone sibling block so
+    a frontend can render it behind a "show details" toggle without
+    re-deriving the read out of the classification card. The block is
+    emitted only when the classification card carries a non-null
+    ``log_rv_point`` (i.e. ``head_mode`` in ``regression`` / ``dual``);
+    otherwise the field stays ``None`` on the response and the legacy
+    classification-only payload shape is byte-identical.
+    """
+
+    if not isinstance(regime_card, dict):
+        return None
+    log_rv_point = regime_card.get("log_rv_point")
+    if log_rv_point is None:
+        return None
+    block: dict[str, Any] = {
+        "log_rv_point": float(log_rv_point),
+        "log_rv_lower": regime_card.get("log_rv_lower"),
+        "log_rv_upper": regime_card.get("log_rv_upper"),
+    }
+    coverage = regime_card.get("coverage")
+    # Coverage on the classification card maps to the calibrated APS
+    # set's nominal coverage. The regression interval rides off the
+    # same conformal manifest (residual_quantile_volatility) so it
+    # inherits the same nominal coverage for now; when the regression
+    # head gets a dedicated quantile sidecar this read switches over.
+    if isinstance(coverage, int | float) and coverage > 0:
+        block["coverage"] = float(coverage)
+    return block
 
 
 def _safe_regime_classification(history_vectors: list[Any]) -> dict[str, Any] | None:

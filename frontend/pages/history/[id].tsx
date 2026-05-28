@@ -170,7 +170,11 @@ export default function HistoryDetailPage() {
           ) : detail && result ? (
             <>
               {result.regime_classification ? (
-                <PreviewPanels slot="regime" regimeClassification={result.regime_classification} />
+                <PreviewPanels
+                  slot="regime"
+                  regimeClassification={result.regime_classification}
+                  regimeRegression={result.regime_regression}
+                />
               ) : null}
 
               {result.multi_axis ? (

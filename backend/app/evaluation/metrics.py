@@ -65,6 +65,16 @@ class EvaluationMetrics:
     regression_rmse_log_rv: float | None = None
     regression_mae_log_rv: float | None = None
     regression_loss: float | None = None
+    # #304 acceptance: per-fold R^2 on log_rv joins the existing
+    # RMSE/MAE pair so the three-way comparison table (classification-
+    # only, regression-only, dual) can report a scale-free goodness-of-
+    # fit alongside the absolute-error metrics. ``1 - SSE / SST`` over
+    # the partition's standardised log(forward_realized_vol_10d)
+    # values; collapses to ``None`` on a partition where SST is 0
+    # (constant target — pathological fixture only) so the consumer
+    # can tell ``no head ran`` apart from ``head ran on a degenerate
+    # partition``.
+    regression_r2_log_rv: float | None = None
     # #292 rates-complex per-head metrics. Keyed on the head short
     # name (``2y`` / ``5y`` / ``terminal``); each value is a dict
     # mirroring the regression-metric panel from

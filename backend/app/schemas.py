@@ -443,6 +443,45 @@ class RegimeClassificationCard(BaseModel):
     )
 
 
+class RegimeRegressionCard(BaseModel):
+    """Regression-head sibling block on the /analyze response (#304).
+
+    The classification card stays the headline; this block carries the
+    same dual-head regression output (``log_rv_point`` + symmetric 90%
+    conformal band) as a standalone surface so a downstream consumer
+    can read the continuous prediction without parsing it out of the
+    classification card. Populated only when the active checkpoint
+    mounts the regression head (``head_mode`` in ``regression`` /
+    ``dual``) AND ``build_regime_classification_card`` returned a card
+    whose ``log_rv_point`` is non-null; otherwise the field stays
+    ``None`` on the response.
+
+    Units mirror :class:`RegimeClassificationCard`: ``log_rv_point`` is
+    in standardised log(forward realized vol) space (the per-fold
+    train-slice standardiser the dual-head trainer fits, see
+    ``log_rv_scaler`` on the run summary). ``log_rv_lower`` /
+    ``log_rv_upper`` are the symmetric conformal interval at
+    ``coverage`` nominal coverage; on a checkpoint without a conformal
+    sidecar the bounds collapse to ``None`` even when the point
+    estimate is populated.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    log_rv_point: float
+    log_rv_lower: float | None = None
+    log_rv_upper: float | None = None
+    coverage: float | None = Field(
+        default=None,
+        description=(
+            "Nominal coverage on the conformal interval (0.9 by default; "
+            "matches the manifest's nominal_coverage when the sidecar "
+            "carries one). None when the regression head is mounted but "
+            "no conformal manifest is on disk."
+        ),
+    )
+
+
 class InferenceStatusSurface(BaseModel):
     """Structured error surface for the per-card inference helpers (#341).
 
@@ -481,6 +520,13 @@ class AnalyzeResponse(BaseModel):
     credibility: CredibilityResponse | None = None
     multi_axis: MultiAxisBlock | None = None
     regime_classification: RegimeClassificationCard | None = None
+    # #304 regression sibling. Populated when the active checkpoint
+    # mounts the dual-head regression head AND the classification card
+    # carried a non-null ``log_rv_point``. The classification card
+    # stays the headline; this block surfaces the continuous
+    # prediction + 90% conformal interval as a standalone read for the
+    # frontend's "show details" toggle on the regime panel.
+    regime_regression: RegimeRegressionCard | None = None
     # #341 sibling status surface so an operator can grep the JSON
     # response for the structured error branch when the regime card
     # degrades. Mutually exclusive with ``regime_classification``

@@ -1887,6 +1887,14 @@ def _evaluate_model(
     log_rv_squared_error_sum = torch.zeros((), dtype=torch.float64, device=device)
     log_rv_abs_error_sum = torch.zeros((), dtype=torch.float64, device=device)
     log_rv_items = torch.zeros((), dtype=torch.int64, device=device)
+    # #304 acceptance: R^2 on log_rv joins MAE / RMSE. R^2 needs the
+    # target's variance over the partition (SST) so the loop also
+    # accumulates the partition-wide sum + sum-of-squares of the
+    # standardised log_rv target. SST is computed once at the end as
+    # ``sum(y^2) - sum(y)^2 / n``; the running-mean variant would
+    # accumulate float64 cancellation error on long val/test sweeps.
+    log_rv_target_sum = torch.zeros((), dtype=torch.float64, device=device)
+    log_rv_target_squared_sum = torch.zeros((), dtype=torch.float64, device=device)
     # Per-axis loss bookkeeping for the multi-task eval path (#273
     # follow-up). Each axis accumulates ``loss * batch_size`` so the
     # final mean matches the per-batch mean ``MultiTaskLoss`` emits
@@ -2067,6 +2075,8 @@ def _evaluate_model(
                     diff = log_rv_pred - log_rv_true
                     log_rv_squared_error_sum += torch.square(diff).sum()
                     log_rv_abs_error_sum += torch.abs(diff).sum()
+                    log_rv_target_sum += log_rv_true.sum()
+                    log_rv_target_squared_sum += torch.square(log_rv_true).sum()
                     log_rv_items += int(diff.shape[0])
             elif has_regression_head:
                 # #304 single-task dual-head eval. ``forward_multi_task``
@@ -2094,6 +2104,8 @@ def _evaluate_model(
                     diff = log_rv_pred - log_rv_true
                     log_rv_squared_error_sum += torch.square(diff).sum()
                     log_rv_abs_error_sum += torch.abs(diff).sum()
+                    log_rv_target_sum += log_rv_true.sum()
+                    log_rv_target_squared_sum += torch.square(log_rv_true).sum()
                     log_rv_items += int(diff.shape[0])
             elif multimodal_forward is not None:
                 modality_out = multimodal_forward(batch_x, **kwargs)
@@ -2239,6 +2251,7 @@ def _evaluate_model(
         regression_rmse_log_rv_value: float | None = None
         regression_mae_log_rv_value: float | None = None
         regression_loss_value: float | None = None
+        regression_r2_log_rv_value: float | None = None
         if has_regression_head and log_rv_items_int > 0:
             regression_loss_value = float(
                 log_rv_squared_error_sum.item() / log_rv_items_int
@@ -2247,6 +2260,18 @@ def _evaluate_model(
             regression_mae_log_rv_value = float(
                 log_rv_abs_error_sum.item() / log_rv_items_int
             )
+            # R^2 = 1 - SSE / SST. SST is the partition's sum of
+            # squared deviations from the mean target; we accumulate
+            # sum + sum-of-squares above so SST = sum(y^2) - sum(y)^2 / n.
+            # A constant-target partition (SST = 0) collapses R^2 to
+            # ``None`` so the consumer can tell ``no head ran`` apart
+            # from ``head ran on a degenerate partition``.
+            sse_value = float(log_rv_squared_error_sum.item())
+            sum_y = float(log_rv_target_sum.item())
+            sum_y_sq = float(log_rv_target_squared_sum.item())
+            sst_value = sum_y_sq - (sum_y * sum_y) / float(log_rv_items_int)
+            if sst_value > 0.0:
+                regression_r2_log_rv_value = 1.0 - sse_value / sst_value
 
         return EvaluationMetrics(
             loss=regime_loss,
@@ -2264,6 +2289,7 @@ def _evaluate_model(
             regression_rmse_log_rv=regression_rmse_log_rv_value,
             regression_mae_log_rv=regression_mae_log_rv_value,
             regression_loss=regression_loss_value,
+            regression_r2_log_rv=regression_r2_log_rv_value,
         )
 
     close_value = float(close_squared_error.item())

@@ -11,6 +11,7 @@ import type {
   CredibilityResponse,
   MultiAxisResponse,
   RegimeClassificationResponse,
+  RegimeRegressionResponse,
   XaiResponse,
 } from "@/lib/analyze/types";
 
@@ -19,6 +20,9 @@ interface PreviewPanelsProps {
   xai?: XaiResponse;
   credibility?: CredibilityResponse;
   regimeClassification?: RegimeClassificationResponse | null;
+  // #304 dual-head sibling block; surfaces behind the regime card's
+  // "show regression details" toggle when populated.
+  regimeRegression?: RegimeRegressionResponse | null;
   slot: "cards" | "xai" | "credibility" | "regime";
 }
 
@@ -27,6 +31,7 @@ export default function PreviewPanels({
   xai,
   credibility,
   regimeClassification,
+  regimeRegression,
   slot,
 }: PreviewPanelsProps) {
   if (slot === "cards") {
@@ -34,7 +39,7 @@ export default function PreviewPanels({
   }
   if (slot === "regime") {
     if (!regimeClassification) return null;
-    return <RegimeClassificationCard regime={regimeClassification} />;
+    return <RegimeClassificationCard regime={regimeClassification} regression={regimeRegression} />;
   }
   if (slot === "xai") {
     return <XaiPanel xai={xai ?? SAMPLE_XAI} previewMode={!xai} />;

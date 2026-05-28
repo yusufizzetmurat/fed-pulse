@@ -226,6 +226,19 @@ export interface CredibilityResponse {
   months_since_reversal?: number | null;
 }
 
+// #304 sibling block: dual-head regression output on log(forward
+// realized vol). Surfaced alongside the classification card so the
+// "show details" toggle on the regime panel can render the
+// continuous prediction + 90% conformal interval without re-parsing
+// it out of RegimeClassificationResponse. Null on a classification-
+// only checkpoint where the regression head is not mounted.
+export interface RegimeRegressionResponse {
+  log_rv_point: number;
+  log_rv_lower: number | null;
+  log_rv_upper: number | null;
+  coverage: number | null;
+}
+
 export interface RegimeClassificationResponse {
   predicted_set: string[];
   set_label: string;
@@ -316,6 +329,8 @@ export interface AnalyzeResult {
   series?: SeriesResponse;
   multi_axis?: MultiAxisResponse;
   regime_classification?: RegimeClassificationResponse | null;
+  // #304 dual-head regression sibling block.
+  regime_regression?: RegimeRegressionResponse | null;
   xai?: XaiResponse;
   credibility?: CredibilityResponse;
 }
