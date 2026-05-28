@@ -70,7 +70,7 @@ describe("PolicyActionCard", () => {
       balance_sheet_state: null,
     };
     render(<PolicyActionCard action={action} />);
-    expect(screen.getByText(/Balance sheet stance unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/Balance sheet stance not detected/i)).toBeInTheDocument();
   });
 
   it("returns null on an all-null payload (non-policy text)", () => {

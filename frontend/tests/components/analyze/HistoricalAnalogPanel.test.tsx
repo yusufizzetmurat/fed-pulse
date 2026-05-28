@@ -112,7 +112,7 @@ describe("HistoricalAnalogPanel", () => {
         analogs={{ analogs: [], index_size: 0, encoder_alias: "" }}
       />,
     );
-    expect(screen.getByText(/Analog index not loaded/i)).toBeInTheDocument();
+    expect(screen.getByText(/No analogs available/i)).toBeInTheDocument();
   });
 
   it("renders the threshold-empty state when no analog crosses the floor", () => {
