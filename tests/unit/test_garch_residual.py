@@ -229,3 +229,58 @@ def test_garch_forecast_horizon_constant_matches_target_window() -> None:
     """
 
     assert GARCH_FORECAST_HORIZON == 10
+
+
+def test_compute_garch_residual_fit_linalg_error_degrades_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ``LinAlgError`` raised by ``arch_model().fit()`` degrades cleanly.
+
+    Mocks the QMLE fit to raise a singular-Hessian error (the canonical
+    convergence-failure surface on degenerate windows) and asserts both
+    baseline and residual come back as ``None`` instead of raising.
+    The raw target is left intact on the caller side.
+    """
+
+    import numpy as np
+    from arch.univariate.base import ARCHModel
+
+    def _raise_linalg(self: ARCHModel, *_args: object, **_kwargs: object) -> None:
+        raise np.linalg.LinAlgError("Singular matrix (mock)")
+
+    monkeypatch.setattr(ARCHModel, "fit", _raise_linalg, raising=True)
+
+    closes = _synth_lognormal_closes(MIN_FIT_RETURNS + 10, seed=101)
+    result = compute_garch_residual(
+        prior_closes=closes, forward_realized_vol_10d=0.015
+    )
+    assert result.baseline is None
+    assert result.residual is None
+    assert result.fit_returns_n == len(closes) - 1
+
+
+def test_compute_garch_residual_forecast_value_error_degrades_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ``ValueError`` raised by ``model_result.forecast()`` degrades cleanly.
+
+    The fit converges normally; the failure surface is on the forecast
+    step (e.g. malformed reindex on a pathological calendar). The
+    baseline must still come back as ``None`` (we cannot synthesise a
+    forecast we never got) and the residual follows.
+    """
+
+    from arch.univariate.base import ARCHModelResult
+
+    def _raise_value(self: ARCHModelResult, *_args: object, **_kwargs: object) -> None:
+        raise ValueError("forecast failure (mock)")
+
+    monkeypatch.setattr(ARCHModelResult, "forecast", _raise_value, raising=True)
+
+    closes = _synth_lognormal_closes(MIN_FIT_RETURNS + 10, seed=102)
+    result = compute_garch_residual(
+        prior_closes=closes, forward_realized_vol_10d=0.015
+    )
+    assert result.baseline is None
+    assert result.residual is None
+    assert result.fit_returns_n == len(closes) - 1
