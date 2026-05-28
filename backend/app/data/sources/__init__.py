@@ -9,6 +9,7 @@ from app.data.sources.registry import SOURCES, register, source_for, source_type
 from app.data.sources import (  # noqa: F401  (side-effect imports)
     beige_book,
     governor_speeches,
+    gss,
     op_fed,
     press_conference,
     regional_research,

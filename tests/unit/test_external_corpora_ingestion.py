@@ -210,7 +210,7 @@ def test_gss_factors_loader_emits_one_row_per_meeting_with_factor_extras(tmp_pat
     by_date = {r["event_date"]: r for r in records}
 
     assert all(r["source"] == "gss_factor" for r in records)
-    assert all(r["source_type"] == "fomc_statement" for r in records)
+    assert all(r["source_type"] == "gss_factor_decomposition" for r in records)
     assert all(r["provenance"] == "peer_reviewed" for r in records)
     assert all(r["license_scope"] == "research_only" for r in records)
     assert all(r["citation_ref"] == "gurkaynak_sack_swanson_2005_ijcb" for r in records)
