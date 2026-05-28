@@ -324,7 +324,10 @@ class CrossSourceContinuousResult:
     encoder_alias: str
     checkpoint: str
     support: int
-    targets: dict[str, dict[str, float]]
+    # ``targets[target_key]`` carries ``support`` (int) plus ``pearson_r``,
+    # ``spearman_r``, ``zscore_rmse`` which are ``float | None`` — None for
+    # degenerate slices (zero variance, sub-2 pairs).
+    targets: dict[str, dict[str, float | int | None]]
     latency_ms_p50: float
     latency_ms_p95: float
 
@@ -493,7 +496,7 @@ def evaluate_continuous_source(
             f"predict_fn returned {len(scores)} scores for {len(rows)} rows."
         )
 
-    targets: dict[str, dict[str, float]] = {}
+    targets: dict[str, dict[str, float | int | None]] = {}
     for key in target_keys:
         paired_x: list[float] = []
         paired_y: list[float] = []
