@@ -96,13 +96,17 @@ RICH_MACRO_REGIME_DIM = 3
 RICH_MACRO_REGIME_MISSING_DIM = 1
 # #215 Summary of Economic Projections (SEP) dot-plot block. Five scalars
 # (current-year / next-year / longer-run median FFR projections + the
-# current-year central-tendency range + a release flag) plus a paired
+# current-year all-participants range + a release flag) plus a paired
 # missing flag. Opt-in via ``--use-sep``; the block is appended past
 # ``RICH_FEATURE_SIZE`` (and past the regime block when both are on) by
 # ``as_rich_list`` only when the loader populates ``sep_features``, so
 # the legacy default path keeps the byte-identical pre-#215 per-bar
-# feature size. See ADR 0030.
-RICH_SEP_DIM = 4
+# feature size. The next-year slot was added back in #415 once the
+# year-specific FRED series IDs (``FEDTARMD<YYYY>``) were pivoted per
+# release date; the #215 ship had dropped the slot when the single
+# rolling series originally referenced in ADR 0030 turned out not to
+# exist. See ADR 0030 for the current design.
+RICH_SEP_DIM = 5
 RICH_SEP_MISSING_DIM = 1
 # #214 press-conf has_press_conf flag (ADR 0037).
 RICH_PRESS_CONF_DIM = 1

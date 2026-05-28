@@ -135,6 +135,7 @@ ignore = [
 "app/data/pseudo_labeling.py" = ["PLR0913", "C901"]
 "app/data/quality_checks.py" = ["C901"]
 "app/data/quality_validation.py" = ["PLR0913"]
+"app/data/sep_projections.py" = ["PLR0913"]
 "app/data/source_type_stratified_analysis.py" = ["PLR0913", "C901"]
 "app/data/training_package_builder.py" = ["PLR0913"]
 "app/db.py" = ["PLR0913"]
