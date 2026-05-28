@@ -630,14 +630,16 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
     ),
     # ---- #443 statement-delta (redline) text spans + embedding ----
     # required=False so pre-#443 events.parquet files validate clean.
+    # coerce=True so in-memory ``object``-dtype rows cast to the
+    # parquet-roundtripped ``string[pyarrow]`` dtype on validation.
     "statement_delta_inserted": Column(
-        str, nullable=True, required=False
+        str, nullable=True, required=False, coerce=True
     ),
     "statement_delta_deleted": Column(
-        str, nullable=True, required=False
+        str, nullable=True, required=False, coerce=True
     ),
     "statement_delta_substituted_pairs": Column(
-        str, nullable=True, required=False
+        str, nullable=True, required=False, coerce=True
     ),
     "statement_delta_embedding": Column(
         object, nullable=True, required=False

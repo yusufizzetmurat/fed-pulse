@@ -1,4 +1,4 @@
-# ADR 0036 — Structured Fed-signal channels: statement-delta + vote tally
+# ADR 0038 — Structured Fed-signal channels: statement-delta + vote tally
 
 Issues #443 and #444 land two new structured-signal channels off the FOMC statement document: a token-level redline against the immediately-prior statement (#443) and the parsed vote tally + dissent block (#444). Both are surfaces the hedge-fund framework treats as first-pass signals — the redline captures the Fed's meticulous wording drift, the vote captures structural disagreement on the Committee — and neither was visible to the pipeline pre-#443/#444. They ship together because both touch the same two integration seams (`event_dataset_builder.py` columns + `FeatureVector.as_rich_list` tail blocks) and bundling them avoids a serial-rebase dance on the `_coerce_payload_config` forwarding pattern.
 

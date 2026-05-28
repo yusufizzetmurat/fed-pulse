@@ -25,7 +25,7 @@ The block is opt-in via ``--use-vote-features`` on
 ``app.train_forecaster``. When the flag is off, the loader leaves the
 ``vote_features`` slot ``None`` and ``FeatureVector.as_rich_list`` does
 NOT append the block, so the default per-bar feature size stays
-byte-identical to pre-#444. See ADR 0036.
+byte-identical to pre-#444. See ADR 0038.
 """
 
 from __future__ import annotations

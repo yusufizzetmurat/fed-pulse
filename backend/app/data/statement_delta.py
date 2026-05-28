@@ -25,7 +25,7 @@ The block is opt-in via ``--use-statement-delta`` on
 ``app.train_forecaster``. When the flag is off, the loader leaves the
 ``statement_delta_embedding`` slot ``None`` and
 ``FeatureVector.as_rich_list`` does NOT append the block, so the default
-per-bar feature size stays byte-identical to pre-#443. See ADR 0036.
+per-bar feature size stays byte-identical to pre-#443. See ADR 0038.
 
 The encoder pass over the three spans is a separate ops question --
 this module produces the text spans + (optionally, when an encoder

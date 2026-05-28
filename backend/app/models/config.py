@@ -123,7 +123,7 @@ RICH_PRESS_CONF_DIM = 1
 # checkpoint (768). Opt-in via ``--use-statement-delta``; the block is
 # appended past the SEP tail by ``as_rich_list`` only when the loader
 # populates the slot, so the default per-bar feature size stays
-# byte-identical to pre-#443. See ADR 0036.
+# byte-identical to pre-#443. See ADR 0038.
 RICH_STATEMENT_DELTA_DIM = 768
 RICH_STATEMENT_DELTA_MISSING_DIM = 1
 # #444 vote tally + dissent block. Four scalars per event (votes_for /
@@ -134,7 +134,7 @@ RICH_STATEMENT_DELTA_MISSING_DIM = 1
 # same band as ``mp_surprise_level``. Opt-in via ``--use-vote-features``;
 # the block is appended past the delta tail by ``as_rich_list`` only
 # when the loader populates the slot, so the default per-bar feature
-# size stays byte-identical to pre-#444. See ADR 0036.
+# size stays byte-identical to pre-#444. See ADR 0038.
 RICH_VOTE_FEATURES_DIM = 4
 RICH_VOTE_FEATURES_MISSING_DIM = 1
 >>>>>>> 671c784 (add statement-delta + vote-tally structured signal channels (#443, #444))
@@ -664,13 +664,13 @@ class ModelConfig:
     # per-bar feature size byte-identical to pre-#443. When ``True`` the
     # loader populates ``FeatureVector.statement_delta_embedding`` from
     # the events.parquet column and ``as_rich_list`` appends the
-    # ``RICH_STATEMENT_DELTA_DIM + 1`` tail. See ADR 0036.
+    # ``RICH_STATEMENT_DELTA_DIM + 1`` tail. See ADR 0038.
     use_statement_delta: bool = False
     # #444 vote-tally + dissent opt-in. Default ``False`` keeps the
     # per-bar feature size byte-identical to pre-#444. When ``True`` the
     # loader populates ``FeatureVector.vote_features`` from the
     # events.parquet vote columns and ``as_rich_list`` appends the
-    # ``RICH_VOTE_FEATURES_DIM + 1`` tail. See ADR 0036.
+    # ``RICH_VOTE_FEATURES_DIM + 1`` tail. See ADR 0038.
     use_vote_features: bool = False
 >>>>>>> 671c784 (add statement-delta + vote-tally structured signal channels (#443, #444))
 
@@ -1004,7 +1004,7 @@ class FeatureVector:
     # the slot only when ``--use-statement-delta`` is on and the
     # events.parquet row carries a non-null embedding (cold-start events
     # and non-statement kinds keep ``None`` so the missing flag fires).
-    # See ADR 0036 and the per-feature row in
+    # See ADR 0038 and the per-feature row in
     # ``docs/feature-provenance-audit.md``.
     statement_delta_embedding: list[float] | None = None
     statement_delta_embedding_missing: float = 1.0
@@ -1016,7 +1016,7 @@ class FeatureVector:
     # ``dissent_direction_signed`` maps hawkish_dissent → +1.0,
     # dovish_dissent → -1.0, unanimous / unparseable → 0.0. Default
     # ``None`` keeps the regression / legacy paths byte-identical.
-    # See ADR 0036.
+    # See ADR 0038.
     vote_features: list[float] | None = None
     vote_features_missing: float = 1.0
 >>>>>>> 671c784 (add statement-delta + vote-tally structured signal channels (#443, #444))
