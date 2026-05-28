@@ -123,7 +123,7 @@ def _is_flagged(cell: str | int | float | None) -> bool:
         return False
     if isinstance(cell, bool):
         return bool(cell)
-    if isinstance(cell, (int, float)):
+    if isinstance(cell, int | float):
         return cell != 0
     text = str(cell).strip()
     if not text:
