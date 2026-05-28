@@ -626,8 +626,12 @@ export default function HistoryPage() {
                   ) : visibleRows.length === 0 ? (
                     <div className="p-4">
                       <EmptyState
-                        title="No runs match these filters"
-                        description="Submit an analysis from the Workspace to populate the history, or relax the filters."
+                        title={total === 0 ? "No history yet." : "No runs match these filters."}
+                        description={
+                          total === 0
+                            ? "Use the Workspace to analyze a statement."
+                            : "Relax the filters or use the Workspace to analyze a new statement."
+                        }
                         action={
                           <Button asChild size="sm" variant="outline">
                             <Link href="/">Open Workspace</Link>

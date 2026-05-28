@@ -87,7 +87,9 @@ describe("HistoryPage", () => {
     const { default: HistoryPage } = await import("@/pages/history");
     render(<HistoryPage />);
     await waitFor(() =>
-      expect(screen.getByText(/no history yet/i)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/use the workspace to analyze a statement\./i),
+      ).toBeInTheDocument(),
     );
   });
 
