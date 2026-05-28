@@ -780,6 +780,29 @@ def _parse_args() -> argparse.Namespace:
             "the target as missing rather than zero. See ADR 0027."
         ),
     )
+    parser.add_argument(
+        "--vol-target-mode",
+        type=str,
+        choices=("raw", "garch_residual"),
+        default="raw",
+        help=(
+            "Forward-vol regression-head target derivation (#435). "
+            "``raw`` (default, byte-identical to the pre-#236 path) "
+            "feeds the head the standardised "
+            "``log(forward_realized_vol_10d)`` scalar. "
+            "``garch_residual`` swaps in "
+            "``forward_realized_vol_10d_garch_residual`` (raw minus "
+            "the GARCH(1,1) 10-day-ahead 1-day-equivalent baseline; "
+            "signed, no log) so the supervised target is the "
+            "unanticipated component the classical conditional-"
+            "variance model leaves on the table. Rows whose residual "
+            "is missing (insufficient fit history per "
+            "``MIN_FIT_RETURNS`` or QMLE convergence failure) fall "
+            "back to the raw target with a log warning so row "
+            "alignment with ``y`` is preserved. See ADR 0034 and "
+            "#434 for the data side."
+        ),
+    )
     # #309 derived-text-features ablation. Default ``on`` is byte-
     # identical to the pre-#309 path; ``off`` zeros the FeatureVector
     # slots populated by the per-sentence multi-axis classifier so the
@@ -1261,6 +1284,9 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         rates_target_mode=str(
             getattr(args, "rates_target_mode", "raw") or "raw"
         ),
+        vol_target_mode=str(
+            getattr(args, "vol_target_mode", "raw") or "raw"
+        ),
         use_regime_conditioning=bool(getattr(args, "use_regime_conditioning", False)),
         use_sep=bool(getattr(args, "use_sep", False)),
     )
@@ -1519,6 +1545,9 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                                 rates_target_mode=str(
                                     getattr(args, "rates_target_mode", "raw") or "raw"
                                 ),
+                                vol_target_mode=str(
+                                    getattr(args, "vol_target_mode", "raw") or "raw"
+                                ),
                                 use_regime_conditioning=bool(
                                     getattr(args, "use_regime_conditioning", False)
                                 ),
@@ -1634,6 +1663,9 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                         rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
                         rates_target_mode=str(
                             getattr(args, "rates_target_mode", "raw") or "raw"
+                        ),
+                        vol_target_mode=str(
+                            getattr(args, "vol_target_mode", "raw") or "raw"
                         ),
                         use_regime_conditioning=bool(
                             getattr(args, "use_regime_conditioning", False)

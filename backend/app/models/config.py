@@ -534,6 +534,17 @@ class ModelConfig:
     # mode-mixing was deferred so the CLI stays one knob deep. See ADR
     # 0027 and :mod:`app.training.rates_targets`.
     rates_target_mode: str = "raw"
+    # #435 forward-vol-target derivation. ``raw`` (default, byte-identical
+    # to the pre-#236 path) feeds the regression head the standardised
+    # ``log(forward_realized_vol_10d)`` scalar. ``garch_residual`` swaps
+    # in ``forward_realized_vol_10d_garch_residual`` (raw minus the
+    # GARCH(1,1) baseline; signed, no log) so the supervised target is
+    # the unanticipated component the classical conditional-variance
+    # model leaves on the table. Rows whose residual is ``None``
+    # (insufficient fit history per ``MIN_FIT_RETURNS`` or QMLE
+    # convergence failure) fall back to the raw target so row alignment
+    # with ``y`` is preserved. See #434 for the data side and ADR 0034.
+    vol_target_mode: str = "raw"
     # #307 macro-regime conditioning toggle. ``False`` (default) keeps
     # the pre-#307 path byte-identical: the loader leaves
     # ``FeatureVector.macro_regime_features`` at ``None`` and
@@ -613,6 +624,9 @@ class ModelConfig:
             rates_alpha=float(getattr(model, "rates_alpha", 0.5)),
             rates_target_mode=str(
                 getattr(model, "rates_target_mode", "raw") or "raw"
+            ),
+            vol_target_mode=str(
+                getattr(model, "vol_target_mode", "raw") or "raw"
             ),
             use_regime_conditioning=bool(
                 getattr(model, "use_regime_conditioning", False)

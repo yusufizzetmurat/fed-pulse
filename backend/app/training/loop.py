@@ -59,6 +59,16 @@ _COMPILE_INCOMPATIBLE_ARCHITECTURES: frozenset[str] = frozenset({"informer", "tf
 _AMP_INCOMPATIBLE_ARCHITECTURES: frozenset[str] = frozenset({"informer", "tft"})
 
 
+# #435 forward-vol regression-target derivation modes. ``raw`` (default)
+# feeds the dual-head MSE branch ``log(forward_realized_vol_10d)``;
+# ``garch_residual`` swaps in ``forward_realized_vol_10d_garch_residual``
+# (raw minus the GARCH(1,1) baseline; signed, no log). The literal
+# vocabulary is pinned here so the CLI ``choices=`` tuple and the loop
+# resolver agree.
+VOL_TARGET_MODES: tuple[str, ...] = ("raw", "garch_residual")
+DEFAULT_VOL_TARGET_MODE: str = "raw"
+
+
 def _resolve_device(device: str | torch.device | None = None) -> torch.device:
     if device is not None:
         return torch.device(device)
@@ -1668,6 +1678,7 @@ def _build_partition_log_rv_target(
     *,
     vol_regime_quantiles: "Sequence[float]",
     log_rv_scaler: "tuple[float, float] | None" = None,
+    vol_target_mode: str = DEFAULT_VOL_TARGET_MODE,
 ) -> tuple[torch.Tensor | None, "tuple[float, float] | None"]:
     """Materialise per-partition log(forward_realized_vol_10d) targets (#304).
 
@@ -1694,12 +1705,32 @@ def _build_partition_log_rv_target(
     initial MSE ~16 while CE ~log(3); alpha=0.5 left MSE owning ~93%
     of the gradient) drops to MSE ~1 once the targets sit in unit
     variance, so the alpha knob behaves like a true mixing weight.
+
+    ``vol_target_mode`` (#435) selects between the raw
+    ``log(forward_realized_vol_10d)`` target (``"raw"``, default;
+    byte-identical to the pre-#236 path) and the GARCH(1,1) residual
+    ``forward_realized_vol_10d_garch_residual`` (``"garch_residual"``;
+    signed, no log). Rows whose residual is ``None`` (insufficient fit
+    history per ``MIN_FIT_RETURNS`` or QMLE convergence failure) fall
+    back to the raw ``log(forward_realized_vol_10d)`` so the per-row
+    count stays aligned with ``y``; the fallback emits a single log
+    warning at the partition boundary so the operator can grep the run
+    log for how many rows the data-side decomposition silently dropped.
     """
 
     from app.training.loaders import vol_regime_class_for
 
+    mode = str(vol_target_mode).lower()
+    if mode not in VOL_TARGET_MODES:
+        raise ValueError(
+            f"unsupported vol_target_mode={vol_target_mode!r}; "
+            f"expected one of {VOL_TARGET_MODES}"
+        )
+    residual_mode = mode == "garch_residual"
+
     values: list[float] = []
     rejected_non_finite = 0
+    residual_fallback_count = 0
     for sequence_group in sequence_groups:
         if len(sequence_group) < SEQUENCE_LENGTH + 1:
             continue
@@ -1732,7 +1763,35 @@ def _build_partition_log_rv_target(
             # ``_is_finite_positive_forward_vol`` narrowed the type
             # at runtime; mypy does not propagate the guard so the
             # explicit ``float(...)`` cast lands here.
-            values.append(math.log(float(forward_vol)))  # type: ignore[arg-type]
+            raw_value = math.log(float(forward_vol))  # type: ignore[arg-type]
+            if residual_mode:
+                residual = getattr(
+                    target_row,
+                    "forward_realized_vol_10d_garch_residual",
+                    None,
+                )
+                # The residual is signed (raw - baseline) and can be
+                # legitimately negative; only ``None`` / NaN / inf
+                # trigger the raw-target fallback. Pre-#236 parquets
+                # carry ``None`` on every row, so the fallback also
+                # covers the legacy training-package case.
+                if residual is None:
+                    residual_fallback_count += 1
+                    values.append(raw_value)
+                    continue
+                try:
+                    residual_value = float(residual)
+                except (TypeError, ValueError):
+                    residual_fallback_count += 1
+                    values.append(raw_value)
+                    continue
+                if not math.isfinite(residual_value):
+                    residual_fallback_count += 1
+                    values.append(raw_value)
+                    continue
+                values.append(residual_value)
+            else:
+                values.append(raw_value)
     if not values:
         return None, log_rv_scaler
 
@@ -1756,6 +1815,13 @@ def _build_partition_log_rv_target(
             "[dual-head] rejected %d row(s) with non-finite or non-positive "
             "forward_realized_vol_10d from the log_rv regression target",
             rejected_non_finite,
+        )
+    if residual_fallback_count:
+        _logger.warning(
+            "[dual-head] vol_target_mode='garch_residual': %d row(s) had "
+            "no GARCH residual (insufficient fit history or QMLE "
+            "convergence failure); fell back to log(forward_realized_vol_10d)",
+            residual_fallback_count,
         )
     return standardised, scaler_out
 
@@ -2470,6 +2536,15 @@ def train_model(
     active_rates_target_mode = str(
         getattr(active_model_config, "rates_target_mode", "raw") or "raw"
     )
+    # #435 forward-vol target derivation. ``raw`` (default) keeps the
+    # pre-#236 ``log(forward_realized_vol_10d)`` MSE target byte-
+    # identical; ``garch_residual`` swaps in the GARCH(1,1) residual
+    # (raw minus the conditional-variance baseline) so the regression
+    # head learns the unanticipated component.
+    active_vol_target_mode = str(
+        getattr(active_model_config, "vol_target_mode", DEFAULT_VOL_TARGET_MODE)
+        or DEFAULT_VOL_TARGET_MODE
+    )
     rates_heads_active = bool(active_rates_heads)
     train_rates_targets: RatesPartitionTensors | None = None
     val_rates_targets: RatesPartitionTensors | None = None
@@ -2585,7 +2660,9 @@ def train_model(
             )
         if dual_head_active and active_output_mode == "classification":
             train_log_rv, log_rv_scaler = _build_partition_log_rv_target(
-                train_groups, vol_regime_quantiles=fitted_quantiles
+                train_groups,
+                vol_regime_quantiles=fitted_quantiles,
+                vol_target_mode=active_vol_target_mode,
             )
         # #292 rates heads -- per-partition targets fitted on train.
         if rates_heads_active and active_output_mode == "classification":
@@ -2647,6 +2724,7 @@ def train_model(
                 val_groups,
                 vol_regime_quantiles=fitted_quantiles,
                 log_rv_scaler=log_rv_scaler,
+                vol_target_mode=active_vol_target_mode,
             )
         if rates_heads_active and active_output_mode == "classification":
             from app.training.rates_targets import build_partition_rates_targets
@@ -2696,6 +2774,7 @@ def train_model(
                 test_groups,
                 vol_regime_quantiles=fitted_quantiles,
                 log_rv_scaler=log_rv_scaler,
+                vol_target_mode=active_vol_target_mode,
             )
         if rates_heads_active and active_output_mode == "classification":
             from app.training.rates_targets import build_partition_rates_targets
@@ -2800,6 +2879,7 @@ def train_model(
             legacy_full_log_rv, log_rv_scaler = _build_partition_log_rv_target(
                 active_sequence_groups,
                 vol_regime_quantiles=legacy_fitted_quantiles,
+                vol_target_mode=active_vol_target_mode,
             )
         text_emb_tensor, text_missing_tensor, _text_emb_dim = _build_text_embedding_tensors(
             active_sequence_groups,
