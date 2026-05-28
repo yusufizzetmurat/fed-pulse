@@ -152,6 +152,26 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
                 raw.get("rates_head_mode", "regression") or "regression"
             ),
             rates_alpha=float(raw.get("rates_alpha", 0.5)),
+            # #423: mirror the #292 rates-fields landing for the #273
+            # multi-task loss knob + the four per-axis lambda fields.
+            # Pre-#273 checkpoints leave these absent and the defaults
+            # collapse to the single-task CE path. Without this,
+            # eval_checkpoint_directional / calibrate_regime_classifier
+            # silently rebuild a multi_task_loss=False config from a
+            # --multi-task-loss=on checkpoint.
+            multi_task_loss=bool(raw.get("multi_task_loss", False)),
+            multi_task_lambda_stance=float(
+                raw.get("multi_task_lambda_stance", 1.0)
+            ),
+            multi_task_lambda_factor=float(
+                raw.get("multi_task_lambda_factor", 0.3)
+            ),
+            multi_task_lambda_certainty=float(
+                raw.get("multi_task_lambda_certainty", 0.3)
+            ),
+            multi_task_lambda_topic=float(
+                raw.get("multi_task_lambda_topic", 0.3)
+            ),
         )
     return ModelConfig()
 

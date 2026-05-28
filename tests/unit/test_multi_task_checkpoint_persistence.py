@@ -125,6 +125,55 @@ def test_checkpoint_carries_per_axis_class_weights_and_lambdas(tmp_path: Path) -
     assert persisted["topic"] == mt["topic"]
 
 
+def test_coerce_payload_config_threads_multi_task_fields() -> None:
+    """`_coerce_payload_config` rebuilds the multi-task knob + lambdas (#423).
+
+    Pre-#423 the helper rebuilt a ``multi_task_loss=False`` config from a
+    checkpoint dict regardless of what the run trained under, so
+    ``eval_checkpoint_directional`` / ``calibrate_regime_classifier``
+    silently saw a single-task config on every multi-task checkpoint.
+    Mirror the #292 rates-fields landing and round-trip the four knobs
+    through the coercion path.
+    """
+
+    from app.training.checkpoint import _coerce_payload_config
+
+    config = ModelConfig(
+        output_mode="classification",
+        multi_task_loss=True,
+        multi_task_lambda_stance=1.0,
+        multi_task_lambda_factor=0.25,
+        multi_task_lambda_certainty=0.35,
+        multi_task_lambda_topic=0.40,
+        n_classes=3,
+    )
+
+    rebuilt = _coerce_payload_config({"model_config": config.to_dict()})
+
+    assert rebuilt.multi_task_loss is True
+    assert rebuilt.multi_task_lambda_stance == 1.0
+    assert rebuilt.multi_task_lambda_factor == 0.25
+    assert rebuilt.multi_task_lambda_certainty == 0.35
+    assert rebuilt.multi_task_lambda_topic == 0.40
+
+
+def test_coerce_payload_config_defaults_when_multi_task_absent() -> None:
+    """Pre-#273 checkpoints leave the keys absent; the rebuilt config
+    must collapse to the single-task CE path so the legacy contract
+    stays byte-identical.
+    """
+
+    from app.training.checkpoint import _coerce_payload_config
+
+    rebuilt = _coerce_payload_config({"model_config": {"input_size": 6}})
+
+    assert rebuilt.multi_task_loss is False
+    assert rebuilt.multi_task_lambda_stance == 1.0
+    assert rebuilt.multi_task_lambda_factor == 0.3
+    assert rebuilt.multi_task_lambda_certainty == 0.3
+    assert rebuilt.multi_task_lambda_topic == 0.3
+
+
 def test_checkpoint_omits_multi_task_weights_when_flag_off(tmp_path: Path) -> None:
     """Default (multi_task_loss=False): no per-axis payload, no contract
     drift for every pre-#273 checkpoint.
