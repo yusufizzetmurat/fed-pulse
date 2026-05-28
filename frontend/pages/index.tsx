@@ -15,7 +15,11 @@ import {
   RegimeHistoryStrip,
   type RegimeHistoryEntry,
 } from "@/components/analyze/RegimeHistoryStrip";
+import { HistoricalContextBadge } from "@/components/analyze/HistoricalContextBadge";
 import { SentenceStrikeXaiPanel } from "@/components/analyze/SentenceStrikeXaiPanel";
+import { StatementDeltaCard } from "@/components/analyze/StatementDeltaCard";
+import { TldrCard } from "@/components/analyze/TldrCard";
+import { WorkspaceMetaStrip } from "@/components/analyze/WorkspaceMetaStrip";
 import { TrajectoryPanel } from "@/components/analyze/TrajectoryPanel";
 import { WatchlistChips } from "@/components/analyze/WatchlistChips";
 import { Header } from "@/components/shell/header";
@@ -384,6 +388,7 @@ export default function WorkspacePage() {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <HistoricalContextBadge result={result} documentDate={request.date} />
               <Badge variant="outline" className="numeric text-[10px]">
                 horizon · 10 days
               </Badge>
@@ -418,6 +423,9 @@ export default function WorkspacePage() {
 
           {result ? (
             <>
+              <TldrCard result={result} />
+              <WorkspaceMetaStrip result={result} />
+              <StatementDeltaCard result={result} />
               {result.regime_classification ? (
                 <RegimeHeadline
                   regime={result.regime_classification}

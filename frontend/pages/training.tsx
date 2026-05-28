@@ -134,8 +134,8 @@ export default function TrainingPage() {
             <Card>
               <CardContent className="py-10 text-center text-muted-foreground">
                 No training jobs in this backend instance. Submit a Real Train forecast from the
-                <Link href="/analyze" className="ml-1 underline">
-                  Analyze page
+                <Link href="/" className="ml-1 underline">
+                  Workspace
                 </Link>
                 {" "}to enqueue one.
               </CardContent>

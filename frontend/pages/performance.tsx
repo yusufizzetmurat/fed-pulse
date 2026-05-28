@@ -263,9 +263,10 @@ export default function PerformancePage() {
           <div className="space-y-1">
             <h1 className="text-2xl font-semibold tracking-tight">Performance</h1>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Accuracy, per-class precision / recall / F1, confusion matrix, and actual coverage
-              of the prediction set on resolved regime predictions. The realised regime is
-              bucketed from the 10-day forward volatility path using the model&apos;s trained cutoffs.
+              How accurately the active model predicts each market regime. Per-class metrics
+              show precision and recall by regime. The confusion matrix shows what the model
+              predicted vs what actually happened. The per-asset breakdown shows accuracy by
+              symbol.
             </p>
           </div>
 

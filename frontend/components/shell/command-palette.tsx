@@ -1,6 +1,19 @@
 import * as React from "react";
 import { useRouter } from "next/router";
-import { Activity, Calendar, FlaskConical, GitCompare, History as HistoryIcon, LineChart, Search } from "lucide-react";
+import {
+  Activity,
+  Calendar,
+  FlaskConical,
+  GitCompare,
+  History as HistoryIcon,
+  LineChart,
+  Plus,
+  Search,
+  Settings as SettingsIcon,
+  Sparkles,
+  Sun,
+  Trash2,
+} from "lucide-react";
 
 import {
   Dialog,
@@ -10,15 +23,24 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { fetchFomcCalendar, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { fetchFomcCalendar, fetchHistory, resolveApiBaseUrl } from "@/lib/analyze/api";
 import { useSymbols } from "@/lib/analyze/useSymbols";
 import { cn } from "@/lib/utils";
+import type { HistoryEntry } from "@/lib/analyze/types";
+
+type PaletteGroup =
+  | "Pages"
+  | "Quick actions"
+  | "Recent runs"
+  | "FOMC dates"
+  | "Symbols"
+  | "Settings";
 
 interface PaletteEntry {
   id: string;
   label: string;
   hint?: string;
-  group: "Pages" | "FOMC dates" | "Symbols";
+  group: PaletteGroup;
   icon?: React.ComponentType<{ className?: string }>;
   perform: () => void;
 }
@@ -30,12 +52,21 @@ interface CommandPaletteProps {
 
 const PAGE_ENTRIES = [
   { id: "page-workspace", label: "Workspace", hint: "/", icon: Activity, href: "/" },
+  { id: "page-predictions", label: "Predictions", hint: "/decisions", icon: LineChart, href: "/decisions" },
   { id: "page-history", label: "History", hint: "/history", icon: HistoryIcon, href: "/history" },
   { id: "page-compare", label: "Compare", hint: "/compare", icon: GitCompare, href: "/compare" },
   { id: "page-calendar", label: "Calendar", hint: "/calendar", icon: Calendar, href: "/calendar" },
   { id: "page-performance", label: "Performance", hint: "/performance", icon: LineChart, href: "/performance" },
   { id: "page-research", label: "Research", hint: "/research", icon: FlaskConical, href: "/research" },
 ];
+
+function toggleTheme() {
+  if (typeof document === "undefined") return;
+  const toggle = document.querySelector<HTMLButtonElement>(
+    'button[aria-label$="theme"]',
+  );
+  toggle?.click();
+}
 
 export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const router = useRouter();
@@ -44,6 +75,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const [query, setQuery] = React.useState("");
   const [activeIndex, setActiveIndex] = React.useState(0);
   const [meetings, setMeetings] = React.useState<Array<{ date: string; daysUntil: number | null }>>([]);
+  const [recentRuns, setRecentRuns] = React.useState<HistoryEntry[]>([]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -70,6 +102,14 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       .catch(() => {
         // Best-effort; an offline calendar just hides the date group.
       });
+    fetchHistory(apiBaseUrl, { limit: 10 }, controller.signal)
+      .then((response) => {
+        if (controller.signal.aborted) return;
+        setRecentRuns(response.items.slice(0, 10));
+      })
+      .catch(() => {
+        // Best-effort; the group hides silently when /history is offline.
+      });
     return () => controller.abort();
   }, [open, apiBaseUrl]);
 
@@ -81,8 +121,84 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     [onOpenChange, router],
   );
 
+  const resetWorkspace = React.useCallback(() => {
+    onOpenChange(false);
+    if (router.pathname === "/") {
+      router.replace("/").catch(() => window.location.assign("/"));
+      if (typeof window !== "undefined") {
+        window.location.assign("/");
+      }
+      return;
+    }
+    router.push("/").catch(() => window.location.assign("/"));
+  }, [onOpenChange, router]);
+
+  const focusWorkspaceInput = React.useCallback(() => {
+    onOpenChange(false);
+    const focusInput = () => {
+      const el = document.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="FOMC text"], textarea#fomc-text',
+      );
+      el?.focus();
+    };
+    if (router.pathname === "/") {
+      focusInput();
+      return;
+    }
+    router
+      .push("/")
+      .then(() => window.setTimeout(focusInput, 50))
+      .catch(() => window.location.assign("/"));
+  }, [onOpenChange, router]);
+
+  const compareLastTwo = React.useCallback(() => {
+    if (recentRuns.length < 2) return;
+    const [a, b] = recentRuns;
+    navigate(`/compare?a=${encodeURIComponent(a.id)}&b=${encodeURIComponent(b.id)}`);
+  }, [navigate, recentRuns]);
+
   const entries = React.useMemo<PaletteEntry[]>(() => {
     const all: PaletteEntry[] = [];
+
+    // Quick actions sit just under Pages so users can hit them fast.
+    all.push({
+      id: "action-new-analysis",
+      label: "New analysis",
+      hint: "Focus workspace input",
+      group: "Quick actions",
+      icon: Plus,
+      perform: focusWorkspaceInput,
+    });
+    all.push({
+      id: "action-toggle-theme",
+      label: "Toggle theme",
+      hint: "Light / dark",
+      group: "Quick actions",
+      icon: Sun,
+      perform: () => {
+        onOpenChange(false);
+        toggleTheme();
+      },
+    });
+    if (recentRuns.length >= 2) {
+      all.push({
+        id: "action-compare-last-two",
+        label: "Compare last two runs",
+        hint: `${recentRuns[0].id.slice(0, 6)}… vs ${recentRuns[1].id.slice(0, 6)}…`,
+        group: "Quick actions",
+        icon: GitCompare,
+        perform: compareLastTwo,
+      });
+    }
+    all.push({
+      id: "action-clear-workspace",
+      label: "Clear workspace",
+      hint: "Reset analyze form",
+      group: "Quick actions",
+      icon: Trash2,
+      perform: resetWorkspace,
+    });
+
     for (const page of PAGE_ENTRIES) {
       all.push({
         id: page.id,
@@ -93,6 +209,20 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         perform: () => navigate(page.href),
       });
     }
+
+    for (const run of recentRuns) {
+      const stance = run.stance ? run.stance.toLowerCase() : null;
+      const hint = [run.symbol, stance].filter(Boolean).join(" · ");
+      all.push({
+        id: `run-${run.id}`,
+        label: `${run.document_date} · ${run.id.slice(0, 8)}`,
+        hint,
+        group: "Recent runs",
+        icon: HistoryIcon,
+        perform: () => navigate(`/history/${run.id}`),
+      });
+    }
+
     for (const meeting of meetings.slice(0, 8)) {
       const tag =
         meeting.daysUntil == null
@@ -123,6 +253,24 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
           navigate(`/?symbol=${encodeURIComponent(symbol.symbol)}`),
       });
     }
+
+    all.push({
+      id: "settings-open",
+      label: "Open settings",
+      hint: "/settings",
+      group: "Settings",
+      icon: SettingsIcon,
+      perform: () => navigate("/settings"),
+    });
+    all.push({
+      id: "settings-models",
+      label: "View models",
+      hint: "/settings#models",
+      group: "Settings",
+      icon: Sparkles,
+      perform: () => navigate("/settings#models"),
+    });
+
     if (!query.trim()) return all;
     const needle = query.trim().toLowerCase();
     return all.filter(
@@ -130,7 +278,17 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         entry.label.toLowerCase().includes(needle) ||
         (entry.hint?.toLowerCase().includes(needle) ?? false),
     );
-  }, [meetings, navigate, query, symbols]);
+  }, [
+    compareLastTwo,
+    focusWorkspaceInput,
+    meetings,
+    navigate,
+    onOpenChange,
+    query,
+    recentRuns,
+    resetWorkspace,
+    symbols,
+  ]);
 
   React.useEffect(() => {
     if (activeIndex >= entries.length) {
@@ -171,7 +329,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         <DialogHeader className="space-y-1 px-4 py-3">
           <DialogTitle className="text-sm">Command palette</DialogTitle>
           <DialogDescription className="text-[11px] text-muted-foreground">
-            Jump to a page, FOMC date, or asset. Arrow keys navigate; Enter selects.
+            Jump to a page, action, recent run, FOMC date, or asset. Arrow keys navigate; Enter selects.
           </DialogDescription>
         </DialogHeader>
         <div className="border-t border-border px-3 py-2">
@@ -182,7 +340,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
             />
             <Input
               autoFocus
-              placeholder="Search pages, FOMC dates, symbols…"
+              placeholder="Search pages, actions, recent runs, FOMC dates, symbols…"
               className="pl-7 text-sm"
               value={query}
               onChange={(event) => {

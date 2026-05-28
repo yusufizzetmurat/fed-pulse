@@ -4,7 +4,6 @@ import { FlaskConical } from "lucide-react";
 import { toast } from "sonner";
 
 import { DecisionsLink } from "@/components/research/DecisionsLink";
-import { DesignSystemTab } from "@/components/research/DesignSystemTab";
 import { JobsLink } from "@/components/research/JobsLink";
 import { Header } from "@/components/shell/header";
 import { StatusBar } from "@/components/shell/status-bar";
@@ -281,8 +280,10 @@ export default function ResearchPage() {
               Research console
             </h1>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Bake-off macro-F1, cross-CB transfer matrix, next-FOMC ordinal forecast, training
-              jobs, design-system primitives, and the raw artefact tree.
+              Research artefacts the model is built on. The Bake-off compares text encoders.
+              The Transfer matrix shows how a model trained on one central bank&apos;s statements
+              performs on another&apos;s. Decisions and Jobs link to training runs. Files lists the
+              raw artefact JSONs you can download.
             </p>
           </div>
 
@@ -299,7 +300,6 @@ export default function ResearchPage() {
                 <TabsTrigger value="transfer">Transfer</TabsTrigger>
                 <TabsTrigger value="decisions">Decisions</TabsTrigger>
                 <TabsTrigger value="jobs">Jobs</TabsTrigger>
-                <TabsTrigger value="design">Design system</TabsTrigger>
                 <TabsTrigger value="files">Files</TabsTrigger>
               </TabsList>
               <TabsContent value="bakeoff" className="space-y-3">
@@ -331,9 +331,6 @@ export default function ResearchPage() {
               </TabsContent>
               <TabsContent value="jobs">
                 <JobsLink />
-              </TabsContent>
-              <TabsContent value="design">
-                <DesignSystemTab />
               </TabsContent>
               <TabsContent value="files">
                 <ArtifactsExplorer sections={data.sections} />

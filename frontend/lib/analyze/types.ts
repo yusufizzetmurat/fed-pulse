@@ -338,6 +338,14 @@ export interface AnalogsResponse {
   encoder_alias: string;
 }
 
+// Strict-prior diff against the previous FOMC statement (#443). Each
+// entry is a span the diff produced; the consumer renders inserted
+// spans in green and deleted spans struck-through in red. Both arrays
+// are optional — older backends omit the field entirely.
+export interface StatementDeltaSpan {
+  text: string;
+}
+
 export interface AnalyzeResult {
   sentiment?: SentimentResponse;
   prediction?: PredictionResponse;
@@ -346,6 +354,15 @@ export interface AnalyzeResult {
   series?: SeriesResponse;
   multi_axis?: MultiAxisResponse;
   regime_classification?: RegimeClassificationResponse | null;
+  // #443 strict-prior diff vs the previous FOMC statement.
+  statement_delta_inserted?: StatementDeltaSpan[] | null;
+  statement_delta_deleted?: StatementDeltaSpan[] | null;
+  // #444 vote tally.
+  votes_for?: number | null;
+  votes_against?: number | null;
+  dissent_direction?: "hawkish" | "dovish" | null;
+  // #450 press-conference Q&A indicator.
+  has_press_conf?: 0 | 1 | null;
   // #304 dual-head regression sibling block.
   regime_regression?: RegimeRegressionResponse | null;
   // #293 rates-reaction list. One entry per mounted rates head

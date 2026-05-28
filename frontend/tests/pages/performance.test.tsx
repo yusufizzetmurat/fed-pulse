@@ -150,8 +150,8 @@ describe("PerformancePage", () => {
     );
     expect(screen.getAllByText(/Actual coverage/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Confusion matrix/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Per-class metrics/i)).toBeInTheDocument();
-    expect(screen.getByText(/Per-asset breakdown/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Per-class metrics/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Per-asset breakdown/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/Run-level detail/i)).toBeInTheDocument();
   });
 
