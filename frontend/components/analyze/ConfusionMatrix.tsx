@@ -7,6 +7,11 @@ interface ConfusionMatrixProps {
   rows: ConfusionRow[];
   classes: readonly string[];
   className?: string;
+  // Drill-down: fires when a user clicks a class label (axis = "predicted"
+  // for column headers, "actual" for row headers) or a body cell
+  // (axis = "cell").
+  onClassClick?: (klass: string, axis: "predicted" | "actual") => void;
+  activeClass?: string | null;
 }
 
 function intensityClass(share: number): string {
@@ -17,7 +22,7 @@ function intensityClass(share: number): string {
   return "bg-muted/30 text-muted-foreground";
 }
 
-export function ConfusionMatrix({ rows, classes, className }: ConfusionMatrixProps) {
+export function ConfusionMatrix({ rows, classes, className, onClassClick, activeClass }: ConfusionMatrixProps) {
   const totalResolved = rows.reduce((sum, row) => sum + row.total, 0);
   if (totalResolved === 0) {
     return (
@@ -42,7 +47,12 @@ export function ConfusionMatrix({ rows, classes, className }: ConfusionMatrixPro
               <th
                 key={klass}
                 scope="col"
-                className="px-2 py-1 text-center text-[10px] uppercase tracking-wide capitalize text-muted-foreground"
+                className={cn(
+                  "px-2 py-1 text-center text-[10px] uppercase tracking-wide capitalize text-muted-foreground",
+                  onClassClick && "cursor-pointer hover:text-foreground",
+                  activeClass === klass && "text-foreground",
+                )}
+                onClick={onClassClick ? () => onClassClick(klass, "predicted") : undefined}
               >
                 {klass}
               </th>
@@ -60,7 +70,12 @@ export function ConfusionMatrix({ rows, classes, className }: ConfusionMatrixPro
             <tr key={row.truth}>
               <th
                 scope="row"
-                className="px-2 py-1 text-left text-xs font-medium capitalize text-muted-foreground"
+                className={cn(
+                  "px-2 py-1 text-left text-xs font-medium capitalize text-muted-foreground",
+                  onClassClick && "cursor-pointer hover:text-foreground",
+                  activeClass === row.truth && "text-foreground",
+                )}
+                onClick={onClassClick ? () => onClassClick(row.truth, "actual") : undefined}
               >
                 {row.truth}
               </th>
@@ -74,7 +89,7 @@ export function ConfusionMatrix({ rows, classes, className }: ConfusionMatrixPro
                       "numeric h-row-sm rounded-sm px-2 text-center text-xs",
                       intensityClass(share),
                     )}
-                    title={`actual ${row.truth} → predicted ${klass}: ${count} / ${row.total}`}
+                    title={`Predicted ${klass}, actually ${row.truth}: ${count} times (${(share * 100).toFixed(1)}% of ${row.truth} class)`}
                   >
                     {count}
                   </td>
