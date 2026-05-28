@@ -152,6 +152,12 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
                 raw.get("rates_head_mode", "regression") or "regression"
             ),
             rates_alpha=float(raw.get("rates_alpha", 0.5)),
+            # #435: forward the new vol-target-mode so a checkpoint trained
+            # under --vol-target-mode=garch_residual rehydrates with the
+            # right target column on eval / calibration paths. Pre-#435
+            # checkpoints leave the key absent and the default collapses
+            # to the raw column.
+            vol_target_mode=str(raw.get("vol_target_mode", "raw") or "raw"),
             # #423: mirror the #292 rates-fields landing for the #273
             # multi-task loss knob + the four per-axis lambda fields.
             # Pre-#273 checkpoints leave these absent and the defaults

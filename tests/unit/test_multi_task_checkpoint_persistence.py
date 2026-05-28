@@ -174,6 +174,39 @@ def test_coerce_payload_config_defaults_when_multi_task_absent() -> None:
     assert rebuilt.multi_task_lambda_topic == 0.3
 
 
+def test_coerce_payload_config_threads_vol_target_mode() -> None:
+    """`_coerce_payload_config` rebuilds the vol-target-mode (#435).
+
+    A checkpoint trained under ``--vol-target-mode garch_residual`` must
+    rebuild a config that names the residual column on the eval /
+    calibration paths. Pre-#435 the helper silently dropped the key.
+    """
+
+    from app.training.checkpoint import _coerce_payload_config
+
+    config = ModelConfig(
+        output_mode="regression",
+        vol_target_mode="garch_residual",
+        n_classes=3,
+    )
+
+    rebuilt = _coerce_payload_config({"model_config": config.to_dict()})
+
+    assert rebuilt.vol_target_mode == "garch_residual"
+
+
+def test_coerce_payload_config_defaults_vol_target_mode_when_absent() -> None:
+    """Pre-#435 checkpoints leave the key absent; the rebuilt config
+    must collapse to ``raw`` so the legacy contract stays byte-identical.
+    """
+
+    from app.training.checkpoint import _coerce_payload_config
+
+    rebuilt = _coerce_payload_config({"model_config": {"input_size": 6}})
+
+    assert rebuilt.vol_target_mode == "raw"
+
+
 def test_checkpoint_omits_multi_task_weights_when_flag_off(tmp_path: Path) -> None:
     """Default (multi_task_loss=False): no per-axis payload, no contract
     drift for every pre-#273 checkpoint.
