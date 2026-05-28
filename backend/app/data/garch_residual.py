@@ -49,7 +49,26 @@ import math
 from dataclasses import dataclass
 from typing import Sequence
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
+
+
+# Exceptions the ``arch`` fit / forecast path actually raises on a
+# degenerate window (singular Hessian, non-finite scores, scipy
+# optimiser blow-up, malformed input). ``ConvergenceWarning`` is a
+# Warning subclass and never propagates as an exception, so it is
+# deliberately not in this tuple; the fit emits it via warnings.warn
+# and we suppress it at the call site via ``show_warning=False``. The
+# tuple is intentionally narrow: anything outside it (e.g. AttributeError
+# from a typo on a module constant) must surface in CI rather than be
+# silently swallowed and turned into a None column.
+_ARCH_FIT_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    np.linalg.LinAlgError,
+    ValueError,
+    RuntimeError,
+    OverflowError,
+)
 
 
 # Minimum strictly-prior returns required to fit GARCH(1,1). ~252
@@ -114,7 +133,7 @@ def _forecast_one_step_equiv_vol(model_result, *, horizon: int) -> float | None:
 
     try:
         forecast = model_result.forecast(horizon=horizon, reindex=False)
-    except Exception:  # arch raises a grab-bag of errors on degenerate fits
+    except _ARCH_FIT_EXCEPTIONS:
         return None
     variance_row = forecast.variance.iloc[-1].to_numpy()
     if variance_row.size == 0:
@@ -148,15 +167,13 @@ def _fit_garch_and_forecast(
         )
         return None
     try:
-        import numpy as np
-
         scaled = np.asarray(returns, dtype=float) * _PERCENT_SCALE
         # show_warning=False suppresses the per-fit "DataScaleWarning"
         # the optimiser emits on tail-heavy windows; we control the
         # scaling explicitly so the warning is noise.
         model = arch_model(scaled, mean="Zero", vol="Garch", p=1, q=1, rescale=False)
         result = model.fit(disp="off", show_warning=False)
-    except Exception:  # arch raises ConvergenceWarning, LinAlgError, ValueError, ...
+    except _ARCH_FIT_EXCEPTIONS:
         return None
     forecast_pct = _forecast_one_step_equiv_vol(result, horizon=horizon)
     if forecast_pct is None:
