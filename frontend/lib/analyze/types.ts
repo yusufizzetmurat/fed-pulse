@@ -331,6 +331,11 @@ export interface AnalyzeResult {
   regime_classification?: RegimeClassificationResponse | null;
   // #304 dual-head regression sibling block.
   regime_regression?: RegimeRegressionResponse | null;
+  // #293 rates-reaction list. One entry per mounted rates head
+  // (2y / 5y / terminal). Null on legacy single-head checkpoints.
+  // An empty list rides when the heads are mounted but the per-event
+  // forward produced no rows.
+  rates_reaction?: RatesReactionCard[] | null;
   xai?: XaiResponse;
   credibility?: CredibilityResponse;
 }
