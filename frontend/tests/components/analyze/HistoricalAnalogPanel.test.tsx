@@ -83,10 +83,10 @@ describe("HistoricalAnalogPanel", () => {
   it("surfaces the post-event volatility bucket via the mini-chart aria-label", () => {
     render(<HistoricalAnalogPanel analogs={fixture()} />);
     expect(
-      screen.getByLabelText(/post-event 10-day realised volatility bucket: high/i),
+      screen.getByLabelText(/10-day realised volatility after the event: high/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByLabelText(/post-event 10-day realised volatility bucket: normal/i),
+      screen.getByLabelText(/10-day realised volatility after the event: normal/i),
     ).toBeInTheDocument();
   });
 
@@ -96,7 +96,7 @@ describe("HistoricalAnalogPanel", () => {
     );
     // Each skeleton card has 4 Skeleton bars (header + body).
     expect(container.querySelectorAll(".animate-pulse").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Historical analog panel/i)).toBeInTheDocument();
+    expect(screen.getByText(/Historical analogs/i)).toBeInTheDocument();
   });
 
   it("renders nothing when analogs is null and not loading", () => {
@@ -112,7 +112,7 @@ describe("HistoricalAnalogPanel", () => {
         analogs={{ analogs: [], index_size: 0, encoder_alias: "" }}
       />,
     );
-    expect(screen.getByText(/Retrieval index not loaded/i)).toBeInTheDocument();
+    expect(screen.getByText(/Analog index not loaded/i)).toBeInTheDocument();
   });
 
   it("renders the threshold-empty state when no analog crosses the floor", () => {
@@ -120,7 +120,7 @@ describe("HistoricalAnalogPanel", () => {
       analogs: fixture().analogs.map((card) => ({ ...card, similarity: 0.12 })),
     });
     render(<HistoricalAnalogPanel analogs={lowSim} similarityThreshold={0.4} />);
-    expect(screen.getByText(/No analogs above threshold/i)).toBeInTheDocument();
+    expect(screen.getByText(/No close analogs found/i)).toBeInTheDocument();
     // The threshold floor is rendered in the description so the
     // user knows what bar was used.
     expect(screen.getByText(/40.0%/)).toBeInTheDocument();
@@ -211,7 +211,7 @@ describe("HistoricalAnalogPanel", () => {
     render(<HistoricalAnalogPanel analogs={fixture()} />);
     // index size is formatted with toLocaleString — accept either
     // comma-grouped or plain formatting depending on test locale.
-    const footer = screen.getByText(/encoder/i);
+    const footer = screen.getByText(/model variant/i);
     expect(within(footer).getByText(/finbert_fed_adjacent_xbank_dapt_retrieval/)).toBeInTheDocument();
   });
 });

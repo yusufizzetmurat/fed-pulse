@@ -202,7 +202,7 @@ export default function HistoryPage() {
       },
       {
         key: "argmax_probability",
-        header: "P(argmax)",
+        header: "Probability",
         align: "right",
         numeric: true,
         sortable: true,
@@ -214,7 +214,7 @@ export default function HistoryPage() {
       },
       {
         key: "regime_set_size",
-        header: "Set",
+        header: "Set size",
         align: "right",
         numeric: true,
         sortable: true,
@@ -223,7 +223,7 @@ export default function HistoryPage() {
       },
       {
         key: "realized_regime",
-        header: "Realized",
+        header: "Actual",
         render: (row) =>
           row.realized_regime ? (
             <Badge variant={regimeVariant(row.realized_regime)} className="text-[10px] capitalize">

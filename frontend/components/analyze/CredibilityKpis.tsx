@@ -34,13 +34,14 @@ export function CredibilityKpis({ credibility }: CredibilityKpisProps) {
     return (
       <div className="rounded-md border border-dashed border-border bg-muted/20 p-4 text-xs text-muted-foreground">
         <p className="mb-1 text-[10px] uppercase tracking-wide text-foreground">
-          Credibility features unpopulated
+          Credibility signals not yet available
         </p>
         <p>
-          The credibility module ran but every signal is at its placeholder value. Needs the
-          prior four FOMC statements + the DFF history under <code className="rounded bg-muted px-1">data/external/fred/</code>
-          {" "}to compute drift, realized-vs-stated gap, and months-since-reversal. The
-          market-implied gap stays N/A until the SEP / OIS curve scrapers ship.
+          The credibility module ran but every signal is at its default value. Computing
+          the shift score, the gap between what was done vs. said, and time since the last
+          reversal requires the previous four FOMC statements plus federal funds rate
+          history. The gap to market expectations stays unavailable until the SEP and OIS
+          data feeds are connected.
         </p>
       </div>
     );
@@ -49,21 +50,21 @@ export function CredibilityKpis({ credibility }: CredibilityKpisProps) {
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <KpiTile
-        label="Drift score"
+        label="Shift score"
         icon={<GitBranch className="h-3.5 w-3.5" />}
         value={<span className="numeric">{drift.toFixed(2)}</span>}
         sparkline={credibility.drift_trend}
         tone={drift > 0.6 ? "warn" : drift < 0.3 ? "neutral" : "neutral"}
         caption={
           drift > 0.6
-            ? "Diverging from prior 4 statements"
+            ? "Diverging from the last 4 statements"
             : drift < 0.3
-            ? "Stable vs prior 4 statements"
-            : "Mild drift vs prior 4"
+            ? "Stable vs the last 4 statements"
+            : "Mild shift vs the last 4"
         }
       />
       <KpiTile
-        label="Realized vs stated"
+        label="What was done vs. said"
         icon={<Scale className="h-3.5 w-3.5" />}
         value={
           realizedGap == null ? (
@@ -84,13 +85,13 @@ export function CredibilityKpis({ credibility }: CredibilityKpisProps) {
             ? "down"
             : "neutral"
         }
-        caption="90-day Pearson · stance vs DFF moves"
+        caption="90-day correlation between stance and actual rate moves"
       />
       <Tooltip>
         <TooltipTrigger asChild>
           <div>
             <KpiTile
-              label="Market-implied gap"
+              label="Gap to market expectations"
               icon={<Activity className="h-3.5 w-3.5" />}
               value={
                 marketGapReady ? (
@@ -104,19 +105,19 @@ export function CredibilityKpis({ credibility }: CredibilityKpisProps) {
               }
               caption={
                 marketGapReady
-                  ? "stance vs OIS-implied path"
-                  : "Pending SEP / OIS curve ingest"
+                  ? "Stance vs the rate path priced into OIS swaps"
+                  : "Waiting on SEP and OIS data feeds"
               }
             />
           </div>
         </TooltipTrigger>
         <TooltipContent side="top" className="max-w-xs text-[11px]">
-          Populated once the SEP dot-plot and Eurodollar / OIS curve scrapers ship. Today the backend
-          returns 0.0 as a placeholder; the UI shows N/A rather than implying confidence.
+          Fills in once the SEP dot-plot and OIS curve data feeds are connected. For now the
+          backend returns a placeholder value, so the UI shows N/A rather than implying a reading.
         </TooltipContent>
       </Tooltip>
       <KpiTile
-        label="Since reversal"
+        label="Time since last reversal"
         icon={<Timer className="h-3.5 w-3.5" />}
         value={
           monthsSince == null ? (
@@ -125,7 +126,7 @@ export function CredibilityKpis({ credibility }: CredibilityKpisProps) {
             <span className="numeric">{monthsSince} mo</span>
           )
         }
-        caption="Months since last stance sign flip"
+        caption="Months since the stance last flipped direction"
       />
     </div>
   );

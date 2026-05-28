@@ -146,9 +146,9 @@ describe("PerformancePage", () => {
     // repeat them). getAllByText with a count guard avoids the
     // ambiguous-match error while still asserting presence.
     await waitFor(() =>
-      expect(screen.getAllByText(/Argmax accuracy/i).length).toBeGreaterThan(0),
+      expect(screen.getAllByText(/Top-pick accuracy/i).length).toBeGreaterThan(0),
     );
-    expect(screen.getAllByText(/Empirical coverage/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Actual coverage/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Confusion matrix/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/Per-class metrics/i)).toBeInTheDocument();
     expect(screen.getByText(/Per-asset breakdown/i)).toBeInTheDocument();
@@ -203,12 +203,11 @@ describe("PerformancePage", () => {
     const { default: PerformancePage } = await import("@/pages/performance");
     render(<PerformancePage />);
 
-    await waitFor(() => expect(screen.getByText(/macro roc-auc/i)).toBeInTheDocument());
-    expect(screen.getByText(/from training eval artifact/i)).toBeInTheDocument();
-    // The "training-time classification breakdown" phrase appears in
-    // both the per-class table and the confusion matrix descriptions
-    // when the artifact is loaded — assert presence, not uniqueness.
-    expect(screen.getAllByText(/training-time classification breakdown/i).length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getByText(/overall roc-auc/i)).toBeInTheDocument());
+    expect(screen.getAllByText(/from training evaluation/i).length).toBeGreaterThan(0);
+    // The phrase appears in both the per-class table and the confusion matrix
+    // descriptions when the artifact is loaded — assert presence, not uniqueness.
+    expect(screen.getAllByText(/training-time evaluation/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/tp_fixture/)).toBeInTheDocument();
   });
 });

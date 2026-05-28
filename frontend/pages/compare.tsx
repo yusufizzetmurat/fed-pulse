@@ -156,10 +156,10 @@ function MultiAxisDeltaCard({ delta }: { delta: MultiAxisDelta }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Multi-axis Δ A − B</CardTitle>
+        <CardTitle>Sentiment breakdown change · A − B</CardTitle>
         <CardDescription>
-          Per-axis deltas from the multi-axis schema. Missing axes appear as
-          "—" when at least one side does not carry that axis.
+          Change on each sentiment axis. Axes show "—" when at least one side
+          did not include that axis.
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0">
@@ -167,8 +167,8 @@ function MultiAxisDeltaCard({ delta }: { delta: MultiAxisDelta }) {
           <thead className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="px-4 py-2 text-left">Axis</th>
-              <th className="px-4 py-2 text-right">Δ A − B</th>
-              <th className="px-4 py-2 text-right">Confidence Δ</th>
+              <th className="px-4 py-2 text-right">Change A − B</th>
+              <th className="px-4 py-2 text-right">Confidence change</th>
             </tr>
           </thead>
           <tbody>
@@ -211,8 +211,8 @@ function MultiAxisDeltaCard({ delta }: { delta: MultiAxisDelta }) {
                 {delta.topicChanged == null
                   ? "—"
                   : delta.topicChanged
-                  ? "primary topic changed"
-                  : "primary topic unchanged"}
+                  ? "main topic changed"
+                  : "main topic unchanged"}
               </td>
             </tr>
           </tbody>
@@ -235,21 +235,21 @@ function MultiAxisSideBySide({
   return (
     <div className="grid gap-4 xl:grid-cols-2">
       <div className="space-y-2">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground">Run A · multi-axis</p>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Run A · sentiment breakdown</p>
         {ma ? <MultiAxisCards multiAxis={ma} /> : (
           <Card>
             <CardContent className="py-6 text-center text-sm text-muted-foreground">
-              Run A has no multi-axis payload.
+              Run A has no sentiment breakdown.
             </CardContent>
           </Card>
         )}
       </div>
       <div className="space-y-2">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground">Run B · multi-axis</p>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Run B · sentiment breakdown</p>
         {mb ? <MultiAxisCards multiAxis={mb} /> : (
           <Card>
             <CardContent className="py-6 text-center text-sm text-muted-foreground">
-              Run B has no multi-axis payload.
+              Run B has no sentiment breakdown.
             </CardContent>
           </Card>
         )}
@@ -292,7 +292,7 @@ function DeltaSummary({ delta }: { delta: CompareDelta }) {
         </span>
       )
     ) : (
-      <span className="text-muted-foreground">regime absent on at least one side</span>
+      <span className="text-muted-foreground">Volatility Regime missing on at least one side</span>
     );
 
   return (
@@ -331,7 +331,7 @@ function DeltaSummary({ delta }: { delta: CompareDelta }) {
             ) : null}
           </div>
           <div>
-            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Drift score</dt>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Shift score</dt>
             <dd
               className={`numeric mt-1 flex items-center gap-1 ${deltaColorClass(delta.driftDelta)}`}
             >
@@ -340,7 +340,7 @@ function DeltaSummary({ delta }: { delta: CompareDelta }) {
             </dd>
           </div>
           <div>
-            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Realized-vs-stated</dt>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">What was done vs. said</dt>
             <dd
               className={`numeric mt-1 flex items-center gap-1 ${deltaColorClass(delta.realizedGapDelta)}`}
             >

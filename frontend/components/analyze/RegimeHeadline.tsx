@@ -115,8 +115,8 @@ export function RegimeHeadline({
           <CardDescription className="flex items-center gap-1.5">
             <ShieldCheck className="h-3.5 w-3.5" />
             {hasRegressionBand
-              ? "log(RV) regression band · 10d forward"
-              : "Vol-regime prediction set · 10d forward"}
+              ? "Volatility forecast · 10 days ahead (log scale)"
+              : "Volatility Regime prediction · 10 days ahead"}
           </CardDescription>
           <div className="flex flex-wrap items-center gap-2">
             {symbol ? (
@@ -131,28 +131,28 @@ export function RegimeHeadline({
             ) : null}
             <Badge variant="outline" className="numeric text-[10px]">
               {hasEmpirical
-                ? `Nominal ${coveragePct}% · Empirical ${empiricalPct}%`
-                : `${coveragePct}% coverage`}
-              {` · set size ${regime.set_size}`}
+                ? `Target ${coveragePct}% · Actual ${empiricalPct}%`
+                : `${coveragePct}% confidence level`}
+              {` · ${regime.set_size} label${regime.set_size === 1 ? "" : "s"} in set`}
             </Badge>
             {hasEmpirical && coverageDriftLarge ? (
               <Badge
                 variant={coverageDeltaPct < 0 ? "hawkish" : "neutral"}
                 className="text-[10px]"
-                title={`Empirical coverage drifted ${
+                title={`Actual coverage drifted ${
                   coverageDeltaPct < 0 ? "below" : "above"
-                } nominal across ${empiricalCoverageSampleSize ?? 0} runs.`}
+                } target across ${empiricalCoverageSampleSize ?? 0} runs.`}
               >
                 {coverageDeltaPct > 0 ? "+" : ""}
                 {coverageDeltaPct}pp drift
               </Badge>
             ) : null}
             {oodFlag ? (
-              <Badge variant="hawkish" className="text-[10px]">
-                <AlertTriangle className="h-3 w-3" /> OOD
+              <Badge variant="hawkish" className="text-[10px]" title="Text looks unlike anything the model was trained on">
+                <AlertTriangle className="h-3 w-3" /> Unfamiliar text
               </Badge>
             ) : null}
-            <EvidenceLink section="6.15" label="Three-way comparison · row 10b" />
+            <EvidenceLink section="6.15" label="Method notes · benchmark comparison" />
           </div>
         </div>
         {hasRegressionBand ? (
@@ -161,7 +161,7 @@ export function RegimeHeadline({
               {(regime.log_rv_point as number).toFixed(3)}
             </span>
             <span className="numeric text-sm text-muted-foreground sm:text-base">
-              log(RV) point · band [{(regime.log_rv_lower as number).toFixed(3)},{" "}
+              Point estimate · confidence range [{(regime.log_rv_lower as number).toFixed(3)},{" "}
               {(regime.log_rv_upper as number).toFixed(3)}]
               {bandWidth != null ? (
                 <span className="ml-1 text-muted-foreground/80">
@@ -172,13 +172,13 @@ export function RegimeHeadline({
             <Badge
               variant={regimeChipVariant(regime.argmax_class)}
               className="capitalize"
-              title="UI-side bucket derived from the regression point against the per-fold tertile cutoffs."
+              title="Regime bucket derived from the numeric forecast using the per-fold cutoffs."
             >
-              {regime.argmax_class} bucket
+              {regime.argmax_class} regime
             </Badge>
             {regime.bucket_source ? (
               <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-                bucket source · {regime.bucket_source}
+                regime source · {regime.bucket_source}
               </Badge>
             ) : null}
           </CardTitle>
@@ -188,7 +188,7 @@ export function RegimeHeadline({
               {regime.argmax_class}
             </span>
             <span className="numeric text-sm text-muted-foreground sm:text-base">
-              argmax · {(argmaxProb * 100).toFixed(1)}%
+              top pick · {(argmaxProb * 100).toFixed(1)}%
             </span>
             <div className="flex flex-wrap items-center gap-1.5">
               {regime.predicted_set.map((label) => (
@@ -207,39 +207,38 @@ export function RegimeHeadline({
       <CardContent className="grid gap-6 md:grid-cols-2">
         <div className="space-y-3 rounded-md border border-border bg-muted/10 p-3">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Fold-4 with / without · dual head, 5 seeds × 5 folds
+            Cross-validated accuracy · 5 seeds × 5 folds
           </p>
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div className="space-y-1">
-              <p className="text-muted-foreground">With fold-4 (canonical)</p>
+              <p className="text-muted-foreground">Including fold 4 (headline)</p>
               <p className="numeric font-medium text-foreground">
-                F1 {FOLD4_DUAL_F1_WITH.toFixed(3)} ± {FOLD4_DUAL_F1_STD_WITH.toFixed(3)}
+                F1 score {FOLD4_DUAL_F1_WITH.toFixed(3)} ± {FOLD4_DUAL_F1_STD_WITH.toFixed(3)}
               </p>
               <p className="numeric text-muted-foreground">
-                RMSE log(RV) {FOLD4_DUAL_RMSE_WITH.toFixed(3)}
+                Root-mean-square error (log volatility) {FOLD4_DUAL_RMSE_WITH.toFixed(3)}
               </p>
             </div>
             <div className="space-y-1">
-              <p className="text-muted-foreground">Without fold-4</p>
+              <p className="text-muted-foreground">Excluding fold 4</p>
               <p className="numeric font-medium text-foreground">
-                F1 {FOLD4_DUAL_F1_WITHOUT.toFixed(3)} ± {FOLD4_DUAL_F1_STD_WITHOUT.toFixed(3)}
+                F1 score {FOLD4_DUAL_F1_WITHOUT.toFixed(3)} ± {FOLD4_DUAL_F1_STD_WITHOUT.toFixed(3)}
               </p>
               <p className="numeric text-muted-foreground">
-                RMSE log(RV) {FOLD4_DUAL_RMSE_WITHOUT.toFixed(3)}
+                Root-mean-square error (log volatility) {FOLD4_DUAL_RMSE_WITHOUT.toFixed(3)}
               </p>
             </div>
           </div>
           <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Fold-4 sits at the R-17 zero-<span className="numeric">calm</span> slice. The delta is small (F1
-            +0.005, RMSE −0.039) which means the canonical headline is not load-bearing on the
-            degenerate fold. Cells from <code>dual_head_comparison_canonical.json</code>; full
-            four-variant context in §6.7.
+            Fold 4 covers a stretch with very few <span className="numeric">calm</span>{" "}
+            examples. The difference between including and excluding it is small (F1 +0.005,
+            error −0.039), so the headline score is not driven by that one slice.
           </p>
-          <EvidenceLink section="6.7" label="Honest headline reporting · four-variant table" />
+          <EvidenceLink section="6.7" label="Method notes · full four-variant table" />
         </div>
         <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Past {trendValues.length || 0} runs · argmax regime
+            Past {trendValues.length || 0} runs · top-pick regime
           </p>
           {trendValues.length ? (
             <Sparkline
@@ -265,7 +264,7 @@ export function RegimeHeadline({
         </div>
         <details className="md:col-span-2 group rounded-md border border-border bg-muted/10 p-3 text-xs">
           <summary className="cursor-pointer select-none text-[11px] uppercase tracking-wide text-muted-foreground group-open:text-foreground">
-            Per-class softmax + calibrated set (secondary detail)
+            Per-class probabilities and prediction set (details)
           </summary>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             <div className="space-y-2">
@@ -308,19 +307,18 @@ export function RegimeHeadline({
             </div>
             <div className="space-y-2 text-muted-foreground">
               <p>
-                Calibrated APS prediction set at nominal {coveragePct}% coverage:{" "}
+                Calibrated prediction set at {coveragePct}% confidence level:{" "}
                 <span className="text-foreground numeric">
                   {`{${regime.predicted_set.join(", ")}}`}
                 </span>{" "}
-                · size {regime.set_size}.
+                · {regime.set_size} label{regime.set_size === 1 ? "" : "s"} in set.
               </p>
               <p>
-                Argmax: <span className="text-foreground capitalize">{regime.argmax_class}</span>{" "}
-                ({(argmaxProb * 100).toFixed(1)}%). Per-class precision / recall / F1 publish on
-                the §6.10 baselines table; the classifier-branch macro-F1 on this checkpoint
-                lands at 0.418 ± 0.052 (row 10b sibling). Demoted from the headline because
-                §6.15 / row 10b makes the regression band the canonical surface and the
-                classification head sits inside its CI.
+                Top pick: <span className="text-foreground capitalize">{regime.argmax_class}</span>{" "}
+                ({(argmaxProb * 100).toFixed(1)}%). Per-class precision, recall, and F1 score
+                live in the baselines table; the classifier scores 0.418 ± 0.052 F1 on this
+                model. Numeric forecast above is the headline, with the classifier shown as
+                supporting detail.
               </p>
               <EvidenceLink section="6.10" label="Baselines table · per-class detail" />
             </div>

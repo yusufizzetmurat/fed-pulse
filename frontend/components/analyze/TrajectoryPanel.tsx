@@ -182,7 +182,7 @@ export function TrajectoryPanel({
             description={
               error
                 ? `Backend reported: ${error}`
-                : "No bundle loaded on this host."
+                : "No trajectory model loaded on this host."
             }
           />
         </CardContent>
@@ -203,11 +203,11 @@ export function TrajectoryPanel({
         <CardContent>
           <EmptyState
             variant="inline"
-            title="Trajectory bundle absent"
+            title="Trajectory model not loaded"
             description={
               <span>
-                Run <code className="rounded bg-muted px-1">python -m app.trajectory.train --architecture transformer</code>{" "}
-                against the canonical training package to produce the bundle, then refresh.
+                Train and load the trajectory model against the training corpus to populate
+                this panel.
               </span>
             }
           />
@@ -282,7 +282,7 @@ export function TrajectoryPanel({
           <div className="flex flex-wrap items-center gap-2">
             {data.train_end ? (
               <Badge variant="outline" className="numeric text-[10px]">
-                train_end · {data.train_end}
+                training ended · {data.train_end}
               </Badge>
             ) : null}
             {hasLiftSignal && !liftEstablished ? (
@@ -291,19 +291,19 @@ export function TrajectoryPanel({
                 className="text-[10px] uppercase tracking-wide"
                 title={
                   data.delta_dir_acc != null && data.baseline_used
-                    ? `Δ dir-acc vs ${data.baseline_used} = ${(data.delta_dir_acc * 100).toFixed(1)}pp; needs ≥ 5pp.`
-                    : "Lift over naive baselines not yet established (#332)."
+                    ? `Improvement vs ${data.baseline_used}: ${(data.delta_dir_acc * 100).toFixed(1)}pp; needs at least 5pp.`
+                    : "No measurable improvement over simple baselines yet."
                 }
               >
-                no lift over baseline · §6.17
+                no improvement over baseline
               </Badge>
             ) : null}
             {liftEstablished ? (
               <Badge variant="dovish" className="text-[10px] uppercase tracking-wide">
-                lift +{((data.delta_dir_acc ?? 0) * 100).toFixed(1)}pp
+                +{((data.delta_dir_acc ?? 0) * 100).toFixed(1)}pp vs baseline
               </Badge>
             ) : null}
-            <EvidenceLink section="6.17" label="Trajectory baselines + parameter cap" />
+            <EvidenceLink section="6.17" label="Method notes · trajectory baselines" />
           </div>
         </CardTitle>
       </CardHeader>
@@ -378,7 +378,7 @@ export function TrajectoryPanel({
               </div>
               {projection.confidence_band && projection.confidence_band.length > 0 ? (
                 <Badge variant="outline" className="text-[10px]">
-                  band · {projection.confidence_band.join(", ")}
+                  prediction set · {projection.confidence_band.join(", ")}
                 </Badge>
               ) : null}
             </div>
@@ -399,9 +399,9 @@ export function TrajectoryPanel({
         ) : null}
 
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          PCA projection of meeting-level embeddings from the cross-bank DAPT encoder.
-          Marker brightness encodes recency (older meetings fade); the star is the next-meeting
-          projection. Confidence band is the APS-calibrated stance set.
+          Each dot is a past FOMC meeting, placed by a 2-D summary of the meeting text.
+          Brighter dots are more recent; the star is the projected next meeting. The
+          prediction set is the calibrated range of likely stances.
         </p>
       </CardContent>
     </Card>

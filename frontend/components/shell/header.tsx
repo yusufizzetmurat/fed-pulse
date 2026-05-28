@@ -48,7 +48,7 @@ export function Header() {
             <Activity className="h-4 w-4 text-primary" aria-hidden="true" />
             <span>Fed Pulse</span>
             <Badge variant="outline" className="ml-1 text-[10px] uppercase tracking-wide">
-              vol-regime
+              Volatility Regime
             </Badge>
           </Link>
           <nav aria-label="Primary" className="hidden items-center gap-0.5 sm:flex">

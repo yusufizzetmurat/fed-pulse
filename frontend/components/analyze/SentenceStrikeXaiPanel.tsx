@@ -279,7 +279,7 @@ export function SentenceStrikeXaiPanel({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="flex items-center gap-2">
             <Highlighter className="h-4 w-4 text-primary" />
-            Sentence attribution
+            Per-sentence explanation
             {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null}
           </CardTitle>
           <div className="flex flex-wrap items-center gap-2">
@@ -318,15 +318,15 @@ export function SentenceStrikeXaiPanel({
         </div>
         <CardDescription>
           {interactive
-            ? "Click a sentence to strike it out — the dashboard re-runs the classifier without it and shows the Δ above. "
-            : "Hover any sentence to see the five tokens with the largest attribution. "}
+            ? "Click a sentence to strike it out — the dashboard re-runs the model without it and shows the change above. "
+            : "Hover any sentence to see the five words that mattered most. "}
           {xai.method ? `Method: ${xai.method}.` : null}
         </CardDescription>
         {driftPoints ? (
           <div className="mt-3 rounded-md border border-border bg-muted/20 px-3 py-2">
             <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
               <span>
-                P({baselineArgmax ?? "argmax"}) across {driftPoints.length - 1} strike
+                Probability of {baselineArgmax ?? "top pick"} across {driftPoints.length - 1} strike
                 {driftPoints.length - 1 === 1 ? "" : "s"}
               </span>
               <span className="numeric text-foreground">

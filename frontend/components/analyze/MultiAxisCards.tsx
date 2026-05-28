@@ -86,10 +86,10 @@ function FactorCard({ factor }: { factor: NonNullable<MultiAxisResponse["factor"
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-1.5 text-xs text-muted-foreground">
-        <p>Signed magnitude on the hawkish (+) ↔ dovish (−) axis.</p>
+        <p>Score along the hawkish (+) to dovish (−) scale.</p>
         {range ? (
           <p>
-            80% range: <span className="font-mono">{range[0].toFixed(2)} … {range[1].toFixed(2)}</span>
+            80% confidence range: <span className="font-mono">{range[0].toFixed(2)} … {range[1].toFixed(2)}</span>
           </p>
         ) : null}
       </CardContent>
@@ -113,7 +113,7 @@ function CertaintyCard({ certainty }: { certainty: NonNullable<MultiAxisResponse
       <CardContent className="space-y-2">
         <Progress value={certainty.confidence} />
         <p className="text-xs text-muted-foreground">
-          How firmly the language commits to the stance.
+          How firmly the wording commits to a stance.
         </p>
       </CardContent>
     </Card>
@@ -132,7 +132,7 @@ function TopicCard({ topic }: { topic: NonNullable<MultiAxisResponse["topic"]> }
       </CardHeader>
       <CardContent className="space-y-2">
         <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>Primary confidence</span>
+          <span>Confidence in main topic</span>
           <span className="font-medium text-foreground">{topic.confidence.toFixed(2)}</span>
         </div>
         <Progress value={topic.confidence} />
@@ -158,7 +158,7 @@ export function MultiAxisCards({ multiAxis, previewMode }: MultiAxisCardsProps) 
     <div className="space-y-2">
       {previewMode ? (
         <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-          Multi-axis preview · fixture data
+          Sentiment breakdown preview · sample data
         </Badge>
       ) : null}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

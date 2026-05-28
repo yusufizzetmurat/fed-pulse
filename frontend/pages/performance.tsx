@@ -143,7 +143,7 @@ export default function PerformancePage() {
       },
       {
         key: "argmaxAccuracy",
-        header: "Argmax acc",
+        header: "Top-pick accuracy",
         align: "right",
         numeric: true,
         sortable: true,
@@ -152,7 +152,7 @@ export default function PerformancePage() {
       },
       {
         key: "empiricalCoverage",
-        header: "Empirical coverage",
+        header: "Actual coverage",
         align: "right",
         numeric: true,
         sortable: true,
@@ -187,7 +187,7 @@ export default function PerformancePage() {
       },
       {
         key: "argmax",
-        header: "Argmax",
+        header: "Top pick",
         render: (row) =>
           row.argmax ? (
             <Badge variant={regimeVariant(row.argmax)} className="text-[10px] capitalize">
@@ -199,7 +199,7 @@ export default function PerformancePage() {
       },
       {
         key: "argmaxProbability",
-        header: "P(argmax)",
+        header: "Probability",
         align: "right",
         numeric: true,
         sortable: true,
@@ -208,7 +208,7 @@ export default function PerformancePage() {
       },
       {
         key: "realized",
-        header: "Realized",
+        header: "Actual",
         render: (row) =>
           row.realized ? (
             <Badge variant={regimeVariant(row.realized)} className="text-[10px] capitalize">
@@ -220,7 +220,7 @@ export default function PerformancePage() {
       },
       {
         key: "argmaxHit",
-        header: "Argmax",
+        header: "Top-pick result",
         align: "center",
         render: (row) => {
           if (!row.argmax || !row.realized) {
@@ -236,7 +236,7 @@ export default function PerformancePage() {
       },
       {
         key: "setHit",
-        header: "Set",
+        header: "Prediction set",
         align: "center",
         render: (row) => {
           if (row.setHit == null) return <span className="text-muted-foreground">—</span>;
@@ -263,9 +263,9 @@ export default function PerformancePage() {
           <div className="space-y-1">
             <h1 className="text-2xl font-semibold tracking-tight">Performance</h1>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Macro-F1, per-class precision / recall / F1, confusion matrix, and empirical conformal
-              coverage on the resolved regime predictions. Realized regime is bucketed from the 10d
-              forward vol path using the classifier&apos;s trained quantile cutoffs.
+              Accuracy, per-class precision / recall / F1, confusion matrix, and actual coverage
+              of the prediction set on resolved regime predictions. The realised regime is
+              bucketed from the 10-day forward volatility path using the model&apos;s trained cutoffs.
             </p>
           </div>
 
@@ -287,12 +287,12 @@ export default function PerformancePage() {
               icon={<Target className="h-3.5 w-3.5" />}
             />
             <KpiTile
-              label="Argmax accuracy"
+              label="Top-pick accuracy"
               value={<span className="numeric">{formatPercent(aggregate.argmaxAccuracy)}</span>}
               caption={
                 aggregate.argmaxAccuracy != null && aggregate.argmaxAccuracy >= 1 / REGIME_CLASSES.length
-                  ? "above uniform baseline"
-                  : "below uniform baseline"
+                  ? "above random-guess baseline"
+                  : "below random-guess baseline"
               }
               tone={
                 aggregate.argmaxAccuracy != null && aggregate.argmaxAccuracy >= 1 / REGIME_CLASSES.length
@@ -303,29 +303,29 @@ export default function PerformancePage() {
               }
             />
             <KpiTile
-              label="Macro-F1"
+              label="Overall F1 score"
               value={<span className="numeric">{formatScore(headlineMacroF1)}</span>}
               caption={
                 breakdownAvailable
-                  ? "from training eval artifact"
+                  ? "from training evaluation"
                   : aggregate.macroF1 != null
-                  ? "client aggregation across history"
+                  ? "computed from your history"
                   : aggregate.resolved > 0
-                  ? "needs resolved runs in every regime class"
+                  ? "needs resolved runs in every regime"
                   : "needs resolved runs"
               }
               tone={headlineMacroF1 != null && headlineMacroF1 >= 0.4 ? "up" : "neutral"}
             />
             <KpiTile
-              label="Empirical coverage"
+              label="Actual coverage"
               value={<span className="numeric">{formatPercent(aggregate.empiricalCoverage)}</span>}
-              caption="realised regime inside the predicted set"
+              caption="how often the realised regime fell inside the prediction set"
             />
             {headlineMacroRocAuc != null ? (
               <KpiTile
-                label="Macro ROC-AUC"
+                label="Overall ROC-AUC"
                 value={<span className="numeric">{formatScore(headlineMacroRocAuc)}</span>}
-                caption="one-vs-rest, training eval"
+                caption="one-vs-rest, from training evaluation"
                 tone={headlineMacroRocAuc >= 0.6 ? "up" : "neutral"}
               />
             ) : null}
@@ -354,8 +354,8 @@ export default function PerformancePage() {
                   <CardTitle className="text-base">Per-class metrics</CardTitle>
                   <CardDescription>
                     {breakdownAvailable
-                      ? "From the training-time classification breakdown — precision, recall, F1, ROC-AUC, PR-AUC."
-                      : "Computed client-side from resolved history runs. Will switch to the training eval artifact when one is published."}
+                      ? "From training-time evaluation — precision, recall, F1, ROC-AUC, PR-AUC."
+                      : "Computed from your resolved history runs. Will switch to the training evaluation when one is published."}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
@@ -423,8 +423,8 @@ export default function PerformancePage() {
                   <CardTitle className="text-base">Confusion matrix</CardTitle>
                   <CardDescription>
                     {breakdownAvailable
-                      ? "From the training-time classification breakdown — rows are the true class, columns the predicted argmax."
-                      : "Computed client-side from resolved runs — rows are realised regime, columns are predicted argmax."}
+                      ? "From training-time evaluation — rows are the actual class, columns are the predicted top pick."
+                      : "Computed from your resolved runs — rows are the realised regime, columns are the predicted top pick."}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -450,7 +450,7 @@ export default function PerformancePage() {
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base">Per-asset breakdown</CardTitle>
                   <CardDescription>
-                    Argmax accuracy and empirical coverage for every symbol with at least one
+                    Top-pick accuracy and actual coverage for every symbol with at least one
                     resolved run.
                   </CardDescription>
                 </CardHeader>
