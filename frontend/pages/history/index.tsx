@@ -76,6 +76,7 @@ export default function HistoryPage() {
   // so cleanup actually runs when React tears it down — an async
   // useCallback cannot hand the cleanup back to React.
   const [reloadVersion, setReloadVersion] = React.useState(0);
+  const [search, setSearch] = React.useState("");
   const reload = React.useCallback(() => {
     setReloadVersion((value) => value + 1);
   }, []);
@@ -139,9 +140,24 @@ export default function HistoryPage() {
     setFilters((value) => ({ ...value, offset: 0, ...delta }));
 
   const visibleRows = React.useMemo(() => {
-    if (regimeFilter === "any") return items;
-    return items.filter((row) => row.argmax_regime === regimeFilter);
-  }, [items, regimeFilter]);
+    const regimeFiltered =
+      regimeFilter === "any" ? items : items.filter((row) => row.argmax_regime === regimeFilter);
+    const needle = search.trim().toLowerCase();
+    if (!needle) return regimeFiltered;
+    return regimeFiltered.filter((row) => {
+      const haystack = [
+        row.id,
+        row.document_date,
+        row.stance,
+        row.symbol,
+        row.horizon,
+        row.argmax_regime ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(needle);
+    });
+  }, [items, regimeFilter, search]);
 
   const columns = React.useMemo<DataTableColumn<RowWithRealized>[]>(
     () => [
@@ -293,6 +309,17 @@ export default function HistoryPage() {
               Past regime predictions. Realized regime is bucketed from the post-event 10d-forward vol path
               against the classifier&apos;s trained quantile cutoffs.
             </p>
+          </div>
+
+          <div className="space-y-1">
+            <Label htmlFor="history-search">Search</Label>
+            <Input
+              id="history-search"
+              type="search"
+              placeholder="Filter by run id, date, stance, or symbol…"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
           </div>
 
           <Card>
