@@ -91,7 +91,11 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-            <Button type="submit" disabled={loading} className="w-full sm:w-auto">
+            <Button
+              type="submit"
+              disabled={loading}
+              className="min-h-[44px] w-full sm:min-h-9 sm:w-auto"
+            >
               {submitLabel}
             </Button>
             <Select
@@ -103,7 +107,7 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
               }}
             >
               <SelectTrigger
-                className="h-9 w-full sm:w-[16rem]"
+                className="h-9 min-h-[44px] w-full sm:min-h-9 sm:w-[16rem]"
                 aria-label="Load a sample FOMC statement"
               >
                 <SelectValue placeholder="Load sample statement…" />

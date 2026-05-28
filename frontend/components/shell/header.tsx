@@ -127,7 +127,7 @@ export function Header() {
               type="button"
               variant="ghost"
               size="icon"
-              className="h-9 w-9 sm:hidden"
+              className="min-h-[44px] min-w-[44px] sm:hidden"
               aria-label={mobileOpen ? "Close navigation menu" : "Open navigation menu"}
               aria-expanded={mobileOpen}
               aria-controls="mobile-nav-panel"
