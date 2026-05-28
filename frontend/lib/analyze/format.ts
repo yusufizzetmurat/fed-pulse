@@ -121,7 +121,7 @@ export function bandLabel(
   confidenceLevel: number,
   source: "conformal" | "gaussian_z" | null | undefined,
 ): string {
-  if (source === "conformal") return `${confidenceLevel}% conformal band`;
-  if (source === "gaussian_z") return `${confidenceLevel}% Gaussian-z band`;
-  return `${confidenceLevel}% confidence band`;
+  if (source === "conformal") return `${confidenceLevel}% calibrated range`;
+  if (source === "gaussian_z") return `${confidenceLevel}% Gaussian range`;
+  return `${confidenceLevel}% confidence range`;
 }
