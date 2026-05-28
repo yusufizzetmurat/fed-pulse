@@ -352,3 +352,35 @@ def test_baseline_arm_preserves_per_bar_slot_values() -> None:
         assert fv.sentiment_score == s0
         assert fv.stance_hawk == h0
         assert fv.certain_label_certain == c0
+
+
+def test_run_one_cell_pins_input_size_to_rich_feature_size() -> None:
+    """`_run_one_cell` must construct ModelConfig with input_size set to
+    RICH_FEATURE_SIZE so the recurrent core sees the same per-bar width
+    the loader emits when ``rich_features=True``.
+
+    Pre-fix, the cell built ModelConfig without an explicit ``input_size``;
+    the dataclass default (FEATURE_SIZE = 6) collided with the 87-dim
+    rich vectors that land on canonical training packages and the LSTM
+    blew up on the first forward. The Phase 2 Runpod batch caught it.
+    """
+
+    import inspect
+    from app.models.config import RICH_FEATURE_SIZE
+    from scripts.run_derived_features_ablation import _run_one_cell
+
+    source = inspect.getsource(_run_one_cell)
+    assert "RICH_FEATURE_SIZE" in source, (
+        "_run_one_cell must reference RICH_FEATURE_SIZE so the ModelConfig "
+        "input_size matches the loader's rich-feature width. Without this "
+        "the trainer dies on a dim mismatch on every canonical training "
+        "package (see Phase 2 Runpod report)."
+    )
+    assert "input_size=RICH_FEATURE_SIZE" in source.replace(" ", ""), (
+        "_run_one_cell's ModelConfig must set input_size to RICH_FEATURE_SIZE "
+        "directly (matches train_forecaster._resolved_input_size)."
+    )
+    assert RICH_FEATURE_SIZE > 6, (
+        "RICH_FEATURE_SIZE must exceed the legacy FEATURE_SIZE default of 6 "
+        "for this test to be meaningful."
+    )
