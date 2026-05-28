@@ -33,6 +33,7 @@ from app.models.config import (
     DEFAULT_INITIAL_DECAY_RATE,
     DEFAULT_NUM_LAYERS,
     FEATURE_SIZE,
+    N_SUPPORTED_SYMBOLS,
 )
 from app.models.forecaster_base import ForecasterBase, prepare_recurrent_input
 from app.models.multi_task_head import MultiTaskHead
@@ -42,7 +43,7 @@ from app.models.rates_heads import RATES_HEAD_N_CLASSES, RATES_HEAD_NAMES
 class ForecasterResearchModel(ForecasterBase):
     """Research-side forecaster carrying every knob."""
 
-    def __init__(
+    def __init__(  # noqa: C901
         self,
         input_size: int = FEATURE_SIZE,
         hidden_size: int = DEFAULT_HIDDEN_SIZE,
@@ -72,6 +73,8 @@ class ForecasterResearchModel(ForecasterBase):
         use_regime_conditioning: bool = False,
         use_sep: bool = False,
         use_press_conf: bool = False,
+        symbol_embedding_dim: int = 0,
+        n_symbols: int = 0,
     ):
         if output_mode not in {"regression", "classification"}:
             raise ValueError(
@@ -119,17 +122,50 @@ class ForecasterResearchModel(ForecasterBase):
         self.vol_regime_quantiles = tuple(float(v) for v in vol_regime_quantiles or ())
         self.vol_regime_target = str(vol_regime_target or "forward_realized_vol_10d")
         self.head_mode = str(head_mode)
+        # #480 symbol-conditioned regime head. ``symbol_embedding_dim=0``
+        # (default) is the symbol-agnostic canonical: no embedding module
+        # mounts, no widening of the regime / log-RV head input, no new
+        # forward-time index lookup. ``> 0`` mounts the embedding and
+        # widens the regime head + dual-head regression head inputs by
+        # ``symbol_embedding_dim`` so the concatenated ``(pool, embed)``
+        # vector lands cleanly on the head's first LayerNorm.
+        self.symbol_embedding_dim = int(symbol_embedding_dim or 0)
+        if self.symbol_embedding_dim < 0:
+            raise ValueError(
+                f"symbol_embedding_dim must be >= 0; got {symbol_embedding_dim}"
+            )
+        self.n_symbols = int(n_symbols) if n_symbols else N_SUPPORTED_SYMBOLS
+        # The embedding only wires into the regime head + dual-head
+        # log-RV regression head, both of which live on the
+        # classification branch. Regression-output mode (close, vol) has
+        # no regime head to condition, so the embedding mount is rejected
+        # there to keep the head-construction graph one-knob-deep.
+        if self.symbol_embedding_dim > 0 and output_mode != "classification":
+            raise ValueError(
+                "symbol_embedding_dim > 0 requires output_mode='classification' "
+                "(the symbol-conditioned head is the regime classifier on the "
+                "classification branch). Got "
+                f"output_mode={output_mode!r}."
+            )
+        if self.symbol_embedding_dim > 0:
+            self.symbol_embedding: nn.Embedding | None = nn.Embedding(
+                self.n_symbols, self.symbol_embedding_dim
+            )
+            head_input_size = hidden_size + self.symbol_embedding_dim
+        else:
+            self.symbol_embedding = None
+            head_input_size = hidden_size
         if output_mode == "classification":
             self.head: nn.Module = MultiTaskHead(
-                hidden_size=hidden_size,
+                hidden_size=head_input_size,
                 head_hidden_size=head_hidden_size,
                 dropout=dropout,
                 stance_classes=self.n_classes,
             )
             if self.head_mode in {"regression", "dual"}:
                 self.regression_head: nn.Module | None = nn.Sequential(
-                    nn.LayerNorm(hidden_size),
-                    nn.Linear(hidden_size, head_hidden_size),
+                    nn.LayerNorm(head_input_size),
+                    nn.Linear(head_input_size, head_hidden_size),
                     nn.GELU(),
                     nn.Dropout(dropout),
                     nn.Linear(head_hidden_size, 1),
@@ -185,6 +221,32 @@ class ForecasterResearchModel(ForecasterBase):
             self.rates_regression_heads = nn.ModuleDict()
             self.rates_classification_heads = nn.ModuleDict()
 
+    def _pool_with_symbol(
+        self,
+        pooled_step: torch.Tensor,
+        symbol_id: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Concatenate the symbol embedding to the encoder pool (#480).
+
+        Default-off contract: when ``symbol_embedding_dim == 0`` the
+        method short-circuits and returns ``pooled_step`` unchanged, so
+        the forward pass is byte-identical to the symbol-agnostic
+        canonical. When ``> 0`` and ``symbol_id`` is ``None``, the
+        symbol-agnostic regime head was wired but no id was supplied;
+        index ``0`` (the canonical ``^GSPC`` slot) is used so the
+        existing single-symbol training contract still trains cleanly.
+        """
+
+        if self.symbol_embedding is None:
+            return pooled_step
+        if symbol_id is None:
+            symbol_id = pooled_step.new_zeros(
+                pooled_step.shape[0], dtype=torch.long
+            )
+        symbol_id = symbol_id.to(device=pooled_step.device, dtype=torch.long)
+        embed = self.symbol_embedding(symbol_id)
+        return torch.cat([pooled_step, embed], dim=-1)
+
     def forward(
         self,
         x: torch.Tensor,
@@ -195,6 +257,7 @@ class ForecasterResearchModel(ForecasterBase):
         text_embedding: torch.Tensor | None = None,
         text_embedding_missing: torch.Tensor | None = None,
         text_embedding_per_bar: torch.Tensor | None = None,
+        symbol_id: torch.Tensor | None = None,
     ) -> torch.Tensor:
         x = prepare_recurrent_input(
             self,
@@ -208,8 +271,9 @@ class ForecasterResearchModel(ForecasterBase):
             text_embedding_per_bar=text_embedding_per_bar,
         )
         pooled_step = self._encode(x)
+        head_input = self._pool_with_symbol(pooled_step, symbol_id)
         if self.output_mode == "classification":
-            multi_task = self.head(pooled_step)
+            multi_task = self.head(head_input)
             stashed: dict[str, torch.Tensor] = {
                 key: tensor.detach() for key, tensor in multi_task.items()
             }
@@ -217,7 +281,7 @@ class ForecasterResearchModel(ForecasterBase):
                 self.regression_head is not None
                 and not bool(getattr(self, "_skip_regression_head", False))
             ):
-                log_rv_pred = self.regression_head(pooled_step).squeeze(-1)
+                log_rv_pred = self.regression_head(head_input).squeeze(-1)
                 stashed["log_rv"] = log_rv_pred.detach()
             for name in self.rates_heads_active:
                 bps_pred = self.rates_regression_heads[name](pooled_step).squeeze(-1)
@@ -242,6 +306,7 @@ class ForecasterResearchModel(ForecasterBase):
         text_embedding: torch.Tensor | None = None,
         text_embedding_missing: torch.Tensor | None = None,
         text_embedding_per_bar: torch.Tensor | None = None,
+        symbol_id: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """Run the forward pass and return the full multi-task dict.
 
@@ -267,12 +332,13 @@ class ForecasterResearchModel(ForecasterBase):
             text_embedding_per_bar=text_embedding_per_bar,
         )
         pooled_step = self._encode(x)
-        multi_task: dict[str, torch.Tensor] = self.head(pooled_step)
+        head_input = self._pool_with_symbol(pooled_step, symbol_id)
+        multi_task: dict[str, torch.Tensor] = self.head(head_input)
         if (
             self.regression_head is not None
             and not bool(getattr(self, "_skip_regression_head", False))
         ):
-            log_rv_pred = self.regression_head(pooled_step).squeeze(-1)
+            log_rv_pred = self.regression_head(head_input).squeeze(-1)
             multi_task["log_rv"] = log_rv_pred
         for name in self.rates_heads_active:
             bps_pred = self.rates_regression_heads[name](pooled_step).squeeze(-1)

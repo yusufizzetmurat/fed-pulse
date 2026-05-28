@@ -402,6 +402,23 @@ CANONICAL_SWEEP_ARCHITECTURES: tuple[str, ...] = tuple(
     arch for arch in FORECASTER_ARCHITECTURES if arch != "tft"
 )
 
+# #480 symbol-conditioned regime head. The events.parquet already carries
+# a ``symbol`` (or ``asset_symbol``) column per row from the per-asset
+# data prep. v1 ships with five canonical symbols mapped to fixed ids so
+# the embedding's row order is reproducible across runs and the symbol-
+# id lookup is byte-stable. New symbols are appended to the end of the
+# tuple; existing rows keep their ids so a checkpoint's embedding stays
+# aligned with the lookup on rehydrate.
+SUPPORTED_SYMBOLS: tuple[str, ...] = (
+    "^GSPC",
+    "^NDX",
+    "^DJI",
+    "DX-Y.NYB",
+    "EURUSD=X",
+)
+SYMBOL_ID_LOOKUP: dict[str, int] = {sym: idx for idx, sym in enumerate(SUPPORTED_SYMBOLS)}
+N_SUPPORTED_SYMBOLS: int = len(SUPPORTED_SYMBOLS)
+
 
 @dataclass(frozen=True)
 class ModelConfig:
@@ -617,6 +634,17 @@ class ModelConfig:
     use_statement_delta: bool = False
     # #444 vote-tally opt-in (ADR 0038).
     use_vote_features: bool = False
+    # #480 symbol-conditioned regime head. ``0`` (default) keeps the
+    # regime / dual-head wiring byte-identical to the symbol-agnostic
+    # canonical: no embedding module, no widened head input, no new
+    # forward kwarg consumed. Setting to a positive integer mounts an
+    # ``nn.Embedding(N_SUPPORTED_SYMBOLS, symbol_embedding_dim)`` on the
+    # research model, widens the MultiTaskHead + regression head input
+    # by the same dim, and concatenates the indexed vector to the
+    # encoder pool before the heads. The serving-side wiring is deferred
+    # to a follow-up because the response surface still emits one card
+    # per statement (no per-symbol picker yet). See ADR + #480.
+    symbol_embedding_dim: int = 0
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -695,6 +723,9 @@ class ModelConfig:
             ),
             use_vote_features=bool(
                 getattr(model, "use_vote_features", False)
+            ),
+            symbol_embedding_dim=int(
+                getattr(model, "symbol_embedding_dim", 0) or 0
             ),
         )
 
@@ -937,6 +968,16 @@ class FeatureVector:
     # mapper consume the target-row value only. Default ``None`` so
     # regression-only callers stay byte-identical.
     forward_realized_vol_10d: float | None = None
+    # #480 multi-horizon auxiliary targets. Same strict-forward generator
+    # as the canonical 10d, parametrised window. Carried on the target
+    # row alongside ``forward_realized_vol_10d``; ``None`` on lookback
+    # bars and on legacy paths so the dataclass shape round-trips clean
+    # through the determinism regression contract.
+    forward_realized_vol_1d: float | None = None
+    forward_realized_vol_3d: float | None = None
+    forward_realized_vol_5d: float | None = None
+    forward_realized_vol_20d: float | None = None
+    forward_realized_vol_30d: float | None = None
     # #236 GARCH(1,1)-residual decomposition of the same target. The
     # baseline is the GARCH(1,1) 10-day-ahead 1-day-equivalent vol
     # forecast (fitted on strict-prior log returns); the residual is
