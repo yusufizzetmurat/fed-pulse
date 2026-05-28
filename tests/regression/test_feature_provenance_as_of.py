@@ -82,6 +82,21 @@ _TARGET_ONLY_COLUMNS: tuple[str, ...] = (
     # asset close series only on the supervised event row.
     "forward_realized_vol_10d_garch_baseline",
     "forward_realized_vol_10d_garch_residual",
+    # #481 per-asset 10d forward realised-vol targets. Storage-only on
+    # the dataclass for now (the events.parquet build step writes them
+    # on the target row; the loader has not yet been wired to broadcast
+    # them — that lands alongside the per-asset head work). The
+    # target-only contract still applies: lookback bars stay None and
+    # only the appended event-day target frame may carry a non-None
+    # value once the loader is wired.
+    "forward_realized_vol_10d_gspc",
+    "forward_realized_vol_10d_ndx",
+    "forward_realized_vol_10d_dji",
+    "forward_realized_vol_10d_dxy",
+    "forward_realized_vol_10d_vix",
+    "forward_realized_vol_10d_eurusd",
+    "forward_realized_vol_10d_usdjpy",
+    "forward_realized_vol_10d_gbpusd",
     "target_yield_2y_change_5d",
     "target_yield_5y_change_5d",
     "target_terminal_rate_change_5d",

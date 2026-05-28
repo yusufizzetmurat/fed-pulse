@@ -949,6 +949,28 @@ class FeatureVector:
     # ``app.data.garch_residual.compute_for_event``.
     forward_realized_vol_10d_garch_baseline: float | None = None
     forward_realized_vol_10d_garch_residual: float | None = None
+    # #481 per-asset 10d forward realised-vol targets. One nullable
+    # float per workspace asset-picker symbol. ``_gspc`` aliases the
+    # canonical ``forward_realized_vol_10d`` above; the remaining seven
+    # cover the other indices, dollar index, VIX, and three major FX
+    # pairs. Storage-only on the dataclass for now: the events.parquet
+    # build step (``event_dataset_builder._build_event_rows``) writes
+    # them on the target row; the training-package loader does not yet
+    # broadcast them onto FeatureVector — that wiring lands alongside
+    # the per-asset head work (downstream of #480). Default ``None`` on
+    # every lookback bar keeps the dataclass shape round-trip clean
+    # against the determinism regression contract, and the
+    # target-only audit row covers them on the parquet side. None of
+    # these fields enters ``as_rich_list`` by construction (no append
+    # block was added), so the input-tensor width is unchanged.
+    forward_realized_vol_10d_gspc: float | None = None
+    forward_realized_vol_10d_ndx: float | None = None
+    forward_realized_vol_10d_dji: float | None = None
+    forward_realized_vol_10d_dxy: float | None = None
+    forward_realized_vol_10d_vix: float | None = None
+    forward_realized_vol_10d_eurusd: float | None = None
+    forward_realized_vol_10d_usdjpy: float | None = None
+    forward_realized_vol_10d_gbpusd: float | None = None
     # #292 rates-complex targets. Strict-forward 5-day yield change in
     # basis points (raw bps; the loader emits the value the
     # events.parquet column already carries). Populated by the

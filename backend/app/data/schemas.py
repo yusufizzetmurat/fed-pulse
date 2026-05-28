@@ -580,6 +580,39 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
     "forward_realized_vol_10d_garch_residual": Column(
         float, nullable=True, required=False, coerce=True
     ),
+    # ----- #481 per-asset 10d forward realised-vol targets -----
+    # One nullable float column per workspace asset-picker symbol.
+    # ``_gspc`` aliases the canonical ``forward_realized_vol_10d``
+    # (SPX) above; the remaining seven cover the other indices,
+    # dollar index, VIX, and the three major FX pairs. required=False
+    # so older events.parquet files (pre #481) validate without the
+    # columns. The pipeline emits None for symbols whose cache fetch
+    # failed or for events sitting outside a symbol's listing window;
+    # downstream learns to skip on the missing-data path.
+    "forward_realized_vol_10d_gspc": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_10d_ndx": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_10d_dji": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_10d_dxy": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_10d_vix": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_10d_eurusd": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_10d_usdjpy": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_10d_gbpusd": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
     "concurrent_macro_release": Column(
         bool, nullable=False, required=True, coerce=True
     ),
