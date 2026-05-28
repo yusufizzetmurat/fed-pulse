@@ -365,11 +365,20 @@ def _run_one_cell(
     hidden_size: int,
     use_derived: bool,
 ) -> dict[str, Any]:
-    from app.models.config import ModelConfig
+    from app.models.config import ModelConfig, RICH_FEATURE_SIZE
     from app.training.loaders import load_walk_forward_split
     from app.training.loop import train_model
 
+    # The runner always loads rich features (split is built with
+    # ``rich_features=True`` below); pin the input projection to
+    # ``RICH_FEATURE_SIZE`` so the recurrent core sees the same per-bar
+    # width the loader emits. Mirrors ``train_forecaster._resolved_input_size``.
+    # Without this the ``ModelConfig`` default (``FEATURE_SIZE`` = 6) was
+    # used and ``train_model``'s first forward died on the LSTM
+    # dim mismatch against the 87-dim vectors that land on canonical
+    # training packages.
     config = ModelConfig(
+        input_size=RICH_FEATURE_SIZE,
         output_mode="classification",
         n_classes=3,
         hidden_size=hidden_size,
