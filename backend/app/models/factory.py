@@ -378,7 +378,7 @@ def build_forecaster(
     # trips them onto the persisted run summary.
     model.rates_heads = rates_heads_tuple  # type: ignore[assignment]
     model.rates_head_mode = rates_head_mode_value  # type: ignore[assignment]
-    model.rates_aux_classification = rates_aux_classification_flag  # type: ignore[assignment]
+    model.rates_aux_classification = rates_aux_classification_flag
     model.rates_alpha = rates_alpha_value  # type: ignore[assignment]
     # #305 round-trip the rates target derivation onto the built module
     # so ``ModelConfig.from_model`` recovers it on resume / inference.
