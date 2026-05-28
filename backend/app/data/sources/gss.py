@@ -18,11 +18,14 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 from pathlib import Path
 from typing import Any, Iterable
 
 from app.data.sources.base import BaseSourceScraper, Provenance, SourceMetadata
 from app.data.sources.registry import register
+
+logger = logging.getLogger(__name__)
 
 
 def _coerce_event_date(raw: str) -> str:
@@ -72,7 +75,20 @@ def _parse_gss_factors_row(
     except ValueError:
         extras["gss_path_factor"] = None
     extras["gss_fomc_statement"] = (row.get("fomc_statement") or "").strip().upper() == "T"
-    extras.update(surprises_by_date.get(event_date, {}))
+    # Guard against future surprises columns that collide with a gss_*
+    # factor key — without this guard, dict.update silently overwrites the
+    # factor we just parsed. Per-collision warn so the misnamed column is
+    # visible without breaking the pipeline.
+    surprise_extras = surprises_by_date.get(event_date, {})
+    for key, value in surprise_extras.items():
+        if key in extras:
+            logger.warning(
+                "GSS surprises CSV key %r collides with factor key for %s; keeping factor value",
+                key,
+                event_date,
+            )
+            continue
+        extras[key] = value
 
     target_repr = (
         f"{extras['gss_target_factor']:+.2f}"
@@ -102,6 +118,39 @@ def _parse_gss_factors_row(
     }
 
 
+_SURPRISES_NUMERIC_COLUMNS: tuple[str, ...] = (
+    "surprise_30min_bp",
+    "surprise_1hour_bp",
+    "surprise_1day_bp",
+    "diff_wide_minus_tight",
+    "diff_daily_minus_tight",
+)
+
+
+def _extract_surprises_row(row: dict[str, str]) -> tuple[str, dict[str, Any]] | None:
+    """Pull the event_date + numeric extras off a single surprises CSV row."""
+
+    event_date = ""
+    for key in ("meeting_date", "date", "event_date"):
+        event_date = _coerce_event_date(row.get(key, ""))
+        if event_date:
+            break
+    if not event_date:
+        return None
+    extras: dict[str, Any] = {}
+    for key in _SURPRISES_NUMERIC_COLUMNS:
+        raw = (row.get(key) or "").strip()
+        if not raw:
+            continue
+        try:
+            extras[key] = float(raw)
+        except ValueError:
+            continue
+    if not extras:
+        return None
+    return event_date, extras
+
+
 def _parse_surprises_csv(text: str) -> dict[str, dict[str, Any]]:
     """Parse the surprises side-table CSV into a per-meeting-date dict."""
 
@@ -110,30 +159,19 @@ def _parse_surprises_csv(text: str) -> dict[str, dict[str, Any]]:
         return by_date
     reader = csv.DictReader(io.StringIO(text))
     for row in reader:
-        event_date = ""
-        for key in ("meeting_date", "date", "event_date"):
-            event_date = _coerce_event_date(row.get(key, ""))
-            if event_date:
-                break
-        if not event_date:
+        parsed = _extract_surprises_row(row)
+        if parsed is None:
             continue
-        extras: dict[str, Any] = {}
-        for key in (
-            "surprise_30min_bp",
-            "surprise_1hour_bp",
-            "surprise_1day_bp",
-            "diff_wide_minus_tight",
-            "diff_daily_minus_tight",
-        ):
-            raw = (row.get(key) or "").strip()
-            if not raw:
-                continue
-            try:
-                extras[key] = float(raw)
-            except ValueError:
-                continue
-        if extras:
-            by_date[event_date] = extras
+        event_date, extras = parsed
+        by_date[event_date] = extras
+    if not by_date:
+        # Non-empty input that produced zero parsed rows is almost always a
+        # schema drift (renamed date column, all-empty value cells). Surface
+        # it at debug so an operator running --log-level=DEBUG sees it
+        # without spamming a quiet run.
+        logger.debug(
+            "GSS surprises CSV parsed to zero rows; check date/value columns"
+        )
     return by_date
 
 
@@ -166,7 +204,12 @@ class GssFactorsScraper:
         if not html:
             return []
         reader = csv.DictReader(io.StringIO(html))
-        return [dict(row) for row in reader]
+        rows = [dict(row) for row in reader]
+        if not rows:
+            logger.debug(
+                "GSS factors CSV parsed to zero rows; check header / row format"
+            )
+        return rows
 
     def parse_entry(self, raw_html: str, *, source_url: str) -> dict[str, Any] | None:
         """Parse a single GSS factors CSV row.

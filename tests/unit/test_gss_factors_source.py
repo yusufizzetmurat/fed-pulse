@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from textwrap import dedent
 
@@ -12,6 +13,7 @@ pytest.importorskip("bs4")  # source registry init imports HTML scrapers
 
 from app.data.sources import SOURCES  # noqa: E402
 from app.data.sources.gss import GssFactorsScraper  # noqa: E402
+from app.data.sources import gss as gss_module  # noqa: E402
 
 
 FIXTURE_FACTORS_CSV = dedent(
@@ -142,3 +144,68 @@ def test_write_skips_none_entries(tmp_path: Path) -> None:
     count = scraper.write([None, {"x": 1}, None], output)
     assert count == 1
     assert output.read_text(encoding="utf-8").strip() == json.dumps({"x": 1})
+
+
+# ----- log guards + collision guard (issue #433) ----------------------------
+
+
+def test_fetch_listing_debug_logs_when_non_empty_input_yields_zero_rows(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Header-only CSV: csv.DictReader gives zero rows but the input is
+    # non-empty. The previous adapter swallowed this silently.
+    scraper = GssFactorsScraper()
+    with caplog.at_level(logging.DEBUG, logger=gss_module.logger.name):
+        result = scraper.fetch_listing("meeting_date,target_factor,path_factor\n")
+    assert result == []
+    assert any("factors CSV parsed to zero rows" in rec.message for rec in caplog.records)
+
+
+def test_parse_surprises_csv_debug_logs_when_non_empty_yields_zero_rows(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Wrong date column name -> every row drops on the date-missing check.
+    bad = dedent(
+        """\
+        wrong_date_column,surprise_30min_bp
+        2001-01-03,-39.3
+        """
+    )
+    with caplog.at_level(logging.DEBUG, logger=gss_module.logger.name):
+        result = gss_module._parse_surprises_csv(bad)
+    assert result == {}
+    assert any("surprises CSV parsed to zero rows" in rec.message for rec in caplog.records)
+
+
+def test_parse_surprises_csv_does_not_log_when_input_empty(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.DEBUG, logger=gss_module.logger.name):
+        result = gss_module._parse_surprises_csv("")
+    assert result == {}
+    # Empty input is the no-op path, not a parse failure — must not log.
+    assert not any(
+        "surprises CSV parsed to zero rows" in rec.message for rec in caplog.records
+    )
+
+
+def test_side_table_merge_does_not_overwrite_factor_keys_on_collision(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Synthesise a colliding surprises table: a (hypothetical, future)
+    # column named identically to a factor key. The merge must keep the
+    # factor value and warn.
+    scraper = GssFactorsScraper()
+    scraper._surprises_by_date = {
+        "2001-01-03": {"gss_target_factor": 999.0, "surprise_30min_bp": -1.0},
+    }
+    row = {"meeting_date": "2001-01-03", "target_factor": "-32.3", "path_factor": "22.8"}
+    with caplog.at_level(logging.WARNING, logger=gss_module.logger.name):
+        parsed = scraper.parse_entry(json.dumps(row), source_url="x")
+    assert parsed is not None
+    extras = parsed["multi_axis_extras"]
+    # Factor value preserved, not overwritten by the colliding side-table key.
+    assert extras["gss_target_factor"] == pytest.approx(-32.3)
+    # Non-colliding side-table column still merged through.
+    assert extras["surprise_30min_bp"] == pytest.approx(-1.0)
+    assert any("collides with factor key" in rec.message for rec in caplog.records)

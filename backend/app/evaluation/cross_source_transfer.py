@@ -16,6 +16,18 @@ for.
 Output schema mirrors `cross_bank_transfer` so downstream aggregation can
 share code paths: ``matrix.csv`` with one row per ``(encoder, source)`` pair
 plus per-source ``support`` so under-populated cells are visible.
+
+Continuous-target arm
+---------------------
+A second dispatch arm handles ``source_type`` strata that ship continuous
+factor columns instead of categorical stance labels (today: GSS
+target/path factor decomposition, ``gss_factor_decomposition``). The arm
+runs the same stance checkpoint, derives a signed stance score
+``P(hawkish) - P(dovish)`` per row, and reports Pearson + Spearman rank
+correlation against the GSS target and path factors. Reported alongside is
+a z-scored RMSE so both factor columns sit on a comparable scale; the raw
+factor is in basis points and the stance score is in [-1, 1] so an
+un-scaled RMSE would be meaningless.
 """
 
 from __future__ import annotations
@@ -24,9 +36,10 @@ import argparse
 import csv
 import io
 import json
+import math
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -53,12 +66,34 @@ CROSS_SOURCE_TYPES: tuple[str, ...] = (
     "beige_book",
     "regional_research",
     "ny_fed_liberty_street",
+    "gss_factor_decomposition",
 )
+
+# Continuous-target strata: rows carry no categorical stance label, they
+# carry numeric factor columns lifted off ``multi_axis_extras``. The
+# harness dispatches these through ``evaluate_continuous_source`` instead
+# of the stance-classification path.
+CROSS_SOURCE_CONTINUOUS_TYPES: tuple[str, ...] = (
+    "gss_factor_decomposition",
+)
+
+# Per continuous source_type, the ``multi_axis_extras`` keys to score
+# the model's signed stance score against. Order matters only for the
+# CSV column layout downstream.
+CONTINUOUS_TARGETS: dict[str, tuple[str, ...]] = {
+    "gss_factor_decomposition": ("gss_target_factor", "gss_path_factor"),
+}
 
 
 @dataclass(frozen=True)
 class CrossSourceRow:
-    """A labelled registry row read for the cross-source eval."""
+    """A registry row read for the cross-source eval.
+
+    ``label`` is empty string for rows from a continuous-target source_type
+    (see ``CROSS_SOURCE_CONTINUOUS_TYPES``); the factor columns live on
+    ``multi_axis_extras`` and the continuous-arm evaluator reads them
+    directly.
+    """
 
     record_id: str
     text: str
@@ -67,6 +102,7 @@ class CrossSourceRow:
     source: str
     source_type: str
     provenance: str
+    multi_axis_extras: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -126,30 +162,37 @@ def load_cross_source_rows(
             payload = json.loads(line)
         except json.JSONDecodeError:
             continue
-        label = str(payload.get("mapped_label", "")).strip().lower()
-        if label not in LABELS:
+        source_type = str(payload.get("source_type", "")).strip()
+        if source_type not in CROSS_SOURCE_TYPES:
             continue
         text = str(payload.get("text", "")).strip()
         if not text:
+            continue
+        label = str(payload.get("mapped_label", "")).strip().lower()
+        is_continuous = source_type in CROSS_SOURCE_CONTINUOUS_TYPES
+        if not is_continuous and label not in LABELS:
             continue
         try:
             sample_weight = float(payload.get("sample_weight", 1.0))
         except (TypeError, ValueError):
             sample_weight = 1.0
-        if not include_zero_weight and sample_weight == 0.0:
+        # Continuous-arm rows carry sample_weight=0 by design (they sit
+        # in the registry for evaluation only, never enter training).
+        # Don't gate them on the zero-weight flag.
+        if not include_zero_weight and sample_weight == 0.0 and not is_continuous:
             continue
-        source_type = str(payload.get("source_type", "")).strip()
-        if source_type not in CROSS_SOURCE_TYPES:
-            continue
+        extras_raw = payload.get("multi_axis_extras") or {}
+        extras = extras_raw if isinstance(extras_raw, dict) else {}
         rows.append(
             CrossSourceRow(
                 record_id=str(payload.get("record_id", "")).strip(),
                 text=text,
-                label=label,
+                label=label if not is_continuous else "",
                 event_date=str(payload.get("event_date", "")).strip(),
                 source=str(payload.get("source", "")).strip(),
                 source_type=source_type,
                 provenance=str(payload.get("provenance", "")).strip(),
+                multi_axis_extras=dict(extras),
             )
         )
     return rows
@@ -267,6 +310,227 @@ def evaluate_source(
     )
 
 
+@dataclass(frozen=True)
+class CrossSourceContinuousResult:
+    """Continuous-arm result for a single (encoder, continuous source) cell.
+
+    The stance checkpoint emits a signed score ``P(hawkish) - P(dovish)``
+    per row; the harness scores that against each continuous target column
+    on ``multi_axis_extras`` via Pearson + Spearman correlation and a
+    z-scored RMSE (raw RMSE is meaningless cross-scale).
+    """
+
+    source_type: str
+    encoder_alias: str
+    checkpoint: str
+    support: int
+    # ``targets[target_key]`` carries ``support`` (int) plus ``pearson_r``,
+    # ``spearman_r``, ``zscore_rmse`` which are ``float | None`` — None for
+    # degenerate slices (zero variance, sub-2 pairs).
+    targets: dict[str, dict[str, float | int | None]]
+    latency_ms_p50: float
+    latency_ms_p95: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_type": self.source_type,
+            "encoder_alias": self.encoder_alias,
+            "checkpoint": self.checkpoint,
+            "support": self.support,
+            "kind": "continuous",
+            "targets": self.targets,
+            "latency_ms": {"p50": self.latency_ms_p50, "p95": self.latency_ms_p95},
+        }
+
+
+def _pearson(xs: list[float], ys: list[float]) -> float | None:
+    """Pearson r over paired finite samples. Returns ``None`` if degenerate."""
+
+    n = len(xs)
+    if n < 2 or len(ys) != n:
+        return None
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    dx2 = sum((x - mx) ** 2 for x in xs)
+    dy2 = sum((y - my) ** 2 for y in ys)
+    if dx2 <= 0 or dy2 <= 0:
+        return None
+    return num / math.sqrt(dx2 * dy2)
+
+
+def _rank(values: list[float]) -> list[float]:
+    """Average-rank assignment, ties get the mean of their tied positions."""
+
+    indexed = sorted(range(len(values)), key=lambda i: values[i])
+    ranks = [0.0] * len(values)
+    i = 0
+    while i < len(indexed):
+        j = i
+        while j + 1 < len(indexed) and values[indexed[j + 1]] == values[indexed[i]]:
+            j += 1
+        avg = (i + j) / 2.0 + 1.0  # 1-indexed average
+        for k in range(i, j + 1):
+            ranks[indexed[k]] = avg
+        i = j + 1
+    return ranks
+
+
+def _spearman(xs: list[float], ys: list[float]) -> float | None:
+    """Spearman rank correlation via Pearson on rank-transformed inputs."""
+
+    if len(xs) < 2 or len(xs) != len(ys):
+        return None
+    return _pearson(_rank(xs), _rank(ys))
+
+
+def _zscore_rmse(xs: list[float], ys: list[float]) -> float | None:
+    """RMSE after z-scoring both vectors. Returns ``None`` if degenerate."""
+
+    n = len(xs)
+    if n < 2 or len(ys) != n:
+        return None
+
+    def _z(vs: list[float]) -> list[float] | None:
+        mean = sum(vs) / len(vs)
+        var = sum((v - mean) ** 2 for v in vs) / len(vs)
+        if var <= 0:
+            return None
+        sd = math.sqrt(var)
+        return [(v - mean) / sd for v in vs]
+
+    zx = _z(xs)
+    zy = _z(ys)
+    if zx is None or zy is None:
+        return None
+    return math.sqrt(sum((a - b) ** 2 for a, b in zip(zx, zy)) / n)
+
+
+def _predict_continuous_scores(
+    rows: list[CrossSourceRow],
+    *,
+    checkpoint: str,
+    max_length: int = 256,
+    batch_size: int = 32,
+) -> tuple[list[float], list[float]]:
+    """Return ``(signed_scores, per_row_latency_ms)`` for the continuous arm.
+
+    Signed score = ``softmax(logits)[hawkish_id] - softmax(logits)[dovish_id]``
+    per row — a single bipolar dim in [-1, 1] that's the natural projection
+    of a 3-class stance head onto the GSS factor axis.
+    """
+
+    import torch
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    model = AutoModelForSequenceClassification.from_pretrained(checkpoint)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    model.eval()
+
+    label2id = {v: k for k, v in ID2LABEL.items()}
+    hawk = label2id["hawkish"]
+    dove = label2id["dovish"]
+
+    scores: list[float] = []
+    latencies: list[float] = []
+    with torch.no_grad():
+        for start in range(0, len(rows), batch_size):
+            batch_rows = rows[start : start + batch_size]
+            batch_texts = [r.text for r in batch_rows]
+            enc = tokenizer(
+                batch_texts,
+                truncation=True,
+                max_length=max_length,
+                padding=True,
+                return_tensors="pt",
+            ).to(device)
+            t0 = time.perf_counter()
+            logits = model(**enc).logits
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            per_item_ms = elapsed_ms / max(len(batch_rows), 1)
+            latencies.extend([per_item_ms] * len(batch_rows))
+            probs = torch.softmax(logits, dim=-1)
+            for prob in probs:
+                scores.append(float(prob[hawk] - prob[dove]))
+    return scores, latencies
+
+
+def evaluate_continuous_source(
+    rows: list[CrossSourceRow],
+    *,
+    source_type: str,
+    encoder_alias: str,
+    checkpoint: str,
+    max_length: int = 256,
+    batch_size: int = 32,
+    predict_fn: Any = None,
+) -> CrossSourceContinuousResult:
+    """Score a continuous-target source slice.
+
+    ``predict_fn(rows) -> (signed_scores, latencies_ms)`` is the test seam;
+    production calls fall through to ``_predict_continuous_scores``.
+    """
+
+    if not rows:
+        raise ValueError(
+            f"No continuous rows for source_type={source_type!r} in registry."
+        )
+    target_keys = CONTINUOUS_TARGETS.get(source_type, ())
+    if not target_keys:
+        raise ValueError(
+            f"No continuous targets configured for source_type={source_type!r}; "
+            "extend CONTINUOUS_TARGETS to register the factor columns."
+        )
+
+    if predict_fn is None:
+        scores, latencies = _predict_continuous_scores(
+            rows, checkpoint=checkpoint, max_length=max_length, batch_size=batch_size
+        )
+    else:
+        scores, latencies = predict_fn(rows)
+
+    if len(scores) != len(rows):
+        raise ValueError(
+            f"predict_fn returned {len(scores)} scores for {len(rows)} rows."
+        )
+
+    targets: dict[str, dict[str, float | int | None]] = {}
+    for key in target_keys:
+        paired_x: list[float] = []
+        paired_y: list[float] = []
+        for row, score in zip(rows, scores):
+            raw = row.multi_axis_extras.get(key)
+            if raw is None:
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if math.isnan(value) or math.isinf(value):
+                continue
+            paired_x.append(score)
+            paired_y.append(value)
+        targets[key] = {
+            "support": len(paired_x),
+            "pearson_r": _pearson(paired_x, paired_y) if paired_x else None,
+            "spearman_r": _spearman(paired_x, paired_y) if paired_x else None,
+            "zscore_rmse": _zscore_rmse(paired_x, paired_y) if paired_x else None,
+        }
+
+    latency = _latency_summary(latencies)
+    return CrossSourceContinuousResult(
+        source_type=source_type,
+        encoder_alias=encoder_alias,
+        checkpoint=checkpoint,
+        support=len(rows),
+        targets=targets,
+        latency_ms_p50=latency["p50_ms"],
+        latency_ms_p95=latency["p95_ms"],
+    )
+
+
 def build_matrix(
     *,
     package_dir: Path,
@@ -275,6 +539,7 @@ def build_matrix(
     max_length: int = 256,
     batch_size: int = 32,
     predict_fn: Any = None,
+    continuous_predict_fn: Any = None,
 ) -> dict[str, Any]:
     """Build the per-(encoder, source_type) cross-source transfer payload.
 
@@ -282,6 +547,12 @@ def build_matrix(
     inference once per (alias, source_type) cell. Cells with zero rows are
     emitted as ``support=0`` with empty metrics so the under-populated
     sources stay visible in the CSV.
+
+    Continuous-target source_types (see ``CROSS_SOURCE_CONTINUOUS_TYPES``)
+    dispatch through ``evaluate_continuous_source`` and emit cells tagged
+    ``kind="continuous"``. ``continuous_predict_fn`` is the corresponding
+    test seam; production code passes ``None`` and lets the harness call
+    the HF inference path.
     """
 
     rows = load_cross_source_rows(package_dir)
@@ -301,6 +572,7 @@ def build_matrix(
     for encoder_alias, checkpoint in encoder_checkpoints.items():
         for source_type in targets:
             slice_rows = buckets.get(source_type, [])
+            is_continuous = source_type in CROSS_SOURCE_CONTINUOUS_TYPES
             if not slice_rows:
                 matrix["cells"].append(
                     {
@@ -309,19 +581,34 @@ def build_matrix(
                         "source_type": source_type,
                         "support": 0,
                         "status": "no_rows",
+                        "kind": "continuous" if is_continuous else "stance",
                     }
                 )
                 continue
             try:
-                result = evaluate_source(
-                    slice_rows,
-                    source_type=source_type,
-                    encoder_alias=encoder_alias,
-                    checkpoint=checkpoint,
-                    max_length=max_length,
-                    batch_size=batch_size,
-                    predict_fn=predict_fn,
-                )
+                if is_continuous:
+                    cont = evaluate_continuous_source(
+                        slice_rows,
+                        source_type=source_type,
+                        encoder_alias=encoder_alias,
+                        checkpoint=checkpoint,
+                        max_length=max_length,
+                        batch_size=batch_size,
+                        predict_fn=continuous_predict_fn,
+                    )
+                    cell = cont.to_dict()
+                else:
+                    result = evaluate_source(
+                        slice_rows,
+                        source_type=source_type,
+                        encoder_alias=encoder_alias,
+                        checkpoint=checkpoint,
+                        max_length=max_length,
+                        batch_size=batch_size,
+                        predict_fn=predict_fn,
+                    )
+                    cell = result.to_dict()
+                    cell["kind"] = "stance"
             except Exception as exc:  # noqa: BLE001 — surface per-cell failure
                 matrix["failures"].append(
                     {
@@ -332,7 +619,6 @@ def build_matrix(
                     }
                 )
                 continue
-            cell = result.to_dict()
             cell["status"] = "ok"
             matrix["cells"].append(cell)
 
@@ -340,6 +626,13 @@ def build_matrix(
 
 
 def render_csv(matrix: dict[str, Any]) -> str:
+    """Render the stance-arm matrix as a CSV.
+
+    Continuous-arm cells are skipped here so the stance CSV stays
+    well-typed (the per-class columns don't apply). Continuous cells are
+    emitted by ``render_continuous_csv``; both share ``matrix.json``.
+    """
+
     fieldnames = [
         "encoder_alias",
         "checkpoint",
@@ -359,6 +652,8 @@ def render_csv(matrix: dict[str, Any]) -> str:
     writer = csv.DictWriter(buffer, fieldnames=fieldnames)
     writer.writeheader()
     for cell in matrix.get("cells", []):
+        if cell.get("kind") == "continuous":
+            continue
         per_label = cell.get("label_support") or {}
         latency = cell.get("latency_ms") or {}
         writer.writerow(
@@ -378,6 +673,67 @@ def render_csv(matrix: dict[str, Any]) -> str:
                 "latency_ms_p95": _fmt(latency.get("p95")),
             }
         )
+    return buffer.getvalue()
+
+
+def render_continuous_csv(matrix: dict[str, Any]) -> str:
+    """Render the continuous-arm cells as a long-form CSV.
+
+    One row per ``(encoder, source_type, target_key)`` tuple, so the
+    Pearson / Spearman / z-RMSE numbers stay one-target-per-row regardless
+    of how many factor columns a source ships. Returns an empty string if
+    no continuous cells made it into the matrix (lets the caller skip the
+    artefact instead of writing a header-only file).
+    """
+
+    rows: list[dict[str, Any]] = []
+    for cell in matrix.get("cells", []):
+        if cell.get("kind") != "continuous":
+            continue
+        latency = cell.get("latency_ms") or {}
+        targets = cell.get("targets") or {}
+        if not targets:
+            rows.append(
+                {
+                    "encoder_alias": cell.get("encoder_alias", ""),
+                    "checkpoint": cell.get("checkpoint", ""),
+                    "source_type": cell.get("source_type", ""),
+                    "status": cell.get("status", ""),
+                    "support": cell.get("support", 0),
+                    "target_key": "",
+                    "paired_support": 0,
+                    "pearson_r": "",
+                    "spearman_r": "",
+                    "zscore_rmse": "",
+                    "latency_ms_p50": _fmt(latency.get("p50")),
+                    "latency_ms_p95": _fmt(latency.get("p95")),
+                }
+            )
+            continue
+        for target_key, stats in targets.items():
+            rows.append(
+                {
+                    "encoder_alias": cell.get("encoder_alias", ""),
+                    "checkpoint": cell.get("checkpoint", ""),
+                    "source_type": cell.get("source_type", ""),
+                    "status": cell.get("status", ""),
+                    "support": cell.get("support", 0),
+                    "target_key": target_key,
+                    "paired_support": stats.get("support", 0),
+                    "pearson_r": _fmt(stats.get("pearson_r")),
+                    "spearman_r": _fmt(stats.get("spearman_r")),
+                    "zscore_rmse": _fmt(stats.get("zscore_rmse")),
+                    "latency_ms_p50": _fmt(latency.get("p50")),
+                    "latency_ms_p95": _fmt(latency.get("p95")),
+                }
+            )
+    if not rows:
+        return ""
+    fieldnames = list(rows[0].keys())
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
     return buffer.getvalue()
 
 
@@ -493,18 +849,26 @@ def main() -> int:
         json.dumps(matrix, indent=2, allow_nan=False), encoding="utf-8"
     )
     (output_dir / "matrix.csv").write_text(render_csv(matrix), encoding="utf-8")
+    continuous_csv = render_continuous_csv(matrix)
+    if continuous_csv:
+        (output_dir / "matrix_continuous.csv").write_text(continuous_csv, encoding="utf-8")
     print(f"[cross_source_transfer] wrote artefacts to {output_dir}")
     return 0
 
 
 __all__ = [
+    "CONTINUOUS_TARGETS",
+    "CROSS_SOURCE_CONTINUOUS_TYPES",
     "CROSS_SOURCE_TYPES",
+    "CrossSourceContinuousResult",
     "CrossSourceResult",
     "CrossSourceRow",
     "build_matrix",
+    "evaluate_continuous_source",
     "evaluate_source",
     "group_by_source_type",
     "load_cross_source_rows",
+    "render_continuous_csv",
     "render_csv",
 ]
 
