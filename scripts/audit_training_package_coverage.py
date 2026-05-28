@@ -132,9 +132,11 @@ SIDECAR_FILES: dict[str, dict[str, object]] = {
     },
 }
 
-# Canonical source / event_kind values emitted by
-# ``backend/app/data/source_type.py`` and recorded in events.parquet
-# under the ``event_kind`` column. The pinned TP carries 6 event_kinds.
+# Canonical event_kind values per ``backend/app/data/schemas.py::
+# _ALLOWED_EVENT_KIND``. event_kind is the document-type axis (what kind
+# of FOMC artefact is this row) and is distinct from source_type (which
+# data provider). The narrower event_kind set above is what
+# events.parquet rows carry.
 EXPECTED_EVENT_KINDS = {
     "statement",
     "minutes",
@@ -142,10 +144,6 @@ EXPECTED_EVENT_KINDS = {
     "speech",
     "testimony",
     "macro_release",
-    "beige_book",
-    "regional_research",
-    "chair_speech",
-    "governor_speech",
 }
 
 
