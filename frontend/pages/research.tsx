@@ -111,9 +111,9 @@ function bakeoffCallout(section: EncoderBakeoffSection): string | null {
   const sorted = [...section.rows].sort((a, b) => b.macro_f1_mean - a.macro_f1_mean);
   const leader = sorted[0];
   const runner = sorted[1];
-  const gapPp = (leader.macro_f1_mean - runner.macro_f1_mean) * 100;
-  if (!Number.isFinite(gapPp) || gapPp <= 0) return null;
-  return `${leader.encoder_key} leads by ${gapPp.toFixed(1)}pp macro-F1 over ${runner.encoder_key}.`;
+  const gapPoints = (leader.macro_f1_mean - runner.macro_f1_mean) * 100;
+  if (!Number.isFinite(gapPoints) || gapPoints <= 0) return null;
+  return `${leader.encoder_key} leads the overall F1 score by ${gapPoints.toFixed(1)} percentage points over ${runner.encoder_key}.`;
 }
 
 function crossBankCallout(
@@ -143,7 +143,8 @@ function crossBankCallout(
     }
   }
   if (worstDrop <= 0 || !worstSource || !worstTarget) return null;
-  return `Transfer from ${worstSource} to ${worstTarget} drops ${(worstDrop * 100).toFixed(1)}pp ${section.metric_name.replace("_", "-")} vs in-domain.`;
+  const metricLabel = section.metric_name.replace("_", "-");
+  return `Transferring from ${worstSource} to ${worstTarget} drops ${metricLabel} by ${(worstDrop * 100).toFixed(1)} percentage points compared with training and evaluating on the same bank.`;
 }
 
 function EncoderBakeoffPane({ section }: { section: EncoderBakeoffSection }) {
