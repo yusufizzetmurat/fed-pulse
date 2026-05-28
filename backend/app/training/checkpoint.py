@@ -195,12 +195,16 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             multi_task_lambda_topic=float(
                 raw.get("multi_task_lambda_topic", 0.3)
             ),
-            # #214: mirror the press-conf opt-in onto the checkpoint
-            # round-trip so a run trained under ``--use-press-conf``
-            # rehydrates with the same input projection. Pre-#214
-            # checkpoints leave the key absent and the default collapses
-            # to the byte-identical no-press-conf path.
+            # #214: round-trip press-conf opt-in.
             use_press_conf=bool(raw.get("use_press_conf", False)),
+            # #443/#444: forward the two new opt-in flags so a checkpoint
+            # trained under ``--use-statement-delta`` / ``--use-vote-features``
+            # rehydrates with the same per-bar input width on the eval /
+            # calibration paths. Pre-#443 checkpoints leave the keys
+            # absent and the defaults collapse to the byte-identical
+            # legacy path.
+            use_statement_delta=bool(raw.get("use_statement_delta", False)),
+            use_vote_features=bool(raw.get("use_vote_features", False)),
         )
     return ModelConfig()
 

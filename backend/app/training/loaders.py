@@ -1473,6 +1473,105 @@ def _compute_macro_regime_features_for_event(
     return features.as_list()
 
 
+# Canonical FOMC voting-member cap. The committee seats 12 voting
+# members each year (7 board governors + the NY Fed president + 4
+# rotating Reserve Bank presidents). Dividing the raw counts by 12
+# keeps the scalars in the same unit-ish band as the other
+# RobustScaler-fittable rich-feature axes so the per-fold scaler does
+# not need to learn a magnitude-3-OOM scale gap on a 4-vector.
+_VOTE_NORM_DIVISOR: float = 12.0
+
+# Dissent-direction sign map. The hawkish / dovish convention matches
+# ``mp_surprise_level``: positive = tighter-than-action, negative =
+# easier-than-action. Unanimous / unparseable rows collapse to 0.0
+# (no signed signal) and the per-row missing flag carries the actual
+# "no data" distinction.
+_DISSENT_DIRECTION_SIGN: dict[str, float] = {
+    "hawkish_dissent": 1.0,
+    "dovish_dissent": -1.0,
+}
+
+
+def _compute_vote_features_for_event(
+    row: Any,
+) -> list[float] | None:
+    """Compose the #444 4-vector off the events.parquet vote columns.
+
+    Returns ``None`` when the row carries no parseable vote tally (a
+    non-statement event kind, a row with missing ``votes_for``, or a
+    pre-#444 events.parquet without the vote columns at all). The
+    caller flips the missing flag in that case.
+
+    Output order matches the audit doc: ``[votes_for_norm,
+    votes_against_norm, is_unanimous_float, dissent_direction_signed]``.
+    """
+
+    raw_votes_for = row.get("votes_for") if hasattr(row, "get") else None
+    votes_for = _coerce_finite_float(raw_votes_for)
+    if votes_for is None:
+        return None
+    votes_against = _coerce_finite_float(
+        row.get("votes_against") if hasattr(row, "get") else None
+    )
+    if votes_against is None:
+        votes_against = 0.0
+    is_unanimous_raw = row.get("is_unanimous") if hasattr(row, "get") else None
+    if is_unanimous_raw is None:
+        is_unanimous = 1.0 if votes_against == 0.0 else 0.0
+    else:
+        try:
+            is_unanimous = 1.0 if bool(is_unanimous_raw) else 0.0
+        except (TypeError, ValueError):
+            is_unanimous = 1.0 if votes_against == 0.0 else 0.0
+    direction_raw = (
+        row.get("dissent_direction") if hasattr(row, "get") else None
+    )
+    direction_sign = 0.0
+    if direction_raw is not None:
+        key = str(direction_raw).strip().lower()
+        direction_sign = _DISSENT_DIRECTION_SIGN.get(key, 0.0)
+    return [
+        votes_for / _VOTE_NORM_DIVISOR,
+        votes_against / _VOTE_NORM_DIVISOR,
+        is_unanimous,
+        direction_sign,
+    ]
+
+
+def _read_statement_delta_embedding(
+    row: Any,
+) -> list[float] | None:
+    """Extract the #443 statement-delta embedding off an events.parquet row.
+
+    Returns ``None`` when the column is absent (pre-#443 events.parquet),
+    when the row is a non-statement event kind (the builder writes
+    ``None``), or when the supervised event is cold-start (no strict-prior
+    statement exists, builder also wrote ``None``). The caller flips the
+    missing flag in that case.
+    """
+
+    if not hasattr(row, "get"):
+        return None
+    raw = row.get("statement_delta_embedding")
+    if raw is None:
+        return None
+    # Parquet round-trips list[float] columns as numpy arrays; tolerate
+    # both shapes.
+    try:
+        values = list(raw)
+    except TypeError:
+        return None
+    if not values:
+        return None
+    out: list[float] = []
+    for v in values:
+        f = _coerce_finite_float(v)
+        if f is None:
+            return None
+        out.append(f)
+    return out
+
+
 def _read_events_frame(package_dir: Path) -> "Any":
     import pandas as pd
 
@@ -1677,6 +1776,8 @@ def _load_package_sequences_with_metadata(
     use_regime_conditioning: bool = False,
     use_sep: bool = False,
     use_press_conf: bool = False,
+    use_statement_delta: bool = False,
+    use_vote_features: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -2002,6 +2103,22 @@ def _load_package_sequences_with_metadata(
             )
         else:
             press_conf_block_list = None
+        # #443 statement-delta embedding. Gated by ``use_statement_delta``
+        # so the legacy path stays byte-identical when the flag is off.
+        # Cold-start rows (no strict-prior statement available) and
+        # non-statement event kinds carry ``None`` on the events.parquet
+        # column; the loader collapses to the missing-1.0 slot.
+        if use_statement_delta:
+            statement_delta_list = _read_statement_delta_embedding(row)
+        else:
+            statement_delta_list = None
+        # #444 vote-tally feature block. Gated by ``use_vote_features``;
+        # missing column / non-statement / unparseable row → None and
+        # the missing flag fires.
+        if use_vote_features:
+            vote_features_list = _compute_vote_features_for_event(row)
+        else:
+            vote_features_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
             vector.forward_realized_vol_10d_garch_baseline = garch_baseline_value
@@ -2050,16 +2167,25 @@ def _load_package_sequences_with_metadata(
             else:
                 vector.sep_features = None
                 vector.sep_features_missing = 1.0
-            # #214 press-conf Q&A block broadcast onto every bar. When
-            # the flag is off, ``press_conf_block_list`` is ``None`` and
-            # the slot stays at the default; the conditional emission
-            # in ``FeatureVector.as_rich_list`` then skips appending the
-            # block entirely, preserving the byte-identical pre-#214
-            # per-bar feature size.
+            # #214 press-conf Q&A block broadcast onto every bar.
             if press_conf_block_list is not None:
                 vector.press_conf_features = list(press_conf_block_list)
             else:
                 vector.press_conf_features = None
+            # #443 statement-delta embedding broadcast.
+            if statement_delta_list is not None:
+                vector.statement_delta_embedding = list(statement_delta_list)
+                vector.statement_delta_embedding_missing = 0.0
+            else:
+                vector.statement_delta_embedding = None
+                vector.statement_delta_embedding_missing = 1.0
+            # #444 vote-tally feature broadcast.
+            if vote_features_list is not None:
+                vector.vote_features = list(vote_features_list)
+                vector.vote_features_missing = 0.0
+            else:
+                vector.vote_features = None
+                vector.vote_features_missing = 1.0
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -2141,6 +2267,8 @@ def load_walk_forward_split(
     use_regime_conditioning: bool = False,
     use_sep: bool = False,
     use_press_conf: bool = False,
+    use_statement_delta: bool = False,
+    use_vote_features: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -2220,6 +2348,8 @@ def load_walk_forward_split(
         use_regime_conditioning=use_regime_conditioning,
         use_sep=use_sep,
         use_press_conf=use_press_conf,
+        use_statement_delta=use_statement_delta,
+        use_vote_features=use_vote_features,
         text_encoder=text_encoder,
         text_adapter_dim=text_adapter_dim,
         text_pool_lambda_inv_days=text_pool_lambda_inv_days,
@@ -2342,6 +2472,8 @@ def load_training_sequences_from_package(
     use_regime_conditioning: bool = False,
     use_sep: bool = False,
     use_press_conf: bool = False,
+    use_statement_delta: bool = False,
+    use_vote_features: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -2775,6 +2907,22 @@ def load_training_sequences_from_package(
             )
         else:
             press_conf_block_list = None
+        # #443 statement-delta embedding. Gated by ``use_statement_delta``
+        # so the legacy path stays byte-identical when the flag is off.
+        # Cold-start rows (no strict-prior statement available) and
+        # non-statement event kinds carry ``None`` on the events.parquet
+        # column; the loader collapses to the missing-1.0 slot.
+        if use_statement_delta:
+            statement_delta_list = _read_statement_delta_embedding(row)
+        else:
+            statement_delta_list = None
+        # #444 vote-tally feature block. Gated by ``use_vote_features``;
+        # missing column / non-statement / unparseable row → None and
+        # the missing flag fires.
+        if use_vote_features:
+            vote_features_list = _compute_vote_features_for_event(row)
+        else:
+            vote_features_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
             vector.forward_realized_vol_10d_garch_baseline = garch_baseline_value
@@ -2817,16 +2965,25 @@ def load_training_sequences_from_package(
             else:
                 vector.sep_features = None
                 vector.sep_features_missing = 1.0
-            # #214 press-conf Q&A block broadcast onto every bar. When
-            # the flag is off, ``press_conf_block_list`` is ``None`` and
-            # the slot stays at the default; the conditional emission
-            # in ``FeatureVector.as_rich_list`` then skips appending the
-            # block entirely, preserving the byte-identical pre-#214
-            # per-bar feature size.
+            # #214 press-conf Q&A block broadcast onto every bar.
             if press_conf_block_list is not None:
                 vector.press_conf_features = list(press_conf_block_list)
             else:
                 vector.press_conf_features = None
+            # #443 statement-delta embedding broadcast.
+            if statement_delta_list is not None:
+                vector.statement_delta_embedding = list(statement_delta_list)
+                vector.statement_delta_embedding_missing = 0.0
+            else:
+                vector.statement_delta_embedding = None
+                vector.statement_delta_embedding_missing = 1.0
+            # #444 vote-tally feature broadcast.
+            if vote_features_list is not None:
+                vector.vote_features = list(vote_features_list)
+                vector.vote_features_missing = 0.0
+            else:
+                vector.vote_features = None
+                vector.vote_features_missing = 1.0
         if rich_features:
             _attach_rich_features(
                 vectors,

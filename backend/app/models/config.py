@@ -104,18 +104,14 @@ RICH_MACRO_REGIME_MISSING_DIM = 1
 # feature size. See ADR 0030.
 RICH_SEP_DIM = 4
 RICH_SEP_MISSING_DIM = 1
-# #214 FOMC press conference Q&A block. One scalar carries the
-# ``has_press_conf`` covariate-shift flag (1.0 on FOMC events whose Q&A
-# transcript landed in the press-conf lookup, 0.0 on pre-2011 events and
-# every other event_kind where the joint corpus does not apply). The flag
-# IS the missingness signal — zero-imputation is the canonical handling
-# of the pre-2011 era under route 1 of #214 (a separate fold split was
-# rejected because it would fragment the walk-forward protocol). The
-# block sits past the SEP tail in ``as_rich_list`` and is appended only
-# when the loader populates ``press_conf_features`` under
-# ``--use-press-conf``, so the default flag-off path stays byte-identical
-# to pre-#214. See ADR 0037.
+# #214 press-conf has_press_conf flag (ADR 0037).
 RICH_PRESS_CONF_DIM = 1
+# #443 statement-delta mean-pooled embedding block (ADR 0038).
+RICH_STATEMENT_DELTA_DIM = 768
+RICH_STATEMENT_DELTA_MISSING_DIM = 1
+# #444 vote tally + dissent block (ADR 0038).
+RICH_VOTE_FEATURES_DIM = 4
+RICH_VOTE_FEATURES_MISSING_DIM = 1
 RICH_EXTRA_FEATURE_SIZE = (
     RICH_CREDIBILITY_DIM
     + RICH_LINGUISTIC_DIM
@@ -312,15 +308,16 @@ def rich_feature_size_with_blocks(
     use_regime: bool,
     use_sep: bool,
     use_press_conf: bool = False,
+    use_statement_delta: bool = False,
+    use_vote_features: bool = False,
 ) -> int:
-    """Combined helper: the per-bar size with regime, SEP, and press-conf block flags.
+    """Combined helper: the per-bar size with every opt-in tail block.
 
-    The blocks are independent — every subset can be active. ``as_rich_list``
-    appends them in a fixed order (regime, then SEP, then press_conf) so
-    a downstream caller iterating slices knows where each block sits
-    without ambiguity. Adding new optional blocks to this helper without
-    bumping the legacy ``RICH_FEATURE_SIZE`` is the structural lock that
-    keeps default-off paths byte-identical across feature additions.
+    All five blocks are independent — any combination can be on. The
+    append order on ``as_rich_list`` is fixed: regime, SEP, press-conf,
+    statement-delta, vote-features. A downstream caller iterating
+    slices knows where each block sits without ambiguity given the five
+    flags.
     """
 
     size = RICH_FEATURE_SIZE
@@ -330,6 +327,10 @@ def rich_feature_size_with_blocks(
         size += RICH_SEP_DIM + RICH_SEP_MISSING_DIM
     if bool(use_press_conf):
         size += RICH_PRESS_CONF_DIM
+    if bool(use_statement_delta):
+        size += RICH_STATEMENT_DELTA_DIM + RICH_STATEMENT_DELTA_MISSING_DIM
+    if bool(use_vote_features):
+        size += RICH_VOTE_FEATURES_DIM + RICH_VOTE_FEATURES_MISSING_DIM
     return size
 
 
@@ -606,17 +607,12 @@ class ModelConfig:
     # the loader appends past ``RICH_FEATURE_SIZE`` (and past the
     # regime block when both flags are on). See ADR 0030.
     use_sep: bool = False
-    # #214 FOMC press conference Q&A opt-in. Default ``False`` keeps the
-    # per-bar feature size byte-identical to pre-#214. When ``True`` the
-    # loader joins the press-conf lookup onto every supervised statement
-    # event: the ``has_press_conf`` scalar fires on FOMC events with a
-    # locatable Q&A transcript (post-2011 era), and the LoRA path
-    # concatenates the Q&A text onto the statement's ``raw_text`` so the
-    # encoder sees a joint statement-plus-Q&A document under route 1 of
-    # the #214 scope brief. Pre-2011 events get a zero-imputed flag —
-    # the covariate-shift handling rejected fragmenting the walk-forward
-    # fold protocol for an era-specific subset. See ADR 0037.
+    # #214 press-conf opt-in (ADR 0037).
     use_press_conf: bool = False
+    # #443 statement-delta opt-in (ADR 0038).
+    use_statement_delta: bool = False
+    # #444 vote-tally opt-in (ADR 0038).
+    use_vote_features: bool = False
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -690,6 +686,12 @@ class ModelConfig:
             ),
             use_sep=bool(getattr(model, "use_sep", False)),
             use_press_conf=bool(getattr(model, "use_press_conf", False)),
+            use_statement_delta=bool(
+                getattr(model, "use_statement_delta", False)
+            ),
+            use_vote_features=bool(
+                getattr(model, "use_vote_features", False)
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -914,21 +916,15 @@ class FeatureVector:
     # per-feature row in ``docs/feature-provenance-audit.md``.
     sep_features: list[float] | None = None
     sep_features_missing: float = 1.0
-    # #214 FOMC press conference Q&A block. One scalar (``has_press_conf``)
-    # that fires on FOMC events with a locatable Q&A transcript and
-    # zero-imputes for pre-2011 events / every other event_kind. The
-    # block doubles as its own missingness flag — the covariate shift
-    # between the pre-2011 (no scheduled press conf) and post-2011 eras
-    # is the entire signal the scalar carries, and a separate
-    # ``*_missing`` would just be its complement. Default ``None`` keeps
-    # the regression / legacy paths byte-identical: ``as_rich_list`` does
-    # NOT append the block when this slot is empty, so the per-bar
-    # feature size stays at the legacy ``RICH_FEATURE_SIZE`` width (or
-    # the regime / SEP-widened width when those flags are on). The
-    # loader sets the slot only when ``--use-press-conf`` is on. See
-    # ADR 0037 and the per-feature row in
-    # ``docs/feature-provenance-audit.md``.
+    # #214 press-conf scalar (has_press_conf). The flag IS the
+    # missingness signal so no sibling *_missing field. See ADR 0037.
     press_conf_features: list[float] | None = None
+    # #443 statement-delta mean-pooled embedding block. See ADR 0038.
+    statement_delta_embedding: list[float] | None = None
+    statement_delta_embedding_missing: float = 1.0
+    # #444 vote-tally signed feature block. See ADR 0038.
+    vote_features: list[float] | None = None
+    vote_features_missing: float = 1.0
     rich_payload: bool = False
     # Phase 9 V2 (#195) classification target. The forward 10-trading-day
     # realised volatility lives on the target row (the last vector in
@@ -1193,13 +1189,7 @@ class FeatureVector:
                     RICH_SEP_DIM - len(sep_block)
                 )
             out = out + sep_block + [float(self.sep_features_missing)]
-        # #214 FOMC press conference Q&A block. Appended past the SEP
-        # tail under the documented append order (regime, then SEP, then
-        # press_conf). Conditional append is the structural lock that
-        # keeps the default ``--no-press-conf`` path byte-identical to
-        # pre-#214; the single ``has_press_conf`` scalar is the entire
-        # block — the missingness flag is folded into the same slot
-        # because the covariate-shift signal is the scalar itself.
+        # #214 press-conf scalar appended after SEP.
         if self.press_conf_features is not None:
             press_conf_block = [
                 float(v) for v in self.press_conf_features[:RICH_PRESS_CONF_DIM]
@@ -1209,6 +1199,26 @@ class FeatureVector:
                     RICH_PRESS_CONF_DIM - len(press_conf_block)
                 )
             out = out + press_conf_block
+        # #443 statement-delta tail.
+        if self.statement_delta_embedding is not None:
+            delta_block = [
+                float(v) for v in self.statement_delta_embedding[:RICH_STATEMENT_DELTA_DIM]
+            ]
+            if len(delta_block) < RICH_STATEMENT_DELTA_DIM:
+                delta_block = delta_block + [0.0] * (
+                    RICH_STATEMENT_DELTA_DIM - len(delta_block)
+                )
+            out = out + delta_block + [float(self.statement_delta_embedding_missing)]
+        # #444 vote-tally tail. Order: regime, SEP, press-conf, statement-delta, vote.
+        if self.vote_features is not None:
+            vote_block = [
+                float(v) for v in self.vote_features[:RICH_VOTE_FEATURES_DIM]
+            ]
+            if len(vote_block) < RICH_VOTE_FEATURES_DIM:
+                vote_block = vote_block + [0.0] * (
+                    RICH_VOTE_FEATURES_DIM - len(vote_block)
+                )
+            out = out + vote_block + [float(self.vote_features_missing)]
         return out
 
 

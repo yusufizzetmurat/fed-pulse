@@ -628,6 +628,42 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
             "pyarrow round-trips (int columns cannot hold NaN)."
         ),
     ),
+    # ---- #443 statement-delta (redline) text spans + embedding ----
+    # required=False so pre-#443 events.parquet files validate clean.
+    # coerce=True so in-memory ``object``-dtype rows cast to the
+    # parquet-roundtripped ``string[pyarrow]`` dtype on validation.
+    "statement_delta_inserted": Column(
+        str, nullable=True, required=False, coerce=True
+    ),
+    "statement_delta_deleted": Column(
+        str, nullable=True, required=False, coerce=True
+    ),
+    "statement_delta_substituted_pairs": Column(
+        str, nullable=True, required=False, coerce=True
+    ),
+    "statement_delta_embedding": Column(
+        object, nullable=True, required=False
+    ),
+    # ---- #444 vote tally + dissent ----
+    "votes_for": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "votes_against": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "dissent_count": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "is_unanimous": Column(
+        checks=Check(_nullable_in_set({True, False})),
+        nullable=True,
+        required=False,
+    ),
+    "dissent_direction": Column(
+        checks=Check(_nullable_in_set({"hawkish_dissent", "dovish_dissent"})),
+        nullable=True,
+        required=False,
+    ),
 }
 
 

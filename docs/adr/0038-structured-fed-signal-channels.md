@@ -1,0 +1,46 @@
+# ADR 0038 — Structured Fed-signal channels: statement-delta + vote tally
+
+Issues #443 and #444 land two new structured-signal channels off the FOMC statement document: a token-level redline against the immediately-prior statement (#443) and the parsed vote tally + dissent block (#444). Both are surfaces the hedge-fund framework treats as first-pass signals — the redline captures the Fed's meticulous wording drift, the vote captures structural disagreement on the Committee — and neither was visible to the pipeline pre-#443/#444. They ship together because both touch the same two integration seams (`event_dataset_builder.py` columns + `FeatureVector.as_rich_list` tail blocks) and bundling them avoids a serial-rebase dance on the `_coerce_payload_config` forwarding pattern.
+
+The statement-delta reading is that the Fed re-writes the statement word by word: a single-token change between two consecutive statements (`solid` → `moderate`, `appropriate` → `appropriate at this time`) is a high-signal event the full-statement embedding dilutes across ~3-5k tokens. Computing the redline at events.parquet build time and feeding the mean-pooled encoder output of the three diff spans (inserted / deleted / substituted) into the model isolates the wording-change signal as its own input channel. The Fed's revision discipline is the prior the channel rides on — every change is intentional, so the diff is signal, not noise.
+
+The vote tally reading is structural: dissent counts are a published Committee-level disagreement signal markets historically move on. The vote is in the statement document itself, so parsing it from `doc.text` adds zero new upstream dependencies and the values are by definition observable on `T` (the vote IS the event). A regex over the standardised "Voting for the action were: ... Voting against the action: ..." template captures the for/against counts; a second pass over the dissenter's trailing prose ("preferred a higher target range" → hawkish; "preferred a lower target range" → dovish) infers the signed direction. Mixed dissents (two dissenters in opposite directions, rare but historical) resolve to `None` rather than committing to one side.
+
+## What lands
+
+`backend/app/data/statement_delta.py` builds the three text spans via `difflib.SequenceMatcher.get_opcodes()` on lowercase + whitespace-normalised token streams. `compute_delta_for_event` returns the spans plus an optional mean-pooled embedding when an `encode_text` callable is wired in by the build CLI. `select_prior_statement_text` is the strict-prior selector — it asserts `prior.event_date != this.event_date` so a same-date prior raises at build time rather than silently folding the as-of statement into its own diff. The events.parquet build path adds five new columns: `statement_delta_inserted` / `statement_delta_deleted` / `statement_delta_substituted_pairs` (the last serialised as a JSON-encoded list-of-pairs to keep the parquet a flat string surface) plus the nullable `statement_delta_embedding` vector column. Cold-start events (the first statement on the panel) and non-statement event kinds (minutes / press_conference / speeches) write `None` everywhere; the loader collapses to the missing-1.0 slot at load time.
+
+`backend/app/data/vote_tally.py` parses the vote block off `doc.text` and emits `VoteTally(votes_for, votes_against, dissent_direction)` plus the derived `dissent_count` (alias of `votes_against`) and `is_unanimous` boolean. The parser tolerates documented template variants ("Voting for the FOMC monetary policy action were:" / "Voting against this action:") and rejects member-name lists shorter than two tokens so prose containing the word "voting" does not bleed into a count. The five events.parquet columns (`votes_for` / `votes_against` / `dissent_count` / `is_unanimous` / `dissent_direction`) land alongside the existing rates targets at the tail of `COLUMN_ORDER`. Non-statement event kinds carry `None` on every vote column by contract.
+
+`FeatureVector` grows two new opt-in tails. `statement_delta_embedding` is a `list[float] | None` slot widened to `RICH_STATEMENT_DELTA_DIM = 768` (the canonical FinBERT-Fed-Adjacent hidden width); `vote_features` is a `list[float] | None` 4-vector composed by `_compute_vote_features_for_event` as `[votes_for_norm, votes_against_norm, is_unanimous_float, dissent_direction_signed]`, where the count axes are divided by 12 (the FOMC voting-member cap) and `dissent_direction_signed` maps the string column to `+1.0` (hawkish) / `-1.0` (dovish) / `0.0` (unanimous, mixed, or unparseable). `ModelConfig.use_statement_delta` and `ModelConfig.use_vote_features` are the two new opt-in flags; both default `False` and both are forwarded through `_coerce_payload_config` so a checkpoint trained under either flag rehydrates the same per-bar input width on the eval / calibration paths. Same forwarding pattern as #423 / #435 / #304 / #292.
+
+## Default-off byte-identity contract
+
+`as_rich_list` appends the four opt-in tails in a fixed order: regime, SEP, statement-delta, vote-features. Each tail is gated on a non-`None` slot, so a `FeatureVector` constructed via the default path (every opt-in flag off) collapses every conditional append and the per-bar width stays at the legacy `RICH_FEATURE_SIZE`. The byte-identity guarantee is the structural lock that keeps pre-#443/#444 checkpoints loading cleanly on the post-#443/#444 inference path — no state-dict reshape, no scaler refit, no manifest migration. The contract is pinned by `tests/unit/test_feature_vector_delta_vote_byte_identity.py::test_default_vector_emits_rich_feature_size_only` plus the per-tail composition test that walks the four-flag-on case end to end.
+
+The same default-off contract applies on the events.parquet read side: a pre-#443 / pre-#444 parquet that does not carry the new columns at all loads cleanly through the loader, and every per-event slot resolves to the missing-1.0 state. The pyandera schema lists the new columns as `required=False, nullable=True` so the validator accepts the legacy and post-#443/#444 shapes without forking the validation path.
+
+## Canonical-sweep ablation plan
+
+Once GPU availability returns, the §6 three-config ablation row from #443 (encoder-only / delta-only / combined) measures the marginal lift the redline channel adds to the document-embedding baseline. The encoder-only cell is the existing canonical sweep; the delta-only cell trains with `--use-statement-delta` ON and the document-encoder text path OFF (a separate flag-state the trainer already supports); the combined cell turns both on. The §6 single-cell ablation row for #444 measures vol-regime macro-F1 with vs without `--use-vote-features` at the canonical seeds × folds budget. Both rows are GPU-blocked behind the canonical sweep return; the trainer-side knobs are in repo and the per-cell scripts wire `--use-statement-delta` / `--use-vote-features` through `app.train_forecaster` without further plumbing.
+
+The encoder-pass that materialises the statement-delta embeddings into events.parquet is itself GPU-blocked — it requires running the FinBERT-Fed-Adjacent checkpoint over three short spans per event row at build time. Until the pass runs, the embedding column stays `None` and the feature block collapses to the missing-1.0 slot; the text-span columns (inserted / deleted / substituted_pairs) are populated unconditionally so a downstream consumer can compute the embedding offline once and re-build the events.parquet without re-running the full ingest. The vote-tally block has no such precondition — the parser is CPU and runs in the same build pass that populates the rest of the events.parquet.
+
+## What stays out
+
+Per-section redline (intro / forward guidance / vote-section diffs separately) is filed as a v2 follow-up under #443. Per-member preference vectors (Yellen / Powell / Bowman fingerprints) and the voting-member roster itself as a feature (committee composition over time) are filed as separate dataset-scoping questions under the #444 issue body. The token-level attention weights on the delta spans (an XAI follow-up that mounts the diff token attribution onto the model's input-saliency map) are tracked separately.
+
+## References
+
+- `backend/app/data/{statement_delta,vote_tally,event_dataset_builder,schemas}.py`
+- `backend/app/models/config.py` (FeatureVector + ModelConfig + slice constants)
+- `backend/app/training/{loaders,checkpoint}.py`
+- `tests/unit/{test_statement_delta,test_vote_tally_parser,test_feature_vector_delta_vote_byte_identity}.py`
+- `tests/regression/test_feature_provenance_as_of.py`
+- `docs/feature-provenance-audit.md`
+- ADR 0028 — retrieval-augmented features (per-event analog block, different surface)
+- ADR 0029 — macro-regime conditioning (paired strict-prior block)
+- ADR 0030 — SEP dot-plot block (paired snapshot block)
+- ADR 0035 — multi-target heads on the shared encoder (same forwarding pattern on `_coerce_payload_config`)
+- Cieslak & Schrimpf (2019). *Non-monetary news in central bank communication.* — the framework for parsing FOMC communication beyond the headline rate decision.
+- Romer & Romer (2004) on dissents-as-policy-signal as the macroeconomic-history anchor for the #444 framing.
