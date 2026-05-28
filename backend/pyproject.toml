@@ -33,7 +33,9 @@ dependencies = [
   "pandas",
   "pandera>=0.20",
   "pyarrow",
-  "datasets",
+  # datasets 4.x removed APIs the loaders use (#465 / #409); pin <4 until
+  # the loaders migrate to the new API surface.
+  "datasets>=3.0,<4",
   "kagglehub",
   "anthropic>=0.40.0",
   "google-genai>=1.0.0",
