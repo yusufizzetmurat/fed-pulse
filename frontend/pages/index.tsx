@@ -9,6 +9,7 @@ import { HistoricalAnalogPanel } from "@/components/analyze/HistoricalAnalogPane
 import { MarketReactionPanel } from "@/components/analyze/MarketReactionPanel";
 import { MultiAxisInterpretation } from "@/components/analyze/MultiAxisInterpretation";
 import { PipelineTrace } from "@/components/analyze/PipelineTrace";
+import { PolicyActionCard } from "@/components/analyze/PolicyActionCard";
 import { RegimeHeadline } from "@/components/analyze/RegimeHeadline";
 import {
   RegimeHistoryStrip,
@@ -451,6 +452,10 @@ export default function WorkspacePage() {
                   }
                 />
               )}
+
+              {result.policy_action ? (
+                <PolicyActionCard action={result.policy_action} />
+              ) : null}
 
               <div className="grid gap-4 xl:grid-cols-2">
                 {result.multi_axis ? (

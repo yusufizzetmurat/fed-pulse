@@ -101,10 +101,40 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _resolve_rates_heads_from_args(args: argparse.Namespace) -> tuple[str, ...]:
-    """Convert ``--rates-heads`` CLI choice into the ModelConfig tuple (#292)."""
+    """Convert ``--rates-heads`` / ``--targets`` CLI choice into the ModelConfig tuple (#292).
 
-    from app.models.rates_heads import resolve_rates_heads
+    Two surfaces resolve to the same internal tuple. ``--targets``
+    accepts the canonical comma-separated form
+    ``regime,rates_2y,rates_terminal`` and is the public knob the
+    multi-target training surface advertises; ``--rates-heads`` keeps
+    the legacy short-name selector (``none``/``2y``/``5y``/
+    ``terminal``/``all``) so pre-#292 scripts and existing sweep
+    configs keep working untouched. When both are supplied,
+    ``--targets`` wins because the explicit list is more specific than
+    the alias.
+    """
 
+    from app.models.rates_heads import RATES_HEAD_NAMES, resolve_rates_heads
+
+    targets_raw = getattr(args, "targets", None)
+    if targets_raw:
+        cleaned = [tok.strip().lower() for tok in str(targets_raw).split(",") if tok.strip()]
+        active: list[str] = []
+        valid_tokens = {"regime"} | {f"rates_{name}" for name in RATES_HEAD_NAMES}
+        for tok in cleaned:
+            if tok not in valid_tokens:
+                raise ValueError(
+                    f"unknown target {tok!r} in --targets; choose from "
+                    f"{sorted(valid_tokens)}"
+                )
+            if tok == "regime":
+                # The regime head is always mounted on a classification
+                # output; the rates tuple stays untouched.
+                continue
+            short = tok[len("rates_"):]
+            if short not in active:
+                active.append(short)
+        return tuple(active)
     return resolve_rates_heads(getattr(args, "rates_heads", "none"))
 
 
@@ -395,6 +425,33 @@ def _parse_args() -> argparse.Namespace:
         action="store_false",
         help="Disable the SEP dot-plot block (no slot, no widening).",
     )
+    # #214 FOMC press-conference Q&A ingestion. Off by default so every
+    # existing sweep and the canonical determinism regression stay
+    # byte-identical; opting in attaches the single ``has_press_conf``
+    # covariate-shift scalar to every supervised event and concatenates
+    # the same-date Q&A text onto the statement's LoRA-side raw_text per
+    # route 1 of the #214 scope brief. Pre-2011 events (no scheduled
+    # press conference) zero-impute the flag and leave the LoRA text at
+    # the statement alone. See ADR 0037.
+    parser.add_argument(
+        "--use-press-conf",
+        dest="use_press_conf",
+        action="store_true",
+        help=(
+            "Attach the press-conf has_press_conf scalar to every event "
+            "and concat the same-date FOMC press conference Q&A onto the "
+            "statement's LoRA raw_text (joint corpus per route 1). "
+            "Default off; the per-bar feature size widens by 1 scalar "
+            "when on. Reads the Q&A lookup from "
+            "data/external/fomc_press_conferences/qa_lookup.parquet."
+        ),
+    )
+    parser.add_argument(
+        "--no-press-conf",
+        dest="use_press_conf",
+        action="store_false",
+        help="Disable the press-conf Q&A block (no slot, no LoRA concat).",
+    )
     parser.set_defaults(
         use_credibility=True,
         use_linguistic=True,
@@ -404,6 +461,7 @@ def _parse_args() -> argparse.Namespace:
         use_retrieval_analogs=False,
         use_regime_conditioning=False,
         use_sep=False,
+        use_press_conf=False,
     )
     # Phase 9 V2 (#195) classification dispatch. Default stays
     # ``regression`` so the existing ablation grid + determinism
@@ -723,6 +781,36 @@ def _parse_args() -> argparse.Namespace:
     # #292 rates-complex heads. Default ``none`` keeps the pre-#292
     # path byte-identical (no rates heads mount).
     parser.add_argument(
+        "--targets",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated list of heads to mount on the shared "
+            "encoder (#292). Tokens: ``regime`` (always implied when "
+            "``--output-mode=classification``), ``rates_2y``, "
+            "``rates_5y``, ``rates_terminal``. Example: "
+            "``--targets regime,rates_2y,rates_terminal`` mounts the "
+            "vol-regime classifier alongside the 2y + terminal rates "
+            "regression heads. Overrides ``--rates-heads`` when both are "
+            "passed."
+        ),
+    )
+    parser.add_argument(
+        "--rates-classification-heads",
+        dest="rates_aux_classification",
+        action="store_true",
+        default=False,
+        help=(
+            "Mount the auxiliary 3-class direction classifier "
+            "(easing / neutral / tightening) alongside each rates "
+            "regression head (#292). Default OFF mounts the regression "
+            "heads only and the response surface emits the bps point + "
+            "interval with a null directional bucket. Required when "
+            "``--rates-head-mode`` is ``classification`` or ``dual`` "
+            "(the CE term has no head to land on otherwise)."
+        ),
+    )
+    parser.add_argument(
         "--rates-heads",
         type=str,
         choices=("none", "2y", "5y", "terminal", "all"),
@@ -778,6 +866,29 @@ def _parse_args() -> argparse.Namespace:
             "#350 strict-prior construction). No-change meetings (where "
             "the surprise magnitude is below the 1-bp epsilon) mark "
             "the target as missing rather than zero. See ADR 0027."
+        ),
+    )
+    parser.add_argument(
+        "--vol-target-mode",
+        type=str,
+        choices=("raw", "garch_residual"),
+        default="raw",
+        help=(
+            "Forward-vol regression-head target derivation (#435). "
+            "``raw`` (default, byte-identical to the pre-#236 path) "
+            "feeds the head the standardised "
+            "``log(forward_realized_vol_10d)`` scalar. "
+            "``garch_residual`` swaps in "
+            "``forward_realized_vol_10d_garch_residual`` (raw minus "
+            "the GARCH(1,1) 10-day-ahead 1-day-equivalent baseline; "
+            "signed, no log) so the supervised target is the "
+            "unanticipated component the classical conditional-"
+            "variance model leaves on the table. Rows whose residual "
+            "is missing (insufficient fit history per "
+            "``MIN_FIT_RETURNS`` or QMLE convergence failure) fall "
+            "back to the raw target with a log warning so row "
+            "alignment with ``y`` is preserved. See ADR 0034 and "
+            "#434 for the data side."
         ),
     )
     # #309 derived-text-features ablation. Default ``on`` is byte-
@@ -1257,12 +1368,17 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         ),
         rates_heads=_resolve_rates_heads_from_args(args),
         rates_head_mode=str(getattr(args, "rates_head_mode", "regression") or "regression"),
+        rates_aux_classification=bool(getattr(args, "rates_aux_classification", False)),
         rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
         rates_target_mode=str(
             getattr(args, "rates_target_mode", "raw") or "raw"
         ),
+        vol_target_mode=str(
+            getattr(args, "vol_target_mode", "raw") or "raw"
+        ),
         use_regime_conditioning=bool(getattr(args, "use_regime_conditioning", False)),
         use_sep=bool(getattr(args, "use_sep", False)),
+        use_press_conf=bool(getattr(args, "use_press_conf", False)),
     )
 
 
@@ -1515,14 +1631,21 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                                 ),
                                 rates_heads=_resolve_rates_heads_from_args(args),
                                 rates_head_mode=str(getattr(args, "rates_head_mode", "regression") or "regression"),
+                                rates_aux_classification=bool(getattr(args, "rates_aux_classification", False)),
                                 rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
                                 rates_target_mode=str(
                                     getattr(args, "rates_target_mode", "raw") or "raw"
+                                ),
+                                vol_target_mode=str(
+                                    getattr(args, "vol_target_mode", "raw") or "raw"
                                 ),
                                 use_regime_conditioning=bool(
                                     getattr(args, "use_regime_conditioning", False)
                                 ),
                                 use_sep=bool(getattr(args, "use_sep", False)),
+                                use_press_conf=bool(
+                                    getattr(args, "use_press_conf", False)
+                                ),
                             ),
                             "learning_rate": float(hp["learning_rate"]),
                             "epochs": int(hp["epochs"]),
@@ -1631,14 +1754,21 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                         ),
                         rates_heads=_resolve_rates_heads_from_args(args),
                         rates_head_mode=str(getattr(args, "rates_head_mode", "regression") or "regression"),
+                        rates_aux_classification=bool(getattr(args, "rates_aux_classification", False)),
                         rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
                         rates_target_mode=str(
                             getattr(args, "rates_target_mode", "raw") or "raw"
+                        ),
+                        vol_target_mode=str(
+                            getattr(args, "vol_target_mode", "raw") or "raw"
                         ),
                         use_regime_conditioning=bool(
                             getattr(args, "use_regime_conditioning", False)
                         ),
                         use_sep=bool(getattr(args, "use_sep", False)),
+                        use_press_conf=bool(
+                            getattr(args, "use_press_conf", False)
+                        ),
                     ),
                     "learning_rate": float(learning_rate),
                     "epochs": int(epochs),
@@ -2522,6 +2652,7 @@ def _run_sweep(
             "retrieval_analogs": bool(args.use_retrieval_analogs),
             "regime_conditioning": bool(args.use_regime_conditioning),
             "sep": bool(args.use_sep),
+            "press_conf": bool(getattr(args, "use_press_conf", False)),
         },
         "text_embeddings": {
             "encoder": text_encoder_arg,
@@ -2602,7 +2733,8 @@ def main() -> int:
             f"llm_features={args.use_llm_features}, "
             f"retrieval_analogs={args.use_retrieval_analogs}, "
             f"regime_conditioning={args.use_regime_conditioning}, "
-            f"sep={args.use_sep})"
+            f"sep={args.use_sep}, "
+            f"press_conf={getattr(args, 'use_press_conf', False)})"
         )
         # Multi-encoder mode loads one set of splits per alias so each
         # sweep cell can pull its arm's embeddings without re-walking
@@ -2660,6 +2792,7 @@ def main() -> int:
                         use_retrieval_analogs=bool(args.use_retrieval_analogs),
                         use_regime_conditioning=bool(args.use_regime_conditioning),
                         use_sep=bool(args.use_sep),
+                        use_press_conf=bool(getattr(args, "use_press_conf", False)),
                         text_encoder=encoder_arg,
                         text_adapter_dim=int(args.text_adapter_dim),
                         text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),

@@ -300,6 +300,43 @@ def _parse_args() -> argparse.Namespace:
         use_retrieval_analogs=False,
         use_regime_conditioning=False,
     )
+    # #445 Loughran-McDonald ablation arm. ``encoder`` (default) runs the
+    # canonical text-encoder path -- ``--text-encoder`` selects the
+    # alias. ``lm_lexicon`` replaces the pooled-encoder text-embedding
+    # block with the six L-M category percentages (positive / negative /
+    # uncertainty / litigious / constraining / modal), training on the
+    # same fold protocol so the head-to-head reads off the same surface.
+    # See ADR 0036.
+    parser.add_argument(
+        "--arm",
+        type=str,
+        choices=("encoder", "lm_lexicon"),
+        default="encoder",
+        help=(
+            "Text-embedding arm. ``encoder`` (default) keeps the canonical "
+            "FinBERT-Fed-Adjacent pooled vector on the text-embedding "
+            "block; ``lm_lexicon`` substitutes the 6-dim Loughran-McDonald "
+            "category-percentage vector and runs the same fold protocol."
+        ),
+    )
+    parser.add_argument(
+        "--lm-cache-root",
+        type=Path,
+        default=None,
+        help=(
+            "Optional override for the Loughran-McDonald cache root. "
+            "Defaults to ``data/external/loughran_mcdonald/``."
+        ),
+    )
+    parser.add_argument(
+        "--lm-local-csv",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path to a local L-M CSV fixture (air-gapped path; "
+            "ignores --lm-cache-root)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -309,6 +346,24 @@ def _resolve_output_path(arg: Path | None) -> Path:
     base = BACKEND_ROOT.parent / "artifacts" / "experiments"
     base.mkdir(parents=True, exist_ok=True)
     return base / "per_family_ablation.json"
+
+
+def _resolve_lm_lexicon_sha_for_payload(args: argparse.Namespace) -> str | None:
+    """Surface the active L-M lexicon SHA in the output JSON.
+
+    ``None`` on the encoder arm (no lexicon involved); the pinned cache
+    SHA (or the local fixture stem) on the ``lm_lexicon`` arm so the
+    audit row can pin which vintage produced the head-to-head numbers.
+    """
+
+    if str(getattr(args, "arm", "encoder")) != "lm_lexicon":
+        return None
+    from app.data.loughran_mcdonald import LM_LEXICON_SHA
+
+    local_csv = getattr(args, "lm_local_csv", None)
+    if local_csv is not None:
+        return Path(local_csv).stem
+    return LM_LEXICON_SHA
 
 
 def _resolved_rates_heads_for_payload(rates_target_mode: str) -> list[str]:
@@ -342,6 +397,43 @@ def _resolve_fold_ids(training_package_id: str, override: list[str] | None) -> l
             "--folds explicitly."
         )
     return sorted(manifest.keys())
+
+
+def _attach_lm_text_block(
+    sequences: list[list[Any]],
+    *,
+    lexicon: Any,
+) -> None:
+    """Replace the pooled text-embedding block with the L-M 6-vector.
+
+    The canonical encoder arm populates ``FeatureVector.text_embedding_pooled``
+    with the softmax-pooled FinBERT vector at the loader level. For the
+    L-M ablation the loader runs with ``text_encoder=None`` (so the
+    pooled slot stays empty + ``text_embedding_missing=1.0``); this
+    helper reads ``vectors[-1].raw_text`` per sequence -- harvested by
+    the loader under ``encoder_lora=True`` -- and writes the six L-M
+    category percentages into ``text_embedding_pooled`` on every bar
+    of the sequence. The bar broadcast mirrors the canonical pooled
+    path so the model's text-embedding adapter sees the same shape.
+
+    Sequences whose target row has no raw text (empty string) keep the
+    default zero list + ``text_embedding_missing=1.0`` so the head
+    treats them as "no L-M signal", consistent with the encoder arm's
+    treatment of missing prior statements.
+    """
+
+    from app.data.loughran_mcdonald import compute_lm_feature_vector
+
+    for sequence in sequences:
+        if not sequence:
+            continue
+        target_text = str(getattr(sequence[-1], "raw_text", "") or "").strip()
+        if not target_text:
+            continue
+        vector = compute_lm_feature_vector(target_text, lexicon)
+        for fv in sequence:
+            fv.text_embedding_pooled = list(vector)
+            fv.text_embedding_missing = 0.0
 
 
 def _zero_per_bar_market_aux(
@@ -504,6 +596,41 @@ def _run_one_cell(
         tuple(RATES_HEAD_NAMES) if rates_target_mode != "raw" else ()
     )
 
+    # #445 ablation arm wiring. The L-M arm turns off the loader's
+    # pooled-encoder path (so ``text_embedding_pooled`` stays empty after
+    # ``load_walk_forward_split``) and pins the model's text-embedding
+    # adapter at the 6-dim L-M vector width. Raw event text is harvested
+    # off ``vectors[-1].raw_text`` via the loader's ``encoder_lora`` flag
+    # (LoRA training is not activated -- ``ModelConfig.encoder_lora``
+    # stays False -- the flag only governs whether the loader writes
+    # ``raw_text`` onto the target-row bar). The L-M vector is then
+    # broadcast into ``text_embedding_pooled`` for every bar of every
+    # sequence before ``train_model`` sees the partition. The encoder
+    # arm keeps the canonical text-encoder path.
+    arm = str(getattr(args, "arm", "encoder"))
+    if arm == "lm_lexicon":
+        from app.data.loughran_mcdonald import (
+            LM_CATEGORIES,
+            load_loughran_mcdonald,
+        )
+
+        loader_text_encoder: str | None = None
+        loader_use_text_embeddings = False
+        loader_encoder_lora = True
+        text_embedding_dim = len(LM_CATEGORIES)
+        text_adapter_dim = len(LM_CATEGORIES)
+        lm_lexicon = load_loughran_mcdonald(
+            cache_root=getattr(args, "lm_cache_root", None),
+            local_csv=getattr(args, "lm_local_csv", None),
+        )
+    else:
+        loader_text_encoder = str(args.text_encoder)
+        loader_use_text_embeddings = True
+        loader_encoder_lora = False
+        text_embedding_dim = 0
+        text_adapter_dim = 0
+        lm_lexicon = None
+
     config = ModelConfig(
         input_size=RICH_FEATURE_SIZE,
         output_mode="classification",
@@ -516,6 +643,8 @@ def _run_one_cell(
         use_regime_conditioning=bool(
             getattr(args, "use_regime_conditioning", False)
         ),
+        text_embedding_dim=text_embedding_dim,
+        text_adapter_dim=text_adapter_dim,
     )
 
     per_fold: list[dict[str, Any]] = []
@@ -524,7 +653,9 @@ def _run_one_cell(
             training_package_id=args.training_package_id,
             fold_id=fold_id,
             rich_features=True,
-            text_encoder=str(args.text_encoder),
+            text_encoder=loader_text_encoder,
+            use_text_embeddings=loader_use_text_embeddings,
+            encoder_lora=loader_encoder_lora,
             use_retrieval_analogs=bool(
                 getattr(args, "use_retrieval_analogs", False)
             ),
@@ -533,6 +664,10 @@ def _run_one_cell(
             ),
             **flags["loader"],
         )
+        if arm == "lm_lexicon" and lm_lexicon is not None:
+            _attach_lm_text_block(split.train, lexicon=lm_lexicon)
+            _attach_lm_text_block(split.val, lexicon=lm_lexicon)
+            _attach_lm_text_block(split.test, lexicon=lm_lexicon)
         # Pre-scaler-fit zeroing for the per-bar families that the
         # loader has no flag for. Same contract as #309's
         # ``_zero_derived_text_features`` rewrite -- the scaler in
@@ -670,6 +805,8 @@ def main() -> int:
         ),
         "use_retrieval_analogs": bool(args.use_retrieval_analogs),
         "use_regime_conditioning": bool(args.use_regime_conditioning),
+        "arm": str(getattr(args, "arm", "encoder")),
+        "lm_lexicon_sha": _resolve_lm_lexicon_sha_for_payload(args),
         "post_350_status": str(args.post_350_status),
         "cumulative_chain": [
             {"label": label, "families": list(families)}

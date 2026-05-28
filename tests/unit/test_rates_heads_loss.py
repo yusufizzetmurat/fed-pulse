@@ -96,7 +96,22 @@ def test_default_run_does_not_mount_rates_heads() -> None:
 
 
 def test_active_rates_heads_mount_regression_and_classifier() -> None:
-    model = _build_model(rates_heads=("2y", "terminal"))
+    """Aux-on mount: each active rates head carries both stacks."""
+
+    config = ModelConfig(
+        output_mode="classification",
+        head_mode="classification",
+        n_classes=3,
+        hidden_size=16,
+        head_hidden_size=8,
+        rates_heads=("2y", "terminal"),
+        # #292 aux classifier is opt-in. The historical contract this
+        # test pinned (both ModuleDicts populated) holds only when the
+        # operator passed the explicit flag; default OFF mounts the
+        # regression heads alone.
+        rates_aux_classification=True,
+    )
+    model = build_forecaster(config)
     assert tuple(model.rates_heads_active) == ("2y", "terminal")
     assert set(model.rates_regression_heads.keys()) == {"2y", "terminal"}
     assert set(model.rates_classification_heads.keys()) == {"2y", "terminal"}
@@ -115,7 +130,18 @@ def test_unknown_rates_head_raises() -> None:
 
 
 def test_forward_multi_task_emits_per_head_bps_and_logits() -> None:
-    model = _build_model(rates_heads=("2y", "5y"))
+    """Forward emits the cls_logits key only when the aux head is mounted."""
+
+    config = ModelConfig(
+        output_mode="classification",
+        head_mode="classification",
+        n_classes=3,
+        hidden_size=16,
+        head_hidden_size=8,
+        rates_heads=("2y", "5y"),
+        rates_aux_classification=True,
+    )
+    model = build_forecaster(config)
     x = torch.zeros((3, 20, model.input_size))
     out = model.forward_multi_task(x)
     assert "rates_2y_bps" in out
@@ -344,6 +370,10 @@ def test_rates_heads_dual_mode_uses_both_terms() -> None:
         head_hidden_size=8,
         rates_heads=("2y",),
         rates_head_mode="dual",
+        # Aux classifier required for the dual joint loss to have a CE
+        # term to compute -- the factory rejects the joint loss config
+        # otherwise.
+        rates_aux_classification=True,
         rates_alpha=0.5,
     )
     result = train_model(

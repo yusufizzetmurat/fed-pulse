@@ -75,6 +75,13 @@ _TRAINING_DELTA_COLUMNS: tuple[str, ...] = (
 # row of the sequence) may carry a non-None value.
 _TARGET_ONLY_COLUMNS: tuple[str, ...] = (
     "forward_realized_vol_10d",
+    # #236 GARCH(1,1)-residual decomposition of the forward-vol target.
+    # The baseline rides on the events.parquet row at build time and
+    # the residual = raw - baseline does too; both are target-only
+    # (lookback bars stay None) since they read from the strict-prior
+    # asset close series only on the supervised event row.
+    "forward_realized_vol_10d_garch_baseline",
+    "forward_realized_vol_10d_garch_residual",
     "target_yield_2y_change_5d",
     "target_yield_5y_change_5d",
     "target_terminal_rate_change_5d",
@@ -120,6 +127,13 @@ _SNAPSHOT_COLUMNS: tuple[str, ...] = (
     # `sep_features` (`list[float] | None`) and is exempt below
     # alongside the other list-payload fields.
     "sep_features_missing",
+    # #443 statement-delta (redline) missing flag. The 768-dim mean-
+    # pooled embedding rides on `statement_delta_embedding`
+    # (`list[float] | None`) and is exempt below.
+    "statement_delta_embedding_missing",
+    # #444 vote-tally missing flag. The 4-scalar signed block rides on
+    # `vote_features` (`list[float] | None`) and is exempt below.
+    "vote_features_missing",
 )
 
 
@@ -207,6 +221,8 @@ def _event_row(
         "intra_meeting_factor_shift": 0.0,
         "realized_date": realized_date,
         "forward_realized_vol_10d": 0.015,
+        "forward_realized_vol_10d_garch_baseline": 0.013,
+        "forward_realized_vol_10d_garch_residual": 0.002,
         "yield_2y_change_5d": -3.2,
         "yield_5y_change_5d": -2.1,
         "terminal_rate_change_5d": -1.0,
@@ -291,6 +307,12 @@ def _audit_inventory_covers_every_field() -> set[str]:
         "analog_features",
         "macro_regime_features",
         "sep_features",
+        # #214 press-conf Q&A block (ADR 0037).
+        "press_conf_features",
+        # #443 statement-delta embedding (ADR 0038).
+        "statement_delta_embedding",
+        # #444 vote-tally features (ADR 0038).
+        "vote_features",
         "rich_payload",
         "text_embedding_pooled",
         "text_embedding_missing",

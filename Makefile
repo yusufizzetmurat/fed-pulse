@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation finetune-pilot-b2 reproduce-all reproduce-smoke push-artefacts deploy-prod-build
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation finetune-pilot-b2 finetune-pilot-b2-phrasebank cross-source-transfer reproduce-all reproduce-smoke push-artefacts deploy-prod-build
 
 help:
 	@echo "Targets:"
@@ -86,6 +86,10 @@ help:
 	@echo "                         - Per-family rich-feature ablation (#334; backs the §6 substitution-finding table)"
 	@echo "  make finetune-pilot-b2 TRAINING_PACKAGE_ID=<id> [ENCODER_ALIAS=<alias>]"
 	@echo "                         - B2 end-to-end fine-tune on vol-regime (#213; AutoModelForSequenceClassification, 5 seeds x 4 folds x 5 epochs)"
+	@echo "  make finetune-pilot-b2-phrasebank TRAINING_PACKAGE_ID=<id> [PHRASEBANK_AUX_LAMBDA=0.3] [PHRASEBANK_SUBSET=sentences_allagree]"
+	@echo "                         - B2 fine-tune with the PhraseBank auxiliary 3-way sentiment CE on top (#33 Path B; ADR 0033)"
+	@echo "  make cross-source-transfer TRAINING_PACKAGE_ID=<id> ENCODER_CHECKPOINTS=alias=path[,alias=path]"
+	@echo "                         - Cross-source transfer matrix (#72 + #83; inference-only per source_type stratum)"
 	@echo "  make reproduce-smoke TRAINING_PACKAGE_ID=<id> [SEED=11]"
 	@echo "                         - 1-seed x 1-fold dual-head smoke + numerical-contract assertion (#335 CI guard)"
 
@@ -867,3 +871,33 @@ finetune-pilot-b2:
 		--learning-rate 2e-5 \
 		--weight-decay 0.01 \
 		$(if $(ENCODER_ALIAS),--encoder-alias $(ENCODER_ALIAS),)
+
+# #33 Path B — PhraseBank as a supervised auxiliary task on top of the
+# B2 fine-tune. Same harness as ``finetune-pilot-b2`` with
+# ``--enable-phrasebank-aux`` flipped on; output lands at a sibling
+# artefact so the §6.x tier table can compare the two cells head-to-head.
+# PHRASEBANK_AUX_LAMBDA defaults to 0.3 (per ADR 0033); sweep ``{0.1,
+# 0.3, 0.5, 1.0}`` to isolate the lambda knob.
+finetune-pilot-b2-phrasebank:
+	@if [ -z "$$TRAINING_PACKAGE_ID" ]; then echo "TRAINING_PACKAGE_ID required" >&2; exit 1; fi
+	docker compose run --rm backend python -m app.data.finetune_pilot_b2 \
+		--training-package-id $$TRAINING_PACKAGE_ID \
+		--output artifacts/experiments/finetune_pilot_b2_phrasebank.json \
+		--seeds 11 29 47 71 97 \
+		--epochs 5 \
+		--train-batch-size 16 \
+		--learning-rate 2e-5 \
+		--weight-decay 0.01 \
+		--enable-phrasebank-aux \
+		--phrasebank-aux-lambda $(if $(PHRASEBANK_AUX_LAMBDA),$(PHRASEBANK_AUX_LAMBDA),0.3) \
+		--phrasebank-subset $(if $(PHRASEBANK_SUBSET),$(PHRASEBANK_SUBSET),sentences_allagree) \
+		$(if $(ENCODER_ALIAS),--encoder-alias $(ENCODER_ALIAS),)
+
+cross-source-transfer:
+	@if [ -z "$$TRAINING_PACKAGE_ID" ]; then echo "TRAINING_PACKAGE_ID required" >&2; exit 1; fi
+	@if [ -z "$$ENCODER_CHECKPOINTS" ]; then echo "ENCODER_CHECKPOINTS required (alias=path[,alias=path])" >&2; exit 1; fi
+	docker compose run --rm backend python -m app.evaluation.cross_source_transfer \
+		--training-package-id $$TRAINING_PACKAGE_ID \
+		--encoder-checkpoints "$$ENCODER_CHECKPOINTS" \
+		$(if $(SOURCE_TYPES),--source-types "$(SOURCE_TYPES)",) \
+		$(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)

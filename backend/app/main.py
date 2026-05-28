@@ -95,6 +95,7 @@ from app.services.market_data import (
     fetch_market_snapshot,
     fetch_realized_forward,
 )
+from app.services.policy_action_extractor import extract_policy_action
 from app.services.text_encoder import analyze_text
 
 logger = logging.getLogger(__name__)
@@ -622,7 +623,10 @@ def _build_analyze_response(
         "series": forecast["series"],
         "multi_axis": _build_multi_axis_block(payload.text, sentiment),
         "regime_classification": regime_card,
+        "regime_regression": _build_regime_regression_block(regime_card),
         "regime_classification_status": regime_status,
+        "rates_reaction": _safe_rates_reaction(history_vectors),
+        "policy_action": _build_policy_action_card(payload),
     }
     if getattr(payload, "include_xai", False):
         attributions = attribute_text(payload.text)
@@ -644,6 +648,118 @@ def _build_analyze_response(
             xai_block["panels"] = panel_attributions
         response["xai"] = xai_block
     return response
+
+
+def _build_regime_regression_block(
+    regime_card: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Derive the sibling ``regime_regression`` block from the classification card (#304).
+
+    The dual-head retrofit keeps the classification card as the
+    product-facing surface and exposes the regression head's point
+    estimate + 90% conformal interval as a standalone sibling block so
+    a frontend can render it behind a "show details" toggle without
+    re-deriving the read out of the classification card. The block is
+    emitted only when the classification card carries a non-null
+    ``log_rv_point`` (i.e. ``head_mode`` in ``regression`` / ``dual``);
+    otherwise the field stays ``None`` on the response and the legacy
+    classification-only payload shape is byte-identical.
+    """
+
+    if not isinstance(regime_card, dict):
+        return None
+    log_rv_point = regime_card.get("log_rv_point")
+    if log_rv_point is None:
+        return None
+    block: dict[str, Any] = {
+        "log_rv_point": float(log_rv_point),
+        "log_rv_lower": regime_card.get("log_rv_lower"),
+        "log_rv_upper": regime_card.get("log_rv_upper"),
+    }
+    coverage = regime_card.get("coverage")
+    # Coverage on the classification card maps to the calibrated APS
+    # set's nominal coverage. The regression interval rides off the
+    # same conformal manifest (residual_quantile_volatility) so it
+    # inherits the same nominal coverage for now; when the regression
+    # head gets a dedicated quantile sidecar this read switches over.
+    if isinstance(coverage, int | float) and coverage > 0:
+        block["coverage"] = float(coverage)
+    return block
+
+
+def _safe_rates_reaction(
+    history_vectors: list[Any],
+) -> list[dict[str, Any]] | None:
+    """Build the rates-reaction list off the active checkpoint (#292).
+
+    Reuses :func:`build_market_reaction_panel` to populate the per-head
+    rates cards for #293's panel. Returns ``None`` when the checkpoint
+    mounts no rates heads or the panel builder degrades to a structured
+    status payload (no card data to surface). An empty list rides when
+    the heads exist but the per-event forward produced no rows -- the
+    schema layer treats that as "active, no read" rather than "absent".
+
+    Wrapped end-to-end in try/except so an inference path crash never
+    breaks /analyze.
+    """
+
+    from app.services.forecaster import build_market_reaction_panel
+
+    try:
+        panel = build_market_reaction_panel(history_vectors)
+    except Exception:  # pragma: no cover -- defensive: never break /analyze
+        logger.warning("rates_reaction_failed", exc_info=True)
+        return None
+    if not isinstance(panel, dict):
+        return None
+    rates_block = panel.get("rates")
+    if not isinstance(rates_block, list):
+        return None
+    if not rates_block:
+        # Heads mounted but produced no rows; surface an empty list so
+        # the frontend can render an "active, no read" badge instead of
+        # falling back to the "no rates heads" empty state.
+        return []
+    return rates_block
+
+
+def _build_policy_action_card(
+    payload: AnalyzeRequest,
+) -> dict[str, Any] | None:
+    """Extract the mechanical policy decision off the request text (#446).
+
+    Pure regex / keyword pass over ``payload.text`` via
+    :func:`extract_policy_action`. Short-circuits to ``None`` when the
+    request body carries no text (``AnalyzeRequest.text`` is required
+    by the schema but the guard stays so a hand-crafted payload with
+    whitespace-only text still serialises cleanly). Wrapped end-to-end
+    in try/except so a regex misfire or an unexpected dataclass shape
+    can never break /analyze.
+
+    ``prior_target_range_mid_bp`` is left ``None`` here — the request
+    schema carries no prior-statement context and we deliberately do
+    not reach into the persisted history layer for it. The card still
+    surfaces a populated ``change_direction`` whenever the policy verb
+    is named in the prose (``decided to raise`` / ``decided to lower``
+    / ``decided to maintain``); only the prior-midpoint fallback is
+    deferred to a follow-up.
+    """
+
+    text = getattr(payload, "text", None)
+    if not isinstance(text, str) or not text.strip():
+        return None
+    try:
+        action = extract_policy_action(text)
+    except Exception:  # pragma: no cover -- defensive: never break /analyze
+        logger.warning("policy_action_extraction_failed", exc_info=True)
+        return None
+    return {
+        "target_range_low_bp": action.target_range_low_bp,
+        "target_range_high_bp": action.target_range_high_bp,
+        "change_direction": action.change_direction,
+        "change_magnitude_bp": action.change_magnitude_bp,
+        "balance_sheet_state": action.balance_sheet_state,
+    }
 
 
 def _safe_regime_classification(history_vectors: list[Any]) -> dict[str, Any] | None:

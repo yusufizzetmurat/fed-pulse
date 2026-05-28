@@ -443,6 +443,106 @@ class RegimeClassificationCard(BaseModel):
     )
 
 
+class RegimeRegressionCard(BaseModel):
+    """Regression-head sibling block on the /analyze response (#304).
+
+    The classification card stays the headline; this block carries the
+    same dual-head regression output (``log_rv_point`` + symmetric 90%
+    conformal band) as a standalone surface so a downstream consumer
+    can read the continuous prediction without parsing it out of the
+    classification card. Populated only when the active checkpoint
+    mounts the regression head (``head_mode`` in ``regression`` /
+    ``dual``) AND ``build_regime_classification_card`` returned a card
+    whose ``log_rv_point`` is non-null; otherwise the field stays
+    ``None`` on the response.
+
+    Units mirror :class:`RegimeClassificationCard`: ``log_rv_point`` is
+    in standardised log(forward realized vol) space (the per-fold
+    train-slice standardiser the dual-head trainer fits, see
+    ``log_rv_scaler`` on the run summary). ``log_rv_lower`` /
+    ``log_rv_upper`` are the symmetric conformal interval at
+    ``coverage`` nominal coverage; on a checkpoint without a conformal
+    sidecar the bounds collapse to ``None`` even when the point
+    estimate is populated.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    log_rv_point: float
+    log_rv_lower: float | None = None
+    log_rv_upper: float | None = None
+    coverage: float | None = Field(
+        default=None,
+        description=(
+            "Nominal coverage on the conformal interval (0.9 by default; "
+            "matches the manifest's nominal_coverage when the sidecar "
+            "carries one). None when the regression head is mounted but "
+            "no conformal manifest is on disk."
+        ),
+    )
+
+
+class PolicyActionCard(BaseModel):
+    """Mechanical policy decision extracted from the statement text (#446).
+
+    Sibling of :class:`RegimeClassificationCard` on the /analyze
+    response. Pure extraction surface — no model inference, no
+    calibration. The four fields mirror the
+    :class:`app.services.policy_action_extractor.PolicyAction`
+    dataclass and are all optional so a statement that names no target
+    range (press conference Q&A, scraping miss, non-policy text) still
+    serialises as a card with every field ``None``.
+
+    Units: ``target_range_low_bp`` / ``target_range_high_bp`` are in
+    basis points (3.50% → 350). ``change_magnitude_bp`` is signed
+    (positive on a hike, negative on a cut, zero on a hold). The
+    frontend renders the colour by ``change_direction``: hike = red,
+    cut = green, hold = neutral.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    target_range_low_bp: int | None = Field(
+        default=None,
+        description=(
+            "Lower bound of the named target range, in basis points "
+            "(e.g. 350 for a 3.50% lower bound). None when no target "
+            "range is named in the text."
+        ),
+    )
+    target_range_high_bp: int | None = Field(
+        default=None,
+        description="Upper bound of the named target range, in basis points.",
+    )
+    change_direction: Literal["hike", "hold", "cut"] | None = Field(
+        default=None,
+        description=(
+            "Verb-derived direction of the action. None when no policy "
+            "verb is named (e.g. press-conference Q&A) and no prior "
+            "midpoint was provided to the extractor."
+        ),
+    )
+    change_magnitude_bp: int | None = Field(
+        default=None,
+        description=(
+            "Signed change in basis points relative to the prior "
+            "meeting (positive on a hike, negative on a cut, zero on a "
+            "hold). Pulled from in-prose magnitude phrases ('by 25 "
+            "basis points', 'by 1/4 percentage point') first; falls "
+            "back to ``this_mid - prior_mid`` when the caller supplied "
+            "a prior midpoint."
+        ),
+    )
+    balance_sheet_state: Literal["expansion", "tapering", "runoff"] | None = Field(
+        default=None,
+        description=(
+            "Balance-sheet posture extracted from the paragraph that "
+            "names balance-sheet operations. None when the paragraph "
+            "is absent or carries no posture-defining keyword."
+        ),
+    )
+
+
 class InferenceStatusSurface(BaseModel):
     """Structured error surface for the per-card inference helpers (#341).
 
@@ -481,6 +581,29 @@ class AnalyzeResponse(BaseModel):
     credibility: CredibilityResponse | None = None
     multi_axis: MultiAxisBlock | None = None
     regime_classification: RegimeClassificationCard | None = None
+    # #304 regression sibling. Populated when the active checkpoint
+    # mounts the dual-head regression head AND the classification card
+    # carried a non-null ``log_rv_point``. The classification card
+    # stays the headline; this block surfaces the continuous
+    # prediction + 90% conformal interval as a standalone read for the
+    # frontend's "show details" toggle on the regime panel.
+    regime_regression: RegimeRegressionCard | None = None
+    # #292 rates-reaction cards. One card per mounted rates head
+    # (2y / 5y / terminal) carrying the bps point + conformal interval
+    # plus the optional directional bucket / APS prediction set when
+    # ``--rates-classification-heads`` was on. ``None`` on a legacy
+    # single-head checkpoint or on a regression-output run; an empty
+    # list when the heads exist but the per-event forward produced no
+    # rows. Hooked by #293's MarketReactionPanel.
+    rates_reaction: list[RatesReactionCard] | None = None
+    # #446 mechanical policy decision extracted from the statement
+    # text. Pure regex / keyword pass — no model inference. None when
+    # the request carries no statement text (defensive; the schema
+    # requires text but the extractor wrapper still short-circuits on
+    # an empty body). Populated for any statement that names a target
+    # range; balance-sheet posture rides off the balance-sheet
+    # paragraph when present.
+    policy_action: PolicyActionCard | None = None
     # #341 sibling status surface so an operator can grep the JSON
     # response for the structured error branch when the regime card
     # degrades. Mutually exclusive with ``regime_classification``

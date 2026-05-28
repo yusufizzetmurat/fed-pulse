@@ -226,6 +226,19 @@ export interface CredibilityResponse {
   months_since_reversal?: number | null;
 }
 
+// #304 sibling block: dual-head regression output on log(forward
+// realized vol). Surfaced alongside the classification card so the
+// "show details" toggle on the regime panel can render the
+// continuous prediction + 90% conformal interval without re-parsing
+// it out of RegimeClassificationResponse. Null on a classification-
+// only checkpoint where the regression head is not mounted.
+export interface RegimeRegressionResponse {
+  log_rv_point: number;
+  log_rv_lower: number | null;
+  log_rv_upper: number | null;
+  coverage: number | null;
+}
+
 export interface RegimeClassificationResponse {
   predicted_set: string[];
   set_label: string;
@@ -283,6 +296,23 @@ export interface MarketReactionPanelResponse {
   checkpoint_path: string | null;
 }
 
+// #446 mechanical policy decision extracted from the statement text.
+// Pure regex / keyword pass on the backend — every field is nullable
+// so a non-policy excerpt (press conference Q&A, scraping miss)
+// surfaces as a card with every field null. Units mirror the
+// backend's `PolicyActionCard`: target_range_*_bp in basis points,
+// change_magnitude_bp signed.
+export type PolicyChangeDirection = "hike" | "hold" | "cut";
+export type BalanceSheetState = "expansion" | "tapering" | "runoff";
+
+export interface PolicyActionResponse {
+  target_range_low_bp: number | null;
+  target_range_high_bp: number | null;
+  change_direction: PolicyChangeDirection | null;
+  change_magnitude_bp: number | null;
+  balance_sheet_state: BalanceSheetState | null;
+}
+
 export type AnalogVolRegime = "calm" | "normal" | "high";
 
 export interface AnalogsRequest {
@@ -316,6 +346,17 @@ export interface AnalyzeResult {
   series?: SeriesResponse;
   multi_axis?: MultiAxisResponse;
   regime_classification?: RegimeClassificationResponse | null;
+  // #304 dual-head regression sibling block.
+  regime_regression?: RegimeRegressionResponse | null;
+  // #293 rates-reaction list. One entry per mounted rates head
+  // (2y / 5y / terminal). Null on legacy single-head checkpoints.
+  // An empty list rides when the heads are mounted but the per-event
+  // forward produced no rows.
+  rates_reaction?: RatesReactionCard[] | null;
+  // #446 mechanical policy decision extracted from the statement
+  // text. Null when the request body carried no text or the
+  // extractor degraded; never raises.
+  policy_action?: PolicyActionResponse | null;
   xai?: XaiResponse;
   credibility?: CredibilityResponse;
 }

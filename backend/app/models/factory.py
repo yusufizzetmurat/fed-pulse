@@ -157,10 +157,15 @@ def build_forecaster(
             "regression_alpha",
             "use_derived_text_features",
             "rates_head_mode",
+            "rates_aux_classification",
             "rates_alpha",
             "rates_target_mode",
+            "vol_target_mode",
             "use_regime_conditioning",
             "use_sep",
+            "use_press_conf",
+            "use_statement_delta",
+            "use_vote_features",
         ):
             flat_kwargs.pop(drop, None)
         flat_rates_heads = tuple(
@@ -192,12 +197,19 @@ def build_forecaster(
         flat.use_derived_text_features = bool(resolved.use_derived_text_features)  # type: ignore[assignment]
         flat.rates_heads = flat_rates_heads  # type: ignore[assignment]
         flat.rates_head_mode = str(resolved.rates_head_mode or "regression")  # type: ignore[assignment]
+        flat.rates_aux_classification = bool(resolved.rates_aux_classification)  # type: ignore[assignment]
         flat.rates_alpha = float(resolved.rates_alpha)  # type: ignore[assignment]
         # #305 round-trip the rates target derivation onto the persisted
         # run summary so the checkpoint records which target the heads
         # were trained against.
         flat.rates_target_mode = str(
             getattr(resolved, "rates_target_mode", "raw") or "raw"
+        )  # type: ignore[assignment]
+        # #435 round-trip the forward-vol target derivation onto the
+        # persisted run summary so the checkpoint records which target
+        # the regression / dual head trained against.
+        flat.vol_target_mode = str(
+            getattr(resolved, "vol_target_mode", "raw") or "raw"
         )  # type: ignore[assignment]
         return flat
 
@@ -243,9 +255,19 @@ def build_forecaster(
     rates_head_mode_value = str(
         kwargs.pop("rates_head_mode", "regression") or "regression"
     )
+    rates_aux_classification_flag = bool(
+        kwargs.pop("rates_aux_classification", False)
+    )
     rates_alpha_value = float(kwargs.pop("rates_alpha", 0.5))
     rates_target_mode_value = str(
         kwargs.pop("rates_target_mode", "raw") or "raw"
+    )
+    # #435 forward-vol target derivation. Loop-side knob; the trainer
+    # reads it off the stashed module attribute when materialising the
+    # regression target tensor. Pop here so the ForecasterModel ctor
+    # does not see the unrecognised kwarg.
+    vol_target_mode_value = str(
+        kwargs.pop("vol_target_mode", "raw") or "raw"
     )
     # #317 finding #8: fail fast at the factory rather than silently
     # zeroing rates_heads when output_mode='regression'. The operator
@@ -256,6 +278,22 @@ def build_forecaster(
             "rates_heads can only be mounted alongside "
             "output_mode='classification' (current: 'regression'). "
             "Pass --output-mode classification or --rates-heads none."
+        )
+    # The CE term in the rates loss needs an aux classifier to land on.
+    # Reject the joint-loss configuration where the classifier was
+    # explicitly disabled but the loss mode still expects CE; surface
+    # the misconfiguration early instead of silently dropping the term.
+    if (
+        rates_heads_tuple
+        and rates_head_mode_value in {"classification", "dual"}
+        and not rates_aux_classification_flag
+    ):
+        raise ValueError(
+            f"rates_head_mode={rates_head_mode_value!r} requires "
+            "--rates-classification-heads (the CE term has no aux head "
+            "to land on otherwise). Either pass "
+            "--rates-classification-heads or set "
+            "--rates-head-mode=regression."
         )
     # Phase 9 V2 (#195) fields all forwarded: ``output_mode`` /
     # ``n_classes`` drive the head shape; ``vol_regime_quantiles`` /
@@ -297,6 +335,11 @@ def build_forecaster(
     # at build time when the flag is on. Default ``False`` keeps every
     # existing checkpoint byte-identical.
     use_sep_flag = bool(kwargs.pop("use_sep", False))
+    # #214 press-conf opt-in.
+    use_press_conf_flag = bool(kwargs.pop("use_press_conf", False))
+    # #443/#444 statement-delta + vote-features opt-in flags.
+    use_statement_delta_flag = bool(kwargs.pop("use_statement_delta", False))
+    use_vote_features_flag = bool(kwargs.pop("use_vote_features", False))
     model: ForecasterResearchModel | ForecasterServingModel
     if role == "serving":
         # Serving construction trims the loss-side / sweep-side knobs the
@@ -307,16 +350,20 @@ def build_forecaster(
         model = ForecasterServingModel(
             model_type=architecture,
             rates_heads=rates_heads_tuple,
+            rates_aux_classification=rates_aux_classification_flag,
             use_regime_conditioning=use_regime_conditioning_flag,
             use_sep=use_sep_flag,
+            use_press_conf=use_press_conf_flag,
             **kwargs,
         )
     else:
         model = ForecasterResearchModel(
             model_type=architecture,
             rates_heads=rates_heads_tuple,
+            rates_aux_classification=rates_aux_classification_flag,
             use_regime_conditioning=use_regime_conditioning_flag,
             use_sep=use_sep_flag,
+            use_press_conf=use_press_conf_flag,
             **kwargs,
         )
     # mypy reads ``nn.Module`` attribute writes as ``Tensor | Module``;
@@ -341,10 +388,19 @@ def build_forecaster(
     # trips them onto the persisted run summary.
     model.rates_heads = rates_heads_tuple  # type: ignore[assignment]
     model.rates_head_mode = rates_head_mode_value  # type: ignore[assignment]
+    model.rates_aux_classification = rates_aux_classification_flag
     model.rates_alpha = rates_alpha_value  # type: ignore[assignment]
     # #305 round-trip the rates target derivation onto the built module
     # so ``ModelConfig.from_model`` recovers it on resume / inference.
     model.rates_target_mode = rates_target_mode_value  # type: ignore[assignment]
+    # #435 round-trip the forward-vol target derivation onto the built
+    # module so ``ModelConfig.from_model`` recovers it on resume.
+    model.vol_target_mode = vol_target_mode_value  # type: ignore[assignment]
+    # #443/#444 round-trip the two new opt-in flags. Default-off path
+    # behaves byte-identically; flag-on a future sweep that resumes off
+    # this checkpoint rebuilds with the same loader-tail widths.
+    model.use_statement_delta = use_statement_delta_flag  # type: ignore[assignment]
+    model.use_vote_features = use_vote_features_flag  # type: ignore[assignment]
     return model
 
 

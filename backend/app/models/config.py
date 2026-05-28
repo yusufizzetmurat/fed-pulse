@@ -104,6 +104,14 @@ RICH_MACRO_REGIME_MISSING_DIM = 1
 # feature size. See ADR 0030.
 RICH_SEP_DIM = 4
 RICH_SEP_MISSING_DIM = 1
+# #214 press-conf has_press_conf flag (ADR 0037).
+RICH_PRESS_CONF_DIM = 1
+# #443 statement-delta mean-pooled embedding block (ADR 0038).
+RICH_STATEMENT_DELTA_DIM = 768
+RICH_STATEMENT_DELTA_MISSING_DIM = 1
+# #444 vote tally + dissent block (ADR 0038).
+RICH_VOTE_FEATURES_DIM = 4
+RICH_VOTE_FEATURES_MISSING_DIM = 1
 RICH_EXTRA_FEATURE_SIZE = (
     RICH_CREDIBILITY_DIM
     + RICH_LINGUISTIC_DIM
@@ -200,6 +208,17 @@ RICH_SEP_MISSING_SLICE = slice(
     RICH_SEP_SLICE.stop,
     RICH_SEP_SLICE.stop + RICH_SEP_MISSING_DIM,
 )
+# #214 press-conf block slice (one scalar, no missing flag — the flag is
+# itself the missingness signal). When the block is populated it sits
+# past the regime + SEP tails per the documented append order
+# (market | rich | regime? | sep? | press_conf?). When the
+# regime / SEP flags are off the press-conf block lands at the dynamic
+# offset their absence opens up; callers iterating the press-conf block
+# should compute the offset off the active flag tuple.
+RICH_PRESS_CONF_SLICE = slice(
+    RICH_SEP_MISSING_SLICE.stop,
+    RICH_SEP_MISSING_SLICE.stop + RICH_PRESS_CONF_DIM,
+)
 
 # Multi-task head (#78) axis cardinalities and canonical label maps.
 # The multi-task head emits four branches; the cardinalities are pinned
@@ -284,13 +303,21 @@ def rich_feature_size_with_sep(use_sep: bool) -> int:
     return RICH_FEATURE_SIZE + RICH_SEP_DIM + RICH_SEP_MISSING_DIM
 
 
-def rich_feature_size_with_blocks(*, use_regime: bool, use_sep: bool) -> int:
-    """Combined helper: the per-bar size with regime and SEP block flags.
+def rich_feature_size_with_blocks(
+    *,
+    use_regime: bool,
+    use_sep: bool,
+    use_press_conf: bool = False,
+    use_statement_delta: bool = False,
+    use_vote_features: bool = False,
+) -> int:
+    """Combined helper: the per-bar size with every opt-in tail block.
 
-    The two blocks are independent — both can be on, both off, or one
-    of the two on. ``as_rich_list`` appends them in a fixed order
-    (regime first, then SEP) so a downstream caller iterating slices
-    knows where each block sits without ambiguity.
+    All five blocks are independent — any combination can be on. The
+    append order on ``as_rich_list`` is fixed: regime, SEP, press-conf,
+    statement-delta, vote-features. A downstream caller iterating
+    slices knows where each block sits without ambiguity given the five
+    flags.
     """
 
     size = RICH_FEATURE_SIZE
@@ -298,6 +325,12 @@ def rich_feature_size_with_blocks(*, use_regime: bool, use_sep: bool) -> int:
         size += RICH_MACRO_REGIME_DIM + RICH_MACRO_REGIME_MISSING_DIM
     if bool(use_sep):
         size += RICH_SEP_DIM + RICH_SEP_MISSING_DIM
+    if bool(use_press_conf):
+        size += RICH_PRESS_CONF_DIM
+    if bool(use_statement_delta):
+        size += RICH_STATEMENT_DELTA_DIM + RICH_STATEMENT_DELTA_MISSING_DIM
+    if bool(use_vote_features):
+        size += RICH_VOTE_FEATURES_DIM + RICH_VOTE_FEATURES_MISSING_DIM
     return size
 
 
@@ -518,6 +551,17 @@ class ModelConfig:
     # via ``ModelConfig.from_model`` reads it back cleanly off the
     # stashed module attribute.
     rates_head_mode: str = "regression"
+    # #292 auxiliary 3-class direction surface opt-in. ``False`` (default)
+    # mounts only the regression heads on every active rates target; the
+    # response surface emits the regression card with a ``None``
+    # directional_bucket / bucket_probabilities. ``True`` mounts the
+    # paired easing/neutral/tightening classifier alongside each
+    # regression head and wires the CE term into the joint loss when
+    # ``rates_head_mode != "regression"``. The flag stays orthogonal to
+    # ``rates_head_mode``: a run with ``rates_head_mode="dual"`` and
+    # ``rates_aux_classification=False`` is rejected at the factory
+    # because the CE term has no head to land on.
+    rates_aux_classification: bool = False
     # Weight on the regression term in the rates dual-head joint loss.
     # ``1.0`` collapses ``dual`` to regression-only at the loss level;
     # ``0.0`` collapses it to classification-only. The CLI default 0.5
@@ -534,6 +578,17 @@ class ModelConfig:
     # mode-mixing was deferred so the CLI stays one knob deep. See ADR
     # 0027 and :mod:`app.training.rates_targets`.
     rates_target_mode: str = "raw"
+    # #435 forward-vol-target derivation. ``raw`` (default, byte-identical
+    # to the pre-#236 path) feeds the regression head the standardised
+    # ``log(forward_realized_vol_10d)`` scalar. ``garch_residual`` swaps
+    # in ``forward_realized_vol_10d_garch_residual`` (raw minus the
+    # GARCH(1,1) baseline; signed, no log) so the supervised target is
+    # the unanticipated component the classical conditional-variance
+    # model leaves on the table. Rows whose residual is ``None``
+    # (insufficient fit history per ``MIN_FIT_RETURNS`` or QMLE
+    # convergence failure) fall back to the raw target so row alignment
+    # with ``y`` is preserved. See #434 for the data side and ADR 0034.
+    vol_target_mode: str = "raw"
     # #307 macro-regime conditioning toggle. ``False`` (default) keeps
     # the pre-#307 path byte-identical: the loader leaves
     # ``FeatureVector.macro_regime_features`` at ``None`` and
@@ -552,6 +607,12 @@ class ModelConfig:
     # the loader appends past ``RICH_FEATURE_SIZE`` (and past the
     # regime block when both flags are on). See ADR 0030.
     use_sep: bool = False
+    # #214 press-conf opt-in (ADR 0037).
+    use_press_conf: bool = False
+    # #443 statement-delta opt-in (ADR 0038).
+    use_statement_delta: bool = False
+    # #444 vote-tally opt-in (ADR 0038).
+    use_vote_features: bool = False
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -585,7 +646,7 @@ class ModelConfig:
             use_time_decay=bool(getattr(model, "use_time_decay", True)),
             encoder_lora=bool(getattr(model, "encoder_lora", False)),
             lora_curriculum_freeze_epoch=(
-                int(getattr(model, "lora_curriculum_freeze_epoch"))
+                int(model.lora_curriculum_freeze_epoch)
                 if getattr(model, "lora_curriculum_freeze_epoch", None) is not None
                 else None
             ),
@@ -610,14 +671,27 @@ class ModelConfig:
             rates_head_mode=str(
                 getattr(model, "rates_head_mode", "regression") or "regression"
             ),
+            rates_aux_classification=bool(
+                getattr(model, "rates_aux_classification", False)
+            ),
             rates_alpha=float(getattr(model, "rates_alpha", 0.5)),
             rates_target_mode=str(
                 getattr(model, "rates_target_mode", "raw") or "raw"
+            ),
+            vol_target_mode=str(
+                getattr(model, "vol_target_mode", "raw") or "raw"
             ),
             use_regime_conditioning=bool(
                 getattr(model, "use_regime_conditioning", False)
             ),
             use_sep=bool(getattr(model, "use_sep", False)),
+            use_press_conf=bool(getattr(model, "use_press_conf", False)),
+            use_statement_delta=bool(
+                getattr(model, "use_statement_delta", False)
+            ),
+            use_vote_features=bool(
+                getattr(model, "use_vote_features", False)
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -842,6 +916,15 @@ class FeatureVector:
     # per-feature row in ``docs/feature-provenance-audit.md``.
     sep_features: list[float] | None = None
     sep_features_missing: float = 1.0
+    # #214 press-conf scalar (has_press_conf). The flag IS the
+    # missingness signal so no sibling *_missing field. See ADR 0037.
+    press_conf_features: list[float] | None = None
+    # #443 statement-delta mean-pooled embedding block. See ADR 0038.
+    statement_delta_embedding: list[float] | None = None
+    statement_delta_embedding_missing: float = 1.0
+    # #444 vote-tally signed feature block. See ADR 0038.
+    vote_features: list[float] | None = None
+    vote_features_missing: float = 1.0
     rich_payload: bool = False
     # Phase 9 V2 (#195) classification target. The forward 10-trading-day
     # realised volatility lives on the target row (the last vector in
@@ -850,6 +933,18 @@ class FeatureVector:
     # mapper consume the target-row value only. Default ``None`` so
     # regression-only callers stay byte-identical.
     forward_realized_vol_10d: float | None = None
+    # #236 GARCH(1,1)-residual decomposition of the same target. The
+    # baseline is the GARCH(1,1) 10-day-ahead 1-day-equivalent vol
+    # forecast (fitted on strict-prior log returns); the residual is
+    # ``forward_realized_vol_10d - baseline``. Both ride on the target
+    # row alongside the raw forward-vol target; lookback bars carry
+    # ``None`` so the per-fold builder can filter the leading target
+    # the same way the raw vol-regime helper does. ``None`` on every
+    # legacy / non-vol path keeps the dataclass shape round-trip clean
+    # against the determinism regression contract. See ADR 0034 and
+    # ``app.data.garch_residual.compute_for_event``.
+    forward_realized_vol_10d_garch_baseline: float | None = None
+    forward_realized_vol_10d_garch_residual: float | None = None
     # #292 rates-complex targets. Strict-forward 5-day yield change in
     # basis points (raw bps; the loader emits the value the
     # events.parquet column already carries). Populated by the
@@ -969,7 +1064,7 @@ class FeatureVector:
             float(self.elapsed_time) / 30.0,
         ]
 
-    def as_rich_list(self, close_scale: float = DEFAULT_CLOSE_SCALE) -> list[float]:
+    def as_rich_list(self, close_scale: float = DEFAULT_CLOSE_SCALE) -> list[float]:  # noqa: C901
         """Emit the full 35-dim per-bar feature vector.
 
         Layout matches the slice constants at the top of this module
@@ -1094,6 +1189,36 @@ class FeatureVector:
                     RICH_SEP_DIM - len(sep_block)
                 )
             out = out + sep_block + [float(self.sep_features_missing)]
+        # #214 press-conf scalar appended after SEP.
+        if self.press_conf_features is not None:
+            press_conf_block = [
+                float(v) for v in self.press_conf_features[:RICH_PRESS_CONF_DIM]
+            ]
+            if len(press_conf_block) < RICH_PRESS_CONF_DIM:
+                press_conf_block = press_conf_block + [0.0] * (
+                    RICH_PRESS_CONF_DIM - len(press_conf_block)
+                )
+            out = out + press_conf_block
+        # #443 statement-delta tail.
+        if self.statement_delta_embedding is not None:
+            delta_block = [
+                float(v) for v in self.statement_delta_embedding[:RICH_STATEMENT_DELTA_DIM]
+            ]
+            if len(delta_block) < RICH_STATEMENT_DELTA_DIM:
+                delta_block = delta_block + [0.0] * (
+                    RICH_STATEMENT_DELTA_DIM - len(delta_block)
+                )
+            out = out + delta_block + [float(self.statement_delta_embedding_missing)]
+        # #444 vote-tally tail. Order: regime, SEP, press-conf, statement-delta, vote.
+        if self.vote_features is not None:
+            vote_block = [
+                float(v) for v in self.vote_features[:RICH_VOTE_FEATURES_DIM]
+            ]
+            if len(vote_block) < RICH_VOTE_FEATURES_DIM:
+                vote_block = vote_block + [0.0] * (
+                    RICH_VOTE_FEATURES_DIM - len(vote_block)
+                )
+            out = out + vote_block + [float(self.vote_features_missing)]
         return out
 
 

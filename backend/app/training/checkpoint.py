@@ -104,6 +104,13 @@ def _metrics_from_payload(payload: dict[str, Any] | None) -> EvaluationMetrics |
                 regime_loss=_opt_float("regime_loss"),
                 classification_breakdown=breakdown,
                 rates_metrics=rates_metrics,
+                # #304 dual-head regression surface. Pre-#304
+                # checkpoints leave these absent; the defaults give
+                # back ``None`` so the legacy contract holds.
+                regression_rmse_log_rv=_opt_float("regression_rmse_log_rv"),
+                regression_mae_log_rv=_opt_float("regression_mae_log_rv"),
+                regression_loss=_opt_float("regression_loss"),
+                regression_r2_log_rv=_opt_float("regression_r2_log_rv"),
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -151,7 +158,53 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             rates_head_mode=str(
                 raw.get("rates_head_mode", "regression") or "regression"
             ),
+            rates_aux_classification=bool(
+                raw.get("rates_aux_classification", False)
+            ),
             rates_alpha=float(raw.get("rates_alpha", 0.5)),
+            # #435: forward the new vol-target-mode so a checkpoint trained
+            # under --vol-target-mode=garch_residual rehydrates with the
+            # right target column on eval / calibration paths. Pre-#435
+            # checkpoints leave the key absent and the default collapses
+            # to the raw column.
+            vol_target_mode=str(raw.get("vol_target_mode", "raw") or "raw"),
+            # #304 dual-head: forward head_mode + regression_alpha so a
+            # dual-head checkpoint rehydrates the same head config the
+            # run trained against. Pre-#304 checkpoints leave the keys
+            # absent and the defaults collapse to the canonical config
+            # the ModelConfig dataclass ships with.
+            head_mode=str(raw.get("head_mode", "dual") or "dual"),
+            regression_alpha=float(raw.get("regression_alpha", 0.5)),
+            # #423: mirror the #292 rates-fields landing for the #273
+            # multi-task loss knob + the four per-axis lambda fields.
+            # Pre-#273 checkpoints leave these absent and the defaults
+            # collapse to the single-task CE path. Without this,
+            # eval_checkpoint_directional / calibrate_regime_classifier
+            # silently rebuild a multi_task_loss=False config from a
+            # --multi-task-loss=on checkpoint.
+            multi_task_loss=bool(raw.get("multi_task_loss", False)),
+            multi_task_lambda_stance=float(
+                raw.get("multi_task_lambda_stance", 1.0)
+            ),
+            multi_task_lambda_factor=float(
+                raw.get("multi_task_lambda_factor", 0.3)
+            ),
+            multi_task_lambda_certainty=float(
+                raw.get("multi_task_lambda_certainty", 0.3)
+            ),
+            multi_task_lambda_topic=float(
+                raw.get("multi_task_lambda_topic", 0.3)
+            ),
+            # #214: round-trip press-conf opt-in.
+            use_press_conf=bool(raw.get("use_press_conf", False)),
+            # #443/#444: forward the two new opt-in flags so a checkpoint
+            # trained under ``--use-statement-delta`` / ``--use-vote-features``
+            # rehydrates with the same per-bar input width on the eval /
+            # calibration paths. Pre-#443 checkpoints leave the keys
+            # absent and the defaults collapse to the byte-identical
+            # legacy path.
+            use_statement_delta=bool(raw.get("use_statement_delta", False)),
+            use_vote_features=bool(raw.get("use_vote_features", False)),
         )
     return ModelConfig()
 

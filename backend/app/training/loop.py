@@ -59,6 +59,16 @@ _COMPILE_INCOMPATIBLE_ARCHITECTURES: frozenset[str] = frozenset({"informer", "tf
 _AMP_INCOMPATIBLE_ARCHITECTURES: frozenset[str] = frozenset({"informer", "tft"})
 
 
+# #435 forward-vol regression-target derivation modes. ``raw`` (default)
+# feeds the dual-head MSE branch ``log(forward_realized_vol_10d)``;
+# ``garch_residual`` swaps in ``forward_realized_vol_10d_garch_residual``
+# (raw minus the GARCH(1,1) baseline; signed, no log). The literal
+# vocabulary is pinned here so the CLI ``choices=`` tuple and the loop
+# resolver agree.
+VOL_TARGET_MODES: tuple[str, ...] = ("raw", "garch_residual")
+DEFAULT_VOL_TARGET_MODE: str = "raw"
+
+
 def _resolve_device(device: str | torch.device | None = None) -> torch.device:
     if device is not None:
         return torch.device(device)
@@ -1668,6 +1678,7 @@ def _build_partition_log_rv_target(
     *,
     vol_regime_quantiles: "Sequence[float]",
     log_rv_scaler: "tuple[float, float] | None" = None,
+    vol_target_mode: str = DEFAULT_VOL_TARGET_MODE,
 ) -> tuple[torch.Tensor | None, "tuple[float, float] | None"]:
     """Materialise per-partition log(forward_realized_vol_10d) targets (#304).
 
@@ -1694,12 +1705,32 @@ def _build_partition_log_rv_target(
     initial MSE ~16 while CE ~log(3); alpha=0.5 left MSE owning ~93%
     of the gradient) drops to MSE ~1 once the targets sit in unit
     variance, so the alpha knob behaves like a true mixing weight.
+
+    ``vol_target_mode`` (#435) selects between the raw
+    ``log(forward_realized_vol_10d)`` target (``"raw"``, default;
+    byte-identical to the pre-#236 path) and the GARCH(1,1) residual
+    ``forward_realized_vol_10d_garch_residual`` (``"garch_residual"``;
+    signed, no log). Rows whose residual is ``None`` (insufficient fit
+    history per ``MIN_FIT_RETURNS`` or QMLE convergence failure) fall
+    back to the raw ``log(forward_realized_vol_10d)`` so the per-row
+    count stays aligned with ``y``; the fallback emits a single log
+    warning at the partition boundary so the operator can grep the run
+    log for how many rows the data-side decomposition silently dropped.
     """
 
     from app.training.loaders import vol_regime_class_for
 
+    mode = str(vol_target_mode).lower()
+    if mode not in VOL_TARGET_MODES:
+        raise ValueError(
+            f"unsupported vol_target_mode={vol_target_mode!r}; "
+            f"expected one of {VOL_TARGET_MODES}"
+        )
+    residual_mode = mode == "garch_residual"
+
     values: list[float] = []
     rejected_non_finite = 0
+    residual_fallback_count = 0
     for sequence_group in sequence_groups:
         if len(sequence_group) < SEQUENCE_LENGTH + 1:
             continue
@@ -1732,7 +1763,35 @@ def _build_partition_log_rv_target(
             # ``_is_finite_positive_forward_vol`` narrowed the type
             # at runtime; mypy does not propagate the guard so the
             # explicit ``float(...)`` cast lands here.
-            values.append(math.log(float(forward_vol)))  # type: ignore[arg-type]
+            raw_value = math.log(float(forward_vol))  # type: ignore[arg-type]
+            if residual_mode:
+                residual = getattr(
+                    target_row,
+                    "forward_realized_vol_10d_garch_residual",
+                    None,
+                )
+                # The residual is signed (raw - baseline) and can be
+                # legitimately negative; only ``None`` / NaN / inf
+                # trigger the raw-target fallback. Pre-#236 parquets
+                # carry ``None`` on every row, so the fallback also
+                # covers the legacy training-package case.
+                if residual is None:
+                    residual_fallback_count += 1
+                    values.append(raw_value)
+                    continue
+                try:
+                    residual_value = float(residual)
+                except (TypeError, ValueError):
+                    residual_fallback_count += 1
+                    values.append(raw_value)
+                    continue
+                if not math.isfinite(residual_value):
+                    residual_fallback_count += 1
+                    values.append(raw_value)
+                    continue
+                values.append(residual_value)
+            else:
+                values.append(raw_value)
     if not values:
         return None, log_rv_scaler
 
@@ -1756,6 +1815,13 @@ def _build_partition_log_rv_target(
             "[dual-head] rejected %d row(s) with non-finite or non-positive "
             "forward_realized_vol_10d from the log_rv regression target",
             rejected_non_finite,
+        )
+    if residual_fallback_count:
+        _logger.warning(
+            "[dual-head] vol_target_mode='garch_residual': %d row(s) had "
+            "no GARCH residual (insufficient fit history or QMLE "
+            "convergence failure); fell back to log(forward_realized_vol_10d)",
+            residual_fallback_count,
         )
     return standardised, scaler_out
 
@@ -1821,6 +1887,14 @@ def _evaluate_model(
     log_rv_squared_error_sum = torch.zeros((), dtype=torch.float64, device=device)
     log_rv_abs_error_sum = torch.zeros((), dtype=torch.float64, device=device)
     log_rv_items = torch.zeros((), dtype=torch.int64, device=device)
+    # #304 acceptance: R^2 on log_rv joins MAE / RMSE. R^2 needs the
+    # target's variance over the partition (SST) so the loop also
+    # accumulates the partition-wide sum + sum-of-squares of the
+    # standardised log_rv target. SST is computed once at the end as
+    # ``sum(y^2) - sum(y)^2 / n``; the running-mean variant would
+    # accumulate float64 cancellation error on long val/test sweeps.
+    log_rv_target_sum = torch.zeros((), dtype=torch.float64, device=device)
+    log_rv_target_squared_sum = torch.zeros((), dtype=torch.float64, device=device)
     # Per-axis loss bookkeeping for the multi-task eval path (#273
     # follow-up). Each axis accumulates ``loss * batch_size`` so the
     # final mean matches the per-batch mean ``MultiTaskLoss`` emits
@@ -2001,6 +2075,8 @@ def _evaluate_model(
                     diff = log_rv_pred - log_rv_true
                     log_rv_squared_error_sum += torch.square(diff).sum()
                     log_rv_abs_error_sum += torch.abs(diff).sum()
+                    log_rv_target_sum += log_rv_true.sum()
+                    log_rv_target_squared_sum += torch.square(log_rv_true).sum()
                     log_rv_items += int(diff.shape[0])
             elif has_regression_head:
                 # #304 single-task dual-head eval. ``forward_multi_task``
@@ -2028,6 +2104,8 @@ def _evaluate_model(
                     diff = log_rv_pred - log_rv_true
                     log_rv_squared_error_sum += torch.square(diff).sum()
                     log_rv_abs_error_sum += torch.abs(diff).sum()
+                    log_rv_target_sum += log_rv_true.sum()
+                    log_rv_target_squared_sum += torch.square(log_rv_true).sum()
                     log_rv_items += int(diff.shape[0])
             elif multimodal_forward is not None:
                 modality_out = multimodal_forward(batch_x, **kwargs)
@@ -2173,6 +2251,7 @@ def _evaluate_model(
         regression_rmse_log_rv_value: float | None = None
         regression_mae_log_rv_value: float | None = None
         regression_loss_value: float | None = None
+        regression_r2_log_rv_value: float | None = None
         if has_regression_head and log_rv_items_int > 0:
             regression_loss_value = float(
                 log_rv_squared_error_sum.item() / log_rv_items_int
@@ -2181,6 +2260,18 @@ def _evaluate_model(
             regression_mae_log_rv_value = float(
                 log_rv_abs_error_sum.item() / log_rv_items_int
             )
+            # R^2 = 1 - SSE / SST. SST is the partition's sum of
+            # squared deviations from the mean target; we accumulate
+            # sum + sum-of-squares above so SST = sum(y^2) - sum(y)^2 / n.
+            # A constant-target partition (SST = 0) collapses R^2 to
+            # ``None`` so the consumer can tell ``no head ran`` apart
+            # from ``head ran on a degenerate partition``.
+            sse_value = float(log_rv_squared_error_sum.item())
+            sum_y = float(log_rv_target_sum.item())
+            sum_y_sq = float(log_rv_target_squared_sum.item())
+            sst_value = sum_y_sq - (sum_y * sum_y) / float(log_rv_items_int)
+            if sst_value > 0.0:
+                regression_r2_log_rv_value = 1.0 - sse_value / sst_value
 
         return EvaluationMetrics(
             loss=regime_loss,
@@ -2198,6 +2289,7 @@ def _evaluate_model(
             regression_rmse_log_rv=regression_rmse_log_rv_value,
             regression_mae_log_rv=regression_mae_log_rv_value,
             regression_loss=regression_loss_value,
+            regression_r2_log_rv=regression_r2_log_rv_value,
         )
 
     close_value = float(close_squared_error.item())
@@ -2470,6 +2562,15 @@ def train_model(
     active_rates_target_mode = str(
         getattr(active_model_config, "rates_target_mode", "raw") or "raw"
     )
+    # #435 forward-vol target derivation. ``raw`` (default) keeps the
+    # pre-#236 ``log(forward_realized_vol_10d)`` MSE target byte-
+    # identical; ``garch_residual`` swaps in the GARCH(1,1) residual
+    # (raw minus the conditional-variance baseline) so the regression
+    # head learns the unanticipated component.
+    active_vol_target_mode = str(
+        getattr(active_model_config, "vol_target_mode", DEFAULT_VOL_TARGET_MODE)
+        or DEFAULT_VOL_TARGET_MODE
+    )
     rates_heads_active = bool(active_rates_heads)
     train_rates_targets: RatesPartitionTensors | None = None
     val_rates_targets: RatesPartitionTensors | None = None
@@ -2585,7 +2686,9 @@ def train_model(
             )
         if dual_head_active and active_output_mode == "classification":
             train_log_rv, log_rv_scaler = _build_partition_log_rv_target(
-                train_groups, vol_regime_quantiles=fitted_quantiles
+                train_groups,
+                vol_regime_quantiles=fitted_quantiles,
+                vol_target_mode=active_vol_target_mode,
             )
         # #292 rates heads -- per-partition targets fitted on train.
         if rates_heads_active and active_output_mode == "classification":
@@ -2647,6 +2750,7 @@ def train_model(
                 val_groups,
                 vol_regime_quantiles=fitted_quantiles,
                 log_rv_scaler=log_rv_scaler,
+                vol_target_mode=active_vol_target_mode,
             )
         if rates_heads_active and active_output_mode == "classification":
             from app.training.rates_targets import build_partition_rates_targets
@@ -2696,6 +2800,7 @@ def train_model(
                 test_groups,
                 vol_regime_quantiles=fitted_quantiles,
                 log_rv_scaler=log_rv_scaler,
+                vol_target_mode=active_vol_target_mode,
             )
         if rates_heads_active and active_output_mode == "classification":
             from app.training.rates_targets import build_partition_rates_targets
@@ -2800,6 +2905,7 @@ def train_model(
             legacy_full_log_rv, log_rv_scaler = _build_partition_log_rv_target(
                 active_sequence_groups,
                 vol_regime_quantiles=legacy_fitted_quantiles,
+                vol_target_mode=active_vol_target_mode,
             )
         text_emb_tensor, text_missing_tensor, _text_emb_dim = _build_text_embedding_tensors(
             active_sequence_groups,
@@ -3225,6 +3331,12 @@ def train_model(
     # identical to the single-task path on rows where only stance is
     # supervised.
     multi_task_loss_fn: nn.Module | None = None
+    # #273 per-axis class weights captured here so the run summary +
+    # checkpoint payload can persist them alongside the lambdas; resume
+    # then reads back the exact loss config the run trained under.
+    # ``None`` on multi_task_loss=False runs (the default) so the
+    # checkpoint contract on every pre-#273 caller stays byte-identical.
+    multi_task_class_weights_payload: dict[str, Any] | None = None
     if multi_task_loss_active and _active_output_mode == "classification":
         from app.models.config import (
             MULTI_TASK_CERTAINTY_CLASSES,
@@ -3261,6 +3373,26 @@ def train_model(
             lambda_certainty=float(getattr(active_model_config, "multi_task_lambda_certainty", 0.3)),
             lambda_topic=float(getattr(active_model_config, "multi_task_lambda_topic", 0.3)),
         ).to(device_obj)
+        # Stash the per-axis weights + lambdas on a plain dict so the
+        # TrainingRunSummary -> torch.save round-trip carries them onto
+        # the checkpoint payload. Tensors are detached to CPU so the
+        # serialised form is portable; the resume path can rebuild the
+        # MultiTaskLoss module by reading these back.
+        multi_task_class_weights_payload = {
+            "stance": (
+                class_weight_tensor.detach().cpu().tolist()
+                if class_weight_tensor is not None
+                else None
+            ),
+            "certainty": certainty_weight.detach().cpu().tolist(),
+            "topic": topic_weight.detach().cpu().tolist(),
+            "lambdas": {
+                "stance": float(multi_task_loss_fn.lambda_stance),
+                "factor": float(multi_task_loss_fn.lambda_factor),
+                "certainty": float(multi_task_loss_fn.lambda_certainty),
+                "topic": float(multi_task_loss_fn.lambda_topic),
+            },
+        }
         print(
             "[train_model] multi_task_loss active: "
             f"lambda_stance={multi_task_loss_fn.lambda_stance} "
@@ -3768,6 +3900,30 @@ def train_model(
             best_val_metrics = dataclasses.replace(
                 best_val_metrics, rates_metrics=rates_val_metrics_payload
             )
+        # #292 per-head training-log breakdown. Emitted once per run on
+        # the val partition so the operator sees MAE-bps / dir-acc / R²
+        # per mounted head without parsing the per-trial JSON. Wrapped in
+        # try/except so a malformed payload never breaks the training
+        # exit path.
+        if rates_val_metrics_payload:
+            for head_name in active_rates_heads:
+                payload = rates_val_metrics_payload.get(head_name)
+                if not isinstance(payload, dict):
+                    continue
+                try:
+                    mae = payload.get("mae_bps") or {}
+                    r2 = payload.get("r_squared") or {}
+                    dir_acc = payload.get("directional_accuracy") or {}
+                    print(
+                        f"[rates] head={head_name} "
+                        f"n={payload.get('n_rows', 0)} "
+                        f"mae_bps={mae.get('point')} "
+                        f"r2={r2.get('point')} "
+                        f"dir_acc={dir_acc.get('point')}",
+                        flush=True,
+                    )
+                except Exception:  # pragma: no cover — print is diagnostic
+                    pass
 
     # ``metrics`` keeps the pre-PR semantics: the headline number the
     # downstream best-selection ranks by. On the walk-forward path
@@ -3824,6 +3980,7 @@ def train_model(
             if rates_heads_active and rates_edges
             else None
         ),
+        multi_task_class_weights=multi_task_class_weights_payload,
     )
 
     if save_checkpoint:

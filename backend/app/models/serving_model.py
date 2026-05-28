@@ -82,8 +82,10 @@ class ForecasterServingModel(ForecasterBase):
         vol_regime_target: str = "forward_realized_vol_10d",
         head_mode: str = "regression",
         rates_heads: tuple[str, ...] = (),
+        rates_aux_classification: bool = False,
         use_regime_conditioning: bool = False,
         use_sep: bool = False,
+        use_press_conf: bool = False,
     ):
         if output_mode not in {"regression", "classification"}:
             raise ValueError(
@@ -114,6 +116,7 @@ class ForecasterServingModel(ForecasterBase):
             text_adapter_dim=text_adapter_dim,
             use_regime_conditioning=use_regime_conditioning,
             use_sep=use_sep,
+            use_press_conf=use_press_conf,
         )
         self.output_mode = output_mode
         self.n_classes = int(n_classes)
@@ -146,6 +149,7 @@ class ForecasterServingModel(ForecasterBase):
                         f"Unknown rates head: {name!r}. Allowed: "
                         f"{list(RATES_HEAD_NAMES)}"
                     )
+            self.rates_aux_classification = bool(rates_aux_classification)
             self.rates_regression_heads: nn.ModuleDict = nn.ModuleDict()
             self.rates_classification_heads: nn.ModuleDict = nn.ModuleDict()
             for name in self.rates_heads_active:
@@ -156,13 +160,14 @@ class ForecasterServingModel(ForecasterBase):
                     nn.Dropout(dropout),
                     nn.Linear(head_hidden_size, 1),
                 )
-                self.rates_classification_heads[name] = nn.Sequential(
-                    nn.LayerNorm(hidden_size),
-                    nn.Linear(hidden_size, head_hidden_size),
-                    nn.GELU(),
-                    nn.Dropout(dropout),
-                    nn.Linear(head_hidden_size, RATES_HEAD_N_CLASSES),
-                )
+                if self.rates_aux_classification:
+                    self.rates_classification_heads[name] = nn.Sequential(
+                        nn.LayerNorm(hidden_size),
+                        nn.Linear(hidden_size, head_hidden_size),
+                        nn.GELU(),
+                        nn.Dropout(dropout),
+                        nn.Linear(head_hidden_size, RATES_HEAD_N_CLASSES),
+                    )
         else:
             self.head = nn.Sequential(
                 nn.LayerNorm(hidden_size),
@@ -173,6 +178,7 @@ class ForecasterServingModel(ForecasterBase):
             )
             self.regression_head = None
             self.rates_heads_active = ()
+            self.rates_aux_classification = bool(rates_aux_classification)
             self.rates_regression_heads = nn.ModuleDict()
             self.rates_classification_heads = nn.ModuleDict()
 
@@ -217,9 +223,10 @@ class ForecasterServingModel(ForecasterBase):
                 stashed["log_rv"] = log_rv_pred.detach()
             for name in self.rates_heads_active:
                 bps_pred = self.rates_regression_heads[name](pooled_step).squeeze(-1)
-                cls_logits = self.rates_classification_heads[name](pooled_step)
                 stashed[f"rates_{name}_bps"] = bps_pred.detach()
-                stashed[f"rates_{name}_cls_logits"] = cls_logits.detach()
+                if name in self.rates_classification_heads:
+                    cls_logits = self.rates_classification_heads[name](pooled_step)
+                    stashed[f"rates_{name}_cls_logits"] = cls_logits.detach()
             self._last_multi_task = stashed
             return multi_task["stance"]  # type: ignore[no-any-return]
         raw = self.head(pooled_step)
@@ -267,9 +274,10 @@ class ForecasterServingModel(ForecasterBase):
             multi_task["log_rv"] = log_rv_pred
         for name in self.rates_heads_active:
             bps_pred = self.rates_regression_heads[name](pooled_step).squeeze(-1)
-            cls_logits = self.rates_classification_heads[name](pooled_step)
             multi_task[f"rates_{name}_bps"] = bps_pred
-            multi_task[f"rates_{name}_cls_logits"] = cls_logits
+            if name in self.rates_classification_heads:
+                cls_logits = self.rates_classification_heads[name](pooled_step)
+                multi_task[f"rates_{name}_cls_logits"] = cls_logits
         return multi_task
 
 

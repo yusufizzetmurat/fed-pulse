@@ -158,6 +158,12 @@ from app.data.rates_event_features import (
     forward_yield_change_bps,
 )
 from app.data.rates_panel import RatesPanelLookup, load_rates_panel_lookup
+from app.data.statement_delta import (
+    STATEMENT_DELTA_EMBEDDING_DIM,
+    compute_delta_for_event,
+    select_prior_statement_text,
+)
+from app.data.vote_tally import VoteTally, parse_vote_tally
 from app.features.credibility import CredibilityVector
 from app.services.credibility_loader import load_credibility_for_run
 
@@ -1301,6 +1307,9 @@ def _build_event_rows(
     cross_asset_lookup: dict[_dt.date, dict[str, float]] | None = None,
     rates_lookup: RatesPanelLookup | None = None,
     rates_horizon: int = 5,
+    prior_statement_text: str | None = None,
+    vote_tally: VoteTally | None = None,
+    delta_encoder: Any | None = None,
 ) -> list[dict[str, Any]]:
     event_date = _date(doc.event_date)
     as_of_ts = _as_of_for_event(doc.event_date, doc.event_kind)
@@ -1345,6 +1354,25 @@ def _build_event_rows(
     # assigned here -- the per-fold quantile cutoffs are computed at
     # training time on the train slice to avoid look-ahead leakage.
     forward_vol_10d = _forward_realized_vol(asset_series, as_of_date, window=10)
+    # #236 GARCH(1,1)-residual decomposition of the same target. Fits
+    # GARCH(1,1) on log returns dated strictly before ``as_of_date`` and
+    # forecasts a 1-day-equivalent vol over the same 10-trading-day
+    # forward window. The residual = raw - baseline isolates the
+    # unanticipated component of realised vol given the standard
+    # conditional-variance model. Strict-prior contract: the fit reads
+    # only closes ``< as_of_date``; the forecast is conditional-on-fit
+    # and reads no close at or after ``as_of_date``. Below
+    # ``MIN_FIT_RETURNS`` (252 trading days) or on convergence failure
+    # both columns degrade to None and the supervised row keeps the raw
+    # target intact. See ADR 0034.
+    from app.data.garch_residual import compute_for_event as _garch_compute_for_event
+
+    garch_result = _garch_compute_for_event(
+        dates=asset_series.dates,
+        closes=asset_series.close,
+        event_date=as_of_date,
+        forward_realized_vol_10d=forward_vol_10d,
+    )
     concurrent_macro = _has_concurrent_macro_release(
         event_date,
         asset_series,
@@ -1391,6 +1419,42 @@ def _build_event_rows(
         pre_meeting = compute_pre_meeting_features(
             rates_lookup, asset_series.dates, event_date=as_of_date
         )
+
+    # #443 statement-delta. Only fires when a strict-prior statement is
+    # available (cold-start of the corpus, or non-statement event kinds
+    # like minutes / press_conference, get a null triple + missing flag).
+    # The encoder pass is opt-in via ``delta_encoder``; without one, the
+    # text spans are stamped on the row and the embedding column carries
+    # ``None``.
+    statement_delta_inserted: str | None = None
+    statement_delta_deleted: str | None = None
+    statement_delta_substituted: str | None = None
+    statement_delta_embedding: list[float] | None = None
+    if doc.event_kind == "statement" and prior_statement_text:
+        delta = compute_delta_for_event(
+            current_text=doc.text,
+            prior_text=prior_statement_text,
+            encode_text=delta_encoder,
+        )
+        if delta is not None:
+            statement_delta_inserted = delta.inserted_text
+            statement_delta_deleted = delta.deleted_text
+            # The substituted-pairs list is JSON-serialised on the column
+            # so the parquet stays a flat string surface. A consumer
+            # reading the column re-parses with ``json.loads`` to get back
+            # the ``list[tuple[str, str]]`` structure.
+            statement_delta_substituted = json.dumps(
+                delta.substituted_pairs, separators=(",", ":"), sort_keys=False
+            )
+            statement_delta_embedding = (
+                list(delta.embedding) if delta.embedding is not None else None
+            )
+
+    # #444 vote tally. The block fires only on statement-kind rows --
+    # the vote is in the FOMC statement document, not in minutes /
+    # speeches / press conferences. Non-statement rows carry None.
+    if vote_tally is None and doc.event_kind == "statement":
+        vote_tally = parse_vote_tally(doc.text)
 
     rows: list[dict[str, Any]] = []
     for h in horizons:
@@ -1441,6 +1505,21 @@ def _build_event_rows(
                 "forward_realized_vol_10d": (
                     float(forward_vol_10d) if forward_vol_10d is not None else None
                 ),
+                # #236 GARCH(1,1)-residual decomposition. See
+                # ``app.data.garch_residual`` + ADR 0034. Both columns
+                # are nullable: ``baseline`` is None when GARCH did not
+                # converge or the strict-prior window is short, and the
+                # residual additionally requires a non-null raw target.
+                "forward_realized_vol_10d_garch_baseline": (
+                    float(garch_result.baseline)
+                    if garch_result.baseline is not None
+                    else None
+                ),
+                "forward_realized_vol_10d_garch_residual": (
+                    float(garch_result.residual)
+                    if garch_result.residual is not None
+                    else None
+                ),
                 "concurrent_macro_release": bool(concurrent_macro),
                 "intra_meeting_stance_shift": float(
                     intra_meeting_shift["intra_meeting_stance_shift"]
@@ -1490,6 +1569,35 @@ def _build_event_rows(
                 ),
                 "pre_meeting_days_since_last_rate_change": _pre_meeting_field(
                     pre_meeting, "pre_meeting_days_since_last_rate_change"
+                ),
+                # --- #443 statement-delta (redline) text spans + embedding ---
+                "statement_delta_inserted": statement_delta_inserted,
+                "statement_delta_deleted": statement_delta_deleted,
+                "statement_delta_substituted_pairs": statement_delta_substituted,
+                "statement_delta_embedding": statement_delta_embedding,
+                # --- #444 vote tally + dissent structural columns ---
+                "votes_for": (
+                    int(vote_tally.votes_for) if vote_tally is not None else None
+                ),
+                "votes_against": (
+                    int(vote_tally.votes_against)
+                    if vote_tally is not None
+                    else None
+                ),
+                "dissent_count": (
+                    int(vote_tally.dissent_count)
+                    if vote_tally is not None
+                    else None
+                ),
+                "is_unanimous": (
+                    bool(vote_tally.is_unanimous)
+                    if vote_tally is not None
+                    else None
+                ),
+                "dissent_direction": (
+                    vote_tally.dissent_direction
+                    if vote_tally is not None
+                    else None
                 ),
             }
         )
@@ -1590,6 +1698,9 @@ COLUMN_ORDER = (
     "direction_t1d",
     "volatility_shift",
     "forward_realized_vol_10d",
+    # #236 GARCH(1,1)-residual variant of the forward-vol target.
+    "forward_realized_vol_10d_garch_baseline",
+    "forward_realized_vol_10d_garch_residual",
     "concurrent_macro_release",
     "intra_meeting_stance_shift",
     "intra_meeting_certainty_shift",
@@ -1612,6 +1723,23 @@ COLUMN_ORDER = (
     "pre_meeting_implied_cut_prob",
     "pre_meeting_implied_pause_prob",
     "pre_meeting_days_since_last_rate_change",
+    # #443 statement-delta (redline). Three text spans + a nullable
+    # mean-pooled embedding vector. The embedding is populated only when
+    # the build pass wires in a delta_encoder; otherwise the column
+    # carries None and the loader collapses to the missing-1.0 slot.
+    "statement_delta_inserted",
+    "statement_delta_deleted",
+    "statement_delta_substituted_pairs",
+    "statement_delta_embedding",
+    # #444 vote tally + dissent. Structural columns; the vote IS the
+    # event so no leak surface. Five fields: counts (for/against),
+    # alias dissent_count, is_unanimous boolean, and the inferred
+    # dissent_direction ("hawkish_dissent" / "dovish_dissent" / None).
+    "votes_for",
+    "votes_against",
+    "dissent_count",
+    "is_unanimous",
+    "dissent_direction",
 )
 
 
@@ -1636,6 +1764,7 @@ def build_event_rows(
     rates_panel_path: Path | str | None = None,
     rates_lookup: RatesPanelLookup | None = None,
     rates_horizon: int = 5,
+    delta_encoder: Any | None = None,
 ) -> pd.DataFrame:
     """Build the events DataFrame for one training package.
 
@@ -1741,8 +1870,28 @@ def build_event_rows(
         if resolved_rates_path is not None:
             rates_lookup = load_rates_panel_lookup(resolved_rates_path)
 
+    # #443 strict-prior statement index. Built once over the
+    # preferred-statement set so each event can read its own
+    # immediately-prior statement text without a quadratic re-scan. The
+    # selector asserts ``prior.event_date < this.event_date`` so a
+    # same-date prior never enters the diff window.
+    statement_text_index: list[tuple[str, str]] = sorted(
+        (
+            (str(d.event_date), d.text)
+            for d in docs
+            if d.event_kind == "statement" and d.text
+        ),
+        key=lambda pair: pair[0],
+    )
+
     out_rows: list[dict[str, Any]] = []
     for doc in docs:
+        prior_statement_text: str | None = None
+        if doc.event_kind == "statement":
+            prior_statement_text = select_prior_statement_text(
+                event_date=str(doc.event_date),
+                prior_index=statement_text_index,
+            )
         rows = _build_event_rows(
             doc,
             asset=asset,
@@ -1757,6 +1906,8 @@ def build_event_rows(
             cross_asset_lookup=cross_asset_lookup,
             rates_lookup=rates_lookup,
             rates_horizon=rates_horizon,
+            prior_statement_text=prior_statement_text,
+            delta_encoder=delta_encoder,
         )
         if not rows:
             summary.dropped_no_prior_window += 1

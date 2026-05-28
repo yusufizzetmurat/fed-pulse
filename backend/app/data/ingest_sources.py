@@ -629,7 +629,7 @@ def _iter_gss_factors_records(
                 label="",  # factor axis is continuous; no categorical stance label
                 license_scope="research_only",
                 citation_ref="gurkaynak_sack_swanson_2005_ijcb",
-                source_type="fomc_statement",
+                source_type="gss_factor_decomposition",
             )
             if built is None:
                 continue
