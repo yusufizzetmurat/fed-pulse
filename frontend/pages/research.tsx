@@ -29,6 +29,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fetchResearchArtifacts, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { errorMessage } from "@/lib/analyze/errors";
 import type {
   ArtifactFile,
   CrossBankTransferSection,
@@ -433,7 +434,9 @@ function ArtifactsExplorer({
               <span className="text-xs text-muted-foreground">{files.length} files</span>
             </div>
             {files.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No files emitted yet.</p>
+              <p className="text-xs text-muted-foreground">
+                No files in this section. Run the relevant pipeline to populate it.
+              </p>
             ) : (
               <ul className="space-y-1.5">
                 {files.slice(0, 20).map((file) => (
@@ -478,7 +481,7 @@ export default function ResearchPage() {
         if (!cancelled) setData(result);
       })
       .catch((err) => {
-        if (!cancelled) toast.error((err as Error).message || "Failed to load research artefacts.");
+        if (!cancelled) toast.error(errorMessage(err, "Failed to load research artefacts."));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

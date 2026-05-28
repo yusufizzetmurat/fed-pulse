@@ -261,8 +261,8 @@ function ModelsSection() {
         ) : data.length === 0 ? (
           <EmptyState
             variant="inline"
-            title="No model files on disk"
-            description="The backend models directory is empty. Train a model and drop the file into the path above."
+            title="No model files on disk."
+            description="Train a model and drop the checkpoint into the path above to make it available here."
           />
         ) : (
           <div className="space-y-4">

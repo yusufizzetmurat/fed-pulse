@@ -178,11 +178,11 @@ export function TrajectoryPanel({
         <CardContent>
           <EmptyState
             variant="inline"
-            title="Trajectory panel offline"
+            title="Trajectory model isn't loaded."
             description={
               error
-                ? `Backend reported: ${error}`
-                : "No trajectory model loaded on this host."
+                ? "Check the Settings page for the active checkpoint."
+                : "Check the Settings page for the active checkpoint."
             }
           />
         </CardContent>
@@ -203,11 +203,11 @@ export function TrajectoryPanel({
         <CardContent>
           <EmptyState
             variant="inline"
-            title="Trajectory model not loaded"
+            title="Trajectory model isn't loaded."
             description={
               <span>
-                Train and load the trajectory model against the training corpus to populate
-                this panel.
+                Train the trajectory model against the corpus and load it from the Settings
+                page to populate this panel.
               </span>
             }
           />

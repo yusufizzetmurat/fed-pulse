@@ -108,7 +108,7 @@ export function PolicyActionCard({ action }: PolicyActionCardProps) {
           </p>
         ) : (
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Balance sheet stance unavailable
+            Balance sheet stance not detected in this statement.
           </p>
         )}
       </CardContent>

@@ -224,11 +224,11 @@ export function HistoricalAnalogPanel({
         <EmptyState
           variant="card"
           icon={<History className="h-5 w-5" />}
-          title="Analog index not loaded"
+          title="No analogs available."
           description={
             <span>
-              The historical analog index is not available. Train and load the retrieval
-              model against the training corpus, then refresh.
+              The retrieval bundle is empty or not loaded. Train and load the retrieval model
+              against the training corpus, then refresh.
             </span>
           }
         />

@@ -40,6 +40,7 @@ import {
   fetchHistoryRun,
   resolveApiBaseUrl,
 } from "@/lib/analyze/api";
+import { errorMessage } from "@/lib/analyze/errors";
 import {
   REGIME_CLASSES,
   aggregateRegimePerformance,
@@ -145,7 +146,7 @@ export default function PerformancePage() {
         setRows(records);
       } catch (err) {
         if (!signal.aborted) {
-          toast.error((err as Error).message || "Failed to load performance data.");
+          toast.error(errorMessage(err, "Failed to load performance data."));
         }
       } finally {
         if (!signal.aborted) setLoading(false);
@@ -391,8 +392,8 @@ export default function PerformancePage() {
             </div>
           ) : rows.length === 0 ? (
             <EmptyState
-              title="No runs in history"
-              description="Submit analyses on the Workspace to populate this view."
+              title="No runs in history."
+              description="Use the Workspace to analyze a statement and populate this view."
               action={
                 <Button asChild size="sm" variant="outline">
                   <Link href="/">Open Workspace</Link>
