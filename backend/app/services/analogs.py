@@ -67,7 +67,23 @@ class _AnalogsState:
         return self.index.encoder_alias or "finbert_fed_adjacent_xbank_dapt_retrieval"
 
 
-_state: _AnalogsState | None = None
+@dataclass(frozen=True)
+class _LoadFailure:
+    """Sticky sentinel cached when the bundle/encoder cannot be loaded.
+
+    Distinct from the ``None`` returned by :func:`get_state` so the cache
+    can tell "never tried" from "tried and failed". Per #410: once a
+    failure is cached, subsequent ``get_state`` calls return ``None``
+    without re-attempting the load and without re-emitting the warning,
+    so a broken bundle on a sweep does not flood logs with one stack
+    trace per event.
+    """
+
+    reason: str
+
+
+_UNSET: Any = object()
+_state: Any = _UNSET
 _state_lock = threading.Lock()
 
 
@@ -113,24 +129,26 @@ def bundle_available() -> bool:
     )
 
 
-def _load_state() -> _AnalogsState | None:
+def _load_state() -> _AnalogsState | _LoadFailure:
     """Build the singleton from the persisted bundle.
 
-    Returns ``None`` when the bundle is missing (so /analyze/analogs
-    can degrade to ``available=False``) or when the encoder fails to
-    load. Logs the failure either way so a broken bundle is visible in
-    uvicorn output without taking the worker down.
+    Returns a :class:`_LoadFailure` sentinel when the bundle is missing
+    or when the encoder fails to load. The sentinel is cached by
+    :func:`get_state` so a sweep against a broken bundle does not
+    re-attempt the load (and re-emit the stack trace) per event — see
+    #410. The first call logs once at WARNING with a structured reason;
+    subsequent calls return silently.
     """
 
     bundle_dir = _resolve_bundle_dir()
     try:
         loaded_index = load_index(bundle_dir)
     except FileNotFoundError:
-        _logger.info("analogs_bundle_missing path=%s", bundle_dir)
-        return None
-    except Exception:  # pragma: no cover — guarded so a malformed parquet does not 500 the worker
-        _logger.warning("analogs_index_load_failed path=%s", bundle_dir, exc_info=True)
-        return None
+        return _LoadFailure(reason=f"bundle_missing path={bundle_dir}")
+    except Exception as exc:  # pragma: no cover — guarded so a malformed parquet does not 500 the worker
+        return _LoadFailure(
+            reason=f"index_load_failed path={bundle_dir} error={type(exc).__name__}: {exc}"
+        )
 
     checkpoint_dir = _resolve_checkpoint_dir(bundle_dir)
     try:
@@ -150,11 +168,13 @@ def _load_state() -> _AnalogsState | None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
         model.eval()
-    except Exception:
-        _logger.warning(
-            "analogs_encoder_load_failed checkpoint=%s", checkpoint_dir, exc_info=True
+    except Exception as exc:
+        return _LoadFailure(
+            reason=(
+                f"encoder_load_failed checkpoint={checkpoint_dir} "
+                f"error={type(exc).__name__}: {exc}"
+            )
         )
-        return None
 
     return _AnalogsState(
         tokenizer=tokenizer,
@@ -167,23 +187,42 @@ def _load_state() -> _AnalogsState | None:
 
 
 def get_state() -> _AnalogsState | None:
-    """Return the cached analogs state, building it on first call."""
+    """Return the cached analogs state, building it on first call.
+
+    Returns ``None`` when no state could be loaded. A failed load is
+    cached as a sticky :class:`_LoadFailure` sentinel so subsequent
+    calls return ``None`` without re-attempting the load and without
+    re-emitting the warning — call :func:`reset_state` (or restart the
+    worker) to clear the sticky failure once the environment is fixed.
+    """
 
     global _state
-    if _state is not None:
-        return _state
+    cached = _state
+    if cached is not _UNSET:
+        return None if isinstance(cached, _LoadFailure) else cached
     with _state_lock:
-        if _state is None:
-            _state = _load_state()
-        return _state
+        cached = _state
+        if cached is not _UNSET:
+            return None if isinstance(cached, _LoadFailure) else cached
+        loaded = _load_state()
+        _state = loaded
+        if isinstance(loaded, _LoadFailure):
+            _logger.warning("analogs_load_failed reason=%s", loaded.reason)
+            return None
+        return loaded
 
 
 def reset_state() -> None:
-    """Drop the singleton so the next call rebuilds (test hook + refresh)."""
+    """Drop the singleton so the next call rebuilds (test hook + refresh).
+
+    Also clears a sticky :class:`_LoadFailure` cached by #410, so an
+    operator who fixed the underlying breakage can recover without a
+    process restart.
+    """
 
     global _state
     with _state_lock:
-        _state = None
+        _state = _UNSET
 
 
 def install_state(state: _AnalogsState) -> None:
