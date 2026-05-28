@@ -43,10 +43,19 @@ from app.training.sep_features import (  # noqa: E402
 )
 
 
-def _row(meeting_date: str, *, cy: float, lr: float, hi: float, lo: float) -> dict:
+def _row(
+    meeting_date: str,
+    *,
+    cy: float,
+    lr: float,
+    hi: float,
+    lo: float,
+    ny: float | None = None,
+) -> dict:
     return {
         "meeting_date": meeting_date,
         "ffr_median_current_year": cy,
+        "ffr_median_next_year": ny,
         "ffr_median_longer_run": lr,
         "ffr_range_upper_current": hi,
         "ffr_range_lower_current": lo,
@@ -58,14 +67,15 @@ def test_sep_release_meeting_sets_flag_one() -> None:
 
     event_date = _dt.date(2024, 3, 20)
     lookup = {
-        "2023-12-13": _row("2023-12-13", cy=5.4, lr=2.5, hi=5.6, lo=5.4),
-        "2024-03-20": _row("2024-03-20", cy=4.6, lr=2.6, hi=4.9, lo=4.4),
+        "2023-12-13": _row("2023-12-13", cy=5.4, ny=4.6, lr=2.5, hi=5.6, lo=5.4),
+        "2024-03-20": _row("2024-03-20", cy=4.6, ny=3.9, lr=2.6, hi=4.9, lo=4.4),
     }
     out = compute_sep_features_for_event(event_date=event_date, sep_lookup=lookup)
     assert out is not None
     # The matched release is the supervised event's own SEP; the values
     # are observable from the document released at T.
     assert out.ffr_median_current_year == pytest.approx(4.6)
+    assert out.ffr_median_next_year == pytest.approx(3.9)
     assert out.ffr_median_longer_run == pytest.approx(2.6)
     assert out.ffr_range_current == pytest.approx(0.5)
     assert out.sep_release_flag == 1.0
@@ -76,14 +86,15 @@ def test_sep_forward_fill_on_non_sep_meeting_sets_flag_zero() -> None:
 
     event_date = _dt.date(2024, 5, 1)  # not an SEP meeting (May)
     lookup = {
-        "2023-12-13": _row("2023-12-13", cy=5.4, lr=2.5, hi=5.6, lo=5.4),
-        "2024-03-20": _row("2024-03-20", cy=4.6, lr=2.6, hi=4.9, lo=4.4),
+        "2023-12-13": _row("2023-12-13", cy=5.4, ny=4.6, lr=2.5, hi=5.6, lo=5.4),
+        "2024-03-20": _row("2024-03-20", cy=4.6, ny=3.9, lr=2.6, hi=4.9, lo=4.4),
     }
     out = compute_sep_features_for_event(event_date=event_date, sep_lookup=lookup)
     assert out is not None
     # The matched release is the March SEP -- the most recent prior.
     # Values carry forward; release flag reads 0.0.
     assert out.ffr_median_current_year == pytest.approx(4.6)
+    assert out.ffr_median_next_year == pytest.approx(3.9)
     assert out.ffr_median_longer_run == pytest.approx(2.6)
     assert out.ffr_range_current == pytest.approx(0.5)
     assert out.sep_release_flag == 0.0
@@ -94,7 +105,7 @@ def test_sep_cold_start_returns_none() -> None:
 
     event_date = _dt.date(2010, 1, 27)
     lookup = {
-        "2012-03-13": _row("2012-03-13", cy=0.25, lr=4.25, hi=0.5, lo=0.0),
+        "2012-03-13": _row("2012-03-13", cy=0.25, ny=0.75, lr=4.25, hi=0.5, lo=0.0),
     }
     out = compute_sep_features_for_event(event_date=event_date, sep_lookup=lookup)
     assert out is None
@@ -105,16 +116,17 @@ def test_sep_strict_prior_filter_drops_future_releases() -> None:
 
     event_date = _dt.date(2024, 1, 31)  # non-SEP meeting (January)
     lookup = {
-        "2023-12-13": _row("2023-12-13", cy=5.4, lr=2.5, hi=5.6, lo=5.4),
+        "2023-12-13": _row("2023-12-13", cy=5.4, ny=4.6, lr=2.5, hi=5.6, lo=5.4),
         # March 2024 SEP post-dates the supervised event; the composer
         # must NOT see it as the matched release.
-        "2024-03-20": _row("2024-03-20", cy=4.6, lr=2.6, hi=4.9, lo=4.4),
+        "2024-03-20": _row("2024-03-20", cy=4.6, ny=3.9, lr=2.6, hi=4.9, lo=4.4),
     }
     out = compute_sep_features_for_event(event_date=event_date, sep_lookup=lookup)
     assert out is not None
     # Without the strict-prior gate the composer would pick March; with
     # the gate it picks December and reads ``release_flag = 0.0``.
     assert out.ffr_median_current_year == pytest.approx(5.4)
+    assert out.ffr_median_next_year == pytest.approx(4.6)
     assert out.sep_release_flag == 0.0
 
 
@@ -123,25 +135,54 @@ def test_sep_range_missing_one_bound_collapses_to_zero() -> None:
 
     event_date = _dt.date(2024, 3, 20)
     lookup = {
-        "2024-03-20": _row("2024-03-20", cy=4.6, lr=2.6, hi=4.9, lo=None),
+        "2024-03-20": _row("2024-03-20", cy=4.6, ny=3.9, lr=2.6, hi=4.9, lo=None),
     }
     out = compute_sep_features_for_event(event_date=event_date, sep_lookup=lookup)
     assert out is not None
     assert out.ffr_range_current == 0.0
 
 
+def test_sep_next_year_missing_collapses_to_zero() -> None:
+    """A pre-2014 SEP row without the year-specific median -> slot = 0.0.
+
+    #415 restoration: the next-year median is pulled per release from
+    FRED's year-specific ``FEDTARMD<YYYY>`` series. The earliest
+    vintage is 2014, so SEPs released in 2012-2013 leave the slot
+    ``None`` in the parquet. The composer must collapse the missing
+    scalar to ``0.0`` without poisoning the rest of the block.
+    """
+
+    event_date = _dt.date(2013, 3, 20)
+    lookup = {
+        "2013-03-20": _row(
+            "2013-03-20",
+            cy=0.25,
+            lr=4.25,
+            hi=0.5,
+            lo=0.0,
+            ny=None,
+        ),
+    }
+    out = compute_sep_features_for_event(event_date=event_date, sep_lookup=lookup)
+    assert out is not None
+    assert out.ffr_median_next_year == 0.0
+    assert out.ffr_median_current_year == pytest.approx(0.25)
+    assert out.sep_release_flag == 1.0
+
+
 def test_sep_features_as_list_layout() -> None:
-    """``as_list`` returns the documented six-element layout."""
+    """``as_list`` returns the documented five-element layout."""
 
     fv = SepFeatures(
         ffr_median_current_year=4.6,
+        ffr_median_next_year=3.9,
         ffr_median_longer_run=2.6,
         ffr_range_current=0.5,
         sep_release_flag=1.0,
     )
     payload = fv.as_list()
     assert len(payload) == SEP_FEATURE_DIM
-    assert payload == [4.6, 2.6, 0.5, 1.0]
+    assert payload == [4.6, 3.9, 2.6, 0.5, 1.0]
 
 
 def test_sep_projections_range_missing_input() -> None:
@@ -150,6 +191,7 @@ def test_sep_projections_range_missing_input() -> None:
     proj = SepProjections(
         meeting_date=_dt.date(2024, 3, 20),
         ffr_median_current_year=4.6,
+        ffr_median_next_year=3.9,
         ffr_median_longer_run=2.6,
         ffr_range_upper_current=None,
         ffr_range_lower_current=4.4,
@@ -198,7 +240,7 @@ def test_as_rich_list_populated_appends_sep_block() -> None:
     only-SEP-on case slices at the dynamic offset below.
     """
 
-    block = [4.6, 2.6, 0.5, 1.0]
+    block = [4.6, 3.9, 2.6, 0.5, 1.0]
     fv = FeatureVector(
         date="2024-03-20",
         sentiment_score=0.0,
@@ -269,7 +311,7 @@ def test_sep_block_appends_after_regime_block_when_both_on() -> None:
     """Combined emission: regime first, then SEP, past ``RICH_FEATURE_SIZE``."""
 
     regime = [1.0, 0.0, -1.0]
-    sep = [4.6, 2.6, 0.5, 1.0]
+    sep = [4.6, 3.9, 2.6, 0.5, 1.0]
     fv = FeatureVector(
         date="2024-03-20",
         sentiment_score=0.0,
@@ -449,6 +491,7 @@ def loader_package(tmp_path: Path, monkeypatch) -> Path:
         {
             "meeting_date": "2023-12-13",
             "ffr_median_current_year": 5.4,
+            "ffr_median_next_year": 4.6,
             "ffr_median_longer_run": 2.5,
             "ffr_range_upper_current": 5.6,
             "ffr_range_lower_current": 5.4,
@@ -456,6 +499,7 @@ def loader_package(tmp_path: Path, monkeypatch) -> Path:
         {
             "meeting_date": "2024-03-20",
             "ffr_median_current_year": 4.6,
+            "ffr_median_next_year": 3.9,
             "ffr_median_longer_run": 2.6,
             "ffr_range_upper_current": 4.9,
             "ffr_range_lower_current": 4.4,
@@ -463,6 +507,7 @@ def loader_package(tmp_path: Path, monkeypatch) -> Path:
         {
             "meeting_date": "2024-12-18",
             "ffr_median_current_year": 4.4,
+            "ffr_median_next_year": 3.4,
             "ffr_median_longer_run": 3.0,
             "ffr_range_upper_current": 4.6,
             "ffr_range_lower_current": 4.4,
@@ -804,24 +849,190 @@ def test_sep_parquet_fixture_csv_round_trips(tmp_path: Path) -> None:
 
     csv_path = tmp_path / "sep_projections.csv"
     csv_path.write_text(
-        "meeting_date,ffr_median_current_year,"
+        "meeting_date,ffr_median_current_year,ffr_median_next_year,"
         "ffr_median_longer_run,ffr_range_upper_current,"
         "ffr_range_lower_current\n"
-        "2024-03-20,4.625,2.625,4.875,4.375\n"
-        "2024-06-12,5.125,2.750,5.250,4.875\n",
+        "2024-03-20,4.625,3.875,2.625,4.875,4.375\n"
+        "2024-06-12,5.125,4.125,2.750,5.250,4.875\n",
         encoding="utf-8",
     )
     rows = load_fixture_csv(csv_path)
     assert len(rows) == 2
     assert rows[0].meeting_date == _dt.date(2024, 3, 20)
     assert rows[0].ffr_median_current_year == pytest.approx(4.625)
+    assert rows[0].ffr_median_next_year == pytest.approx(3.875)
     frame = to_frame(rows)
     assert list(frame["meeting_date"]) == ["2024-03-20", "2024-06-12"]
+    assert list(frame["ffr_median_next_year"]) == [pytest.approx(3.875), pytest.approx(4.125)]
     # Sanity check: the default FRED series mapping covers every
-    # numeric column the parquet schema requires.
+    # stable multi-vintage column the parquet schema requires. The
+    # ``ffr_median_next_year`` column is sourced via a per-release
+    # pivot on the year-specific ``FEDTARMD<YYYY>`` series and does
+    # not appear in the static mapping; see ``_resolve_next_year_series_id``.
     assert set(DEFAULT_FRED_SERIES_IDS.keys()) == {
         "ffr_median_current_year",
         "ffr_median_longer_run",
         "ffr_range_upper_current",
         "ffr_range_lower_current",
     }
+
+
+# ---------------------------------------------------------------------------
+# #415 year-specific FRED pivot for the next-year median slot.
+# ---------------------------------------------------------------------------
+
+
+def test_next_year_series_id_resolves_to_year_plus_one() -> None:
+    """``_resolve_next_year_series_id`` returns ``FEDTARMD<year+1>``."""
+
+    from app.data.sep_projections import _resolve_next_year_series_id
+
+    assert _resolve_next_year_series_id(_dt.date(2024, 9, 18)) == "FEDTARMD2025"
+    assert _resolve_next_year_series_id(_dt.date(2024, 3, 20)) == "FEDTARMD2025"
+    assert _resolve_next_year_series_id(_dt.date(2023, 12, 13)) == "FEDTARMD2024"
+
+
+def test_build_from_fred_responses_pulls_year_specific_next_year_median() -> None:
+    """The FRED path projects ``FEDTARMD<year+1>`` onto each release.
+
+    Hands the builder a synthetic FRED panel with one stable
+    multi-vintage series per scalar and two year-specific
+    ``FEDTARMD<YYYY>`` series, one per supervised release year.
+    The 2024-03 release must read its next-year median off the
+    2025 vintage; the 2025-03 release must read it off the 2026
+    vintage. The on-or-before lookup picks the latest observation
+    stamped at or before the release date for both branches.
+    """
+
+    from app.data.sep_projections import (
+        EARLIEST_NEXT_YEAR_VINTAGE,
+        build_from_fred_responses,
+    )
+    from app.services.fred_client import FredObservation, FredSeriesResponse
+
+    def _series(sid: str, payload: list[tuple[str, float]]) -> FredSeriesResponse:
+        return FredSeriesResponse(
+            series_id=sid,
+            realtime_start="",
+            realtime_end="",
+            observation_start=payload[0][0] if payload else "",
+            observation_end=payload[-1][0] if payload else "",
+            count=len(payload),
+            observations=[
+                FredObservation(date=d, value=v, realtime_start="", realtime_end="")
+                for d, v in payload
+            ],
+        )
+
+    fred_responses = {
+        "FEDTARMD": _series("FEDTARMD", [("2024-03-20", 4.625), ("2025-03-19", 3.875)]),
+        "FEDTARMDLR": _series("FEDTARMDLR", [("2024-03-20", 2.625), ("2025-03-19", 2.875)]),
+        "FEDTARRH": _series("FEDTARRH", [("2024-03-20", 4.875), ("2025-03-19", 4.250)]),
+        "FEDTARRL": _series("FEDTARRL", [("2024-03-20", 4.375), ("2025-03-19", 3.500)]),
+    }
+    next_year_responses = {
+        "FEDTARMD2025": _series("FEDTARMD2025", [("2024-03-20", 3.875)]),
+        "FEDTARMD2026": _series("FEDTARMD2026", [("2025-03-19", 3.125)]),
+    }
+    rows = build_from_fred_responses(
+        fred_responses=fred_responses,
+        sep_meeting_dates=[_dt.date(2024, 3, 20), _dt.date(2025, 3, 19)],
+        next_year_responses=next_year_responses,
+    )
+    assert len(rows) == 2
+    march_2024, march_2025 = rows
+    assert march_2024.ffr_median_next_year == pytest.approx(3.875)
+    assert march_2025.ffr_median_next_year == pytest.approx(3.125)
+    # The static series IDs still resolve the other four scalars; the
+    # next-year pivot is the only series-ID-per-release pull.
+    assert march_2024.ffr_median_current_year == pytest.approx(4.625)
+    assert march_2025.ffr_median_longer_run == pytest.approx(2.875)
+    # Sanity check on the constant guarding the pre-2014 fallback.
+    assert EARLIEST_NEXT_YEAR_VINTAGE == 2014
+
+
+def test_build_from_fred_responses_skips_pre_2014_next_year_pivot() -> None:
+    """Pre-2014 SEPs leave the next-year slot ``None`` (graceful fallback).
+
+    The earliest year-specific median series FRED publishes targets
+    the 2014 vintage. A 2012 SEP would need ``FEDTARMD2013``, which
+    FRED does not publish; the builder must skip the lookup and
+    leave the slot ``None`` rather than wiring a 404 into the row.
+    """
+
+    from app.data.sep_projections import build_from_fred_responses
+    from app.services.fred_client import FredObservation, FredSeriesResponse
+
+    def _series(sid: str, payload: list[tuple[str, float]]) -> FredSeriesResponse:
+        return FredSeriesResponse(
+            series_id=sid,
+            realtime_start="",
+            realtime_end="",
+            observation_start=payload[0][0] if payload else "",
+            observation_end=payload[-1][0] if payload else "",
+            count=len(payload),
+            observations=[
+                FredObservation(date=d, value=v, realtime_start="", realtime_end="")
+                for d, v in payload
+            ],
+        )
+
+    fred_responses = {
+        "FEDTARMD": _series("FEDTARMD", [("2012-03-13", 0.25)]),
+        "FEDTARMDLR": _series("FEDTARMDLR", [("2012-03-13", 4.25)]),
+        "FEDTARRH": _series("FEDTARRH", [("2012-03-13", 0.50)]),
+        "FEDTARRL": _series("FEDTARRL", [("2012-03-13", 0.00)]),
+    }
+    rows = build_from_fred_responses(
+        fred_responses=fred_responses,
+        sep_meeting_dates=[_dt.date(2012, 3, 13)],
+        next_year_responses={},
+    )
+    assert len(rows) == 1
+    assert rows[0].ffr_median_next_year is None
+    # The rest of the row is populated from the stable series so the
+    # block is still useful on a pre-2014 vintage.
+    assert rows[0].ffr_median_current_year == pytest.approx(0.25)
+
+
+def test_build_from_fred_responses_missing_next_year_series_collapses_slot() -> None:
+    """A missing year-specific series at runtime -> ``None`` in the slot.
+
+    Pins the in-vintage fallback: the release year is post-2014 but
+    the ``FEDTARMD<YYYY>`` payload is absent from
+    ``next_year_responses`` (FRED 404 or a transient outage the
+    operator swallowed in ``_hydrate_next_year_responses``). The row
+    still writes; only the next-year scalar collapses.
+    """
+
+    from app.data.sep_projections import build_from_fred_responses
+    from app.services.fred_client import FredObservation, FredSeriesResponse
+
+    def _series(sid: str, payload: list[tuple[str, float]]) -> FredSeriesResponse:
+        return FredSeriesResponse(
+            series_id=sid,
+            realtime_start="",
+            realtime_end="",
+            observation_start=payload[0][0] if payload else "",
+            observation_end=payload[-1][0] if payload else "",
+            count=len(payload),
+            observations=[
+                FredObservation(date=d, value=v, realtime_start="", realtime_end="")
+                for d, v in payload
+            ],
+        )
+
+    fred_responses = {
+        "FEDTARMD": _series("FEDTARMD", [("2024-03-20", 4.625)]),
+        "FEDTARMDLR": _series("FEDTARMDLR", [("2024-03-20", 2.625)]),
+        "FEDTARRH": _series("FEDTARRH", [("2024-03-20", 4.875)]),
+        "FEDTARRL": _series("FEDTARRL", [("2024-03-20", 4.375)]),
+    }
+    rows = build_from_fred_responses(
+        fred_responses=fred_responses,
+        sep_meeting_dates=[_dt.date(2024, 3, 20)],
+        next_year_responses={},  # no FEDTARMD2025 payload available
+    )
+    assert len(rows) == 1
+    assert rows[0].ffr_median_next_year is None
+    assert rows[0].ffr_median_current_year == pytest.approx(4.625)

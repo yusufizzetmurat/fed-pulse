@@ -1,11 +1,20 @@
 """Summary of Economic Projections (SEP) dot-plot features (#215).
 
-Four strict-prior scalars per supervised FOMC event, drawn from the
+Five strict-prior scalars per supervised FOMC event, drawn from the
 SEP series FRED actually publishes:
 
 - ``sep_ffr_median_current_year`` -- median FFR projection for the
   current calendar-year end (``FEDTARMD``). Quarterly cadence (March /
   June / September / December meetings).
+- ``sep_ffr_median_next_year`` -- median FFR projection for the next
+  calendar-year end. FRED publishes this as a year-specific series
+  ``FEDTARMD<YYYY>`` per vintage rather than a single rolling line;
+  the parquet builder pivots per release, pulling
+  ``FEDTARMD<year(release)+1>`` at each SEP meeting and writing the
+  on-or-before value into the row. Pre-2014 vintages lack the year-
+  specific series entirely and the slot collapses to ``0.0`` with
+  the per-row missing flag carrying the signal (#415 restoration of
+  the slot dropped during the #215 reviewer pass).
 - ``sep_ffr_median_longer_run`` -- median longer-run FFR projection
   (``FEDTARMDLR``); the FOMC's neutral-rate estimate.
 - ``sep_ffr_range_current`` -- upper minus lower of the full
@@ -20,11 +29,6 @@ SEP series FRED actually publishes:
   when the values are forward-filled from a prior SEP meeting. Lets
   the model learn the interaction between "fresh projections" and the
   reaction to the released document.
-
-Per-event median for the next calendar year is NOT included. FRED does
-not publish a single multi-vintage "next-year median" series; that
-slot would require year-specific FEDTARMD<YY> pulls pivoted per event
-date. Tracked as a follow-up to #215.
 
 Provenance contract -- ``T (snapshot)`` for SEP-release meetings,
 ``T-Δ`` for forward-filled meetings. The SEP is released simultaneously
@@ -53,7 +57,7 @@ from typing import Any, Mapping
 # release flag in the last slot. The ``RICH_SEP_DIM`` constant on
 # ``app.models.config`` is the single source of truth; this alias
 # gives the helper a local name.
-SEP_FEATURE_DIM: int = 4
+SEP_FEATURE_DIM: int = 5
 
 
 @dataclass(frozen=True)
@@ -67,6 +71,7 @@ class SepProjections:
 
     meeting_date: datetime.date
     ffr_median_current_year: float | None
+    ffr_median_next_year: float | None
     ffr_median_longer_run: float | None
     ffr_range_upper_current: float | None
     ffr_range_lower_current: float | None
@@ -93,12 +98,15 @@ class SepProjections:
 class SepFeatures:
     """Per-event SEP feature block, as the loader writes onto a FeatureVector.
 
-    The first three slots are the scalar SEP statistics; the fourth is
-    the release flag. ``as_list`` returns the four-element list the
-    loader broadcasts onto every bar of the supervised sequence.
+    The first four slots are the scalar SEP statistics (current-year
+    median, next-year median, longer-run median, current-year range);
+    the fifth is the release flag. ``as_list`` returns the five-element
+    list the loader broadcasts onto every bar of the supervised
+    sequence.
     """
 
     ffr_median_current_year: float
+    ffr_median_next_year: float
     ffr_median_longer_run: float
     ffr_range_current: float
     sep_release_flag: float
@@ -106,6 +114,7 @@ class SepFeatures:
     def as_list(self) -> list[float]:
         return [
             float(self.ffr_median_current_year),
+            float(self.ffr_median_next_year),
             float(self.ffr_median_longer_run),
             float(self.ffr_range_current),
             float(self.sep_release_flag),
@@ -147,6 +156,7 @@ def _projection_from_record(record: Mapping[str, Any]) -> SepProjections | None:
     return SepProjections(
         meeting_date=md,
         ffr_median_current_year=_coerce_float(record.get("ffr_median_current_year")),
+        ffr_median_next_year=_coerce_float(record.get("ffr_median_next_year")),
         ffr_median_longer_run=_coerce_float(record.get("ffr_median_longer_run")),
         ffr_range_upper_current=_coerce_float(
             record.get("ffr_range_upper_current")
@@ -199,6 +209,7 @@ def compute_sep_features_for_event(
     range_current = latest.range_current()
     return SepFeatures(
         ffr_median_current_year=float(latest.ffr_median_current_year or 0.0),
+        ffr_median_next_year=float(latest.ffr_median_next_year or 0.0),
         ffr_median_longer_run=float(latest.ffr_median_longer_run or 0.0),
         ffr_range_current=float(range_current or 0.0),
         sep_release_flag=release_flag,

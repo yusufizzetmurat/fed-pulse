@@ -10,16 +10,15 @@ The methodology angle is the structural addition: the input surface should not s
 
 An opt-in `--use-sep` flag on `app.train_forecaster`. Default OFF — the new fields stay `None` and `FeatureVector.as_rich_list()` does NOT append the SEP block; the per-bar feature size on the legacy / opt-out path is byte-identical to pre-#215. When ON, the loader writes a 4-scalar SEP block (plus a paired missing flag) onto every bar of every supervised sequence, and the model factory widens the recurrent core's input projection by `RICH_SEP_DIM + RICH_SEP_MISSING_DIM` in lockstep.
 
-Four scalars + a release flag:
+Five scalars + a release flag:
 
 | Feature | Strict-prior construction |
 | --- | --- |
 | `sep_ffr_median_current_year` | FOMC's median projection for the current calendar-year-end FFR, as published in the meeting's SEP table. FRED series `FEDTARMD`. Forward-filled on non-SEP meetings from the most recent prior release. |
+| `sep_ffr_median_next_year` | FOMC's median projection for the next calendar-year-end FFR. FRED publishes this as a year-specific series per vintage (`FEDTARMD<YYYY>`) rather than a single rolling line — `FEDTARMD2024`, `FEDTARMD2025`, and so on — so the loader pivots per release date: at each SEP meeting it pulls `FEDTARMD<year(release)+1>` and reads the value stamped on the release. A 2024-09-18 release reads its next-year median off `FEDTARMD2025`; a 2025-03-19 release reads off `FEDTARMD2026`. Same forward-fill rule. Pre-2014 vintages lack the year-specific series and the slot collapses to `None`; the per-row missing flag carries the signal. Restored via #415 after the original #215 ship dropped the slot when the rolling-line series `FEDTARMDLM` turned out not to exist on FRED. |
 | `sep_ffr_median_longer_run` | Median longer-run FFR projection — the Committee's neutral-rate estimate. FRED series `FEDTARMDLR`. Same forward-fill. |
 | `sep_ffr_range_current` | Upper minus lower of the all-participants full range for the current-year projection (`FEDTARRH` − `FEDTARRL`). Dispersion measure: small range means views cluster tightly; wide range means substantial disagreement. These are full range bounds, not central-tendency bounds — central tendency trims three high and three low and would need the separate `FEDTARCT*` series this loader does not currently pull. |
 | `sep_release_flag` | `1.0` on the SEP-release meeting itself; `0.0` on forward-fill meetings. Lets the model learn the interaction between a fresh SEP and the reaction to the released document. |
-
-Median for the next calendar-year-end is intentionally NOT in the block. FRED does not publish a single multi-vintage "next-year median" series; that slot would require pulling year-specific `FEDTARMD<YY>` series and pivoting per event date. Tracked as a follow-up to #215.
 
 Plus a paired `sep_features_missing` flag (`1.0` when `--use-sep` is off or when the SEP parquet is absent on disk; `0.0` when populated).
 
