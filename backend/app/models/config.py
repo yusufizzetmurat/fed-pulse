@@ -850,6 +850,18 @@ class FeatureVector:
     # mapper consume the target-row value only. Default ``None`` so
     # regression-only callers stay byte-identical.
     forward_realized_vol_10d: float | None = None
+    # #236 GARCH(1,1)-residual decomposition of the same target. The
+    # baseline is the GARCH(1,1) 10-day-ahead 1-day-equivalent vol
+    # forecast (fitted on strict-prior log returns); the residual is
+    # ``forward_realized_vol_10d - baseline``. Both ride on the target
+    # row alongside the raw forward-vol target; lookback bars carry
+    # ``None`` so the per-fold builder can filter the leading target
+    # the same way the raw vol-regime helper does. ``None`` on every
+    # legacy / non-vol path keeps the dataclass shape round-trip clean
+    # against the determinism regression contract. See ADR 0034 and
+    # ``app.data.garch_residual.compute_for_event``.
+    forward_realized_vol_10d_garch_baseline: float | None = None
+    forward_realized_vol_10d_garch_residual: float | None = None
     # #292 rates-complex targets. Strict-forward 5-day yield change in
     # basis points (raw bps; the loader emits the value the
     # events.parquet column already carries). Populated by the

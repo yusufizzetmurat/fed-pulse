@@ -570,6 +570,16 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
     "forward_realized_vol_10d": Column(
         float, nullable=True, required=False, coerce=True
     ),
+    # #236 GARCH(1,1)-residual decomposition. Nullable for events whose
+    # strict-prior window is shorter than ``MIN_FIT_RETURNS`` (~252 td)
+    # or the QMLE fit failed to converge. required=False so older
+    # events.parquet files (pre #236) validate without the columns.
+    "forward_realized_vol_10d_garch_baseline": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_10d_garch_residual": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
     "concurrent_macro_release": Column(
         bool, nullable=False, required=True, coerce=True
     ),

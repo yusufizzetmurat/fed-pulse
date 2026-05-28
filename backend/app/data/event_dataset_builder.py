@@ -1345,6 +1345,25 @@ def _build_event_rows(
     # assigned here -- the per-fold quantile cutoffs are computed at
     # training time on the train slice to avoid look-ahead leakage.
     forward_vol_10d = _forward_realized_vol(asset_series, as_of_date, window=10)
+    # #236 GARCH(1,1)-residual decomposition of the same target. Fits
+    # GARCH(1,1) on log returns dated strictly before ``as_of_date`` and
+    # forecasts a 1-day-equivalent vol over the same 10-trading-day
+    # forward window. The residual = raw - baseline isolates the
+    # unanticipated component of realised vol given the standard
+    # conditional-variance model. Strict-prior contract: the fit reads
+    # only closes ``< as_of_date``; the forecast is conditional-on-fit
+    # and reads no close at or after ``as_of_date``. Below
+    # ``MIN_FIT_RETURNS`` (252 trading days) or on convergence failure
+    # both columns degrade to None and the supervised row keeps the raw
+    # target intact. See ADR 0034.
+    from app.data.garch_residual import compute_for_event as _garch_compute_for_event
+
+    garch_result = _garch_compute_for_event(
+        dates=asset_series.dates,
+        closes=asset_series.close,
+        event_date=as_of_date,
+        forward_realized_vol_10d=forward_vol_10d,
+    )
     concurrent_macro = _has_concurrent_macro_release(
         event_date,
         asset_series,
@@ -1440,6 +1459,21 @@ def _build_event_rows(
                 "volatility_shift": float(vol_shift) if vol_shift is not None else None,
                 "forward_realized_vol_10d": (
                     float(forward_vol_10d) if forward_vol_10d is not None else None
+                ),
+                # #236 GARCH(1,1)-residual decomposition. See
+                # ``app.data.garch_residual`` + ADR 0034. Both columns
+                # are nullable: ``baseline`` is None when GARCH did not
+                # converge or the strict-prior window is short, and the
+                # residual additionally requires a non-null raw target.
+                "forward_realized_vol_10d_garch_baseline": (
+                    float(garch_result.baseline)
+                    if garch_result.baseline is not None
+                    else None
+                ),
+                "forward_realized_vol_10d_garch_residual": (
+                    float(garch_result.residual)
+                    if garch_result.residual is not None
+                    else None
                 ),
                 "concurrent_macro_release": bool(concurrent_macro),
                 "intra_meeting_stance_shift": float(
@@ -1590,6 +1624,9 @@ COLUMN_ORDER = (
     "direction_t1d",
     "volatility_shift",
     "forward_realized_vol_10d",
+    # #236 GARCH(1,1)-residual variant of the forward-vol target.
+    "forward_realized_vol_10d_garch_baseline",
+    "forward_realized_vol_10d_garch_residual",
     "concurrent_macro_release",
     "intra_meeting_stance_shift",
     "intra_meeting_certainty_shift",
