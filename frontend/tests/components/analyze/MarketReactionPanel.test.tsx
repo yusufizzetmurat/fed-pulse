@@ -53,12 +53,12 @@ function fixture(): MarketReactionPanelResponse {
 }
 
 describe("MarketReactionPanel", () => {
-  it("renders one card per rates head plus the vol regime card", () => {
+  it("renders one card per rates head plus the Volatility Regime card", () => {
     render(<MarketReactionPanel panel={fixture()} />);
     expect(screen.getByText(/2y yield/i)).toBeInTheDocument();
     expect(screen.getByText(/5y yield/i)).toBeInTheDocument();
     expect(screen.getByText(/Terminal rate/i)).toBeInTheDocument();
-    expect(screen.getByText(/Vol regime/i)).toBeInTheDocument();
+    expect(screen.getByText(/Volatility Regime/i)).toBeInTheDocument();
   });
 
   it("shows the directional bucket badge", () => {
@@ -132,6 +132,6 @@ describe("MarketReactionPanel", () => {
         }}
       />,
     );
-    expect(screen.getByText(/Aux classifier unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/Direction model unavailable/i)).toBeInTheDocument();
   });
 });

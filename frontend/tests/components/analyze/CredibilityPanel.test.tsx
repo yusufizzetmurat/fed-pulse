@@ -7,10 +7,10 @@ import { SAMPLE_CREDIBILITY } from "@/lib/analyze/fixtures";
 describe("CredibilityPanel", () => {
   it("renders the four credibility surface items from the fixture", () => {
     render(<CredibilityPanel credibility={SAMPLE_CREDIBILITY} />);
-    expect(screen.getByText(/drift vs. prior 4 statements/i)).toBeInTheDocument();
-    expect(screen.getByText(/realized vs\. stated/i)).toBeInTheDocument();
-    expect(screen.getByText(/market-implied gap/i)).toBeInTheDocument();
-    expect(screen.getByText(/since reversal/i)).toBeInTheDocument();
+    expect(screen.getByText(/shift vs\. last 4 statements/i)).toBeInTheDocument();
+    expect(screen.getByText(/what was done vs\. said/i)).toBeInTheDocument();
+    expect(screen.getByText(/gap to market expectations/i)).toBeInTheDocument();
+    expect(screen.getByText(/time since last reversal/i)).toBeInTheDocument();
     expect(screen.getByText(/14 mo/)).toBeInTheDocument();
   });
 

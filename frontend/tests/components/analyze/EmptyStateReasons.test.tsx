@@ -17,9 +17,9 @@ describe("Inline 'awaiting checkpoint' reasons", () => {
       />,
     );
     expect(
-      screen.getByText(/multi-axis classifier returned no axis labels/i),
+      screen.getByText(/sentiment breakdown returned no labels/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/multi_axis_classifier\.pt/)).toBeInTheDocument();
+    expect(screen.getByText(/active model file is missing/i)).toBeInTheDocument();
   });
 
   it("MultiAxisInterpretation renders the tile grid when at least one axis is present", () => {
@@ -34,7 +34,7 @@ describe("Inline 'awaiting checkpoint' reasons", () => {
       />,
     );
     expect(
-      screen.queryByText(/multi-axis classifier returned no axis labels/i),
+      screen.queryByText(/sentiment breakdown returned no labels/i),
     ).not.toBeInTheDocument();
     expect(screen.getByText(/stance/i)).toBeInTheDocument();
   });
@@ -51,8 +51,8 @@ describe("Inline 'awaiting checkpoint' reasons", () => {
         }}
       />,
     );
-    expect(screen.getByText(/credibility features unpopulated/i)).toBeInTheDocument();
-    expect(screen.getByText(/data\/external\/fred/)).toBeInTheDocument();
+    expect(screen.getByText(/credibility signals not yet available/i)).toBeInTheDocument();
+    expect(screen.getByText(/federal funds rate/i)).toBeInTheDocument();
   });
 
   it("CredibilityKpis renders the KPI tiles when drift trend has real history", () => {
@@ -67,7 +67,7 @@ describe("Inline 'awaiting checkpoint' reasons", () => {
         }}
       />,
     );
-    expect(screen.queryByText(/credibility features unpopulated/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/drift score/i)).toBeInTheDocument();
+    expect(screen.queryByText(/credibility signals not yet available/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/shift score/i)).toBeInTheDocument();
   });
 });
