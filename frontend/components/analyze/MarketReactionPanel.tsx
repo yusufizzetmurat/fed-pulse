@@ -69,7 +69,7 @@ export function RatesReactionCard({ card }: RatesReactionCardProps) {
             </Badge>
           ) : (
             <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-              Aux classifier unavailable
+              Direction model unavailable
             </Badge>
           )}
         </CardTitle>
@@ -77,19 +77,19 @@ export function RatesReactionCard({ card }: RatesReactionCardProps) {
       <CardContent className="space-y-3">
         <div className="space-y-1 text-xs text-muted-foreground">
           <p>
-            5-day post-event change predicted by the rates head.
+            Predicted change over the 5 days after the event.
           </p>
           <p>
             <span className="font-mono">{bandText}</span>
             {card.coverage != null ? (
               <span className="ml-2 text-[10px] uppercase tracking-wide text-muted-foreground">
-                {(card.coverage * 100).toFixed(0)}% conformal
+                {(card.coverage * 100).toFixed(0)}% confidence range
               </span>
             ) : null}
           </p>
           {card.predicted_set != null && card.predicted_set.length > 0 ? (
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              calibrated set: {`{${card.predicted_set.join(", ")}}`}
+              Prediction set: {`{${card.predicted_set.join(", ")}}`}
             </p>
           ) : null}
         </div>
@@ -135,7 +135,7 @@ function VolRegimeCard({ card }: VolRegimeReactionCardProps) {
       <CardHeader className="pb-2">
         <CardDescription className="flex items-center gap-1.5">
           <TrendingUp className="h-3.5 w-3.5" />
-          Vol regime
+          Volatility Regime
         </CardDescription>
         <CardTitle className="flex items-center justify-between text-2xl capitalize">
           <span>{card.regime_label}</span>
@@ -156,12 +156,12 @@ function VolRegimeCard({ card }: VolRegimeReactionCardProps) {
         ))}
         {card.log_rv_point != null ? (
           <p className="text-xs text-muted-foreground pt-1">
-            Dual-head log(RV) prediction: <span className="font-mono">{card.log_rv_point.toFixed(3)}</span>
+            Point estimate (log volatility): <span className="font-mono">{card.log_rv_point.toFixed(3)}</span>
           </p>
         ) : null}
         {card.coverage != null ? (
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            {(card.coverage * 100).toFixed(0)}% conformal
+            {(card.coverage * 100).toFixed(0)}% confidence level
           </p>
         ) : null}
       </CardContent>
@@ -182,9 +182,9 @@ export function MarketReactionPanel({ panel }: MarketReactionPanelProps) {
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-          Market reaction panel
+          Market reaction
         </Badge>
-        <EvidenceLink section="6.15" label="Dual-head methodology · rates + vol cards" />
+        <EvidenceLink section="6.15" label="Method notes · rates and volatility cards" />
       </div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {panel.rates.map((card) => (
