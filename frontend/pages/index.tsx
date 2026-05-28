@@ -362,7 +362,7 @@ export default function WorkspacePage() {
   return (
     <>
       <Head>
-        <title>Fed Pulse — vol-regime workspace</title>
+        <title>Fed Pulse — Volatility Regime workspace</title>
       </Head>
       <div className="min-h-screen bg-background text-foreground">
         <Header />
@@ -377,17 +377,18 @@ export default function WorkspacePage() {
             <div className="space-y-1">
               <h1 className="text-2xl font-semibold tracking-tight">Workspace</h1>
               <p className="max-w-2xl text-sm text-muted-foreground">
-                Paste an FOMC excerpt and the classifier returns a calibrated 10-day vol-regime set,
-                the multi-axis breakdown, sentence attribution, credibility KPIs, and the full pipeline
-                trace. Everything is read off the live backend.
+                Paste an FOMC excerpt and the model returns a calibrated 10-day Volatility
+                Regime prediction, a sentiment breakdown, a per-sentence explanation,
+                credibility checks, and a full pipeline trace. Everything comes from the live
+                backend.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline" className="numeric text-[10px]">
-                horizon · 10d
+                horizon · 10 days
               </Badge>
               <Badge variant="outline" className="numeric text-[10px]">
-                target · vol regime
+                target · Volatility Regime
               </Badge>
             </div>
           </div>
@@ -435,18 +436,19 @@ export default function WorkspacePage() {
                 />
               ) : (
                 <EmptyState
-                  title="Calibrated regime card not in this build"
+                  title="Volatility Regime card not available in this build"
                   description={
                     <div className="space-y-2">
                       <p>
-                        The deployed forecaster is regression-mode — it predicts close and volatility numerically
-                        but does not bucket them into a calibrated{" "}
-                        <span className="numeric">calm / normal / high</span> set. The classification head and its
-                        conformal sidecar (<code>softmax_quantile</code>) ship as part of #216 / Round 1.
+                        The active forecaster is in numeric mode — it predicts close and
+                        volatility as single numbers rather than a calibrated{" "}
+                        <span className="numeric">calm / normal / high</span> prediction set.
+                        The Volatility Regime classifier and its calibration data are not loaded.
                       </p>
                       <p className="text-muted-foreground">
-                        Every other workspace surface below — multi-axis breakdown, sentence attribution,
-                        credibility KPIs, pipeline trace, history strip — is live against the current checkpoint.
+                        Every other workspace panel below — sentiment breakdown, per-sentence
+                        explanation, credibility checks, pipeline trace, and history strip — is
+                        live against the current model.
                       </p>
                     </div>
                   }
@@ -463,8 +465,8 @@ export default function WorkspacePage() {
                 ) : (
                   <EmptyState
                     variant="inline"
-                    title="Multi-axis checkpoint absent"
-                    description="Train and deploy the multi-axis classifier to populate stance, factor, certainty, topic."
+                    title="Sentiment breakdown not loaded"
+                    description="Load the sentiment model to populate stance, factor, certainty, and topic."
                   />
                 )}
                 {result.credibility ? (
@@ -472,8 +474,8 @@ export default function WorkspacePage() {
                 ) : (
                   <EmptyState
                     variant="inline"
-                    title="Credibility features unavailable"
-                    description="No embedding or FRED cache attached on this host yet."
+                    title="Credibility signals unavailable"
+                    description="The required embedding model and historical rate cache are not loaded on this host yet."
                   />
                 )}
               </div>

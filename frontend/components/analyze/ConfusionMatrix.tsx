@@ -22,7 +22,8 @@ export function ConfusionMatrix({ rows, classes, className }: ConfusionMatrixPro
   if (totalResolved === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        No resolved runs yet — submit analyses past their 10d window to populate the matrix.
+        No resolved runs yet — submit analyses whose 10-day window has passed to populate
+        the matrix.
       </p>
     );
   }
@@ -30,12 +31,12 @@ export function ConfusionMatrix({ rows, classes, className }: ConfusionMatrixPro
     <div className={cn("overflow-x-auto", className)}>
       <table className="w-full border-separate" style={{ borderSpacing: 2 }}>
         <caption className="sr-only">
-          Confusion matrix: rows are the realised regime, columns are the predicted argmax.
+          Confusion matrix: rows are the realised regime, columns are the model's top pick.
         </caption>
         <thead>
           <tr>
             <th scope="col" className="px-2 py-1 text-left text-[10px] uppercase tracking-wide text-muted-foreground">
-              truth / pred
+              actual / predicted
             </th>
             {classes.map((klass) => (
               <th
@@ -50,7 +51,7 @@ export function ConfusionMatrix({ rows, classes, className }: ConfusionMatrixPro
               scope="col"
               className="px-2 py-1 text-right text-[10px] uppercase tracking-wide text-muted-foreground"
             >
-              support
+              total
             </th>
           </tr>
         </thead>
@@ -73,7 +74,7 @@ export function ConfusionMatrix({ rows, classes, className }: ConfusionMatrixPro
                       "numeric h-row-sm rounded-sm px-2 text-center text-xs",
                       intensityClass(share),
                     )}
-                    title={`truth ${row.truth} → predicted ${klass}: ${count} / ${row.total}`}
+                    title={`actual ${row.truth} → predicted ${klass}: ${count} / ${row.total}`}
                   >
                     {count}
                   </td>

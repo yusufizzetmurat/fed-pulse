@@ -91,9 +91,9 @@ function familyLabel(family: string): string {
     market: "Market",
     credibility: "Credibility",
     linguistic: "Linguistic",
-    mp_surprise: "MP surprise",
-    multi_axis: "Multi-axis",
-    realized_vol: "Realised vol",
+    mp_surprise: "Policy surprise",
+    multi_axis: "Sentiment breakdown",
+    realized_vol: "Realised volatility",
     cross_asset: "Cross-asset",
     llm: "LLM features",
     trajectory_input: "Trajectory input",
@@ -102,7 +102,7 @@ function familyLabel(family: string): string {
 }
 
 function panelLabel(panel: string): string {
-  if (panel === "regime") return "Vol regime";
+  if (panel === "regime") return "Volatility Regime";
   if (panel.startsWith("rates_")) {
     const head = panel.slice("rates_".length);
     return `Rates · ${head}`;
@@ -114,21 +114,21 @@ function panelLabel(panel: string): string {
 function unavailableCopy(reason: string | null): string {
   switch (reason) {
     case "not_classification_mode":
-      return "Panel inactive on the current checkpoint.";
+      return "Panel inactive on the active model.";
     case "head_not_mounted":
-      return "Head not mounted on the current checkpoint.";
+      return "This prediction is not enabled on the active model.";
     case "no_multi_task_forward":
-      return "Model exposes no multi-task forward.";
+      return "Model does not expose the joint prediction needed for this view.";
     case "inference_kwarg_missing":
-      return "Inference contract mismatch — operator follow-up.";
+      return "Model inputs do not match what the explainer expects.";
     case "ig_runtime_error":
     case "unexpected_exception":
-      return "Attribution runtime error.";
+      return "Explanation engine error.";
     case "missing_stance_logits":
     case "missing_logits":
-      return "Target logits missing from the forward dict.";
+      return "Target prediction missing from the model output.";
     case "bundle_not_loaded":
-      return "Model bundle not loaded.";
+      return "Model not loaded.";
     default:
       return "Explanation unavailable for this panel.";
   }
@@ -143,7 +143,7 @@ export function PanelAttributionRow({ panel }: { panel: XaiPanelAttribution }) {
       >
         <span className="text-xs font-medium">{panelLabel(panel.panel)}</span>
         <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-          Explanation unavailable
+          Explanation not available
         </Badge>
         <span className="ml-2 text-[11px] text-muted-foreground">
           {unavailableCopy(panel.reason)}
@@ -163,7 +163,7 @@ export function PanelAttributionRow({ panel }: { panel: XaiPanelAttribution }) {
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold">{panelLabel(panel.panel)}</span>
         <span className="text-[10px] text-muted-foreground">
-          target: {panel.target} · IG n={panel.n_steps}
+          target: {panel.target} · {panel.n_steps} attribution steps
         </span>
       </div>
       <div className="space-y-1">
@@ -201,23 +201,24 @@ export function XaiPanel({ xai, previewMode }: XaiPanelProps) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Highlighter className="h-4 w-4 text-primary" />
-          Sentence attribution
+          Per-sentence explanation
           {previewMode ? (
             <Badge variant="outline" className="ml-2 text-[10px] uppercase tracking-wide">
-              Preview · fixture
+              Preview · sample data
             </Badge>
           ) : null}
         </CardTitle>
         <CardDescription>
-          Hover any sentence to see the five tokens with the largest attribution.
+          Hover any sentence to see the five words that mattered most.
           {xai.method ? ` Method: ${xai.method}.` : null}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {isEmpty ? (
           <p className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-4 text-sm text-muted-foreground">
-            No salient sentences detected. The attribution method found no tokens above the salience floor — common for very short
-            inputs or text that lies outside the FOMC vocabulary the model was trained on.
+            No high-impact sentences found. The explanation method found no words above the
+            sensitivity threshold. This is common for very short inputs, or text that lies
+            outside the FOMC vocabulary the model was trained on.
           </p>
         ) : (
           <p className="space-x-1.5 text-sm leading-7">
@@ -229,7 +230,7 @@ export function XaiPanel({ xai, previewMode }: XaiPanelProps) {
         {panels.length > 0 ? (
           <div className="space-y-3 border-t border-border pt-3" data-testid="panel-attributions">
             <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              Per-panel feature-family attribution · integrated gradients
+              What drove each panel · grouped by feature type
             </p>
             {panels.map((panel) => (
               <PanelAttributionRow key={panel.panel} panel={panel} />
