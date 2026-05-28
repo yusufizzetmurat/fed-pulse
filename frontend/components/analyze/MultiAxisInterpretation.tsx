@@ -37,7 +37,7 @@ function StanceTile({ stance, history }: { stance: MultiAxisStance; history?: Ar
         </span>
       }
       sparkline={history}
-      caption="Hawkish (+) / Dovish (−)"
+      caption="Hawkish (+) favours tighter policy; Dovish (−) favours easier policy"
     />
   );
 }
@@ -71,7 +71,7 @@ function FactorTile({
       tone={tone}
       sparkline={history}
       sparklineTone={tone}
-      caption="GSS forward-guidance vs target-shock · low-coverage axis (§6.13)"
+      caption="Forward-guidance vs near-term rate shock · limited training data"
     />
   );
 }
@@ -91,7 +91,7 @@ function CertaintyTile({
       delta={certainty.confidence}
       deltaFormatter={(v) => v.toFixed(2)}
       sparkline={history}
-      caption="How firmly the language commits"
+      caption="How firmly the wording commits to a stance"
     />
   );
 }
@@ -110,7 +110,7 @@ function TopicTile({ topic }: { topic: NonNullable<MultiAxisResponse["topic"]> }
       caption={
         topic.secondary?.length
           ? `also: ${topic.secondary.map((t) => t.replace(/_/g, " ")).join(", ")}`
-          : "primary topic"
+          : "main topic"
       }
     />
   );
@@ -130,14 +130,13 @@ export function MultiAxisInterpretation({
     return (
       <div className="rounded-md border border-dashed border-border bg-muted/20 p-4 text-xs text-muted-foreground sm:col-span-2">
         <p className="mb-1 text-[10px] uppercase tracking-wide text-foreground">
-          Multi-axis classifier returned no axis labels
+          Sentiment breakdown returned no labels
         </p>
         <p>
-          The classifier ran but every head returned null. The most common cause is a missing
-          checkpoint at <code className="rounded bg-muted px-1">backend/models/multi_axis_classifier.pt</code>
-          {" "}or a passage shorter than the encoder context window. Train and deploy the
-          checkpoint, or paste a longer FOMC statement to populate stance, factor, certainty,
-          and topic.
+          The sentiment model ran but produced no labels for any axis. This usually means
+          the active model file is missing, or the passage is too short for the model to
+          read. Load a sentiment model, or paste a longer FOMC statement to populate stance,
+          factor, certainty, and topic.
         </p>
       </div>
     );
@@ -147,12 +146,12 @@ export function MultiAxisInterpretation({
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-          Multi-axis interpretation
+          Sentiment breakdown
         </Badge>
-        <EvidenceLink section="6.13" label="Multi-task null + factor-axis gate (#328)" />
+        <EvidenceLink section="6.13" label="Method notes · sentiment axes" />
         {!multiAxis.factor ? (
-          <Badge variant="outline" className="text-[10px]" title="Per §6.13 / #328 the factor card is gated off when training-pool coverage falls below 0.01.">
-            factor · gated off (null result)
+          <Badge variant="outline" className="text-[10px]" title="The factor card is hidden when the training data does not contain enough labelled examples to support a confident prediction.">
+            factor · hidden (low confidence)
           </Badge>
         ) : null}
       </div>
