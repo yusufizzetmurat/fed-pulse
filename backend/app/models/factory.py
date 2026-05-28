@@ -419,7 +419,7 @@ def build_forecaster(
     # so the persisted checkpoint payload carries the dim regardless of
     # which role built the module.
     if not hasattr(model, "symbol_embedding_dim"):
-        model.symbol_embedding_dim = symbol_embedding_dim_value  # type: ignore[assignment]
+        model.symbol_embedding_dim = symbol_embedding_dim_value
     return model
 
 
