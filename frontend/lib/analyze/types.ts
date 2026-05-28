@@ -296,6 +296,23 @@ export interface MarketReactionPanelResponse {
   checkpoint_path: string | null;
 }
 
+// #446 mechanical policy decision extracted from the statement text.
+// Pure regex / keyword pass on the backend — every field is nullable
+// so a non-policy excerpt (press conference Q&A, scraping miss)
+// surfaces as a card with every field null. Units mirror the
+// backend's `PolicyActionCard`: target_range_*_bp in basis points,
+// change_magnitude_bp signed.
+export type PolicyChangeDirection = "hike" | "hold" | "cut";
+export type BalanceSheetState = "expansion" | "tapering" | "runoff";
+
+export interface PolicyActionResponse {
+  target_range_low_bp: number | null;
+  target_range_high_bp: number | null;
+  change_direction: PolicyChangeDirection | null;
+  change_magnitude_bp: number | null;
+  balance_sheet_state: BalanceSheetState | null;
+}
+
 export type AnalogVolRegime = "calm" | "normal" | "high";
 
 export interface AnalogsRequest {
@@ -336,6 +353,10 @@ export interface AnalyzeResult {
   // An empty list rides when the heads are mounted but the per-event
   // forward produced no rows.
   rates_reaction?: RatesReactionCard[] | null;
+  // #446 mechanical policy decision extracted from the statement
+  // text. Null when the request body carried no text or the
+  // extractor degraded; never raises.
+  policy_action?: PolicyActionResponse | null;
   xai?: XaiResponse;
   credibility?: CredibilityResponse;
 }

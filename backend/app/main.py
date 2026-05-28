@@ -95,6 +95,7 @@ from app.services.market_data import (
     fetch_market_snapshot,
     fetch_realized_forward,
 )
+from app.services.policy_action_extractor import extract_policy_action
 from app.services.text_encoder import analyze_text
 
 logger = logging.getLogger(__name__)
@@ -625,6 +626,7 @@ def _build_analyze_response(
         "regime_regression": _build_regime_regression_block(regime_card),
         "regime_classification_status": regime_status,
         "rates_reaction": _safe_rates_reaction(history_vectors),
+        "policy_action": _build_policy_action_card(payload),
     }
     if getattr(payload, "include_xai", False):
         attributions = attribute_text(payload.text)
@@ -719,6 +721,45 @@ def _safe_rates_reaction(
         # falling back to the "no rates heads" empty state.
         return []
     return rates_block
+
+
+def _build_policy_action_card(
+    payload: AnalyzeRequest,
+) -> dict[str, Any] | None:
+    """Extract the mechanical policy decision off the request text (#446).
+
+    Pure regex / keyword pass over ``payload.text`` via
+    :func:`extract_policy_action`. Short-circuits to ``None`` when the
+    request body carries no text (``AnalyzeRequest.text`` is required
+    by the schema but the guard stays so a hand-crafted payload with
+    whitespace-only text still serialises cleanly). Wrapped end-to-end
+    in try/except so a regex misfire or an unexpected dataclass shape
+    can never break /analyze.
+
+    ``prior_target_range_mid_bp`` is left ``None`` here — the request
+    schema carries no prior-statement context and we deliberately do
+    not reach into the persisted history layer for it. The card still
+    surfaces a populated ``change_direction`` whenever the policy verb
+    is named in the prose (``decided to raise`` / ``decided to lower``
+    / ``decided to maintain``); only the prior-midpoint fallback is
+    deferred to a follow-up.
+    """
+
+    text = getattr(payload, "text", None)
+    if not isinstance(text, str) or not text.strip():
+        return None
+    try:
+        action = extract_policy_action(text)
+    except Exception:  # pragma: no cover -- defensive: never break /analyze
+        logger.warning("policy_action_extraction_failed", exc_info=True)
+        return None
+    return {
+        "target_range_low_bp": action.target_range_low_bp,
+        "target_range_high_bp": action.target_range_high_bp,
+        "change_direction": action.change_direction,
+        "change_magnitude_bp": action.change_magnitude_bp,
+        "balance_sheet_state": action.balance_sheet_state,
+    }
 
 
 def _safe_regime_classification(history_vectors: list[Any]) -> dict[str, Any] | None:

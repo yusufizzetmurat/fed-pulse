@@ -482,6 +482,67 @@ class RegimeRegressionCard(BaseModel):
     )
 
 
+class PolicyActionCard(BaseModel):
+    """Mechanical policy decision extracted from the statement text (#446).
+
+    Sibling of :class:`RegimeClassificationCard` on the /analyze
+    response. Pure extraction surface — no model inference, no
+    calibration. The four fields mirror the
+    :class:`app.services.policy_action_extractor.PolicyAction`
+    dataclass and are all optional so a statement that names no target
+    range (press conference Q&A, scraping miss, non-policy text) still
+    serialises as a card with every field ``None``.
+
+    Units: ``target_range_low_bp`` / ``target_range_high_bp`` are in
+    basis points (3.50% → 350). ``change_magnitude_bp`` is signed
+    (positive on a hike, negative on a cut, zero on a hold). The
+    frontend renders the colour by ``change_direction``: hike = red,
+    cut = green, hold = neutral.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    target_range_low_bp: int | None = Field(
+        default=None,
+        description=(
+            "Lower bound of the named target range, in basis points "
+            "(e.g. 350 for a 3.50% lower bound). None when no target "
+            "range is named in the text."
+        ),
+    )
+    target_range_high_bp: int | None = Field(
+        default=None,
+        description="Upper bound of the named target range, in basis points.",
+    )
+    change_direction: Literal["hike", "hold", "cut"] | None = Field(
+        default=None,
+        description=(
+            "Verb-derived direction of the action. None when no policy "
+            "verb is named (e.g. press-conference Q&A) and no prior "
+            "midpoint was provided to the extractor."
+        ),
+    )
+    change_magnitude_bp: int | None = Field(
+        default=None,
+        description=(
+            "Signed change in basis points relative to the prior "
+            "meeting (positive on a hike, negative on a cut, zero on a "
+            "hold). Pulled from in-prose magnitude phrases ('by 25 "
+            "basis points', 'by 1/4 percentage point') first; falls "
+            "back to ``this_mid - prior_mid`` when the caller supplied "
+            "a prior midpoint."
+        ),
+    )
+    balance_sheet_state: Literal["expansion", "tapering", "runoff"] | None = Field(
+        default=None,
+        description=(
+            "Balance-sheet posture extracted from the paragraph that "
+            "names balance-sheet operations. None when the paragraph "
+            "is absent or carries no posture-defining keyword."
+        ),
+    )
+
+
 class InferenceStatusSurface(BaseModel):
     """Structured error surface for the per-card inference helpers (#341).
 
@@ -535,6 +596,14 @@ class AnalyzeResponse(BaseModel):
     # list when the heads exist but the per-event forward produced no
     # rows. Hooked by #293's MarketReactionPanel.
     rates_reaction: list[RatesReactionCard] | None = None
+    # #446 mechanical policy decision extracted from the statement
+    # text. Pure regex / keyword pass — no model inference. None when
+    # the request carries no statement text (defensive; the schema
+    # requires text but the extractor wrapper still short-circuits on
+    # an empty body). Populated for any statement that names a target
+    # range; balance-sheet posture rides off the balance-sheet
+    # paragraph when present.
+    policy_action: PolicyActionCard | None = None
     # #341 sibling status surface so an operator can grep the JSON
     # response for the structured error branch when the regime card
     # degrades. Mutually exclusive with ``regime_classification``
