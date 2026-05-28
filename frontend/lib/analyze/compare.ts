@@ -214,3 +214,46 @@ export function computeMultiAxisDelta(
     topicChanged,
   };
 }
+
+// One-sentence narrative covering the largest absolute Δ on each
+// available axis. Hides quietly when no axis carries a signal.
+export function buildNarrativeSummary(delta: MultiAxisDelta): string | null {
+  type Bullet = { axis: string; magnitude: number; phrase: string };
+  const candidates: Bullet[] = [];
+  if (delta.stanceRankDelta != null && Number.isFinite(delta.stanceRankDelta)) {
+    candidates.push({
+      axis: "stance",
+      magnitude: Math.abs(delta.stanceRankDelta),
+      phrase:
+        delta.stanceRankDelta > 0
+          ? `Run A is more hawkish on rate guidance (+${delta.stanceRankDelta.toFixed(2)})`
+          : delta.stanceRankDelta < 0
+          ? `Run A is more dovish on rate guidance (${delta.stanceRankDelta.toFixed(2)})`
+          : "Stance unchanged",
+    });
+  }
+  if (delta.factorDelta != null && Number.isFinite(delta.factorDelta)) {
+    candidates.push({
+      axis: "factor",
+      magnitude: Math.abs(delta.factorDelta),
+      phrase:
+        delta.factorDelta > 0
+          ? `more hawkish on inflation tone (+${delta.factorDelta.toFixed(2)})`
+          : delta.factorDelta < 0
+          ? `more dovish on inflation tone (${delta.factorDelta.toFixed(2)})`
+          : "inflation tone unchanged",
+    });
+  }
+  // No usable signal — caller suppresses the callout.
+  if (candidates.length === 0) return null;
+  // When every candidate has zero magnitude there is nothing newsworthy
+  // to surface; treat as "no signal" rather than emitting a confusing
+  // "unchanged but unchanged" sentence.
+  if (candidates.every((c) => c.magnitude === 0)) return null;
+  // Sort by absolute magnitude; primary leads, secondary follows.
+  candidates.sort((a, b) => b.magnitude - a.magnitude);
+  const primary = candidates[0];
+  if (candidates.length === 1) return `${primary.phrase}.`;
+  const secondary = candidates[1];
+  return `${primary.phrase} but ${secondary.phrase}.`;
+}
