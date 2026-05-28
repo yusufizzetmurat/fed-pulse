@@ -1800,6 +1800,17 @@ def _load_package_sequences_with_metadata(
         forward_vol_value = _coerce_finite_float(
             row.get("forward_realized_vol_10d")
         )
+        # #236 GARCH(1,1) baseline + residual. Frozen into the events
+        # parquet at build time (see ``app.data.garch_residual``);
+        # the loader only reads them off the row and broadcasts onto
+        # the target slot. Older events.parquet files without these
+        # columns degrade cleanly to ``None`` here.
+        garch_baseline_value = _coerce_finite_float(
+            row.get("forward_realized_vol_10d_garch_baseline")
+        )
+        garch_residual_value = _coerce_finite_float(
+            row.get("forward_realized_vol_10d_garch_residual")
+        )
         # #292 rates-complex strict-forward 5d yield change targets.
         # Each value rides on the same event row alongside
         # forward_realized_vol_10d; the per-fold target builder
@@ -1887,6 +1898,8 @@ def _load_package_sequences_with_metadata(
             sep_block_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
+            vector.forward_realized_vol_10d_garch_baseline = garch_baseline_value
+            vector.forward_realized_vol_10d_garch_residual = garch_residual_value
             vector.target_yield_2y_change_5d = rates_2y_value
             vector.target_yield_5y_change_5d = rates_5y_value
             vector.target_terminal_rate_change_5d = rates_terminal_value
@@ -2533,6 +2546,14 @@ def load_training_sequences_from_package(
         forward_vol_value = _coerce_finite_float(
             row.get("forward_realized_vol_10d")
         )
+        # #236 GARCH(1,1) baseline + residual (see matched walk-forward
+        # site above for the contract).
+        garch_baseline_value = _coerce_finite_float(
+            row.get("forward_realized_vol_10d_garch_baseline")
+        )
+        garch_residual_value = _coerce_finite_float(
+            row.get("forward_realized_vol_10d_garch_residual")
+        )
         # #292 rates-complex strict-forward 5d yield change targets.
         # Each value rides on the same event row alongside
         # forward_realized_vol_10d; the per-fold target builder
@@ -2600,6 +2621,8 @@ def load_training_sequences_from_package(
             sep_block_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
+            vector.forward_realized_vol_10d_garch_baseline = garch_baseline_value
+            vector.forward_realized_vol_10d_garch_residual = garch_residual_value
             vector.target_yield_2y_change_5d = rates_2y_value
             vector.target_yield_5y_change_5d = rates_5y_value
             vector.target_terminal_rate_change_5d = rates_terminal_value

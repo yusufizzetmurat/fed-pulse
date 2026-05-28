@@ -69,6 +69,8 @@ itself a documented training target.
 | `sep_features_missing` | loader flag on the SEP composer | `T (snapshot)` | none | per-row 0/1 mask. `1.0` when `--use-sep` is off (default) or when the SEP-projections parquet is absent on disk (graceful degrade — the code path stays live without the parquet). The conditional-emit contract on `as_rich_list` keeps the per-bar feature size byte-identical to pre-#215 in that case (the block + flag are not emitted at all). |
 | `rich_payload` | loader flag, set after rich-feature attachment | n/a | none | structural flag, not consumed as a numeric feature. |
 | `forward_realized_vol_10d` | `event_dataset_builder._forward_realized_vol` (closes `[T..T+10]`) | **`T+Δ`, future-derived** | none (target) | declared training target under the strict-forward ADR. The loader broadcasts the target-row value onto every bar of the sequence for convenience, but it is **not** emitted by `FeatureVector.as_rich_list` and therefore never enters the model input tensor. Downstream consumers (`collect_forward_vols`, `_build_training_tensors`) only read it off the target row at index `>= SEQUENCE_LENGTH`. Per-fold quantile cutoffs are fit on the train slice only. |
+| `forward_realized_vol_10d_garch_baseline` | `app.data.garch_residual.compute_for_event`: GARCH(1,1) fitted on strict-prior log returns of the asset's close series (closes dated `< event_date`), forecast `horizon=10` days ahead, mean per-step variance square-rooted to a 1-day-equivalent vol. | `T-Δ` (fit window) → 10-step-ahead forecast | none (target-side) | #236 GARCH baseline. The fit consumes only closes strictly before `event_date`; the forecast is conditional-on-fit and reads no close at or after `event_date`. The leak surface is identical to `_volatility_shift`'s pre-event leg. `None` when the strict-prior window is shorter than `MIN_FIT_RETURNS` (~252 td) or the QMLE step does not converge. Same broadcast-but-not-emitted contract as `forward_realized_vol_10d`; only the target row is read by the residual target consumer. See ADR 0034. |
+| `forward_realized_vol_10d_garch_residual` | `app.data.garch_residual.compute_for_event`: `forward_realized_vol_10d − forward_realized_vol_10d_garch_baseline` | **`T+Δ`, future-derived** | none (target) | #236 GARCH-residual variant of the forward-vol target. The residual isolates the unanticipated component of realised vol given the GARCH(1,1) conditional-variance model — the part a hybrid GARCH-NN forecaster predicts after the classical baseline is stripped off. `None` whenever either the raw target or the baseline is `None`. Stored on the events.parquet at build time so the target column is frozen in the training package; same broadcast-but-not-emitted contract as the raw sibling. See ADR 0034. |
 | `target_yield_2y_change_5d` | `data.rates_event_features.forward_yield_change_bps` (t → t+5) | **`T+Δ`, future-derived** | none (target) | rates-head training target. Same broadcast-but-not-emitted pattern as `forward_realized_vol_10d`; not in `as_rich_list` output, only read off the target row by `app.training.rates_targets.build_partition_rates_targets`. |
 | `target_yield_5y_change_5d` | same as above (5y tenor) | **`T+Δ`, future-derived** | none (target) | rates-head training target; same storage / emission contract. |
 | `target_terminal_rate_change_5d` | same as above (terminal-rate proxy) | **`T+Δ`, future-derived** | none (target) | rates-head training target; same storage / emission contract. |
@@ -141,8 +143,10 @@ keep-with-caveat alternative.
 No other `FeatureVector` column reads from a source post-dating
 `row.event_date` beyond the documented training-target columns
 (`forward_realized_vol_10d`, `target_yield_2y_change_5d`,
-`target_yield_5y_change_5d`, `target_terminal_rate_change_5d`, and the
-three `_fomc_attributable` projections added under #305).
+`target_yield_5y_change_5d`, `target_terminal_rate_change_5d`, the
+three `_fomc_attributable` projections added under #305, and the
+`forward_realized_vol_10d_garch_baseline` / `forward_realized_vol_10d_garch_residual`
+decomposition added under #236).
 
 ## Regression test
 
