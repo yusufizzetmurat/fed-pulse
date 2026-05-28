@@ -159,7 +159,7 @@ def _load_state() -> _AnalogsState | _LoadFailure:
         # strictly offline: a malformed or missing directory raises here
         # instead of silently triggering a HF Hub lookup that may hang
         # in air-gapped environments or fetch an unrelated repo.
-        tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
             str(checkpoint_dir), local_files_only=True, trust_remote_code=False
         )
         model = AutoModel.from_pretrained(
