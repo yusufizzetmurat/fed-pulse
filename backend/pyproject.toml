@@ -16,7 +16,12 @@ dependencies = [
   "uvicorn[standard]",
   "pydantic-settings>=2.0",
   "pyyaml>=6.0",
-  "transformers",
+  # transformers 5.x removed `GenerationMixin` from
+  # `transformers.models.auto.auto_factory`, which breaks the multi-axis
+  # encoder loader (post_306 Runpod sweep, #409). Pin to the 4.57+ line
+  # the encoder was last validated on; bump deliberately when 5.x is
+  # vetted end-to-end.
+  "transformers>=4.57,<5",
   "accelerate>=1.1.0",
   "sentence-transformers>=3.0",
   "huggingface_hub>=0.24",
