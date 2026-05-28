@@ -527,6 +527,14 @@ class AnalyzeResponse(BaseModel):
     # prediction + 90% conformal interval as a standalone read for the
     # frontend's "show details" toggle on the regime panel.
     regime_regression: RegimeRegressionCard | None = None
+    # #292 rates-reaction cards. One card per mounted rates head
+    # (2y / 5y / terminal) carrying the bps point + conformal interval
+    # plus the optional directional bucket / APS prediction set when
+    # ``--rates-classification-heads`` was on. ``None`` on a legacy
+    # single-head checkpoint or on a regression-output run; an empty
+    # list when the heads exist but the per-event forward produced no
+    # rows. Hooked by #293's MarketReactionPanel.
+    rates_reaction: list[RatesReactionCard] | None = None
     # #341 sibling status surface so an operator can grep the JSON
     # response for the structured error branch when the regime card
     # degrades. Mutually exclusive with ``regime_classification``

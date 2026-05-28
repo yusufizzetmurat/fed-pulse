@@ -624,6 +624,7 @@ def _build_analyze_response(
         "regime_classification": regime_card,
         "regime_regression": _build_regime_regression_block(regime_card),
         "regime_classification_status": regime_status,
+        "rates_reaction": _safe_rates_reaction(history_vectors),
     }
     if getattr(payload, "include_xai", False):
         attributions = attribute_text(payload.text)
@@ -682,6 +683,42 @@ def _build_regime_regression_block(
     if isinstance(coverage, int | float) and coverage > 0:
         block["coverage"] = float(coverage)
     return block
+
+
+def _safe_rates_reaction(
+    history_vectors: list[Any],
+) -> list[dict[str, Any]] | None:
+    """Build the rates-reaction list off the active checkpoint (#292).
+
+    Reuses :func:`build_market_reaction_panel` to populate the per-head
+    rates cards for #293's panel. Returns ``None`` when the checkpoint
+    mounts no rates heads or the panel builder degrades to a structured
+    status payload (no card data to surface). An empty list rides when
+    the heads exist but the per-event forward produced no rows -- the
+    schema layer treats that as "active, no read" rather than "absent".
+
+    Wrapped end-to-end in try/except so an inference path crash never
+    breaks /analyze.
+    """
+
+    from app.services.forecaster import build_market_reaction_panel
+
+    try:
+        panel = build_market_reaction_panel(history_vectors)
+    except Exception:  # pragma: no cover -- defensive: never break /analyze
+        logger.warning("rates_reaction_failed", exc_info=True)
+        return None
+    if not isinstance(panel, dict):
+        return None
+    rates_block = panel.get("rates")
+    if not isinstance(rates_block, list):
+        return None
+    if not rates_block:
+        # Heads mounted but produced no rows; surface an empty list so
+        # the frontend can render an "active, no read" badge instead of
+        # falling back to the "no rates heads" empty state.
+        return []
+    return rates_block
 
 
 def _safe_regime_classification(history_vectors: list[Any]) -> dict[str, Any] | None:

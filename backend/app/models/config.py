@@ -518,6 +518,17 @@ class ModelConfig:
     # via ``ModelConfig.from_model`` reads it back cleanly off the
     # stashed module attribute.
     rates_head_mode: str = "regression"
+    # #292 auxiliary 3-class direction surface opt-in. ``False`` (default)
+    # mounts only the regression heads on every active rates target; the
+    # response surface emits the regression card with a ``None``
+    # directional_bucket / bucket_probabilities. ``True`` mounts the
+    # paired easing/neutral/tightening classifier alongside each
+    # regression head and wires the CE term into the joint loss when
+    # ``rates_head_mode != "regression"``. The flag stays orthogonal to
+    # ``rates_head_mode``: a run with ``rates_head_mode="dual"`` and
+    # ``rates_aux_classification=False`` is rejected at the factory
+    # because the CE term has no head to land on.
+    rates_aux_classification: bool = False
     # Weight on the regression term in the rates dual-head joint loss.
     # ``1.0`` collapses ``dual`` to regression-only at the loss level;
     # ``0.0`` collapses it to classification-only. The CLI default 0.5
@@ -620,6 +631,9 @@ class ModelConfig:
             ),
             rates_head_mode=str(
                 getattr(model, "rates_head_mode", "regression") or "regression"
+            ),
+            rates_aux_classification=bool(
+                getattr(model, "rates_aux_classification", False)
             ),
             rates_alpha=float(getattr(model, "rates_alpha", 0.5)),
             rates_target_mode=str(
