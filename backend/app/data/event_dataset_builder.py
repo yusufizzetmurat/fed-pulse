@@ -1047,8 +1047,15 @@ def _forward_realized_vol(
         return None
     closes = series.close[on_or_after : on_or_after + window + 1]
     rets = _log_returns(closes)
-    if len(rets) < 2:
+    if len(rets) < 1:
         return None
+    if len(rets) == 1:
+        # window=1 (the auxiliary multi-horizon target). Sample std with
+        # ddof=1 is undefined for a single observation; the standard
+        # daily-RV approximation in this degenerate case is the absolute
+        # log return. The 10d canonical path is unaffected (always 10
+        # returns).
+        return abs(rets[0])
     n = len(rets)
     mean = sum(rets) / n
     return (sum((v - mean) ** 2 for v in rets) / (n - 1)) ** 0.5
@@ -1354,6 +1361,17 @@ def _build_event_rows(
     # assigned here -- the per-fold quantile cutoffs are computed at
     # training time on the train slice to avoid look-ahead leakage.
     forward_vol_10d = _forward_realized_vol(asset_series, as_of_date, window=10)
+    # Multi-horizon auxiliary targets (#480, foundation for the
+    # multi-asset / multi-horizon roadmap). Same generator, parametrised
+    # window. ``10d`` remains the canonical regime target; the auxiliary
+    # horizons ride alongside on the parquet so downstream heads can be
+    # mounted without a rebuild. Each horizon degrades to ``None``
+    # independently when the post-event window runs off the end of the
+    # asset's price series.
+    forward_vol_multi_horizon: dict[int, float | None] = {
+        h: _forward_realized_vol(asset_series, as_of_date, window=h)
+        for h in (1, 3, 5, 20, 30)
+    }
     # #236 GARCH(1,1)-residual decomposition of the same target. Fits
     # GARCH(1,1) on log returns dated strictly before ``as_of_date`` and
     # forecasts a 1-day-equivalent vol over the same 10-trading-day
@@ -1504,6 +1522,35 @@ def _build_event_rows(
                 "volatility_shift": float(vol_shift) if vol_shift is not None else None,
                 "forward_realized_vol_10d": (
                     float(forward_vol_10d) if forward_vol_10d is not None else None
+                ),
+                # Multi-horizon auxiliary targets (#480). Same generator
+                # as the canonical 10d, parametrised window. Independent
+                # null degradation per horizon when the post-event window
+                # runs off the end of the asset price series.
+                "forward_realized_vol_1d": (
+                    float(forward_vol_multi_horizon[1])
+                    if forward_vol_multi_horizon[1] is not None
+                    else None
+                ),
+                "forward_realized_vol_3d": (
+                    float(forward_vol_multi_horizon[3])
+                    if forward_vol_multi_horizon[3] is not None
+                    else None
+                ),
+                "forward_realized_vol_5d": (
+                    float(forward_vol_multi_horizon[5])
+                    if forward_vol_multi_horizon[5] is not None
+                    else None
+                ),
+                "forward_realized_vol_20d": (
+                    float(forward_vol_multi_horizon[20])
+                    if forward_vol_multi_horizon[20] is not None
+                    else None
+                ),
+                "forward_realized_vol_30d": (
+                    float(forward_vol_multi_horizon[30])
+                    if forward_vol_multi_horizon[30] is not None
+                    else None
                 ),
                 # #236 GARCH(1,1)-residual decomposition. See
                 # ``app.data.garch_residual`` + ADR 0034. Both columns
@@ -1698,6 +1745,13 @@ COLUMN_ORDER = (
     "direction_t1d",
     "volatility_shift",
     "forward_realized_vol_10d",
+    # #480 multi-horizon auxiliary targets. Same generator, parametrised
+    # window. 10d remains canonical; these ride alongside.
+    "forward_realized_vol_1d",
+    "forward_realized_vol_3d",
+    "forward_realized_vol_5d",
+    "forward_realized_vol_20d",
+    "forward_realized_vol_30d",
     # #236 GARCH(1,1)-residual variant of the forward-vol target.
     "forward_realized_vol_10d_garch_baseline",
     "forward_realized_vol_10d_garch_residual",

@@ -205,6 +205,10 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             # legacy path.
             use_statement_delta=bool(raw.get("use_statement_delta", False)),
             use_vote_features=bool(raw.get("use_vote_features", False)),
+            # #480 symbol-conditioned regime head. Default 0 keeps the
+            # pre-#480 path byte-identical (no embedding module mounted,
+            # no head-input widening).
+            symbol_embedding_dim=int(raw.get("symbol_embedding_dim", 0) or 0),
         )
     return ModelConfig()
 

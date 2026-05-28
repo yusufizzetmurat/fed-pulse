@@ -166,6 +166,9 @@ def build_forecaster(
             "use_press_conf",
             "use_statement_delta",
             "use_vote_features",
+            # #480 symbol-conditioned regime head is research-only on the
+            # recurrent class. The flat_mlp ctor does not consume it.
+            "symbol_embedding_dim",
         ):
             flat_kwargs.pop(drop, None)
         flat_rates_heads = tuple(
@@ -340,6 +343,14 @@ def build_forecaster(
     # #443/#444 statement-delta + vote-features opt-in flags.
     use_statement_delta_flag = bool(kwargs.pop("use_statement_delta", False))
     use_vote_features_flag = bool(kwargs.pop("use_vote_features", False))
+    # #480 symbol-conditioned regime head. Pop here so the serving
+    # constructor (which does not accept the kwarg in v1) does not
+    # receive it. The research class consumes the kwarg directly to
+    # mount the embedding and widen the regime / log-RV head input.
+    # Serving wiring is deferred to a follow-up alongside the
+    # response-surface picker. Default 0 keeps the legacy path
+    # byte-identical (no embedding module, no widening).
+    symbol_embedding_dim_value = int(kwargs.pop("symbol_embedding_dim", 0) or 0)
     model: ForecasterResearchModel | ForecasterServingModel
     if role == "serving":
         # Serving construction trims the loss-side / sweep-side knobs the
@@ -364,6 +375,7 @@ def build_forecaster(
             use_regime_conditioning=use_regime_conditioning_flag,
             use_sep=use_sep_flag,
             use_press_conf=use_press_conf_flag,
+            symbol_embedding_dim=symbol_embedding_dim_value,
             **kwargs,
         )
     # mypy reads ``nn.Module`` attribute writes as ``Tensor | Module``;
@@ -401,6 +413,13 @@ def build_forecaster(
     # this checkpoint rebuilds with the same loader-tail widths.
     model.use_statement_delta = use_statement_delta_flag  # type: ignore[assignment]
     model.use_vote_features = use_vote_features_flag  # type: ignore[assignment]
+    # #480 round-trip the symbol-embedding dim so
+    # ``ModelConfig.from_model`` recovers it on resume. The research
+    # class set this in its ctor; stash it on the serving instance too
+    # so the persisted checkpoint payload carries the dim regardless of
+    # which role built the module.
+    if not hasattr(model, "symbol_embedding_dim"):
+        model.symbol_embedding_dim = symbol_embedding_dim_value
     return model
 
 
