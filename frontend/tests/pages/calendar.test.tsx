@@ -51,7 +51,12 @@ describe("CalendarPage", () => {
     });
     const { default: CalendarPage } = await import("@/pages/calendar");
     render(<CalendarPage />);
-    await waitFor(() => expect(screen.getByText("2024-11-06")).toBeInTheDocument());
+    // The upcoming date is rendered twice: once in the countdown card
+    // header, once in the list row. Match on the list row's font-mono
+    // <p> only to keep the assertion stable.
+    await waitFor(() =>
+      expect(screen.getAllByText("2024-11-06").length).toBeGreaterThanOrEqual(1),
+    );
     expect(screen.getByText("2024-09-17")).toBeInTheDocument();
     expect(screen.getAllByText(/^scheduled$/i).length).toBeGreaterThanOrEqual(2);
   });

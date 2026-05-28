@@ -289,8 +289,8 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
       </div>
     ) : (
       <p className="text-sm text-muted-foreground">
-        No sentiment breakdown model is loaded. The stance card falls back to the
-        legacy sentiment classifier.
+        Sentiment breakdown model isn't loaded. The stance card falls back to the
+        legacy sentiment classifier — load a sentiment model from the Settings page.
       </p>
     ),
   };

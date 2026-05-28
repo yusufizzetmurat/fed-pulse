@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { resolveApiBaseUrl } from "@/lib/analyze/api";
+import { errorMessage } from "@/lib/analyze/errors";
 
 interface DocumentIngestionTabsProps {
   text: string;
@@ -38,11 +39,7 @@ export function DocumentIngestionTabs({ text, onChange }: DocumentIngestionTabsP
       setLastSource({ kind: response.data.source_kind, meta: response.data.source_metadata });
       toast.success(`Loaded ${response.data.char_count.toLocaleString()} chars from ${response.data.source_kind}`);
     } catch (err) {
-      const detail =
-        (err as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
-        (err as Error).message ||
-        "Failed to parse the document.";
-      toast.error(String(detail));
+      toast.error(errorMessage(err, "Failed to parse the document."));
     } finally {
       setBusy(false);
     }

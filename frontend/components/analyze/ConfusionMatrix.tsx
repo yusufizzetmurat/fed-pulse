@@ -27,8 +27,8 @@ export function ConfusionMatrix({ rows, classes, className, onClassClick, active
   if (totalResolved === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        No resolved runs yet — submit analyses whose 10-day window has passed to populate
-        the matrix.
+        No resolved runs yet. Submit analyses and wait for the 10-day window to close to
+        populate the matrix.
       </p>
     );
   }

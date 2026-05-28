@@ -15,6 +15,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fetchNextFomcForecast, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { errorMessage } from "@/lib/analyze/errors";
 import type {
   NextFomcForecastResponse,
   NextFomcMeetingPrediction,
@@ -150,7 +151,7 @@ function HeadlineCard({
             />
           </div>
         ) : null}
-        <div className="grid grid-cols-6 gap-1.5 text-center">
+        <div className="grid grid-cols-3 gap-1.5 text-center sm:grid-cols-6">
           {data.ordinal_classes.map((cls) => (
             <div key={cls} className="rounded-md border border-border p-2">
               <p className="text-xs text-muted-foreground">{ORDINAL_LABELS[cls] ?? cls}</p>
@@ -190,32 +191,21 @@ function HistoryTable({
       </CardHeader>
       <CardContent className="p-0">
         {recent.length === 0 ? (
-          <p className="px-4 py-6 text-center text-sm text-muted-foreground">No history yet.</p>
+          <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+            No forecast history yet. Train a checkpoint to populate this card.
+          </p>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2 text-left">Meeting</th>
-                <th className="px-4 py-2 text-left">Realised</th>
-                <th className="px-4 py-2 text-left">Predicted</th>
-                <th className="px-4 py-2 text-right">P(predicted)</th>
-                <th className="px-4 py-2 text-center">Hit</th>
-              </tr>
-            </thead>
-            <tbody>
+          <>
+            {/* Mobile: stacked card-per-row to avoid horizontal scroll. */}
+            <ul className="divide-y divide-border md:hidden">
               {recent.map((entry) => {
                 const predicted = entry.predicted_class[primaryModel] ?? "—";
                 const p = entry.probabilities[primaryModel]?.[predicted];
                 const hit = entry.target_class != null && entry.target_class === predicted;
                 return (
-                  <tr key={entry.target_event_date} className="border-b border-border last:border-0">
-                    <td className="px-4 py-2 font-mono text-xs">{entry.target_event_date}</td>
-                    <td className="px-4 py-2">
-                      {entry.target_class ? ORDINAL_LABELS[entry.target_class] ?? entry.target_class : "—"}
-                    </td>
-                    <td className="px-4 py-2">{ORDINAL_LABELS[predicted] ?? predicted}</td>
-                    <td className="px-4 py-2 text-right font-mono">{formatPercent(p)}</td>
-                    <td className="px-4 py-2 text-center">
+                  <li key={entry.target_event_date} className="space-y-1.5 px-4 py-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-xs">{entry.target_event_date}</span>
                       {entry.target_class == null ? (
                         <Badge variant="outline">pending</Badge>
                       ) : hit ? (
@@ -223,12 +213,61 @@ function HistoryTable({
                       ) : (
                         <Badge variant="dovish">miss</Badge>
                       )}
-                    </td>
-                  </tr>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs">
+                      <span className="text-muted-foreground">Predicted</span>
+                      <span className="text-right">{ORDINAL_LABELS[predicted] ?? predicted}</span>
+                      <span className="text-muted-foreground">P(predicted)</span>
+                      <span className="text-right font-mono">{formatPercent(p)}</span>
+                      <span className="text-muted-foreground">Realised</span>
+                      <span className="text-right">
+                        {entry.target_class ? ORDINAL_LABELS[entry.target_class] ?? entry.target_class : "—"}
+                      </span>
+                    </div>
+                  </li>
                 );
               })}
-            </tbody>
-          </table>
+            </ul>
+            <div className="hidden md:block">
+              <table className="w-full text-sm">
+                <thead className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-2 text-left">Meeting</th>
+                    <th className="px-4 py-2 text-left">Realised</th>
+                    <th className="px-4 py-2 text-left">Predicted</th>
+                    <th className="px-4 py-2 text-right">P(predicted)</th>
+                    <th className="px-4 py-2 text-center">Hit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recent.map((entry) => {
+                    const predicted = entry.predicted_class[primaryModel] ?? "—";
+                    const p = entry.probabilities[primaryModel]?.[predicted];
+                    const hit = entry.target_class != null && entry.target_class === predicted;
+                    return (
+                      <tr key={entry.target_event_date} className="border-b border-border last:border-0">
+                        <td className="px-4 py-2 font-mono text-xs">{entry.target_event_date}</td>
+                        <td className="px-4 py-2">
+                          {entry.target_class ? ORDINAL_LABELS[entry.target_class] ?? entry.target_class : "—"}
+                        </td>
+                        <td className="px-4 py-2">{ORDINAL_LABELS[predicted] ?? predicted}</td>
+                        <td className="px-4 py-2 text-right font-mono">{formatPercent(p)}</td>
+                        <td className="px-4 py-2 text-center">
+                          {entry.target_class == null ? (
+                            <Badge variant="outline">pending</Badge>
+                          ) : hit ? (
+                            <Badge variant="hawkish">hit</Badge>
+                          ) : (
+                            <Badge variant="dovish">miss</Badge>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>
@@ -248,7 +287,7 @@ function MetricsTable({
           <CardTitle>Walk-forward metrics</CardTitle>
         </CardHeader>
         <CardContent className="py-6 text-center text-sm text-muted-foreground">
-          No metrics published.
+          No metrics available. Train a checkpoint to populate this card.
         </CardContent>
       </Card>
     );
@@ -260,30 +299,32 @@ function MetricsTable({
         <CardDescription>Leave-one-meeting-out walk-forward CV across the full window.</CardDescription>
       </CardHeader>
       <CardContent className="p-0">
-        <table className="w-full text-sm">
-          <thead className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
-            <tr>
-              <th className="px-4 py-2 text-left">Model</th>
-              <th className="px-4 py-2 text-right">n</th>
-              <th className="px-4 py-2 text-right">Brier</th>
-              <th className="px-4 py-2 text-right">Log-loss</th>
-              <th className="px-4 py-2 text-right">Top-1 acc</th>
-              <th className="px-4 py-2 text-right">Macro-F1</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(([model, m]) => (
-              <tr key={model} className="border-b border-border last:border-0">
-                <td className="px-4 py-2 font-mono">{model}</td>
-                <td className="px-4 py-2 text-right font-mono text-muted-foreground">{m.n}</td>
-                <td className="px-4 py-2 text-right font-mono">{formatNumber(m.brier)}</td>
-                <td className="px-4 py-2 text-right font-mono">{formatNumber(m.log_loss)}</td>
-                <td className="px-4 py-2 text-right font-mono">{formatPercent(m.top1_accuracy)}</td>
-                <td className="px-4 py-2 text-right font-mono">{formatNumber(m.macro_f1)}</td>
+        <ScrollableTable>
+          <table className="w-full min-w-[36rem] text-sm">
+            <thead className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-4 py-2 text-left">Model</th>
+                <th className="px-4 py-2 text-right">n</th>
+                <th className="px-4 py-2 text-right">Brier</th>
+                <th className="px-4 py-2 text-right">Log-loss</th>
+                <th className="px-4 py-2 text-right">Top-1 acc</th>
+                <th className="px-4 py-2 text-right">Macro-F1</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map(([model, m]) => (
+                <tr key={model} className="border-b border-border last:border-0">
+                  <td className="px-4 py-2 font-mono">{model}</td>
+                  <td className="px-4 py-2 text-right font-mono text-muted-foreground">{m.n}</td>
+                  <td className="px-4 py-2 text-right font-mono">{formatNumber(m.brier)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{formatNumber(m.log_loss)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{formatPercent(m.top1_accuracy)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{formatNumber(m.macro_f1)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </ScrollableTable>
       </CardContent>
     </Card>
   );
@@ -301,7 +342,7 @@ function AttributionTable({
           <CardTitle>Feature-family attribution</CardTitle>
         </CardHeader>
         <CardContent className="py-6 text-center text-sm text-muted-foreground">
-          No attribution table emitted yet.
+          No attribution rows available. Train a checkpoint to populate this card.
         </CardContent>
       </Card>
     );
@@ -315,38 +356,101 @@ function AttributionTable({
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0">
-        <table className="w-full text-sm">
-          <thead className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
-            <tr>
-              <th className="px-4 py-2 text-left">Subset</th>
-              <th className="px-4 py-2 text-left">Families</th>
-              <th className="px-4 py-2 text-right">#feat</th>
-              <th className="px-4 py-2 text-right">Brier</th>
-              <th className="px-4 py-2 text-right">Log-loss</th>
-              <th className="px-4 py-2 text-right">Top-1 acc</th>
-              <th className="px-4 py-2 text-right">Macro-F1</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.subset} className="border-b border-border last:border-0">
-                <td className="px-4 py-2 font-mono">{row.subset}</td>
-                <td className="px-4 py-2 text-xs text-muted-foreground">
-                  {row.families.join(", ") || "—"}
-                </td>
-                <td className="px-4 py-2 text-right font-mono text-muted-foreground">
-                  {row.n_features ?? "—"}
-                </td>
-                <td className="px-4 py-2 text-right font-mono">{formatNumber(row.brier)}</td>
-                <td className="px-4 py-2 text-right font-mono">{formatNumber(row.log_loss)}</td>
-                <td className="px-4 py-2 text-right font-mono">{formatPercent(row.top1_accuracy)}</td>
-                <td className="px-4 py-2 text-right font-mono">{formatNumber(row.macro_f1)}</td>
+        <ScrollableTable>
+          <table className="w-full min-w-[44rem] text-sm">
+            <thead className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-4 py-2 text-left">Subset</th>
+                <th className="px-4 py-2 text-left">Families</th>
+                <th className="px-4 py-2 text-right">#feat</th>
+                <th className="px-4 py-2 text-right">Brier</th>
+                <th className="px-4 py-2 text-right">Log-loss</th>
+                <th className="px-4 py-2 text-right">Top-1 acc</th>
+                <th className="px-4 py-2 text-right">Macro-F1</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.subset} className="border-b border-border last:border-0">
+                  <td className="px-4 py-2 font-mono">{row.subset}</td>
+                  <td className="px-4 py-2 text-xs text-muted-foreground">
+                    {row.families.join(", ") || "—"}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono text-muted-foreground">
+                    {row.n_features ?? "—"}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">{formatNumber(row.brier)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{formatNumber(row.log_loss)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{formatPercent(row.top1_accuracy)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{formatNumber(row.macro_f1)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </ScrollableTable>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Horizontal scroll wrapper used for the wide metrics tables on
+ * `/decisions`. A right-edge gradient hints at the off-screen columns
+ * on narrow viewports; the gradient hides itself once the table fits
+ * inside the container, so it never paints over a fully-visible table
+ * on desktop. The container is keyboard-focusable so users can scroll
+ * with arrow keys.
+ */
+function ScrollableTable({ children }: { children: React.ReactNode }) {
+  const scrollerRef = React.useRef<HTMLDivElement | null>(null);
+  const [showFade, setShowFade] = React.useState(false);
+
+  React.useEffect(() => {
+    const node = scrollerRef.current;
+    if (!node) return;
+    const update = () => {
+      const overflow = node.scrollWidth - node.clientWidth;
+      const room = overflow - node.scrollLeft;
+      setShowFade(overflow > 4 && room > 4);
+    };
+    update();
+    node.addEventListener("scroll", update, { passive: true });
+    // ResizeObserver is missing in some test environments (jsdom). Fall
+    // back to a window-resize listener so the fade still re-evaluates
+    // on rotate / viewport change without crashing the page.
+    let detach: () => void;
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(update);
+      observer.observe(node);
+      detach = () => observer.disconnect();
+    } else {
+      window.addEventListener("resize", update);
+      detach = () => window.removeEventListener("resize", update);
+    }
+    return () => {
+      node.removeEventListener("scroll", update);
+      detach();
+    };
+  }, []);
+
+  return (
+    <div className="relative">
+      <div
+        ref={scrollerRef}
+        role="region"
+        aria-label="Scrollable table"
+        tabIndex={0}
+        className="overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {children}
+      </div>
+      {showFade ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-background to-transparent"
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -362,7 +466,7 @@ export default function DecisionsPage() {
         if (!cancelled) setData(result);
       })
       .catch((err) => {
-        if (!cancelled) toast.error((err as Error).message || "Failed to load decision forecast.");
+        if (!cancelled) toast.error(errorMessage(err, "Failed to load decision forecast."));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -429,9 +533,9 @@ export default function DecisionsPage() {
           ) : (
             <Card>
               <CardHeader>
-                <CardTitle>Forecaster has not been run</CardTitle>
+                <CardTitle>No forecast available.</CardTitle>
                 <CardDescription>
-                  No artefacts under{" "}
+                  Train a checkpoint to populate this page. The forecaster reads from{" "}
                   <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
                     data/artifacts/next_fomc/
                   </code>
@@ -444,7 +548,7 @@ export default function DecisionsPage() {
                   <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
                     make next-fomc TRAINING_PACKAGE_ID=&lt;id&gt;
                   </code>{" "}
-                  to populate this view.
+                  to publish a forecast.
                 </p>
                 {data?.upcoming_meeting ? (
                   <p>

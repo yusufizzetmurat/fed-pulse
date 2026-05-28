@@ -80,7 +80,7 @@ describe("ComparePage", () => {
     const { default: ComparePage } = await import("@/pages/compare");
     render(<ComparePage />);
     await waitFor(() =>
-      expect(screen.getByText(/no runs yet/i)).toBeInTheDocument(),
+      expect(screen.getByText(/no history yet/i)).toBeInTheDocument(),
     );
   });
 

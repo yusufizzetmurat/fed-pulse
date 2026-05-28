@@ -167,7 +167,7 @@ describe("DecisionsPage", () => {
     fetchNextFomcForecastMock.mockResolvedValue(EMPTY_RESPONSE);
     const { default: DecisionsPage } = await import("@/pages/decisions");
     render(<DecisionsPage />);
-    await waitFor(() => expect(screen.getByText(/Forecaster has not been run/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/No forecast available/i)).toBeInTheDocument());
     expect(screen.getByText(/make next-fomc/)).toBeInTheDocument();
     expect(screen.getByText(/2026-06-16/)).toBeInTheDocument();
   });

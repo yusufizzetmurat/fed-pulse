@@ -87,7 +87,7 @@ describe("HistoryPage", () => {
     const { default: HistoryPage } = await import("@/pages/history");
     render(<HistoryPage />);
     await waitFor(() =>
-      expect(screen.getByText(/no runs match these filters/i)).toBeInTheDocument(),
+      expect(screen.getByText(/no history yet/i)).toBeInTheDocument(),
     );
   });
 

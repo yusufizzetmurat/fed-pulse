@@ -36,6 +36,7 @@ import {
   resolveApiBaseUrl,
 } from "@/lib/analyze/api";
 import { DEFAULT_TEXT } from "@/lib/analyze/constants";
+import { errorMessage } from "@/lib/analyze/errors";
 import { toStance } from "@/lib/analyze/format";
 import { useEvaluationCoverage } from "@/lib/analyze/useEvaluationCoverage";
 import type {
@@ -176,7 +177,7 @@ export default function WorkspacePage() {
         });
         toast.success(`Prefilled FOMC ${payload.kind} from ${queryDate}.`);
       } catch (err) {
-        toast.error((err as Error).message || "Could not load document for this date.");
+        toast.error(errorMessage(err, "Could not load document for this date."));
       }
     })();
     return () => {
@@ -274,12 +275,7 @@ export default function WorkspacePage() {
       } else {
         setResult(null);
         setBaselineResult(null);
-        const err = analyzeRes.reason;
-        const message =
-          (err as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
-          (err as Error).message ||
-          "Request failed. Is the backend running?";
-        toast.error(message);
+        toast.error(errorMessage(analyzeRes.reason));
       }
       // Commit the market panel only when the seq still matches the
       // most recent submit. Older in-flight fetches that arrive late
@@ -346,12 +342,7 @@ export default function WorkspacePage() {
           );
         }
         if (analyzeRes.status === "rejected") {
-          const err = analyzeRes.reason;
-          const message =
-            (err as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
-            (err as Error).message ||
-            "Counterfactual request failed.";
-          toast.error(message);
+          toast.error(errorMessage(analyzeRes.reason));
         }
       } finally {
         if (ticket === counterfactualSeqRef.current) {
@@ -412,7 +403,7 @@ export default function WorkspacePage() {
           documentDate={request.date}
         />
         <main id="main-content" tabIndex={-1} className="container space-y-5 py-6 focus:outline-none">
-          <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
             <div className="space-y-1">
               <h1 className="text-2xl font-semibold tracking-tight">Workspace</h1>
               <p className="max-w-2xl text-sm text-muted-foreground">
@@ -482,19 +473,18 @@ export default function WorkspacePage() {
                 />
               ) : (
                 <EmptyState
-                  title="Volatility Regime card not available in this build"
+                  title="Volatility Regime card unavailable."
                   description={
                     <div className="space-y-2">
                       <p>
-                        The active forecaster is in numeric mode — it predicts close and
-                        volatility as single numbers rather than a calibrated{" "}
+                        The active checkpoint runs in regression mode. Switch to a
+                        classification-capable model in Settings to populate the calibrated{" "}
                         <span className="numeric">calm / normal / high</span> prediction set.
-                        The Volatility Regime classifier and its calibration data are not loaded.
                       </p>
                       <p className="text-muted-foreground">
-                        Every other workspace panel below — sentiment breakdown, per-sentence
-                        explanation, credibility checks, pipeline trace, and history strip — is
-                        live against the current model.
+                        Sentiment breakdown, per-sentence explanation, credibility checks,
+                        pipeline trace, and history strip below still render against the
+                        current model.
                       </p>
                     </div>
                   }
@@ -516,8 +506,8 @@ export default function WorkspacePage() {
                 ) : (
                   <EmptyState
                     variant="inline"
-                    title="Sentiment breakdown not loaded"
-                    description="Load the sentiment model to populate stance, factor, certainty, and topic."
+                    title="Sentiment breakdown unavailable."
+                    description="Load a sentiment model from the Settings page to populate stance, factor, certainty, and topic."
                   />
                 )}
                 {result.credibility ? (
@@ -525,8 +515,8 @@ export default function WorkspacePage() {
                 ) : (
                   <EmptyState
                     variant="inline"
-                    title="Credibility signals unavailable"
-                    description="The required embedding model and historical rate cache are not loaded on this host yet."
+                    title="Credibility signals unavailable."
+                    description="Load the embedding model and the historical rate cache from the Settings page."
                   />
                 )}
               </div>
