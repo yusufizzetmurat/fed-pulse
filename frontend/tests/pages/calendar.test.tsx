@@ -16,14 +16,18 @@ vi.mock("next/head", () => ({
 }));
 
 const fetchFomcCalendarMock = vi.fn();
+const fetchNextFomcForecastMock = vi.fn();
 vi.mock("@/lib/analyze/api", () => ({
   resolveApiBaseUrl: () => "http://localhost:8000",
   fetchFomcCalendar: (...args: unknown[]) => fetchFomcCalendarMock(...args),
+  fetchNextFomcForecast: (...args: unknown[]) => fetchNextFomcForecastMock(...args),
 }));
 
 describe("CalendarPage", () => {
   beforeEach(() => {
     fetchFomcCalendarMock.mockReset();
+    fetchNextFomcForecastMock.mockReset();
+    fetchNextFomcForecastMock.mockRejectedValue(new Error("not available"));
     pushMock.mockReset();
   });
 

@@ -1,7 +1,7 @@
 import * as React from "react";
 import Head from "next/head";
 import { useRouter } from "next/router";
-import { ArrowDownRight, ArrowRight, ArrowUpRight, GitCompare } from "lucide-react";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, GitCompare, Share2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { MultiAxisCards } from "@/components/analyze/MultiAxisCards";
@@ -43,6 +43,67 @@ function formatDelta(value: number | null, fractionDigits = 2): string {
 function deltaColorClass(value: number | null): string {
   if (value == null || value === 0) return "text-muted-foreground";
   return value > 0 ? "text-hawkish" : "text-dovish";
+}
+
+// Annotated delta for a sentiment axis. Positive = more hawkish (red),
+// negative = more dovish (green). The bracketed label is the
+// directional readout the user picked.
+function annotatedAxisDelta(value: number | null, axis: string): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const sign = value > 0 ? "+" : "";
+  const direction =
+    value > 0 ? `${axis} hawkish` : value < 0 ? `${axis} dovish` : axis;
+  return `${sign}${value.toFixed(2)} (${direction})`;
+}
+
+// One-sentence narrative covering the largest absolute Δ on each
+// available axis. Hides quietly when no axis carries a signal.
+function buildNarrativeSummary(delta: MultiAxisDelta): string | null {
+  type Bullet = { axis: string; magnitude: number; phrase: string };
+  const candidates: Bullet[] = [];
+  if (delta.stanceRankDelta != null) {
+    candidates.push({
+      axis: "stance",
+      magnitude: Math.abs(delta.stanceRankDelta),
+      phrase:
+        delta.stanceRankDelta > 0
+          ? `Run A is more hawkish on rate guidance (+${delta.stanceRankDelta.toFixed(2)})`
+          : delta.stanceRankDelta < 0
+          ? `Run A is more dovish on rate guidance (${delta.stanceRankDelta.toFixed(2)})`
+          : "Stance unchanged",
+    });
+  }
+  if (delta.factorDelta != null) {
+    candidates.push({
+      axis: "factor",
+      magnitude: Math.abs(delta.factorDelta),
+      phrase:
+        delta.factorDelta > 0
+          ? `more hawkish on inflation tone (+${delta.factorDelta.toFixed(2)})`
+          : delta.factorDelta < 0
+          ? `more dovish on inflation tone (${delta.factorDelta.toFixed(2)})`
+          : "inflation tone unchanged",
+    });
+  }
+  if (candidates.length === 0) return null;
+  // Sort by absolute magnitude, take up to two for the narrative.
+  candidates.sort((a, b) => b.magnitude - a.magnitude);
+  const primary = candidates[0];
+  if (candidates.length === 1) return `${primary.phrase}.`;
+  const secondary = candidates[1];
+  return `${primary.phrase} but ${secondary.phrase}.`;
+}
+
+function NarrativeSummaryCard({ delta }: { delta: MultiAxisDelta }) {
+  const sentence = buildNarrativeSummary(delta);
+  if (!sentence) return null;
+  return (
+    <Card>
+      <CardContent className="py-3">
+        <p className="text-sm">{sentence}</p>
+      </CardContent>
+    </Card>
+  );
 }
 
 function DeltaIcon({ value }: { value: number | null }) {
@@ -174,7 +235,9 @@ function MultiAxisDeltaCard({ delta }: { delta: MultiAxisDelta }) {
           <tbody>
             <tr className="border-b border-border">
               <td className="px-4 py-2 font-mono">stance</td>
-              <td className="px-4 py-2 text-right font-mono">{stanceDir}</td>
+              <td className={`px-4 py-2 text-right font-mono ${deltaColorClass(delta.stanceRankDelta)}`}>
+                {delta.stanceRankDelta != null ? annotatedAxisDelta(delta.stanceRankDelta, "stance") : stanceDir}
+              </td>
               <td className="px-4 py-2 text-right font-mono">
                 {delta.stanceConfidenceDelta != null
                   ? `${delta.stanceConfidenceDelta >= 0 ? "+" : ""}${delta.stanceConfidenceDelta.toFixed(2)}`
@@ -183,10 +246,8 @@ function MultiAxisDeltaCard({ delta }: { delta: MultiAxisDelta }) {
             </tr>
             <tr className="border-b border-border">
               <td className="px-4 py-2 font-mono">factor</td>
-              <td className="px-4 py-2 text-right font-mono">
-                {delta.factorDelta != null
-                  ? `${delta.factorDelta >= 0 ? "+" : ""}${delta.factorDelta.toFixed(2)}`
-                  : "—"}
+              <td className={`px-4 py-2 text-right font-mono ${deltaColorClass(delta.factorDelta)}`}>
+                {annotatedAxisDelta(delta.factorDelta, "factor")}
               </td>
               <td className="px-4 py-2 text-right font-mono">
                 {delta.factorConfidenceDelta != null
@@ -485,12 +546,33 @@ export default function ComparePage() {
         <Header />
         <StatusBar />
         <main id="main-content" tabIndex={-1} className="container space-y-6 py-8 focus:outline-none">
-          <div className="space-y-2">
-            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Compare runs</h1>
-            <p className="max-w-2xl text-muted-foreground">
-              Pick two past analyses and see the stance, prediction, and confidence deltas side by
-              side. Selections are sticky in the URL — share the link to send a paired view.
-            </p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-2">
+              <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Compare runs</h1>
+              <p className="max-w-2xl text-muted-foreground">
+                Pick two past analyses and see the stance, prediction, and confidence deltas side by
+                side. Selections are sticky in the URL — share the link to send a paired view.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (typeof window === "undefined") return;
+                const url = window.location.href;
+                const writer = navigator?.clipboard?.writeText;
+                if (writer) {
+                  writer.call(navigator.clipboard, url)
+                    .then(() => toast.success("Share link copied"))
+                    .catch(() => toast.error("Could not copy link"));
+                } else {
+                  toast.info(url);
+                }
+              }}
+            >
+              <Share2 className="h-3.5 w-3.5" aria-hidden="true" />
+              Copy share link
+            </Button>
           </div>
 
           {entriesLoading ? (
@@ -525,6 +607,7 @@ export default function ComparePage() {
             </div>
           )}
 
+          {multiAxisDelta ? <NarrativeSummaryCard delta={multiAxisDelta} /> : null}
           {delta ? <DeltaSummary delta={delta} /> : null}
           {multiAxisDelta ? <MultiAxisDeltaCard delta={multiAxisDelta} /> : null}
           {detailA && detailB ? (

@@ -126,6 +126,13 @@ export default function WorkspacePage() {
     });
   }, []);
 
+  // Pending request to auto-submit after a deep-link prefill so the user
+  // lands on a populated workspace without an extra click. ``handleSubmit``
+  // is declared further down — we keep this in a ref so the effect that
+  // schedules the submit doesn't need to retrigger when handleSubmit
+  // changes identity each render.
+  const autoSubmitPendingRef = React.useRef<AnalyzeRequest | null>(null);
+
   // Calendar / cross-page deep links land here with ?date=&symbol=&horizon=&kind=.
   React.useEffect(() => {
     if (!router.isReady) return;
@@ -159,7 +166,14 @@ export default function WorkspacePage() {
         }
         const payload = await response.json();
         if (cancelled || typeof payload?.text !== "string" || !payload.text) return;
-        setRequest((prev) => ({ ...prev, text: payload.text }));
+        setRequest((prev) => {
+          const next = { ...prev, text: payload.text };
+          // Mark the next state as the one that should auto-submit. The
+          // submit fires from a follow-up effect that watches request.text
+          // so handleSubmit sees the populated request.
+          autoSubmitPendingRef.current = next;
+          return next;
+        });
         toast.success(`Prefilled FOMC ${payload.kind} from ${queryDate}.`);
       } catch (err) {
         toast.error((err as Error).message || "Could not load document for this date.");
@@ -347,6 +361,19 @@ export default function WorkspacePage() {
     },
     [apiBaseUrl, baselineResult, request],
   );
+
+  // Auto-fire handleSubmit once the deep-link prefill flushes into the
+  // request state. We compare against the ref the prefill effect parked
+  // there so a manual edit between prefill and run doesn't accidentally
+  // trigger this branch.
+  React.useEffect(() => {
+    const pending = autoSubmitPendingRef.current;
+    if (pending && request.text === pending.text && request.date === pending.date) {
+      autoSubmitPendingRef.current = null;
+      handleSubmit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request.text, request.date]);
 
   const handleStruckChange = React.useCallback(
     (next: Set<number>) => {
