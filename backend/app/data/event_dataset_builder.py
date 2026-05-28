@@ -1980,10 +1980,15 @@ def build_event_rows(
                 per_asset_target_series[sym] = _fetch_close_series(
                     sym, start=earliest, end=latest, cache_dir=target_cache_dir
                 )
-            except RuntimeError as exc:
+            except Exception as exc:
+                # Broadened from RuntimeError to Exception (#481 review): yfinance
+                # can surface HTTP 429 / network / parser errors that aren't our
+                # synthetic RuntimeError. A single rate-limit on one symbol must
+                # not crash the rebuild — the column lands as None for that symbol
+                # and downstream events still build.
                 print(
                     f"[event_dataset_builder] per-asset target fetch failed for "
-                    f"{sym}: {exc}; column "
+                    f"{sym}: {type(exc).__name__}: {exc}; column "
                     f"{per_asset_target_column(sym)} will be None across all rows.",
                     file=sys.stderr,
                 )
