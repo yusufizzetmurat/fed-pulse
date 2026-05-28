@@ -70,6 +70,14 @@ function defaultRequest(): AnalyzeRequest {
   };
 }
 
+function SectionDivider({ label }: { label: string }) {
+  return (
+    <div className="border-t border-border mt-6 mb-1 pt-3">
+      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+    </div>
+  );
+}
+
 function takeArgmaxRegime(entry: HistoryEntry, detailPayload: AnalyzeResult | null): string | null {
   const regime = detailPayload?.regime_classification;
   if (regime?.argmax_class) return regime.argmax_class;
@@ -118,6 +126,13 @@ export default function WorkspacePage() {
     });
   }, []);
 
+  // Pending request to auto-submit after a deep-link prefill so the user
+  // lands on a populated workspace without an extra click. ``handleSubmit``
+  // is declared further down — we keep this in a ref so the effect that
+  // schedules the submit doesn't need to retrigger when handleSubmit
+  // changes identity each render.
+  const autoSubmitPendingRef = React.useRef<AnalyzeRequest | null>(null);
+
   // Calendar / cross-page deep links land here with ?date=&symbol=&horizon=&kind=.
   React.useEffect(() => {
     if (!router.isReady) return;
@@ -151,7 +166,14 @@ export default function WorkspacePage() {
         }
         const payload = await response.json();
         if (cancelled || typeof payload?.text !== "string" || !payload.text) return;
-        setRequest((prev) => ({ ...prev, text: payload.text }));
+        setRequest((prev) => {
+          const next = { ...prev, text: payload.text };
+          // Mark the next state as the one that should auto-submit. The
+          // submit fires from a follow-up effect that watches request.text
+          // so handleSubmit sees the populated request.
+          autoSubmitPendingRef.current = next;
+          return next;
+        });
         toast.success(`Prefilled FOMC ${payload.kind} from ${queryDate}.`);
       } catch (err) {
         toast.error((err as Error).message || "Could not load document for this date.");
@@ -340,6 +362,19 @@ export default function WorkspacePage() {
     [apiBaseUrl, baselineResult, request],
   );
 
+  // Auto-fire handleSubmit once the deep-link prefill flushes into the
+  // request state. We compare against the ref the prefill effect parked
+  // there so a manual edit between prefill and run doesn't accidentally
+  // trigger this branch.
+  React.useEffect(() => {
+    const pending = autoSubmitPendingRef.current;
+    if (pending && request.text === pending.text && request.date === pending.date) {
+      autoSubmitPendingRef.current = null;
+      handleSubmit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request.text, request.date]);
+
   const handleStruckChange = React.useCallback(
     (next: Set<number>) => {
       setStruck(next);
@@ -423,9 +458,12 @@ export default function WorkspacePage() {
 
           {result ? (
             <>
+              <SectionDivider label="Statement analysis" />
               <TldrCard result={result} />
-              <WorkspaceMetaStrip result={result} />
               <StatementDeltaCard result={result} />
+              <WorkspaceMetaStrip result={result} />
+
+              <SectionDivider label="Model prediction" />
               {result.regime_classification ? (
                 <RegimeHeadline
                   regime={result.regime_classification}
@@ -467,6 +505,11 @@ export default function WorkspacePage() {
                 <PolicyActionCard action={result.policy_action} />
               ) : null}
 
+              {marketPanel && (marketPanel.rates.length > 0 || marketPanel.vol_regime) ? (
+                <MarketReactionPanel panel={marketPanel} />
+              ) : null}
+
+              <SectionDivider label="Sentiment and context" />
               <div className="grid gap-4 xl:grid-cols-2">
                 {result.multi_axis ? (
                   <MultiAxisInterpretation multiAxis={result.multi_axis} />
@@ -488,12 +531,16 @@ export default function WorkspacePage() {
                 )}
               </div>
 
-              {marketPanel && (marketPanel.rates.length > 0 || marketPanel.vol_regime) ? (
-                <MarketReactionPanel panel={marketPanel} />
-              ) : null}
-
               <HistoricalAnalogPanel analogs={analogsPanel} loading={analogsLoading} />
 
+              <TrajectoryPanel
+                apiBaseUrl={apiBaseUrl}
+                asOfDate={request.date}
+                historyLength={12}
+              />
+
+              <SectionDivider label="Model internals" />
+              <PipelineTrace result={result} inputText={request.text} />
 
               {result.xai ? (
                 <SentenceStrikeXaiPanel
@@ -505,14 +552,6 @@ export default function WorkspacePage() {
                   loading={counterfactualLoading}
                 />
               ) : null}
-
-              <TrajectoryPanel
-                apiBaseUrl={apiBaseUrl}
-                asOfDate={request.date}
-                historyLength={12}
-              />
-
-              <PipelineTrace result={result} inputText={request.text} />
 
               <RegimeHistoryStrip entries={historyEntries} symbol={request.symbol} />
             </>

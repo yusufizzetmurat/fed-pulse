@@ -1,7 +1,17 @@
 import * as React from "react";
 import Head from "next/head";
 import Link from "next/link";
-import { Target } from "lucide-react";
+import { Target, X } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { toast } from "sonner";
 
 import { ConfusionMatrix } from "@/components/analyze/ConfusionMatrix";
@@ -61,12 +71,40 @@ function regimeVariant(label: string | null | undefined): "hawkish" | "dovish" |
   return "outline";
 }
 
+// Wald-style 95% half-width for a proportion p over a support of n.
+// Returns null when n is too small for the approximation to be meaningful.
+function proportionHalfWidth(p: number | null, n: number): number | null {
+  if (p == null || !Number.isFinite(p) || n < 5) return null;
+  const variance = p * (1 - p);
+  if (variance <= 0) return null;
+  return 1.96 * Math.sqrt(variance / n);
+}
+
+function formatScoreWithCi(value: number | null, halfWidth: number | null): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  if (halfWidth == null) return value.toFixed(3);
+  return `${value.toFixed(3)} ±${halfWidth.toFixed(3)}`;
+}
+
+const PERF_TOOLTIP_STYLE: React.CSSProperties = {
+  background: "hsl(var(--popover))",
+  color: "hsl(var(--popover-foreground))",
+  border: "1px solid hsl(var(--border))",
+  borderRadius: 6,
+  padding: "6px 8px",
+  fontSize: 12,
+};
+
 export default function PerformancePage() {
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
   const [rows, setRows] = React.useState<RunRegimeRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [totalRuns, setTotalRuns] = React.useState(0);
   const [breakdown, setBreakdown] = React.useState<ClassificationBreakdownResponse | null>(null);
+  // Drill-down: when set, the per-asset chart, per-asset table, and
+  // run-level table only show runs where this class was either
+  // predicted as argmax or appeared as realised.
+  const [classFilter, setClassFilter] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -117,6 +155,19 @@ export default function PerformancePage() {
   }, [apiBaseUrl]);
 
   const aggregate = React.useMemo(() => aggregateRegimePerformance(rows), [rows]);
+  // Subset of rows that match the active class drill-down (or all rows
+  // when no filter is set). The per-asset chart, per-asset table, and
+  // run-level table all read from the filtered rows / aggregate.
+  const filteredRows = React.useMemo(() => {
+    if (!classFilter) return rows;
+    return rows.filter(
+      (row) => row.argmax === classFilter || row.realized === classFilter,
+    );
+  }, [rows, classFilter]);
+  const filteredAggregate = React.useMemo(
+    () => aggregateRegimePerformance(filteredRows),
+    [filteredRows],
+  );
   const breakdownAvailable = breakdown?.available === true;
   const headlineMacroF1 = breakdownAvailable
     ? breakdown?.macro_f1 ?? null
@@ -380,27 +431,54 @@ export default function PerformancePage() {
                       {breakdownAvailable && breakdown?.per_class
                         ? breakdown.per_class.map((row, idx) => {
                             const label = breakdown.class_labels?.[row.class_id] ?? REGIME_CLASSES[row.class_id] ?? `class ${row.class_id}`;
+                            const precisionHw = proportionHalfWidth(row.precision, row.support);
+                            const recallHw = proportionHalfWidth(row.recall, row.support);
+                            // F1 has no closed-form Wald SE; use the
+                            // larger of precision / recall half-widths
+                            // as a conservative band-width approximation.
+                            const f1Hw =
+                              precisionHw != null && recallHw != null
+                                ? Math.max(precisionHw, recallHw)
+                                : null;
+                            const isActive = classFilter === label;
                             return (
-                              <tr key={`${row.class_id}-${idx}`} className="border-b border-border last:border-0">
+                              <tr
+                                key={`${row.class_id}-${idx}`}
+                                className={`border-b border-border last:border-0 cursor-pointer hover:bg-accent/40 ${isActive ? "bg-accent/30" : ""}`}
+                                onClick={() => setClassFilter(isActive ? null : label)}
+                              >
                                 <td className="px-4 py-2 capitalize">{label}</td>
                                 <td className="numeric px-4 py-2 text-right">{row.support}</td>
-                                <td className="numeric px-4 py-2 text-right">{formatScore(row.precision)}</td>
-                                <td className="numeric px-4 py-2 text-right">{formatScore(row.recall)}</td>
-                                <td className="numeric px-4 py-2 text-right">{formatScore(row.f1)}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScoreWithCi(row.precision, precisionHw)}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScoreWithCi(row.recall, recallHw)}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScoreWithCi(row.f1, f1Hw)}</td>
                                 <td className="numeric px-4 py-2 text-right">{formatScore(row.roc_auc ?? null)}</td>
                                 <td className="numeric px-4 py-2 text-right">{formatScore(row.pr_auc ?? null)}</td>
                               </tr>
                             );
                           })
-                        : aggregate.perClass.map((entry) => (
-                            <tr key={entry.klass} className="border-b border-border last:border-0">
-                              <td className="px-4 py-2 capitalize">{entry.klass}</td>
-                              <td className="numeric px-4 py-2 text-right">{entry.support}</td>
-                              <td className="numeric px-4 py-2 text-right">{formatScore(entry.precision)}</td>
-                              <td className="numeric px-4 py-2 text-right">{formatScore(entry.recall)}</td>
-                              <td className="numeric px-4 py-2 text-right">{formatScore(entry.f1)}</td>
-                            </tr>
-                          ))}
+                        : aggregate.perClass.map((entry) => {
+                            const precisionHw = proportionHalfWidth(entry.precision, entry.support);
+                            const recallHw = proportionHalfWidth(entry.recall, entry.support);
+                            const f1Hw =
+                              precisionHw != null && recallHw != null
+                                ? Math.max(precisionHw, recallHw)
+                                : null;
+                            const isActive = classFilter === entry.klass;
+                            return (
+                              <tr
+                                key={entry.klass}
+                                className={`border-b border-border last:border-0 cursor-pointer hover:bg-accent/40 ${isActive ? "bg-accent/30" : ""}`}
+                                onClick={() => setClassFilter(isActive ? null : entry.klass)}
+                              >
+                                <td className="px-4 py-2 capitalize">{entry.klass}</td>
+                                <td className="numeric px-4 py-2 text-right">{entry.support}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScoreWithCi(entry.precision, precisionHw)}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScoreWithCi(entry.recall, recallHw)}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScoreWithCi(entry.f1, f1Hw)}</td>
+                              </tr>
+                            );
+                          })}
                     </tbody>
                   </table>
                 </CardContent>
@@ -441,9 +519,42 @@ export default function PerformancePage() {
                           ),
                           total: counts.reduce((acc, n) => acc + n, 0),
                         }));
-                        return <ConfusionMatrix rows={matrixRows} classes={labels} />;
+                        return (
+                          <ConfusionMatrix
+                            rows={matrixRows}
+                            classes={labels}
+                            onClassClick={(klass) =>
+                              setClassFilter((prev) => (prev === klass ? null : klass))
+                            }
+                            activeClass={classFilter}
+                          />
+                        );
                       })()
-                    : <ConfusionMatrix rows={aggregate.confusion} classes={REGIME_CLASSES} />}
+                    : (
+                      <ConfusionMatrix
+                        rows={aggregate.confusion}
+                        classes={REGIME_CLASSES}
+                        onClassClick={(klass) =>
+                          setClassFilter((prev) => (prev === klass ? null : klass))
+                        }
+                        activeClass={classFilter}
+                      />
+                    )}
+                  {classFilter ? (
+                    <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                      <span>
+                        Filtered to runs where <span className="font-mono capitalize">{classFilter}</span> was predicted or actual.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setClassFilter(null)}
+                        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 hover:bg-accent/40"
+                      >
+                        <X className="h-3 w-3" aria-hidden="true" />
+                        Clear
+                      </button>
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
 
@@ -452,12 +563,69 @@ export default function PerformancePage() {
                   <CardTitle className="text-base">Per-asset breakdown</CardTitle>
                   <CardDescription>
                     Top-pick accuracy and actual coverage for every symbol with at least one
-                    resolved run.
+                    resolved run.{classFilter ? ` Filtered to ${classFilter}.` : ""}
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="p-0">
+                <CardContent className="space-y-4 p-0">
+                  {(() => {
+                    const chartRows = filteredAggregate.bySymbol
+                      .filter((row) => row.argmaxAccuracy != null)
+                      .map((row) => ({
+                        symbol: row.symbol,
+                        accuracy: row.argmaxAccuracy ?? 0,
+                        resolved: row.resolved,
+                      }))
+                      .sort((a, b) => b.accuracy - a.accuracy);
+                    if (chartRows.length === 0) return null;
+                    return (
+                      <div className="px-4 pt-4">
+                        <div className="h-56 w-full">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                              data={chartRows}
+                              margin={{ top: 8, right: 16, bottom: 24, left: 0 }}
+                            >
+                              <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="2 3" />
+                              <XAxis
+                                dataKey="symbol"
+                                tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                                interval={0}
+                                angle={-30}
+                                textAnchor="end"
+                              />
+                              <YAxis
+                                tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                                domain={[0, 1]}
+                                tickFormatter={(v) => `${Math.round(Number(v) * 100)}%`}
+                              />
+                              <Tooltip
+                                cursor={{ fill: "hsl(var(--muted) / 0.4)" }}
+                                contentStyle={PERF_TOOLTIP_STYLE}
+                                formatter={(value, _name, ctx) => {
+                                  const d = ctx?.payload as { symbol: string; accuracy: number; resolved: number } | undefined;
+                                  if (!d) return [String(value), "accuracy"];
+                                  return [
+                                    `${(d.accuracy * 100).toFixed(1)}% on ${d.resolved} run${d.resolved === 1 ? "" : "s"}`,
+                                    "top-pick accuracy",
+                                  ];
+                                }}
+                              />
+                              <Bar dataKey="accuracy" isAnimationActive={false}>
+                                {chartRows.map((d) => (
+                                  <Cell
+                                    key={d.symbol}
+                                    fill={d.accuracy >= 1 / REGIME_CLASSES.length ? "hsl(var(--up))" : "hsl(var(--down))"}
+                                  />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <DataTable
-                    rows={aggregate.bySymbol}
+                    rows={filteredAggregate.bySymbol}
                     columns={symbolColumns}
                     rowKey={(row) => row.symbol}
                   />
@@ -469,12 +637,12 @@ export default function PerformancePage() {
                   <CardTitle className="text-base">Run-level detail</CardTitle>
                   <CardDescription>
                     Each scanned run with predicted argmax, calibrated probability, realised regime,
-                    and set-membership coverage.
+                    and set-membership coverage.{classFilter ? ` Filtered to ${classFilter}.` : ""}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
                   <DataTable
-                    rows={rows}
+                    rows={filteredRows}
                     columns={runColumns}
                     rowKey={(row) => row.id}
                     rowHref={(row) => `/history/${row.id}`}
