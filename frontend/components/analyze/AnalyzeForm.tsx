@@ -94,8 +94,8 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
               {submitLabel}
             </Button>
             <p className="text-xs text-muted-foreground">
-              Runs the calibrated vol-regime classifier and the supporting multi-axis, XAI, and
-              credibility heads against the FOMC excerpt.
+              Runs the Volatility Regime prediction along with the sentiment breakdown,
+              explanation, and credibility checks against the FOMC excerpt.
             </p>
           </div>
         </form>

@@ -69,16 +69,16 @@ export function LegacyForecastCard({
             Legacy point forecast
           </CardTitle>
           <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-            regression head
+            numeric prediction
           </Badge>
         </div>
         <CardDescription className="flex items-start gap-1.5 text-xs">
           <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
           <span>
-            The deployed forecaster is in regression mode — it emits scalar close + volatility
-            predictions instead of the calibrated <span className="numeric">calm / normal / high</span>{" "}
-            regime set. This card surfaces those numbers as a fallback while the classification head
-            ships; the demo headline target is still the regime card above.
+            The active forecaster is in numeric mode — it produces single close and volatility
+            numbers rather than the calibrated <span className="numeric">calm / normal / high</span>{" "}
+            Volatility Regime prediction. This card shows those numbers as a fallback; the
+            Volatility Regime card above remains the headline.
           </span>
         </CardDescription>
       </CardHeader>
@@ -97,8 +97,8 @@ export function LegacyForecastCard({
             value={<span className="numeric">{formatVol(vol)}</span>}
             caption={
               market?.volatility_5d != null
-                ? `5d realised ${formatVol(market.volatility_5d)}`
-                : "annualised stdev of log returns"
+                ? `5-day realised ${formatVol(market.volatility_5d)}`
+                : "annualised standard deviation of log returns"
             }
           />
         </div>
