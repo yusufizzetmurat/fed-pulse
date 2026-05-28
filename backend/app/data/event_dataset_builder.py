@@ -200,6 +200,25 @@ CROSS_ASSET_SYMBOLS: tuple[tuple[str, str], ...] = (
     ("^VIX3M", "vix3m_close"),
     ("^IRX", "irx_close"),
 )
+# Per-asset forward realised-vol targets (#481). One column per symbol
+# carries the strict-forward 10-trading-day realised vol of log returns
+# computed on that symbol's own close series. The canonical
+# ``forward_realized_vol_10d`` column stays as the ^GSPC alias so the
+# existing classifier contract is unchanged; per-asset training arrives
+# downstream of the symbol-conditioned head work. Missing data (pre-
+# listing, holiday, or the symbol cache failed to fetch) keeps the
+# column ``None`` so the regime classifier learns to skip rather than
+# treating an absent quote as a zero.
+PER_ASSET_TARGET_SYMBOLS: tuple[str, ...] = (
+    "^GSPC",
+    "^NDX",
+    "^DJI",
+    "DX-Y.NYB",
+    "^VIX",
+    "EURUSD=X",
+    "USDJPY=X",
+    "GBPUSD=X",
+)
 MARKET_MODEL_WINDOW_DAYS = 252
 VOL_WINDOW_DAYS = 10
 ROLLING_VOL_DAYS = 5
@@ -215,6 +234,37 @@ SPEECH_AS_OF_TIME = "T14:00:00Z"
 # 13:00 UTC to stay clear of DST hand-waving; intraday alignment will
 # replace this if the announcement-window target ever lands.
 MACRO_AS_OF_TIME = "T13:00:00Z"
+
+def per_asset_target_slug(symbol: str) -> str:
+    """Normalise a yfinance symbol to the suffix used for per-asset vol target columns.
+
+    The rule: lowercase the symbol, then strip the yfinance prefix/suffix
+    tokens ``^`` (index), ``=x`` (FX), ``.nyb`` (NY ICE futures venue), and
+    finally drop any remaining ``-`` separators.
+
+    Examples:
+
+    - ``^GSPC`` -> ``gspc``
+    - ``DX-Y.NYB`` -> ``dxy``
+    - ``EURUSD=X`` -> ``eurusd``
+    - ``^VIX`` -> ``vix``
+    """
+
+    slug = symbol.lower()
+    for token in ("^", "=x", ".nyb"):
+        slug = slug.replace(token, "")
+    slug = slug.replace("-", "")
+    return slug
+
+
+def per_asset_target_column(symbol: str) -> str:
+    """Return the events.parquet column name for ``symbol``'s 10d realised vol.
+
+    See ``per_asset_target_slug`` for the normalisation rule.
+    """
+
+    return f"forward_realized_vol_10d_{per_asset_target_slug(symbol)}"
+
 
 # Map registry document_type values (raw, mixed-case) onto the canonical
 # event_kind taxonomy. Anything not listed is dropped silently and counted
@@ -1317,6 +1367,7 @@ def _build_event_rows(
     prior_statement_text: str | None = None,
     vote_tally: VoteTally | None = None,
     delta_encoder: Any | None = None,
+    per_asset_target_series: dict[str, _CloseSeries] | None = None,
 ) -> list[dict[str, Any]]:
     event_date = _date(doc.event_date)
     as_of_ts = _as_of_for_event(doc.event_date, doc.event_kind)
@@ -1473,6 +1524,27 @@ def _build_event_rows(
     # speeches / press conferences. Non-statement rows carry None.
     if vote_tally is None and doc.event_kind == "statement":
         vote_tally = parse_vote_tally(doc.text)
+
+    # #481 per-asset 10d forward realised-vol targets. One value per
+    # symbol per event_date, computed on each symbol's own close series
+    # under the strict-forward convention pinned by
+    # ``_forward_realized_vol``. The canonical
+    # ``forward_realized_vol_10d`` stays as the ^GSPC alias above.
+    # Missing series (the symbol's cache fetch failed, or the event
+    # sits before the symbol's listing) collapse to ``None`` so the
+    # downstream classifier treats it as "skip" rather than zero.
+    per_asset_target_values: dict[str, float | None] = {
+        per_asset_target_column(sym): None for sym in PER_ASSET_TARGET_SYMBOLS
+    }
+    if per_asset_target_series:
+        for sym in PER_ASSET_TARGET_SYMBOLS:
+            series = per_asset_target_series.get(sym)
+            if series is None or not series.dates:
+                continue
+            value = _forward_realized_vol(series, as_of_date, window=10)
+            per_asset_target_values[per_asset_target_column(sym)] = (
+                float(value) if value is not None else None
+            )
 
     rows: list[dict[str, Any]] = []
     for h in horizons:
@@ -1646,6 +1718,13 @@ def _build_event_rows(
                     if vote_tally is not None
                     else None
                 ),
+                # --- #481 per-asset 10d forward realised-vol targets ---
+                # One nullable float per workspace asset-picker symbol.
+                # Same strict-forward 10-trading-day convention as the
+                # canonical alias above; ``None`` when the symbol's
+                # series is absent or the event sits within the forward
+                # window of the series tail.
+                **per_asset_target_values,
             }
         )
     return rows
@@ -1755,6 +1834,12 @@ COLUMN_ORDER = (
     # #236 GARCH(1,1)-residual variant of the forward-vol target.
     "forward_realized_vol_10d_garch_baseline",
     "forward_realized_vol_10d_garch_residual",
+    # #481 per-asset forward realised-vol targets (10d). Eight columns,
+    # one per workspace asset-picker symbol; ``_gspc`` is the canonical
+    # alias of ``forward_realized_vol_10d`` and the remaining seven
+    # cover the other indices, dollar index, VIX, and the three major
+    # FX pairs. All nullable, required=False so older parquets validate.
+    *(per_asset_target_column(sym) for sym in PER_ASSET_TARGET_SYMBOLS),
     "concurrent_macro_release",
     "intra_meeting_stance_shift",
     "intra_meeting_certainty_shift",
@@ -1819,6 +1904,8 @@ def build_event_rows(
     rates_lookup: RatesPanelLookup | None = None,
     rates_horizon: int = 5,
     delta_encoder: Any | None = None,
+    per_asset_target_series: dict[str, _CloseSeries] | None = None,
+    per_asset_target_cache_dir: Path | None = None,
 ) -> pd.DataFrame:
     """Build the events DataFrame for one training package.
 
@@ -1871,6 +1958,13 @@ def build_event_rows(
     earliest = event_dates[0] - _dt.timedelta(days=MARKET_MODEL_WINDOW_DAYS * 2 + 60)
     latest = event_dates[-1] + _dt.timedelta(days=max(horizons) * 2 + 60)
 
+    # Capture caller-injection state up front so the #481 per-asset
+    # target block below can opt out of outbound yfinance fetches when
+    # the caller is in test mode (asset + benchmark series both
+    # explicitly supplied).
+    asset_series_was_injected = asset_series is not None
+    bench_series_was_injected = bench_series is not None
+
     if asset_series is None:
         asset_series = _fetch_close_series(
             asset, start=earliest, end=latest, cache_dir=market_cache_dir
@@ -1902,6 +1996,56 @@ def build_event_rows(
                 file=sys.stderr,
             )
     cross_asset_lookup = _build_cross_asset_lookup(cross_asset_series)
+
+    # #481 per-asset 10d forward realised-vol targets. Same fetch-or-
+    # cache contract as the cross-asset feed above: one parquet per
+    # symbol under ``per_asset_target_cache_dir`` (defaults to
+    # ``<DATA_DIR>/external/yfinance``), and a missing/failing symbol
+    # collapses the column to ``None`` rather than blocking the build.
+    # The ^GSPC / benchmark entries reuse the canonical series the
+    # caller already loaded so the ``_gspc`` column and
+    # ``forward_realized_vol_10d`` alias come from byte-identical inputs.
+    if per_asset_target_series is None:
+        per_asset_target_series = {}
+        # Detect test mode: callers (unit tests) that supply both
+        # ``asset_series`` and ``bench_series`` upfront expect no
+        # outbound network. Reuse the injected series for ^GSPC /
+        # benchmark and leave every other symbol absent (column ->
+        # None). The smoke / CLI path leaves both None and fetches.
+        injected_canonical_series = (
+            asset_series_was_injected and bench_series_was_injected
+        )
+        target_cache_dir: Path | None = per_asset_target_cache_dir
+        if target_cache_dir is None:
+            target_cache_dir = DEFAULT_DATA_DIR / "external" / "yfinance"
+        for sym in PER_ASSET_TARGET_SYMBOLS:
+            if sym == asset and asset_series is not None:
+                per_asset_target_series[sym] = asset_series
+                continue
+            if sym == benchmark and bench_series is not None:
+                per_asset_target_series[sym] = bench_series
+                continue
+            if injected_canonical_series:
+                # Test mode: skip the outbound fetch. The per-asset
+                # column for ``sym`` lands as ``None`` on every row,
+                # exercising the missing-data path explicitly.
+                continue
+            try:
+                per_asset_target_series[sym] = _fetch_close_series(
+                    sym, start=earliest, end=latest, cache_dir=target_cache_dir
+                )
+            except Exception as exc:
+                # Broadened from RuntimeError to Exception (#481 review): yfinance
+                # can surface HTTP 429 / network / parser errors that aren't our
+                # synthetic RuntimeError. A single rate-limit on one symbol must
+                # not crash the rebuild — the column lands as None for that symbol
+                # and downstream events still build.
+                print(
+                    f"[event_dataset_builder] per-asset target fetch failed for "
+                    f"{sym}: {type(exc).__name__}: {exc}; column "
+                    f"{per_asset_target_column(sym)} will be None across all rows.",
+                    file=sys.stderr,
+                )
 
     credibility_kwargs = {
         "embedding_path": embedding_path,
@@ -1962,6 +2106,7 @@ def build_event_rows(
             rates_horizon=rates_horizon,
             prior_statement_text=prior_statement_text,
             delta_encoder=delta_encoder,
+            per_asset_target_series=per_asset_target_series,
         )
         if not rows:
             summary.dropped_no_prior_window += 1
@@ -2108,6 +2253,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "targets (default: 5)."
         ),
     )
+    parser.add_argument(
+        "--per-asset-target-cache-dir",
+        default=None,
+        help=(
+            "Where to cache the per-asset forward-vol target price series "
+            "(#481). Defaults to <DATA_DIR>/external/yfinance. One parquet "
+            "per symbol; a missing/failing symbol collapses its column to "
+            "None across all rows."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -2151,6 +2306,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     macro_csv = Path(args.macro_release_csv) if args.macro_release_csv else None
     macro_calendar = _resolve_macro_calendar(macro_csv)
 
+    per_asset_target_cache_dir = (
+        Path(args.per_asset_target_cache_dir)
+        if args.per_asset_target_cache_dir
+        else None
+    )
+
     # Collapsed view
     summary = _BuildSummary()
     df = build_event_rows(
@@ -2166,6 +2327,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         macro_release_calendar=macro_calendar,
         rates_panel_path=args.rates_panel_path,
         rates_horizon=int(args.rates_horizon),
+        per_asset_target_cache_dir=per_asset_target_cache_dir,
     )
     output_path = Path(args.output)
     if not output_path.is_absolute():
@@ -2205,6 +2367,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             keep_all_sources=True,
             rates_panel_path=args.rates_panel_path,
             rates_horizon=int(args.rates_horizon),
+            per_asset_target_cache_dir=per_asset_target_cache_dir,
         )
         full_output_path = Path(full_output_arg)
         if not full_output_path.is_absolute():
