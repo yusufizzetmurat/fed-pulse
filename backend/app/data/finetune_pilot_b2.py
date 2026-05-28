@@ -107,9 +107,12 @@ class FoldCell:
     classification_breakdown: dict[str, Any]
     train_runtime_s: float
     eval_runtime_s: float
+    phrasebank_aux_train_loss: float | None = None
+    phrasebank_aux_lambda: float = 0.0
+    phrasebank_aux_rows: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "fold_id": self.fold_id,
             "metrics": {
                 "regime_f1_macro": self.macro_f1,
@@ -126,6 +129,13 @@ class FoldCell:
             "train_runtime_s": self.train_runtime_s,
             "eval_runtime_s": self.eval_runtime_s,
         }
+        if self.phrasebank_aux_lambda > 0.0:
+            payload["phrasebank_aux"] = {
+                "train_loss": self.phrasebank_aux_train_loss,
+                "aux_lambda": self.phrasebank_aux_lambda,
+                "n_rows": self.phrasebank_aux_rows,
+            }
+        return payload
 
 
 @dataclass
@@ -382,7 +392,7 @@ def _block_bootstrap_ci(
     return {"lower": lo, "upper": hi, "confidence": confidence, "n_resamples": n_resamples}
 
 
-def _train_and_eval_one_cell(
+def _train_and_eval_one_cell(  # noqa: PLR0913 — per-cell knobs surface as named kwargs by design
     *,
     train_texts: list[str],
     train_labels: list[int],
@@ -396,17 +406,37 @@ def _train_and_eval_one_cell(
     learning_rate: float,
     weight_decay: float,
     max_length: int,
+    phrasebank_rows: list[Any] | None = None,
+    phrasebank_aux_lambda: float = 0.0,
 ) -> dict[str, Any]:
-    """Run one fine-tune cell end-to-end and return its metrics dict."""
+    """Run one fine-tune cell end-to-end and return its metrics dict.
+
+    When ``phrasebank_rows`` is supplied and ``phrasebank_aux_lambda``
+    is strictly positive, the FOMC stance CE is augmented by an
+    auxiliary PhraseBank 3-way sentiment CE on a small linear head
+    over the encoder's pooled output (#33 Path B). The aux head reads
+    its rows from a separate DataLoader that round-robins one
+    PhraseBank batch per FOMC batch; the auxiliary loss is added to
+    the main loss as ``lambda * aux_ce`` so the aux gradient flows
+    through the same encoder as the main task. When the aux is off
+    the path stays byte-identical to pre-#33 B2.
+    """
 
     # Imports happen here so module import stays cheap on environments
     # without torch (the dataclass + helper surface is importable
     # standalone for the unit-test smoke).
     import torch
+    from torch import nn
     from torch.utils.data import DataLoader, Dataset
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
     _set_all_seeds(seed)
+
+    enable_aux = bool(
+        phrasebank_rows
+        and phrasebank_aux_lambda > 0.0
+        and len(phrasebank_rows) > 0
+    )
 
     hf_token = _hf_token()
     revision = revision_for(encoder_alias)
@@ -424,6 +454,20 @@ def _train_and_eval_one_cell(
         token=hf_token,
         revision=revision,
     )
+
+    # Auxiliary 3-class linear head over the encoder's pooled output.
+    # Only constructed when aux is on so the default-off path stays
+    # byte-identical to pre-#33 B2 — same module graph, same parameter
+    # set, same optimiser state.
+    aux_head: nn.Linear | None = None
+    if enable_aux:
+        hidden_size = int(getattr(model.config, "hidden_size", 0))
+        if hidden_size <= 0:
+            raise RuntimeError(
+                "Encoder model.config.hidden_size missing / non-positive; "
+                "auxiliary head needs a pooled-output dimension."
+            )
+        aux_head = nn.Linear(hidden_size, 3)
 
     class _TextDataset(Dataset[dict[str, "torch.Tensor"]]):
         def __init__(self, texts: list[str], labels: list[int]) -> None:
@@ -452,9 +496,14 @@ def _train_and_eval_one_cell(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
+    if aux_head is not None:
+        aux_head.to(device)
 
+    optimizer_params: list[torch.nn.Parameter] = list(model.parameters())
+    if aux_head is not None:
+        optimizer_params.extend(list(aux_head.parameters()))
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        optimizer_params,
         lr=learning_rate,
         weight_decay=weight_decay,
     )
@@ -469,26 +518,84 @@ def _train_and_eval_one_cell(
     )
     eval_loader = DataLoader(test_ds, batch_size=eval_batch_size, shuffle=False)
 
+    # Auxiliary PhraseBank stream. A second DataLoader cycles over the
+    # PhraseBank rows independently of the FOMC fold split; aux batches
+    # are zipped one-for-one with FOMC batches inside the train step
+    # via ``itertools.cycle`` so the aux pool drives no extra epochs.
+    aux_loader: DataLoader | None = None
+    aux_iter: Any = None
+    if aux_head is not None and phrasebank_rows is not None:
+        aux_texts = [str(r.sentence) for r in phrasebank_rows]
+        aux_labels = [int(r.label_idx) for r in phrasebank_rows]
+        aux_ds = _TextDataset(aux_texts, aux_labels)
+        aux_generator = torch.Generator()
+        aux_generator.manual_seed(seed + 1)
+        aux_loader = DataLoader(
+            aux_ds,
+            batch_size=train_batch_size,
+            shuffle=True,
+            generator=aux_generator,
+        )
+
+    def _cycle(loader: DataLoader) -> Any:
+        while True:
+            yield from loader
+
     train_t0 = time.perf_counter()
     losses: list[float] = []
+    aux_losses: list[float] = []
     model.train()
+    if aux_head is not None:
+        aux_head.train()
+    if aux_loader is not None:
+        aux_iter = _cycle(aux_loader)
     for _ in range(epochs):
         for batch in train_loader:
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
             labels_t = batch["labels"].to(device)
             optimizer.zero_grad()
-            outputs = model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                labels=labels_t,
-            )
-            loss = outputs.loss
+            if aux_head is None:
+                outputs = model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels_t,
+                )
+                loss = outputs.loss
+            else:
+                # Recompute the main CE explicitly so the encoder
+                # forward also yields hidden states for the aux head.
+                # Going through ``output_hidden_states=True`` keeps
+                # the call signature on every BERT-family backbone.
+                outputs = model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels_t,
+                    output_hidden_states=True,
+                )
+                main_loss = outputs.loss
+
+                aux_batch = next(aux_iter)
+                aux_input_ids = aux_batch["input_ids"].to(device)
+                aux_attention_mask = aux_batch["attention_mask"].to(device)
+                aux_labels_t = aux_batch["labels"].to(device)
+                aux_outputs = model.base_model(
+                    input_ids=aux_input_ids,
+                    attention_mask=aux_attention_mask,
+                )
+                aux_pooled = _pooled_from_base_model_output(
+                    aux_outputs, aux_attention_mask
+                )
+                aux_logits = aux_head(aux_pooled)
+                aux_loss = nn.functional.cross_entropy(aux_logits, aux_labels_t)
+                aux_losses.append(float(aux_loss.detach().item()))
+                loss = main_loss + phrasebank_aux_lambda * aux_loss
             loss.backward()
             optimizer.step()
             losses.append(float(loss.detach().item()))
     train_runtime = time.perf_counter() - train_t0
     mean_train_loss = float(statistics.fmean(losses)) if losses else 0.0
+    mean_aux_loss = float(statistics.fmean(aux_losses)) if aux_losses else None
 
     eval_t0 = time.perf_counter()
     model.eval()
@@ -526,7 +633,38 @@ def _train_and_eval_one_cell(
         "classification_breakdown": breakdown.to_dict(),
         "train_runtime_s": train_runtime,
         "eval_runtime_s": eval_runtime,
+        "phrasebank_aux_train_loss": mean_aux_loss,
+        "phrasebank_aux_lambda": (
+            phrasebank_aux_lambda if aux_head is not None else 0.0
+        ),
+        "phrasebank_aux_rows": (
+            len(phrasebank_rows) if (aux_head is not None and phrasebank_rows) else 0
+        ),
     }
+
+
+def _pooled_from_base_model_output(
+    outputs: Any, attention_mask: "Any"
+) -> "Any":
+    """Extract a pooled vector from a HF base-model output.
+
+    BERT-family backbones expose ``pooler_output`` directly; backbones
+    without a pooler (e.g. RoBERTa configured without one, DistilBERT)
+    fall back to a masked-mean over ``last_hidden_state``. Mean-pool
+    keeps the gradient flowing through the encoder for the aux task
+    even when the pooler is absent.
+    """
+
+    import torch
+
+    pooled = getattr(outputs, "pooler_output", None)
+    if pooled is not None:
+        return pooled
+    last_hidden = outputs.last_hidden_state
+    mask = attention_mask.unsqueeze(-1).to(last_hidden.dtype)
+    summed = (last_hidden * mask).sum(dim=1)
+    denom = mask.sum(dim=1).clamp(min=torch.tensor(1.0, device=last_hidden.device))
+    return summed / denom
 
 
 def run_sweep(args: argparse.Namespace) -> dict[str, Any]:
@@ -543,6 +681,40 @@ def run_sweep(args: argparse.Namespace) -> dict[str, Any]:
         raise SystemExit(
             f"No folds resolved from {package_dir}; supply --folds explicitly."
         )
+
+    # PhraseBank auxiliary-task rows (#33 Path B). Loaded once and
+    # shared across every (seed, fold) cell so the aux pool is constant
+    # across the sweep; only the FOMC fold split varies. Cells never
+    # use PhraseBank text as their fine-tune validation slice — the
+    # aux loader is wholly separate from the FOMC fold's train / test
+    # slices, no row indexing crossover.
+    phrasebank_rows: list[Any] | None = None
+    phrasebank_meta: dict[str, Any] = {"enabled": False}
+    if getattr(args, "enable_phrasebank_aux", False):
+        from app.data.phrasebank import (
+            class_counts as _pb_class_counts,
+            load_phrasebank_rows,
+        )
+
+        subset = getattr(args, "phrasebank_subset", None) or "sentences_allagree"
+        local_jsonl = getattr(args, "phrasebank_jsonl", None)
+        cache_root = getattr(args, "phrasebank_cache_root", None)
+        phrasebank_rows = load_phrasebank_rows(
+            subset=subset,
+            local_jsonl=Path(local_jsonl) if local_jsonl else None,
+            cache_root=Path(cache_root) if cache_root else None,
+        )
+        phrasebank_meta = {
+            "enabled": True,
+            "subset": subset,
+            "n_rows": len(phrasebank_rows),
+            "class_counts": _pb_class_counts(phrasebank_rows),
+            "aux_lambda": float(getattr(args, "phrasebank_aux_lambda", 0.0)),
+        }
+        if not phrasebank_rows:
+            raise SystemExit(
+                "PhraseBank loader returned no rows; aux flag is on but pool is empty."
+            )
 
     seed_trials: list[SeedTrial] = []
     all_macro_f1: list[float] = []
@@ -593,6 +765,10 @@ def run_sweep(args: argparse.Namespace) -> dict[str, Any]:
                 learning_rate=args.learning_rate,
                 weight_decay=args.weight_decay,
                 max_length=args.max_length,
+                phrasebank_rows=phrasebank_rows,
+                phrasebank_aux_lambda=float(
+                    getattr(args, "phrasebank_aux_lambda", 0.0)
+                ),
             )
             cell = FoldCell(
                 seed=seed,
@@ -636,6 +812,7 @@ def run_sweep(args: argparse.Namespace) -> dict[str, Any]:
         "n_classes": N_CLASSES,
         "labels": list(VOL_REGIME_LABELS),
         "started_at_utc": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+        "phrasebank_aux": phrasebank_meta,
         "trials": [trial.to_dict() for trial in seed_trials],
         "summary": summary,
     }
@@ -716,6 +893,57 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Output JSON path. Defaults to "
             "artifacts/experiments/finetune_pilot_b2.json."
+        ),
+    )
+    # PhraseBank auxiliary-task knobs (#33 Path B). Default off so the
+    # CLI without these flags reproduces pre-#33 B2 byte-identically.
+    parser.add_argument(
+        "--enable-phrasebank-aux",
+        action="store_true",
+        help=(
+            "Enable the PhraseBank auxiliary 3-way sentiment CE on top "
+            "of the vol-regime CE during fine-tune (#33 Path B). Off by "
+            "default so the harness reproduces the existing B2 numerics."
+        ),
+    )
+    parser.add_argument(
+        "--phrasebank-aux-lambda",
+        type=float,
+        default=0.3,
+        help=(
+            "Auxiliary-loss weight applied to the PhraseBank CE term "
+            "when --enable-phrasebank-aux is on. Default 0.3 mirrors "
+            "the multi-task LSTM-stage default lambdas in "
+            "MultiTaskLoss (lambda_factor / lambda_certainty / "
+            "lambda_topic)."
+        ),
+    )
+    parser.add_argument(
+        "--phrasebank-subset",
+        default="sentences_allagree",
+        help=(
+            "PhraseBank subset name. Defaults to the strict 100%%-"
+            "agreement subset (2 264 rows); operator can override with "
+            "'sentences_50agree' for the full 4 840-row pool."
+        ),
+    )
+    parser.add_argument(
+        "--phrasebank-cache-root",
+        type=Path,
+        default=None,
+        help=(
+            "Override for the on-disk PhraseBank cache root. Defaults "
+            "to data/external/phrasebank/."
+        ),
+    )
+    parser.add_argument(
+        "--phrasebank-jsonl",
+        type=Path,
+        default=None,
+        help=(
+            "Optional local JSONL fixture path for PhraseBank rows. "
+            "When supplied the HF read path is skipped — used by tests "
+            "and air-gapped reproductions."
         ),
     )
     return parser.parse_args()

@@ -1,0 +1,329 @@
+"""Tests for the PhraseBank auxiliary-task path through B2 (#33).
+
+Covers four contracts:
+
+1. Default-off path through ``_train_and_eval_one_cell`` produces a
+   metrics dict whose phrasebank-aux fields are zero / None, so an
+   operator who never flips ``--enable-phrasebank-aux`` sees the
+   pre-#33 B2 behaviour byte-identically.
+2. PhraseBank-on path runs to completion, returns a finite aux-loss
+   trace, and reports the operator-supplied lambda.
+3. The aux head's parameters receive non-zero gradients during the
+   training step (proves the aux gradient actually flows into the
+   optimiser).
+4. ``run_sweep`` honours the ``--phrasebank-jsonl`` fixture without
+   reaching the HF Hub — sweep payloads carry a ``phrasebank_aux``
+   meta block.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from app.data import finetune_pilot_b2
+from app.data.phrasebank import PhraseBankRow
+
+
+def _torch_or_skip() -> Any:
+    return pytest.importorskip("torch")
+
+
+def _transformers_or_skip() -> Any:
+    return pytest.importorskip("transformers")
+
+
+def _stub_alias() -> str:
+    return "hf-internal-testing/tiny-random-bert"
+
+
+def _ensure_stub_loadable() -> None:
+    transformers = _transformers_or_skip()
+    try:
+        transformers.AutoTokenizer.from_pretrained(_stub_alias())
+    except Exception as exc:  # noqa: BLE001 -- cache flake on CI
+        pytest.skip(f"tiny-random-bert unavailable in test env: {exc}")
+
+
+def _make_phrasebank_rows() -> list[PhraseBankRow]:
+    return [
+        PhraseBankRow(row_id="pb_0", sentence="Revenue grew strongly.", label_idx=2),
+        PhraseBankRow(row_id="pb_1", sentence="Operating costs were flat.", label_idx=1),
+        PhraseBankRow(row_id="pb_2", sentence="Profit fell sharply.", label_idx=0),
+        PhraseBankRow(row_id="pb_3", sentence="Margins widened.", label_idx=2),
+    ]
+
+
+def _make_fomc_corpus() -> tuple[list[str], list[int], list[str], list[int]]:
+    train_texts = [
+        "Inflation remains elevated; further tightening is appropriate.",
+        "The committee judges that the policy stance is appropriate.",
+        "Conditions are softening; downside risks have increased.",
+        "Labour market remains tight; price pressures persist.",
+    ]
+    train_labels = [2, 1, 0, 2]
+    test_texts = [
+        "Risks to the outlook are roughly balanced.",
+        "Inflation is well above the committee's longer-run goal.",
+    ]
+    test_labels = [1, 2]
+    return train_texts, train_labels, test_texts, test_labels
+
+
+def test_default_off_metrics_have_zero_aux_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With aux off, the metrics dict reports zero rows + zero lambda.
+
+    The default-off path is the byte-identity contract: an operator
+    who never flips ``--enable-phrasebank-aux`` sees a B2 cell that
+    is equivalent to the pre-#33 harness.
+    """
+
+    torch = _torch_or_skip()
+    _ensure_stub_loadable()
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    train_texts, train_labels, test_texts, test_labels = _make_fomc_corpus()
+    cell = finetune_pilot_b2._train_and_eval_one_cell(
+        train_texts=train_texts,
+        train_labels=train_labels,
+        test_texts=test_texts,
+        test_labels=test_labels,
+        encoder_alias=_stub_alias(),
+        seed=11,
+        epochs=1,
+        train_batch_size=2,
+        eval_batch_size=2,
+        learning_rate=5e-5,
+        weight_decay=0.0,
+        max_length=32,
+        phrasebank_rows=None,
+        phrasebank_aux_lambda=0.0,
+    )
+    assert cell["phrasebank_aux_lambda"] == 0.0
+    assert cell["phrasebank_aux_rows"] == 0
+    assert cell["phrasebank_aux_train_loss"] is None
+    # Headline metric set unchanged from the pre-#33 contract.
+    assert 0.0 <= cell["macro_f1"] <= 1.0
+
+
+def test_aux_on_metrics_report_finite_aux_loss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With aux on, the cell returns a finite aux-loss trace + lambda."""
+
+    torch = _torch_or_skip()
+    _ensure_stub_loadable()
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    train_texts, train_labels, test_texts, test_labels = _make_fomc_corpus()
+    cell = finetune_pilot_b2._train_and_eval_one_cell(
+        train_texts=train_texts,
+        train_labels=train_labels,
+        test_texts=test_texts,
+        test_labels=test_labels,
+        encoder_alias=_stub_alias(),
+        seed=11,
+        epochs=1,
+        train_batch_size=2,
+        eval_batch_size=2,
+        learning_rate=5e-5,
+        weight_decay=0.0,
+        max_length=32,
+        phrasebank_rows=_make_phrasebank_rows(),
+        phrasebank_aux_lambda=0.3,
+    )
+    assert cell["phrasebank_aux_lambda"] == pytest.approx(0.3)
+    assert cell["phrasebank_aux_rows"] == 4
+    aux_loss = cell["phrasebank_aux_train_loss"]
+    assert aux_loss is not None
+    assert aux_loss == pytest.approx(aux_loss)  # finite (no NaN)
+    assert 0.0 <= cell["macro_f1"] <= 1.0
+
+
+def test_aux_gradient_flows_into_aux_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Aux-head parameters receive non-zero gradients.
+
+    Direct check: build the encoder + aux head, run one forward +
+    backward through the same code path as the harness, assert the
+    aux-head linear layer's weight grad is non-zero.
+    """
+
+    torch = _torch_or_skip()
+    transformers = _transformers_or_skip()
+    _ensure_stub_loadable()
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    stub = _stub_alias()
+    tokenizer = transformers.AutoTokenizer.from_pretrained(stub)
+    model = transformers.AutoModelForSequenceClassification.from_pretrained(
+        stub,
+        num_labels=finetune_pilot_b2.N_CLASSES,
+        ignore_mismatched_sizes=True,
+    )
+    hidden_size = int(model.config.hidden_size)
+    aux_head = torch.nn.Linear(hidden_size, 3)
+
+    rows = _make_phrasebank_rows()
+    encodings = tokenizer(
+        [r.sentence for r in rows],
+        truncation=True,
+        max_length=32,
+        padding="max_length",
+        return_tensors="pt",
+    )
+    aux_labels = torch.tensor([r.label_idx for r in rows], dtype=torch.long)
+
+    model.train()
+    aux_head.train()
+    outputs = model.base_model(
+        input_ids=encodings["input_ids"],
+        attention_mask=encodings["attention_mask"],
+    )
+    pooled = finetune_pilot_b2._pooled_from_base_model_output(
+        outputs, encodings["attention_mask"]
+    )
+    logits = aux_head(pooled)
+    loss = torch.nn.functional.cross_entropy(logits, aux_labels)
+    loss.backward()
+
+    # Aux head's linear weight grad is populated + non-zero somewhere.
+    assert aux_head.weight.grad is not None
+    assert aux_head.weight.grad.abs().sum().item() > 0.0
+    # The encoder body also receives gradient -- proves the aux loss
+    # flows back through the shared encoder, not just the new head.
+    encoder_grads = [
+        p.grad for p in model.base_model.parameters() if p.grad is not None
+    ]
+    assert any(g.abs().sum().item() > 0.0 for g in encoder_grads)
+
+
+def test_run_sweep_honours_phrasebank_jsonl_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``run_sweep`` reads PhraseBank from a local JSONL when supplied.
+
+    Tightly bounds the smoke: 1 seed, 1 fold, 1 epoch, batch 2 over a
+    tiny synthetic training-package fixture. The assertion is on the
+    sweep payload's ``phrasebank_aux`` meta block, not the macro-F1
+    (the random-init stub does not converge on 4 train rows).
+    """
+
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("pyarrow")
+    torch = _torch_or_skip()
+    _ensure_stub_loadable()
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    package_dir = tmp_path / "tp_phrasebank_smoke"
+    package_dir.mkdir()
+
+    # Five FOMC rows spanning a clean train window + one test event.
+    registry_rows = []
+    events_rows = []
+    for i in range(5):
+        ed = f"2020-0{i + 1}-15"
+        registry_rows.append(
+            {
+                "record_id": f"doc_{i}",
+                "text": f"FOMC statement {i}. Inflation remains a concern.",
+                "event_date": ed,
+                "source": "fomc_statement",
+                "sample_weight": 1.0,
+            }
+        )
+        events_rows.append(
+            {"event_date": ed, "forward_realized_vol_10d": 0.010 + 0.005 * i}
+        )
+    test_ed = "2021-01-15"
+    registry_rows.append(
+        {
+            "record_id": "doc_test",
+            "text": "FOMC test statement. Conditions softening.",
+            "event_date": test_ed,
+            "source": "fomc_statement",
+            "sample_weight": 1.0,
+        }
+    )
+    events_rows.append(
+        {"event_date": test_ed, "forward_realized_vol_10d": 0.035}
+    )
+
+    (package_dir / "registry_normalized.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in registry_rows), encoding="utf-8"
+    )
+    pd.DataFrame(events_rows).to_parquet(package_dir / "events.parquet")
+
+    fold_manifest = {
+        "folds": [
+            {
+                "fold_id": "fold_smoke",
+                "train_end": "2020-12-31",
+                "test_start": "2021-01-01",
+                "test_end": "2021-12-31",
+            }
+        ]
+    }
+    (package_dir / "fold_manifest_expanding_walk_forward.json").write_text(
+        json.dumps(fold_manifest), encoding="utf-8"
+    )
+
+    # PhraseBank fixture.
+    pb_fixture = tmp_path / "phrasebank_fixture.jsonl"
+    pb_rows = [
+        {"sentence": "Revenue grew sharply.", "label": "positive"},
+        {"sentence": "Profit fell sharply.", "label": "negative"},
+        {"sentence": "Costs were flat.", "label": "neutral"},
+        {"sentence": "Margins narrowed slightly.", "label": "negative"},
+    ]
+    pb_fixture.write_text(
+        "\n".join(json.dumps(r) for r in pb_rows), encoding="utf-8"
+    )
+
+    # Redirect the resolver so we don't depend on the global processed/
+    # directory inside the worktree.
+    monkeypatch.setattr(
+        finetune_pilot_b2,
+        "_resolve_training_package_dir",
+        lambda _id: package_dir,
+    )
+
+    args = type(
+        "Args",
+        (),
+        {
+            "training_package_id": "tp_phrasebank_smoke",
+            "encoder_alias": _stub_alias(),
+            "seeds": [11],
+            "folds": ["fold_smoke"],
+            "epochs": 1,
+            "train_batch_size": 2,
+            "eval_batch_size": 2,
+            "learning_rate": 5e-5,
+            "weight_decay": 0.0,
+            "max_length": 32,
+            "enable_phrasebank_aux": True,
+            "phrasebank_aux_lambda": 0.3,
+            "phrasebank_subset": "sentences_allagree",
+            "phrasebank_cache_root": None,
+            "phrasebank_jsonl": pb_fixture,
+        },
+    )()
+    payload = finetune_pilot_b2.run_sweep(args)
+    meta = payload["phrasebank_aux"]
+    assert meta["enabled"] is True
+    assert meta["n_rows"] == 4
+    assert meta["aux_lambda"] == pytest.approx(0.3)
+    assert meta["class_counts"] == [2, 1, 1]
+    # The sweep produced exactly one (seed, fold) cell with the aux
+    # payload populated.
+    cells = payload["trials"][0]["folds"]
+    assert len(cells) == 1
+    assert "phrasebank_aux" in cells[0]
+    assert cells[0]["phrasebank_aux"]["n_rows"] == 4
