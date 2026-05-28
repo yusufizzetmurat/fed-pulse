@@ -425,6 +425,33 @@ def _parse_args() -> argparse.Namespace:
         action="store_false",
         help="Disable the SEP dot-plot block (no slot, no widening).",
     )
+    # #214 FOMC press-conference Q&A ingestion. Off by default so every
+    # existing sweep and the canonical determinism regression stay
+    # byte-identical; opting in attaches the single ``has_press_conf``
+    # covariate-shift scalar to every supervised event and concatenates
+    # the same-date Q&A text onto the statement's LoRA-side raw_text per
+    # route 1 of the #214 scope brief. Pre-2011 events (no scheduled
+    # press conference) zero-impute the flag and leave the LoRA text at
+    # the statement alone. See ADR 0037.
+    parser.add_argument(
+        "--use-press-conf",
+        dest="use_press_conf",
+        action="store_true",
+        help=(
+            "Attach the press-conf has_press_conf scalar to every event "
+            "and concat the same-date FOMC press conference Q&A onto the "
+            "statement's LoRA raw_text (joint corpus per route 1). "
+            "Default off; the per-bar feature size widens by 1 scalar "
+            "when on. Reads the Q&A lookup from "
+            "data/external/fomc_press_conferences/qa_lookup.parquet."
+        ),
+    )
+    parser.add_argument(
+        "--no-press-conf",
+        dest="use_press_conf",
+        action="store_false",
+        help="Disable the press-conf Q&A block (no slot, no LoRA concat).",
+    )
     parser.set_defaults(
         use_credibility=True,
         use_linguistic=True,
@@ -434,6 +461,7 @@ def _parse_args() -> argparse.Namespace:
         use_retrieval_analogs=False,
         use_regime_conditioning=False,
         use_sep=False,
+        use_press_conf=False,
     )
     # Phase 9 V2 (#195) classification dispatch. Default stays
     # ``regression`` so the existing ablation grid + determinism
@@ -1350,6 +1378,7 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         ),
         use_regime_conditioning=bool(getattr(args, "use_regime_conditioning", False)),
         use_sep=bool(getattr(args, "use_sep", False)),
+        use_press_conf=bool(getattr(args, "use_press_conf", False)),
     )
 
 
@@ -1614,6 +1643,9 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                                     getattr(args, "use_regime_conditioning", False)
                                 ),
                                 use_sep=bool(getattr(args, "use_sep", False)),
+                                use_press_conf=bool(
+                                    getattr(args, "use_press_conf", False)
+                                ),
                             ),
                             "learning_rate": float(hp["learning_rate"]),
                             "epochs": int(hp["epochs"]),
@@ -1734,6 +1766,9 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                             getattr(args, "use_regime_conditioning", False)
                         ),
                         use_sep=bool(getattr(args, "use_sep", False)),
+                        use_press_conf=bool(
+                            getattr(args, "use_press_conf", False)
+                        ),
                     ),
                     "learning_rate": float(learning_rate),
                     "epochs": int(epochs),
@@ -2617,6 +2652,7 @@ def _run_sweep(
             "retrieval_analogs": bool(args.use_retrieval_analogs),
             "regime_conditioning": bool(args.use_regime_conditioning),
             "sep": bool(args.use_sep),
+            "press_conf": bool(getattr(args, "use_press_conf", False)),
         },
         "text_embeddings": {
             "encoder": text_encoder_arg,
@@ -2697,7 +2733,8 @@ def main() -> int:
             f"llm_features={args.use_llm_features}, "
             f"retrieval_analogs={args.use_retrieval_analogs}, "
             f"regime_conditioning={args.use_regime_conditioning}, "
-            f"sep={args.use_sep})"
+            f"sep={args.use_sep}, "
+            f"press_conf={getattr(args, 'use_press_conf', False)})"
         )
         # Multi-encoder mode loads one set of splits per alias so each
         # sweep cell can pull its arm's embeddings without re-walking
@@ -2755,6 +2792,7 @@ def main() -> int:
                         use_retrieval_analogs=bool(args.use_retrieval_analogs),
                         use_regime_conditioning=bool(args.use_regime_conditioning),
                         use_sep=bool(args.use_sep),
+                        use_press_conf=bool(getattr(args, "use_press_conf", False)),
                         text_encoder=encoder_arg,
                         text_adapter_dim=int(args.text_adapter_dim),
                         text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),

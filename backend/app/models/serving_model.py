@@ -85,6 +85,7 @@ class ForecasterServingModel(ForecasterBase):
         rates_aux_classification: bool = False,
         use_regime_conditioning: bool = False,
         use_sep: bool = False,
+        use_press_conf: bool = False,
     ):
         if output_mode not in {"regression", "classification"}:
             raise ValueError(
@@ -115,6 +116,7 @@ class ForecasterServingModel(ForecasterBase):
             text_adapter_dim=text_adapter_dim,
             use_regime_conditioning=use_regime_conditioning,
             use_sep=use_sep,
+            use_press_conf=use_press_conf,
         )
         self.output_mode = output_mode
         self.n_classes = int(n_classes)
