@@ -180,8 +180,9 @@ def _predict_with_model(
 
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
     model = AutoModelForSequenceClassification.from_pretrained(checkpoint)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
     model.eval()
-    device = next(model.parameters()).device
 
     # Honour the canonical TDW label order (dovish, hawkish, neutral) per the
     # cross_bank_transfer note — some legacy checkpoints carry an inverted

@@ -563,15 +563,10 @@ def _train_and_eval_one_cell(  # noqa: PLR0913 — per-cell knobs surface as nam
                 )
                 loss = outputs.loss
             else:
-                # Recompute the main CE explicitly so the encoder
-                # forward also yields hidden states for the aux head.
-                # Going through ``output_hidden_states=True`` keeps
-                # the call signature on every BERT-family backbone.
                 outputs = model(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     labels=labels_t,
-                    output_hidden_states=True,
                 )
                 main_loss = outputs.loss
 
@@ -655,15 +650,13 @@ def _pooled_from_base_model_output(
     even when the pooler is absent.
     """
 
-    import torch
-
     pooled = getattr(outputs, "pooler_output", None)
     if pooled is not None:
         return pooled
     last_hidden = outputs.last_hidden_state
     mask = attention_mask.unsqueeze(-1).to(last_hidden.dtype)
     summed = (last_hidden * mask).sum(dim=1)
-    denom = mask.sum(dim=1).clamp(min=torch.tensor(1.0, device=last_hidden.device))
+    denom = mask.sum(dim=1).clamp(min=1.0)
     return summed / denom
 
 
@@ -690,31 +683,44 @@ def run_sweep(args: argparse.Namespace) -> dict[str, Any]:
     # slices, no row indexing crossover.
     phrasebank_rows: list[Any] | None = None
     phrasebank_meta: dict[str, Any] = {"enabled": False}
+    aux_lambda = float(getattr(args, "phrasebank_aux_lambda", 0.0))
     if getattr(args, "enable_phrasebank_aux", False):
-        from app.data.phrasebank import (
-            class_counts as _pb_class_counts,
-            load_phrasebank_rows,
-        )
-
-        subset = getattr(args, "phrasebank_subset", None) or "sentences_allagree"
-        local_jsonl = getattr(args, "phrasebank_jsonl", None)
-        cache_root = getattr(args, "phrasebank_cache_root", None)
-        phrasebank_rows = load_phrasebank_rows(
-            subset=subset,
-            local_jsonl=Path(local_jsonl) if local_jsonl else None,
-            cache_root=Path(cache_root) if cache_root else None,
-        )
-        phrasebank_meta = {
-            "enabled": True,
-            "subset": subset,
-            "n_rows": len(phrasebank_rows),
-            "class_counts": _pb_class_counts(phrasebank_rows),
-            "aux_lambda": float(getattr(args, "phrasebank_aux_lambda", 0.0)),
-        }
-        if not phrasebank_rows:
-            raise SystemExit(
-                "PhraseBank loader returned no rows; aux flag is on but pool is empty."
+        if aux_lambda <= 0.0:
+            print(
+                f"[finetune-pilot-b2] WARN: --enable-phrasebank-aux is set "
+                f"but --phrasebank-aux-lambda={aux_lambda} <= 0; treating "
+                f"the run as aux-disabled.",
+                flush=True,
             )
+        else:
+            from app.data.phrasebank import (
+                class_counts as _pb_class_counts,
+                load_phrasebank_rows,
+            )
+
+            subset = (
+                getattr(args, "phrasebank_subset", None)
+                or "sentences_allagree"
+            )
+            local_jsonl = getattr(args, "phrasebank_jsonl", None)
+            cache_root = getattr(args, "phrasebank_cache_root", None)
+            phrasebank_rows = load_phrasebank_rows(
+                subset=subset,
+                local_jsonl=Path(local_jsonl) if local_jsonl else None,
+                cache_root=Path(cache_root) if cache_root else None,
+            )
+            if not phrasebank_rows:
+                raise SystemExit(
+                    "PhraseBank loader returned no rows; aux flag is on but "
+                    "pool is empty."
+                )
+            phrasebank_meta = {
+                "enabled": True,
+                "subset": subset,
+                "n_rows": len(phrasebank_rows),
+                "class_counts": _pb_class_counts(phrasebank_rows),
+                "aux_lambda": aux_lambda,
+            }
 
     seed_trials: list[SeedTrial] = []
     all_macro_f1: list[float] = []

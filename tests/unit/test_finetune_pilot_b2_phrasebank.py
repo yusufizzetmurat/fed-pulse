@@ -28,6 +28,71 @@ from app.data import finetune_pilot_b2
 from app.data.phrasebank import PhraseBankRow
 
 
+def _build_synthetic_package(tmp_path: Path) -> Path:
+    """Build a minimal training-package fixture under ``tmp_path``.
+
+    Five train rows + one test row spanning a clean walk-forward fold,
+    plus a fold manifest. Shared between the JSONL-fixture happy-path
+    test and the lambda<=0 disable-the-aux footgun test.
+    """
+
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("pyarrow")
+
+    package_dir = tmp_path / "tp_phrasebank_smoke"
+    package_dir.mkdir()
+
+    registry_rows: list[dict[str, Any]] = []
+    events_rows: list[dict[str, Any]] = []
+    for i in range(5):
+        ed = f"2020-0{i + 1}-15"
+        registry_rows.append(
+            {
+                "record_id": f"doc_{i}",
+                "text": f"FOMC statement {i}. Inflation remains a concern.",
+                "event_date": ed,
+                "source": "fomc_statement",
+                "sample_weight": 1.0,
+            }
+        )
+        events_rows.append(
+            {"event_date": ed, "forward_realized_vol_10d": 0.010 + 0.005 * i}
+        )
+    test_ed = "2021-01-15"
+    registry_rows.append(
+        {
+            "record_id": "doc_test",
+            "text": "FOMC test statement. Conditions softening.",
+            "event_date": test_ed,
+            "source": "fomc_statement",
+            "sample_weight": 1.0,
+        }
+    )
+    events_rows.append(
+        {"event_date": test_ed, "forward_realized_vol_10d": 0.035}
+    )
+
+    (package_dir / "registry_normalized.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in registry_rows), encoding="utf-8"
+    )
+    pd.DataFrame(events_rows).to_parquet(package_dir / "events.parquet")
+
+    fold_manifest = {
+        "folds": [
+            {
+                "fold_id": "fold_smoke",
+                "train_end": "2020-12-31",
+                "test_start": "2021-01-01",
+                "test_end": "2021-12-31",
+            }
+        ]
+    }
+    (package_dir / "fold_manifest_expanding_walk_forward.json").write_text(
+        json.dumps(fold_manifest), encoding="utf-8"
+    )
+    return package_dir
+
+
 def _torch_or_skip() -> Any:
     return pytest.importorskip("torch")
 
@@ -215,64 +280,11 @@ def test_run_sweep_honours_phrasebank_jsonl_fixture(
     (the random-init stub does not converge on 4 train rows).
     """
 
-    pd = pytest.importorskip("pandas")
-    pytest.importorskip("pyarrow")
     torch = _torch_or_skip()
     _ensure_stub_loadable()
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
 
-    package_dir = tmp_path / "tp_phrasebank_smoke"
-    package_dir.mkdir()
-
-    # Five FOMC rows spanning a clean train window + one test event.
-    registry_rows = []
-    events_rows = []
-    for i in range(5):
-        ed = f"2020-0{i + 1}-15"
-        registry_rows.append(
-            {
-                "record_id": f"doc_{i}",
-                "text": f"FOMC statement {i}. Inflation remains a concern.",
-                "event_date": ed,
-                "source": "fomc_statement",
-                "sample_weight": 1.0,
-            }
-        )
-        events_rows.append(
-            {"event_date": ed, "forward_realized_vol_10d": 0.010 + 0.005 * i}
-        )
-    test_ed = "2021-01-15"
-    registry_rows.append(
-        {
-            "record_id": "doc_test",
-            "text": "FOMC test statement. Conditions softening.",
-            "event_date": test_ed,
-            "source": "fomc_statement",
-            "sample_weight": 1.0,
-        }
-    )
-    events_rows.append(
-        {"event_date": test_ed, "forward_realized_vol_10d": 0.035}
-    )
-
-    (package_dir / "registry_normalized.jsonl").write_text(
-        "\n".join(json.dumps(r) for r in registry_rows), encoding="utf-8"
-    )
-    pd.DataFrame(events_rows).to_parquet(package_dir / "events.parquet")
-
-    fold_manifest = {
-        "folds": [
-            {
-                "fold_id": "fold_smoke",
-                "train_end": "2020-12-31",
-                "test_start": "2021-01-01",
-                "test_end": "2021-12-31",
-            }
-        ]
-    }
-    (package_dir / "fold_manifest_expanding_walk_forward.json").write_text(
-        json.dumps(fold_manifest), encoding="utf-8"
-    )
+    package_dir = _build_synthetic_package(tmp_path)
 
     # PhraseBank fixture.
     pb_fixture = tmp_path / "phrasebank_fixture.jsonl"
@@ -327,3 +339,63 @@ def test_run_sweep_honours_phrasebank_jsonl_fixture(
     assert len(cells) == 1
     assert "phrasebank_aux" in cells[0]
     assert cells[0]["phrasebank_aux"]["n_rows"] == 4
+
+
+def test_run_sweep_treats_enable_aux_with_zero_lambda_as_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--enable-phrasebank-aux`` with ``--phrasebank-aux-lambda=0`` is a
+    footgun: PhraseBank would load (and emit ``enabled=true`` meta) while
+    the multiplier zeroed every aux gradient. We treat lambda<=0 as
+    aux-disabled, emit a WARN line, and never touch the loader.
+    """
+
+    torch = _torch_or_skip()
+    _ensure_stub_loadable()
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    package_dir = _build_synthetic_package(tmp_path)
+
+    # Sentinel: if the loader is reached we explode the test.
+    def _exploding_loader(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("PhraseBank loader must not be invoked when lambda<=0")
+
+    monkeypatch.setattr(
+        finetune_pilot_b2,
+        "_resolve_training_package_dir",
+        lambda _id: package_dir,
+    )
+    monkeypatch.setattr(
+        "app.data.phrasebank.load_phrasebank_rows",
+        _exploding_loader,
+    )
+
+    args = type(
+        "Args",
+        (),
+        {
+            "training_package_id": "tp_phrasebank_smoke",
+            "encoder_alias": _stub_alias(),
+            "seeds": [11],
+            "folds": ["fold_smoke"],
+            "epochs": 1,
+            "train_batch_size": 2,
+            "eval_batch_size": 2,
+            "learning_rate": 5e-5,
+            "weight_decay": 0.0,
+            "max_length": 32,
+            "enable_phrasebank_aux": True,
+            "phrasebank_aux_lambda": 0.0,
+            "phrasebank_subset": "sentences_allagree",
+            "phrasebank_cache_root": None,
+            "phrasebank_jsonl": None,
+        },
+    )()
+    payload = finetune_pilot_b2.run_sweep(args)
+    captured = capsys.readouterr()
+    assert "WARN" in captured.out
+    assert payload["phrasebank_aux"] == {"enabled": False}
+    # Per-cell schema is also aux-free.
+    cells = payload["trials"][0]["folds"]
+    assert "phrasebank_aux" not in cells[0]
