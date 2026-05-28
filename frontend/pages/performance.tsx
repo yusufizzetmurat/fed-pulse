@@ -45,6 +45,7 @@ import {
   REGIME_CLASSES,
   aggregateRegimePerformance,
   buildRunRegimeRecord,
+  proportionHalfWidth,
   type RunRegimeRecord,
 } from "@/lib/analyze/performance";
 import type {
@@ -70,15 +71,6 @@ function regimeVariant(label: string | null | undefined): "hawkish" | "dovish" |
   if (label === "high") return "hawkish";
   if (label === "normal") return "neutral";
   return "outline";
-}
-
-// Wald-style 95% half-width for a proportion p over a support of n.
-// Returns null when n is too small for the approximation to be meaningful.
-function proportionHalfWidth(p: number | null, n: number): number | null {
-  if (p == null || !Number.isFinite(p) || n < 5) return null;
-  const variance = p * (1 - p);
-  if (variance <= 0) return null;
-  return 1.96 * Math.sqrt(variance / n);
 }
 
 function formatScoreWithCi(value: number | null, halfWidth: number | null): string {

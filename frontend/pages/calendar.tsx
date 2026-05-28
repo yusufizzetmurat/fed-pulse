@@ -47,7 +47,10 @@ function ordinalSuffix(n: number): string {
 }
 
 function formatCountdown(targetIso: string, nowMs: number): string {
-  const target = new Date(`${targetIso}T00:00:00`).getTime();
+  // Parse the target as UTC midnight so viewers in every timezone see the
+  // same countdown to the same meeting. The displayed value is still a
+  // relative duration ("in 3d 4h"), which is timezone-agnostic.
+  const target = new Date(`${targetIso}T00:00:00Z`).getTime();
   if (!Number.isFinite(target)) return "—";
   const diffMs = target - nowMs;
   if (diffMs <= 0) return "today";
