@@ -107,7 +107,7 @@ def _coerce_label_idx(label: Any) -> int | None:
         if normalised in LABEL2ID:
             return LABEL2ID[normalised]
         return None
-    if isinstance(label, (int, bool)) and not isinstance(label, bool):
+    if isinstance(label, int) and not isinstance(label, bool):
         if 0 <= int(label) < N_CLASSES:
             return int(label)
         return None
