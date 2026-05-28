@@ -10,5 +10,5 @@
   "tolerance": 0.005,
   "source_artefact": "1-seed x 1-fold x 1-epoch smoke run (deterministic CPU torch)",
   "source_artefact_cell": "trials[0].summary.test_metrics.regime_f1_macro (cold-start single-cell, not the canonical-sweep mean)",
-  "rationale": "Determinism contract — not an accuracy benchmark. The canonical headline (5-seed x 5-fold x 40-epoch sweep mean = 0.419) lives in dual_head_comparison_canonical.json. This file pins the deterministic single-cell value the smoke must reproduce on every push to dev so a future training-pipeline change cannot silently drift the trainer's numerical surface."
+  "rationale": "Advisory drift sentinel (#427). Not an accuracy benchmark. The canonical headline (5-seed x 5-fold x 40-epoch sweep mean = 0.419) lives in dual_head_comparison_canonical.json and is the hard contract. The pinned 1-seed x 1-fold x 1-epoch value here is a sentinel: scripts/assert_reproducibility_smoke.py prints a WARN diff against this value on every PR but exits 0 so legitimate training-surface improvements do not gate merges. The no-leak guarantee for the training features lives in tests/regression/test_feature_provenance_as_of.py."
 }
