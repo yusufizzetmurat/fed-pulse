@@ -1,9 +1,11 @@
 import * as React from "react";
 import Head from "next/head";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import { ChevronRight, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
+import { HistoryTimelineChart, type HistoryTimelineRow } from "@/components/analyze/HistoryTimelineChart";
 import { Header } from "@/components/shell/header";
 import { StatusBar } from "@/components/shell/status-bar";
 import { Badge } from "@/components/ui/badge";
@@ -19,13 +21,6 @@ import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   deleteHistoryRun,
@@ -34,23 +29,13 @@ import {
   resolveApiBaseUrl,
 } from "@/lib/analyze/api";
 import { stanceLabel, toStance } from "@/lib/analyze/format";
-import type { HistoryEntry, HistoryQuery } from "@/lib/analyze/types";
+import { useSymbols } from "@/lib/analyze/useSymbols";
+import type { HistoryEntry, Stance } from "@/lib/analyze/types";
 
-const STANCE_OPTIONS = [
-  { value: "any", label: "Any stance" },
-  { value: "hawkish", label: "Hawkish" },
-  { value: "neutral", label: "Neutral" },
-  { value: "dovish", label: "Dovish" },
-];
+const STANCE_VALUES: Stance[] = ["hawkish", "neutral", "dovish"];
+const REGIME_VALUES = ["calm", "normal", "high"] as const;
 
-const REGIME_OPTIONS = [
-  { value: "any", label: "Any regime" },
-  { value: "calm", label: "Calm" },
-  { value: "normal", label: "Normal" },
-  { value: "high", label: "High" },
-];
-
-const HORIZON_OPTIONS = ["any", "1d", "3d", "5d", "10d"];
+type RegimeValue = (typeof REGIME_VALUES)[number];
 
 function regimeVariant(label: string | null | undefined): "hawkish" | "dovish" | "neutral" | "outline" {
   if (label === "calm") return "dovish";
@@ -63,23 +48,148 @@ interface RowWithRealized extends HistoryEntry {
   realized_regime?: string | null;
 }
 
+interface Filters {
+  stances: Set<Stance>;
+  regimes: Set<RegimeValue>;
+  symbols: Set<string>;
+  variants: Set<string>;
+  dateStart: string;
+  dateEnd: string;
+}
+
+function parseSet<T extends string>(value: string | string[] | undefined, allowed: readonly T[]): Set<T> {
+  if (!value) return new Set<T>();
+  const list = Array.isArray(value) ? value : value.split(",");
+  const set = new Set<T>();
+  for (const item of list) {
+    const trimmed = String(item).trim();
+    if (allowed.includes(trimmed as T)) set.add(trimmed as T);
+  }
+  return set;
+}
+
+function parseFreeSet(value: string | string[] | undefined): Set<string> {
+  if (!value) return new Set<string>();
+  const list = Array.isArray(value) ? value : value.split(",");
+  return new Set(list.map((v) => String(v).trim()).filter((v) => v.length > 0));
+}
+
+function parseDate(value: string | string[] | undefined): string {
+  if (!value) return "";
+  if (Array.isArray(value)) return value[0] ?? "";
+  return value;
+}
+
+function readFilters(query: Record<string, string | string[] | undefined>): Filters {
+  return {
+    stances: parseSet(query.stance, STANCE_VALUES),
+    regimes: parseSet(query.regime, REGIME_VALUES),
+    symbols: parseFreeSet(query.symbol),
+    variants: parseFreeSet(query.variant),
+    dateStart: parseDate(query.start),
+    dateEnd: parseDate(query.end),
+  };
+}
+
+function serialiseFilters(filters: Filters, search: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (filters.stances.size > 0) out.stance = [...filters.stances].join(",");
+  if (filters.regimes.size > 0) out.regime = [...filters.regimes].join(",");
+  if (filters.symbols.size > 0) out.symbol = [...filters.symbols].join(",");
+  if (filters.variants.size > 0) out.variant = [...filters.variants].join(",");
+  if (filters.dateStart) out.start = filters.dateStart;
+  if (filters.dateEnd) out.end = filters.dateEnd;
+  if (search) out.q = search;
+  return out;
+}
+
+function emptyFilters(): Filters {
+  return {
+    stances: new Set(),
+    regimes: new Set(),
+    symbols: new Set(),
+    variants: new Set(),
+    dateStart: "",
+    dateEnd: "",
+  };
+}
+
+function MultiToggle<T extends string>({
+  label,
+  options,
+  selected,
+  onToggle,
+  variant,
+}: {
+  label: string;
+  options: readonly { value: T; label: string }[];
+  selected: Set<T>;
+  onToggle: (value: T) => void;
+  variant?: (value: T) => "hawkish" | "dovish" | "neutral" | "outline";
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs uppercase tracking-wide text-muted-foreground">{label}</Label>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((opt) => {
+          const active = selected.has(opt.value);
+          const tone = variant ? variant(opt.value) : "outline";
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => onToggle(opt.value)}
+              className="focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
+            >
+              <Badge
+                variant={active ? tone : "outline"}
+                className={`cursor-pointer text-[10px] ${active ? "" : "opacity-60"}`}
+              >
+                {opt.label}
+              </Badge>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function HistoryPage() {
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
+  const router = useRouter();
+  const { symbols: symbolUniverse } = useSymbols();
   const [items, setItems] = React.useState<RowWithRealized[]>([]);
   const [total, setTotal] = React.useState(0);
   const [loading, setLoading] = React.useState(false);
-  const [filters, setFilters] = React.useState<HistoryQuery>({ limit: 50, offset: 0 });
-  const [regimeFilter, setRegimeFilter] = React.useState<string>("any");
 
-  // Bump this version to force a refetch (e.g. after a delete) without
-  // rebuilding the filters object. The effect owns the AbortController
-  // so cleanup actually runs when React tears it down — an async
-  // useCallback cannot hand the cleanup back to React.
-  const [reloadVersion, setReloadVersion] = React.useState(0);
+  const [filters, setFilters] = React.useState<Filters>(emptyFilters);
   const [search, setSearch] = React.useState("");
+  const [reloadVersion, setReloadVersion] = React.useState(0);
   const reload = React.useCallback(() => {
     setReloadVersion((value) => value + 1);
   }, []);
+
+  // Hydrate filters from URL once router is ready. Only runs on mount /
+  // first ready; subsequent edits flow through pushUrl() and don't
+  // re-hydrate (avoiding the round-trip loop).
+  const hydratedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!router.isReady || hydratedRef.current) return;
+    hydratedRef.current = true;
+    setFilters(readFilters(router.query as Record<string, string | string[] | undefined>));
+    const q = router.query.q;
+    setSearch(typeof q === "string" ? q : "");
+  }, [router.isReady, router.query]);
+
+  // Mirror filter state to URL.
+  const pushUrl = React.useCallback(
+    (nextFilters: Filters, nextSearch: string) => {
+      const params = serialiseFilters(nextFilters, nextSearch);
+      router.replace({ pathname: "/history", query: params }, undefined, { shallow: true });
+    },
+    [router],
+  );
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -87,15 +197,10 @@ export default function HistoryPage() {
     setLoading(true);
     (async () => {
       try {
-        const result = await fetchHistory(apiBaseUrl, filters, signal);
+        const result = await fetchHistory(apiBaseUrl, { limit: 200, offset: 0 }, signal);
         if (signal.aborted) return;
         setItems(result.items.map((row) => ({ ...row, realized_regime: null })));
         setTotal(result.total);
-        // One batched round trip replaces the N per-row fetches the page
-        // used to fan out. Backend caps the batch at 50 ids; the page
-        // limit defaults to 50 so the call fits in one request. Failures
-        // are best-effort — aborted requests and yfinance hiccups leave
-        // the realized column on "pending" rather than nuking the table.
         const ids = result.items.map((row) => row.id);
         try {
           const batch = await fetchHistoryRealizedBatch(apiBaseUrl, ids, signal);
@@ -108,7 +213,7 @@ export default function HistoryPage() {
             }),
           );
         } catch {
-          // Best-effort: realized column stays "pending" on batch failure.
+          // Best-effort.
         }
       } catch (err) {
         if (!signal.aborted) {
@@ -121,7 +226,7 @@ export default function HistoryPage() {
     return () => {
       controller.abort();
     };
-  }, [apiBaseUrl, filters, reloadVersion]);
+  }, [apiBaseUrl, reloadVersion]);
 
   const handleDelete = React.useCallback(
     async (id: string) => {
@@ -136,28 +241,83 @@ export default function HistoryPage() {
     [apiBaseUrl, reload],
   );
 
-  const patchFilter = (delta: Partial<HistoryQuery>) =>
-    setFilters((value) => ({ ...value, offset: 0, ...delta }));
+  // Collect the available variant / symbol options from the loaded rows.
+  // Symbols also include the static universe so filters work pre-load.
+  const symbolOptions = React.useMemo(() => {
+    const set = new Set<string>(symbolUniverse.map((s) => s.symbol));
+    for (const row of items) set.add(row.symbol);
+    return [...set].sort();
+  }, [items, symbolUniverse]);
+
+  const variantOptions = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const row of items) {
+      if (row.forecast_mode) set.add(row.forecast_mode);
+    }
+    return [...set].sort();
+  }, [items]);
 
   const visibleRows = React.useMemo(() => {
-    const regimeFiltered =
-      regimeFilter === "any" ? items : items.filter((row) => row.argmax_regime === regimeFilter);
     const needle = search.trim().toLowerCase();
-    if (!needle) return regimeFiltered;
-    return regimeFiltered.filter((row) => {
-      const haystack = [
-        row.id,
-        row.document_date,
-        row.stance,
-        row.symbol,
-        row.horizon,
-        row.argmax_regime ?? "",
-      ]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(needle);
+    return items.filter((row) => {
+      if (filters.stances.size > 0 && !filters.stances.has(toStance(row.stance))) return false;
+      if (filters.regimes.size > 0) {
+        if (!row.argmax_regime || !filters.regimes.has(row.argmax_regime as RegimeValue)) return false;
+      }
+      if (filters.symbols.size > 0 && !filters.symbols.has(row.symbol)) return false;
+      if (filters.variants.size > 0 && !filters.variants.has(row.forecast_mode)) return false;
+      if (filters.dateStart && row.document_date < filters.dateStart) return false;
+      if (filters.dateEnd && row.document_date > filters.dateEnd) return false;
+      if (needle) {
+        const haystack = [
+          row.id,
+          row.document_date,
+          row.stance,
+          row.symbol,
+          row.horizon,
+          row.argmax_regime ?? "",
+        ]
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(needle)) return false;
+      }
+      return true;
     });
-  }, [items, regimeFilter, search]);
+  }, [items, filters, search]);
+
+  const patchFilters = React.useCallback(
+    (delta: Partial<Filters>) => {
+      setFilters((prev) => {
+        const next = { ...prev, ...delta } as Filters;
+        pushUrl(next, search);
+        return next;
+      });
+    },
+    [pushUrl, search],
+  );
+
+  const toggleInSet = <T extends string>(set: Set<T>, value: T): Set<T> => {
+    const next = new Set(set);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    return next;
+  };
+
+  const handleResetFilters = () => {
+    const next = emptyFilters();
+    setFilters(next);
+    setSearch("");
+    pushUrl(next, "");
+  };
+
+  const filtersActive =
+    filters.stances.size > 0 ||
+    filters.regimes.size > 0 ||
+    filters.symbols.size > 0 ||
+    filters.variants.size > 0 ||
+    !!filters.dateStart ||
+    !!filters.dateEnd ||
+    !!search;
 
   const columns = React.useMemo<DataTableColumn<RowWithRealized>[]>(
     () => [
@@ -311,133 +471,182 @@ export default function HistoryPage() {
             </p>
           </div>
 
-          <div className="space-y-1">
-            <Label htmlFor="history-search">Search</Label>
-            <Input
-              id="history-search"
-              type="search"
-              placeholder="Filter by run id, date, stance, or symbol…"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
+          <HistoryTimelineChart rows={visibleRows as HistoryTimelineRow[]} />
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Filters</CardTitle>
-              <CardDescription>
-                {total} total run{total === 1 ? "" : "s"}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid gap-3 md:grid-cols-5">
-                <div className="space-y-1">
-                  <Label htmlFor="filter-symbol">Symbol</Label>
+          <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+            <aside className="space-y-4 rounded-md border border-border p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium">Filters</p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleResetFilters}
+                  disabled={!filtersActive}
+                  className="h-7 text-[11px]"
+                >
+                  Reset
+                </Button>
+              </div>
+
+              <MultiToggle
+                label="Stance"
+                options={[
+                  { value: "hawkish" as Stance, label: "Hawkish" },
+                  { value: "neutral" as Stance, label: "Neutral" },
+                  { value: "dovish" as Stance, label: "Dovish" },
+                ]}
+                selected={filters.stances}
+                onToggle={(value) => patchFilters({ stances: toggleInSet(filters.stances, value) })}
+                variant={(value) =>
+                  value === "hawkish" ? "hawkish" : value === "dovish" ? "dovish" : "neutral"
+                }
+              />
+
+              <MultiToggle
+                label="Regime"
+                options={[
+                  { value: "calm" as RegimeValue, label: "Calm" },
+                  { value: "normal" as RegimeValue, label: "Normal" },
+                  { value: "high" as RegimeValue, label: "High" },
+                ]}
+                selected={filters.regimes}
+                onToggle={(value) => patchFilters({ regimes: toggleInSet(filters.regimes, value) })}
+                variant={(value) =>
+                  value === "high" ? "hawkish" : value === "calm" ? "dovish" : "neutral"
+                }
+              />
+
+              <div className="space-y-1.5">
+                <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Date range
+                </Label>
+                <div className="grid grid-cols-2 gap-1.5">
                   <Input
-                    id="filter-symbol"
-                    placeholder="e.g. ^GSPC"
-                    value={filters.symbol ?? ""}
-                    onChange={(event) => patchFilter({ symbol: event.target.value || undefined })}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="filter-horizon">Horizon</Label>
-                  <Select
-                    value={filters.horizon ?? "any"}
-                    onValueChange={(value) =>
-                      patchFilter({ horizon: value === "any" ? undefined : value })
-                    }
-                  >
-                    <SelectTrigger id="filter-horizon">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {HORIZON_OPTIONS.map((option) => (
-                        <SelectItem key={option} value={option}>
-                          {option === "any" ? "Any horizon" : option}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="filter-stance">Stance</Label>
-                  <Select
-                    value={filters.stance ?? "any"}
-                    onValueChange={(value) =>
-                      patchFilter({ stance: value === "any" ? undefined : value })
-                    }
-                  >
-                    <SelectTrigger id="filter-stance">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {STANCE_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="filter-regime">Regime</Label>
-                  <Select value={regimeFilter} onValueChange={setRegimeFilter}>
-                    <SelectTrigger id="filter-regime">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {REGIME_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="filter-date">Document date</Label>
-                  <Input
-                    id="filter-date"
                     type="date"
-                    value={filters.document_date ?? ""}
-                    onChange={(event) =>
-                      patchFilter({ document_date: event.target.value || undefined })
-                    }
+                    value={filters.dateStart}
+                    onChange={(e) => patchFilters({ dateStart: e.target.value })}
+                    aria-label="Start date"
+                  />
+                  <Input
+                    type="date"
+                    value={filters.dateEnd}
+                    onChange={(e) => patchFilters({ dateEnd: e.target.value })}
+                    aria-label="End date"
                   />
                 </div>
               </div>
-            </CardContent>
-          </Card>
 
-          {loading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-            </div>
-          ) : visibleRows.length === 0 ? (
-            <EmptyState
-              title="No runs match these filters"
-              description="Submit an analysis from the Workspace to populate the history, or relax the filters."
-              action={
-                <Button asChild size="sm" variant="outline">
-                  <Link href="/">Open Workspace</Link>
-                </Button>
-              }
-            />
-          ) : (
-            <Card>
-              <CardContent className="p-0">
-                <DataTable
-                  rows={visibleRows}
-                  columns={columns}
-                  rowKey={(row) => row.id}
-                  rowHref={(row) => `/history/${row.id}`}
+              {symbolOptions.length > 0 ? (
+                <div className="space-y-1.5">
+                  <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+                    Symbol
+                  </Label>
+                  <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
+                    {symbolOptions.map((sym) => {
+                      const active = filters.symbols.has(sym);
+                      return (
+                        <button
+                          key={sym}
+                          type="button"
+                          onClick={() => patchFilters({ symbols: toggleInSet(filters.symbols, sym) })}
+                          className="focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
+                        >
+                          <Badge
+                            variant={active ? "outline" : "outline"}
+                            className={`cursor-pointer text-[10px] font-mono ${active ? "border-primary text-foreground" : "opacity-60"}`}
+                          >
+                            {sym}
+                          </Badge>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
+              {variantOptions.length > 0 ? (
+                <div className="space-y-1.5">
+                  <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+                    Model variant
+                  </Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {variantOptions.map((v) => {
+                      const active = filters.variants.has(v);
+                      return (
+                        <button
+                          key={v}
+                          type="button"
+                          onClick={() => patchFilters({ variants: toggleInSet(filters.variants, v) })}
+                          className="focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
+                        >
+                          <Badge
+                            variant="outline"
+                            className={`cursor-pointer text-[10px] font-mono ${active ? "border-primary text-foreground" : "opacity-60"}`}
+                          >
+                            {v}
+                          </Badge>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </aside>
+
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label htmlFor="history-search">Search</Label>
+                <Input
+                  id="history-search"
+                  type="search"
+                  placeholder="Filter by run id, date, stance, or symbol…"
+                  value={search}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setSearch(next);
+                    pushUrl(filters, next);
+                  }}
                 />
-              </CardContent>
-            </Card>
-          )}
+              </div>
+
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">Runs</CardTitle>
+                  <CardDescription>
+                    {visibleRows.length} shown · {total} total run{total === 1 ? "" : "s"}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-0">
+                  {loading ? (
+                    <div className="space-y-2 p-4">
+                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-10 w-full" />
+                    </div>
+                  ) : visibleRows.length === 0 ? (
+                    <div className="p-4">
+                      <EmptyState
+                        title="No runs match these filters"
+                        description="Submit an analysis from the Workspace to populate the history, or relax the filters."
+                        action={
+                          <Button asChild size="sm" variant="outline">
+                            <Link href="/">Open Workspace</Link>
+                          </Button>
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <DataTable
+                      rows={visibleRows}
+                      columns={columns}
+                      rowKey={(row) => row.id}
+                      rowHref={(row) => `/history/${row.id}`}
+                    />
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         </main>
       </div>
     </>

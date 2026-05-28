@@ -70,6 +70,14 @@ function defaultRequest(): AnalyzeRequest {
   };
 }
 
+function SectionDivider({ label }: { label: string }) {
+  return (
+    <div className="border-t border-border mt-6 mb-1 pt-3">
+      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+    </div>
+  );
+}
+
 function takeArgmaxRegime(entry: HistoryEntry, detailPayload: AnalyzeResult | null): string | null {
   const regime = detailPayload?.regime_classification;
   if (regime?.argmax_class) return regime.argmax_class;
@@ -423,9 +431,12 @@ export default function WorkspacePage() {
 
           {result ? (
             <>
+              <SectionDivider label="Statement analysis" />
               <TldrCard result={result} />
-              <WorkspaceMetaStrip result={result} />
               <StatementDeltaCard result={result} />
+              <WorkspaceMetaStrip result={result} />
+
+              <SectionDivider label="Model prediction" />
               {result.regime_classification ? (
                 <RegimeHeadline
                   regime={result.regime_classification}
@@ -467,6 +478,11 @@ export default function WorkspacePage() {
                 <PolicyActionCard action={result.policy_action} />
               ) : null}
 
+              {marketPanel && (marketPanel.rates.length > 0 || marketPanel.vol_regime) ? (
+                <MarketReactionPanel panel={marketPanel} />
+              ) : null}
+
+              <SectionDivider label="Sentiment and context" />
               <div className="grid gap-4 xl:grid-cols-2">
                 {result.multi_axis ? (
                   <MultiAxisInterpretation multiAxis={result.multi_axis} />
@@ -488,12 +504,16 @@ export default function WorkspacePage() {
                 )}
               </div>
 
-              {marketPanel && (marketPanel.rates.length > 0 || marketPanel.vol_regime) ? (
-                <MarketReactionPanel panel={marketPanel} />
-              ) : null}
-
               <HistoricalAnalogPanel analogs={analogsPanel} loading={analogsLoading} />
 
+              <TrajectoryPanel
+                apiBaseUrl={apiBaseUrl}
+                asOfDate={request.date}
+                historyLength={12}
+              />
+
+              <SectionDivider label="Model internals" />
+              <PipelineTrace result={result} inputText={request.text} />
 
               {result.xai ? (
                 <SentenceStrikeXaiPanel
@@ -505,14 +525,6 @@ export default function WorkspacePage() {
                   loading={counterfactualLoading}
                 />
               ) : null}
-
-              <TrajectoryPanel
-                apiBaseUrl={apiBaseUrl}
-                asOfDate={request.date}
-                historyLength={12}
-              />
-
-              <PipelineTrace result={result} inputText={request.text} />
 
               <RegimeHistoryStrip entries={historyEntries} symbol={request.symbol} />
             </>
