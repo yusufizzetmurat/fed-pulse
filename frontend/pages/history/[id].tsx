@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchHistoryRun, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { errorMessage as toErrorMessage } from "@/lib/analyze/errors";
 import { downloadRunCsv } from "@/lib/export/run-export";
 import { downloadRunPdf } from "@/lib/export/pdf";
 import { stanceLabel, toStance } from "@/lib/analyze/format";
@@ -58,7 +59,7 @@ export default function HistoryDetailPage() {
       })
       .catch((err) => {
         if (cancelled) return;
-        const message = (err as Error).message || "Run not found.";
+        const message = toErrorMessage(err, "Run not found.");
         setErrorMessage(message);
         toast.error(message);
       })

@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchHistory, fetchHistoryRun, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { errorMessage } from "@/lib/analyze/errors";
 import {
   computeCompareDelta,
   computeMultiAxisDelta,
@@ -442,7 +443,7 @@ export default function ComparePage() {
         if (!cancelled) setEntries(result.items);
       })
       .catch((err) => {
-        if (!cancelled) toast.error((err as Error).message || "Failed to load history list.");
+        if (!cancelled) toast.error(errorMessage(err, "Failed to load history list."));
       })
       .finally(() => {
         if (!cancelled) setEntriesLoading(false);
@@ -466,7 +467,7 @@ export default function ComparePage() {
         if (!cancelled) setDetailA(detail);
       })
       .catch((err) => {
-        if (!cancelled) toast.error((err as Error).message || "Failed to load run A.");
+        if (!cancelled) toast.error(errorMessage(err, "Failed to load run A."));
       })
       .finally(() => {
         if (!cancelled) setLoadingA(false);
@@ -488,7 +489,7 @@ export default function ComparePage() {
         if (!cancelled) setDetailB(detail);
       })
       .catch((err) => {
-        if (!cancelled) toast.error((err as Error).message || "Failed to load run B.");
+        if (!cancelled) toast.error(errorMessage(err, "Failed to load run B."));
       })
       .finally(() => {
         if (!cancelled) setLoadingB(false);
@@ -583,7 +584,7 @@ export default function ComparePage() {
           ) : entries.length === 0 ? (
             <Card>
               <CardContent className="py-10 text-center text-muted-foreground">
-                No runs yet — submit at least two analyses before using this page.
+                No history yet. Use the Workspace to submit at least two analyses, then return here to compare.
               </CardContent>
             </Card>
           ) : (
