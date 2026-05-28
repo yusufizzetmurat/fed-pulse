@@ -74,9 +74,9 @@ function CountdownCard({ targetDate }: { targetDate: string }) {
   }, []);
   return (
     <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Clock className="h-4 w-4 text-primary" />
+      <CardHeader className="px-4 pb-3 pt-4 sm:px-6 sm:pt-6">
+        <CardTitle className="flex items-center gap-2 text-2xl sm:text-3xl">
+          <Clock className="h-5 w-5 text-primary sm:h-6 sm:w-6" />
           FOMC meeting in {formatCountdown(targetDate, now)}
         </CardTitle>
         <CardDescription>
@@ -101,7 +101,7 @@ function MeetingRow({ meeting, onAnalyze, predictedAction, contextLabel }: Meeti
       <button
         type="button"
         onClick={() => onAnalyze(targetDate)}
-        className="flex w-full flex-wrap items-center justify-between gap-3 py-3 text-left hover:bg-accent/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm px-2"
+        className="flex w-full min-h-[44px] flex-col gap-2 rounded-sm px-2 py-3 text-left hover:bg-accent/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3"
       >
         <div className="space-y-0.5">
           <p className="font-mono text-sm">{meeting.meeting_date}</p>
@@ -115,7 +115,7 @@ function MeetingRow({ meeting, onAnalyze, predictedAction, contextLabel }: Meeti
             {contextLabel ? <span>· {contextLabel}</span> : null}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {predictedAction ? (
             <Badge variant="outline" className="text-[10px]">
               forecast · {predictedAction}
