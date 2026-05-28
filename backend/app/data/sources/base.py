@@ -23,6 +23,7 @@ _VALID_SOURCE_TYPES = frozenset({
     "beige_book",
     "regional_research",
     "ny_fed_liberty_street",
+    "gss_factor_decomposition",
 })
 
 
