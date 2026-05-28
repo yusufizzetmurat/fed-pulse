@@ -163,7 +163,12 @@ def build_forecaster(
             "vol_target_mode",
             "use_regime_conditioning",
             "use_sep",
+<<<<<<< HEAD
             "use_press_conf",
+=======
+            "use_statement_delta",
+            "use_vote_features",
+>>>>>>> 671c784 (add statement-delta + vote-tally structured signal channels (#443, #444))
         ):
             flat_kwargs.pop(drop, None)
         flat_rates_heads = tuple(
@@ -333,12 +338,25 @@ def build_forecaster(
     # at build time when the flag is on. Default ``False`` keeps every
     # existing checkpoint byte-identical.
     use_sep_flag = bool(kwargs.pop("use_sep", False))
+<<<<<<< HEAD
     # #214 FOMC press-conference Q&A toggle. Forwarded to the model
     # constructor so the recurrent core widens its input projection by
     # the single-scalar press-conf tail at build time when the flag is
     # on. Default ``False`` keeps every existing checkpoint
     # byte-identical (no tail dim, no extra LoRA concat on the loader).
     use_press_conf_flag = bool(kwargs.pop("use_press_conf", False))
+=======
+    # #443/#444 statement-delta + vote-features opt-in flags. Both
+    # default ``False`` so the legacy / canonical-sweep path is
+    # byte-identical. When ``True`` the loader appends extra tail
+    # blocks on every per-bar tensor (see ``FeatureVector.as_rich_list``);
+    # the recurrent core widens its input projection to absorb the
+    # extra dims at build time. The flags are stashed on the built
+    # module below so ``ModelConfig.from_model`` round-trips them onto
+    # the checkpoint payload via ``_coerce_payload_config``.
+    use_statement_delta_flag = bool(kwargs.pop("use_statement_delta", False))
+    use_vote_features_flag = bool(kwargs.pop("use_vote_features", False))
+>>>>>>> 671c784 (add statement-delta + vote-tally structured signal channels (#443, #444))
     model: ForecasterResearchModel | ForecasterServingModel
     if role == "serving":
         # Serving construction trims the loss-side / sweep-side knobs the
@@ -395,6 +413,11 @@ def build_forecaster(
     # #435 round-trip the forward-vol target derivation onto the built
     # module so ``ModelConfig.from_model`` recovers it on resume.
     model.vol_target_mode = vol_target_mode_value  # type: ignore[assignment]
+    # #443/#444 round-trip the two new opt-in flags. Default-off path
+    # behaves byte-identically; flag-on a future sweep that resumes off
+    # this checkpoint rebuilds with the same loader-tail widths.
+    model.use_statement_delta = use_statement_delta_flag  # type: ignore[assignment]
+    model.use_vote_features = use_vote_features_flag  # type: ignore[assignment]
     return model
 
 

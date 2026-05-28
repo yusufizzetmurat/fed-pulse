@@ -127,6 +127,13 @@ _SNAPSHOT_COLUMNS: tuple[str, ...] = (
     # `sep_features` (`list[float] | None`) and is exempt below
     # alongside the other list-payload fields.
     "sep_features_missing",
+    # #443 statement-delta (redline) missing flag. The 768-dim mean-
+    # pooled embedding rides on `statement_delta_embedding`
+    # (`list[float] | None`) and is exempt below.
+    "statement_delta_embedding_missing",
+    # #444 vote-tally missing flag. The 4-scalar signed block rides on
+    # `vote_features` (`list[float] | None`) and is exempt below.
+    "vote_features_missing",
 )
 
 
@@ -300,17 +307,12 @@ def _audit_inventory_covers_every_field() -> set[str]:
         "analog_features",
         "macro_regime_features",
         "sep_features",
-        # #214 press-conf Q&A block. Single-scalar list payload
-        # (``has_press_conf``) appended past the SEP tail only when the
-        # loader populates the slot under ``--use-press-conf``. Audit
-        # row: ``T (snapshot)`` — the press conference is released ~30
-        # minutes after the FOMC statement on the same event date, so
-        # the flag is observable from the document released on ``T``,
-        # same band as the statement-side ``stance_*`` features. Exempt
-        # from the per-column inventory (list payload, conditional
-        # emission) under the same precedent as ``macro_regime_features``
-        # / ``sep_features``. See ADR 0037.
+        # #214 press-conf Q&A block (ADR 0037).
         "press_conf_features",
+        # #443 statement-delta embedding (ADR 0038).
+        "statement_delta_embedding",
+        # #444 vote-tally features (ADR 0038).
+        "vote_features",
         "rich_payload",
         "text_embedding_pooled",
         "text_embedding_missing",
