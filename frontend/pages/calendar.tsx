@@ -72,7 +72,7 @@ export default function CalendarPage() {
     // Without it, only the date prefills and the user has to paste the
     // text themselves.
     router.push({
-      pathname: "/analyze",
+      pathname: "/",
       query: { date: meetingDate, kind: "statement" },
     });
   };
