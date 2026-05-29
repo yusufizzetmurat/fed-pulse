@@ -22,6 +22,9 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.error
+import urllib.request
+import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +35,10 @@ from bs4 import BeautifulSoup
 
 
 ARCHIVE_BASE_URL = "https://www.federalreserve.gov"
+ARCHIVE_LISTING_URL = (
+    ARCHIVE_BASE_URL + "/monetarypolicy/publications/beige-book-default.htm"
+)
+OUTPUT_FILENAME = "beige_book.json"
 
 # Matches any beigebook URL that looks like an issue page:
 #   beigebook202401.htm           (6-digit YYYYMM)
@@ -240,3 +247,140 @@ def write_beige_book_json(parsed: Iterable[ParsedBeigeBook], output_path: Path) 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
     return len(rows)
+
+
+# federalreserve.gov 403s the stdlib default ``Python-urllib/x.y`` UA, so
+# every request needs a real-browser-ish header. Identifying the project
+# in the UA keeps the traffic auditable on the upstream's side.
+_USER_AGENT = (
+    "fed-pulse-data-ingester/1.0 "
+    "(+https://github.com/yusufizzetmurat/fed-pulse)"
+)
+
+
+def _http_get_text(url: str, *, timeout: float) -> str:
+    """Fetch ``url`` and return the response body as decoded text.
+
+    Wraps stdlib ``urllib.request.urlopen`` so HTTP non-2xx surfaces as
+    ``RuntimeError`` (the upstream ``HTTPError`` is re-raised with the URL
+    in the message so the caller logs see which issue page failed). A
+    User-Agent header is set explicitly because the federalreserve.gov
+    edge rejects requests without one.
+    """
+
+    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    try:
+        response = urllib.request.urlopen(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"HTTP {exc.code} from {url}") from exc
+    with response:
+        body = response.read()
+    return body.decode("utf-8", errors="replace")
+
+
+def pull_beige_book_archive(
+    target_path: Path,
+    *,
+    force: bool = False,
+    archive_url: str = ARCHIVE_LISTING_URL,
+    limit: int | None = None,
+    timeout: float = 30.0,
+) -> int:
+    """Walk the federalreserve.gov Beige Book archive and write parsed rows.
+
+    Fetches the archive listing, discovers every issue summary URL, then
+    fetches and parses each summary page. The parsed rows are written to
+    ``target_path`` via :func:`write_beige_book_json` — the same JSON
+    shape ``ingest_sources._iter_scraped_records`` consumes.
+
+    Idempotent: when ``target_path`` already exists with a non-empty JSON
+    list and ``force`` is False, the existing row count is returned
+    without any HTTP traffic. A corrupt or empty file forces a re-pull.
+
+    Per-issue failures (HTTP error on a single summary page, parse miss)
+    are logged via :mod:`warnings` and the walk continues — one bad
+    issue page must not drop the whole pull. ``limit`` caps the walk at
+    the first ``N`` discovered issues, useful for smoke-testing.
+    """
+
+    if target_path.exists() and not force:
+        try:
+            cached = json.loads(target_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            cached = None
+        if isinstance(cached, list) and len(cached) > 0:
+            return len(cached)
+
+    listing_html = _http_get_text(archive_url, timeout=timeout)
+    entries = extract_beige_book_listing(listing_html)
+    if limit is not None:
+        entries = entries[:limit]
+
+    parsed: list[ParsedBeigeBook] = []
+    for entry in entries:
+        try:
+            page_html = _http_get_text(entry.url, timeout=timeout)
+            parsed.append(parse_beige_book_page(page_html, source_url=entry.url))
+        except Exception as exc:
+            warnings.warn(
+                f"Beige Book fetch failed for {entry.url}: {exc}",
+                stacklevel=2,
+            )
+            continue
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = target_path.with_suffix(target_path.suffix + ".tmp")
+    try:
+        written = write_beige_book_json(parsed, tmp_path)
+        if written == 0:
+            raise RuntimeError(
+                f"Beige Book pull from {archive_url} produced zero rows"
+            )
+        tmp_path.replace(target_path)
+        return written
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+
+
+if __name__ == "__main__":
+    import argparse
+
+    from app.config import DATA_DIR as _DEFAULT_DATA_DIR
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Walk the federalreserve.gov Beige Book archive and write "
+            f"{OUTPUT_FILENAME} into the data directory. The resulting "
+            "JSON is picked up unchanged by "
+            "`python -m app.data.ingest_sources --include-scraped`."
+        )
+    )
+    parser.add_argument(
+        "--data-dir",
+        default=str(_DEFAULT_DATA_DIR),
+        help="Base data directory (default: app.config.DATA_DIR).",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-pull even if the cache file already exists.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Stop after fetching N issues (smoke testing).",
+    )
+    parser.add_argument(
+        "--archive-url",
+        default=ARCHIVE_LISTING_URL,
+        help="Override the archive listing URL.",
+    )
+    ns = parser.parse_args()
+    target = Path(ns.data_dir) / OUTPUT_FILENAME
+    rows = pull_beige_book_archive(
+        target, force=ns.force, archive_url=ns.archive_url, limit=ns.limit
+    )
+    print(f"Beige Book cache at {target} (rows: {rows})")
