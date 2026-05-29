@@ -17,6 +17,10 @@ from __future__ import annotations
 
 import json
 import re
+import time
+import urllib.error
+import urllib.request
+import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +30,9 @@ from bs4 import BeautifulSoup
 
 
 LSE_BASE_URL = "https://libertystreeteconomics.newyorkfed.org"
+ARCHIVE_LISTING_URL = LSE_BASE_URL + "/"
+OUTPUT_FILENAME = "regional_research.json"
+
 LSE_POST_URL_PATTERN = re.compile(
     r"^https://libertystreeteconomics\.newyorkfed\.org/(\d{4})/(\d{2})/[a-z0-9-]+/?$"
 )
@@ -191,3 +198,156 @@ def write_regional_research_json(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
     return len(rows)
+
+
+# Liberty Street Economics is fronted by a CDN that 403s the stdlib
+# default ``Python-urllib/x.y`` UA on some edge nodes. Identifying the
+# project in the UA keeps the traffic auditable on the upstream's side
+# and matches the convention the federalreserve.gov scrapers use.
+_USER_AGENT = (
+    "fed-pulse-data-ingester/1.0 "
+    "(+https://github.com/yusufizzetmurat/fed-pulse)"
+)
+
+
+def _http_get_text(url: str, *, timeout: float) -> str:
+    """Fetch ``url`` and return the response body as decoded text.
+
+    Wraps stdlib ``urllib.request.urlopen`` so HTTP non-2xx surfaces as
+    ``RuntimeError`` (the upstream ``HTTPError`` is re-raised with the URL
+    in the message so the caller logs see which post page failed).
+    """
+
+    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    try:
+        response = urllib.request.urlopen(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"HTTP {exc.code} from {url}") from exc
+    with response:
+        body = response.read()
+    return body.decode("utf-8", errors="replace")
+
+
+def pull_regional_research_archive(
+    target_path: Path,
+    *,
+    force: bool = False,
+    archive_url: str = ARCHIVE_LISTING_URL,
+    limit: int | None = None,
+    timeout: float = 30.0,
+    delay_seconds: float = 0.5,
+) -> int:
+    """Walk the Liberty Street Economics archive and write parsed rows.
+
+    Fetches the archive listing (defaults to the site homepage, which
+    surfaces the most recent posts), discovers every post URL matching
+    the canonical ``/{YYYY}/{MM}/{slug}/`` pattern, then fetches and
+    parses each post page. Parsed rows are written to ``target_path``
+    via :func:`write_regional_research_json` -- the same JSON shape
+    ``ingest_sources._iter_scraped_records`` consumes.
+
+    Idempotent: when ``target_path`` already exists with a non-empty
+    JSON list and ``force`` is False, the existing row count is
+    returned without any HTTP traffic. A corrupt or empty file forces
+    a re-pull.
+
+    Per-post failures (HTTP error on a single post page, parse miss)
+    are logged via :mod:`warnings` and the walk continues -- one bad
+    post page must not drop the whole pull. ``limit`` caps the walk at
+    the first ``N`` discovered posts, useful for smoke-testing.
+    """
+
+    if target_path.exists() and not force:
+        try:
+            cached = json.loads(target_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            cached = None
+        if isinstance(cached, list) and len(cached) > 0:
+            return len(cached)
+
+    listing_html = _http_get_text(archive_url, timeout=timeout)
+    entries = extract_lse_listing(listing_html)
+    if limit is not None:
+        entries = entries[:limit]
+
+    parsed: list[ParsedRegionalResearch] = []
+    for i, entry in enumerate(entries):
+        try:
+            page_html = _http_get_text(entry.url, timeout=timeout)
+            parsed.append(parse_lse_post(page_html, source_url=entry.url))
+        except Exception as exc:
+            warnings.warn(
+                f"Regional research fetch failed for {entry.url}: {exc}",
+                stacklevel=2,
+            )
+            continue
+        # Polite delay between page fetches so a long walk does not
+        # trigger an upstream throttle. Skipped after the last entry.
+        if delay_seconds > 0 and i + 1 < len(entries):
+            time.sleep(delay_seconds)
+
+    tmp_path = target_path.with_suffix(target_path.suffix + ".tmp")
+    try:
+        written = write_regional_research_json(parsed, tmp_path)
+        if written == 0:
+            raise RuntimeError(
+                f"Regional research pull from {archive_url} produced zero rows"
+            )
+        tmp_path.replace(target_path)
+        return written
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+
+
+if __name__ == "__main__":
+    import argparse
+
+    from app.config import DATA_DIR as _DEFAULT_DATA_DIR
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Walk the Liberty Street Economics archive and write "
+            f"{OUTPUT_FILENAME} into the data directory. The resulting "
+            "JSON is picked up unchanged by "
+            "`python -m app.data.ingest_sources --include-scraped`."
+        )
+    )
+    parser.add_argument(
+        "--data-dir",
+        default=str(_DEFAULT_DATA_DIR),
+        help="Base data directory (default: app.config.DATA_DIR).",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-pull even if the cache file already exists.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Stop after fetching N posts (smoke testing).",
+    )
+    parser.add_argument(
+        "--archive-url",
+        default=ARCHIVE_LISTING_URL,
+        help="Override the archive listing URL.",
+    )
+    parser.add_argument(
+        "--delay-seconds",
+        type=float,
+        default=0.5,
+        help="Polite delay between page fetches (default: 0.5s).",
+    )
+    ns = parser.parse_args()
+    target = Path(ns.data_dir) / OUTPUT_FILENAME
+    rows = pull_regional_research_archive(
+        target,
+        force=ns.force,
+        archive_url=ns.archive_url,
+        limit=ns.limit,
+        delay_seconds=ns.delay_seconds,
+    )
+    print(f"Regional research cache at {target} (rows: {rows})")
