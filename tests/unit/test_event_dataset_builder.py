@@ -220,13 +220,16 @@ def test_prior_window_days_threads_through_build_event_rows(
 
     package = tmp_path / "package"
     package.mkdir()
-    event_date = "2024-06-12"
+    event_date = "2023-06-14"
     _write_registry(
         package / "registry_normalized.jsonl",
         [_registry_entry_for_statement(event_date)],
     )
-    dates = _make_trading_dates(_dt.date(2020, 1, 2), 1000)
-    closes = [100.0 + i * 0.01 for i in range(1000)]
+    # 1500 trading days starting 2018-01 so 60+ pre-event bars are
+    # available and the +30d forward window also clears the end of
+    # the series.
+    dates = _make_trading_dates(_dt.date(2018, 1, 2), 1500)
+    closes = [100.0 + i * 0.01 for i in range(1500)]
     series = _series_from_closes(dates, closes)
 
     df_default = edb.build_event_rows(
