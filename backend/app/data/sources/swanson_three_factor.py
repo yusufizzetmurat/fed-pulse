@@ -250,7 +250,11 @@ def _parse_swanson_row(row: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-register(SwansonThreeFactorScraper())
+# Only register when imported as a module; see op_fed.py for the same
+# guard's rationale (python -m re-executes this file as __main__ after
+# the package init already imported and registered it).
+if __name__ != "__main__":
+    register(SwansonThreeFactorScraper())
 
 
 if __name__ == "__main__":
