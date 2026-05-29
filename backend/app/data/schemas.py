@@ -570,6 +570,26 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
     "forward_realized_vol_10d": Column(
         float, nullable=True, required=False, coerce=True
     ),
+    # #480 multi-horizon auxiliary targets. Same generator as the
+    # canonical 10d, parametrised window. Nullable per-horizon when the
+    # post-event window runs off the end of the asset price series;
+    # required=False so pre-#480 events.parquet files validate without
+    # the columns present.
+    "forward_realized_vol_1d": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_3d": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_5d": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_20d": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_30d": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
     # #236 GARCH(1,1)-residual decomposition. Nullable for events whose
     # strict-prior window is shorter than ``MIN_FIT_RETURNS`` (~252 td)
     # or the QMLE fit failed to converge. required=False so older
@@ -578,6 +598,39 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
         float, nullable=True, required=False, coerce=True
     ),
     "forward_realized_vol_10d_garch_residual": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    # ----- #481 per-asset 10d forward realised-vol targets -----
+    # One nullable float column per workspace asset-picker symbol.
+    # ``_gspc`` aliases the canonical ``forward_realized_vol_10d``
+    # (SPX) above; the remaining seven cover the other indices,
+    # dollar index, VIX, and the three major FX pairs. required=False
+    # so older events.parquet files (pre #481) validate without the
+    # columns. The pipeline emits None for symbols whose cache fetch
+    # failed or for events sitting outside a symbol's listing window;
+    # downstream learns to skip on the missing-data path.
+    "forward_realized_vol_10d_gspc": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_10d_ndx": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_10d_dji": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_10d_dxy": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_10d_vix": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_10d_eurusd": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_10d_usdjpy": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "forward_realized_vol_10d_gbpusd": Column(
         float, nullable=True, required=False, coerce=True
     ),
     "concurrent_macro_release": Column(

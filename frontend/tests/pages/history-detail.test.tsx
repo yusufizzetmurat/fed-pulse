@@ -84,7 +84,10 @@ describe("HistoryDetailPage", () => {
     fetchHistoryRunMock.mockRejectedValue(new Error("Run does not exist"));
     const { default: HistoryDetailPage } = await import("@/pages/history/[id]");
     render(<HistoryDetailPage />);
-    await waitFor(() => expect(screen.getByText(/Run does not exist/)).toBeInTheDocument());
+    // The categorical error voice surfaces a generic Model unavailable
+    // string rather than the backend's raw message — the helper folds
+    // both 404 and unknown errors into the same bucket.
+    await waitFor(() => expect(screen.getByText(/Model unavailable/i)).toBeInTheDocument());
   });
 
   it("links the compare-with button to /compare?a=<id>", async () => {

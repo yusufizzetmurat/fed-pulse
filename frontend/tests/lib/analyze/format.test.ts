@@ -81,12 +81,12 @@ describe("format helpers", () => {
   });
 
   it("bandLabel marks conformal vs Gaussian-z vs unknown", () => {
-    expect(bandLabel(80, "conformal")).toBe("80% conformal band");
-    expect(bandLabel(80, "gaussian_z")).toBe("80% Gaussian-z band");
+    expect(bandLabel(80, "conformal")).toBe("80% calibrated range");
+    expect(bandLabel(80, "gaussian_z")).toBe("80% Gaussian range");
     // Null / missing source falls back to the legacy generic label so older
     // history rows (saved before the band-source field existed) still render.
-    expect(bandLabel(80, null)).toBe("80% confidence band");
-    expect(bandLabel(80, undefined)).toBe("80% confidence band");
-    expect(bandLabel(95, "conformal")).toBe("95% conformal band");
+    expect(bandLabel(80, null)).toBe("80% confidence range");
+    expect(bandLabel(80, undefined)).toBe("80% confidence range");
+    expect(bandLabel(95, "conformal")).toBe("95% calibrated range");
   });
 });

@@ -3,19 +3,32 @@
 Trains the forecaster under three configurations on the same
 walk-forward fold protocol:
 
-- ``baseline``: ``use_derived_text_features=True`` -- the pre-#309
+- ``baseline``: every derived-text slot stays on -- the pre-#309
   baseline (per-sentence sentiment / stance / certainty / topic slots
   flow into the recurrent core).
-- ``ablation``: ``use_derived_text_features=False`` -- the document-
-  level encoder text path is the only text-derived signal.
-- ``replacement``: ``use_derived_text_features=False`` plus the #291
-  pre-meeting rates columns. The arm runs only when
+- ``derived_ablation`` (alias ``ablation``): the five derived-feature
+  columns surfaced in the §16 walkthrough (``sentiment_score``,
+  ``stance_label``, ``factor_labels``, ``certainty_score``,
+  ``topic_label``) are zeroed in place on every FeatureVector before
+  the per-fold scaler fit. The document-level encoder text path is
+  the only text-derived signal that survives.
+- ``derived_replacement`` (alias ``replacement``): same narrow
+  five-column zero, plus the #291 pre-meeting rates columns once
+  the loader carries them. The arm runs only when
   ``data/external/fred/rates_panel.parquet`` is on disk; otherwise it
   reports ``skipped`` in the output JSON. Wiring the 12 pre-meeting
   columns into the FeatureVector input slots that the ablation arm
-  zeros is a substantial loader refactor; the runner emits
-  ``replacement_arm: "deferred: pre-meeting wiring tracked in #320"``
-  and the comparison runs the two arms whose code paths exist today.
+  zeros is tracked under #315; until that lands the arm emits the
+  same input tensor as ``derived_ablation`` and surfaces the deferral
+  on ``replacement_arm`` in the manifest.
+
+The narrow five-column zeroing is the methodology contract this
+runner ships. The broader text-family zero (linguistic / mp_surprise
+/ multi-axis / LLM-features blocks together) is owned by the
+per-family ablation (#334). This ablation isolates the question the
+issue body asks: do the five derived-feature columns specifically
+carry forecaster-relevant signal over the document-level encoder
+path. See ADR 0039 for the methodology framing.
 
 The output JSON is keyed by configuration with per-fold macro-F1 +
 bootstrap CI numbers so the §16 finalization-roadmap table can read
@@ -25,9 +38,15 @@ Usage::
 
     docker compose run --rm backend python -m scripts.run_derived_features_ablation \\
         --training-package-id <id> \\
+        --arm derived_ablation \\
         --output artifacts/experiments/derived_features_ablation.json \\
         --seeds 11 29 47 71 97 \\
         --bootstrap-samples 500
+
+Omit ``--arm`` to sweep all three arms in one invocation (the legacy
+shape the PR #314 runner shipped). Pass ``--arm`` to run a single
+cell (matches the per-family / L-M runners and lets a Runpod queue
+schedule one arm per job).
 """
 
 from __future__ import annotations
@@ -38,9 +57,58 @@ import math
 import random
 import statistics
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from app.config import BACKEND_ROOT
+
+
+# The five derived-feature columns the §16 walkthrough surfaces and
+# the issue body names verbatim. Mapped to the FeatureVector attribute
+# slots that ``as_rich_list`` writes into the per-bar tensor:
+#
+# - ``sentiment_score``  : per-bar position [0]
+# - ``stance_label``     : stance one-hot at positions [29:32]
+#                          (stance_hawk / stance_dove / stance_neutral)
+# - ``factor_labels``    : multi-task ``factor`` axis -- carried via
+#                          ``mt_aux`` rather than a per-bar slot. The
+#                          narrow ablation masks the auxiliary loss
+#                          contribution by collapsing ``factor_mask``
+#                          to False so the head no longer reads the
+#                          axis.
+# - ``certainty_score``  : per-bar position [33] (certain_label_certain)
+# - ``topic_label``      : multi-task ``topic`` axis (mt_aux only;
+#                          same mask-to-False treatment as factor).
+#
+# ``stance_missing`` (slot [34]) is intentionally NOT zeroed: it's a
+# missingness flag that tells the head "no stance signal available",
+# which is precisely what the ablation establishes. Flipping it would
+# leak a "stance unknown" signal that the baseline arm does not see
+# either (baseline already keeps stance_missing at whatever the
+# upstream loader set it to).
+_FIVE_DERIVED_COLUMNS: tuple[str, ...] = (
+    "sentiment_score",
+    "stance_label",
+    "factor_labels",
+    "certainty_score",
+    "topic_label",
+)
+
+# The FeatureVector attributes the narrow zeroer overwrites. Kept
+# separate from ``_FIVE_DERIVED_COLUMNS`` (the conceptual names the
+# issue body uses) so the conceptual list reads cleanly in the
+# manifest and the attribute list stays the operational contract.
+_FIVE_DERIVED_FV_ATTRS: tuple[str, ...] = (
+    "sentiment_score",
+    "stance_hawk",
+    "stance_dove",
+    "stance_neutral",
+    "certain_label_certain",
+)
+
+# The multi-task aux axes the narrow zeroer masks off. The masks
+# drop to all-False so the auxiliary loss contribution from each axis
+# vanishes; the target tensors themselves are untouched.
+_FIVE_DERIVED_MT_AUX_AXES: tuple[str, ...] = ("factor", "topic")
 
 
 # The replacement arm pulls in #291 pre-meeting columns from
@@ -58,6 +126,68 @@ _REPLACEMENT_ARM_DATA = (
 _REPLACEMENT_ARM_DEFERRAL_TICKET = (
     "deferred: pre-meeting wiring tracked in #315"
 )
+
+
+# Arm vocabulary. ``baseline`` is the canonical pipeline byte-identical
+# to the pre-#309 head. ``derived_ablation`` flips the narrow
+# five-column zero on every FeatureVector before the per-fold scaler
+# fit. ``derived_replacement`` does the same zero and is the slot
+# the #315 pre-meeting columns will fill once that issue lands. The
+# legacy arm names (``ablation`` / ``replacement``) stay as aliases so
+# the PR #314 CLI surface keeps working.
+_ARM_CHOICES: tuple[str, ...] = (
+    "baseline",
+    "derived_ablation",
+    "derived_replacement",
+)
+_ARM_ALIASES: dict[str, str] = {
+    "ablation": "derived_ablation",
+    "replacement": "derived_replacement",
+}
+
+
+def _canonicalise_arm(name: str) -> str:
+    """Resolve a CLI arm string to one of ``_ARM_CHOICES``.
+
+    The PR #314 runner shipped with ``ablation`` / ``replacement`` arm
+    names; #309's methodology rewrite renames them so the §16 table
+    can read the columns as ``derived_ablation`` / ``derived_replacement``
+    against the per-family runner's ``zero_<family>`` vocabulary.
+    Legacy strings resolve to the new names without breaking callers.
+    """
+
+    return _ARM_ALIASES.get(name, name)
+
+
+def _zero_five_derived_columns_inplace(
+    sequences: Iterable[list[Any]],
+) -> None:
+    """Zero the five derived-feature columns on every per-bar FeatureVector.
+
+    Mirrors the per-family runner's ``_zero_per_bar_market_aux``
+    pattern: the loader has no flag for the narrow five-column slice
+    (the existing ``use_multi_axis`` / ``use_mp_surprise`` flags zero
+    families much wider than the §16 question scopes), so the runner
+    walks the loaded sequences and overwrites the slots in place
+    BEFORE ``train_model`` fits the per-fold RobustScaler. That
+    ordering is the load-bearing piece -- the scaler sees the zero
+    column on the train slice and locks the median + IQR at the
+    no-signal state, then applies the same transform to val + test so
+    the post-scale value stays a literal 0 across the partition.
+
+    The multi-task ``factor`` and ``topic`` aux axes have no per-bar
+    slot in ``as_rich_list``; they ride the auxiliary loss path. The
+    matching mask collapse runs inside ``train_model`` and is enabled
+    by ``ModelConfig.use_derived_text_features=False``; the runner
+    flips that flag on both ablation arms so the aux contribution
+    drops out alongside the per-bar zeroing.
+    """
+
+    for sequence in sequences:
+        for fv in sequence:
+            for attr in _FIVE_DERIVED_FV_ATTRS:
+                if hasattr(fv, attr):
+                    setattr(fv, attr, 0.0)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -125,8 +255,24 @@ def _parse_args() -> argparse.Namespace:
             "Status string emitted on the manifest when the replacement "
             "arm runs without wiring the pre-meeting columns. Set to "
             "``ready`` once the FeatureVector loader carries the 12 "
-            "pre-meeting columns from #291 into the input slots that "
-            "``_zero_derived_text_features`` zeros."
+            "pre-meeting columns from #291 into the input slots the "
+            "narrow five-column zero clears."
+        ),
+    )
+    parser.add_argument(
+        "--arm",
+        type=str,
+        choices=list(_ARM_CHOICES) + list(_ARM_ALIASES.keys()),
+        default=None,
+        help=(
+            "Run a single arm and exit. ``baseline`` keeps the canonical "
+            "pipeline, ``derived_ablation`` zeros the five derived-feature "
+            "columns in place before the per-fold scaler fit, and "
+            "``derived_replacement`` is the #315-blocked slot the "
+            "pre-meeting rates columns will fill. Legacy aliases "
+            "``ablation`` / ``replacement`` resolve to the canonical names. "
+            "Omit to sweep all three arms in one invocation (the PR #314 "
+            "default shape)."
         ),
     )
     return parser.parse_args()
@@ -177,9 +323,16 @@ def _bootstrap_ci(
     finite = [v for v in values if v is not None and math.isfinite(v)]
     if not finite:
         return None
+    mean = statistics.fmean(finite)
+    # ``std`` is the across-observation sample std on the finite
+    # measurements (5 seeds x N folds). The §16 narrative reads as
+    # ``mean ± std`` per arm; the bootstrap (lo / hi) numbers carry
+    # the CI separately for callers that want the resampled spread.
+    std = statistics.stdev(finite) if len(finite) >= 2 else 0.0
     if len(finite) < 2 or samples <= 0:
         return {
-            "mean": statistics.fmean(finite),
+            "mean": mean,
+            "std": std,
             "lo": min(finite),
             "hi": max(finite),
             "n": len(finite),
@@ -194,7 +347,8 @@ def _bootstrap_ci(
     lo_idx = max(0, int(math.floor(alpha * len(means))))
     hi_idx = min(len(means) - 1, int(math.ceil((1.0 - alpha) * len(means))) - 1)
     return {
-        "mean": statistics.fmean(finite),
+        "mean": mean,
+        "std": std,
         "lo": means[lo_idx],
         "hi": means[hi_idx],
         "n": len(finite),
@@ -211,11 +365,20 @@ def _run_one_cell(
     hidden_size: int,
     use_derived: bool,
 ) -> dict[str, Any]:
-    from app.models.config import ModelConfig
+    from app.models.config import ModelConfig, RICH_FEATURE_SIZE
     from app.training.loaders import load_walk_forward_split
     from app.training.loop import train_model
 
+    # The runner always loads rich features (split is built with
+    # ``rich_features=True`` below); pin the input projection to
+    # ``RICH_FEATURE_SIZE`` so the recurrent core sees the same per-bar
+    # width the loader emits. Mirrors ``train_forecaster._resolved_input_size``.
+    # Without this the ``ModelConfig`` default (``FEATURE_SIZE`` = 6) was
+    # used and ``train_model``'s first forward died on the LSTM
+    # dim mismatch against the 87-dim vectors that land on canonical
+    # training packages.
     config = ModelConfig(
+        input_size=RICH_FEATURE_SIZE,
         output_mode="classification",
         n_classes=3,
         hidden_size=hidden_size,
@@ -229,6 +392,19 @@ def _run_one_cell(
             fold_id=fold_id,
             rich_features=True,
         )
+        # Narrow five-column zeroing on every FeatureVector before the
+        # per-fold scaler fit. The ``use_derived_text_features=False``
+        # config flag downstream collapses the multi-task factor /
+        # topic aux masks inside ``train_model``; this pass clears the
+        # per-bar sentiment + stance one-hot + certainty slots the
+        # ``as_rich_list`` writer would otherwise hand the scaler.
+        # Baseline (``use_derived=True``) skips both -- the per-fold
+        # tensor that lands on ``train_model`` is byte-identical to
+        # the canonical pipeline.
+        if not use_derived:
+            _zero_five_derived_columns_inplace(split.train)
+            _zero_five_derived_columns_inplace(split.val)
+            _zero_five_derived_columns_inplace(split.test)
         result = train_model(
             model_config=config,
             train_sequence_groups=split.train,
@@ -267,9 +443,9 @@ def _configurations() -> list[tuple[str, dict[str, Any]]]:
 
     return [
         ("baseline", {"use_derived": True}),
-        ("ablation", {"use_derived": False}),
+        ("derived_ablation", {"use_derived": False}),
         (
-            "replacement",
+            "derived_replacement",
             {
                 "use_derived": False,
                 "requires": str(_REPLACEMENT_ARM_DATA),
@@ -286,10 +462,16 @@ def main() -> int:
     fold_ids = _resolve_fold_ids(args.training_package_id, args.folds)
     print(f"[derived_features_ablation] folds={fold_ids}")
 
+    selected_arm = _canonicalise_arm(args.arm) if args.arm is not None else None
+    if selected_arm is not None:
+        print(f"[derived_features_ablation] arm={selected_arm}")
+
     trials: dict[str, list[dict[str, Any]]] = {}
     skipped: dict[str, str] = {}
     replacement_arm_status: str | None = None
     for name, kwargs in _configurations():
+        if selected_arm is not None and name != selected_arm:
+            continue
         required = kwargs.pop("requires", None)
         if required is not None and not Path(required).exists():
             skipped[name] = (
@@ -302,7 +484,7 @@ def main() -> int:
                 flush=True,
             )
             continue
-        if name == "replacement":
+        if name == "derived_replacement":
             # The arm is gated on the rates_panel.parquet being present.
             # Wiring the 12 pre-meeting columns into the FeatureVector
             # slots that the ablation zeros is tracked separately; the
@@ -350,6 +532,12 @@ def main() -> int:
 
     payload = {
         "configurations": list(trials.keys()),
+        "arm_choices": list(_ARM_CHOICES),
+        "arm_aliases": dict(_ARM_ALIASES),
+        "arm": selected_arm,
+        "five_derived_columns": list(_FIVE_DERIVED_COLUMNS),
+        "five_derived_fv_attrs": list(_FIVE_DERIVED_FV_ATTRS),
+        "five_derived_mt_aux_axes": list(_FIVE_DERIVED_MT_AUX_AXES),
         "skipped": skipped,
         "seeds": list(args.seeds),
         "fold_ids": fold_ids,

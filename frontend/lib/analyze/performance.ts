@@ -197,3 +197,14 @@ function mean(values: number[]): number {
   if (values.length === 0) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
+
+// Wald-style 95% half-width for a proportion p over a support of n.
+// Returns null when n is too small for the normal approximation to be
+// meaningful or when p is degenerate (variance ≤ 0). Non-finite inputs
+// also return null so the caller's "—" branch fires.
+export function proportionHalfWidth(p: number | null, n: number): number | null {
+  if (p == null || !Number.isFinite(p) || !Number.isFinite(n) || n < 5) return null;
+  const variance = p * (1 - p);
+  if (variance <= 0) return null;
+  return 1.96 * Math.sqrt(variance / n);
+}

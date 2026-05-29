@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchTrainJob, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { errorMessage as toErrorMessage } from "@/lib/analyze/errors";
 import type { TrainJobState } from "@/lib/analyze/types";
 
 const STATUS_VARIANT: Record<string, "hawkish" | "dovish" | "outline" | "secondary"> = {
@@ -52,7 +53,7 @@ export default function TrainingDetailPage() {
         })
         .catch((err) => {
           if (!cancelled) {
-            const message = (err as Error).message || "Failed to load job state.";
+            const message = toErrorMessage(err, "Failed to load job state.");
             setErrorMessage(message);
             toast.error(message);
           }

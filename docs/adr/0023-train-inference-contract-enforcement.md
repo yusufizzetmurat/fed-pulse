@@ -1,119 +1,90 @@
 # ADR 0023 — Train / inference contract enforcement
 
-Status: accepted, in production (as of merge).
-Date: 2026-05-27.
-References:
-- Issue #341.
-- ADR 0016 (forecaster research / serving split) — #336.
-- Issue #339 (encoder usage + train/inference parity audit) — produced `docs/feature-provenance-audit.md`.
-- `backend/app/training/inference_contract.py` — sidecar dataclass + derive / read / write / validate helpers.
-- `backend/app/training/checkpoint.py::_save_model_checkpoint` — sidecar write site.
-- `scripts/promote_checkpoint.py::promote_research_checkpoint_to_serving` — sidecar write on promotion.
-- `backend/app/services/forecaster.py::_get_model` — sidecar validation on serving load.
-- `backend/app/services/forecaster.py::_validate_serving_contract` — hard-vs-soft failure dispatch.
-- `backend/app/services/forecaster.py::build_market_reaction_panel` — structured-state surface.
-- `backend/app/main.py::_safe_regime_classification` — structured-state surface + counter increment.
-- `backend/app/main.py::health_check` — exposes the validation surface + counters.
-- `backend/app/schemas.py::InferenceStatusSurface` — response-side structured-state schema.
-- `backend/app/models/registry.yaml::encoders[*].inference_features`, `artefacts[*].inference_features` — declarative feature pins.
-- `tests/properties/test_forward_parity.py` — numeric parity (`torch.allclose`, atol=1e-6) between research and serving forwards on a real canonical checkpoint or its toy fallback.
-- `tests/properties/test_kwarg_superset.py` — signature-only sibling of the parity test; AST-walks the loop + serving call sites.
-- `tests/unit/test_inference_contract.py` — sidecar round-trip + loader-refusal coverage.
+ADR 0016 split the forecaster into research (`ForecasterResearchModel`) and serving (`ForecasterServingModel`) classes; #336 added a promotion contract handing the persisted state-dict from the research artefact into a serving-shape payload. The #339 audit (`docs/feature-provenance-audit.md`) confirmed that even with the split in place, the two surfaces drifted in three ways the codebase couldn't catch without reviewer eyes.
 
-## Context
+Silent kwarg drift: training-side loaders fed `text_embedding`, `credibility`, `chunks`, and friends through to `forward_multi_task`; serving call sites populated the same kwargs from a different source (live cached payloads, zero defaults). A train-side kwarg the serving forecaster forgot to thread through silently degraded to zero — the model evaluated against a different feature distribution at inference than at training, and the only signal was a quiet regression in the regime card. #339 closed three such instances (`credibility`, `text_embedding`, `text_embedding_missing`).
 
-ADR 0016 split the forecaster into research (`ForecasterResearchModel`) and serving (`ForecasterServingModel`) classes, and #336 added a promotion contract (`scripts/promote_checkpoint.py`) that hands the persisted state-dict from the research artefact into a serving-shape payload. The #339 audit confirmed that even with the class split in place, the two surfaces could drift in subtle ways:
+Silent failure swallowing: `_safe_regime_classification` and `build_market_reaction_panel` wrapped forward dispatch in `try / except: return None`. A real failure — a `TypeError` from a missed kwarg, a `RuntimeError` from `prepare_recurrent_input` rejecting an absent text embedding — degraded to `None` on the JSON response with no greppable signal. The operator couldn't tell "model deliberately mute" from "model crashed silently".
 
-1. **Silent kwarg drift.** Training-side loaders fed `text_embedding`, `credibility`, `chunks`, and friends through to `forward_multi_task`; serving call sites in `app.services.forecaster` populated the same kwargs from a different source (live cached payloads, zero defaults). A train-side kwarg the serving forecaster forgot to thread through silently degraded to zero — the model evaluated against a different feature distribution at inference than at training, and the only signal was a quiet regression in the regime card. The #339 audit explicitly closed three such instances (`credibility`, `text_embedding`, `text_embedding_missing`).
-2. **Silent failure swallowing.** `_safe_regime_classification` and `build_market_reaction_panel` both wrapped their forward dispatch in a `try / except: return None`. A real failure — a `TypeError` from a kwarg the call site missed, a `RuntimeError` from `prepare_recurrent_input` rejecting an absent text embedding — degraded to `None` on the JSON response with no greppable signal. The operator could not tell "model deliberately mute" from "model crashed silently".
-3. **No declarative pin between the deployed checkpoint and the published registry.** `registry.yaml` declared the encoders the bake-off used and the artefacts the inference container pulled, but the linkage between "this checkpoint requires text_embedding + credibility" and "this serving call site supplies text_embedding + credibility" lived only in code review. A future PR that dropped a feature from the serving call site would not be rejected at boot — it would just silently zero the input.
+No declarative pin between the deployed checkpoint and the published registry. `registry.yaml` declared the encoders the bake-off used and the artefacts the inference container pulled, but the linkage between "this checkpoint requires text_embedding + credibility" and "this serving call site supplies them" lived only in code review. A future PR that dropped a feature from the serving call site wouldn't be rejected at boot — it would silently zero the input.
 
-The issue spec for #341 enumerated five interlocking items that together make "the deployed model is the published model" automated rather than reviewer-enforced.
+#341 ships five interlocking items so "the deployed model is the published model" is automated rather than reviewer-enforced. The ordering below mirrors the property-test surface so the contract is greppable end-to-end.
 
-## Decision
+## Forward-parity property test
 
-Ship the five items as a single PR, each load-bearing on the next. The order below mirrors the test surface in the property tests so the contract is greppable end-to-end.
+`tests/properties/test_forward_parity.py` builds research and serving forecasters from the SAME `ModelConfig` and loads the SAME `state_dict` into both. The acceptance is `torch.allclose(research(x), serving(x), atol=1e-6, rtol=0.0)` on three input shapes: a deterministic zero-mean Gaussian over `(1, 30, FEATURE_SIZE)`; the same shape under a non-trivial mean / scale shift (the prior-N cache case the runtime path feeds); the `forward_multi_task` dispatch when the canonical checkpoint mounts classification mode (skipped on regression-only toy fallback).
 
-### 1. Forward-parity property test
+The fixture prefers `backend/models/forecaster_best.pt` when present (canonical CI / production path) and falls back to a deterministic toy state_dict otherwise — but the fallback isn't a stub: the toy state_dict still feeds both classes, so the parity assertion has identical semantics on a fresh clone and on a production-shaped box. `atol=1e-6` is tight enough to catch a real divergence (an extra detach + reshape on one path that quietly changes the numeric output) without flagging float32 rounding noise.
 
-`tests/properties/test_forward_parity.py` builds the research and serving forecasters from the SAME `ModelConfig` and loads the SAME `state_dict` into both classes. The acceptance is `torch.allclose(research(x), serving(x), atol=1e-6, rtol=0.0)` on three input shapes:
+## Structured error surfacing on the helpers
 
-- a deterministic zero-mean Gaussian over the (1, 30, FEATURE_SIZE) lookback;
-- the same shape under a non-trivial mean / scale shift (the prior-N cache case the runtime path actually feeds);
-- the `forward_multi_task` dispatch, when the canonical checkpoint mounts classification mode (skipped on the regression-only toy fallback).
+`_safe_regime_classification` and `build_market_reaction_panel` keep their "never raise" invariant but surface one of three structured states:
 
-The fixture prefers `backend/models/forecaster_best.pt` when present (canonical CI / production path) and falls back to a deterministic toy state_dict otherwise — but the fallback is NOT a stub: the toy state_dict still feeds both the research class and the serving class, so the parity assertion has identical semantics on a fresh clone and on a production-shaped box. The `atol=1e-6` floor is tight enough to catch a real divergence (e.g. an extra detach + reshape on one path that quietly changes the numeric output) without flagging float32 rounding noise.
+- `not_classification_mode` — the active checkpoint emits no card by contract. Legitimate `None`-shaped payload (or, for the panel, a structured payload carrying only the `status` key) so the operator can distinguish deliberate mute from silent crash.
+- `inference_kwarg_missing` — the forward raised `TypeError`, typically because the call site populated a kwarg the sidecar didn't declare, or omitted one the model requires. The kwarg name is parsed out of the Python `TypeError` message (`forward_multi_task() missing 1 required keyword-only argument: 'text_embedding'`) so the operator gets the exact missing field without parsing logs.
+- `unexpected_exception` — anything else. Carries `exception_class` + `detail`. `RuntimeError` from the text/chunks-path mounted-but-not-threaded case is a sub-class of this branch.
 
-### 2. Structured error surfacing on `_safe_regime_classification` + `build_market_reaction_panel`
+Each branch increments a module-level counter (`app.services.forecaster._contract_counters`) and emits a WARNING-level log line with structured key=value fields. The counters surface through `/health` so an operator can spot a stuck contract without log-grepping.
 
-Both helpers previously wrapped their forward dispatch in `try / except: return None`. The replacement preserves the "never raise" invariant but surfaces one of three structured states:
+The /analyze response carries the structured surface in two places. `regime_classification` stays `RegimeClassificationCard | None` (legacy contract). A degraded card lands as `null` and the structured payload splits into a new sibling `regime_classification_status` (`InferenceStatusSurface | None`), mutually exclusive with the card being populated. `build_market_reaction_panel`'s structured payloads collapse at the `/analyze/market` handler back to the legacy empty-panel response so the `MarketReactionPanel` schema doesn't grow a status field; the structured detail still hits the service-side logs + counters.
 
-- `status: "not_classification_mode"` — the active checkpoint emits no card by contract. Legitimate `None`-shaped payload (or, for the panel, a structured payload carrying only the `status` key) so the operator can distinguish "model deliberately mute" from "model crashed silently".
-- `status: "inference_kwarg_missing"` — the forward path raised `TypeError`, typically because the call site populated a kwarg the checkpoint did not declare in its inference contract sidecar, or omitted one the model requires. The kwarg name is parsed out of the Python `TypeError` message (`forward_multi_task() missing 1 required keyword-only argument: 'text_embedding'`) so the operator gets the exact missing field without parsing logs.
-- `status: "unexpected_exception"` — anything else. Carries `exception_class` (the class name) + `detail` (the message). `RuntimeError` from the text/chunks-path mounted-but-not-threaded case is a sub-class of this branch.
+## Per-checkpoint sidecar
 
-Each branch increments a module-level counter (`app.services.forecaster._contract_counters`) and emits a `WARNING`-level log line with the structured fields as `key=value` pairs. The counters are surfaced through `/health` so an operator can spot a stuck contract without parsing logs.
+`backend/app/training/inference_contract.py` carries the `InferenceContract` dataclass (schema version + model class + required / optional kwargs + inference features + encoder alias) and the `derive_contract` / `write_sidecar` / `read_sidecar` / `validate_against_serving` helpers. Every checkpoint write path emits a `<stem>.inference_contract.json` next to the `.pt`:
 
-The /analyze response carries the structured surface in two places:
-
-- `regime_classification` stays `RegimeClassificationCard | None` (the legacy contract). A degraded card now lands as `null` on this field with the structured payload split into…
-- `regime_classification_status` — a new sibling field of type `InferenceStatusSurface | None`. Mutually exclusive with the card being populated: either the card lands, or this field carries the structured reason.
-
-`build_market_reaction_panel`'s structured payloads are collapsed by the `/analyze/market` route handler back to the legacy empty-panel response so the schema-side `MarketReactionPanel` does not need to grow a status field, while the structured detail still hits the logs + counters at the service layer.
-
-### 3. Per-checkpoint `<stem>.inference_contract.json` sidecar
-
-`backend/app/training/inference_contract.py` carries the `InferenceContract` dataclass (schema version + model class + required / optional kwargs + inference features + encoder alias) and the `derive_contract`, `write_sidecar`, `read_sidecar`, and `validate_against_serving` helpers. Every checkpoint write path is wired to emit the sidecar next to the `.pt` file:
-
-- `_save_model_checkpoint` (the training-loop call site) writes one on every save, deriving the required-kwarg set from the model's runtime gates (`_text_path_active`, `credibility_features`, `use_chunk_attention`, `use_llm_embeddings`).
+- `_save_model_checkpoint` writes one on every save, deriving the required-kwarg set from the model's runtime gates (`_text_path_active`, `credibility_features`, `use_chunk_attention`, `use_llm_embeddings`).
 - `promote_research_checkpoint_to_serving` writes one on every promotion — preferring the source-side sidecar when present, falling back to deriving from the freshly built serving instance.
 
-The sidecar write is a soft step: a failure logs at `WARNING` and degrades to "no sidecar emitted" so the training run still succeeds, but the default is to emit one on every save. Pre-#341 checkpoints with no sidecar continue to load — they hit the `sidecar_absent` branch in the loader and degrade to a soft warning.
+The write is a soft step: failure logs at WARNING and degrades to "no sidecar emitted" so the training run still succeeds. Pre-#341 checkpoints without a sidecar continue to load — they hit the `sidecar_absent` branch in the loader and degrade to a soft warning.
 
-### 4. Loader / serving kwarg-superset unit test
+## Loader / serving kwarg-superset test
 
-`tests/properties/test_kwarg_superset.py` AST-walks `backend/app/training/loop.py` and `backend/app/services/forecaster.py` to extract every kwarg the two sides populate (both via the `kwargs["name"] = ...` indirection and via direct `forward_multi_task(x, name=...)` calls), then asserts that every train-side kwarg is in the serving forward's signature. A drift in either direction trips the test before the artefact reaches CI's contract job. Includes a sibling assertion that the `SERVING_FORWARD_KWARGS` constant in `inference_contract.py` matches the live `ForecasterServingModel.forward` signature, so a downstream PR that adds a kwarg to the serving class but forgets to update the constant fails fast.
+`tests/properties/test_kwarg_superset.py` AST-walks `loop.py` and `forecaster.py` to extract every kwarg the two sides populate (both `kwargs["name"] = ...` indirection and direct `forward_multi_task(x, name=...)` calls), then asserts every train-side kwarg is in the serving forward's signature. Drift in either direction trips the test before the artefact reaches CI's contract job. A sibling assertion pins `SERVING_FORWARD_KWARGS` to the live `ForecasterServingModel.forward` signature so a downstream PR that adds a kwarg to the serving class but forgets to update the constant fails fast.
 
-The point of the AST walk (rather than a pure runtime check) is that the test exercises both forward methods (`forward` and `forward_multi_task`) without instantiating the model, so it runs cheaply even on a fresh clone with no torch available — and the union-set semantics catch the "training-side adds, serving-side never threads" bug class even when the training kwarg is gated on a model flag that is off in the test fixture.
+AST walk over runtime check, because the test exercises both forwards (`forward` and `forward_multi_task`) without instantiating the model — runs cheaply on a fresh clone with no torch — and the union-set semantics catch the "training-side adds, serving-side never threads" bug class even when the kwarg is gated on a flag that's off in the test fixture.
 
-### 5. `registry.yaml::inference_features:` block
+## `registry.yaml::inference_features`
 
-Every encoder + artefact entry in `backend/app/models/registry.yaml` now carries an `inference_features:` list declaring the kwargs the encoder / artefact contributes to a serving forecaster. Three population conventions:
+Every encoder and artefact entry in `backend/app/models/registry.yaml` now carries an `inference_features:` list declaring the kwargs the encoder / artefact contributes to a serving forecaster:
 
-- Encoders that feed pooled text vectors into the serving forward (`finbert_fed_adjacent`, `finbert_fed_adjacent_xbank_dapt`, the multi-axis classifier siblings, etc.) carry `[text_embedding, text_embedding_missing]`.
-- Artefacts that bind the full serving forecaster (`forecaster_canonical`, `rates_heads_canonical`) carry `[text_embedding, text_embedding_missing, credibility]` — the canonical kwarg set the serving call site populates.
-- Bake-off siblings and placeholder rows that never reach the serving path carry `[]` so the field is required-by-schema everywhere but the registry stays honest about what is and is not wired into inference.
+- Encoders that feed pooled text vectors into the serving forward (`finbert_fed_adjacent`, `finbert_fed_adjacent_xbank_dapt`, the multi-axis classifier siblings) carry `[text_embedding, text_embedding_missing]`.
+- Artefacts that bind the full serving forecaster (`forecaster_canonical`, `rates_heads_canonical`) carry `[text_embedding, text_embedding_missing, credibility]`.
+- Bake-off siblings and placeholder rows that never reach the serving path carry `[]` so the field is required-by-schema everywhere but the registry stays honest about what's actually wired.
 
-The serving loader (`_validate_serving_contract` in `app.services.forecaster`) consults `encoder_ref(contract.encoder_alias).inference_features` and asserts the contract's `inference_features` are a subset. A registry that drops a feature mid-flight refuses to bind a checkpoint trained against the old declaration — the failure mode is `registry_inference_features_mismatch` and lands on `/health` rather than 5xx-ing the request path.
+The serving loader (`_validate_serving_contract`) consults `encoder_ref(contract.encoder_alias).inference_features` and asserts the contract's `inference_features` are a subset. A registry that drops a feature mid-flight refuses to bind a checkpoint trained against the old declaration; the failure mode is `registry_inference_features_mismatch` and lands on `/health` rather than 5xx-ing the request path.
 
 ## Failure-mode dispatch
 
-Two failure surfaces, two semantics:
+Soft (legacy compatibility): a checkpoint with no sidecar (`sidecar_absent`) loads normally. The pre-#341 fleet continues to bind. `/health` exposes `inference_contract.status: "sidecar_absent"` so the operator can audit for unmigrated artefacts.
 
-- **Soft (legacy compatibility).** A checkpoint with no sidecar (`sidecar_absent`) loads normally. The legacy serving fleet from before this ADR continues to bind. `/health` exposes `inference_contract.status: "sidecar_absent"` so the operator can audit the fleet for unmigrated artefacts.
-- **Hard (post-#341 contract).** A checkpoint with a sidecar that declares kwargs the serving signature does not accept (`serving_signature_missing_kwargs`) or features the registry does not pin (`registry_inference_features_mismatch`) refuses to bind. `_get_model` raises `RuntimeError`, `_model` stays `None`, and the next /analyze request retries the cold load (and surfaces the same error on `/health`). The intent: a known-incompatible artefact is a fast-fail signal, not a quiet degradation.
+Hard (post-#341 contract): a checkpoint with a sidecar declaring kwargs the serving signature doesn't accept (`serving_signature_missing_kwargs`) or features the registry doesn't pin (`registry_inference_features_mismatch`) refuses to bind. `_get_model` raises `RuntimeError`, `_model` stays `None`, and the next /analyze request retries the cold load (surfacing the same error on `/health`). A known-incompatible artefact is a fast-fail signal, not a quiet degradation.
 
-## Consequences
+## Downstream effects
 
-- The contract validation runs at LOAD time, not lazily on first request. A checkpoint that survives `_get_model()` is guaranteed to be kwarg-compatible with the serving signature; subsequent /analyze calls cannot trip the contract failure mode.
-- The /health endpoint becomes the durable record of contract status. Counters reset on process restart by design — the structured logs alongside the increment are the persistent record.
-- `MarketReactionPanel` keeps its existing schema; the structured status surface for market-reaction lives in the service-side logs + `/health` counters rather than on the panel itself. The /analyze response gains `regime_classification_status` as a new optional sibling field so the openapi snapshot rebases by one field.
-- Per-checkpoint sidecar files (`<stem>.inference_contract.json`) become an audit artefact alongside the existing `.conformal.json` manifests. The rollout for existing fleet checkpoints is "they emit on next write" — a one-shot migration script is not strictly required because the soft `sidecar_absent` branch keeps the legacy fleet binding. Promotion + retrain are the natural backfill paths.
-- Multi-axis classifier (`backend/app/data/train_text_multi_axis_classifier.py`) and trajectory bundle (`backend/app/trajectory/model.py`) write their own `torch.save` payloads under their own classes — they are NOT the serving forecaster, so they do not bind through `ForecasterServingModel`. Sidecar emission for those subsystems shipped as #393 (see "Extensions" below).
-- `_save_model_checkpoint` grew two keyword-only arguments (`encoder_alias`, `inference_features`) so callers can thread the registry context into the sidecar. Existing callers pass through unchanged (the new args default to `None` / `()`).
-- The structured error surface on `_safe_regime_classification` is a behaviour change for existing tests: a previously-`None` return on the regression-only / no-manifest paths is now a structured `{"status": "not_classification_mode"}` payload. The /analyze response handler splits this off into the new `regime_classification_status` field so the `RegimeClassificationCard` schema is unchanged. Two unit tests in `tests/unit/test_regime_classification_response_block.py` and one in `tests/unit/test_rates_heads_endpoint.py` updated to match.
+Contract validation runs at LOAD time, not lazily on first request — a checkpoint that survives `_get_model()` is guaranteed kwarg-compatible. `/health` becomes the durable record; counters reset on process restart by design (the structured logs are the persistent record).
 
-## Extensions
+`MarketReactionPanel` keeps its schema; the market-reaction status surface lives in service-side logs + `/health` counters. The /analyze response gains `regime_classification_status` as a new optional sibling field; the openapi snapshot rebases by one field. The per-checkpoint sidecar becomes an audit artefact alongside the existing `.conformal.json` manifests. Rollout for existing fleet checkpoints is "emit on next write" — no one-shot migration is required because the soft branch keeps the legacy fleet binding; promotion + retrain are the natural backfill paths.
 
-### #393 — Multi-axis classifier + trajectory bundle sidecars
+`_save_model_checkpoint` grew two keyword-only args (`encoder_alias`, `inference_features`) so callers can thread registry context into the sidecar; existing callers pass through unchanged (new args default to `None` / `()`). The structured error surface on `_safe_regime_classification` is a behaviour change for existing tests: a previously-`None` return on the regression-only / no-manifest paths is now a structured `{"status": "not_classification_mode"}` payload. The /analyze handler splits this off into the new `regime_classification_status` field, so the `RegimeClassificationCard` schema is unchanged; two unit tests in `test_regime_classification_response_block.py` and one in `test_rates_heads_endpoint.py` updated to match.
 
-The two non-forecaster serving artefacts the inference container binds (`TextMultiAxisClassifier` checkpoint at `text_multi_axis_best.pt` and the trajectory bundle's `model.pt`) now ship the same `<stem>.inference_contract.json` sidecar as the forecaster. Each subsystem reuses the shared `InferenceContract` dataclass + `write_sidecar` / `read_sidecar` / `validate_against_serving` helpers in `app.training.inference_contract`; the derivation entry points (`derive_multi_axis_contract`, `derive_trajectory_contract`) declare the kwarg set the respective serving call site populates:
+Multi-axis classifier (`train_text_multi_axis_classifier.py`) and trajectory bundle (`trajectory/model.py`) write their own `torch.save` payloads under their own classes — they're not the serving forecaster, so they don't bind through `ForecasterServingModel`. Sidecar emission for those subsystems shipped as #393.
 
-- Multi-axis classifier: `input_ids`, `attention_mask` (required). The serving call site in `app.services.multi_axis_classifier.score_text` populates both from the HF tokeniser; a forward refactor that drops either kwarg is rejected at boot rather than silently zeroing the attention mask.
-- Trajectory bundle: `inputs` (required), `mask` (optional). Both architectures (LSTM + Transformer) share the same forward signature, so one contract covers both arms.
+## #393 — sidecars for the other two serving artefacts
 
-Save sites: `_save_checkpoint` in `app.data.train_text_multi_axis_classifier` (multi-axis) and `app.trajectory.model.save_model` (trajectory). Sidecar emission is wrapped in the same soft-fail try / except the forecaster save site uses so a sidecar failure never breaks a training run.
+The two non-forecaster artefacts the inference container binds (`TextMultiAxisClassifier` at `text_multi_axis_best.pt`; the trajectory bundle's `model.pt`) now ship the same sidecar shape. Each subsystem reuses the shared dataclass + helpers; the derivation entry points (`derive_multi_axis_contract`, `derive_trajectory_contract`) declare the kwarg set the respective serving call site populates:
 
-Load sites: `app.services.multi_axis_classifier._load_state` and `app.services.trajectory._load_state` each call a local `_validate_contract` helper that hard-refuses on signature mismatch (`RuntimeError` with a structured status string — no `str(exc)` leak per the #341 standing rule) and soft-degrades on `sidecar_absent` so the pre-#393 serving fleet keeps binding. Each service exposes `get_serving_contract_status()` mirroring the forecaster's status-surface shape so `/health` can grep the structured reason without parsing logs.
+- Multi-axis classifier: `input_ids`, `attention_mask` (required). The serving call site in `app.services.multi_axis_classifier.score_text` populates both from the HF tokeniser; a forward refactor that drops either is rejected at boot.
+- Trajectory bundle: `inputs` (required), `mask` (optional). LSTM and Transformer arms share the same forward signature, so one contract covers both.
 
-The contract design is unchanged; the dataclass + sidecar suffix + schema version stay shared across the three artefact types. No new ADR was opened because the wire format is identical — the extension is purely "two more save / load sites bound to the same contract surface".
+Save sites: `_save_checkpoint` in `train_text_multi_axis_classifier` and `app.trajectory.model.save_model`. Emission is wrapped in the same soft-fail try/except the forecaster uses. Load sites: `app.services.multi_axis_classifier._load_state` and `app.services.trajectory._load_state` each call a local `_validate_contract` that hard-refuses on signature mismatch (`RuntimeError` with a structured status string — no `str(exc)` leak per the #341 standing rule) and soft-degrades on `sidecar_absent`. Each service exposes `get_serving_contract_status()` mirroring the forecaster's surface so `/health` can grep the structured reason.
+
+The wire format is identical — the extension is two more save / load sites bound to the same contract surface, no new ADR needed.
+
+## References
+
+- `backend/app/training/inference_contract.py`, `backend/app/training/checkpoint.py`
+- `backend/app/services/forecaster.py::_validate_serving_contract`, `_get_model`
+- `backend/app/main.py::health_check`, `_safe_regime_classification`
+- `backend/app/models/registry.yaml` (`encoders[*].inference_features`, `artefacts[*].inference_features`)
+- `tests/properties/test_forward_parity.py`, `test_kwarg_superset.py`; `tests/unit/test_inference_contract.py`
+- ADR 0016 (#336), Issues #339, #341, #393

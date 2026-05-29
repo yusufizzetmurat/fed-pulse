@@ -72,6 +72,7 @@ ignore = [
 "backend/app/data/pseudo_labeling.py" = ["PLR0913", "C901"]
 "backend/app/data/quality_checks.py" = ["C901"]
 "backend/app/data/quality_validation.py" = ["PLR0913"]
+"backend/app/data/sep_projections.py" = ["PLR0913"]
 "backend/app/data/source_type_stratified_analysis.py" = ["PLR0913", "C901"]
 "backend/app/data/training_package_builder.py" = ["PLR0913"]
 "backend/app/db.py" = ["PLR0913"]

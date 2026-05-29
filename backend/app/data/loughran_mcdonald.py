@@ -64,14 +64,20 @@ _LM_CSV_COLUMNS: dict[str, tuple[str, ...]] = {
     "modal": ("Strong_Modal", "Weak_Modal"),
 }
 
-# Pinned SHA of the cached Master Dictionary CSV. The on-disk file is
-# named ``<sha>__master_dictionary.csv`` so multiple vintages can sit
+# Pinned tag of the cached Master Dictionary CSV. The on-disk file is
+# named ``<tag>__master_dictionary.csv`` so multiple vintages can sit
 # side by side; the loader resolves the active vintage off the pinned
 # constant rather than walking the directory. Updating the pin is a
 # deliberate methodology decision -- a new vintage may shift the
 # per-category counts and the ablation row's framing should be re-run
-# against the new SHA before the wiki cell is updated.
-LM_LEXICON_SHA: str = "lm_master_2024_q4"
+# against the new tag before the wiki cell is updated.
+#
+# Vintage bumped to 2025 master on 2026-05-29. The 2024 q4 release was
+# retired from sraf.nd.edu (mccluster.nd.edu) and the surviving public
+# mirror only ships the 1993-2025 master file. The eval corpus runs
+# through 2025 anyway, so the new vintage is also the most contemporary
+# with the FOMC text we measure against.
+LM_LEXICON_SHA: str = "lm_master_2025"
 
 DEFAULT_CACHE_ROOT = DATA_DIR / "external" / "loughran_mcdonald"
 

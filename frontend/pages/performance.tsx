@@ -1,7 +1,17 @@
 import * as React from "react";
 import Head from "next/head";
 import Link from "next/link";
-import { Target } from "lucide-react";
+import { Target, X } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { toast } from "sonner";
 
 import { ConfusionMatrix } from "@/components/analyze/ConfusionMatrix";
@@ -30,10 +40,12 @@ import {
   fetchHistoryRun,
   resolveApiBaseUrl,
 } from "@/lib/analyze/api";
+import { errorMessage } from "@/lib/analyze/errors";
 import {
   REGIME_CLASSES,
   aggregateRegimePerformance,
   buildRunRegimeRecord,
+  proportionHalfWidth,
   type RunRegimeRecord,
 } from "@/lib/analyze/performance";
 import type {
@@ -61,12 +73,31 @@ function regimeVariant(label: string | null | undefined): "hawkish" | "dovish" |
   return "outline";
 }
 
+function formatScoreWithCi(value: number | null, halfWidth: number | null): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  if (halfWidth == null) return value.toFixed(3);
+  return `${value.toFixed(3)} ±${halfWidth.toFixed(3)}`;
+}
+
+const PERF_TOOLTIP_STYLE: React.CSSProperties = {
+  background: "hsl(var(--popover))",
+  color: "hsl(var(--popover-foreground))",
+  border: "1px solid hsl(var(--border))",
+  borderRadius: 6,
+  padding: "6px 8px",
+  fontSize: 12,
+};
+
 export default function PerformancePage() {
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
   const [rows, setRows] = React.useState<RunRegimeRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [totalRuns, setTotalRuns] = React.useState(0);
   const [breakdown, setBreakdown] = React.useState<ClassificationBreakdownResponse | null>(null);
+  // Drill-down: when set, the per-asset chart, per-asset table, and
+  // run-level table only show runs where this class was either
+  // predicted as argmax or appeared as realised.
+  const [classFilter, setClassFilter] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -107,7 +138,7 @@ export default function PerformancePage() {
         setRows(records);
       } catch (err) {
         if (!signal.aborted) {
-          toast.error((err as Error).message || "Failed to load performance data.");
+          toast.error(errorMessage(err, "Failed to load performance data."));
         }
       } finally {
         if (!signal.aborted) setLoading(false);
@@ -117,6 +148,19 @@ export default function PerformancePage() {
   }, [apiBaseUrl]);
 
   const aggregate = React.useMemo(() => aggregateRegimePerformance(rows), [rows]);
+  // Subset of rows that match the active class drill-down (or all rows
+  // when no filter is set). The per-asset chart, per-asset table, and
+  // run-level table all read from the filtered rows / aggregate.
+  const filteredRows = React.useMemo(() => {
+    if (!classFilter) return rows;
+    return rows.filter(
+      (row) => row.argmax === classFilter || row.realized === classFilter,
+    );
+  }, [rows, classFilter]);
+  const filteredAggregate = React.useMemo(
+    () => aggregateRegimePerformance(filteredRows),
+    [filteredRows],
+  );
   const breakdownAvailable = breakdown?.available === true;
   const headlineMacroF1 = breakdownAvailable
     ? breakdown?.macro_f1 ?? null
@@ -143,7 +187,7 @@ export default function PerformancePage() {
       },
       {
         key: "argmaxAccuracy",
-        header: "Argmax acc",
+        header: "Top-pick accuracy",
         align: "right",
         numeric: true,
         sortable: true,
@@ -152,7 +196,7 @@ export default function PerformancePage() {
       },
       {
         key: "empiricalCoverage",
-        header: "Empirical coverage",
+        header: "Actual coverage",
         align: "right",
         numeric: true,
         sortable: true,
@@ -187,7 +231,7 @@ export default function PerformancePage() {
       },
       {
         key: "argmax",
-        header: "Argmax",
+        header: "Top pick",
         render: (row) =>
           row.argmax ? (
             <Badge variant={regimeVariant(row.argmax)} className="text-[10px] capitalize">
@@ -199,7 +243,7 @@ export default function PerformancePage() {
       },
       {
         key: "argmaxProbability",
-        header: "P(argmax)",
+        header: "Probability",
         align: "right",
         numeric: true,
         sortable: true,
@@ -208,7 +252,7 @@ export default function PerformancePage() {
       },
       {
         key: "realized",
-        header: "Realized",
+        header: "Actual",
         render: (row) =>
           row.realized ? (
             <Badge variant={regimeVariant(row.realized)} className="text-[10px] capitalize">
@@ -220,7 +264,7 @@ export default function PerformancePage() {
       },
       {
         key: "argmaxHit",
-        header: "Argmax",
+        header: "Top-pick result",
         align: "center",
         render: (row) => {
           if (!row.argmax || !row.realized) {
@@ -236,7 +280,7 @@ export default function PerformancePage() {
       },
       {
         key: "setHit",
-        header: "Set",
+        header: "Prediction set",
         align: "center",
         render: (row) => {
           if (row.setHit == null) return <span className="text-muted-foreground">—</span>;
@@ -263,9 +307,10 @@ export default function PerformancePage() {
           <div className="space-y-1">
             <h1 className="text-2xl font-semibold tracking-tight">Performance</h1>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Macro-F1, per-class precision / recall / F1, confusion matrix, and empirical conformal
-              coverage on the resolved regime predictions. Realized regime is bucketed from the 10d
-              forward vol path using the classifier&apos;s trained quantile cutoffs.
+              How accurately the active model predicts each market regime. Per-class metrics
+              show precision and recall by regime. The confusion matrix shows what the model
+              predicted vs what actually happened. The per-asset breakdown shows accuracy by
+              symbol.
             </p>
           </div>
 
@@ -287,12 +332,12 @@ export default function PerformancePage() {
               icon={<Target className="h-3.5 w-3.5" />}
             />
             <KpiTile
-              label="Argmax accuracy"
+              label="Top-pick accuracy"
               value={<span className="numeric">{formatPercent(aggregate.argmaxAccuracy)}</span>}
               caption={
                 aggregate.argmaxAccuracy != null && aggregate.argmaxAccuracy >= 1 / REGIME_CLASSES.length
-                  ? "above uniform baseline"
-                  : "below uniform baseline"
+                  ? "above random-guess baseline"
+                  : "below random-guess baseline"
               }
               tone={
                 aggregate.argmaxAccuracy != null && aggregate.argmaxAccuracy >= 1 / REGIME_CLASSES.length
@@ -303,29 +348,29 @@ export default function PerformancePage() {
               }
             />
             <KpiTile
-              label="Macro-F1"
+              label="Overall F1 score"
               value={<span className="numeric">{formatScore(headlineMacroF1)}</span>}
               caption={
                 breakdownAvailable
-                  ? "from training eval artifact"
+                  ? "from training evaluation"
                   : aggregate.macroF1 != null
-                  ? "client aggregation across history"
+                  ? "computed from your history"
                   : aggregate.resolved > 0
-                  ? "needs resolved runs in every regime class"
+                  ? "needs resolved runs in every regime"
                   : "needs resolved runs"
               }
               tone={headlineMacroF1 != null && headlineMacroF1 >= 0.4 ? "up" : "neutral"}
             />
             <KpiTile
-              label="Empirical coverage"
+              label="Actual coverage"
               value={<span className="numeric">{formatPercent(aggregate.empiricalCoverage)}</span>}
-              caption="realised regime inside the predicted set"
+              caption="how often the realised regime fell inside the prediction set"
             />
             {headlineMacroRocAuc != null ? (
               <KpiTile
-                label="Macro ROC-AUC"
+                label="Overall ROC-AUC"
                 value={<span className="numeric">{formatScore(headlineMacroRocAuc)}</span>}
-                caption="one-vs-rest, training eval"
+                caption="one-vs-rest, from training evaluation"
                 tone={headlineMacroRocAuc >= 0.6 ? "up" : "neutral"}
               />
             ) : null}
@@ -339,8 +384,8 @@ export default function PerformancePage() {
             </div>
           ) : rows.length === 0 ? (
             <EmptyState
-              title="No runs in history"
-              description="Submit analyses on the Workspace to populate this view."
+              title="No runs in history."
+              description="Use the Workspace to analyze a statement and populate this view."
               action={
                 <Button asChild size="sm" variant="outline">
                   <Link href="/">Open Workspace</Link>
@@ -354,8 +399,8 @@ export default function PerformancePage() {
                   <CardTitle className="text-base">Per-class metrics</CardTitle>
                   <CardDescription>
                     {breakdownAvailable
-                      ? "From the training-time classification breakdown — precision, recall, F1, ROC-AUC, PR-AUC."
-                      : "Computed client-side from resolved history runs. Will switch to the training eval artifact when one is published."}
+                      ? "From training-time evaluation — precision, recall, F1, ROC-AUC, PR-AUC."
+                      : "Computed from your resolved history runs. Will switch to the training evaluation when one is published."}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
@@ -379,27 +424,54 @@ export default function PerformancePage() {
                       {breakdownAvailable && breakdown?.per_class
                         ? breakdown.per_class.map((row, idx) => {
                             const label = breakdown.class_labels?.[row.class_id] ?? REGIME_CLASSES[row.class_id] ?? `class ${row.class_id}`;
+                            const precisionHw = proportionHalfWidth(row.precision, row.support);
+                            const recallHw = proportionHalfWidth(row.recall, row.support);
+                            // F1 has no closed-form Wald SE; use the
+                            // larger of precision / recall half-widths
+                            // as a conservative band-width approximation.
+                            const f1Hw =
+                              precisionHw != null && recallHw != null
+                                ? Math.max(precisionHw, recallHw)
+                                : null;
+                            const isActive = classFilter === label;
                             return (
-                              <tr key={`${row.class_id}-${idx}`} className="border-b border-border last:border-0">
+                              <tr
+                                key={`${row.class_id}-${idx}`}
+                                className={`border-b border-border last:border-0 cursor-pointer hover:bg-accent/40 ${isActive ? "bg-accent/30" : ""}`}
+                                onClick={() => setClassFilter(isActive ? null : label)}
+                              >
                                 <td className="px-4 py-2 capitalize">{label}</td>
                                 <td className="numeric px-4 py-2 text-right">{row.support}</td>
-                                <td className="numeric px-4 py-2 text-right">{formatScore(row.precision)}</td>
-                                <td className="numeric px-4 py-2 text-right">{formatScore(row.recall)}</td>
-                                <td className="numeric px-4 py-2 text-right">{formatScore(row.f1)}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScoreWithCi(row.precision, precisionHw)}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScoreWithCi(row.recall, recallHw)}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScoreWithCi(row.f1, f1Hw)}</td>
                                 <td className="numeric px-4 py-2 text-right">{formatScore(row.roc_auc ?? null)}</td>
                                 <td className="numeric px-4 py-2 text-right">{formatScore(row.pr_auc ?? null)}</td>
                               </tr>
                             );
                           })
-                        : aggregate.perClass.map((entry) => (
-                            <tr key={entry.klass} className="border-b border-border last:border-0">
-                              <td className="px-4 py-2 capitalize">{entry.klass}</td>
-                              <td className="numeric px-4 py-2 text-right">{entry.support}</td>
-                              <td className="numeric px-4 py-2 text-right">{formatScore(entry.precision)}</td>
-                              <td className="numeric px-4 py-2 text-right">{formatScore(entry.recall)}</td>
-                              <td className="numeric px-4 py-2 text-right">{formatScore(entry.f1)}</td>
-                            </tr>
-                          ))}
+                        : aggregate.perClass.map((entry) => {
+                            const precisionHw = proportionHalfWidth(entry.precision, entry.support);
+                            const recallHw = proportionHalfWidth(entry.recall, entry.support);
+                            const f1Hw =
+                              precisionHw != null && recallHw != null
+                                ? Math.max(precisionHw, recallHw)
+                                : null;
+                            const isActive = classFilter === entry.klass;
+                            return (
+                              <tr
+                                key={entry.klass}
+                                className={`border-b border-border last:border-0 cursor-pointer hover:bg-accent/40 ${isActive ? "bg-accent/30" : ""}`}
+                                onClick={() => setClassFilter(isActive ? null : entry.klass)}
+                              >
+                                <td className="px-4 py-2 capitalize">{entry.klass}</td>
+                                <td className="numeric px-4 py-2 text-right">{entry.support}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScoreWithCi(entry.precision, precisionHw)}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScoreWithCi(entry.recall, recallHw)}</td>
+                                <td className="numeric px-4 py-2 text-right">{formatScoreWithCi(entry.f1, f1Hw)}</td>
+                              </tr>
+                            );
+                          })}
                     </tbody>
                   </table>
                 </CardContent>
@@ -423,8 +495,8 @@ export default function PerformancePage() {
                   <CardTitle className="text-base">Confusion matrix</CardTitle>
                   <CardDescription>
                     {breakdownAvailable
-                      ? "From the training-time classification breakdown — rows are the true class, columns the predicted argmax."
-                      : "Computed client-side from resolved runs — rows are realised regime, columns are predicted argmax."}
+                      ? "From training-time evaluation — rows are the actual class, columns are the predicted top pick."
+                      : "Computed from your resolved runs — rows are the realised regime, columns are the predicted top pick."}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -440,9 +512,42 @@ export default function PerformancePage() {
                           ),
                           total: counts.reduce((acc, n) => acc + n, 0),
                         }));
-                        return <ConfusionMatrix rows={matrixRows} classes={labels} />;
+                        return (
+                          <ConfusionMatrix
+                            rows={matrixRows}
+                            classes={labels}
+                            onClassClick={(klass) =>
+                              setClassFilter((prev) => (prev === klass ? null : klass))
+                            }
+                            activeClass={classFilter}
+                          />
+                        );
                       })()
-                    : <ConfusionMatrix rows={aggregate.confusion} classes={REGIME_CLASSES} />}
+                    : (
+                      <ConfusionMatrix
+                        rows={aggregate.confusion}
+                        classes={REGIME_CLASSES}
+                        onClassClick={(klass) =>
+                          setClassFilter((prev) => (prev === klass ? null : klass))
+                        }
+                        activeClass={classFilter}
+                      />
+                    )}
+                  {classFilter ? (
+                    <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                      <span>
+                        Filtered to runs where <span className="font-mono capitalize">{classFilter}</span> was predicted or actual.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setClassFilter(null)}
+                        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 hover:bg-accent/40"
+                      >
+                        <X className="h-3 w-3" aria-hidden="true" />
+                        Clear
+                      </button>
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
 
@@ -450,13 +555,70 @@ export default function PerformancePage() {
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base">Per-asset breakdown</CardTitle>
                   <CardDescription>
-                    Argmax accuracy and empirical coverage for every symbol with at least one
-                    resolved run.
+                    Top-pick accuracy and actual coverage for every symbol with at least one
+                    resolved run.{classFilter ? ` Filtered to ${classFilter}.` : ""}
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="p-0">
+                <CardContent className="space-y-4 p-0">
+                  {(() => {
+                    const chartRows = filteredAggregate.bySymbol
+                      .filter((row) => row.argmaxAccuracy != null)
+                      .map((row) => ({
+                        symbol: row.symbol,
+                        accuracy: row.argmaxAccuracy ?? 0,
+                        resolved: row.resolved,
+                      }))
+                      .sort((a, b) => b.accuracy - a.accuracy);
+                    if (chartRows.length === 0) return null;
+                    return (
+                      <div className="px-4 pt-4">
+                        <div className="h-56 w-full">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                              data={chartRows}
+                              margin={{ top: 8, right: 16, bottom: 24, left: 0 }}
+                            >
+                              <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="2 3" />
+                              <XAxis
+                                dataKey="symbol"
+                                tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                                interval={0}
+                                angle={-30}
+                                textAnchor="end"
+                              />
+                              <YAxis
+                                tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                                domain={[0, 1]}
+                                tickFormatter={(v) => `${Math.round(Number(v) * 100)}%`}
+                              />
+                              <Tooltip
+                                cursor={{ fill: "hsl(var(--muted) / 0.4)" }}
+                                contentStyle={PERF_TOOLTIP_STYLE}
+                                formatter={(value, _name, ctx) => {
+                                  const d = ctx?.payload as { symbol: string; accuracy: number; resolved: number } | undefined;
+                                  if (!d) return [String(value), "accuracy"];
+                                  return [
+                                    `${(d.accuracy * 100).toFixed(1)}% on ${d.resolved} run${d.resolved === 1 ? "" : "s"}`,
+                                    "top-pick accuracy",
+                                  ];
+                                }}
+                              />
+                              <Bar dataKey="accuracy" isAnimationActive={false}>
+                                {chartRows.map((d) => (
+                                  <Cell
+                                    key={d.symbol}
+                                    fill={d.accuracy >= 1 / REGIME_CLASSES.length ? "hsl(var(--up))" : "hsl(var(--down))"}
+                                  />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <DataTable
-                    rows={aggregate.bySymbol}
+                    rows={filteredAggregate.bySymbol}
                     columns={symbolColumns}
                     rowKey={(row) => row.symbol}
                   />
@@ -468,12 +630,12 @@ export default function PerformancePage() {
                   <CardTitle className="text-base">Run-level detail</CardTitle>
                   <CardDescription>
                     Each scanned run with predicted argmax, calibrated probability, realised regime,
-                    and set-membership coverage.
+                    and set-membership coverage.{classFilter ? ` Filtered to ${classFilter}.` : ""}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
                   <DataTable
-                    rows={rows}
+                    rows={filteredRows}
                     columns={runColumns}
                     rowKey={(row) => row.id}
                     rowHref={(row) => `/history/${row.id}`}

@@ -75,6 +75,16 @@ _TRAINING_DELTA_COLUMNS: tuple[str, ...] = (
 # row of the sequence) may carry a non-None value.
 _TARGET_ONLY_COLUMNS: tuple[str, ...] = (
     "forward_realized_vol_10d",
+    # #480 multi-horizon auxiliary targets. Same strict-forward
+    # generator as the canonical 10d, parametrised window. Each
+    # horizon is target-only (lookback bars stay None) since the
+    # generator reads strict-forward closes against the supervised
+    # event row.
+    "forward_realized_vol_1d",
+    "forward_realized_vol_3d",
+    "forward_realized_vol_5d",
+    "forward_realized_vol_20d",
+    "forward_realized_vol_30d",
     # #236 GARCH(1,1)-residual decomposition of the forward-vol target.
     # The baseline rides on the events.parquet row at build time and
     # the residual = raw - baseline does too; both are target-only
@@ -82,6 +92,21 @@ _TARGET_ONLY_COLUMNS: tuple[str, ...] = (
     # asset close series only on the supervised event row.
     "forward_realized_vol_10d_garch_baseline",
     "forward_realized_vol_10d_garch_residual",
+    # #481 per-asset 10d forward realised-vol targets. Storage-only on
+    # the dataclass for now (the events.parquet build step writes them
+    # on the target row; the loader has not yet been wired to broadcast
+    # them — that lands alongside the per-asset head work). The
+    # target-only contract still applies: lookback bars stay None and
+    # only the appended event-day target frame may carry a non-None
+    # value once the loader is wired.
+    "forward_realized_vol_10d_gspc",
+    "forward_realized_vol_10d_ndx",
+    "forward_realized_vol_10d_dji",
+    "forward_realized_vol_10d_dxy",
+    "forward_realized_vol_10d_vix",
+    "forward_realized_vol_10d_eurusd",
+    "forward_realized_vol_10d_usdjpy",
+    "forward_realized_vol_10d_gbpusd",
     "target_yield_2y_change_5d",
     "target_yield_5y_change_5d",
     "target_terminal_rate_change_5d",
@@ -221,6 +246,12 @@ def _event_row(
         "intra_meeting_factor_shift": 0.0,
         "realized_date": realized_date,
         "forward_realized_vol_10d": 0.015,
+        # #480 multi-horizon auxiliary targets.
+        "forward_realized_vol_1d": 0.011,
+        "forward_realized_vol_3d": 0.012,
+        "forward_realized_vol_5d": 0.014,
+        "forward_realized_vol_20d": 0.017,
+        "forward_realized_vol_30d": 0.018,
         "forward_realized_vol_10d_garch_baseline": 0.013,
         "forward_realized_vol_10d_garch_residual": 0.002,
         "yield_2y_change_5d": -3.2,

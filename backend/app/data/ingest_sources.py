@@ -41,6 +41,9 @@ def _dataset_revision(dataset_id: str) -> str | None:
 OP_FED_DEFAULT_RELATIVE = Path("external") / "op_fed" / "opfed_v1.csv"
 GSS_FACTORS_DEFAULT_RELATIVE = Path("external") / "gss" / "gss_factors.csv"
 GSS_SURPRISES_DEFAULT_RELATIVE = Path("external") / "gss" / "gss_surprises.csv"
+SWANSON_THREE_FACTOR_DEFAULT_RELATIVE = (
+    Path("external") / "swanson" / "pre-and-post-ZLB-factors-extended.xlsx"
+)
 SCRAPED_FILES = (
     "fomc_statements.json",
     "fomc_minutes.json",
@@ -96,6 +99,15 @@ def _parse_args() -> argparse.Namespace:
         "--include-gss-factors",
         action="store_true",
         help="Ingest GSS (Gürkaynak-Sack-Swanson 2005 IJCB) per-FOMC target/path factor decomposition and 30min/1hr/1day surprise windows.",
+    )
+    parser.add_argument(
+        "--include-swanson-three-factor",
+        action="store_true",
+        help=(
+            "Ingest Swanson (2021 JME) per-FOMC three-factor decomposition "
+            "(target rate / forward guidance / LSAP). Extends GSS through "
+            "the ZLB era to 2019-06-19."
+        ),
     )
     parser.add_argument(
         "--include-gtfintechlab-fed",
@@ -639,6 +651,122 @@ def _iter_gss_factors_records(
     return records
 
 
+def _iter_swanson_three_factor_records(
+    xlsx_path: Path,
+) -> list[dict[str, Any]]:
+    """Load the Swanson 2021 JME three-factor decomposition into registry rows.
+
+    Each FOMC meeting becomes one row with target / forward-guidance /
+    LSAP factors on ``multi_axis_extras``. Stance-unlabelled (the
+    decomposition is continuous, not categorical) so rows populate the
+    factor axis of the multi-axis schema without polluting the
+    hawkish/dovish/neutral training pool. Coverage 1991-07-05 through
+    2019-06-19 (241 meetings at last verification).
+
+    Missing xlsx file → warn + return [] (mirrors the GSS path so
+    operators see a single "you forgot a setup step" guard rather than
+    a hard failure on a fresh checkout).
+    """
+
+    if not xlsx_path.exists():
+        warnings.warn(
+            f"Swanson three-factor xlsx not found at {xlsx_path}; skipping.",
+            stacklevel=2,
+        )
+        return []
+
+    try:
+        import pandas as pd  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError(
+            "pandas is required for the Swanson three-factor loader; "
+            "install backend dependencies first."
+        ) from exc
+    import pandas as pd
+
+    try:
+        df = pd.read_excel(
+            xlsx_path,
+            engine="openpyxl",
+            sheet_name="Data",
+            header=1,
+        )
+    except Exception as exc:
+        warnings.warn(
+            f"Swanson three-factor xlsx at {xlsx_path} failed to parse: "
+            f"{exc}; skipping.",
+            stacklevel=2,
+        )
+        return []
+
+    records: list[dict[str, Any]] = []
+    for _, row in df.iterrows():
+        raw_date = row.iloc[1]  # date is the second column (first is unnamed)
+        if raw_date is None or (
+            isinstance(raw_date, float) and raw_date != raw_date  # NaN check
+        ):
+            continue
+        try:
+            event_date = raw_date.strftime("%Y-%m-%d")  # type: ignore[union-attr]
+        except AttributeError:
+            event_date = str(raw_date)[:10]
+        if not event_date or len(event_date) < 10:
+            continue
+
+        def _float_or_none(value: Any) -> float | None:
+            if value is None:
+                return None
+            try:
+                f = float(value)
+            except (TypeError, ValueError):
+                return None
+            if f != f:  # noqa: PLR0124 (NaN)
+                return None
+            return f
+
+        target = _float_or_none(row.get("Federal Funds Rate factor"))
+        fg = _float_or_none(row.get("Forward Guidance factor"))
+        lsap = _float_or_none(row.get("LSAP factor"))
+        if target is None and fg is None and lsap is None:
+            continue
+
+        extras = {
+            "swanson_target_factor": target,
+            "swanson_forward_guidance_factor": fg,
+            "swanson_lsap_factor": lsap,
+        }
+
+        target_repr = (
+            f"{target:+.4f}" if target is not None else "n/a"
+        )
+        fg_repr = f"{fg:+.4f}" if fg is not None else "n/a"
+        lsap_repr = f"{lsap:+.4f}" if lsap is not None else "n/a"
+        text = (
+            f"Swanson three-factor decomposition for {event_date}: "
+            f"target={target_repr}, forward_guidance={fg_repr}, "
+            f"lsap={lsap_repr}"
+        )
+
+        built = _build_registry_record(
+            source="swanson_three_factor",
+            source_record_id=f"swanson_{event_date}",
+            event_date=event_date,
+            document_type="statement",
+            title=f"Swanson three-factor decomposition {event_date}",
+            text=text,
+            label="",  # factor axis is continuous; no categorical stance
+            license_scope="research_only",
+            citation_ref="swanson_2021_jme",
+            source_type="swanson_three_factor",
+        )
+        if built is None:
+            continue
+        built["provenance"] = "peer_reviewed"
+        built["multi_axis_extras"] = extras
+        records.append(built)
+    return records
+
+
 def _read_json_or_jsonl(path: Path) -> list[dict[str, Any]]:
     text = path.read_text(encoding="utf-8").strip()
     if not text:
@@ -827,6 +955,9 @@ def main() -> int:
     include_scraped = args.all_sources or args.include_scraped
     include_op_fed = args.all_sources or args.include_op_fed
     include_gss_factors = args.all_sources or args.include_gss_factors
+    include_swanson_three_factor = (
+        args.all_sources or args.include_swanson_three_factor
+    )
     include_gtfintechlab_fed = args.all_sources or args.include_gtfintechlab_fed
     include_gtfintechlab_cross_bank = args.all_sources or args.include_gtfintechlab_cross_bank
     include_fomc_archive = args.all_sources or args.include_fomc_archive
@@ -836,6 +967,7 @@ def main() -> int:
         or include_scraped
         or include_op_fed
         or include_gss_factors
+        or include_swanson_three_factor
         or include_gtfintechlab_fed
         or include_gtfintechlab_cross_bank
         or include_fomc_archive
@@ -843,7 +975,8 @@ def main() -> int:
         print(
             "No source selected. Use --all-sources or one of "
             "--include-hf/--include-kaggle/--include-scraped/--include-op-fed/"
-            "--include-gss-factors/--include-gtfintechlab-fed/"
+            "--include-gss-factors/--include-swanson-three-factor/"
+            "--include-gtfintechlab-fed/"
             "--include-gtfintechlab-cross-bank/--include-fomc-archive."
         )
         return 1
@@ -873,6 +1006,15 @@ def main() -> int:
         )
         print(f"Ingested GSS factor records: {len(gss_records)} (per-FOMC target/path factors; factor axis only)")
         unified.extend(gss_records)
+    if include_swanson_three_factor:
+        swanson_records = _iter_swanson_three_factor_records(
+            data_dir / SWANSON_THREE_FACTOR_DEFAULT_RELATIVE,
+        )
+        print(
+            f"Ingested Swanson three-factor records: {len(swanson_records)} "
+            "(per-FOMC target / forward-guidance / LSAP factors; factor axis only)"
+        )
+        unified.extend(swanson_records)
     if include_gtfintechlab_fed:
         gtfintechlab_records = _iter_gtfintechlab_federal_reserve_records()
         labelled = sum(1 for r in gtfintechlab_records if r.get("label"))

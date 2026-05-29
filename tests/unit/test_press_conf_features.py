@@ -85,7 +85,7 @@ def test_press_conf_stacks_with_regime_and_sep_blocks() -> None:
     fv = _baseline_vector()
     fv.macro_regime_features = [1.0, 0.0, -1.0]
     fv.macro_regime_features_missing = 0.0
-    fv.sep_features = [5.25, 3.0, 0.50, 1.0]
+    fv.sep_features = [5.25, 4.0, 3.0, 0.50, 1.0]
     fv.sep_features_missing = 0.0
     fv.press_conf_features = [1.0]
 

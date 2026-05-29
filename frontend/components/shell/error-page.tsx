@@ -26,7 +26,7 @@ export function ErrorPage({ status, title, description, hint }: ErrorPageProps) 
     if (typeof window !== "undefined" && window.history.length > 1) {
       window.history.back();
     } else if (typeof window !== "undefined") {
-      window.location.assign("/analyze");
+      window.location.assign("/");
     }
   };
 
@@ -57,7 +57,7 @@ export function ErrorPage({ status, title, description, hint }: ErrorPageProps) 
           ) : null}
           <div className="flex flex-wrap items-center justify-center gap-2">
             <Button asChild>
-              <Link href="/analyze">
+              <Link href="/">
                 <Home className="h-4 w-4" aria-hidden="true" />
                 Back to home
               </Link>

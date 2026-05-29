@@ -1,7 +1,7 @@
 import * as React from "react";
 import Head from "next/head";
 import { useRouter } from "next/router";
-import { ArrowDownRight, ArrowRight, ArrowUpRight, GitCompare } from "lucide-react";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, GitCompare, Share2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { MultiAxisCards } from "@/components/analyze/MultiAxisCards";
@@ -19,7 +19,9 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchHistory, fetchHistoryRun, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { errorMessage } from "@/lib/analyze/errors";
 import {
+  buildNarrativeSummary,
   computeCompareDelta,
   computeMultiAxisDelta,
   describeStanceShift,
@@ -43,6 +45,29 @@ function formatDelta(value: number | null, fractionDigits = 2): string {
 function deltaColorClass(value: number | null): string {
   if (value == null || value === 0) return "text-muted-foreground";
   return value > 0 ? "text-hawkish" : "text-dovish";
+}
+
+// Annotated delta for a sentiment axis. Positive = more hawkish (red),
+// negative = more dovish (green). The bracketed label is the
+// directional readout the user picked.
+function annotatedAxisDelta(value: number | null, axis: string): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const sign = value > 0 ? "+" : "";
+  const direction =
+    value > 0 ? `${axis} hawkish` : value < 0 ? `${axis} dovish` : axis;
+  return `${sign}${value.toFixed(2)} (${direction})`;
+}
+
+function NarrativeSummaryCard({ delta }: { delta: MultiAxisDelta }) {
+  const sentence = buildNarrativeSummary(delta);
+  if (!sentence) return null;
+  return (
+    <Card>
+      <CardContent className="py-3">
+        <p className="text-sm">{sentence}</p>
+      </CardContent>
+    </Card>
+  );
 }
 
 function DeltaIcon({ value }: { value: number | null }) {
@@ -156,10 +181,10 @@ function MultiAxisDeltaCard({ delta }: { delta: MultiAxisDelta }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Multi-axis Δ A − B</CardTitle>
+        <CardTitle>Sentiment breakdown change · A − B</CardTitle>
         <CardDescription>
-          Per-axis deltas from the multi-axis schema. Missing axes appear as
-          "—" when at least one side does not carry that axis.
+          Change on each sentiment axis. Axes show "—" when at least one side
+          did not include that axis.
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0">
@@ -167,14 +192,16 @@ function MultiAxisDeltaCard({ delta }: { delta: MultiAxisDelta }) {
           <thead className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="px-4 py-2 text-left">Axis</th>
-              <th className="px-4 py-2 text-right">Δ A − B</th>
-              <th className="px-4 py-2 text-right">Confidence Δ</th>
+              <th className="px-4 py-2 text-right">Change A − B</th>
+              <th className="px-4 py-2 text-right">Confidence change</th>
             </tr>
           </thead>
           <tbody>
             <tr className="border-b border-border">
               <td className="px-4 py-2 font-mono">stance</td>
-              <td className="px-4 py-2 text-right font-mono">{stanceDir}</td>
+              <td className={`px-4 py-2 text-right font-mono ${deltaColorClass(delta.stanceRankDelta)}`}>
+                {delta.stanceRankDelta != null ? annotatedAxisDelta(delta.stanceRankDelta, "stance") : stanceDir}
+              </td>
               <td className="px-4 py-2 text-right font-mono">
                 {delta.stanceConfidenceDelta != null
                   ? `${delta.stanceConfidenceDelta >= 0 ? "+" : ""}${delta.stanceConfidenceDelta.toFixed(2)}`
@@ -183,10 +210,8 @@ function MultiAxisDeltaCard({ delta }: { delta: MultiAxisDelta }) {
             </tr>
             <tr className="border-b border-border">
               <td className="px-4 py-2 font-mono">factor</td>
-              <td className="px-4 py-2 text-right font-mono">
-                {delta.factorDelta != null
-                  ? `${delta.factorDelta >= 0 ? "+" : ""}${delta.factorDelta.toFixed(2)}`
-                  : "—"}
+              <td className={`px-4 py-2 text-right font-mono ${deltaColorClass(delta.factorDelta)}`}>
+                {annotatedAxisDelta(delta.factorDelta, "factor")}
               </td>
               <td className="px-4 py-2 text-right font-mono">
                 {delta.factorConfidenceDelta != null
@@ -211,8 +236,8 @@ function MultiAxisDeltaCard({ delta }: { delta: MultiAxisDelta }) {
                 {delta.topicChanged == null
                   ? "—"
                   : delta.topicChanged
-                  ? "primary topic changed"
-                  : "primary topic unchanged"}
+                  ? "main topic changed"
+                  : "main topic unchanged"}
               </td>
             </tr>
           </tbody>
@@ -235,21 +260,21 @@ function MultiAxisSideBySide({
   return (
     <div className="grid gap-4 xl:grid-cols-2">
       <div className="space-y-2">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground">Run A · multi-axis</p>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Run A · sentiment breakdown</p>
         {ma ? <MultiAxisCards multiAxis={ma} /> : (
           <Card>
             <CardContent className="py-6 text-center text-sm text-muted-foreground">
-              Run A has no multi-axis payload.
+              Run A has no sentiment breakdown.
             </CardContent>
           </Card>
         )}
       </div>
       <div className="space-y-2">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground">Run B · multi-axis</p>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Run B · sentiment breakdown</p>
         {mb ? <MultiAxisCards multiAxis={mb} /> : (
           <Card>
             <CardContent className="py-6 text-center text-sm text-muted-foreground">
-              Run B has no multi-axis payload.
+              Run B has no sentiment breakdown.
             </CardContent>
           </Card>
         )}
@@ -292,7 +317,7 @@ function DeltaSummary({ delta }: { delta: CompareDelta }) {
         </span>
       )
     ) : (
-      <span className="text-muted-foreground">regime absent on at least one side</span>
+      <span className="text-muted-foreground">Volatility Regime missing on at least one side</span>
     );
 
   return (
@@ -331,7 +356,7 @@ function DeltaSummary({ delta }: { delta: CompareDelta }) {
             ) : null}
           </div>
           <div>
-            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Drift score</dt>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Shift score</dt>
             <dd
               className={`numeric mt-1 flex items-center gap-1 ${deltaColorClass(delta.driftDelta)}`}
             >
@@ -340,7 +365,7 @@ function DeltaSummary({ delta }: { delta: CompareDelta }) {
             </dd>
           </div>
           <div>
-            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Realized-vs-stated</dt>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">What was done vs. said</dt>
             <dd
               className={`numeric mt-1 flex items-center gap-1 ${deltaColorClass(delta.realizedGapDelta)}`}
             >
@@ -381,7 +406,7 @@ export default function ComparePage() {
         if (!cancelled) setEntries(result.items);
       })
       .catch((err) => {
-        if (!cancelled) toast.error((err as Error).message || "Failed to load history list.");
+        if (!cancelled) toast.error(errorMessage(err, "Failed to load history list."));
       })
       .finally(() => {
         if (!cancelled) setEntriesLoading(false);
@@ -405,7 +430,7 @@ export default function ComparePage() {
         if (!cancelled) setDetailA(detail);
       })
       .catch((err) => {
-        if (!cancelled) toast.error((err as Error).message || "Failed to load run A.");
+        if (!cancelled) toast.error(errorMessage(err, "Failed to load run A."));
       })
       .finally(() => {
         if (!cancelled) setLoadingA(false);
@@ -427,7 +452,7 @@ export default function ComparePage() {
         if (!cancelled) setDetailB(detail);
       })
       .catch((err) => {
-        if (!cancelled) toast.error((err as Error).message || "Failed to load run B.");
+        if (!cancelled) toast.error(errorMessage(err, "Failed to load run B."));
       })
       .finally(() => {
         if (!cancelled) setLoadingB(false);
@@ -485,12 +510,33 @@ export default function ComparePage() {
         <Header />
         <StatusBar />
         <main id="main-content" tabIndex={-1} className="container space-y-6 py-8 focus:outline-none">
-          <div className="space-y-2">
-            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Compare runs</h1>
-            <p className="max-w-2xl text-muted-foreground">
-              Pick two past analyses and see the stance, prediction, and confidence deltas side by
-              side. Selections are sticky in the URL — share the link to send a paired view.
-            </p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-2">
+              <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Compare runs</h1>
+              <p className="max-w-2xl text-muted-foreground">
+                Pick two past analyses and see the stance, prediction, and confidence deltas side by
+                side. Selections are sticky in the URL — share the link to send a paired view.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (typeof window === "undefined") return;
+                const url = window.location.href;
+                const writer = navigator?.clipboard?.writeText;
+                if (writer) {
+                  writer.call(navigator.clipboard, url)
+                    .then(() => toast.success("Share link copied"))
+                    .catch(() => toast.error("Could not copy link"));
+                } else {
+                  toast.info(url);
+                }
+              }}
+            >
+              <Share2 className="h-3.5 w-3.5" aria-hidden="true" />
+              Copy share link
+            </Button>
           </div>
 
           {entriesLoading ? (
@@ -501,7 +547,7 @@ export default function ComparePage() {
           ) : entries.length === 0 ? (
             <Card>
               <CardContent className="py-10 text-center text-muted-foreground">
-                No runs yet — submit at least two analyses before using this page.
+                No history yet. Use the Workspace to submit at least two analyses, then return here to compare.
               </CardContent>
             </Card>
           ) : (
@@ -525,6 +571,7 @@ export default function ComparePage() {
             </div>
           )}
 
+          {multiAxisDelta ? <NarrativeSummaryCard delta={multiAxisDelta} /> : null}
           {delta ? <DeltaSummary delta={delta} /> : null}
           {multiAxisDelta ? <MultiAxisDeltaCard delta={multiAxisDelta} /> : null}
           {detailA && detailB ? (

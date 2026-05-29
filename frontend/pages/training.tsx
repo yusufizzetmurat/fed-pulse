@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchTrainJobs, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { errorMessage } from "@/lib/analyze/errors";
 import type { TrainJobStatus, TrainJobSummary } from "@/lib/analyze/types";
 
 const STATUS_VARIANT: Record<string, "hawkish" | "dovish" | "outline" | "secondary"> = {
@@ -83,7 +84,7 @@ export default function TrainingPage() {
           if (!cancelled) setJobs(result.items);
         })
         .catch((err) => {
-          if (!cancelled) toast.error((err as Error).message || "Failed to load training jobs.");
+          if (!cancelled) toast.error(errorMessage(err, "Failed to load training jobs."));
         })
         .finally(() => {
           if (!cancelled) setLoading(false);
@@ -134,8 +135,8 @@ export default function TrainingPage() {
             <Card>
               <CardContent className="py-10 text-center text-muted-foreground">
                 No training jobs in this backend instance. Submit a Real Train forecast from the
-                <Link href="/analyze" className="ml-1 underline">
-                  Analyze page
+                <Link href="/" className="ml-1 underline">
+                  Workspace
                 </Link>
                 {" "}to enqueue one.
               </CardContent>

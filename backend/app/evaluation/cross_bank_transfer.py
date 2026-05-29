@@ -168,7 +168,7 @@ def _predict_with_model(
     import torch
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)  # type: ignore[no-untyped-call]
     model = AutoModelForSequenceClassification.from_pretrained(checkpoint)
     model.eval()
     device = next(model.parameters()).device

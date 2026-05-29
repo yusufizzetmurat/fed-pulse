@@ -15,7 +15,11 @@ import {
   RegimeHistoryStrip,
   type RegimeHistoryEntry,
 } from "@/components/analyze/RegimeHistoryStrip";
+import { HistoricalContextBadge } from "@/components/analyze/HistoricalContextBadge";
 import { SentenceStrikeXaiPanel } from "@/components/analyze/SentenceStrikeXaiPanel";
+import { StatementDeltaCard } from "@/components/analyze/StatementDeltaCard";
+import { TldrCard } from "@/components/analyze/TldrCard";
+import { WorkspaceMetaStrip } from "@/components/analyze/WorkspaceMetaStrip";
 import { TrajectoryPanel } from "@/components/analyze/TrajectoryPanel";
 import { WatchlistChips } from "@/components/analyze/WatchlistChips";
 import { Header } from "@/components/shell/header";
@@ -32,6 +36,7 @@ import {
   resolveApiBaseUrl,
 } from "@/lib/analyze/api";
 import { DEFAULT_TEXT } from "@/lib/analyze/constants";
+import { errorMessage } from "@/lib/analyze/errors";
 import { toStance } from "@/lib/analyze/format";
 import { useEvaluationCoverage } from "@/lib/analyze/useEvaluationCoverage";
 import type {
@@ -64,6 +69,14 @@ function defaultRequest(): AnalyzeRequest {
     include_realized: false,
     include_xai: true,
   };
+}
+
+function SectionDivider({ label }: { label: string }) {
+  return (
+    <div className="border-t border-border mt-6 mb-1 pt-3">
+      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+    </div>
+  );
 }
 
 function takeArgmaxRegime(entry: HistoryEntry, detailPayload: AnalyzeResult | null): string | null {
@@ -114,6 +127,13 @@ export default function WorkspacePage() {
     });
   }, []);
 
+  // Pending request to auto-submit after a deep-link prefill so the user
+  // lands on a populated workspace without an extra click. ``handleSubmit``
+  // is declared further down — we keep this in a ref so the effect that
+  // schedules the submit doesn't need to retrigger when handleSubmit
+  // changes identity each render.
+  const autoSubmitPendingRef = React.useRef<AnalyzeRequest | null>(null);
+
   // Calendar / cross-page deep links land here with ?date=&symbol=&horizon=&kind=.
   React.useEffect(() => {
     if (!router.isReady) return;
@@ -147,10 +167,17 @@ export default function WorkspacePage() {
         }
         const payload = await response.json();
         if (cancelled || typeof payload?.text !== "string" || !payload.text) return;
-        setRequest((prev) => ({ ...prev, text: payload.text }));
+        setRequest((prev) => {
+          const next = { ...prev, text: payload.text };
+          // Mark the next state as the one that should auto-submit. The
+          // submit fires from a follow-up effect that watches request.text
+          // so handleSubmit sees the populated request.
+          autoSubmitPendingRef.current = next;
+          return next;
+        });
         toast.success(`Prefilled FOMC ${payload.kind} from ${queryDate}.`);
       } catch (err) {
-        toast.error((err as Error).message || "Could not load document for this date.");
+        toast.error(errorMessage(err, "Could not load document for this date."));
       }
     })();
     return () => {
@@ -248,12 +275,7 @@ export default function WorkspacePage() {
       } else {
         setResult(null);
         setBaselineResult(null);
-        const err = analyzeRes.reason;
-        const message =
-          (err as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
-          (err as Error).message ||
-          "Request failed. Is the backend running?";
-        toast.error(message);
+        toast.error(errorMessage(analyzeRes.reason));
       }
       // Commit the market panel only when the seq still matches the
       // most recent submit. Older in-flight fetches that arrive late
@@ -320,12 +342,7 @@ export default function WorkspacePage() {
           );
         }
         if (analyzeRes.status === "rejected") {
-          const err = analyzeRes.reason;
-          const message =
-            (err as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
-            (err as Error).message ||
-            "Counterfactual request failed.";
-          toast.error(message);
+          toast.error(errorMessage(analyzeRes.reason));
         }
       } finally {
         if (ticket === counterfactualSeqRef.current) {
@@ -335,6 +352,19 @@ export default function WorkspacePage() {
     },
     [apiBaseUrl, baselineResult, request],
   );
+
+  // Auto-fire handleSubmit once the deep-link prefill flushes into the
+  // request state. We compare against the ref the prefill effect parked
+  // there so a manual edit between prefill and run doesn't accidentally
+  // trigger this branch.
+  React.useEffect(() => {
+    const pending = autoSubmitPendingRef.current;
+    if (pending && request.text === pending.text && request.date === pending.date) {
+      autoSubmitPendingRef.current = null;
+      handleSubmit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request.text, request.date]);
 
   const handleStruckChange = React.useCallback(
     (next: Set<number>) => {
@@ -362,7 +392,7 @@ export default function WorkspacePage() {
   return (
     <>
       <Head>
-        <title>Fed Pulse — vol-regime workspace</title>
+        <title>Fed Pulse — Volatility Regime workspace</title>
       </Head>
       <div className="min-h-screen bg-background text-foreground">
         <Header />
@@ -373,21 +403,23 @@ export default function WorkspacePage() {
           documentDate={request.date}
         />
         <main id="main-content" tabIndex={-1} className="container space-y-5 py-6 focus:outline-none">
-          <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
             <div className="space-y-1">
               <h1 className="text-2xl font-semibold tracking-tight">Workspace</h1>
               <p className="max-w-2xl text-sm text-muted-foreground">
-                Paste an FOMC excerpt and the classifier returns a calibrated 10-day vol-regime set,
-                the multi-axis breakdown, sentence attribution, credibility KPIs, and the full pipeline
-                trace. Everything is read off the live backend.
+                Paste an FOMC excerpt and the model returns a calibrated 10-day Volatility
+                Regime prediction, a sentiment breakdown, a per-sentence explanation,
+                credibility checks, and a full pipeline trace. Everything comes from the live
+                backend.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <HistoricalContextBadge result={result} documentDate={request.date} />
               <Badge variant="outline" className="numeric text-[10px]">
-                horizon · 10d
+                horizon · 10 days
               </Badge>
               <Badge variant="outline" className="numeric text-[10px]">
-                target · vol regime
+                target · Volatility Regime
               </Badge>
             </div>
           </div>
@@ -417,6 +449,12 @@ export default function WorkspacePage() {
 
           {result ? (
             <>
+              <SectionDivider label="Statement analysis" />
+              <TldrCard result={result} />
+              <StatementDeltaCard result={result} />
+              <WorkspaceMetaStrip result={result} />
+
+              <SectionDivider label="Model prediction" />
               {result.regime_classification ? (
                 <RegimeHeadline
                   regime={result.regime_classification}
@@ -435,18 +473,18 @@ export default function WorkspacePage() {
                 />
               ) : (
                 <EmptyState
-                  title="Calibrated regime card not in this build"
+                  title="Volatility Regime card unavailable."
                   description={
                     <div className="space-y-2">
                       <p>
-                        The deployed forecaster is regression-mode — it predicts close and volatility numerically
-                        but does not bucket them into a calibrated{" "}
-                        <span className="numeric">calm / normal / high</span> set. The classification head and its
-                        conformal sidecar (<code>softmax_quantile</code>) ship as part of #216 / Round 1.
+                        The active checkpoint runs in regression mode. Switch to a
+                        classification-capable model in Settings to populate the calibrated{" "}
+                        <span className="numeric">calm / normal / high</span> prediction set.
                       </p>
                       <p className="text-muted-foreground">
-                        Every other workspace surface below — multi-axis breakdown, sentence attribution,
-                        credibility KPIs, pipeline trace, history strip — is live against the current checkpoint.
+                        Sentiment breakdown, per-sentence explanation, credibility checks,
+                        pipeline trace, and history strip below still render against the
+                        current model.
                       </p>
                     </div>
                   }
@@ -457,14 +495,19 @@ export default function WorkspacePage() {
                 <PolicyActionCard action={result.policy_action} />
               ) : null}
 
+              {marketPanel && (marketPanel.rates.length > 0 || marketPanel.vol_regime) ? (
+                <MarketReactionPanel panel={marketPanel} />
+              ) : null}
+
+              <SectionDivider label="Sentiment and context" />
               <div className="grid gap-4 xl:grid-cols-2">
                 {result.multi_axis ? (
                   <MultiAxisInterpretation multiAxis={result.multi_axis} />
                 ) : (
                   <EmptyState
                     variant="inline"
-                    title="Multi-axis checkpoint absent"
-                    description="Train and deploy the multi-axis classifier to populate stance, factor, certainty, topic."
+                    title="Sentiment breakdown unavailable."
+                    description="Load a sentiment model from the Settings page to populate stance, factor, certainty, and topic."
                   />
                 )}
                 {result.credibility ? (
@@ -472,18 +515,22 @@ export default function WorkspacePage() {
                 ) : (
                   <EmptyState
                     variant="inline"
-                    title="Credibility features unavailable"
-                    description="No embedding or FRED cache attached on this host yet."
+                    title="Credibility signals unavailable."
+                    description="Load the embedding model and the historical rate cache from the Settings page."
                   />
                 )}
               </div>
 
-              {marketPanel && (marketPanel.rates.length > 0 || marketPanel.vol_regime) ? (
-                <MarketReactionPanel panel={marketPanel} />
-              ) : null}
-
               <HistoricalAnalogPanel analogs={analogsPanel} loading={analogsLoading} />
 
+              <TrajectoryPanel
+                apiBaseUrl={apiBaseUrl}
+                asOfDate={request.date}
+                historyLength={12}
+              />
+
+              <SectionDivider label="Model internals" />
+              <PipelineTrace result={result} inputText={request.text} />
 
               {result.xai ? (
                 <SentenceStrikeXaiPanel
@@ -495,14 +542,6 @@ export default function WorkspacePage() {
                   loading={counterfactualLoading}
                 />
               ) : null}
-
-              <TrajectoryPanel
-                apiBaseUrl={apiBaseUrl}
-                asOfDate={request.date}
-                historyLength={12}
-              />
-
-              <PipelineTrace result={result} inputText={request.text} />
 
               <RegimeHistoryStrip entries={historyEntries} symbol={request.symbol} />
             </>

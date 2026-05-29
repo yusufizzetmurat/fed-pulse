@@ -221,7 +221,7 @@ def _predict_with_model(
     import torch
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)  # type: ignore[no-untyped-call]
     model = AutoModelForSequenceClassification.from_pretrained(checkpoint)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -423,7 +423,7 @@ def _predict_continuous_scores(
     import torch
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)  # type: ignore[no-untyped-call]
     model = AutoModelForSequenceClassification.from_pretrained(checkpoint)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)

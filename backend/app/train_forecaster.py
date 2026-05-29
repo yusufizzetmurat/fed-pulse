@@ -452,6 +452,26 @@ def _parse_args() -> argparse.Namespace:
         action="store_false",
         help="Disable the press-conf Q&A block (no slot, no LoRA concat).",
     )
+    # #480 symbol-conditioned regime head. Default 0 keeps the regime
+    # / dual-head wiring byte-identical to the symbol-agnostic
+    # canonical: no embedding module, no head-input widening, no
+    # symbol_id lookup at forward time. ``> 0`` mounts the embedding
+    # alongside the existing regime head + dual-head log-RV regression
+    # head. v1 ships with five symbols (^GSPC, ^NDX, ^DJI, DX-Y.NYB,
+    # EURUSD=X); the lookup table lives on
+    # :data:`app.models.config.SUPPORTED_SYMBOLS`.
+    parser.add_argument(
+        "--symbol-embedding-dim",
+        dest="symbol_embedding_dim",
+        type=int,
+        default=0,
+        help=(
+            "Width of the per-symbol embedding concatenated to the encoder "
+            "pool before the regime + dual-head log-RV regression heads. "
+            "0 (default) disables the embedding entirely and keeps the "
+            "forward pass byte-identical to the symbol-agnostic canonical."
+        ),
+    )
     parser.set_defaults(
         use_credibility=True,
         use_linguistic=True,
@@ -1379,6 +1399,7 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         use_regime_conditioning=bool(getattr(args, "use_regime_conditioning", False)),
         use_sep=bool(getattr(args, "use_sep", False)),
         use_press_conf=bool(getattr(args, "use_press_conf", False)),
+        symbol_embedding_dim=int(getattr(args, "symbol_embedding_dim", 0) or 0),
     )
 
 

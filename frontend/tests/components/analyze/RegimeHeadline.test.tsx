@@ -24,8 +24,8 @@ const REGIME_WITH_BAND: RegimeClassificationResponse = {
 describe("RegimeHeadline coverage chip", () => {
   it("shows the run-level coverage badge when no empirical figure is provided", () => {
     render(<RegimeHeadline regime={REGIME} symbol="^GSPC" documentDate="2024-09-18" />);
-    expect(screen.getByText(/80% coverage · set size 2/i)).toBeInTheDocument();
-    expect(screen.queryByText(/empirical/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/80% confidence level · 2 labels in set/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Actual/i)).not.toBeInTheDocument();
   });
 
   it("merges nominal + empirical into one chip when empirical coverage is available", () => {
@@ -38,7 +38,7 @@ describe("RegimeHeadline coverage chip", () => {
         empiricalCoverageSampleSize={42}
       />,
     );
-    expect(screen.getByText(/Nominal 80% · Empirical 76%/i)).toBeInTheDocument();
+    expect(screen.getByText(/Target 80% · Actual 76%/i)).toBeInTheDocument();
   });
 
   it("renders the drift badge when empirical drops more than 10pp under nominal", () => {
@@ -64,40 +64,40 @@ describe("RegimeHeadline coverage chip", () => {
         empiricalCoverageSampleSize={0}
       />,
     );
-    expect(screen.queryByText(/empirical/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/80% coverage · set size 2/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Actual/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/80% confidence level · 2 labels in set/i)).toBeInTheDocument();
   });
 });
 
 describe("RegimeHeadline regression-canonical surface (#338)", () => {
-  it("leads with the log(RV) regression band when the dual-head fields are populated", () => {
+  it("leads with the numeric volatility forecast when the dual-head fields are populated", () => {
     render(<RegimeHeadline regime={REGIME_WITH_BAND} symbol="^GSPC" documentDate="2024-09-18" />);
-    expect(screen.getByText(/log\(RV\) regression band/i)).toBeInTheDocument();
+    expect(screen.getByText(/Volatility forecast · 10 days ahead/i)).toBeInTheDocument();
     expect(screen.getByText(/-0\.250/)).toBeInTheDocument();
-    expect(screen.getByText(/band \[-0\.850, 0\.350\]/)).toBeInTheDocument();
-    expect(screen.getByText(/normal bucket/i)).toBeInTheDocument();
-    expect(screen.getByText(/bucket source · regression/i)).toBeInTheDocument();
+    expect(screen.getByText(/confidence range \[-0\.850, 0\.350\]/)).toBeInTheDocument();
+    expect(screen.getByText(/normal regime/i)).toBeInTheDocument();
+    expect(screen.getByText(/regime source · regression/i)).toBeInTheDocument();
   });
 
   it("falls back to the classifier-led surface when no log_rv_point is present", () => {
     render(<RegimeHeadline regime={REGIME} symbol="^GSPC" documentDate="2024-09-18" />);
-    expect(screen.queryByText(/log\(RV\) regression band/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/Vol-regime prediction set/i)).toBeInTheDocument();
-    expect(screen.getByText(/argmax · 45\.0%/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Volatility forecast · 10 days ahead/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Volatility Regime prediction · 10 days ahead/i)).toBeInTheDocument();
+    expect(screen.getByText(/top pick · 45\.0%/i)).toBeInTheDocument();
   });
 
   it("ships the fold-4 with/without callout on every render", () => {
     render(<RegimeHeadline regime={REGIME_WITH_BAND} symbol="^GSPC" documentDate="2024-09-18" />);
-    expect(screen.getByText(/With fold-4/i)).toBeInTheDocument();
-    expect(screen.getByText(/Without fold-4/i)).toBeInTheDocument();
+    expect(screen.getByText(/Including fold 4/i)).toBeInTheDocument();
+    expect(screen.getByText(/Excluding fold 4/i)).toBeInTheDocument();
     // Numbers from dual_head_comparison_canonical.json.
-    expect(screen.getByText(/F1 0\.419 ± 0\.070/)).toBeInTheDocument();
-    expect(screen.getByText(/F1 0\.414 ± 0\.079/)).toBeInTheDocument();
+    expect(screen.getByText(/F1 score 0\.419 ± 0\.070/)).toBeInTheDocument();
+    expect(screen.getByText(/F1 score 0\.414 ± 0\.079/)).toBeInTheDocument();
   });
 
-  it("demotes per-class softmax + predicted set to a foldable section", () => {
+  it("demotes per-class probabilities + predicted set to a foldable section", () => {
     render(<RegimeHeadline regime={REGIME_WITH_BAND} symbol="^GSPC" documentDate="2024-09-18" />);
-    const summary = screen.getByText(/Per-class softmax \+ calibrated set/i);
+    const summary = screen.getByText(/Per-class probabilities and prediction set/i);
     expect(summary.tagName.toLowerCase()).toBe("summary");
   });
 

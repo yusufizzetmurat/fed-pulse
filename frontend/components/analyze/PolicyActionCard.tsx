@@ -93,7 +93,7 @@ export function PolicyActionCard({ action }: PolicyActionCardProps) {
             </Badge>
           ) : (
             <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-              No verb named
+              No action verb detected
             </Badge>
           )}
         </CardTitle>
@@ -108,7 +108,7 @@ export function PolicyActionCard({ action }: PolicyActionCardProps) {
           </p>
         ) : (
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Balance-sheet posture unavailable
+            Balance sheet stance not detected in this statement.
           </p>
         )}
       </CardContent>

@@ -13,7 +13,7 @@ function renderWithTooltip(node: React.ReactNode) {
 describe("XaiPanel", () => {
   it("renders the title and one chip per sentence", () => {
     renderWithTooltip(<XaiPanel xai={SAMPLE_XAI} />);
-    expect(screen.getByText(/sentence attribution/i)).toBeInTheDocument();
+    expect(screen.getByText(/per-sentence explanation/i)).toBeInTheDocument();
     for (const sentence of SAMPLE_XAI.sentences) {
       expect(screen.getByText(sentence.text)).toBeInTheDocument();
     }
@@ -21,8 +21,8 @@ describe("XaiPanel", () => {
 
   it("renders the empty-state placeholder when there are no sentences", () => {
     renderWithTooltip(<XaiPanel xai={{ sentences: [] }} />);
-    expect(screen.getByText(/sentence attribution/i)).toBeInTheDocument();
-    expect(screen.getByText(/no salient sentences detected/i)).toBeInTheDocument();
+    expect(screen.getByText(/per-sentence explanation/i)).toBeInTheDocument();
+    expect(screen.getByText(/no high-impact sentences found/i)).toBeInTheDocument();
   });
 
   it("shows the integrated-gradients method label", () => {
@@ -51,7 +51,7 @@ describe("XaiPanel", () => {
     expect(screen.getByTestId("panel-attribution-regime")).toBeInTheDocument();
     expect(screen.getByText("Linguistic")).toBeInTheDocument();
     expect(screen.getByText("Credibility")).toBeInTheDocument();
-    expect(screen.getByText(/IG n=20/)).toBeInTheDocument();
+    expect(screen.getByText(/20 attribution steps/)).toBeInTheDocument();
   });
 
   it("renders the explanation-unavailable badge when a panel is unavailable", () => {
@@ -65,9 +65,9 @@ describe("XaiPanel", () => {
     };
     renderWithTooltip(<PanelAttributionRow panel={panel} />);
     expect(screen.getByTestId("panel-attribution-rates_2y")).toBeInTheDocument();
-    expect(screen.getByText(/explanation unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/explanation not available/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/Head not mounted on the current checkpoint\./i),
+      screen.getByText(/This prediction is not enabled on the active model\./i),
     ).toBeInTheDocument();
   });
 

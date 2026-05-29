@@ -1,10 +1,20 @@
 import * as React from "react";
 import Head from "next/head";
 import { FlaskConical } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ErrorBar,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { toast } from "sonner";
 
 import { DecisionsLink } from "@/components/research/DecisionsLink";
-import { DesignSystemTab } from "@/components/research/DesignSystemTab";
 import { JobsLink } from "@/components/research/JobsLink";
 import { Header } from "@/components/shell/header";
 import { StatusBar } from "@/components/shell/status-bar";
@@ -19,6 +29,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fetchResearchArtifacts, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { errorMessage } from "@/lib/analyze/errors";
 import type {
   ArtifactFile,
   CrossBankTransferSection,
@@ -51,6 +62,91 @@ function heatmapColor(value: number, min: number, max: number): string {
   return `rgba(16, 185, 129, ${alpha.toFixed(3)})`;
 }
 
+const BAKEOFF_TOOLTIP_STYLE: React.CSSProperties = {
+  background: "hsl(var(--popover))",
+  color: "hsl(var(--popover-foreground))",
+  border: "1px solid hsl(var(--border))",
+  borderRadius: 6,
+  padding: "6px 8px",
+  fontSize: 12,
+};
+
+function bakeoffBarColor(value: number, min: number, max: number): string {
+  if (max <= min) return "hsl(var(--primary))";
+  const t = Math.max(0, Math.min(1, (value - min) / (max - min)));
+  // Sequential primary-tinted ramp; lighter at low scores.
+  const alpha = 0.35 + 0.6 * t;
+  return `hsla(var(--primary) / ${alpha.toFixed(3)})`;
+}
+
+interface BakeoffBarDatum {
+  name: string;
+  macroF1: number;
+  ciLow: number | null;
+  ciHigh: number | null;
+  // recharts error bars accept a [low, high] tuple-difference.
+  errorOffsets: [number, number];
+}
+
+function buildBakeoffBarData(section: EncoderBakeoffSection): BakeoffBarDatum[] {
+  return [...section.rows]
+    .sort((a, b) => b.macro_f1_mean - a.macro_f1_mean)
+    .map((row) => {
+      const low = row.macro_f1_ci_low;
+      const high = row.macro_f1_ci_high;
+      const offsetLow = low != null ? Math.max(0, row.macro_f1_mean - low) : 0;
+      const offsetHigh = high != null ? Math.max(0, high - row.macro_f1_mean) : 0;
+      return {
+        name: row.encoder_key,
+        macroF1: row.macro_f1_mean,
+        ciLow: low,
+        ciHigh: high,
+        errorOffsets: [offsetLow, offsetHigh] as [number, number],
+      };
+    });
+}
+
+function bakeoffCallout(section: EncoderBakeoffSection): string | null {
+  if (section.rows.length < 2) return null;
+  const sorted = [...section.rows].sort((a, b) => b.macro_f1_mean - a.macro_f1_mean);
+  const leader = sorted[0];
+  const runner = sorted[1];
+  const gapPoints = (leader.macro_f1_mean - runner.macro_f1_mean) * 100;
+  if (!Number.isFinite(gapPoints) || gapPoints <= 0) return null;
+  return `${leader.encoder_key} leads the overall F1 score by ${gapPoints.toFixed(1)} percentage points over ${runner.encoder_key}.`;
+}
+
+function crossBankCallout(
+  section: CrossBankTransferSection,
+  cellMap: Map<string, TransferMatrixCell>,
+  sources: string[],
+  targets: string[],
+): string | null {
+  if (sources.length === 0 || targets.length === 0) return null;
+  // Largest in-domain to off-diagonal drop across all rows.
+  let worstDrop = 0;
+  let worstSource = "";
+  let worstTarget = "";
+  for (const src of sources) {
+    const inDomain = cellMap.get(`${src}|${src}`);
+    if (!inDomain) continue;
+    for (const tgt of targets) {
+      if (tgt === src) continue;
+      const cell = cellMap.get(`${src}|${tgt}`);
+      if (!cell) continue;
+      const drop = inDomain.metric - cell.metric;
+      if (drop > worstDrop) {
+        worstDrop = drop;
+        worstSource = src;
+        worstTarget = tgt;
+      }
+    }
+  }
+  if (worstDrop <= 0 || !worstSource || !worstTarget) return null;
+  const metricLabel = section.metric_name.replace("_", "-");
+  return `Transferring from ${worstSource} to ${worstTarget} drops ${metricLabel} by ${(worstDrop * 100).toFixed(1)} percentage points compared with training and evaluating on the same bank.`;
+}
+
 function EncoderBakeoffPane({ section }: { section: EncoderBakeoffSection }) {
   if (!section.available || section.rows.length === 0) {
     return (
@@ -69,6 +165,11 @@ function EncoderBakeoffPane({ section }: { section: EncoderBakeoffSection }) {
       </Card>
     );
   }
+  const barData = buildBakeoffBarData(section);
+  const macroValues = barData.map((d) => d.macroF1);
+  const minF1 = macroValues.length ? Math.min(...macroValues) : 0;
+  const maxF1 = macroValues.length ? Math.max(...macroValues) : 1;
+  const callout = bakeoffCallout(section);
   return (
     <Card>
       <CardHeader>
@@ -77,7 +178,52 @@ function EncoderBakeoffPane({ section }: { section: EncoderBakeoffSection }) {
           {section.rows.length} encoders, coverage {section.coverage ? `${(section.coverage * 100).toFixed(0)}%` : "—"} block-bootstrap CI.
         </CardDescription>
       </CardHeader>
-      <CardContent className="p-0">
+      <CardContent className="space-y-4 p-0">
+        {barData.length > 0 ? (
+          <div className="px-4 pt-4">
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={barData} margin={{ top: 12, right: 16, bottom: 24, left: 0 }}>
+                  <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="2 3" />
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                    interval={0}
+                    angle={-30}
+                    textAnchor="end"
+                  />
+                  <YAxis
+                    tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                    domain={[0, 1]}
+                    tickFormatter={(v) => Number(v).toFixed(2)}
+                  />
+                  <Tooltip
+                    cursor={{ fill: "hsl(var(--muted) / 0.4)" }}
+                    contentStyle={BAKEOFF_TOOLTIP_STYLE}
+                    formatter={(value, _name, ctx) => {
+                      const d = ctx?.payload as BakeoffBarDatum | undefined;
+                      if (!d) return [String(value), "macro-F1"];
+                      const ci =
+                        d.ciLow != null && d.ciHigh != null
+                          ? ` (95% CI ${d.ciLow.toFixed(3)}–${d.ciHigh.toFixed(3)})`
+                          : "";
+                      return [`${d.macroF1.toFixed(3)}${ci}`, "macro-F1"];
+                    }}
+                  />
+                  <Bar dataKey="macroF1" isAnimationActive={false}>
+                    {barData.map((d) => (
+                      <Cell key={d.name} fill={bakeoffBarColor(d.macroF1, minF1, maxF1)} />
+                    ))}
+                    <ErrorBar dataKey="errorOffsets" stroke="hsl(var(--muted-foreground))" width={4} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            {callout ? (
+              <p className="mt-2 text-xs text-muted-foreground">{callout}</p>
+            ) : null}
+          </div>
+        ) : null}
         <table className="w-full text-sm">
           <thead className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
@@ -144,53 +290,126 @@ function CrossBankTransferPane({ section }: { section: CrossBankTransferSection 
   const metrics = section.cells.map((c) => c.metric);
   const min = Math.min(...metrics);
   const max = Math.max(...metrics);
+  const callout = crossBankCallout(section, cellMap, sources, targets);
+  const renderCellTooltip = (src: string, tgt: string, cell: TransferMatrixCell | undefined) => {
+    if (!cell) return undefined;
+    const inDomain = cellMap.get(`${src}|${src}`);
+    if (!inDomain || src === tgt) {
+      return `Trained on ${src}, evaluated on ${tgt}: ${cell.metric.toFixed(3)} ${section.metric_name.replace("_", "-")}.`;
+    }
+    const delta = cell.metric - inDomain.metric;
+    const deltaLabel =
+      delta >= 0
+        ? `+${(delta * 100).toFixed(1)}pp vs in-domain`
+        : `${(delta * 100).toFixed(1)}pp vs in-domain`;
+    return `Trained on ${src}, evaluated on ${tgt}: ${cell.metric.toFixed(3)} ${section.metric_name.replace("_", "-")}. ${deltaLabel}.`;
+  };
   return (
     <Card>
       <CardHeader>
         <CardTitle>Cross-CB transfer matrix</CardTitle>
         <CardDescription>
-          {section.metric_name.replace("_", "-")}. Rows are training banks, columns are evaluation banks.
+          {section.metric_name.replace("_", "-")}. Rows are training banks, columns are evaluation banks. Heatmap on top, numeric values below.
         </CardDescription>
       </CardHeader>
-      <CardContent className="overflow-auto">
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr>
-              <th className="border border-border bg-muted/30 px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                source ↓ / target →
-              </th>
-              {targets.map((tgt) => (
-                <th key={tgt} className="border border-border bg-muted/30 px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {tgt}
+      <CardContent className="space-y-4 overflow-auto">
+        <div>
+          <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Heatmap</p>
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr>
+                <th className="border border-border bg-muted/30 px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  source ↓ / target →
                 </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {sources.map((src) => (
-              <tr key={src}>
-                <th className="border border-border bg-muted/20 px-3 py-2 text-left text-xs font-medium text-muted-foreground">
-                  {src}
-                </th>
-                {targets.map((tgt) => {
-                  const cell = cellMap.get(`${src}|${tgt}`);
-                  return (
-                    <td
-                      key={`${src}-${tgt}`}
-                      className="border border-border px-3 py-2 text-right font-mono text-xs"
-                      style={cell ? { backgroundColor: heatmapColor(cell.metric, min, max) } : undefined}
-                    >
-                      {cell ? cell.metric.toFixed(3) : "—"}
-                    </td>
-                  );
-                })}
+                {targets.map((tgt) => (
+                  <th key={tgt} className="border border-border bg-muted/30 px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {tgt}
+                  </th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sources.map((src) => (
+                <tr key={`heat-${src}`}>
+                  <th className="border border-border bg-muted/20 px-3 py-2 text-left text-xs font-medium text-muted-foreground">
+                    {src}
+                  </th>
+                  {targets.map((tgt) => {
+                    const cell = cellMap.get(`${src}|${tgt}`);
+                    return (
+                      <td
+                        key={`heat-${src}-${tgt}`}
+                        className="border border-border px-3 py-3 text-center font-mono text-[10px]"
+                        style={cell ? { backgroundColor: heatmapColor(cell.metric, min, max) } : undefined}
+                        title={renderCellTooltip(src, tgt, cell)}
+                      >
+                        {cell ? "" : "—"}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {callout ? (
+            <p className="mt-2 text-xs text-muted-foreground">{callout}</p>
+          ) : null}
+        </div>
+        <div>
+          <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Values</p>
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr>
+                <th className="border border-border bg-muted/30 px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  source ↓ / target →
+                </th>
+                {targets.map((tgt) => (
+                  <th key={tgt} className="border border-border bg-muted/30 px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {tgt}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sources.map((src) => (
+                <tr key={`val-${src}`}>
+                  <th className="border border-border bg-muted/20 px-3 py-2 text-left text-xs font-medium text-muted-foreground">
+                    {src}
+                  </th>
+                  {targets.map((tgt) => {
+                    const cell = cellMap.get(`${src}|${tgt}`);
+                    return (
+                      <td
+                        key={`val-${src}-${tgt}`}
+                        className="border border-border px-3 py-2 text-right font-mono text-xs"
+                        title={renderCellTooltip(src, tgt, cell)}
+                      >
+                        {cell ? cell.metric.toFixed(3) : "—"}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </CardContent>
     </Card>
   );
+}
+
+function describeArtifactFile(relativePath: string): string {
+  const last = relativePath.split("/").pop() ?? "";
+  if (last.endsWith(".parquet")) return "Tabular cache for downstream loaders.";
+  if (last.endsWith(".pt") || last.endsWith(".bin")) return "Model checkpoint weights.";
+  if (last.includes("aggregate")) return "Aggregated metrics across seeds.";
+  if (last.includes("conformal")) return "Conformal calibration sidecar.";
+  if (last.includes("breakdown")) return "Per-class breakdown for the evaluation harness.";
+  if (last.includes("transfer")) return "Cross-bank transfer evaluation row.";
+  if (last.endsWith(".json")) return "Structured evaluation artefact.";
+  if (last.endsWith(".csv")) return "CSV table of evaluation rows.";
+  if (last.endsWith(".md")) return "Markdown notes for this run.";
+  return "Research artefact.";
 }
 
 function ArtifactsExplorer({
@@ -203,9 +422,9 @@ function ArtifactsExplorer({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Artefact files</CardTitle>
+        <CardTitle>Downloads</CardTitle>
         <CardDescription>
-          {totalFiles} files indexed across {sectionEntries.length} sections.
+          {totalFiles} files across {sectionEntries.length} sections. Each file lists its size, last update, and a short note on what it is.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -216,18 +435,25 @@ function ArtifactsExplorer({
               <span className="text-xs text-muted-foreground">{files.length} files</span>
             </div>
             {files.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No files emitted yet.</p>
+              <p className="text-xs text-muted-foreground">
+                No files in this section. Run the relevant pipeline to populate it.
+              </p>
             ) : (
-              <ul className="space-y-0.5">
+              <ul className="space-y-1.5">
                 {files.slice(0, 20).map((file) => (
                   <li
                     key={file.relative_path}
-                    className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs text-muted-foreground"
+                    className="space-y-0.5 border-b border-border/40 pb-1.5 last:border-0"
                   >
-                    <span>{file.relative_path}</span>
-                    <span>
-                      {formatBytes(file.size_bytes)} · {file.modified_at.slice(0, 19)}
-                    </span>
+                    <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs text-muted-foreground">
+                      <span>{file.relative_path}</span>
+                      <span>
+                        {formatBytes(file.size_bytes)} · updated {file.modified_at.slice(0, 19)}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      {describeArtifactFile(file.relative_path)}
+                    </p>
                   </li>
                 ))}
                 {files.length > 20 ? (
@@ -256,7 +482,7 @@ export default function ResearchPage() {
         if (!cancelled) setData(result);
       })
       .catch((err) => {
-        if (!cancelled) toast.error((err as Error).message || "Failed to load research artefacts.");
+        if (!cancelled) toast.error(errorMessage(err, "Failed to load research artefacts."));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -281,8 +507,10 @@ export default function ResearchPage() {
               Research console
             </h1>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Bake-off macro-F1, cross-CB transfer matrix, next-FOMC ordinal forecast, training
-              jobs, design-system primitives, and the raw artefact tree.
+              Research artefacts the model is built on. The Bake-off compares text encoders.
+              The Transfer matrix shows how a model trained on one central bank&apos;s statements
+              performs on another&apos;s. Decisions and Jobs link to training runs. Files lists the
+              raw artefact JSONs you can download.
             </p>
           </div>
 
@@ -299,8 +527,7 @@ export default function ResearchPage() {
                 <TabsTrigger value="transfer">Transfer</TabsTrigger>
                 <TabsTrigger value="decisions">Decisions</TabsTrigger>
                 <TabsTrigger value="jobs">Jobs</TabsTrigger>
-                <TabsTrigger value="design">Design system</TabsTrigger>
-                <TabsTrigger value="files">Files</TabsTrigger>
+                <TabsTrigger value="files">Downloads</TabsTrigger>
               </TabsList>
               <TabsContent value="bakeoff" className="space-y-3">
                 <EncoderBakeoffPane section={data.encoder_bakeoff} />
@@ -331,9 +558,6 @@ export default function ResearchPage() {
               </TabsContent>
               <TabsContent value="jobs">
                 <JobsLink />
-              </TabsContent>
-              <TabsContent value="design">
-                <DesignSystemTab />
               </TabsContent>
               <TabsContent value="files">
                 <ArtifactsExplorer sections={data.sections} />

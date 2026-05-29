@@ -32,7 +32,7 @@ describe("Error pages", () => {
     render(<NotFoundPage />);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/off the map/i);
     const home = screen.getByRole("link", { name: /back to home/i });
-    expect(home).toHaveAttribute("href", "/analyze");
+    expect(home).toHaveAttribute("href", "/");
     expect(screen.getByText(/Status 404/i)).toBeInTheDocument();
   });
 
@@ -41,7 +41,7 @@ describe("Error pages", () => {
     render(<ServerErrorPage />);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/broke on our side/i);
     const home = screen.getByRole("link", { name: /back to home/i });
-    expect(home).toHaveAttribute("href", "/analyze");
+    expect(home).toHaveAttribute("href", "/");
     expect(screen.getByText(/Status 500/i)).toBeInTheDocument();
   });
 

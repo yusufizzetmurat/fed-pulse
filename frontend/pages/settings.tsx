@@ -60,9 +60,9 @@ function roleLabel(role: string): string {
     case "forecaster":
       return "Forecaster";
     case "multi_axis":
-      return "Multi-axis classifier";
+      return "Sentiment breakdown model";
     case "lora_adapter":
-      return "LoRA adapter";
+      return "LoRA (low-rank adapter)";
     case "calibration":
       return "Calibration";
     default:
@@ -120,16 +120,18 @@ function CheckpointRow({ checkpoint }: { checkpoint: SettingsCheckpoint }) {
             {checkpoint.encoder_alias ? (
               <>
                 <span>·</span>
-                <span className="numeric">{checkpoint.encoder_alias}</span>
+                <span>
+                  Model variant: <span className="numeric">{checkpoint.encoder_alias}</span>
+                </span>
               </>
             ) : null}
             {checkpoint.role === "forecaster" ? (
               <>
                 <span>·</span>
                 <span>
-                  conformal sidecar:{" "}
+                  Calibration data:{" "}
                   {checkpoint.conformal_sidecar_present ? (
-                    <span className="text-up">present</span>
+                    <span className="text-up">loaded</span>
                   ) : (
                     <span className="text-down">missing</span>
                   )}
@@ -140,10 +142,10 @@ function CheckpointRow({ checkpoint }: { checkpoint: SettingsCheckpoint }) {
           {checkpoint.role === "forecaster" && contractStatus ? (
             <div
               className="flex flex-wrap items-center gap-1.5 pt-1"
-              aria-label="inference contract kwargs"
+              aria-label="model input check"
             >
               <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                inference contract:
+                Model input check:
               </span>
               {contractStatus === "sidecar_absent" ? (
                 <Badge
@@ -155,7 +157,7 @@ function CheckpointRow({ checkpoint }: { checkpoint: SettingsCheckpoint }) {
                 </Badge>
               ) : requiredKwargs.length === 0 ? (
                 <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                  no required kwargs
+                  no required inputs
                 </Badge>
               ) : (
                 requiredKwargs.map((name) => {
@@ -172,8 +174,8 @@ function CheckpointRow({ checkpoint }: { checkpoint: SettingsCheckpoint }) {
                       }
                       title={
                         isSupplied
-                          ? `${name} is supplied by the serving wiring`
-                          : `${name} declared by the checkpoint sidecar but NOT supplied by the serving wiring`
+                          ? `${name} is supplied by the backend`
+                          : `${name} is required by this model file but not supplied by the backend`
                       }
                     >
                       {name}
@@ -235,8 +237,8 @@ function ModelsSection() {
           {modelsDir ? (
             <>
               Read-only inventory of <code className="rounded bg-muted px-1 font-mono text-xs">{modelsDir}</code>.
-              Active flag points at the file each service is currently loaded from. Live swap is intentionally
-              not wired — drop a new checkpoint into the directory and restart the backend container to switch.
+              The active flag points at the file each service is currently loaded from. To switch models,
+              drop a new file into the directory and restart the backend; live swap is intentionally disabled.
             </>
           ) : (
             "Read-only inventory of the backend models directory."
@@ -253,14 +255,14 @@ function ModelsSection() {
         ) : error ? (
           <EmptyState
             variant="inline"
-            title="Could not load checkpoints"
+            title="Could not load model files"
             description={<p>{error}</p>}
           />
         ) : data.length === 0 ? (
           <EmptyState
             variant="inline"
-            title="No checkpoints on disk"
-            description="The backend models directory is empty. Train a checkpoint and drop it into the path above."
+            title="No model files on disk."
+            description="Train a model and drop the checkpoint into the path above to make it available here."
           />
         ) : (
           <div className="space-y-4">
@@ -394,7 +396,7 @@ export default function SettingsPage() {
               Settings
             </h1>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Read-only inventory of the model files the backend has loaded, plus the per-browser
+              Read-only view of the model files the backend has loaded, plus the per-browser
               defaults the workspace uses when you open it.
             </p>
           </div>

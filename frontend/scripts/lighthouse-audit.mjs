@@ -97,7 +97,7 @@ async function main() {
   await mkdir(AUDIT_DIR, { recursive: true });
 
   console.log(`Lighthouse audit · base ${BASE_URL}`);
-  const reachable = await probe(`${BASE_URL}/analyze`);
+  const reachable = await probe(`${BASE_URL}/`);
   if (!reachable) {
     const message = `Dev server is not reachable at ${BASE_URL}. Start the frontend (e.g. \`make dev-cpu\`) and retry.`;
     const stamp = todayIso();

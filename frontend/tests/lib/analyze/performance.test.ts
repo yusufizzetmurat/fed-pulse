@@ -4,6 +4,7 @@ import {
   REGIME_CLASSES,
   aggregateRegimePerformance,
   buildRunRegimeRecord,
+  proportionHalfWidth,
 } from "@/lib/analyze/performance";
 import type { HistoryEntry, HistoryRealizedResponse } from "@/lib/analyze/types";
 
@@ -120,5 +121,32 @@ describe("aggregateRegimePerformance", () => {
     expect(agg.empiricalCoverage).toBe(null);
     expect(agg.macroF1).toBe(null);
     expect(agg.perClass.map((entry) => entry.klass)).toEqual([...REGIME_CLASSES]);
+  });
+});
+
+describe("proportionHalfWidth", () => {
+  it("returns the canonical Wald half-width for p=0.5, n=100", () => {
+    // 1.96 * sqrt(0.25 / 100) = 1.96 * 0.05 = 0.098.
+    const value = proportionHalfWidth(0.5, 100);
+    expect(value).not.toBeNull();
+    expect(value!).toBeCloseTo(0.098, 5);
+  });
+
+  it("returns null at the degenerate endpoints (p=0 and p=1)", () => {
+    expect(proportionHalfWidth(0, 100)).toBeNull();
+    expect(proportionHalfWidth(1, 100)).toBeNull();
+  });
+
+  it("returns null when the support is too small for the normal approximation", () => {
+    expect(proportionHalfWidth(0.5, 4)).toBeNull();
+    expect(proportionHalfWidth(0.5, 0)).toBeNull();
+  });
+
+  it("returns null on non-finite inputs", () => {
+    expect(proportionHalfWidth(Number.NaN, 100)).toBeNull();
+    expect(proportionHalfWidth(Number.POSITIVE_INFINITY, 100)).toBeNull();
+    expect(proportionHalfWidth(0.5, Number.NaN)).toBeNull();
+    expect(proportionHalfWidth(0.5, Number.POSITIVE_INFINITY)).toBeNull();
+    expect(proportionHalfWidth(null, 100)).toBeNull();
   });
 });

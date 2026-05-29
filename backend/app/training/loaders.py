@@ -665,9 +665,12 @@ def _read_sep_projections_lookup(
     Looks first inside the training package and then under the canonical
     location ``data/external/fred/sep_projections.parquet``. Date keys
     are ``YYYY-MM-DD`` strings to match the SEP composer's
-    ``meeting_date`` field. Each value carries the four scalar columns
-    the composer reads (current-year median + longer-run median +
-    current-year range upper/lower).
+    ``meeting_date`` field. Each value carries the five scalar columns
+    the composer reads (current-year median + next-year median +
+    longer-run median + current-year range upper/lower). The next-year
+    median may be ``None`` on pre-2014 vintages where FRED has no
+    year-specific ``FEDTARMD<YYYY>`` series; the composer collapses
+    that to ``0.0`` so the block shape stays fixed.
 
     Returns an empty dict when no parquet is found. The composer then
     returns ``None`` for every event and the loader collapses the slot
@@ -703,6 +706,9 @@ def _read_sep_projections_lookup(
             "meeting_date": meeting_str,
             "ffr_median_current_year": _coerce_finite_float(
                 record.get("ffr_median_current_year")
+            ),
+            "ffr_median_next_year": _coerce_finite_float(
+                record.get("ffr_median_next_year")
             ),
             "ffr_median_longer_run": _coerce_finite_float(
                 record.get("ffr_median_longer_run")

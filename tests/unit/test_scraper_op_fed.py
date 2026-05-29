@@ -110,3 +110,111 @@ def test_write_skips_none_entries(tmp_path: Path) -> None:
 def test_fetch_listing_returns_empty_on_empty_string() -> None:
     scraper = OpFedScraper()
     assert scraper.fetch_listing("") == []
+
+
+# ----- pull_op_fed_csv -----
+
+
+import urllib.error  # noqa: E402
+from unittest.mock import patch  # noqa: E402
+
+from app.data.sources.op_fed import OP_FED_UPSTREAM_URL, pull_op_fed_csv  # noqa: E402
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes, status: int = 200) -> None:
+        self._body = body
+        self.status = status
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+        return None
+
+
+def test_pull_downloads_and_writes_csv(tmp_path: Path) -> None:
+    target = tmp_path / "external" / "op_fed" / "opfed_v1.csv"
+    body = FIXTURE_CSV.encode("utf-8")
+    with patch(
+        "app.data.sources.op_fed.urllib.request.urlopen",
+        return_value=_FakeResponse(body),
+    ) as opener:
+        rows = pull_op_fed_csv(target)
+    assert rows == 3
+    assert target.exists()
+    assert target.read_bytes() == body
+    # URL passed through default
+    opener.assert_called_once()
+    assert opener.call_args.args[0] == OP_FED_UPSTREAM_URL
+
+
+def test_pull_is_idempotent_when_cache_exists(tmp_path: Path) -> None:
+    target = tmp_path / "opfed_v1.csv"
+    target.write_text(FIXTURE_CSV, encoding="utf-8")
+    with patch("app.data.sources.op_fed.urllib.request.urlopen") as opener:
+        rows = pull_op_fed_csv(target)
+    assert rows == 3
+    opener.assert_not_called()
+
+
+def test_pull_force_re_downloads_over_existing_cache(tmp_path: Path) -> None:
+    target = tmp_path / "opfed_v1.csv"
+    target.write_text("stale,placeholder\n1,2\n", encoding="utf-8")
+    body = FIXTURE_CSV.encode("utf-8")
+    with patch(
+        "app.data.sources.op_fed.urllib.request.urlopen",
+        return_value=_FakeResponse(body),
+    ):
+        rows = pull_op_fed_csv(target, force=True)
+    assert rows == 3
+    assert target.read_bytes() == body
+
+
+def test_pull_raises_on_zero_row_download(tmp_path: Path) -> None:
+    target = tmp_path / "opfed_v1.csv"
+    # Header-only CSV → DictReader sees zero rows.
+    body = b"unique_id,sentence\n"
+    with patch(
+        "app.data.sources.op_fed.urllib.request.urlopen",
+        return_value=_FakeResponse(body),
+    ):
+        with pytest.raises(RuntimeError, match="zero rows"):
+            pull_op_fed_csv(target)
+    assert not target.exists()
+    assert not target.with_suffix(target.suffix + ".tmp").exists()
+
+
+def test_pull_raises_on_http_error(tmp_path: Path) -> None:
+    target = tmp_path / "opfed_v1.csv"
+    http_error = urllib.error.HTTPError(
+        OP_FED_UPSTREAM_URL, 404, "Not Found", hdrs=None, fp=None  # type: ignore[arg-type]
+    )
+    with patch(
+        "app.data.sources.op_fed.urllib.request.urlopen",
+        side_effect=http_error,
+    ):
+        with pytest.raises(RuntimeError, match="HTTP 404"):
+            pull_op_fed_csv(target)
+    assert not target.exists()
+    assert not target.with_suffix(target.suffix + ".tmp").exists()
+
+
+def test_pull_repulls_when_cache_parses_to_zero_rows(tmp_path: Path) -> None:
+    """A header-only / truncated cache file should trigger a re-pull
+    rather than silently returning a zero count."""
+
+    target = tmp_path / "opfed_v1.csv"
+    target.write_text("unique_id,sentence\n", encoding="utf-8")
+    body = FIXTURE_CSV.encode("utf-8")
+    with patch(
+        "app.data.sources.op_fed.urllib.request.urlopen",
+        return_value=_FakeResponse(body),
+    ) as opener:
+        rows = pull_op_fed_csv(target)
+    assert rows == 3
+    opener.assert_called_once()
+    assert target.read_bytes() == body

@@ -6,11 +6,13 @@ vi.mock("sonner", () => ({
   Toaster: () => null,
 }));
 
+const replaceMock = vi.fn();
 vi.mock("next/router", () => ({
   useRouter: () => ({
     isReady: true,
     query: {},
     push: vi.fn(),
+    replace: replaceMock,
   }),
 }));
 
@@ -22,11 +24,14 @@ const fetchHistoryMock = vi.fn();
 const fetchHistoryRealizedBatchMock = vi.fn();
 const deleteHistoryRunMock = vi.fn();
 
+const fetchSymbolsMock = vi.fn();
+
 vi.mock("@/lib/analyze/api", () => ({
   resolveApiBaseUrl: () => "http://localhost:8000",
   fetchHistory: (...args: unknown[]) => fetchHistoryMock(...args),
   fetchHistoryRealizedBatch: (...args: unknown[]) => fetchHistoryRealizedBatchMock(...args),
   deleteHistoryRun: (...args: unknown[]) => deleteHistoryRunMock(...args),
+  fetchSymbols: (...args: unknown[]) => fetchSymbolsMock(...args),
 }));
 
 describe("HistoryPage", () => {
@@ -35,6 +40,9 @@ describe("HistoryPage", () => {
     fetchHistoryRealizedBatchMock.mockReset();
     fetchHistoryRealizedBatchMock.mockResolvedValue({ items: {}, missing: [] });
     deleteHistoryRunMock.mockReset();
+    fetchSymbolsMock.mockReset();
+    fetchSymbolsMock.mockResolvedValue({ symbols: [] });
+    replaceMock.mockReset();
   });
 
   it("renders the rows returned by the backend", async () => {
@@ -67,8 +75,8 @@ describe("HistoryPage", () => {
     });
     const { default: HistoryPage } = await import("@/pages/history");
     render(<HistoryPage />);
-    await waitFor(() => expect(screen.getByText("^GSPC")).toBeInTheDocument());
-    expect(screen.getByText("^NDX")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText("^GSPC").length).toBeGreaterThan(0));
+    expect(screen.getAllByText("^NDX").length).toBeGreaterThan(0);
     expect(screen.getByText("2024-09-18")).toBeInTheDocument();
     expect(screen.getByText("2024-11-06")).toBeInTheDocument();
     expect(screen.getAllByText(/hawkish/i).length).toBeGreaterThan(0);
@@ -79,7 +87,9 @@ describe("HistoryPage", () => {
     const { default: HistoryPage } = await import("@/pages/history");
     render(<HistoryPage />);
     await waitFor(() =>
-      expect(screen.getByText(/no runs match these filters/i)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/use the workspace to analyze a statement\./i),
+      ).toBeInTheDocument(),
     );
   });
 

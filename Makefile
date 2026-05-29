@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation finetune-pilot-b2 finetune-pilot-b2-phrasebank cross-source-transfer reproduce-all reproduce-smoke push-artefacts deploy-prod-build
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep audit-training-package pre-sweep-column-audit build-events-parquet pull-op-fed pull-swanson-three-factor pull-beige-book pull-press-conferences pull-speeches pull-testimonies pull-regional-research train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation finetune-pilot-b2 finetune-pilot-b2-phrasebank cross-source-transfer reproduce-all reproduce-smoke push-artefacts deploy-prod-build
 
 help:
 	@echo "Targets:"
@@ -128,6 +128,112 @@ data-prep:
 		--feature-version "$(FEATURE_VERSION)" \
 		--owner "$(OWNER)" \
 		$(if $(TRAINING_PACKAGE_ID),--training-package-id "$(TRAINING_PACKAGE_ID)",)
+
+audit-training-package:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	python -m scripts.audit_training_package_coverage \
+		--training-package-id "$(TRAINING_PACKAGE_ID)"
+
+# Pre-sweep per-column population audit (#505 A.1.a). Reads
+# events.parquet, computes non-null rates per (overall + event_kind +
+# source + fold), gates the sweep launch on schema-required columns.
+# Writes column_population.csv + summary.md + summary.json under
+# backend/artifacts/audits/pre_sweep_<TRAINING_PACKAGE_ID>/.
+pre-sweep-column-audit:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose run --rm backend \
+		python -m scripts.run_pre_sweep_column_audit \
+			--events-parquet "data/processed/$(TRAINING_PACKAGE_ID)/events.parquet" \
+			--fold-manifest "data/processed/$(TRAINING_PACKAGE_ID)/fold_manifest_expanding_walk_forward.json" \
+			--output-dir "backend/artifacts/audits/pre_sweep_$(TRAINING_PACKAGE_ID)" \
+			$(if $(THRESHOLD_PCT),--threshold-pct $(THRESHOLD_PCT),)
+
+# Build events.parquet (canonical training-feature table) under an
+# existing data-prep'd training package directory. ``pipeline_data_prep``
+# stops at ``registry_normalized.parquet`` + ``splits_*.parquet``; this
+# target is the missing last step that turns those into the
+# ``events.parquet`` the trainers read. Pass optional sidecar paths to
+# enable the rates panel (#291) and per-asset-target (#481/#482)
+# feature blocks; the underlying CLI degrades cleanly when they are
+# absent so the bare invocation still produces a valid (canonical-arm-
+# only) events.parquet.
+#
+# Env vars:
+#   TRAINING_PACKAGE_ID    required
+#   ASSET                  defaults to ^GSPC (canonical anchor symbol)
+#   RATES_PANEL_PATH       defaults to data/external/fred/rates_panel.parquet
+#                          when --build-rates-panel produced it; pass empty
+#                          to skip rates features.
+#   PER_ASSET_CACHE_DIR    defaults to data/external/yfinance; pass empty
+#                          to skip the per-asset target columns.
+build-events-parquet:
+	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.event_dataset_builder \
+			--training-package-id "$(TRAINING_PACKAGE_ID)" \
+			--asset "$(if $(ASSET),$(ASSET),^GSPC)" \
+			--output events.parquet \
+			--full-output events_full.parquet \
+			$(if $(RATES_PANEL_PATH),--rates-panel-path "$(RATES_PANEL_PATH)",) \
+			$(if $(PER_ASSET_CACHE_DIR),--per-asset-target-cache-dir "$(PER_ASSET_CACHE_DIR)",) \
+			$(if $(PRIOR_WINDOW),--prior-window $(PRIOR_WINDOW),)
+
+pull-op-fed:
+	docker compose run --rm backend \
+		python -m app.data.sources.op_fed $(if $(FORCE),--force,)
+
+# Swanson 2021 three-factor xlsx pulled from UCI mirror (#420).
+# Lands at data/external/swanson/pre-and-post-ZLB-factors-extended.xlsx
+# so the subsequent `python -m app.data.ingest_sources
+# --include-swanson-three-factor` picks it up unchanged.
+pull-swanson-three-factor:
+	docker compose run --rm backend \
+		python -m app.data.sources.swanson_three_factor \
+			$(if $(FORCE),--force,)
+
+pull-beige-book:
+	docker compose run --rm backend \
+		python -m app.services.scraper_beige_book \
+			$(if $(FORCE),--force,) \
+			$(if $(LIMIT),--limit $(LIMIT),)
+
+# Walk the federalreserve.gov FOMC calendar + historical pages and write
+# press_conferences.json under the data dir. FORCE=1 re-pulls even when
+# the cache is present; LIMIT=N caps the walk for smoke testing.
+pull-press-conferences:
+	docker compose run --rm backend \
+		python -m app.services.scraper_press_conferences \
+			$(if $(FORCE),--force,) \
+			$(if $(LIMIT),--limit $(LIMIT),)
+
+# Walk the federalreserve.gov annual speech archives and write both
+# chair_speeches.json and governor_speeches.json under the data dir.
+# YEARS overrides the default 2006-current walk window.
+pull-speeches:
+	docker compose run --rm backend \
+		python -m app.services.scraper_speeches \
+			$(if $(FORCE),--force,) \
+			$(if $(LIMIT),--limit $(LIMIT),) \
+			$(if $(YEARS),--years $(YEARS),)
+
+# Walk the federalreserve.gov annual testimony archives and write
+# congressional_testimonies.json under the data dir. YEARS overrides
+# the default 2006-current walk window.
+pull-testimonies:
+	docker compose run --rm backend \
+		python -m app.services.scraper_testimonies \
+			$(if $(FORCE),--force,) \
+			$(if $(LIMIT),--limit $(LIMIT),) \
+			$(if $(YEARS),--years $(YEARS),)
+
+# Walk the Liberty Street Economics archive (NY Fed regional research)
+# and write regional_research.json under the data dir. The default
+# archive URL is the site homepage, which surfaces the most recent posts.
+pull-regional-research:
+	docker compose run --rm backend \
+		python -m app.services.scraper_regional_research \
+			$(if $(FORCE),--force,) \
+			$(if $(LIMIT),--limit $(LIMIT),)
 
 train-smoke:
 	@test -n "$(TRAINING_PACKAGE_ID)" || (echo "TRAINING_PACKAGE_ID is required"; exit 1)

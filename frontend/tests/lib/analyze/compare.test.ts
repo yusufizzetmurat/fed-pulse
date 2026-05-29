@@ -1,12 +1,27 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildNarrativeSummary,
   computeCompareDelta,
   computeMultiAxisDelta,
   computeRegimeDelta,
   describeStanceShift,
+  type MultiAxisDelta,
 } from "@/lib/analyze/compare";
 import type { HistoryDetail } from "@/lib/analyze/types";
+
+function makeMultiAxisDelta(overrides: Partial<MultiAxisDelta> = {}): MultiAxisDelta {
+  return {
+    stanceRankDelta: null,
+    stanceConfidenceDelta: null,
+    factorDelta: null,
+    factorConfidenceDelta: null,
+    certaintyConfidenceDelta: null,
+    certaintyShift: "unknown",
+    topicChanged: null,
+    ...overrides,
+  };
+}
 
 function makeDetail(overrides: Partial<HistoryDetail> & { payload?: Record<string, unknown> }): HistoryDetail {
   return {
@@ -175,5 +190,54 @@ describe("computeMultiAxisDelta", () => {
     expect(d.factorDelta).toBe(null);
     expect(d.certaintyShift).toBe("unknown");
     expect(d.topicChanged).toBe(null);
+  });
+});
+
+describe("buildNarrativeSummary", () => {
+  it("leads with the largest absolute stance delta when stance dominates", () => {
+    const sentence = buildNarrativeSummary(
+      makeMultiAxisDelta({ stanceRankDelta: 1.5, factorDelta: 0.2 }),
+    );
+    expect(sentence).not.toBeNull();
+    // Stance wins the primary clause.
+    expect(sentence!.startsWith("Run A is more hawkish on rate guidance")).toBe(true);
+    // Factor is demoted to the secondary clause.
+    expect(sentence).toContain("but more hawkish on inflation tone");
+  });
+
+  it("leads with the largest absolute factor delta when factor dominates", () => {
+    const sentence = buildNarrativeSummary(
+      makeMultiAxisDelta({ stanceRankDelta: 0.1, factorDelta: -0.9 }),
+    );
+    expect(sentence).not.toBeNull();
+    // Factor leads with a dovish framing.
+    expect(sentence!.startsWith("more dovish on inflation tone")).toBe(true);
+  });
+
+  it("returns null when both axes carry a zero delta", () => {
+    const sentence = buildNarrativeSummary(
+      makeMultiAxisDelta({ stanceRankDelta: 0, factorDelta: 0 }),
+    );
+    expect(sentence).toBeNull();
+  });
+
+  it("returns null when neither axis is present", () => {
+    expect(buildNarrativeSummary(makeMultiAxisDelta())).toBeNull();
+  });
+
+  it("handles mixed signs across the two axes", () => {
+    const sentence = buildNarrativeSummary(
+      makeMultiAxisDelta({ stanceRankDelta: 0.8, factorDelta: -0.4 }),
+    );
+    expect(sentence).not.toBeNull();
+    expect(sentence).toContain("more hawkish on rate guidance");
+    expect(sentence).toContain("more dovish on inflation tone");
+  });
+
+  it("returns null when both inputs are NaN", () => {
+    const sentence = buildNarrativeSummary(
+      makeMultiAxisDelta({ stanceRankDelta: Number.NaN, factorDelta: Number.NaN }),
+    );
+    expect(sentence).toBeNull();
   });
 });

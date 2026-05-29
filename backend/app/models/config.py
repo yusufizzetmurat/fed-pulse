@@ -96,13 +96,17 @@ RICH_MACRO_REGIME_DIM = 3
 RICH_MACRO_REGIME_MISSING_DIM = 1
 # #215 Summary of Economic Projections (SEP) dot-plot block. Five scalars
 # (current-year / next-year / longer-run median FFR projections + the
-# current-year central-tendency range + a release flag) plus a paired
+# current-year all-participants range + a release flag) plus a paired
 # missing flag. Opt-in via ``--use-sep``; the block is appended past
 # ``RICH_FEATURE_SIZE`` (and past the regime block when both are on) by
 # ``as_rich_list`` only when the loader populates ``sep_features``, so
 # the legacy default path keeps the byte-identical pre-#215 per-bar
-# feature size. See ADR 0030.
-RICH_SEP_DIM = 4
+# feature size. The next-year slot was added back in #415 once the
+# year-specific FRED series IDs (``FEDTARMD<YYYY>``) were pivoted per
+# release date; the #215 ship had dropped the slot when the single
+# rolling series originally referenced in ADR 0030 turned out not to
+# exist. See ADR 0030 for the current design.
+RICH_SEP_DIM = 5
 RICH_SEP_MISSING_DIM = 1
 # #214 press-conf has_press_conf flag (ADR 0037).
 RICH_PRESS_CONF_DIM = 1
@@ -398,6 +402,23 @@ CANONICAL_SWEEP_ARCHITECTURES: tuple[str, ...] = tuple(
     arch for arch in FORECASTER_ARCHITECTURES if arch != "tft"
 )
 
+# #480 symbol-conditioned regime head. The events.parquet already carries
+# a ``symbol`` (or ``asset_symbol``) column per row from the per-asset
+# data prep. v1 ships with five canonical symbols mapped to fixed ids so
+# the embedding's row order is reproducible across runs and the symbol-
+# id lookup is byte-stable. New symbols are appended to the end of the
+# tuple; existing rows keep their ids so a checkpoint's embedding stays
+# aligned with the lookup on rehydrate.
+SUPPORTED_SYMBOLS: tuple[str, ...] = (
+    "^GSPC",
+    "^NDX",
+    "^DJI",
+    "DX-Y.NYB",
+    "EURUSD=X",
+)
+SYMBOL_ID_LOOKUP: dict[str, int] = {sym: idx for idx, sym in enumerate(SUPPORTED_SYMBOLS)}
+N_SUPPORTED_SYMBOLS: int = len(SUPPORTED_SYMBOLS)
+
 
 @dataclass(frozen=True)
 class ModelConfig:
@@ -613,6 +634,17 @@ class ModelConfig:
     use_statement_delta: bool = False
     # #444 vote-tally opt-in (ADR 0038).
     use_vote_features: bool = False
+    # #480 symbol-conditioned regime head. ``0`` (default) keeps the
+    # regime / dual-head wiring byte-identical to the symbol-agnostic
+    # canonical: no embedding module, no widened head input, no new
+    # forward kwarg consumed. Setting to a positive integer mounts an
+    # ``nn.Embedding(N_SUPPORTED_SYMBOLS, symbol_embedding_dim)`` on the
+    # research model, widens the MultiTaskHead + regression head input
+    # by the same dim, and concatenates the indexed vector to the
+    # encoder pool before the heads. The serving-side wiring is deferred
+    # to a follow-up because the response surface still emits one card
+    # per statement (no per-symbol picker yet). See ADR + #480.
+    symbol_embedding_dim: int = 0
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -691,6 +723,9 @@ class ModelConfig:
             ),
             use_vote_features=bool(
                 getattr(model, "use_vote_features", False)
+            ),
+            symbol_embedding_dim=int(
+                getattr(model, "symbol_embedding_dim", 0) or 0
             ),
         )
 
@@ -933,6 +968,16 @@ class FeatureVector:
     # mapper consume the target-row value only. Default ``None`` so
     # regression-only callers stay byte-identical.
     forward_realized_vol_10d: float | None = None
+    # #480 multi-horizon auxiliary targets. Same strict-forward generator
+    # as the canonical 10d, parametrised window. Carried on the target
+    # row alongside ``forward_realized_vol_10d``; ``None`` on lookback
+    # bars and on legacy paths so the dataclass shape round-trips clean
+    # through the determinism regression contract.
+    forward_realized_vol_1d: float | None = None
+    forward_realized_vol_3d: float | None = None
+    forward_realized_vol_5d: float | None = None
+    forward_realized_vol_20d: float | None = None
+    forward_realized_vol_30d: float | None = None
     # #236 GARCH(1,1)-residual decomposition of the same target. The
     # baseline is the GARCH(1,1) 10-day-ahead 1-day-equivalent vol
     # forecast (fitted on strict-prior log returns); the residual is
@@ -945,6 +990,28 @@ class FeatureVector:
     # ``app.data.garch_residual.compute_for_event``.
     forward_realized_vol_10d_garch_baseline: float | None = None
     forward_realized_vol_10d_garch_residual: float | None = None
+    # #481 per-asset 10d forward realised-vol targets. One nullable
+    # float per workspace asset-picker symbol. ``_gspc`` aliases the
+    # canonical ``forward_realized_vol_10d`` above; the remaining seven
+    # cover the other indices, dollar index, VIX, and three major FX
+    # pairs. Storage-only on the dataclass for now: the events.parquet
+    # build step (``event_dataset_builder._build_event_rows``) writes
+    # them on the target row; the training-package loader does not yet
+    # broadcast them onto FeatureVector — that wiring lands alongside
+    # the per-asset head work (downstream of #480). Default ``None`` on
+    # every lookback bar keeps the dataclass shape round-trip clean
+    # against the determinism regression contract, and the
+    # target-only audit row covers them on the parquet side. None of
+    # these fields enters ``as_rich_list`` by construction (no append
+    # block was added), so the input-tensor width is unchanged.
+    forward_realized_vol_10d_gspc: float | None = None
+    forward_realized_vol_10d_ndx: float | None = None
+    forward_realized_vol_10d_dji: float | None = None
+    forward_realized_vol_10d_dxy: float | None = None
+    forward_realized_vol_10d_vix: float | None = None
+    forward_realized_vol_10d_eurusd: float | None = None
+    forward_realized_vol_10d_usdjpy: float | None = None
+    forward_realized_vol_10d_gbpusd: float | None = None
     # #292 rates-complex targets. Strict-forward 5-day yield change in
     # basis points (raw bps; the loader emits the value the
     # events.parquet column already carries). Populated by the

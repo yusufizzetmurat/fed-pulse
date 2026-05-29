@@ -165,6 +165,6 @@ describe("SettingsPage — inference contract badges", () => {
 
     expect(screen.queryByTestId(/contract-kwarg-/)).not.toBeInTheDocument();
     expect(screen.queryByTestId("contract-legacy-badge")).not.toBeInTheDocument();
-    expect(screen.getByText(/no required kwargs/i)).toBeInTheDocument();
+    expect(screen.getByText(/no required inputs/i)).toBeInTheDocument();
   });
 });

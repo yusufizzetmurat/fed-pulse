@@ -91,7 +91,7 @@ function CoverageGauge({ coverage }: { coverage: number }) {
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-xs">
-        <span className="text-muted-foreground">Nominal coverage</span>
+        <span className="text-muted-foreground">Confidence level</span>
         <span className="numeric text-foreground">{pct}%</span>
       </div>
       <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
@@ -110,7 +110,7 @@ function multiAxisSummary(multiAxis: MultiAxisResponse): string {
     parts.push(
       `topic ${(multiAxis.topic.label ?? multiAxis.topic.primary ?? "—").toString()}`,
     );
-  return parts.join(" · ") || "axes absent";
+  return parts.join(" · ") || "no sentiment labels";
 }
 
 function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
@@ -153,24 +153,24 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
     key: "encode",
     title: "Encode",
     blurb:
-      "Runs the text through the encoder backbone. Surfaces an energy-based OOD signal so the workspace can flag inputs outside the training distribution.",
+      "Runs the text through the language model. Flags inputs that look unlike anything the model was trained on, so the workspace can warn before trusting the result.",
     icon: <Layers className="h-3.5 w-3.5" />,
     state: ood === false ? "warn" : "ok",
     summary: encoderKey
-      ? `Encoder: ${encoderKey}${ood === false ? " · OOD flag set" : ""}`
-      : "Encoder: classifier-side embedding (default)",
+      ? `Model variant: ${encoderKey}${ood === false ? " · unfamiliar text flag set" : ""}`
+      : "Model variant: default",
     body: (
       <div className="space-y-3">
         <dl className="grid gap-x-4 gap-y-1.5 text-sm sm:grid-cols-2">
-          <dt className="text-muted-foreground">Encoder alias</dt>
+          <dt className="text-muted-foreground">Model variant</dt>
           <dd className="numeric text-right">{encoderKey ?? "default"}</dd>
-          <dt className="text-muted-foreground">OOD energy</dt>
+          <dt className="text-muted-foreground">Unfamiliarity score</dt>
           <dd className="numeric text-right">{oodEnergy != null ? oodEnergy.toFixed(3) : "—"}</dd>
-          <dt className="text-muted-foreground">OOD threshold</dt>
+          <dt className="text-muted-foreground">Unfamiliarity threshold</dt>
           <dd className="numeric text-right">
             {oodThreshold != null ? oodThreshold.toFixed(3) : "—"}
           </dd>
-          <dt className="text-muted-foreground">In-distribution</dt>
+          <dt className="text-muted-foreground">Familiar to model</dt>
           <dd className="text-right">
             {ood == null ? (
               "—"
@@ -188,7 +188,7 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
         {oodEnergy != null && oodThreshold != null && oodThreshold !== 0 ? (
           <div className="space-y-1">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">Energy vs threshold</span>
+              <span className="text-muted-foreground">Score vs threshold</span>
               <span className="numeric text-foreground">
                 {oodEnergy.toFixed(3)} / {oodThreshold.toFixed(3)}
               </span>
@@ -206,7 +206,8 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
               />
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Energy below the threshold reads as in-distribution; above flags OOD.
+              A score below the threshold means the text looks familiar to the model; above
+              means it does not.
             </p>
           </div>
         ) : null}
@@ -216,12 +217,12 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
 
   const multiAxisStep: Step = {
     key: "multi-axis",
-    title: "Multi-axis head",
+    title: "Sentiment breakdown",
     blurb:
-      "Four heads off the shared trunk — stance, hawkish-dovish factor, certainty, topic — each calibrated against the labeled FOMC corpus.",
+      "Four predictions from the same shared model — stance, hawkish / dovish score, certainty, and topic — calibrated against the labelled FOMC corpus.",
     icon: <Workflow className="h-3.5 w-3.5" />,
     state: multiAxis ? "ok" : "absent",
-    summary: multiAxis ? multiAxisSummary(multiAxis) : "Multi-axis checkpoint absent",
+    summary: multiAxis ? multiAxisSummary(multiAxis) : "Sentiment model not loaded",
     body: multiAxis ? (
       <div className="space-y-3">
         <ul className="grid gap-1.5 text-sm sm:grid-cols-2">
@@ -288,31 +289,28 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
       </div>
     ) : (
       <p className="text-sm text-muted-foreground">
-        No multi-axis classifier checkpoint at{" "}
-        <code className="rounded bg-muted px-1 font-mono text-xs">
-          backend/models/text_multi_axis_best.pt
-        </code>
-        . The stance card is populated from the legacy sentiment classifier fallback.
+        Sentiment breakdown model isn't loaded. The stance card falls back to the
+        legacy sentiment classifier — load a sentiment model from the Settings page.
       </p>
     ),
   };
 
   const regimeStep: Step = {
     key: "regime",
-    title: "Regime head",
+    title: "Volatility Regime prediction",
     blurb:
-      "Predicts the 10-day forward vol regime — calm / normal / high — plus the calibrated conformal set so the UI can hedge across more than one class when the model is unsure.",
+      "Predicts the 10-day forward volatility regime — calm / normal / high — together with a calibrated prediction set so the UI can hedge across more than one class when the model is unsure.",
     icon: <Cpu className="h-3.5 w-3.5" />,
     state: regime ? "ok" : "absent",
     summary: regime
-      ? `argmax: ${regime.argmax_class} · set size ${regime.set_size}`
-      : "Regression-mode checkpoint or conformal sidecar absent",
+      ? `Top pick: ${regime.argmax_class} · ${regime.set_size} label${regime.set_size === 1 ? "" : "s"} in set`
+      : "Numeric-mode model or calibration data not loaded",
     body: regime ? (
       <div className="space-y-3 text-sm">
         <dl className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
-          <dt className="text-muted-foreground">Argmax class</dt>
+          <dt className="text-muted-foreground">Top pick</dt>
           <dd className="text-right capitalize">{regime.argmax_class}</dd>
-          <dt className="text-muted-foreground">Set composition</dt>
+          <dt className="text-muted-foreground">Labels in prediction set</dt>
           <dd className="text-right capitalize">{regime.predicted_set.join(", ") || "—"}</dd>
           <dt className="text-muted-foreground">Set size</dt>
           <dd className="numeric text-right">{regime.set_size}</dd>
@@ -353,25 +351,25 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
           })}
         </div>
         <p className="text-xs text-muted-foreground">
-          Calibrated APS: classes whose softmax mass meets the calibration quantile are included in
-          the set. Coverage + quantile come from the conformal sidecar.
+          The prediction set includes every regime whose probability clears the calibration
+          threshold. The threshold and confidence level come from a calibration step run on
+          held-out data.
         </p>
       </div>
     ) : (
       <p className="text-sm text-muted-foreground">
-        The active checkpoint is regression-mode or no <code>.conformal.json</code> sidecar with{" "}
-        <code>softmax_quantile</code> was found. The regression head still emits close + vol point
-        forecasts in the response; the workspace hides them because the headline target is the
-        calibrated regime set.
+        The active model is in numeric mode, or no calibration data was found. The numeric
+        forecaster still produces close and volatility point predictions in the response; the
+        workspace hides them because the Volatility Regime prediction is the headline.
       </p>
     ),
   };
 
   const xaiStep: Step = {
     key: "xai",
-    title: "Sentence attribution",
+    title: "Per-sentence explanation",
     blurb:
-      "Per-sentence attribution against the stance logit. Surfaces which sentences pushed the model toward its decision and feeds the strike-out counterfactual loop.",
+      "Scores each sentence by how much it pushed the model toward its stance decision. Powers the strike-out tool that lets you remove a sentence and re-score.",
     icon: <Highlighter className="h-3.5 w-3.5" />,
     state: xaiSentences > 0 ? "ok" : "absent",
     summary:
@@ -382,7 +380,7 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
       xaiSentences > 0 ? (
         <div className="space-y-2">
           <p className="text-sm text-muted-foreground">
-            Three highest-magnitude sentences. The full panel above lets you strike any of them.
+            Three highest-impact sentences. The full panel above lets you strike any of them.
           </p>
           <ul className="space-y-1.5">
             {[...(result.xai?.sentences ?? [])]
@@ -411,8 +409,8 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">
-          No salient sentences detected — common for very short inputs or text outside the FOMC
-          vocabulary the attribution dictionary covers.
+          No high-impact sentences found. This is common for very short inputs, or for text
+          outside the FOMC vocabulary the explanation dictionary covers.
         </p>
       ),
   };
@@ -421,12 +419,12 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
     key: "calibration",
     title: "Calibration",
     blurb:
-      "How tight the conformal set is and what coverage was calibrated for. Empirical coverage on resolved runs lives on the Performance page.",
+      "How tight the prediction set is, and the confidence level it was calibrated for. Actual coverage on resolved runs is tracked on the Performance page.",
     icon: <ShieldCheck className="h-3.5 w-3.5" />,
     state: regime ? "ok" : "absent",
     summary: regime
-      ? `Calibrated split-conformal · ${Math.round(regime.coverage * 100)}% nominal`
-      : "Calibration sidecar absent",
+      ? `Calibrated prediction set · ${Math.round(regime.coverage * 100)}% confidence level`
+      : "Calibration data not loaded",
     body: regime ? (
       <div className="space-y-3">
         <CoverageGauge coverage={regime.coverage} />
@@ -437,15 +435,15 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
           <dd className="text-right">{regime.set_label}</dd>
         </dl>
         <p className="text-xs text-muted-foreground">
-          A tighter set (size 1) means the model is confident enough to single out one regime; a
-          looser set hedges across more classes. Empirical coverage over resolved runs is tracked
-          on the Performance page.
+          A tight set (size 1) means the model is confident enough to single out one regime; a
+          looser set hedges across more classes. Actual coverage on resolved runs is tracked on
+          the Performance page.
         </p>
       </div>
     ) : (
       <p className="text-sm text-muted-foreground">
-        Calibration is only available when the regime head is active. Empirical coverage is still
-        computed on the Performance page when realised regimes resolve.
+        Calibration is only available when the Volatility Regime prediction is active. Actual
+        coverage is still computed on the Performance page when realised regimes resolve.
       </p>
     ),
   };
@@ -518,7 +516,7 @@ export function PipelineTrace({ result, inputText }: PipelineTraceProps) {
           </CardTitle>
           <CardDescription>
             End-to-end view of what the backend actually ran on this input. Click any step in the
-            rail or row below for the diagnostics.
+            rail or row below for details.
           </CardDescription>
         </div>
         <StepRail steps={steps} activeKey={openKey} onSelect={setOpenKey} />

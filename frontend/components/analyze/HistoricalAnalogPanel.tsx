@@ -61,7 +61,7 @@ function WhatHappenedNext({ bucket }: WhatHappenedNextProps) {
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
-        <span>What happened next · 10d vol</span>
+        <span>What happened next · 10-day volatility</span>
         <span className="numeric capitalize text-foreground">
           {bucket ? VOL_REGIME_LABEL[bucket] : "—"}
         </span>
@@ -71,8 +71,8 @@ function WhatHappenedNext({ bucket }: WhatHappenedNextProps) {
         role="img"
         aria-label={
           bucket
-            ? `Post-event 10-day realised volatility bucket: ${VOL_REGIME_LABEL[bucket]}`
-            : "Post-event volatility bucket unavailable"
+            ? `10-day realised volatility after the event: ${VOL_REGIME_LABEL[bucket]}`
+            : "Post-event volatility unavailable"
         }
       >
         {VOL_REGIME_ORDER.map((segment) => {
@@ -185,9 +185,9 @@ export function HistoricalAnalogPanel({
   const headerBadge = (
     <div className="flex flex-wrap items-center gap-2">
       <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-        Historical analog panel
+        Historical analogs
       </Badge>
-      <EvidenceLink section="6.16" label="Retrieval supervision rebuild · recall@k" />
+      <EvidenceLink section="6.16" label="Method notes · retrieval quality" />
     </div>
   );
 
@@ -224,12 +224,11 @@ export function HistoricalAnalogPanel({
         <EmptyState
           variant="card"
           icon={<History className="h-5 w-5" />}
-          title="Retrieval index not loaded"
+          title="No analogs available."
           description={
             <span>
-              Train the retrieval encoder via{" "}
-              <code className="rounded bg-muted px-1">python -m app.retrieval.train</code>{" "}
-              against the canonical training package to produce the analog index, then refresh.
+              The retrieval bundle is empty or not loaded. Train and load the retrieval model
+              against the training corpus, then refresh.
             </span>
           }
         />
@@ -248,13 +247,13 @@ export function HistoricalAnalogPanel({
         <EmptyState
           variant="card"
           icon={<Sparkles className="h-5 w-5" />}
-          title="No analogs above threshold"
+          title="No close analogs found"
           description={
             <span>
-              The retrieval encoder scored {analogs.analogs.length} candidate
+              The retrieval model scored {analogs.analogs.length} candidate
               {analogs.analogs.length === 1 ? "" : "s"} but none crossed the{" "}
               <span className="numeric">{formatSimilarity(similarityThreshold)}</span>{" "}
-              similarity floor for this statement.
+              similarity threshold for this statement.
             </span>
           }
         />
@@ -279,13 +278,12 @@ export function HistoricalAnalogPanel({
         ))}
       </div>
       <p className="text-[11px] leading-relaxed text-muted-foreground">
-        Past FOMC statements most similar to the current text, ranked by
-        cosine similarity in the retrieval encoder embedding space.
-        Post-event regime bucket is a UI-only marker — the raw 10-day
-        realised vol is withheld from this surface to avoid leaking the
-        supervised target. Index size:{" "}
+        Past FOMC statements most similar to the current text, ranked by a
+        retrieval model. The post-event volatility marker shows a coarse
+        calm / normal / high band only — raw values are hidden so the
+        analog does not give away the answer. Index size:{" "}
         <span className="numeric">{analogs.index_size.toLocaleString()}</span>
-        {" "}past statements · encoder{" "}
+        {" "}past statements · model variant{" "}
         <code className="rounded bg-muted px-1">{analogs.encoder_alias}</code>.
       </p>
     </div>

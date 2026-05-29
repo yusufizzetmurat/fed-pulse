@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { HORIZON_OPTIONS } from "@/lib/analyze/constants";
+import { SAMPLE_STATEMENTS } from "@/lib/analyze/sample-statements";
 import type { AnalyzeRequest, Horizon } from "@/lib/analyze/types";
 
 interface AnalyzeFormProps {
@@ -89,13 +90,39 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <Button type="submit" disabled={loading}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+            <Button
+              type="submit"
+              disabled={loading}
+              className="min-h-[44px] w-full sm:min-h-9 sm:w-auto"
+            >
               {submitLabel}
             </Button>
+            <Select
+              value=""
+              onValueChange={(id) => {
+                const sample = SAMPLE_STATEMENTS.find((entry) => entry.id === id);
+                if (!sample) return;
+                onChange({ ...value, text: sample.text, date: sample.date });
+              }}
+            >
+              <SelectTrigger
+                className="h-9 min-h-[44px] w-full sm:min-h-9 sm:w-[16rem]"
+                aria-label="Load a sample FOMC statement"
+              >
+                <SelectValue placeholder="Load sample statement…" />
+              </SelectTrigger>
+              <SelectContent>
+                {SAMPLE_STATEMENTS.map((sample) => (
+                  <SelectItem key={sample.id} value={sample.id}>
+                    {sample.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <p className="text-xs text-muted-foreground">
-              Runs the calibrated vol-regime classifier and the supporting multi-axis, XAI, and
-              credibility heads against the FOMC excerpt.
+              Runs the Volatility Regime prediction along with the sentiment breakdown,
+              explanation, and credibility checks against the FOMC excerpt.
             </p>
           </div>
         </form>
