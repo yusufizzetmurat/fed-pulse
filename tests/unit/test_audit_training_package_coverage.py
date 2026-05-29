@@ -1,9 +1,9 @@
 """Tests for the coverage audit script.
 
-The required column families exercised here are the actual events.parquet
-column names from ``backend/app/data/schemas.py``. The audit also walks
-sidecar parquets (press-conf Q&A, SEP projections); those are reported
-but do NOT fail the audit.
+The audit gates the sweep on a narrow REQUIRED set (the supervised
+target only) and reports OPTIONAL families as a per-family roll-up plus
+a trainer-flag impact list. Sidecar parquets are reported but do not
+fail the audit.
 """
 
 from __future__ import annotations
@@ -13,41 +13,49 @@ from pathlib import Path
 import pandas as pd
 
 from scripts.audit_training_package_coverage import (
+    OPTIONAL_EVENT_FAMILIES,
     REQUIRED_EVENT_FAMILIES,
+    TRAINER_FLAG_DEPENDENCIES,
     _check_column,
     audit,
 )
 
 
-def _all_required_event_columns() -> list[str]:
-    columns: list[str] = []
-    for cols in REQUIRED_EVENT_FAMILIES.values():
-        columns.extend(cols)
-    return columns
-
-
-def _make_full_event_dataframe(n: int = 10) -> pd.DataFrame:
-    """Build a synthetic events.parquet frame with every required column
-    populated. The string-typed columns get text; numeric columns get
-    floats.
+def _make_minimal_event_dataframe(n: int = 10) -> pd.DataFrame:
+    """The smallest events.parquet shape the audit treats as passing:
+    the supervised target column populated, plus event_kind for the
+    distribution report.
     """
-    string_cols = {
-        "statement_delta_inserted",
-        "statement_delta_deleted",
-        "statement_delta_substituted_pairs",
-        "dissent_direction",
-    }
-    list_cols = {"statement_delta_embedding"}
-    data: dict[str, list[object]] = {}
-    for column in _all_required_event_columns():
-        if column in string_cols:
-            data[column] = ["text"] * n
-        elif column in list_cols:
-            data[column] = [[0.0]] * n
-        else:
-            data[column] = [0.05] * n
-    data["event_kind"] = ["statement"] * n
-    return pd.DataFrame(data)
+    return pd.DataFrame(
+        {
+            "forward_realized_vol_10d": [0.05] * n,
+            "event_kind": ["statement"] * n,
+        }
+    )
+
+
+def test_required_set_is_exactly_the_supervised_target() -> None:
+    """Contract guard: the REQUIRED set must NOT regress into requiring
+    optional features. The trainer only refuses to start if the target
+    is missing — everything else is a feature flag that degrades.
+    """
+    required_cols: list[str] = []
+    for cols in REQUIRED_EVENT_FAMILIES.values():
+        required_cols.extend(cols)
+    assert required_cols == ["forward_realized_vol_10d"]
+
+
+def test_every_optional_family_has_a_trainer_flag_mapping() -> None:
+    """Every optional family must declare which trainer flag it gates,
+    so the audit report can name the flag rather than just the column.
+    A new family without a mapping should fail this test loudly.
+    """
+    for family in OPTIONAL_EVENT_FAMILIES:
+        assert family in TRAINER_FLAG_DEPENDENCIES, (
+            f"Optional family {family!r} has no entry in "
+            "TRAINER_FLAG_DEPENDENCIES — add the trainer flag(s) it "
+            "gates so the audit report can surface the impact."
+        )
 
 
 def test_check_column_missing() -> None:
@@ -84,8 +92,9 @@ def test_check_column_ok() -> None:
     assert populated == 4
 
 
-def test_audit_passes_on_full_event_dataframe(tmp_path: Path) -> None:
-    df = _make_full_event_dataframe(n=10)
+def test_audit_passes_on_minimal_dataframe(tmp_path: Path) -> None:
+    """Bare-minimum events.parquet — only the supervised target — passes."""
+    df = _make_minimal_event_dataframe(n=10)
     parquet = tmp_path / "events.parquet"
     df.to_parquet(parquet)
 
@@ -93,27 +102,8 @@ def test_audit_passes_on_full_event_dataframe(tmp_path: Path) -> None:
     assert result == 0
 
 
-def test_audit_fails_when_required_rates_column_missing(tmp_path: Path) -> None:
-    df = _make_full_event_dataframe(n=10).drop(columns=["yield_2y_change_5d"])
-    parquet = tmp_path / "events.parquet"
-    df.to_parquet(parquet)
-
-    result = audit(parquet)
-    assert result == 1
-
-
-def test_audit_fails_when_required_column_sparse(tmp_path: Path) -> None:
-    df = _make_full_event_dataframe(n=10)
-    df["statement_delta_inserted"] = ["text"] + [None] * 9
-    parquet = tmp_path / "events.parquet"
-    df.to_parquet(parquet)
-
-    result = audit(parquet)
-    assert result == 1
-
-
 def test_audit_fails_when_canonical_target_missing(tmp_path: Path) -> None:
-    df = _make_full_event_dataframe(n=10).drop(
+    df = _make_minimal_event_dataframe(n=10).drop(
         columns=["forward_realized_vol_10d"]
     )
     parquet = tmp_path / "events.parquet"
@@ -123,6 +113,30 @@ def test_audit_fails_when_canonical_target_missing(tmp_path: Path) -> None:
     assert result == 1
 
 
+def test_audit_fails_when_canonical_target_sparse(tmp_path: Path) -> None:
+    df = _make_minimal_event_dataframe(n=10)
+    df.loc[: 9 - 1, "forward_realized_vol_10d"] = None  # only 1/10 populated
+    df.loc[0, "forward_realized_vol_10d"] = 0.05
+    parquet = tmp_path / "events.parquet"
+    df.to_parquet(parquet)
+
+    result = audit(parquet)
+    assert result == 1
+
+
+def test_audit_passes_when_optional_families_all_missing(tmp_path: Path) -> None:
+    """A TP missing every optional family (rates, garch, statement-delta
+    etc.) still passes — those flags are reported as degraded but the
+    audit does not gate the sweep on them.
+    """
+    df = _make_minimal_event_dataframe(n=10)
+    parquet = tmp_path / "events.parquet"
+    df.to_parquet(parquet)
+
+    result = audit(parquet)
+    assert result == 0
+
+
 def test_audit_returns_two_when_file_missing(tmp_path: Path) -> None:
     target = tmp_path / "does-not-exist.parquet"
     result = audit(target)
@@ -130,43 +144,41 @@ def test_audit_returns_two_when_file_missing(tmp_path: Path) -> None:
 
 
 def test_audit_passes_when_event_kind_includes_unknown(tmp_path: Path) -> None:
-    df = _make_full_event_dataframe(n=10)
+    df = _make_minimal_event_dataframe(n=10)
     df.loc[0, "event_kind"] = "unrecognised_kind"
     parquet = tmp_path / "events.parquet"
     df.to_parquet(parquet)
 
-    # Unknown event_kind values are reported but do not fail the audit.
     result = audit(parquet)
     assert result == 0
 
 
 def test_audit_passes_when_event_kind_column_missing(tmp_path: Path) -> None:
-    df = _make_full_event_dataframe(n=10).drop(columns=["event_kind"])
+    df = _make_minimal_event_dataframe(n=10).drop(columns=["event_kind"])
     parquet = tmp_path / "events.parquet"
     df.to_parquet(parquet)
 
-    # Missing event_kind column is reported but does NOT fail the audit
-    # (corpus-diversity gaps are tracked separately under #485).
     result = audit(parquet)
     assert result == 0
 
 
-def test_sparse_threshold_override_relaxes_audit(tmp_path: Path) -> None:
-    df = _make_full_event_dataframe(n=10)
-    df["statement_delta_inserted"] = ["text"] + [None] * 9
+def test_sparse_threshold_override_relaxes_required_check(
+    tmp_path: Path,
+) -> None:
+    """A target column populated below the default 50% threshold can be
+    waved through by lowering --sparse-threshold-pct.
+    """
+    df = _make_minimal_event_dataframe(n=10)
+    df["forward_realized_vol_10d"] = [0.05] + [None] * 9  # 10% populated
     parquet = tmp_path / "events.parquet"
     df.to_parquet(parquet)
 
-    result = audit(parquet, sparse_threshold=5.0)
-    assert result == 0
+    assert audit(parquet) == 1  # fails at default 50%
+    assert audit(parquet, sparse_threshold=5.0) == 0  # passes at 5%
 
 
 def test_audit_reports_sidecar_absence_without_failing(tmp_path: Path) -> None:
-    """No sidecar parquets present alongside events.parquet — audit
-    still passes since sidecar gaps degrade trainer flags that default
-    off. The report visibly notes the absence; the exit code is 0.
-    """
-    df = _make_full_event_dataframe(n=10)
+    df = _make_minimal_event_dataframe(n=10)
     parquet = tmp_path / "events.parquet"
     df.to_parquet(parquet)
 
