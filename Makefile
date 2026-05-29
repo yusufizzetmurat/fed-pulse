@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep audit-training-package pull-op-fed pull-beige-book train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation finetune-pilot-b2 finetune-pilot-b2-phrasebank cross-source-transfer reproduce-all reproduce-smoke push-artefacts deploy-prod-build
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep audit-training-package pull-op-fed pull-swanson-three-factor pull-beige-book train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation finetune-pilot-b2 finetune-pilot-b2-phrasebank cross-source-transfer reproduce-all reproduce-smoke push-artefacts deploy-prod-build
 
 help:
 	@echo "Targets:"
@@ -137,6 +137,15 @@ audit-training-package:
 pull-op-fed:
 	docker compose run --rm backend \
 		python -m app.data.sources.op_fed $(if $(FORCE),--force,)
+
+# Swanson 2021 three-factor xlsx pulled from UCI mirror (#420).
+# Lands at data/external/swanson/pre-and-post-ZLB-factors-extended.xlsx
+# so the subsequent `python -m app.data.ingest_sources
+# --include-swanson-three-factor` picks it up unchanged.
+pull-swanson-three-factor:
+	docker compose run --rm backend \
+		python -m app.data.sources.swanson_three_factor \
+			$(if $(FORCE),--force,)
 
 pull-beige-book:
 	docker compose run --rm backend \
