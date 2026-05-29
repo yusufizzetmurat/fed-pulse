@@ -200,7 +200,7 @@ def _parse_swanson_row(row: dict[str, Any]) -> dict[str, Any] | None:
     iso_date: str = ""
     try:
         # pandas Timestamp / datetime
-        iso_date = raw_date.strftime("%Y-%m-%d")  # type: ignore[union-attr]
+        iso_date = raw_date.strftime("%Y-%m-%d")
     except AttributeError:
         iso_date = str(raw_date)[:10]
     if not iso_date or len(iso_date) < 10:
