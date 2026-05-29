@@ -161,7 +161,8 @@ build-events-parquet:
 			--output events.parquet \
 			--full-output events_full.parquet \
 			$(if $(RATES_PANEL_PATH),--rates-panel-path "$(RATES_PANEL_PATH)",) \
-			$(if $(PER_ASSET_CACHE_DIR),--per-asset-target-cache-dir "$(PER_ASSET_CACHE_DIR)",)
+			$(if $(PER_ASSET_CACHE_DIR),--per-asset-target-cache-dir "$(PER_ASSET_CACHE_DIR)",) \
+			$(if $(PRIOR_WINDOW),--prior-window $(PRIOR_WINDOW),)
 
 pull-op-fed:
 	docker compose run --rm backend \

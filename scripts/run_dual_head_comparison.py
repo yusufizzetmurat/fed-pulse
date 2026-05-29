@@ -186,12 +186,30 @@ def _resolve_output_path(arg: Path | None) -> Path:
     return base / "dual_head_comparison.json"
 
 
-def _trial_metrics(summary: Any) -> dict[str, float | None]:
-    """Pull the headline numbers out of a TrainingRunSummary."""
+def _trial_metrics(summary: Any) -> dict[str, Any]:
+    """Pull headline numbers + the per-fold classification breakdown
+    out of a ``TrainingRunSummary``. The classification breakdown
+    carries the 3x3 confusion matrix and the per-class P/R/F1 + support
+    counts that the downstream defense analyses (#496 ordinal confusion,
+    #500 per-fold baselines) read.
+
+    ``classification_breakdown`` is included whenever the test partition
+    ran a classification head; on regression-only arms it lands as
+    ``None`` and consumers degrade cleanly.
+    """
 
     test = getattr(summary, "test_metrics", None) or getattr(summary, "metrics", None)
     if test is None:
         return {}
+    breakdown = getattr(test, "classification_breakdown", None)
+    breakdown_payload: dict[str, Any] | None = None
+    if breakdown is not None:
+        # ``classification_breakdown`` on EvaluationMetrics is already a
+        # dict at this stage (loop.py assigns ``breakdown.to_dict()``).
+        if isinstance(breakdown, dict):
+            breakdown_payload = breakdown
+        elif hasattr(breakdown, "to_dict"):
+            breakdown_payload = breakdown.to_dict()
     return {
         "regime_f1_macro": getattr(test, "regime_f1_macro", None),
         "regime_accuracy": getattr(test, "regime_accuracy", None),
@@ -199,6 +217,7 @@ def _trial_metrics(summary: Any) -> dict[str, float | None]:
         "regression_rmse_log_rv": getattr(test, "regression_rmse_log_rv", None),
         "regression_mae_log_rv": getattr(test, "regression_mae_log_rv", None),
         "regression_loss": getattr(test, "regression_loss", None),
+        "classification_breakdown": breakdown_payload,
     }
 
 
