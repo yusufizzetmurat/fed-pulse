@@ -279,7 +279,7 @@ def _http_get_text(url: str, *, timeout: float) -> str:
     return body.decode("utf-8", errors="replace")
 
 
-def pull_beige_book_archive(
+def pull_beige_book_archive(  # noqa: PLR0913
     target_path: Path,
     *,
     force: bool = False,
