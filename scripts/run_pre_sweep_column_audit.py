@@ -59,11 +59,23 @@ def _load_event_schema_columns() -> dict[str, dict[str, bool]]:
     }
 
 
-def _load_fold_manifest(path: Path) -> dict[str, list[str]] | None:
-    """Return {fold_id: [event_date strings in that fold's TEST split]}.
+def _load_fold_manifest(
+    path: Path,
+    event_dates: pd.Series | None = None,
+) -> dict[str, list[str]] | None:
+    """Return ``{fold_id: [event_date strings in that fold's TEST split]}``.
 
-    Returns ``None`` when the manifest can't be parsed; the audit falls
-    back to overall-only populations in that case.
+    The production manifest (``fold_manifest_expanding_walk_forward.json``)
+    declares each fold as a ``[test_start, test_end]`` ISO-date range, not
+    as an enumerated event list — so the reader expands the range against
+    ``event_dates`` (the ``event_date`` column from the parquet under
+    audit) and emits the intersection per fold. We also accept the legacy
+    enumerated forms (``test`` / ``test_event_dates``) so older fixtures
+    keep working.
+
+    Returns ``None`` when the manifest can't be parsed or no fold could be
+    resolved; the audit falls back to overall-only populations in that
+    case.
     """
 
     try:
@@ -75,15 +87,27 @@ def _load_fold_manifest(path: Path) -> dict[str, list[str]] | None:
     if not isinstance(folds, list):
         return None
 
+    date_strings: list[str] | None = None
+    if event_dates is not None:
+        date_strings = [str(d) for d in event_dates.tolist() if d is not None]
+
     out: dict[str, list[str]] = {}
     for entry in folds:
         if not isinstance(entry, dict):
             continue
         fold_id = entry.get("fold_id") or entry.get("id")
-        test_dates = entry.get("test") or entry.get("test_event_dates")
-        if not fold_id or not isinstance(test_dates, list):
+        if not fold_id:
             continue
-        out[str(fold_id)] = [str(d) for d in test_dates if d]
+        legacy_dates = entry.get("test") or entry.get("test_event_dates")
+        if isinstance(legacy_dates, list):
+            out[str(fold_id)] = [str(d) for d in legacy_dates if d]
+            continue
+        test_start = entry.get("test_start")
+        test_end = entry.get("test_end")
+        if not test_start or not test_end or date_strings is None:
+            continue
+        lo, hi = str(test_start), str(test_end)
+        out[str(fold_id)] = [d for d in date_strings if lo <= d <= hi]
     return out or None
 
 
@@ -160,7 +184,12 @@ def audit_column_populations(
 
     fold_test_dates: dict[str, list[str]] | None = None
     if fold_manifest is not None and fold_manifest.exists():
-        fold_test_dates = _load_fold_manifest(fold_manifest)
+        event_dates = (
+            df_events["event_date"].astype(str)
+            if "event_date" in df_events.columns
+            else None
+        )
+        fold_test_dates = _load_fold_manifest(fold_manifest, event_dates)
 
     rows: list[dict[str, Any]] = []
     flagged_required: list[dict[str, Any]] = []
@@ -193,6 +222,8 @@ def audit_column_populations(
                 (f"fold:{fold_id}", evdates.isin(dates))
             )
 
+    advisory_nullable: list[dict[str, Any]] = []
+
     for column in sorted(df_events.columns):
         for slice_label, slice_filter in slice_filters:
             _populate_per_slice(
@@ -203,18 +234,29 @@ def audit_column_populations(
             continue
         if not schema_cols[column]["required"]:
             continue
-        # Required-column gate runs against the overall non-null rate.
-        non_null_rate = float(df_events[column].notna().sum() / max(len(df_events), 1))
-        if non_null_rate + 1e-12 < threshold_rate:
-            flagged_required.append(
-                {
-                    "column": column,
-                    "non_null_rate": non_null_rate,
-                    "n_rows": int(len(df_events)),
-                    "n_non_null": int(df_events[column].notna().sum()),
-                    "threshold_rate": threshold_rate,
-                }
-            )
+        # The strict gate fires only when the schema marks the column
+        # as both required AND non-nullable. Columns declared
+        # ``nullable=True`` are populated only on the source/window
+        # subset that emits them (e.g. ``axis_stance`` ships on HF-style
+        # corpora; ``realized_return`` is null when the prior price
+        # window won't resolve), so flagging them against an overall
+        # non-null floor double-counts a population gap the schema
+        # already accepts. We still report them as advisory.
+        non_null = int(df_events[column].notna().sum())
+        non_null_rate = float(non_null / max(len(df_events), 1))
+        if non_null_rate + 1e-12 >= threshold_rate:
+            continue
+        entry = {
+            "column": column,
+            "non_null_rate": non_null_rate,
+            "n_rows": int(len(df_events)),
+            "n_non_null": non_null,
+            "threshold_rate": threshold_rate,
+        }
+        if schema_cols[column]["nullable"]:
+            advisory_nullable.append(entry)
+        else:
+            flagged_required.append(entry)
 
     schema_only_columns = [
         c for c in schema_cols if c not in df_events.columns
@@ -235,6 +277,7 @@ def audit_column_populations(
             schema_only_required_missing
         ),
         "required_columns_under_threshold": flagged_required,
+        "nullable_required_columns_under_threshold": advisory_nullable,
         "threshold_pct": float(threshold_pct),
         "fold_manifest_used": bool(fold_test_dates),
         "pass": (
@@ -278,8 +321,27 @@ def _render_summary_md(summary: dict[str, Any]) -> str:
                 f"({entry['n_non_null']}/{entry['n_rows']})"
             )
         lines.append("")
+    advisory = summary.get("nullable_required_columns_under_threshold") or []
+    if advisory:
+        lines.append(
+            f"## Advisory: nullable required columns below {summary['threshold_pct']}% non-null"
+        )
+        lines.append(
+            "These columns are declared ``nullable=True`` in the schema, so "
+            "the population gap is allowed by design and does not fail the "
+            "gate. Listed for source/window-mix visibility."
+        )
+        for entry in advisory:
+            pct = 100.0 * entry["non_null_rate"]
+            lines.append(
+                f"- `{entry['column']}` — {pct:.2f}% "
+                f"({entry['n_non_null']}/{entry['n_rows']})"
+            )
+        lines.append("")
     if summary["pass"]:
-        lines.append("All required schema columns present and at full population.")
+        lines.append(
+            "All schema columns required as non-nullable are present and at full population."
+        )
     return "\n".join(lines) + "\n"
 
 

@@ -108,6 +108,34 @@ def test_audit_fails_when_required_column_partially_null(tmp_path: Path) -> None
     assert summary["pass"] is False
 
 
+def test_audit_treats_partial_nullable_required_column_as_advisory(
+    tmp_path: Path,
+) -> None:
+    """``axis_stance`` is declared ``required=True, nullable=True``: the
+    column must exist on the parquet, but individual rows may legitimately
+    carry ``None`` (only HF-style multi-axis sources ship it). The audit
+    must surface the population gap as advisory rather than failing the
+    strict gate.
+    """
+
+    df = _make_minimal_events(n=10)
+    df["axis_stance"] = [None] * 10  # 0% non-null, allowed by schema
+    parquet = tmp_path / "events.parquet"
+    df.to_parquet(parquet)
+
+    _, summary = audit_column_populations(parquet)
+    flagged = {
+        entry["column"] for entry in summary["required_columns_under_threshold"]
+    }
+    advisory = {
+        entry["column"]
+        for entry in summary["nullable_required_columns_under_threshold"]
+    }
+    assert "axis_stance" not in flagged
+    assert "axis_stance" in advisory
+    assert summary["pass"] is True
+
+
 def test_audit_threshold_override_relaxes_required_gate(
     tmp_path: Path,
 ) -> None:
@@ -177,6 +205,54 @@ def test_audit_uses_fold_manifest_when_provided(tmp_path: Path) -> None:
     assert {"wf_fold_1", "wf_fold_2"} <= fold_slices
 
 
+def test_audit_expands_fold_manifest_with_test_start_end_ranges(
+    tmp_path: Path,
+) -> None:
+    """The production manifest writer emits per-fold ``test_start`` /
+    ``test_end`` ISO-date ranges, not enumerated date lists. The reader
+    must expand the range against ``event_date`` so the per-fold breakdown
+    actually fires.
+    """
+
+    df = _make_minimal_events(n=6)
+    df["event_date"] = [
+        "2024-01-01",
+        "2024-02-01",
+        "2024-03-01",
+        "2024-04-01",
+        "2024-05-01",
+        "2024-06-01",
+    ]
+    parquet = tmp_path / "events.parquet"
+    df.to_parquet(parquet)
+    manifest = {
+        "folds": [
+            {
+                "fold_id": "wf_fold_1",
+                "test_start": "2024-01-01",
+                "test_end": "2024-03-01",
+            },
+            {
+                "fold_id": "wf_fold_2",
+                "test_start": "2024-04-01",
+                "test_end": "2024-06-01",
+            },
+        ]
+    }
+    manifest_path = tmp_path / "fold_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    population, summary = audit_column_populations(
+        parquet, fold_manifest=manifest_path
+    )
+    assert summary["fold_manifest_used"] is True
+    fold_slices = population[population["slice_kind"] == "fold"]
+    by_fold = dict(zip(fold_slices["slice_value"], fold_slices["rows"]))
+    # Each fold's test window covers exactly three of the six synthetic events.
+    assert by_fold.get("wf_fold_1") == 3
+    assert by_fold.get("wf_fold_2") == 3
+
+
 def test_audit_skips_fold_breakdown_on_corrupt_manifest(tmp_path: Path) -> None:
     df = _make_minimal_events(n=2)
     parquet = tmp_path / "events.parquet"
@@ -212,6 +288,7 @@ def test_summary_md_lists_flagged_columns() -> None:
                 "threshold_rate": 1.0,
             }
         ],
+        "nullable_required_columns_under_threshold": [],
         "threshold_pct": 100.0,
         "fold_manifest_used": False,
         "pass": False,
@@ -232,10 +309,39 @@ def test_summary_md_pass_message() -> None:
         "schema_columns_absent": [],
         "required_columns_missing_from_parquet": [],
         "required_columns_under_threshold": [],
+        "nullable_required_columns_under_threshold": [],
         "threshold_pct": 100.0,
         "fold_manifest_used": True,
         "pass": True,
     }
     md = _render_summary_md(summary)
     assert "PASS" in md
-    assert "All required schema columns present" in md
+    assert "non-nullable" in md
+
+
+def test_summary_md_renders_advisory_section() -> None:
+    summary = {
+        "events_parquet": "x.parquet",
+        "n_rows": 100,
+        "n_columns": 10,
+        "schema_columns_present": [],
+        "schema_columns_absent": [],
+        "required_columns_missing_from_parquet": [],
+        "required_columns_under_threshold": [],
+        "nullable_required_columns_under_threshold": [
+            {
+                "column": "axis_stance",
+                "non_null_rate": 0.0,
+                "n_non_null": 0,
+                "n_rows": 100,
+                "threshold_rate": 1.0,
+            }
+        ],
+        "threshold_pct": 100.0,
+        "fold_manifest_used": True,
+        "pass": True,
+    }
+    md = _render_summary_md(summary)
+    assert "PASS" in md
+    assert "Advisory" in md
+    assert "`axis_stance`" in md
