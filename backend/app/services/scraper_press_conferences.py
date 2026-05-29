@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import json
 import re
+import time
+import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import BytesIO
@@ -41,6 +43,31 @@ from bs4 import BeautifulSoup
 ARCHIVE_BASE_URL = "https://www.federalreserve.gov"
 PRESS_CONF_URL_PATTERN = re.compile(r"^/monetarypolicy/fomcpresconf(\d{8})\.htm$")
 DATE_FROM_URL_PATTERN = re.compile(r"/fomcpresconf(\d{8})\.htm$")
+
+OUTPUT_FILENAME = "press_conferences.json"
+# Recent press-conference URLs live on the FOMC calendars page. The
+# orchestrator can additionally walk per-year historical pages
+# (/monetarypolicy/fomchistorical{year}.htm) to back-fill pre-2021
+# events; the calendar by itself covers 2021 forward only.
+ARCHIVE_LISTING_URL = ARCHIVE_BASE_URL + "/monetarypolicy/fomccalendars.htm"
+HISTORICAL_YEAR_URL_TEMPLATE = (
+    ARCHIVE_BASE_URL + "/monetarypolicy/fomchistorical{year}.htm"
+)
+# Press conferences started in April 2011. The default historical
+# window walks calendar + 2011-2020 historical pages so the cache
+# covers the full press-conf era.
+_DEFAULT_HISTORICAL_YEARS_LOWER = 2011
+_DEFAULT_HISTORICAL_YEARS_UPPER = 2020
+
+# federalreserve.gov 403s the stdlib default ``Python-urllib/x.y`` UA
+# and the bare ``python-requests`` UA on some edge nodes. Identifying
+# the project in the UA keeps the traffic auditable on the upstream's
+# side and matches the convention the other federalreserve.gov
+# scrapers in this package use.
+_USER_AGENT = (
+    "fed-pulse-data-ingester/1.0 "
+    "(+https://github.com/yusufizzetmurat/fed-pulse)"
+)
 
 # Page-header noise stamped on every page of the Federal Reserve press
 # conference PDFs ("January 29, 2025   Chair Powell's Press Conference
@@ -256,7 +283,11 @@ def _load_or_fetch_pdf_bytes(
     if not pdf_url:
         return b""
     try:
-        response = requests.get(pdf_url, timeout=30)
+        response = requests.get(
+            pdf_url,
+            timeout=30,
+            headers={"User-Agent": _USER_AGENT},
+        )
         response.raise_for_status()
     except Exception:
         return b""
@@ -388,3 +419,226 @@ def build_qa_lookup(parsed: Iterable[ParsedPressConference]) -> dict[str, dict[s
             "has_press_conf": "1",
         }
     return lookup
+
+
+def _http_get_text(url: str, *, timeout: float) -> str:
+    """Fetch ``url`` and return the response body as decoded text.
+
+    Wraps ``requests.get`` so HTTP non-2xx surfaces as ``RuntimeError``
+    (the upstream error is re-raised with the URL in the message so
+    the caller logs see which page failed). The press-conference
+    scraper uses ``requests`` rather than stdlib ``urllib`` for
+    consistency with :func:`_load_or_fetch_pdf_bytes`, which already
+    fetches PDFs via the same library.
+    """
+
+    try:
+        response = requests.get(
+            url, timeout=timeout, headers={"User-Agent": _USER_AGENT}
+        )
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        code = exc.response.status_code if exc.response is not None else "?"
+        raise RuntimeError(f"HTTP {code} from {url}") from exc
+    return response.text
+
+
+def _default_historical_years() -> list[int]:
+    """Years walked for the historical back-fill by default.
+
+    Press conferences started in April 2011. The default window walks
+    2011 through 2020 inclusive; 2021 onward is covered by the
+    ``fomccalendars.htm`` listing already.
+    """
+
+    return list(
+        range(_DEFAULT_HISTORICAL_YEARS_LOWER, _DEFAULT_HISTORICAL_YEARS_UPPER + 1)
+    )
+
+
+def pull_press_conferences_archive(  # noqa: PLR0913
+    target_path: Path,
+    *,
+    force: bool = False,
+    archive_url: str = ARCHIVE_LISTING_URL,
+    historical_years: list[int] | None = None,
+    limit: int | None = None,
+    timeout: float = 30.0,
+    delay_seconds: float = 0.5,
+    cache_pdf_dir: Path | None = None,
+) -> int:
+    """Walk the federalreserve.gov FOMC calendars + historical pages and write parsed rows.
+
+    Press-conference URLs live on two sources:
+
+    1. ``/monetarypolicy/fomccalendars.htm`` -- the current calendar
+       page, which surfaces 2021-onward press-conference links inline.
+    2. ``/monetarypolicy/fomchistorical{year}.htm`` -- per-year
+       historical pages, used to back-fill 2011-2020 press confs.
+
+    The orchestrator fetches the calendar page (or whatever
+    ``archive_url`` points at), then each historical year page,
+    de-duplicates the discovered URLs, and parses every press
+    conference. Each parse downloads the sibling PDF and runs the
+    pypdf text extractor + Q&A splitter.
+
+    Parsed rows are written to ``target_path`` via
+    :func:`write_press_conferences_json` -- the same JSON shape
+    ``ingest_sources._iter_scraped_records`` consumes. The Q&A
+    lookup sidecar (#214) is intentionally NOT produced here; that
+    follow-up writes it from the same parsed rows separately.
+
+    Idempotent: when ``target_path`` already exists with a non-empty
+    JSON list and ``force`` is False, the existing row count is
+    returned without any HTTP traffic. Per-page failures are logged
+    via :mod:`warnings` and the walk continues. A walk producing zero
+    rows raises ``RuntimeError`` so a broken default surfaces loudly.
+    """
+
+    if target_path.exists() and not force:
+        try:
+            cached = json.loads(target_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            cached = None
+        if isinstance(cached, list) and len(cached) > 0:
+            return len(cached)
+
+    year_list = (
+        historical_years
+        if historical_years is not None
+        else _default_historical_years()
+    )
+    listing_urls = [archive_url] + [
+        HISTORICAL_YEAR_URL_TEMPLATE.format(year=y) for y in year_list
+    ]
+
+    entries: list[PressConferenceListingEntry] = []
+    seen_urls: set[str] = set()
+    for listing_url in listing_urls:
+        try:
+            listing_html = _http_get_text(listing_url, timeout=timeout)
+        except Exception as exc:
+            warnings.warn(
+                f"Press conference listing fetch failed for {listing_url}: {exc}",
+                stacklevel=2,
+            )
+            continue
+        for entry in extract_press_conference_listing(listing_html):
+            if entry.url in seen_urls:
+                continue
+            seen_urls.add(entry.url)
+            entries.append(entry)
+
+    # Sort by date so smoke-test ``--limit N`` returns the most recent
+    # N press confs (most useful for end-to-end smoke tests).
+    entries.sort(key=lambda e: e.date, reverse=True)
+    if limit is not None:
+        entries = entries[:limit]
+
+    parsed: list[ParsedPressConference] = []
+    for i, entry in enumerate(entries):
+        try:
+            page_html = _http_get_text(entry.url, timeout=timeout)
+            parsed.append(
+                parse_press_conference_page(
+                    page_html,
+                    source_url=entry.url,
+                    cache_pdf_dir=cache_pdf_dir,
+                )
+            )
+        except Exception as exc:
+            warnings.warn(
+                f"Press conference fetch failed for {entry.url}: {exc}",
+                stacklevel=2,
+            )
+            continue
+        if delay_seconds > 0 and i + 1 < len(entries):
+            time.sleep(delay_seconds)
+
+    tmp_path = target_path.with_suffix(target_path.suffix + ".tmp")
+    try:
+        written = write_press_conferences_json(parsed, tmp_path)
+        if written == 0:
+            raise RuntimeError(
+                f"Press conferences pull produced zero rows (listings tried: "
+                f"{len(listing_urls)})"
+            )
+        tmp_path.replace(target_path)
+        return written
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+
+
+if __name__ == "__main__":
+    import argparse
+
+    from app.config import DATA_DIR as _DEFAULT_DATA_DIR
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Walk the federalreserve.gov FOMC calendar + historical pages "
+            f"and write {OUTPUT_FILENAME} into the data directory. The "
+            "resulting JSON is picked up unchanged by "
+            "`python -m app.data.ingest_sources --include-scraped`."
+        )
+    )
+    parser.add_argument(
+        "--data-dir",
+        default=str(_DEFAULT_DATA_DIR),
+        help="Base data directory (default: app.config.DATA_DIR).",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-pull even if the cache file already exists.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Stop after fetching N press confs (smoke testing).",
+    )
+    parser.add_argument(
+        "--archive-url",
+        default=ARCHIVE_LISTING_URL,
+        help="Override the FOMC calendar URL.",
+    )
+    parser.add_argument(
+        "--historical-years",
+        type=int,
+        nargs="+",
+        default=None,
+        help=(
+            "Historical years to back-fill via "
+            "/monetarypolicy/fomchistorical{year}.htm (default: 2011-2020)."
+        ),
+    )
+    parser.add_argument(
+        "--delay-seconds",
+        type=float,
+        default=0.5,
+        help="Polite delay between page fetches (default: 0.5s).",
+    )
+    parser.add_argument(
+        "--cache-pdf-dir",
+        default=None,
+        help=(
+            "Local directory under which press-conference PDFs are "
+            "cached so a re-pull does not re-download every PDF "
+            "(default: no PDF cache)."
+        ),
+    )
+    ns = parser.parse_args()
+    target = Path(ns.data_dir) / OUTPUT_FILENAME
+    rows = pull_press_conferences_archive(
+        target,
+        force=ns.force,
+        archive_url=ns.archive_url,
+        historical_years=ns.historical_years,
+        limit=ns.limit,
+        delay_seconds=ns.delay_seconds,
+        cache_pdf_dir=Path(ns.cache_pdf_dir) if ns.cache_pdf_dir else None,
+    )
+    print(f"Press conferences cache at {target} (rows: {rows})")
