@@ -24,15 +24,31 @@ contract, not the technical one.
   sweep / HP grid, no row appears in any embedding / DAPT / encoder
   used during the training programme.
 
-### Stub state at pre-registration time
+### Holdout contents at pre-registration time
 
-The file currently ships stub rows carrying a leading
-`# pragma: stub` marker in the `text` field. The integrity sha pinned
-below is captured at the moment the stubs are replaced with real
-scraped text. Until that swap the audit script (see "Integrity
-verification" below) intentionally reports a sha mismatch — that is
-the desired state, not a bug, because reporting a sealed-eval headline
-against stubbed text would be a methodology defect.
+Eleven FOMC statements, scraped 2026-05-29 from federalreserve.gov
+press-release pages and pinned in this same commit:
+
+| Date | Action | URL |
+|---|---|---|
+| 2025-01-29 | Hold 4¼–4½% | `pressreleases/monetary20250129a.htm` |
+| 2025-03-19 | Hold 4¼–4½% (QT taper) | `pressreleases/monetary20250319a.htm` |
+| 2025-05-07 | Hold 4¼–4½% | `pressreleases/monetary20250507a.htm` |
+| 2025-06-18 | Hold 4¼–4½% | `pressreleases/monetary20250618a.htm` |
+| 2025-07-30 | Hold 4¼–4½% (Bowman + Waller dissent for cut) | `pressreleases/monetary20250730a.htm` |
+| 2025-09-17 | Cut to 4–4¼% (Miran dissent for deeper cut) | `pressreleases/monetary20250917a.htm` |
+| 2025-10-29 | Cut to 3¾–4% (QT ends Dec 1) | `pressreleases/monetary20251029a.htm` |
+| 2025-12-10 | Cut to 3½–3¾% (reserve-management buys begin) | `pressreleases/monetary20251210a.htm` |
+| 2026-01-28 | Hold 3½–3¾% (new voter slate) | `pressreleases/monetary20260128a.htm` |
+| 2026-03-18 | Hold 3½–3¾% | `pressreleases/monetary20260318a.htm` |
+| 2026-04-29 | Hold 3½–3¾% (3-way dissent) | `pressreleases/monetary20260429a.htm` |
+
+Every text was extracted from the `div#article p` selector of the
+press-release page, joined with `\n\n`. The `Implementation Note
+issued <Month D, YYYY>` trailing line on each row was cross-checked
+against the row's `event_date` at pin time. Minutes (released ~3
+weeks after each meeting) are not included in this pre-registration;
+adding them post-hoc would invalidate the contract.
 
 ## Pre-declared evaluation metrics
 
@@ -90,20 +106,18 @@ The script that computes and verifies the holdout file's sha256:
 shasum -a 256 data/external/sealed_holdout/fomc_2025.jsonl
 ```
 
-The pre-registered sha will be committed to this file in a follow-up
-commit at the moment the stub replacement lands. Until then the
-sha-pin block below is empty.
-
-### Pinned sha256 (post stub replacement)
+### Pinned sha256
 
 ```
-<INTENTIONALLY BLANK — see "Stub state at pre-registration time">
+2d38de11ce020b119574012a735ee1ffafd5842ed111ee5141572176cdd281c0
 ```
 
-To pin: replace the placeholder above with the output of `shasum -a 256
-data/external/sealed_holdout/fomc_2025.jsonl` as run on the commit
-SHA that lands the real scraped rows. The pinning commit must
-reference issue #501.
+Captured at the commit that introduces the real scraped statements
+into `fomc_2025.jsonl`. Any future commit that mutates that file
+without producing the same sha after re-hash breaks the pre-
+registration. CI should hard-fail on a sha drift; until that check
+lands, manual verification before the one allowed seal-break run is
+the contract.
 
 ## Code revision that defines this holdout
 
