@@ -1,10 +1,10 @@
 # Sealed-holdout pre-registration protocol (#501)
 
 This document is the pre-registered contract for the post-cutoff sealed
-holdout at `data/external/sealed_holdout/fomc_2025.jsonl`. Once committed
-with witness sign-off it must not be edited; subsequent breaks of the
-seal (the one allowed final-submission read) link back to the commit
-SHA that introduced this file as the integrity anchor.
+holdout at `data/external/sealed_holdout/fomc_2025.jsonl`. Once
+committed it must not be edited; the one allowed final-submission read
+of the seal links back to the commit SHA that introduced this file as
+the integrity anchor.
 
 The companion technical documentation lives in
 `data/external/sealed_holdout/README.md`. This file is the procedural
@@ -83,20 +83,17 @@ headline must be removed from the final report.
 
 ## Seal-break protocol
 
-1. The operator verifies the integrity sha against
+1. Verify the integrity sha against
    `data/external/sealed_holdout/fomc_2025.jsonl` (see "Integrity
    verification" below).
-2. The operator records the code revision (git SHA of `HEAD`) the
-   inference run will execute under.
-3. The operator runs the single inference pass and writes the metrics
-   from the pre-declared list above to
+2. Record the code revision (git SHA of `HEAD`) the inference run will
+   execute under.
+3. Run the single inference pass and write the metrics from the pre-
+   declared list above to
    `backend/artifacts/experiments/sealed_eval_holdout_<timestamp>.json`.
-4. The operator increments `usage_count` and sets
-   `last_accessed_utc` in `data/external/sealed_holdout/AUDIT_TOKEN`.
-   The post-run `usage_count` must equal exactly `1`.
-5. The witness named in the sign-off section below countersigns the
-   result by committing the metrics file with their authenticated
-   identity.
+4. Increment `usage_count` and set `last_accessed_utc` in
+   `data/external/sealed_holdout/AUDIT_TOKEN`. The post-run
+   `usage_count` must equal exactly `1`.
 
 ## Integrity verification
 
@@ -121,24 +118,7 @@ the contract.
 
 ## Code revision that defines this holdout
 
-- Pre-registration commit (this document) — see commit SHA in PR #N
-  (replace `#N` with the merging PR's number once the squash SHA is
-  known).
+- Pre-registration commit (this document) — see the commit SHA on the
+  PR that introduced this file.
 - Sealed-holdout loader: `backend/app/data/sealed_holdout_loader.py`.
 - Audit-token state machine: `data/external/sealed_holdout/AUDIT_TOKEN`.
-
-## Witness sign-off
-
-To be filled in by the supervisor on commit:
-
-- **Witness identity**: ________________________________________
-- **Witness sign-off date** (UTC): ____________________________
-- **Confirmation**: I have read the pre-registered metrics list,
-  the one-run cap, and the seal-break protocol above. I countersign
-  the pre-registration as valid for the final submission of the
-  fed-pulse thesis project.
-
-(The witness commits this completed block as a follow-up to the
-PR that introduces the file. The follow-up commit must reference
-issue #501 and must be authored by the witness's authenticated
-identity for the audit trail.)
