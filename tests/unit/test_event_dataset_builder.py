@@ -204,6 +204,57 @@ def test_lookahead_guard_raises_when_prior_bar_overlaps_as_of() -> None:
 
 
 # ---------------------------------------------------------------------------
+# prior_window_days CLI threading (#476: 20 -> 60d sequence support)
+# ---------------------------------------------------------------------------
+
+
+def test_prior_window_days_threads_through_build_event_rows(
+    tmp_path: Path,
+) -> None:
+    """``--prior-window 60`` on the CLI must end up sizing the
+    ``prior_bars_json`` window on every emitted row. The default stays
+    at 20 for back-compat; explicit 60 must change the count.
+    """
+
+    import json as _json
+
+    package = tmp_path / "package"
+    package.mkdir()
+    event_date = "2024-06-12"
+    _write_registry(
+        package / "registry_normalized.jsonl",
+        [_registry_entry_for_statement(event_date)],
+    )
+    dates = _make_trading_dates(_dt.date(2020, 1, 2), 1000)
+    closes = [100.0 + i * 0.01 for i in range(1000)]
+    series = _series_from_closes(dates, closes)
+
+    df_default = edb.build_event_rows(
+        package_dir=package,
+        asset="^GSPC",
+        benchmark="^GSPC",
+        asset_series=series,
+        bench_series=series,
+    )
+    df_60 = edb.build_event_rows(
+        package_dir=package,
+        asset="^GSPC",
+        benchmark="^GSPC",
+        asset_series=series,
+        bench_series=series,
+        prior_window_days=60,
+    )
+
+    # Read the JSON-encoded prior window off the first row of each frame.
+    default_bars = _json.loads(df_default.iloc[0]["prior_bars_json"])
+    long_bars = _json.loads(df_60.iloc[0]["prior_bars_json"])
+    assert len(default_bars) == edb.PRIOR_WINDOW_DAYS == 20
+    assert len(long_bars) == 60
+    # The 20-bar window should be the tail of the 60-bar window.
+    assert default_bars == long_bars[-20:]
+
+
+# ---------------------------------------------------------------------------
 # No survivorship: zero-move events still emit a row
 # ---------------------------------------------------------------------------
 

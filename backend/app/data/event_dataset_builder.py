@@ -1368,13 +1368,17 @@ def _build_event_rows(
     vote_tally: VoteTally | None = None,
     delta_encoder: Any | None = None,
     per_asset_target_series: dict[str, _CloseSeries] | None = None,
+    prior_window_days: int = PRIOR_WINDOW_DAYS,
 ) -> list[dict[str, Any]]:
     event_date = _date(doc.event_date)
     as_of_ts = _as_of_for_event(doc.event_date, doc.event_kind)
     as_of_date = event_date  # placeholder time is same-day; window cuts on date
 
     prior_bars = _build_prior_window(
-        asset_series, as_of_date, cross_asset_lookup=cross_asset_lookup
+        asset_series,
+        as_of_date,
+        cross_asset_lookup=cross_asset_lookup,
+        window_days=prior_window_days,
     )
     if prior_bars is None:
         return []
@@ -1906,6 +1910,7 @@ def build_event_rows(
     delta_encoder: Any | None = None,
     per_asset_target_series: dict[str, _CloseSeries] | None = None,
     per_asset_target_cache_dir: Path | None = None,
+    prior_window_days: int = PRIOR_WINDOW_DAYS,
 ) -> pd.DataFrame:
     """Build the events DataFrame for one training package.
 
@@ -2107,6 +2112,7 @@ def build_event_rows(
             prior_statement_text=prior_statement_text,
             delta_encoder=delta_encoder,
             per_asset_target_series=per_asset_target_series,
+            prior_window_days=prior_window_days,
         )
         if not rows:
             summary.dropped_no_prior_window += 1
@@ -2263,6 +2269,19 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "None across all rows."
         ),
     )
+    parser.add_argument(
+        "--prior-window",
+        type=int,
+        default=PRIOR_WINDOW_DAYS,
+        help=(
+            "Number of trailing trading-day bars to attach as the "
+            "prior_bars_json window (#209/#476). Defaults to 20 for "
+            "back-compat with existing checkpoints; bump to 60 when "
+            "rebuilding events.parquet for the extended-window sweep arm. "
+            "Larger values shift walk-forward fold boundaries because the "
+            "first usable event moves later in the calendar."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -2328,6 +2347,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         rates_panel_path=args.rates_panel_path,
         rates_horizon=int(args.rates_horizon),
         per_asset_target_cache_dir=per_asset_target_cache_dir,
+        prior_window_days=int(args.prior_window),
     )
     output_path = Path(args.output)
     if not output_path.is_absolute():
@@ -2368,6 +2388,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             rates_panel_path=args.rates_panel_path,
             rates_horizon=int(args.rates_horizon),
             per_asset_target_cache_dir=per_asset_target_cache_dir,
+            prior_window_days=int(args.prior_window),
         )
         full_output_path = Path(full_output_arg)
         if not full_output_path.is_absolute():
