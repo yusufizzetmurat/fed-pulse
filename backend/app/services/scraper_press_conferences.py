@@ -59,6 +59,16 @@ HISTORICAL_YEAR_URL_TEMPLATE = (
 _DEFAULT_HISTORICAL_YEARS_LOWER = 2011
 _DEFAULT_HISTORICAL_YEARS_UPPER = 2020
 
+# federalreserve.gov 403s the stdlib default ``Python-urllib/x.y`` UA
+# and the bare ``python-requests`` UA on some edge nodes. Identifying
+# the project in the UA keeps the traffic auditable on the upstream's
+# side and matches the convention the other federalreserve.gov
+# scrapers in this package use.
+_USER_AGENT = (
+    "fed-pulse-data-ingester/1.0 "
+    "(+https://github.com/yusufizzetmurat/fed-pulse)"
+)
+
 # Page-header noise stamped on every page of the Federal Reserve press
 # conference PDFs ("January 29, 2025   Chair Powell's Press Conference
 # FINAL\nPage 4 of 27"). Stripped before Q&A splitting so the speaker-turn
@@ -409,17 +419,6 @@ def build_qa_lookup(parsed: Iterable[ParsedPressConference]) -> dict[str, dict[s
             "has_press_conf": "1",
         }
     return lookup
-
-
-# federalreserve.gov 403s the stdlib default ``Python-urllib/x.y`` UA
-# and the bare ``python-requests`` UA on some edge nodes. Identifying
-# the project in the UA keeps the traffic auditable on the upstream's
-# side and matches the convention the other federalreserve.gov
-# scrapers in this package use.
-_USER_AGENT = (
-    "fed-pulse-data-ingester/1.0 "
-    "(+https://github.com/yusufizzetmurat/fed-pulse)"
-)
 
 
 def _http_get_text(url: str, *, timeout: float) -> str:

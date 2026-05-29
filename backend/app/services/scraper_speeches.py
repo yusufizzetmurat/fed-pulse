@@ -420,6 +420,12 @@ def pull_speeches_archive(  # noqa: PLR0913
     total rows raises ``RuntimeError``.
     """
 
+    # Idempotency: ONLY honour a cache hit when BOTH files exist. A run
+    # that exited between the chair and governor ``replace()`` swaps
+    # below would leave a half-written pair on disk; treating that state
+    # as a cache hit would freeze the divergence across all future
+    # invocations. Forcing a re-pull whenever the pair is incomplete is
+    # the safe recovery path.
     if (
         chair_target_path.exists()
         and governor_target_path.exists()
@@ -437,6 +443,18 @@ def pull_speeches_archive(  # noqa: PLR0913
             and (len(chair_cached) + len(gov_cached)) > 0
         ):
             return len(chair_cached) + len(gov_cached)
+    elif (
+        chair_target_path.exists() != governor_target_path.exists()
+        and not force
+    ):
+        # Partial-write recovery: warn so the operator can see the
+        # divergence in the run log, then fall through to the re-pull.
+        present = "chair" if chair_target_path.exists() else "governor"
+        warnings.warn(
+            f"Speeches cache is partial — only {present}_speeches.json "
+            "present; re-pulling both files",
+            stacklevel=2,
+        )
 
     if archive_url is not None:
         listing_urls = [archive_url]
