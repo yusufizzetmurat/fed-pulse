@@ -20,11 +20,22 @@ from __future__ import annotations
 import csv
 import io
 import json
+import urllib.request
 from pathlib import Path
 from typing import Any, Iterable
 
 from app.data.sources.base import BaseSourceScraper, Provenance, SourceMetadata
 from app.data.sources.registry import register
+
+# Public mirror of the Op-Fed v1 CSV release published alongside Keith et
+# al. (2025), arXiv:2509.13539. Pinned to the ``main`` branch's
+# ``data/opfed_v1.csv`` per the repo README. The on-disk filename matches
+# ``OP_FED_DEFAULT_RELATIVE`` in ``app.data.ingest_sources`` so the
+# downstream ``--include-op-fed`` ingest path picks the pull up without
+# extra wiring.
+OP_FED_UPSTREAM_URL = (
+    "https://raw.githubusercontent.com/kakeith/op-fed/main/data/opfed_v1.csv"
+)
 
 # Stance mapping kept local so the adapter is loadable without importing
 # ingest_sources (avoids a hard import cycle if ingest_sources is later split).
@@ -141,3 +152,83 @@ class OpFedScraper:
 
 
 register(OpFedScraper())
+
+
+def pull_op_fed_csv(
+    target_path: Path,
+    *,
+    force: bool = False,
+    url: str = OP_FED_UPSTREAM_URL,
+    timeout: float = 60.0,
+) -> int:
+    """Download the Op-Fed CSV to ``target_path``. Returns the parsed row count.
+
+    Idempotent: when ``target_path`` already exists and ``force`` is False
+    the file is left alone and the existing row count is returned. Atomic:
+    the body is written to a sibling ``.tmp`` file, parsed as CSV, and only
+    renamed into place once it parses to a non-empty row set so a partial
+    download cannot leave a half-file at the cache path. Any HTTP non-200
+    or zero-row parse raises and removes the tmp file.
+    """
+
+    if target_path.exists() and not force:
+        with target_path.open("r", encoding="utf-8", newline="") as handle:
+            return sum(1 for _ in csv.DictReader(handle))
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = target_path.with_suffix(target_path.suffix + ".tmp")
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            status = getattr(response, "status", 200)
+            if status != 200:
+                raise RuntimeError(
+                    f"Op-Fed upstream returned HTTP {status} from {url}"
+                )
+            body = response.read()
+        tmp_path.write_bytes(body)
+        with tmp_path.open("r", encoding="utf-8", newline="") as handle:
+            row_count = sum(1 for _ in csv.DictReader(handle))
+        if row_count == 0:
+            raise RuntimeError(
+                f"Op-Fed download from {url} produced zero rows"
+            )
+        tmp_path.replace(target_path)
+        return row_count
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+
+
+if __name__ == "__main__":
+    import argparse
+
+    from app.config import DATA_DIR as _DEFAULT_DATA_DIR
+    from app.data.ingest_sources import OP_FED_DEFAULT_RELATIVE
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Pull the Op-Fed CSV release into the local data cache so "
+            "`python -m app.data.ingest_sources --include-op-fed` can "
+            "materialise rows into the source registry."
+        )
+    )
+    parser.add_argument(
+        "--data-dir",
+        default=str(_DEFAULT_DATA_DIR),
+        help="Base data directory (default: app.config.DATA_DIR).",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-download even if the cache file already exists.",
+    )
+    parser.add_argument(
+        "--url",
+        default=OP_FED_UPSTREAM_URL,
+        help="Override the upstream URL (default: kakeith/op-fed main).",
+    )
+    ns = parser.parse_args()
+    target = Path(ns.data_dir) / OP_FED_DEFAULT_RELATIVE
+    rows = pull_op_fed_csv(target, force=ns.force, url=ns.url)
+    print(f"Op-Fed cache at {target} (rows: {rows})")
