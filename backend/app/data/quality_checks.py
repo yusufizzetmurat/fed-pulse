@@ -88,11 +88,15 @@ def _is_valid_date(value: str) -> bool:
 
 
 def _exact_dedup(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    # QualityPassedRowSchema asserts ``unique=["text_hash"]``, so dedup keys
+    # on text_hash alone. Keying on (event_date, text_hash) kept the second
+    # row when the same text was linked to two events and the schema
+    # validation downstream then rejected the frame.
     kept: list[dict[str, Any]] = []
     dropped: list[dict[str, str]] = []
     seen: dict[str, str] = {}
     for row in rows:
-        key = f"{row.get('event_date','')}::{row.get('text_hash','')}"
+        key = str(row.get("text_hash", ""))
         rid = str(row.get("record_id", ""))
         if key in seen:
             dropped.append({"record_id": rid, "kept_record_id": seen[key], "reason": "exact_text_hash_duplicate"})
