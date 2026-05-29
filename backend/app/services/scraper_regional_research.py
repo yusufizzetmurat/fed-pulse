@@ -224,7 +224,7 @@ def _http_get_text(url: str, *, timeout: float) -> str:
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"HTTP {exc.code} from {url}") from exc
     with response:
-        body = response.read()
+        body: bytes = response.read()
     return body.decode("utf-8", errors="replace")
 
 
