@@ -3,15 +3,19 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+import requests
 
 from app.services.scraper_press_conferences import (
+    ARCHIVE_LISTING_URL,
     PressConferenceListingEntry,
     ParsedPressConference,
     build_qa_lookup,
     extract_press_conference_listing,
     parse_press_conference_page,
+    pull_press_conferences_archive,
     split_prepared_remarks_and_qa,
     write_press_conferences_json,
 )
@@ -239,3 +243,195 @@ def test_parse_press_conference_page_caches_pdf_to_disk(tmp_path: Path, monkeypa
     assert parsed_first.qa_text == parsed_second.qa_text
     assert parsed_first.qa_text
     assert parsed_first.prepared_remarks_text
+
+
+# ----- pull_press_conferences_archive -----
+
+
+class _FakeRequestsResponse:
+    def __init__(
+        self,
+        *,
+        text: str = "",
+        content: bytes = b"",
+        status_code: int = 200,
+    ) -> None:
+        self.text = text
+        self.content = content
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            err = requests.HTTPError(f"HTTP {self.status_code}")
+            err.response = self  # type: ignore[assignment]
+            raise err
+
+
+_LISTING_HTML = """
+<html><body>
+<a href="/monetarypolicy/fomcpresconf20240131.htm">January</a>
+<a href="/monetarypolicy/fomcpresconf20240320.htm">March</a>
+</body></html>
+"""
+
+_PRESS_HTML_TEMPLATE = """
+<html><head><meta property="og:title" content="FOMC Press Conference - {label}"></head>
+<body><p>See the PDF.</p></body></html>
+"""
+
+
+def _route_requests_get(url, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+    if url == ARCHIVE_LISTING_URL:
+        return _FakeRequestsResponse(text=_LISTING_HTML)
+    # Suppress historical-year listing fetches (they 404 in the
+    # default historical window and are caught by the per-listing
+    # try/except in the orchestrator).
+    if "fomchistorical" in url:
+        return _FakeRequestsResponse(status_code=404)
+    if "fomcpresconf20240131.htm" in url:
+        return _FakeRequestsResponse(text=_PRESS_HTML_TEMPLATE.format(label="January"))
+    if "fomcpresconf20240320.htm" in url:
+        return _FakeRequestsResponse(text=_PRESS_HTML_TEMPLATE.format(label="March"))
+    raise AssertionError(f"unexpected URL fetched: {url}")
+
+
+def _stub_pdf_text(_bytes: bytes) -> str:
+    return "Prepared remarks. " + "Filler. " * 20
+
+
+def test_pull_press_walks_listing_and_writes_json(tmp_path: Path) -> None:
+    target = tmp_path / "press_conferences.json"
+    with patch(
+        "app.services.scraper_press_conferences.requests.get",
+        side_effect=_route_requests_get,
+    ), patch(
+        "app.services.scraper_press_conferences._load_or_fetch_pdf_bytes",
+        return_value=b"%PDF-1.4 stub",
+    ), patch(
+        "app.services.scraper_press_conferences._extract_pdf_text",
+        side_effect=_stub_pdf_text,
+    ):
+        rows = pull_press_conferences_archive(
+            target,
+            historical_years=[],
+            delay_seconds=0.0,
+        )
+    assert rows == 2
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    # Sorted by date desc: March first, then January
+    assert [r["date"] for r in payload] == ["2024-03-20", "2024-01-31"]
+    for row in payload:
+        assert row["document_type"] == "press_conference"
+        assert row["text"]
+
+
+def test_pull_press_is_idempotent_when_cache_has_rows(tmp_path: Path) -> None:
+    target = tmp_path / "press_conferences.json"
+    target.write_text(
+        json.dumps(
+            [{"date": "2024-01-31", "text": "x", "document_type": "press_conference"}]
+        ),
+        encoding="utf-8",
+    )
+    with patch(
+        "app.services.scraper_press_conferences.requests.get"
+    ) as get_mock:
+        rows = pull_press_conferences_archive(
+            target, historical_years=[], delay_seconds=0.0
+        )
+    assert rows == 1
+    get_mock.assert_not_called()
+
+
+def test_pull_press_force_re_walks_over_existing_cache(tmp_path: Path) -> None:
+    target = tmp_path / "press_conferences.json"
+    target.write_text(json.dumps([{"date": "stale", "text": "x"}]), encoding="utf-8")
+    with patch(
+        "app.services.scraper_press_conferences.requests.get",
+        side_effect=_route_requests_get,
+    ), patch(
+        "app.services.scraper_press_conferences._load_or_fetch_pdf_bytes",
+        return_value=b"%PDF-1.4 stub",
+    ), patch(
+        "app.services.scraper_press_conferences._extract_pdf_text",
+        side_effect=_stub_pdf_text,
+    ):
+        rows = pull_press_conferences_archive(
+            target,
+            force=True,
+            historical_years=[],
+            delay_seconds=0.0,
+        )
+    assert rows == 2
+
+
+def test_pull_press_continues_when_one_page_404s(tmp_path: Path) -> None:
+    target = tmp_path / "press_conferences.json"
+
+    def _route_one_404(url, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        if "fomcpresconf20240131.htm" in url:
+            return _FakeRequestsResponse(status_code=404)
+        return _route_requests_get(url, *args, **kwargs)
+
+    with patch(
+        "app.services.scraper_press_conferences.requests.get",
+        side_effect=_route_one_404,
+    ), patch(
+        "app.services.scraper_press_conferences._load_or_fetch_pdf_bytes",
+        return_value=b"%PDF-1.4 stub",
+    ), patch(
+        "app.services.scraper_press_conferences._extract_pdf_text",
+        side_effect=_stub_pdf_text,
+    ):
+        with pytest.warns(UserWarning, match="Press conference fetch failed"):
+            rows = pull_press_conferences_archive(
+                target,
+                historical_years=[],
+                delay_seconds=0.0,
+            )
+    assert rows == 1  # only March survived
+
+
+def test_pull_press_raises_on_calendar_listing_http_error(tmp_path: Path) -> None:
+    target = tmp_path / "press_conferences.json"
+
+    def _route_calendar_503(url, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        return _FakeRequestsResponse(status_code=503)
+
+    with patch(
+        "app.services.scraper_press_conferences.requests.get",
+        side_effect=_route_calendar_503,
+    ):
+        with pytest.warns(UserWarning, match="Press conference listing fetch failed"):
+            with pytest.raises(RuntimeError, match="zero rows"):
+                pull_press_conferences_archive(
+                    target,
+                    historical_years=[],
+                    delay_seconds=0.0,
+                )
+    assert not target.exists()
+    assert not target.with_suffix(target.suffix + ".tmp").exists()
+
+
+def test_pull_press_limit_caps_walk(tmp_path: Path) -> None:
+    target = tmp_path / "press_conferences.json"
+    with patch(
+        "app.services.scraper_press_conferences.requests.get",
+        side_effect=_route_requests_get,
+    ), patch(
+        "app.services.scraper_press_conferences._load_or_fetch_pdf_bytes",
+        return_value=b"%PDF-1.4 stub",
+    ), patch(
+        "app.services.scraper_press_conferences._extract_pdf_text",
+        side_effect=_stub_pdf_text,
+    ):
+        rows = pull_press_conferences_archive(
+            target,
+            historical_years=[],
+            limit=1,
+            delay_seconds=0.0,
+        )
+    assert rows == 1
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    # Most recent first
+    assert payload[0]["date"] == "2024-03-20"
