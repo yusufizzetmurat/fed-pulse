@@ -80,14 +80,12 @@ def test_audit_passes_when_every_required_column_is_present_and_populated(
 
 
 def test_audit_fails_when_required_column_absent(tmp_path: Path) -> None:
-    df = _make_minimal_events(n=10).drop(columns=["forward_realized_vol_10d"])
+    """Drop a column that the schema marks ``required=True`` and confirm
+    the audit reports it as missing.
+    """
+
+    df = _make_minimal_events(n=10).drop(columns=["event_date"])
     parquet = tmp_path / "events.parquet"
-    df.to_parquet(parquet)
-    # forward_realized_vol_10d is required=False in the schema today,
-    # so we instead drop a column that IS required=True. ``event_date``
-    # qualifies.
-    if "event_date" in df.columns:
-        df = df.drop(columns=["event_date"])
     df.to_parquet(parquet)
 
     _, summary = audit_column_populations(parquet)
