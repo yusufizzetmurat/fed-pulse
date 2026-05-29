@@ -253,8 +253,20 @@ def test_prior_window_days_threads_through_build_event_rows(
     long_bars = _json.loads(df_60.iloc[0]["prior_bars_json"])
     assert len(default_bars) == edb.PRIOR_WINDOW_DAYS == 20
     assert len(long_bars) == 60
-    # The 20-bar window should be the tail of the 60-bar window.
-    assert default_bars == long_bars[-20:]
+    # The 20-bar window's dates should match the tail-20 dates of the
+    # 60-bar window. (Derived fields like cum_return_20d depend on
+    # window position and differ legitimately between the two views;
+    # the date axis is the invariant we care about for the threading
+    # contract.)
+    default_dates = [bar["date"] for bar in default_bars]
+    long_tail_dates = [bar["date"] for bar in long_bars[-20:]]
+    assert default_dates == long_tail_dates
+    # And the prior_window_sha256 column must differ — two different
+    # input windows must hash differently.
+    assert (
+        df_default.iloc[0]["prior_window_sha256"]
+        != df_60.iloc[0]["prior_window_sha256"]
+    )
 
 
 # ---------------------------------------------------------------------------
