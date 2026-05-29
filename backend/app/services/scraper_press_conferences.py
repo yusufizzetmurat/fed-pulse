@@ -457,7 +457,7 @@ def _default_historical_years() -> list[int]:
     )
 
 
-def pull_press_conferences_archive(
+def pull_press_conferences_archive(  # noqa: PLR0913
     target_path: Path,
     *,
     force: bool = False,

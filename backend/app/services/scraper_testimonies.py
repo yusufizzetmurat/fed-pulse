@@ -305,7 +305,7 @@ def _default_years() -> list[int]:
     return list(range(_DEFAULT_YEAR_LOWER, current + 1))
 
 
-def pull_testimonies_archive(
+def pull_testimonies_archive(  # noqa: PLR0913
     target_path: Path,
     *,
     force: bool = False,

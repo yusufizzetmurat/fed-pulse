@@ -379,7 +379,7 @@ def _default_years() -> list[int]:
     return list(range(_DEFAULT_YEAR_LOWER, current + 1))
 
 
-def pull_speeches_archive(
+def pull_speeches_archive(  # noqa: PLR0913
     chair_target_path: Path,
     governor_target_path: Path,
     *,
