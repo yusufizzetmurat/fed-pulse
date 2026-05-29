@@ -20,6 +20,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Iterable
@@ -164,26 +165,33 @@ def pull_op_fed_csv(
     """Download the Op-Fed CSV to ``target_path``. Returns the parsed row count.
 
     Idempotent: when ``target_path`` already exists and ``force`` is False
-    the file is left alone and the existing row count is returned. Atomic:
-    the body is written to a sibling ``.tmp`` file, parsed as CSV, and only
-    renamed into place once it parses to a non-empty row set so a partial
-    download cannot leave a half-file at the cache path. Any HTTP non-200
-    or zero-row parse raises and removes the tmp file.
+    the existing file is re-counted and returned. If the cache parses to
+    zero rows it is treated as corrupt and a re-pull is forced.
+
+    Best-effort atomic on POSIX: the body is written to a sibling ``.tmp``
+    file, parsed as CSV, and only renamed into place once it parses to a
+    non-empty row set. ``Path.replace`` is a single ``rename(2)`` on
+    Linux/macOS; on Windows the rename is not atomic. Any HTTP error or
+    zero-row parse raises ``RuntimeError`` and removes the tmp file.
     """
 
     if target_path.exists() and not force:
         with target_path.open("r", encoding="utf-8", newline="") as handle:
-            return sum(1 for _ in csv.DictReader(handle))
+            cached_rows = sum(1 for _ in csv.DictReader(handle))
+        if cached_rows > 0:
+            return cached_rows
+        # Cache exists but is empty — treat as corrupt and re-pull.
 
     target_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = target_path.with_suffix(target_path.suffix + ".tmp")
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
-            status = getattr(response, "status", 200)
-            if status != 200:
-                raise RuntimeError(
-                    f"Op-Fed upstream returned HTTP {status} from {url}"
-                )
+        try:
+            response = urllib.request.urlopen(url, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(
+                f"Op-Fed upstream returned HTTP {exc.code} from {url}"
+            ) from exc
+        with response:
             body = response.read()
         tmp_path.write_bytes(body)
         with tmp_path.open("r", encoding="utf-8", newline="") as handle:

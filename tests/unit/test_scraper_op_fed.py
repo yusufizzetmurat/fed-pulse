@@ -115,6 +115,7 @@ def test_fetch_listing_returns_empty_on_empty_string() -> None:
 # ----- pull_op_fed_csv -----
 
 
+import urllib.error  # noqa: E402
 from unittest.mock import patch  # noqa: E402
 
 from app.data.sources.op_fed import OP_FED_UPSTREAM_URL, pull_op_fed_csv  # noqa: E402
@@ -189,11 +190,31 @@ def test_pull_raises_on_zero_row_download(tmp_path: Path) -> None:
 
 def test_pull_raises_on_http_error(tmp_path: Path) -> None:
     target = tmp_path / "opfed_v1.csv"
+    http_error = urllib.error.HTTPError(
+        OP_FED_UPSTREAM_URL, 404, "Not Found", hdrs=None, fp=None  # type: ignore[arg-type]
+    )
     with patch(
         "app.data.sources.op_fed.urllib.request.urlopen",
-        return_value=_FakeResponse(b"", status=404),
+        side_effect=http_error,
     ):
         with pytest.raises(RuntimeError, match="HTTP 404"):
             pull_op_fed_csv(target)
     assert not target.exists()
     assert not target.with_suffix(target.suffix + ".tmp").exists()
+
+
+def test_pull_repulls_when_cache_parses_to_zero_rows(tmp_path: Path) -> None:
+    """A header-only / truncated cache file should trigger a re-pull
+    rather than silently returning a zero count."""
+
+    target = tmp_path / "opfed_v1.csv"
+    target.write_text("unique_id,sentence\n", encoding="utf-8")
+    body = FIXTURE_CSV.encode("utf-8")
+    with patch(
+        "app.data.sources.op_fed.urllib.request.urlopen",
+        return_value=_FakeResponse(body),
+    ) as opener:
+        rows = pull_op_fed_csv(target)
+    assert rows == 3
+    opener.assert_called_once()
+    assert target.read_bytes() == body
