@@ -20,13 +20,17 @@ contract that gates it.
   `last_accessed_utc`. Initial state: `sealed`, `0`, `null`. Flips on
   the first successful read.
 
-## Stub markers
+## Pinned contents
 
-`fomc_2025.jsonl` currently ships stub rows carrying a leading
-`# pragma: stub` marker in the `text` field. The loader prints a hard
-warning when any stub is seen on load so the sealed-eval headline is
-not silently published against placeholder text. Replace the stub
-content with real scraped text before the one-shot run.
+`fomc_2025.jsonl` carries the eleven FOMC statements from 2025-01-29
+through 2026-04-29 scraped from federalreserve.gov press-release
+pages. The integrity sha256 is pinned in
+`docs/sealed_holdout_protocol.md`; the table of statement dates and
+the cross-check methodology live there. Re-hashing the file after any
+edit must yield the pinned sha or the pre-registration is broken.
+
+The loader still scans for legacy `# pragma: stub` markers and aborts
+loudly if any are found, but no such markers exist on the pinned file.
 
 ## Read it through the loader
 

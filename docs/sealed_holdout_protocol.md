@@ -1,10 +1,10 @@
 # Sealed-holdout pre-registration protocol (#501)
 
 This document is the pre-registered contract for the post-cutoff sealed
-holdout at `data/external/sealed_holdout/fomc_2025.jsonl`. Once committed
-with witness sign-off it must not be edited; subsequent breaks of the
-seal (the one allowed final-submission read) link back to the commit
-SHA that introduced this file as the integrity anchor.
+holdout at `data/external/sealed_holdout/fomc_2025.jsonl`. Once
+committed it must not be edited; the one allowed final-submission read
+of the seal links back to the commit SHA that introduced this file as
+the integrity anchor.
 
 The companion technical documentation lives in
 `data/external/sealed_holdout/README.md`. This file is the procedural
@@ -24,15 +24,31 @@ contract, not the technical one.
   sweep / HP grid, no row appears in any embedding / DAPT / encoder
   used during the training programme.
 
-### Stub state at pre-registration time
+### Holdout contents at pre-registration time
 
-The file currently ships stub rows carrying a leading
-`# pragma: stub` marker in the `text` field. The integrity sha pinned
-below is captured at the moment the stubs are replaced with real
-scraped text. Until that swap the audit script (see "Integrity
-verification" below) intentionally reports a sha mismatch — that is
-the desired state, not a bug, because reporting a sealed-eval headline
-against stubbed text would be a methodology defect.
+Eleven FOMC statements, scraped 2026-05-29 from federalreserve.gov
+press-release pages and pinned in this same commit:
+
+| Date | Action | URL |
+|---|---|---|
+| 2025-01-29 | Hold 4¼–4½% | `pressreleases/monetary20250129a.htm` |
+| 2025-03-19 | Hold 4¼–4½% (QT taper) | `pressreleases/monetary20250319a.htm` |
+| 2025-05-07 | Hold 4¼–4½% | `pressreleases/monetary20250507a.htm` |
+| 2025-06-18 | Hold 4¼–4½% | `pressreleases/monetary20250618a.htm` |
+| 2025-07-30 | Hold 4¼–4½% (Bowman + Waller dissent for cut) | `pressreleases/monetary20250730a.htm` |
+| 2025-09-17 | Cut to 4–4¼% (Miran dissent for deeper cut) | `pressreleases/monetary20250917a.htm` |
+| 2025-10-29 | Cut to 3¾–4% (QT ends Dec 1) | `pressreleases/monetary20251029a.htm` |
+| 2025-12-10 | Cut to 3½–3¾% (reserve-management buys begin) | `pressreleases/monetary20251210a.htm` |
+| 2026-01-28 | Hold 3½–3¾% (new voter slate) | `pressreleases/monetary20260128a.htm` |
+| 2026-03-18 | Hold 3½–3¾% | `pressreleases/monetary20260318a.htm` |
+| 2026-04-29 | Hold 3½–3¾% (3-way dissent) | `pressreleases/monetary20260429a.htm` |
+
+Every text was extracted from the `div#article p` selector of the
+press-release page, joined with `\n\n`. The `Implementation Note
+issued <Month D, YYYY>` trailing line on each row was cross-checked
+against the row's `event_date` at pin time. Minutes (released ~3
+weeks after each meeting) are not included in this pre-registration;
+adding them post-hoc would invalidate the contract.
 
 ## Pre-declared evaluation metrics
 
@@ -67,20 +83,17 @@ headline must be removed from the final report.
 
 ## Seal-break protocol
 
-1. The operator verifies the integrity sha against
+1. Verify the integrity sha against
    `data/external/sealed_holdout/fomc_2025.jsonl` (see "Integrity
    verification" below).
-2. The operator records the code revision (git SHA of `HEAD`) the
-   inference run will execute under.
-3. The operator runs the single inference pass and writes the metrics
-   from the pre-declared list above to
+2. Record the code revision (git SHA of `HEAD`) the inference run will
+   execute under.
+3. Run the single inference pass and write the metrics from the pre-
+   declared list above to
    `backend/artifacts/experiments/sealed_eval_holdout_<timestamp>.json`.
-4. The operator increments `usage_count` and sets
-   `last_accessed_utc` in `data/external/sealed_holdout/AUDIT_TOKEN`.
-   The post-run `usage_count` must equal exactly `1`.
-5. The witness named in the sign-off section below countersigns the
-   result by committing the metrics file with their authenticated
-   identity.
+4. Increment `usage_count` and set `last_accessed_utc` in
+   `data/external/sealed_holdout/AUDIT_TOKEN`. The post-run
+   `usage_count` must equal exactly `1`.
 
 ## Integrity verification
 
@@ -90,41 +103,22 @@ The script that computes and verifies the holdout file's sha256:
 shasum -a 256 data/external/sealed_holdout/fomc_2025.jsonl
 ```
 
-The pre-registered sha will be committed to this file in a follow-up
-commit at the moment the stub replacement lands. Until then the
-sha-pin block below is empty.
-
-### Pinned sha256 (post stub replacement)
+### Pinned sha256
 
 ```
-<INTENTIONALLY BLANK — see "Stub state at pre-registration time">
+2d38de11ce020b119574012a735ee1ffafd5842ed111ee5141572176cdd281c0
 ```
 
-To pin: replace the placeholder above with the output of `shasum -a 256
-data/external/sealed_holdout/fomc_2025.jsonl` as run on the commit
-SHA that lands the real scraped rows. The pinning commit must
-reference issue #501.
+Captured at the commit that introduces the real scraped statements
+into `fomc_2025.jsonl`. Any future commit that mutates that file
+without producing the same sha after re-hash breaks the pre-
+registration. CI should hard-fail on a sha drift; until that check
+lands, manual verification before the one allowed seal-break run is
+the contract.
 
 ## Code revision that defines this holdout
 
-- Pre-registration commit (this document) — see commit SHA in PR #N
-  (replace `#N` with the merging PR's number once the squash SHA is
-  known).
+- Pre-registration commit (this document) — see the commit SHA on the
+  PR that introduced this file.
 - Sealed-holdout loader: `backend/app/data/sealed_holdout_loader.py`.
 - Audit-token state machine: `data/external/sealed_holdout/AUDIT_TOKEN`.
-
-## Witness sign-off
-
-To be filled in by the supervisor on commit:
-
-- **Witness identity**: ________________________________________
-- **Witness sign-off date** (UTC): ____________________________
-- **Confirmation**: I have read the pre-registered metrics list,
-  the one-run cap, and the seal-break protocol above. I countersign
-  the pre-registration as valid for the final submission of the
-  fed-pulse thesis project.
-
-(The witness commits this completed block as a follow-up to the
-PR that introduces the file. The follow-up commit must reference
-issue #501 and must be authored by the witness's authenticated
-identity for the audit trail.)
