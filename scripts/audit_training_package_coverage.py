@@ -45,18 +45,34 @@ DEFAULT_EXTERNAL = REPO_ROOT / "data" / "external"
 # populated counts as a failure. Set conservatively.
 DEFAULT_SPARSE_THRESHOLD_PCT = 50.0
 
-# Required events.parquet column families. Each entry: family label →
-# (column names that must exist AND be at least sparse_threshold
-# populated, optional issue/PR reference). Column names verified against
-# ``backend/app/data/schemas.py`` and the loader sidecars.
+# events.parquet column families.
 #
-# Note: press_conference QA, SEP projections, and per-asset close caches
-# do NOT live on events.parquet — they live in sidecar parquets and are
-# reported under SIDECAR_FILES below.
+# ``REQUIRED``: drops the supervised target — the trainer literally
+# cannot run without it. Failing this gate aborts the audit with a
+# non-zero exit code.
+#
+# ``OPTIONAL``: feature families that ``schemas.py`` marks
+# ``required=False``. A TP whose builder did not emit them is still
+# valid — the trainer flags that depend on them simply degrade to a
+# no-op. The audit reports populations and (via
+# ``TRAINER_FLAG_DEPENDENCIES``) which sweep flags will silently
+# degrade, but DOES NOT fail.
+#
+# Column names verified against ``backend/app/data/schemas.py``. Sidecar
+# parquets (press-conf Q&A, SEP projections, per-asset close caches)
+# live under ``SIDECAR_FILES`` below.
 REQUIRED_EVENT_FAMILIES: dict[str, list[str]] = {
     "canonical_target": [
         "forward_realized_vol_10d",
     ],
+}
+
+# Optional events.parquet column families: presence reported, absence
+# does NOT fail the audit. Each family ties back to one or more trainer
+# flags via ``TRAINER_FLAG_DEPENDENCIES`` below so the audit report
+# states "flag X will silently no-op on this TP" rather than just
+# "column Y absent".
+OPTIONAL_EVENT_FAMILIES: dict[str, list[str]] = {
     "rates_panel_pre_meeting": [
         "pre_meeting_yield_1y",
         "pre_meeting_yield_2y",
@@ -68,8 +84,10 @@ REQUIRED_EVENT_FAMILIES: dict[str, list[str]] = {
         "yield_5y_change_5d",
         "terminal_rate_change_5d",
     ],
-    "garch_residual": [
+    "garch_baseline": [
         "forward_realized_vol_10d_garch_baseline",
+    ],
+    "garch_residual": [
         "forward_realized_vol_10d_garch_residual",
     ],
     "statement_delta": [
@@ -83,13 +101,8 @@ REQUIRED_EVENT_FAMILIES: dict[str, list[str]] = {
         "votes_against",
         "dissent_count",
         "dissent_direction",
+        "is_unanimous",
     ],
-}
-
-# Optional events.parquet column families: presence reported, absence
-# does NOT fail the audit. Reflects feature additions that may or may
-# not have a builder firing on the current rebuild.
-OPTIONAL_EVENT_FAMILIES: dict[str, list[str]] = {
     "multi_horizon_vol": [
         "forward_realized_vol_1d",
         "forward_realized_vol_3d",
@@ -106,6 +119,50 @@ OPTIONAL_EVENT_FAMILIES: dict[str, list[str]] = {
         "forward_realized_vol_10d_eurusd",
         "forward_realized_vol_10d_usdjpy",
         "forward_realized_vol_10d_gbpusd",
+    ],
+}
+
+# Map each optional family to the trainer surface that consumes it.
+# Each entry is a SHORT description (verified against the actual
+# argparse surface in ``backend/app/train_forecaster.py`` and loader
+# kwargs in ``backend/app/training/loaders.py`` on 2026-05-29) — NOT a
+# CLI snippet the operator should paste verbatim unless the entry says
+# "(CLI flag: …)". Several feature blocks are gated only via
+# ``ModelConfig`` keyword args and have no top-level CLI flag yet; the
+# audit surfaces that distinction so the operator does not chase a
+# non-existent flag name.
+TRAINER_FLAG_DEPENDENCIES: dict[str, list[str]] = {
+    "rates_panel_pre_meeting": [
+        "rates head input features (auto-consumed when populated; "
+        "no CLI gate)",
+    ],
+    "rates_panel_change_5d": [
+        "rates head targets (CLI flag: --rates-heads <subset> "
+        "selects which heads)",
+    ],
+    "garch_baseline": [
+        "GARCH(1,1) baseline column on events.parquet (no CLI gate; "
+        "consumed by --vol-target-mode garch_residual via the residual "
+        "column)",
+    ],
+    "garch_residual": [
+        "CLI flag: --vol-target-mode garch_residual",
+    ],
+    "statement_delta": [
+        "loader kwarg: use_statement_delta=True via ModelConfig (no "
+        "top-level CLI flag)",
+    ],
+    "vote_tally": [
+        "loader kwarg: use_vote_features=True via ModelConfig (no "
+        "top-level CLI flag)",
+    ],
+    "multi_horizon_vol": [
+        "multi-horizon target columns (auto-consumed via --targets "
+        "when columns are present; #483)",
+    ],
+    "per_asset_vol": [
+        "symbol-conditioned head (CLI flag: --symbol-embedding-dim N "
+        "with N>0; per-asset target columns via --targets pattern; #482)",
     ],
 }
 
@@ -178,6 +235,11 @@ def _audit_event_families(
 ) -> list[str]:
     """Walk required event-schema families. Return list of failure
     descriptions; empty list means everything passed.
+
+    Required families are gates that fail the audit. Optional families
+    are reported as a per-family roll-up plus a trainer-flag impact
+    list — the operator sees which sweep flags will silently degrade
+    on this TP.
     """
     failures: list[str] = []
 
@@ -195,19 +257,52 @@ def _audit_event_families(
             if not ok:
                 failures.append(f"{family}: {column} ({status})")
 
-    print("\n=== OPTIONAL EVENTS.PARQUET FAMILIES (presence reported) ===")
+    print("\n=== OPTIONAL EVENTS.PARQUET FAMILIES ===")
+    print(
+        "    (presence reported; absence does NOT fail the audit. "
+        "Trainer flags that depend on a missing family will silently "
+        "no-op — see the FLAG IMPACT section below.)"
+    )
     n_total = len(df)
+    degraded_families: list[str] = []
     for family, columns in OPTIONAL_EVENT_FAMILIES.items():
         print(f"\n[{family}]")
+        family_has_any_populated = False
         for column in columns:
             if column in df.columns:
                 n_pop = int(df[column].notna().sum())
+                if n_pop > 0:
+                    family_has_any_populated = True
+                marker = "POP " if n_pop > 0 else "EMPT"
                 print(
-                    f"  PRESENT {column:53s} {_format_pct(n_pop, n_total)} "
+                    f"  {marker} {column:53s} {_format_pct(n_pop, n_total)} "
                     f"({n_pop}/{n_total})"
                 )
             else:
-                print(f"  ABSENT  {column}")
+                print(f"  MISS {column}")
+        if not family_has_any_populated:
+            degraded_families.append(family)
+
+    print("\n=== TRAINER FLAG IMPACT ===")
+    if not degraded_families:
+        print("  All optional families have at least one populated column.")
+        print("  No sweep flag will silently no-op due to data gaps.")
+    else:
+        print(
+            "  The following sweep flags will silently no-op on this TP "
+            "because their backing family has zero populated rows:"
+        )
+        for family in degraded_families:
+            flags = TRAINER_FLAG_DEPENDENCIES.get(family, [])
+            flag_label = ", ".join(flags) if flags else "(no flag mapped)"
+            print(f"    [{family}] -> {flag_label}")
+        print(
+            "\n  These flags are SAFE TO SET on the sweep CLI — the trainer "
+            "will reach the empty column, log a fallback, and proceed — but "
+            "the methodology cell they target will not be the cell the "
+            "operator expects. Rebuild events.parquet with the relevant "
+            "builder enabled before counting on the cell."
+        )
 
     return failures
 
