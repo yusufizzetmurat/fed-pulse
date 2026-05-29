@@ -204,6 +204,72 @@ def test_lookahead_guard_raises_when_prior_bar_overlaps_as_of() -> None:
 
 
 # ---------------------------------------------------------------------------
+# prior_window_days CLI threading (#476: 20 -> 60d sequence support)
+# ---------------------------------------------------------------------------
+
+
+def test_prior_window_days_threads_through_build_event_rows(
+    tmp_path: Path,
+) -> None:
+    """``--prior-window 60`` on the CLI must end up sizing the
+    ``prior_bars_json`` window on every emitted row. The default stays
+    at 20 for back-compat; explicit 60 must change the count.
+    """
+
+    import json as _json
+
+    package = tmp_path / "package"
+    package.mkdir()
+    event_date = "2023-06-14"
+    _write_registry(
+        package / "registry_normalized.jsonl",
+        [_registry_entry_for_statement(event_date)],
+    )
+    # 1500 trading days starting 2018-01 so 60+ pre-event bars are
+    # available and the +30d forward window also clears the end of
+    # the series.
+    dates = _make_trading_dates(_dt.date(2018, 1, 2), 1500)
+    closes = [100.0 + i * 0.01 for i in range(1500)]
+    series = _series_from_closes(dates, closes)
+
+    df_default = edb.build_event_rows(
+        package_dir=package,
+        asset="^GSPC",
+        benchmark="^GSPC",
+        asset_series=series,
+        bench_series=series,
+    )
+    df_60 = edb.build_event_rows(
+        package_dir=package,
+        asset="^GSPC",
+        benchmark="^GSPC",
+        asset_series=series,
+        bench_series=series,
+        prior_window_days=60,
+    )
+
+    # Read the JSON-encoded prior window off the first row of each frame.
+    default_bars = _json.loads(df_default.iloc[0]["prior_bars_json"])
+    long_bars = _json.loads(df_60.iloc[0]["prior_bars_json"])
+    assert len(default_bars) == edb.PRIOR_WINDOW_DAYS == 20
+    assert len(long_bars) == 60
+    # The 20-bar window's dates should match the tail-20 dates of the
+    # 60-bar window. (Derived fields like cum_return_20d depend on
+    # window position and differ legitimately between the two views;
+    # the date axis is the invariant we care about for the threading
+    # contract.)
+    default_dates = [bar["date"] for bar in default_bars]
+    long_tail_dates = [bar["date"] for bar in long_bars[-20:]]
+    assert default_dates == long_tail_dates
+    # And the prior_window_sha256 column must differ — two different
+    # input windows must hash differently.
+    assert (
+        df_default.iloc[0]["prior_window_sha256"]
+        != df_60.iloc[0]["prior_window_sha256"]
+    )
+
+
+# ---------------------------------------------------------------------------
 # No survivorship: zero-move events still emit a row
 # ---------------------------------------------------------------------------
 
