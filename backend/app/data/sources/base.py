@@ -24,6 +24,7 @@ _VALID_SOURCE_TYPES = frozenset({
     "regional_research",
     "ny_fed_liberty_street",
     "gss_factor_decomposition",
+    "swanson_three_factor",
 })
 
 
