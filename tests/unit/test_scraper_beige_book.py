@@ -115,13 +115,19 @@ _PAGE_HTML_TEMPLATE = """
 <html><head><meta property="og:title" content="Beige Book {month}"></head>
 <body><div id="article">
 <p>{filler}</p>
+<p>{filler2}</p>
+<p>{filler3}</p>
 </div></body></html>
 """
 
 
 def _fake_page(month: str) -> str:
-    filler = ("Substantive regional summary " * 20)
-    return _PAGE_HTML_TEMPLATE.format(month=month, filler=filler)
+    filler = "Substantive regional summary " * 20
+    filler2 = "Manufacturing activity expanded modestly across most districts " * 6
+    filler3 = "Labor markets remained tight with wage pressures elevated " * 6
+    return _PAGE_HTML_TEMPLATE.format(
+        month=month, filler=filler, filler2=filler2, filler3=filler3
+    )
 
 
 def _route_urlopen(url, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
@@ -141,7 +147,7 @@ def test_pull_walks_listing_and_writes_json(tmp_path: Path) -> None:
         "app.services.scraper_beige_book.urllib.request.urlopen",
         side_effect=_route_urlopen,
     ) as opener:
-        rows = pull_beige_book_archive(target)
+        rows = pull_beige_book_archive(target, delay_seconds=0.0)
     assert rows == 2
     payload = json.loads(target.read_text(encoding="utf-8"))
     assert [r["date"] for r in payload] == ["2024-01-01", "2024-03-01"]
@@ -156,7 +162,7 @@ def test_pull_is_idempotent_when_cache_has_rows(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with patch("app.services.scraper_beige_book.urllib.request.urlopen") as opener:
-        rows = pull_beige_book_archive(target)
+        rows = pull_beige_book_archive(target, delay_seconds=0.0)
     assert rows == 1
     opener.assert_not_called()
 
@@ -168,7 +174,7 @@ def test_pull_force_re_walks_over_existing_cache(tmp_path: Path) -> None:
         "app.services.scraper_beige_book.urllib.request.urlopen",
         side_effect=_route_urlopen,
     ):
-        rows = pull_beige_book_archive(target, force=True)
+        rows = pull_beige_book_archive(target, force=True, delay_seconds=0.0)
     assert rows == 2
 
 
@@ -179,7 +185,7 @@ def test_pull_repulls_when_cache_is_empty_list(tmp_path: Path) -> None:
         "app.services.scraper_beige_book.urllib.request.urlopen",
         side_effect=_route_urlopen,
     ) as opener:
-        rows = pull_beige_book_archive(target)
+        rows = pull_beige_book_archive(target, delay_seconds=0.0)
     assert rows == 2
     assert opener.call_count == 3
 
@@ -190,7 +196,7 @@ def test_pull_limit_caps_walk(tmp_path: Path) -> None:
         "app.services.scraper_beige_book.urllib.request.urlopen",
         side_effect=_route_urlopen,
     ) as opener:
-        rows = pull_beige_book_archive(target, limit=1)
+        rows = pull_beige_book_archive(target, limit=1, delay_seconds=0.0)
     assert rows == 1
     # 1 listing + 1 page = 2 fetches
     assert opener.call_count == 2
@@ -210,7 +216,7 @@ def test_pull_continues_when_one_page_404s(tmp_path: Path) -> None:
         side_effect=_route_with_one_404,
     ):
         with pytest.warns(UserWarning, match="Beige Book fetch failed"):
-            rows = pull_beige_book_archive(target)
+            rows = pull_beige_book_archive(target, delay_seconds=0.0)
     assert rows == 1  # only March survived
 
 
@@ -222,7 +228,7 @@ def test_pull_raises_on_listing_http_error(tmp_path: Path) -> None:
         side_effect=err,
     ):
         with pytest.raises(RuntimeError, match="HTTP 503"):
-            pull_beige_book_archive(target)
+            pull_beige_book_archive(target, delay_seconds=0.0)
     assert not target.exists()
     assert not target.with_suffix(target.suffix + ".tmp").exists()
 
@@ -242,6 +248,6 @@ def test_pull_raises_when_every_page_fails(tmp_path: Path) -> None:
     ):
         with pytest.warns(UserWarning):
             with pytest.raises(RuntimeError, match="zero rows"):
-                pull_beige_book_archive(target)
+                pull_beige_book_archive(target, delay_seconds=0.0)
     assert not target.exists()
     assert not target.with_suffix(target.suffix + ".tmp").exists()

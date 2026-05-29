@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 import warnings
@@ -285,6 +286,7 @@ def pull_beige_book_archive(
     archive_url: str = ARCHIVE_LISTING_URL,
     limit: int | None = None,
     timeout: float = 30.0,
+    delay_seconds: float = 0.5,
 ) -> int:
     """Walk the federalreserve.gov Beige Book archive and write parsed rows.
 
@@ -317,7 +319,7 @@ def pull_beige_book_archive(
         entries = entries[:limit]
 
     parsed: list[ParsedBeigeBook] = []
-    for entry in entries:
+    for i, entry in enumerate(entries):
         try:
             page_html = _http_get_text(entry.url, timeout=timeout)
             parsed.append(parse_beige_book_page(page_html, source_url=entry.url))
@@ -327,8 +329,13 @@ def pull_beige_book_archive(
                 stacklevel=2,
             )
             continue
+        # Polite delay between page fetches so a 400-issue walk doesn't
+        # trigger an upstream throttle (which would silently truncate the
+        # cache to N rows with no surface-level error). Skipped after the
+        # last entry.
+        if delay_seconds > 0 and i + 1 < len(entries):
+            time.sleep(delay_seconds)
 
-    target_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = target_path.with_suffix(target_path.suffix + ".tmp")
     try:
         written = write_beige_book_json(parsed, tmp_path)
@@ -378,9 +385,19 @@ if __name__ == "__main__":
         default=ARCHIVE_LISTING_URL,
         help="Override the archive listing URL.",
     )
+    parser.add_argument(
+        "--delay-seconds",
+        type=float,
+        default=0.5,
+        help="Polite delay between page fetches (default: 0.5s).",
+    )
     ns = parser.parse_args()
     target = Path(ns.data_dir) / OUTPUT_FILENAME
     rows = pull_beige_book_archive(
-        target, force=ns.force, archive_url=ns.archive_url, limit=ns.limit
+        target,
+        force=ns.force,
+        archive_url=ns.archive_url,
+        limit=ns.limit,
+        delay_seconds=ns.delay_seconds,
     )
     print(f"Beige Book cache at {target} (rows: {rows})")
