@@ -93,7 +93,11 @@ def test_check_column_ok() -> None:
 
 
 def test_audit_passes_on_minimal_dataframe(tmp_path: Path) -> None:
-    """Bare-minimum events.parquet — only the supervised target — passes."""
+    """Bare-minimum events.parquet — only the supervised target — passes.
+
+    Also confirms the audit does not gate on any other column even when
+    every optional family is absent.
+    """
     df = _make_minimal_event_dataframe(n=10)
     parquet = tmp_path / "events.parquet"
     df.to_parquet(parquet)
@@ -115,8 +119,7 @@ def test_audit_fails_when_canonical_target_missing(tmp_path: Path) -> None:
 
 def test_audit_fails_when_canonical_target_sparse(tmp_path: Path) -> None:
     df = _make_minimal_event_dataframe(n=10)
-    df.loc[: 9 - 1, "forward_realized_vol_10d"] = None  # only 1/10 populated
-    df.loc[0, "forward_realized_vol_10d"] = 0.05
+    df["forward_realized_vol_10d"] = [0.05] + [None] * 9  # 10% populated
     parquet = tmp_path / "events.parquet"
     df.to_parquet(parquet)
 
@@ -124,17 +127,32 @@ def test_audit_fails_when_canonical_target_sparse(tmp_path: Path) -> None:
     assert result == 1
 
 
-def test_audit_passes_when_optional_families_all_missing(tmp_path: Path) -> None:
-    """A TP missing every optional family (rates, garch, statement-delta
-    etc.) still passes — those flags are reported as degraded but the
-    audit does not gate the sweep on them.
+def test_garch_baseline_and_residual_are_separate_families() -> None:
+    """The trainer uses ``forward_realized_vol_10d_garch_residual`` as
+    the supervised target under ``--vol-target-mode garch_residual``;
+    ``forward_realized_vol_10d_garch_baseline`` is only the GARCH model
+    fit. Bundling both into one family would let a TP with only the
+    baseline populated falsely report the residual-gated sweep arm as
+    healthy. Lock the split here.
     """
-    df = _make_minimal_event_dataframe(n=10)
-    parquet = tmp_path / "events.parquet"
-    df.to_parquet(parquet)
+    assert "garch_baseline" in OPTIONAL_EVENT_FAMILIES
+    assert "garch_residual" in OPTIONAL_EVENT_FAMILIES
+    assert OPTIONAL_EVENT_FAMILIES["garch_baseline"] == [
+        "forward_realized_vol_10d_garch_baseline"
+    ]
+    assert OPTIONAL_EVENT_FAMILIES["garch_residual"] == [
+        "forward_realized_vol_10d_garch_residual"
+    ]
 
-    result = audit(parquet)
-    assert result == 0
+
+def test_vote_tally_family_includes_is_unanimous() -> None:
+    """The loader (``loaders.py`` ~line 1524) derives one of four vote
+    scalars from ``is_unanimous``; the column is required=False in the
+    schema, so a TP can have ``votes_for`` populated while ``is_unanimous``
+    is absent. The audit should surface that gap rather than declare
+    the family healthy.
+    """
+    assert "is_unanimous" in OPTIONAL_EVENT_FAMILIES["vote_tally"]
 
 
 def test_audit_returns_two_when_file_missing(tmp_path: Path) -> None:

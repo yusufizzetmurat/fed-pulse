@@ -84,8 +84,10 @@ OPTIONAL_EVENT_FAMILIES: dict[str, list[str]] = {
         "yield_5y_change_5d",
         "terminal_rate_change_5d",
     ],
-    "garch_residual": [
+    "garch_baseline": [
         "forward_realized_vol_10d_garch_baseline",
+    ],
+    "garch_residual": [
         "forward_realized_vol_10d_garch_residual",
     ],
     "statement_delta": [
@@ -99,6 +101,7 @@ OPTIONAL_EVENT_FAMILIES: dict[str, list[str]] = {
         "votes_against",
         "dissent_count",
         "dissent_direction",
+        "is_unanimous",
     ],
     "multi_horizon_vol": [
         "forward_realized_vol_1d",
@@ -119,19 +122,48 @@ OPTIONAL_EVENT_FAMILIES: dict[str, list[str]] = {
     ],
 }
 
-# Map each optional family to the trainer flag(s) it gates. When a
-# family has zero columns populated the audit reports the corresponding
-# flag(s) as silently degrading. The flag names match the argparse
-# surface in ``backend/app/train_forecaster.py`` / sweep configs as of
-# 2026-05-29; rename here when those flags change.
+# Map each optional family to the trainer surface that consumes it.
+# Each entry is a SHORT description (verified against the actual
+# argparse surface in ``backend/app/train_forecaster.py`` and loader
+# kwargs in ``backend/app/training/loaders.py`` on 2026-05-29) — NOT a
+# CLI snippet the operator should paste verbatim unless the entry says
+# "(CLI flag: …)". Several feature blocks are gated only via
+# ``ModelConfig`` keyword args and have no top-level CLI flag yet; the
+# audit surfaces that distinction so the operator does not chase a
+# non-existent flag name.
 TRAINER_FLAG_DEPENDENCIES: dict[str, list[str]] = {
-    "rates_panel_pre_meeting": ["--use-rates-features"],
-    "rates_panel_change_5d": ["--use-rates-features"],
-    "garch_residual": ["--target-mode garch_residual"],
-    "statement_delta": ["--use-statement-delta-features"],
-    "vote_tally": ["--use-vote-features"],
-    "multi_horizon_vol": ["--multi-horizon-heads"],
-    "per_asset_vol": ["--symbol-conditioned-head", "--per-asset-targets"],
+    "rates_panel_pre_meeting": [
+        "rates head input features (auto-consumed when populated; "
+        "no CLI gate)",
+    ],
+    "rates_panel_change_5d": [
+        "rates head targets (CLI flag: --rates-heads <subset> "
+        "selects which heads)",
+    ],
+    "garch_baseline": [
+        "GARCH(1,1) baseline column on events.parquet (no CLI gate; "
+        "consumed by --vol-target-mode garch_residual via the residual "
+        "column)",
+    ],
+    "garch_residual": [
+        "CLI flag: --vol-target-mode garch_residual",
+    ],
+    "statement_delta": [
+        "loader kwarg: use_statement_delta=True via ModelConfig (no "
+        "top-level CLI flag)",
+    ],
+    "vote_tally": [
+        "loader kwarg: use_vote_features=True via ModelConfig (no "
+        "top-level CLI flag)",
+    ],
+    "multi_horizon_vol": [
+        "multi-horizon target columns (auto-consumed via --targets "
+        "when columns are present; #483)",
+    ],
+    "per_asset_vol": [
+        "symbol-conditioned head (CLI flag: --symbol-embedding-dim N "
+        "with N>0; per-asset target columns via --targets pattern; #482)",
+    ],
 }
 
 # Sidecar parquet files the training loader reads alongside events.parquet.
