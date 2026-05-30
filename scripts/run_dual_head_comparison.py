@@ -240,6 +240,21 @@ def _parse_args() -> argparse.Namespace:
             "missing flag."
         ),
     )
+    # #478 VIX term-structure + VRP block. Off by default so the
+    # canonical sweep stays byte-identical.
+    parser.add_argument(
+        "--use-vix-features",
+        dest="use_vix_features",
+        action="store_true",
+        help=(
+            "Attach the 6-scalar VIX term-structure + VRP block "
+            "(vix, vix1m, vix3m, vix6m, vix_3m_over_1m_slope, vrp) at "
+            "T-1 to every supervised event. Reads the strict-prior "
+            "vix_*_t_minus_1 columns on events.parquet; pre-coverage "
+            "events (^VIX1M / ^VIX3M / ^VIX6M before 2008) carry zeros "
+            "+ missing=1.0."
+        ),
+    )
     # #470 regime-loss variant. ``ce`` keeps the standard CE on the
     # 3-class regime head; ``ordinal_ce`` swaps in bin-distance-weighted
     # CE so a calm->high miss costs 2x a calm->normal miss.
@@ -346,6 +361,7 @@ def _parse_args() -> argparse.Namespace:
         use_vote_features=False,
         use_press_conf=False,
         use_text_embeddings=True,
+        use_vix_features=False,
     )
     return parser.parse_args()
 
@@ -466,6 +482,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
     use_statement_delta: bool = False,
     use_vote_features: bool = False,
     use_press_conf: bool = False,
+    use_vix_features: bool = False,
     regime_loss: str = "ce",
     text_encoder: str | None = None,
     use_text_embeddings: bool = True,
@@ -490,6 +507,10 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
         if absolute_vol_thresholds is not None
         else DEFAULT_ABSOLUTE_VOL_THRESHOLDS
     )
+    # ``input_size`` stays at the base RICH_FEATURE_SIZE. Every opt-in
+    # tail (regime / sep / press_conf / statement_delta / vote / vix) is
+    # widened inside ``ForecasterBase.__init__`` via the per-tail
+    # ``*_tail_dim`` accumulators; widening here would double-count.
     config = ModelConfig(
         input_size=RICH_FEATURE_SIZE,
         output_mode="classification",
@@ -506,6 +527,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
         use_press_conf=use_press_conf,
         use_statement_delta=use_statement_delta,
         use_vote_features=use_vote_features,
+        use_vix_features=use_vix_features,
         regime_loss_mode=regime_loss,
         vol_regime_label_mode=vol_regime_label_mode,
         absolute_vol_thresholds=resolved_absolute_thresholds,
@@ -524,6 +546,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
             use_press_conf=use_press_conf,
             text_encoder=text_encoder,
             use_text_embeddings=use_text_embeddings,
+            use_vix_features=use_vix_features,
             vol_target_horizon=vol_target_horizon,
             sequence_length=active_sequence_length,
         )
@@ -636,6 +659,7 @@ def main() -> int:
                     use_statement_delta=bool(args.use_statement_delta),
                     use_vote_features=bool(args.use_vote_features),
                     use_press_conf=bool(args.use_press_conf),
+                    use_vix_features=bool(args.use_vix_features),
                     regime_loss=str(args.regime_loss),
                     text_encoder=(
                         str(args.text_encoder) if args.text_encoder else None
@@ -683,6 +707,7 @@ def main() -> int:
         "use_statement_delta": bool(args.use_statement_delta),
         "use_vote_features": bool(args.use_vote_features),
         "use_press_conf": bool(args.use_press_conf),
+        "use_vix_features": bool(args.use_vix_features),
         "regime_loss": str(args.regime_loss),
         "text_encoder": (
             str(args.text_encoder) if args.text_encoder else None
