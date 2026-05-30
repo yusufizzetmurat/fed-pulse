@@ -114,6 +114,193 @@ def apply_temperature(logits: torch.Tensor, T: float) -> torch.Tensor:
 
 
 # ---------------------------------------------------------------------------
+# Per-class Platt scaling (one-vs-rest sigmoid)
+# ---------------------------------------------------------------------------
+
+
+def fit_platt_per_class(
+    val_logits: torch.Tensor,
+    val_targets: torch.Tensor,
+    *,
+    n_classes: int = 3,
+    max_iter: int = 200,
+    lr: float = 0.05,
+) -> list[tuple[float, float]]:
+    """Fit a per-class sigmoid Platt calibrator on softmax scores.
+
+    For each class ``c`` the calibrator is ``p_c = sigmoid(a_c * z_c + b_c)``
+    where ``z_c`` is the per-class softmax score from ``val_logits``. The
+    parameters minimise binary cross-entropy against the one-vs-rest
+    indicator ``1[target == c]`` and are fit with LBFGS, mirroring the
+    reference implementation in Platt (1999).
+
+    Returns a list of ``(a, b)`` tuples of length ``n_classes``. When a
+    class is absent from the val targets the calibrator falls back to
+    the identity ``(1.0, 0.0)`` so the inference path is byte-identical
+    to the uncalibrated softmax for that class.
+    """
+
+    if val_logits.shape[0] != val_targets.shape[0]:
+        raise ValueError(
+            f"val_logits ({val_logits.shape[0]} rows) and val_targets "
+            f"({val_targets.shape[0]} rows) must have the same length"
+        )
+    if val_logits.dim() != 2:
+        raise ValueError(f"val_logits must be 2-D; got shape {tuple(val_logits.shape)}")
+    if val_targets.dim() != 1:
+        raise ValueError(f"val_targets must be 1-D; got shape {tuple(val_targets.shape)}")
+    if n_classes <= 0:
+        raise ValueError(f"n_classes must be positive; got {n_classes}")
+    if val_logits.shape[0] == 0:
+        return [(1.0, 0.0)] * n_classes
+
+    logits = val_logits.detach().float()
+    targets = val_targets.long()
+    softmax_scores = F.softmax(logits, dim=-1)
+
+    params: list[tuple[float, float]] = []
+    for c in range(n_classes):
+        z = softmax_scores[:, c].detach()
+        y = (targets == c).float()
+        if y.sum().item() == 0 or y.sum().item() == y.numel():
+            # All zeros or all ones -- BCE is degenerate; keep identity.
+            params.append((1.0, 0.0))
+            continue
+
+        a = torch.tensor(1.0, requires_grad=True)
+        b = torch.tensor(0.0, requires_grad=True)
+        optimiser = torch.optim.LBFGS([a, b], lr=lr, max_iter=max_iter)
+
+        def _closure(
+            a: torch.Tensor = a,
+            b: torch.Tensor = b,
+            z: torch.Tensor = z,
+            y: torch.Tensor = y,
+            opt: torch.optim.LBFGS = optimiser,
+        ) -> torch.Tensor:
+            opt.zero_grad()
+            logit = a * z + b
+            loss = F.binary_cross_entropy_with_logits(logit, y)
+            loss.backward()  # type: ignore[no-untyped-call]
+            return loss
+
+        optimiser.step(_closure)  # type: ignore[no-untyped-call]
+        params.append((float(a.detach().item()), float(b.detach().item())))
+    return params
+
+
+def apply_platt_per_class(
+    logits: torch.Tensor,
+    params: Sequence[tuple[float, float]],
+    *,
+    renormalise: bool = True,
+) -> torch.Tensor:
+    """Apply per-class Platt sigmoids to the softmax of ``logits``.
+
+    Returns the per-row vector ``sigmoid(a_c * softmax(logits)_c + b_c)``
+    over each class; when ``renormalise=True`` the resulting vector is
+    rescaled to sum to 1 so the downstream conformal / argmax surface
+    can keep treating it as a probability distribution. The sigmoid
+    outputs are not naturally normalised across classes (one-vs-rest by
+    construction), so renormalising is the standard recovery step when
+    the consumer expects a categorical distribution.
+    """
+
+    if logits.dim() != 2:
+        raise ValueError(f"logits must be 2-D; got shape {tuple(logits.shape)}")
+    if logits.shape[-1] != len(params):
+        raise ValueError(
+            f"params length {len(params)} does not match logits classes "
+            f"{logits.shape[-1]}"
+        )
+
+    softmax_scores = F.softmax(logits, dim=-1)
+    a_vec = torch.tensor([p[0] for p in params], dtype=softmax_scores.dtype)
+    b_vec = torch.tensor([p[1] for p in params], dtype=softmax_scores.dtype)
+    calibrated = torch.sigmoid(softmax_scores * a_vec + b_vec)
+    if renormalise:
+        denom = calibrated.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+        calibrated = calibrated / denom
+    return calibrated
+
+
+# ---------------------------------------------------------------------------
+# Multi-class Brier + NLL
+# ---------------------------------------------------------------------------
+
+
+def brier_score(
+    probs: Sequence[Sequence[float]],
+    targets: Sequence[int],
+    *,
+    n_classes: int | None = None,
+) -> float:
+    """Multi-class Brier score: mean of ``||p - one_hot(target)||^2``.
+
+    The lower the better; equals 0 for a perfect deterministic predictor
+    and ``2`` in the worst case for a 3-class problem (probability mass
+    entirely on the wrong class). Matches the
+    ``next_fomc_decision._classification_metrics`` definition so the two
+    pipelines agree on the metric.
+    """
+
+    if len(probs) != len(targets):
+        raise ValueError("probs and targets must have the same length")
+    if not probs:
+        return 0.0
+    width = n_classes if n_classes is not None else len(probs[0])
+    if width <= 0:
+        raise ValueError(f"n_classes must be positive; got {width}")
+
+    total = 0.0
+    for row, target in zip(probs, targets):
+        row_list = list(row)
+        if len(row_list) != width:
+            raise ValueError(
+                f"row width {len(row_list)} does not match expected {width}"
+            )
+        target_idx = int(target)
+        row_sum = 0.0
+        for i, p in enumerate(row_list):
+            indicator = 1.0 if i == target_idx else 0.0
+            diff = float(p) - indicator
+            row_sum += diff * diff
+        total += row_sum
+    return total / len(probs)
+
+
+def negative_log_likelihood(
+    probs: Sequence[Sequence[float]],
+    targets: Sequence[int],
+    *,
+    eps: float = 1e-12,
+) -> float:
+    """Mean NLL = ``-mean(log p[target])`` over the rows.
+
+    ``eps`` floors the per-row probability so an unlucky 0 does not blow
+    up to infinity; matches the convention used by sklearn's log_loss.
+    """
+
+    if len(probs) != len(targets):
+        raise ValueError("probs and targets must have the same length")
+    if not probs:
+        return 0.0
+    import math as _math
+
+    total = 0.0
+    for row, target in zip(probs, targets):
+        row_list = list(row)
+        target_idx = int(target)
+        if target_idx < 0 or target_idx >= len(row_list):
+            raise ValueError(
+                f"target index {target_idx} out of bounds for {len(row_list)} classes"
+            )
+        p = max(float(row_list[target_idx]), eps)
+        total += -_math.log(p)
+    return total / len(probs)
+
+
+# ---------------------------------------------------------------------------
 # Reliability curve + ECE
 # ---------------------------------------------------------------------------
 
@@ -377,6 +564,10 @@ def render_reliability_diagram_png(
 __all__ = [
     "fit_temperature",
     "apply_temperature",
+    "fit_platt_per_class",
+    "apply_platt_per_class",
+    "brier_score",
+    "negative_log_likelihood",
     "ReliabilityBin",
     "ReliabilityCurve",
     "reliability_curve",

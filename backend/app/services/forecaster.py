@@ -1141,6 +1141,7 @@ def build_regime_classification_card(
     if str(getattr(model, "output_mode", "regression")) != "classification":
         return None
     manifest = _conformal_manifest_for(BEST_MODEL_PATH)
+    calibration_sidecar = _calibration_sidecar_for(BEST_MODEL_PATH)
 
     from app.evaluation.conformal import (
         format_class_set_label,
@@ -1248,7 +1249,9 @@ def build_regime_classification_card(
             ):
                 logits = model(x, **kwargs)
                 if logits.dim() == 2:
-                    probs_tensor = torch.softmax(logits, dim=-1).squeeze(0)
+                    probs_tensor = _apply_calibration_to_softmax(
+                        logits, calibration_sidecar
+                    ).squeeze(0)
                     probs = [float(p) for p in probs_tensor.tolist()]
                     n_classes = len(probs)
                     labels_local: tuple[str, ...] = VOL_REGIME_CLASS_LABELS
@@ -1299,7 +1302,7 @@ def build_regime_classification_card(
     logits = model(x, **kwargs)
     if logits.dim() != 2:
         return None
-    probs_tensor = torch.softmax(logits, dim=-1).squeeze(0)
+    probs_tensor = _apply_calibration_to_softmax(logits, calibration_sidecar).squeeze(0)
     probs = [float(p) for p in probs_tensor.tolist()]
     n_classes = len(probs)
     labels: tuple[str, ...] = VOL_REGIME_CLASS_LABELS
@@ -1411,6 +1414,80 @@ def _conformal_manifest_for(checkpoint_path: Path | None) -> Any:
         return load_manifest(manifest_path)
     except Exception:
         return None
+
+
+def _calibration_sidecar_for(checkpoint_path: Path | None) -> dict[str, Any] | None:
+    """Load the regime-head post-hoc calibration sidecar, when present.
+
+    Written by ``scripts/calibrate_regime_classifier.py`` next to the
+    checkpoint as ``{stem}.calibration.json``. Carries any of:
+    ``temperature`` (scalar), ``platt_a`` / ``platt_b`` (per-class
+    sigmoid params). Absent file -> ``None`` so the inference path
+    keeps the raw softmax (byte-identical to the pre-calibration
+    contract).
+    """
+
+    if checkpoint_path is None:
+        return None
+    sidecar_path = checkpoint_path.with_name(checkpoint_path.stem + ".calibration.json")
+    if not sidecar_path.exists():
+        return None
+    try:
+        import json as _json
+
+        payload = _json.loads(sidecar_path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _apply_calibration_to_softmax(
+    logits: torch.Tensor,
+    sidecar: dict[str, Any] | None,
+) -> torch.Tensor:
+    """Apply temperature scaling + per-class Platt to a logits batch.
+
+    ``logits`` shape: ``(B, n_classes)`` -- already-batched stance logits
+    off the regime head. Returns a per-row probability tensor of the
+    same shape. When the sidecar is missing or carries neither
+    parameter set the function falls back to the raw softmax.
+
+    Composition order matches the calibration script: temperature
+    first, Platt second, so a "both" sidecar reproduces the
+    val-partition fit exactly.
+    """
+
+    from app.evaluation.calibration_temperature import (
+        apply_platt_per_class,
+        apply_temperature,
+    )
+
+    if sidecar is None:
+        return torch.softmax(logits, dim=-1)
+
+    working = logits
+    temperature_value: float | None = None
+
+    temperature_raw = sidecar.get("temperature")
+    if isinstance(temperature_raw, int | float) and float(temperature_raw) > 0.0:
+        temperature_value = float(temperature_raw)
+        working = working / temperature_value
+
+    a_raw = sidecar.get("platt_a")
+    b_raw = sidecar.get("platt_b")
+    if (
+        isinstance(a_raw, list)
+        and isinstance(b_raw, list)
+        and len(a_raw) == len(b_raw) == int(working.shape[-1])
+    ):
+        params = [(float(a), float(b)) for a, b in zip(a_raw, b_raw)]
+        return apply_platt_per_class(working, params)
+
+    if temperature_value is not None:
+        return apply_temperature(logits, temperature_value)
+    return torch.softmax(logits, dim=-1)
 
 
 def _build_confidence_bands(
