@@ -120,6 +120,39 @@ def _parse_args() -> argparse.Namespace:
             "strict-prior policy-surprise direction. See ADR 0027."
         ),
     )
+    # #435 dual-head MSE-branch target derivation. ``raw`` (default,
+    # byte-identical) feeds ``log(forward_realized_vol_10d)``;
+    # ``garch_residual`` swaps in the GARCH(1,1) residual column with
+    # fallback to raw on rows lacking a residual (ADR 0034).
+    parser.add_argument(
+        "--vol-target-mode",
+        type=str,
+        choices=("raw", "garch_residual"),
+        default="raw",
+        help=(
+            "Forward-vol regression-target derivation. ``raw`` (default) "
+            "feeds the standardised ``log(forward_realized_vol_10d)``; "
+            "``garch_residual`` swaps in "
+            "``forward_realized_vol_10d_garch_residual`` (signed, no "
+            "log). See ADR 0034."
+        ),
+    )
+    # Supervised forward-vol horizon (trading days). ``10`` keeps the
+    # canonical y axis; the loader switches to
+    # ``forward_realized_vol_<H>d`` for any other supported choice.
+    parser.add_argument(
+        "--target-horizon",
+        type=int,
+        choices=(1, 3, 5, 10, 20, 30),
+        default=10,
+        help=(
+            "Supervised forward-vol horizon in trading days. ``10`` "
+            "(default) reads the canonical "
+            "``forward_realized_vol_10d`` column; other choices read "
+            "``forward_realized_vol_<H>d`` from the same events "
+            "parquet (populated by the multi-horizon data builder)."
+        ),
+    )
     # #306 retrieval-augmented input features. Off by default so the
     # canonical sweep stays byte-identical.
     parser.add_argument(
@@ -298,7 +331,7 @@ def _resolve_auto_rates_heads(
     return ()
 
 
-def _run_one_cell(
+def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
     head_mode: str,
     seed: int,
     *,
@@ -308,6 +341,8 @@ def _run_one_cell(
     regression_alpha: float,
     hidden_size: int,
     rates_target_mode: str = "raw",
+    vol_target_mode: str = "raw",
+    vol_target_horizon: int = 10,
     use_retrieval_analogs: bool = False,
     use_regime_conditioning: bool = False,
     use_statement_delta: bool = False,
@@ -330,6 +365,8 @@ def _run_one_cell(
         hidden_size=hidden_size,
         rates_heads=rates_heads,
         rates_target_mode=rates_target_mode,
+        vol_target_mode=vol_target_mode,
+        vol_target_horizon=vol_target_horizon,
         use_regime_conditioning=use_regime_conditioning,
         use_press_conf=use_press_conf,
         use_statement_delta=use_statement_delta,
@@ -347,6 +384,7 @@ def _run_one_cell(
             use_statement_delta=use_statement_delta,
             use_vote_features=use_vote_features,
             use_press_conf=use_press_conf,
+            vol_target_horizon=vol_target_horizon,
         )
         result = train_model(
             model_config=config,
@@ -407,6 +445,8 @@ def main() -> int:
                     regression_alpha=args.regression_alpha,
                     hidden_size=args.hidden_size,
                     rates_target_mode=str(args.rates_target_mode),
+                    vol_target_mode=str(args.vol_target_mode),
+                    vol_target_horizon=int(args.target_horizon),
                     use_retrieval_analogs=bool(args.use_retrieval_analogs),
                     use_regime_conditioning=bool(args.use_regime_conditioning),
                     use_statement_delta=bool(args.use_statement_delta),
@@ -444,6 +484,8 @@ def main() -> int:
         "rates_heads": list(
             _resolve_auto_rates_heads(str(args.rates_target_mode), rates_heads=None)
         ),
+        "vol_target_mode": str(args.vol_target_mode),
+        "vol_target_horizon": int(args.target_horizon),
         "use_retrieval_analogs": bool(args.use_retrieval_analogs),
         "use_regime_conditioning": bool(args.use_regime_conditioning),
         "use_statement_delta": bool(args.use_statement_delta),

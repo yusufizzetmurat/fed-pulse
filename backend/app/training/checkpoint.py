@@ -168,6 +168,10 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             # checkpoints leave the key absent and the default collapses
             # to the raw column.
             vol_target_mode=str(raw.get("vol_target_mode", "raw") or "raw"),
+            # Round-trip the supervised forward-vol horizon so a checkpoint
+            # trained under ``--target-horizon`` rehydrates against the
+            # same events-parquet column on eval / calibration paths.
+            vol_target_horizon=int(raw.get("vol_target_horizon", 10) or 10),
             # #304 dual-head: forward head_mode + regression_alpha so a
             # dual-head checkpoint rehydrates the same head config the
             # run trained against. Pre-#304 checkpoints leave the keys
