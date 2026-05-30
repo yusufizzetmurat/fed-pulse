@@ -17,6 +17,7 @@ from app.models.config import (
     RICH_FEATURE_SIZE,
     RICH_MACRO_REGIME_DIM,
     RICH_MACRO_REGIME_MISSING_DIM,
+    RICH_PRESS_CONF_DIM,
     RICH_SEP_DIM,
     RICH_SEP_MISSING_DIM,
     RICH_STATEMENT_DELTA_DIM,
@@ -84,6 +85,45 @@ def test_vote_features_slot_appends_tail_when_populated() -> None:
     )
     assert len(rich) == expected
     assert rich[-1] == 0.0
+
+
+def test_statement_delta_uniform_width_across_populated_and_missing() -> None:
+    """Regression: opt-in row with missing data must match populated width.
+
+    Before #524, an event opted-in via ``use_statement_delta`` but
+    lacking a strict-prior statement left
+    ``statement_delta_embedding=None`` and ``as_rich_list`` skipped the
+    tail entirely. Statement events emitted +769 dims, non-statement
+    events emitted +0 → ragged ``torch.tensor`` build at sweep time.
+    The loader now zero-fills the slot whenever the flag is on, so the
+    two FeatureVectors below must produce identical-width rich lists.
+    """
+
+    populated = _bare_vector()
+    populated.statement_delta_embedding = [0.1] * RICH_STATEMENT_DELTA_DIM
+    populated.statement_delta_embedding_missing = 0.0
+    missing = _bare_vector()
+    missing.statement_delta_embedding = [0.0] * RICH_STATEMENT_DELTA_DIM
+    missing.statement_delta_embedding_missing = 1.0
+    assert len(populated.as_rich_list()) == len(missing.as_rich_list())
+
+
+def test_vote_features_uniform_width_across_populated_and_missing() -> None:
+    populated = _bare_vector()
+    populated.vote_features = [0.83, 0.08, 0.0, 1.0]
+    populated.vote_features_missing = 0.0
+    missing = _bare_vector()
+    missing.vote_features = [0.0] * RICH_VOTE_FEATURES_DIM
+    missing.vote_features_missing = 1.0
+    assert len(populated.as_rich_list()) == len(missing.as_rich_list())
+
+
+def test_press_conf_uniform_width_across_populated_and_missing() -> None:
+    populated = _bare_vector()
+    populated.press_conf_features = [1.0]
+    missing = _bare_vector()
+    missing.press_conf_features = [0.0] * RICH_PRESS_CONF_DIM
+    assert len(populated.as_rich_list()) == len(missing.as_rich_list())
 
 
 def test_all_opt_in_tails_compose_in_documented_order() -> None:
