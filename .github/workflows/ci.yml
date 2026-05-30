@@ -48,7 +48,7 @@ jobs:
             --follow-imports=silent \
             app/config.py app/determinism.py app/schemas.py \
             app/data/sources app/data/label_schemas.py \
-            app/training app/models app/services app/evaluation
+            app/training app/models app/services app/evaluation app/eval
 
   pytest:
     runs-on: ubuntu-latest

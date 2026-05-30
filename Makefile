@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep audit-training-package pre-sweep-column-audit build-events-parquet pull-op-fed pull-swanson-three-factor pull-beige-book pull-press-conferences pull-speeches pull-testimonies pull-regional-research train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation finetune-pilot-b2 finetune-pilot-b2-phrasebank cross-source-transfer reproduce-all reproduce-smoke push-artefacts deploy-prod-build
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep audit-training-package pre-sweep-column-audit build-events-parquet pull-op-fed pull-swanson-three-factor pull-beige-book pull-press-conferences pull-speeches pull-testimonies pull-regional-research train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation finetune-pilot-b2 finetune-pilot-b2-phrasebank cross-source-transfer reproduce-all reproduce-smoke push-artefacts deploy-prod-build per-fold-baselines paired-stats ordinal-confusion
 
 help:
 	@echo "Targets:"
@@ -1011,3 +1011,27 @@ cross-source-transfer:
 		--encoder-checkpoints "$$ENCODER_CHECKPOINTS" \
 		$(if $(SOURCE_TYPES),--source-types "$(SOURCE_TYPES)",) \
 		$(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
+
+# Per-fold class-distribution + dual baselines table (#500).
+per-fold-baselines:
+	docker compose run --rm backend \
+		python -m app.eval.per_fold_baselines \
+			--training-package-id canonical \
+			--sweep-artefact artifacts/experiments/dual_head_comparison_canonical.json \
+			--output artifacts/experiments/per_fold_baselines.json
+
+# Paired Wilcoxon + Holm-Bonferroni on head-mode comparisons (#497).
+paired-stats:
+	docker compose run --rm backend \
+		python -m app.eval.paired_comparisons \
+			--sweep-artefacts artifacts/experiments/dual_head_comparison_canonical.json \
+			--comparisons classification,dual classification,regression regression,dual \
+			--metric regime_f1_macro \
+			--output artifacts/experiments/paired_comparisons.json
+
+# Ordinal confusion-matrix decomposition (#496).
+ordinal-confusion:
+	docker compose run --rm backend \
+		python -m app.eval.ordinal_confusion \
+			--sweep-artefact artifacts/experiments/dual_head_comparison_canonical.json \
+			--output artifacts/experiments/ordinal_confusion.json
