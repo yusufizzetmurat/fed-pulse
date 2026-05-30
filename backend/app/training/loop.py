@@ -1344,6 +1344,7 @@ def _build_partition_multi_task_tensors(
     sequence_groups: "Sequence[Sequence[FeatureVector]]",
     *,
     vol_regime_quantiles: "Sequence[float]",
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> dict[str, torch.Tensor] | None:
     """Materialise per-partition multi-task target + mask tensors (#273).
 
@@ -1364,7 +1365,9 @@ def _build_partition_multi_task_tensors(
     from app.training.loaders import _build_multi_task_target_tensors
 
     return _build_multi_task_target_tensors(
-        sequence_groups, vol_regime_quantiles=vol_regime_quantiles
+        sequence_groups,
+        vol_regime_quantiles=vol_regime_quantiles,
+        sequence_length=sequence_length,
     )
 
 
@@ -1748,6 +1751,7 @@ def _build_partition_log_rv_target(
     vol_regime_quantiles: "Sequence[float]",
     log_rv_scaler: "tuple[float, float] | None" = None,
     vol_target_mode: str = DEFAULT_VOL_TARGET_MODE,
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> tuple[torch.Tensor | None, "tuple[float, float] | None"]:
     """Materialise per-partition log(forward_realized_vol_10d) targets (#304).
 
@@ -1801,23 +1805,23 @@ def _build_partition_log_rv_target(
     rejected_non_finite = 0
     residual_fallback_count = 0
     for sequence_group in sequence_groups:
-        if len(sequence_group) < SEQUENCE_LENGTH + 1:
+        if len(sequence_group) < sequence_length + 1:
             continue
         # Group-level pre-filter mirrors ``_build_partition_tensors`` so
         # the row counts agree. The classification branch in
         # ``_build_partition_tensors`` drops a whole group when its
-        # leading target (idx == SEQUENCE_LENGTH) has a null
+        # leading target (idx == sequence_length) has a null
         # forward_realized_vol_10d; iterating per-row without that
         # group-level gate would emit log_rv values for downstream
         # rows whose x / y counterparts were dropped, breaking the
         # TensorDataset row-count invariant.
-        leading_target = sequence_group[SEQUENCE_LENGTH]
+        leading_target = sequence_group[sequence_length]
         leading_vol = getattr(leading_target, "forward_realized_vol_10d", None)
         if leading_vol is None or (
             isinstance(leading_vol, float) and leading_vol != leading_vol
         ):
             continue
-        for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
+        for idx in range(sequence_length, len(sequence_group)):
             target_row = sequence_group[idx]
             cls_idx = vol_regime_class_for(
                 getattr(target_row, "forward_realized_vol_10d", None),
@@ -2400,6 +2404,7 @@ def _build_partition_tensors(
     vol_regime_quantiles: Sequence[float] = (),
     lora_bundle: Any = None,
     lora_max_tokens: int = 0,
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
@@ -2444,10 +2449,10 @@ def _build_partition_tensors(
         # row-aligned tensors.
         filtered: list[list[FeatureVector]] = []
         for group in sequence_groups:
-            if len(group) < SEQUENCE_LENGTH + 1:
+            if len(group) < sequence_length + 1:
                 continue
             target_value = getattr(
-                group[SEQUENCE_LENGTH], "forward_realized_vol_10d", None
+                group[sequence_length], "forward_realized_vol_10d", None
             )
             if target_value is None:
                 continue
@@ -2463,6 +2468,7 @@ def _build_partition_tensors(
         close_scale=close_scale,
         output_mode=output_mode,
         vol_regime_quantiles=vol_regime_quantiles,
+        sequence_length=sequence_length,
     )
     if x is None or y is None:
         # ``_build_training_tensors`` returns None tensors only when the
@@ -2491,7 +2497,9 @@ def _build_partition_tensors(
         )
         return x, y, scale, input_ids, attention_mask
     text_emb, text_missing, _ = _build_text_embedding_tensors(
-        active_groups, fallback_in_dim=fallback_text_in_dim
+        active_groups,
+        fallback_in_dim=fallback_text_in_dim,
+        sequence_length=sequence_length,
     )
     return x, y, scale, text_emb, text_missing
 
@@ -2643,6 +2651,11 @@ def train_model(
     test_rates_targets: RatesPartitionTensors | None = None
     rates_scalers: dict[str, Any] = {}
     rates_edges: dict[str, Any] = {}
+    # ``ModelConfig.sequence_length=0`` means "use module default" so
+    # checkpoints saved before #530 keep the byte-identical 20-bar window.
+    active_sequence_length = int(
+        getattr(active_model_config, "sequence_length", 0) or 0
+    ) or SEQUENCE_LENGTH
 
     if walk_forward_path:
         train_groups: list[list[FeatureVector]] = [list(group) for group in train_sequence_groups or []]
@@ -2660,7 +2673,9 @@ def train_model(
         )
         if active_output_mode == "classification":
             n_classes_active = int(getattr(active_model_config, "n_classes", 3) or 3)
-            train_forward_vols = collect_forward_vols(train_groups)
+            train_forward_vols = collect_forward_vols(
+                train_groups, sequence_length=active_sequence_length
+            )
             fitted_quantiles = fit_vol_regime_quantiles(
                 train_forward_vols, n_classes=n_classes_active
             )
@@ -2765,6 +2780,7 @@ def train_model(
             output_mode=active_output_mode,
             vol_regime_quantiles=fitted_quantiles,
             lora_bundle=encoder_lora_bundle,
+            sequence_length=active_sequence_length,
         )
         # Multi-task aux tensors (#273) — sibling call so the partition
         # tensorisation contract on _build_partition_tensors stays a
@@ -2774,13 +2790,16 @@ def train_model(
         # mode, so the row order aligns with train_x / train_y.
         if multi_task_loss_active:
             train_mt_aux = _build_partition_multi_task_tensors(
-                train_groups, vol_regime_quantiles=fitted_quantiles
+                train_groups,
+                vol_regime_quantiles=fitted_quantiles,
+                sequence_length=active_sequence_length,
             )
         if dual_head_active and active_output_mode == "classification":
             train_log_rv, log_rv_scaler = _build_partition_log_rv_target(
                 train_groups,
                 vol_regime_quantiles=fitted_quantiles,
                 vol_target_mode=active_vol_target_mode,
+                sequence_length=active_sequence_length,
             )
         # #292 rates heads -- per-partition targets fitted on train.
         if rates_heads_active and active_output_mode == "classification":
@@ -2832,10 +2851,13 @@ def train_model(
             output_mode=active_output_mode,
             vol_regime_quantiles=fitted_quantiles,
             lora_bundle=encoder_lora_bundle,
+            sequence_length=active_sequence_length,
         )
         if multi_task_loss_active:
             val_mt_aux = _build_partition_multi_task_tensors(
-                val_groups, vol_regime_quantiles=fitted_quantiles
+                val_groups,
+                vol_regime_quantiles=fitted_quantiles,
+                sequence_length=active_sequence_length,
             )
         if dual_head_active and active_output_mode == "classification":
             val_log_rv, _ = _build_partition_log_rv_target(
@@ -2843,6 +2865,7 @@ def train_model(
                 vol_regime_quantiles=fitted_quantiles,
                 log_rv_scaler=log_rv_scaler,
                 vol_target_mode=active_vol_target_mode,
+                sequence_length=active_sequence_length,
             )
         if rates_heads_active and active_output_mode == "classification":
             from app.training.rates_targets import build_partition_rates_targets
@@ -2882,10 +2905,13 @@ def train_model(
             output_mode=active_output_mode,
             vol_regime_quantiles=fitted_quantiles,
             lora_bundle=encoder_lora_bundle,
+            sequence_length=active_sequence_length,
         )
         if multi_task_loss_active:
             test_mt_aux = _build_partition_multi_task_tensors(
-                test_groups, vol_regime_quantiles=fitted_quantiles
+                test_groups,
+                vol_regime_quantiles=fitted_quantiles,
+                sequence_length=active_sequence_length,
             )
         if dual_head_active and active_output_mode == "classification":
             test_log_rv, _ = _build_partition_log_rv_target(
@@ -2893,6 +2919,7 @@ def train_model(
                 vol_regime_quantiles=fitted_quantiles,
                 log_rv_scaler=log_rv_scaler,
                 vol_target_mode=active_vol_target_mode,
+                sequence_length=active_sequence_length,
             )
         if rates_heads_active and active_output_mode == "classification":
             from app.training.rates_targets import build_partition_rates_targets
@@ -2970,7 +2997,9 @@ def train_model(
         legacy_fitted_quantiles: tuple[float, ...] = ()
         if active_output_mode == "classification":
             n_classes_active = int(getattr(active_model_config, "n_classes", 3) or 3)
-            legacy_forward_vols = collect_forward_vols(active_sequence_groups)
+            legacy_forward_vols = collect_forward_vols(
+                active_sequence_groups, sequence_length=active_sequence_length
+            )
             legacy_fitted_quantiles = fit_vol_regime_quantiles(
                 legacy_forward_vols, n_classes=n_classes_active
             )
@@ -2988,6 +3017,7 @@ def train_model(
             active_sequence_groups,
             output_mode=active_output_mode,
             vol_regime_quantiles=legacy_fitted_quantiles,
+            sequence_length=active_sequence_length,
         )
         # #304 dual-head on the legacy path. Build the log_rv target
         # tensor over the full active_sequence_groups list, then split
@@ -2998,10 +3028,12 @@ def train_model(
                 active_sequence_groups,
                 vol_regime_quantiles=legacy_fitted_quantiles,
                 vol_target_mode=active_vol_target_mode,
+                sequence_length=active_sequence_length,
             )
         text_emb_tensor, text_missing_tensor, _text_emb_dim = _build_text_embedding_tensors(
             active_sequence_groups,
             fallback_in_dim=fallback_text_in_dim,
+            sequence_length=active_sequence_length,
         )
         if x is None or y is None:
             model = (

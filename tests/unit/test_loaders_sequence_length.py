@@ -254,3 +254,55 @@ def test_sequence_length_60_against_20bar_tp_drops_every_event(
             text_encoder=None,
             sequence_length=60,
         )
+
+
+def test_build_training_tensors_emits_60bar_timestep_dim(package_60bar: Path) -> None:
+    """``_build_training_tensors(..., sequence_length=60)`` -> ``x.shape[1] == 60``.
+
+    Loader-side plumbing is necessary but not sufficient: the tensor
+    builder slices its own window off the sequence groups, so the
+    timestep dim of the x tensor must also pick up the override.
+    """
+
+    import torch
+
+    split = loaders.load_walk_forward_split(
+        _TRAINING_PACKAGE_ID_60,
+        rich_features=False,
+        text_encoder=None,
+        sequence_length=60,
+    )
+    x, y, _scale = loaders._build_training_tensors(
+        split.train, sequence_length=60
+    )
+    assert isinstance(x, torch.Tensor)
+    assert isinstance(y, torch.Tensor)
+    # Window count = sum(max(0, len(group) - sequence_length)) over groups;
+    # the 60-bar fixture emits one (sequence_length + 1)-row group per
+    # split partition so the per-group window count is exactly 1, and the
+    # batch dim must be `len(split.train) * 1`. The explicit product
+    # locks the multi-window contract in case a future fixture variant
+    # widens the per-group row count.
+    expected_windows = sum(
+        max(0, len(group) - 60) for group in split.train
+    )
+    assert x.shape[0] == expected_windows
+    assert x.shape[1] == 60
+    assert x.shape[0] == y.shape[0]
+
+
+def test_build_training_tensors_default_matches_module_constant(
+    package_20bar: Path,
+) -> None:
+    """Default kwarg drops to ``SEQUENCE_LENGTH`` -> ``x.shape[1] == 20``."""
+
+    import torch
+
+    split = loaders.load_walk_forward_split(
+        _TRAINING_PACKAGE_ID_20,
+        rich_features=False,
+        text_encoder=None,
+    )
+    x, _y, _scale = loaders._build_training_tensors(split.train)
+    assert isinstance(x, torch.Tensor)
+    assert x.shape[1] == SEQUENCE_LENGTH
