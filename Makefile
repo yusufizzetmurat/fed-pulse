@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep audit-training-package pre-sweep-column-audit build-events-parquet pull-op-fed pull-swanson-three-factor pull-beige-book pull-press-conferences pull-speeches pull-testimonies pull-regional-research train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation finetune-pilot-b2 finetune-pilot-b2-phrasebank cross-source-transfer reproduce-all reproduce-smoke push-artefacts deploy-prod-build per-fold-baselines paired-stats ordinal-confusion
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep audit-training-package pre-sweep-column-audit build-events-parquet pull-op-fed pull-swanson-three-factor pull-beige-book pull-press-conferences pull-speeches pull-testimonies pull-regional-research train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation hawk-dove-jackknife finetune-pilot-b2 finetune-pilot-b2-phrasebank cross-source-transfer reproduce-all reproduce-smoke push-artefacts deploy-prod-build per-fold-baselines paired-stats ordinal-confusion
 
 help:
 	@echo "Targets:"
@@ -84,6 +84,8 @@ help:
 	@echo "                         - Canonical dual-head comparison (5 seeds x 40 epochs, regression-alpha=0.5, canonical output JSON)"
 	@echo "  make per-family-ablation TRAINING_PACKAGE_ID=<id>"
 	@echo "                         - Per-family rich-feature ablation (#334; backs the §6 substitution-finding table)"
+	@echo "  make hawk-dove-jackknife TRAINING_PACKAGE_ID=<id> [SMOKE=1]"
+	@echo "                         - Leave-one-out per token on the in-house hawk/dove lexicon (#506; ~3-4 GPU-hours full, ~30 min smoke)"
 	@echo "  make finetune-pilot-b2 TRAINING_PACKAGE_ID=<id> [ENCODER_ALIAS=<alias>]"
 	@echo "                         - B2 end-to-end fine-tune on vol-regime (#213; AutoModelForSequenceClassification, 5 seeds x 4 folds x 5 epochs)"
 	@echo "  make finetune-pilot-b2-phrasebank TRAINING_PACKAGE_ID=<id> [PHRASEBANK_AUX_LAMBDA=0.3] [PHRASEBANK_SUBSET=sentences_allagree]"
@@ -963,6 +965,22 @@ per-family-ablation:
 		--epochs 40 \
 		--head-mode dual \
 		--regression-alpha 0.5
+
+# #506 hawk/dove lexicon jackknife. Leave-one-out per single-token entry
+# in HAWK_TOKENS / DOVE_TOKENS, rebuilds the per-document linguistic
+# features parquet under the patched lexicon, and runs a baseline-only
+# per-family ablation smoke per cell to read off macro-F1. Writes the
+# artefact to ``backend/artifacts/experiments/hawk_dove_jackknife.json``
+# with a fragile-tokens list keyed off ``|delta| > 0.005``. GPU-bound:
+# ~3-4 hours for the full sweep at the default epochs=40; ``SMOKE=1``
+# drops the per-cell budget to 5 epochs (~30 min total).
+hawk-dove-jackknife:
+	@if [ -z "$$TRAINING_PACKAGE_ID" ]; then echo "TRAINING_PACKAGE_ID required" >&2; exit 1; fi
+	docker compose run --rm backend python -m scripts.run_hawk_dove_jackknife \
+		--training-package-id $$TRAINING_PACKAGE_ID \
+		--output artifacts/experiments/hawk_dove_jackknife.json \
+		--seeds 11 \
+		$(if $(SMOKE),--smoke,)
 
 # #213 B2 end-to-end fine-tune harness. Fine-tunes
 # AutoModelForSequenceClassification directly on FOMC document text
