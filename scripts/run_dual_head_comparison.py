@@ -288,13 +288,43 @@ def _parse_args() -> argparse.Namespace:
         "--regime-loss",
         dest="regime_loss",
         type=str,
-        choices=("ce", "ordinal_ce"),
+        choices=("ce", "ordinal_ce", "focal", "class_balanced"),
         default="ce",
         help=(
             "Regime-axis loss kernel. ``ce`` (default) keeps the standard "
             "cross-entropy byte-identical to the pre-#470 canonical "
             "sweep; ``ordinal_ce`` weights each row's CE by "
-            "``1 + |true - argmax|`` so far-bin confusions pay more."
+            "``1 + |true - argmax|`` so far-bin confusions pay more; "
+            "``focal`` applies Lin et al. 2017's (1-p)**gamma modulator; "
+            "``class_balanced`` uses Cui et al. 2019 effective-number "
+            "reweighting on the existing inverse-frequency path."
+        ),
+    )
+    # #502 focal-loss hyperparameter. Only consulted when
+    # ``--regime-loss focal`` is set; ignored under every other mode.
+    parser.add_argument(
+        "--focal-gamma",
+        dest="focal_gamma",
+        type=float,
+        default=2.0,
+        help=(
+            "Focusing parameter for ``--regime-loss focal``. Default 2.0 "
+            "matches Lin et al. 2017. Higher values down-weight easy "
+            "examples more aggressively. Ignored under other loss modes."
+        ),
+    )
+    # #502 class-balanced hyperparameter. Only consulted when
+    # ``--regime-loss class_balanced`` is set; ignored under every other
+    # mode.
+    parser.add_argument(
+        "--class-balanced-beta",
+        dest="class_balanced_beta",
+        type=float,
+        default=0.999,
+        help=(
+            "Effective-number reweighting hyperparameter for "
+            "``--regime-loss class_balanced``. Default 0.999 mirrors Cui "
+            "et al. 2019's CIFAR-LT recipe. Ignored under other loss modes."
         ),
     )
     # #471 multi-horizon auxiliary regression heads. Empty default
@@ -573,6 +603,8 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
     use_press_conf: bool = False,
     use_vix_features: bool = False,
     regime_loss: str = "ce",
+    focal_gamma: float = 2.0,
+    class_balanced_beta: float = 0.999,
     text_encoder: str | None = None,
     use_text_embeddings: bool = True,
     vol_regime_label_mode: str = "per_fold_quantile",
@@ -621,6 +653,8 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
         use_vote_features=use_vote_features,
         use_vix_features=use_vix_features,
         regime_loss_mode=regime_loss,
+        focal_gamma=float(focal_gamma),
+        class_balanced_beta=float(class_balanced_beta),
         vol_regime_label_mode=vol_regime_label_mode,
         absolute_vol_thresholds=resolved_absolute_thresholds,
         aux_horizons=tuple(aux_horizons),
@@ -756,6 +790,8 @@ def main() -> int:
                     use_press_conf=bool(args.use_press_conf),
                     use_vix_features=bool(args.use_vix_features),
                     regime_loss=str(args.regime_loss),
+                    focal_gamma=float(args.focal_gamma),
+                    class_balanced_beta=float(args.class_balanced_beta),
                     text_encoder=(
                         str(args.text_encoder) if args.text_encoder else None
                     ),
@@ -807,6 +843,8 @@ def main() -> int:
         "use_press_conf": bool(args.use_press_conf),
         "use_vix_features": bool(args.use_vix_features),
         "regime_loss": str(args.regime_loss),
+        "focal_gamma": float(args.focal_gamma),
+        "class_balanced_beta": float(args.class_balanced_beta),
         "text_encoder": (
             str(args.text_encoder) if args.text_encoder else None
         ),

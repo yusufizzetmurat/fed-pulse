@@ -77,6 +77,54 @@ def test_dual_head_runner_no_mp_surprise_flag(monkeypatch):
     assert args.use_mp_surprise is False
 
 
+def test_dual_head_runner_regime_loss_focal_choice_accepted(monkeypatch):
+    """``--regime-loss focal`` parses + ``--focal-gamma`` overrides default."""
+
+    from scripts.run_dual_head_comparison import _parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_dual_head_comparison",
+            "--training-package-id",
+            "tp_dummy",
+            "--regime-loss",
+            "focal",
+            "--focal-gamma",
+            "1.5",
+        ],
+    )
+    args = _parse_args()
+    assert args.regime_loss == "focal"
+    assert args.focal_gamma == 1.5
+    assert args.class_balanced_beta == 0.999
+
+
+def test_dual_head_runner_regime_loss_class_balanced_choice_accepted(monkeypatch):
+    """``--regime-loss class_balanced`` parses + ``--class-balanced-beta``."""
+
+    from scripts.run_dual_head_comparison import _parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_dual_head_comparison",
+            "--training-package-id",
+            "tp_dummy",
+            "--regime-loss",
+            "class_balanced",
+            "--class-balanced-beta",
+            "0.99",
+        ],
+    )
+    args = _parse_args()
+    assert args.regime_loss == "class_balanced"
+    assert args.class_balanced_beta == 0.99
+    assert args.focal_gamma == 2.0
+
+
 def test_dual_head_runner_text_encoder_opt_in(monkeypatch):
     """``--text-encoder <alias>`` parses; ``--no-text-embeddings`` flips."""
 
