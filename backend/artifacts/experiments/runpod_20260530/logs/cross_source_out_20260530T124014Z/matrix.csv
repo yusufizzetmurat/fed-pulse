@@ -1,0 +1,11 @@
+encoder_alias,checkpoint,source_type,status,support,dovish_n,hawkish_n,neutral_n,macro_f1,weighted_f1,accuracy,latency_ms_p50,latency_ms_p95
+finbert_fed_adjacent,yusufizzetmurat/finbert-fed-adjacent,fomc_statement,ok,3364,1004,850,1510,0.289301,0.337274,0.394174,0.055299,0.062079
+finbert_fed_adjacent,yusufizzetmurat/finbert-fed-adjacent,fomc_minutes,no_rows,0,0,0,0,,,,,
+finbert_fed_adjacent,yusufizzetmurat/finbert-fed-adjacent,fomc_meeting_transcript,ok,156,92,46,18,0.244898,0.433281,0.576923,0.059567,0.081908
+finbert_fed_adjacent,yusufizzetmurat/finbert-fed-adjacent,fomc_press_conference,no_rows,0,0,0,0,,,,,
+finbert_fed_adjacent,yusufizzetmurat/finbert-fed-adjacent,chair_speech,no_rows,0,0,0,0,,,,,
+finbert_fed_adjacent,yusufizzetmurat/finbert-fed-adjacent,governor_speech,no_rows,0,0,0,0,,,,,
+finbert_fed_adjacent,yusufizzetmurat/finbert-fed-adjacent,congressional_testimony,no_rows,0,0,0,0,,,,,
+finbert_fed_adjacent,yusufizzetmurat/finbert-fed-adjacent,beige_book,no_rows,0,0,0,0,,,,,
+finbert_fed_adjacent,yusufizzetmurat/finbert-fed-adjacent,regional_research,no_rows,0,0,0,0,,,,,
+finbert_fed_adjacent,yusufizzetmurat/finbert-fed-adjacent,ny_fed_liberty_street,no_rows,0,0,0,0,,,,,

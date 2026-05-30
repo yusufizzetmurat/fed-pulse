@@ -1,0 +1,147 @@
+{
+  "training_package_id": "canonical",
+  "sweep_artefact": "artifacts/experiments/runpod_20260530/runpod_canonical_20260530T120517Z.json",
+  "head_mode": "classification",
+  "folds": [
+    {
+      "fold_id": "wf_fold_1",
+      "class_distribution": {
+        "train": {
+          "calm": 1480,
+          "normal": 1484,
+          "high": 1484
+        },
+        "val": {
+          "calm": 144,
+          "normal": 60,
+          "high": 268
+        },
+        "test": {
+          "calm": 112,
+          "normal": 180,
+          "high": 188
+        }
+      },
+      "quantile_edges": [
+        0.005756943799727098,
+        0.009169791805018562
+      ],
+      "majority_baseline_f1": 0.1818181818181818,
+      "stratified_random_f1": 0.32835053302434447,
+      "encoder_f1": 0.39557838303486015,
+      "head_mode": "classification"
+    },
+    {
+      "fold_id": "wf_fold_2",
+      "class_distribution": {
+        "train": {
+          "calm": 1640,
+          "normal": 1640,
+          "high": 1640
+        },
+        "val": {
+          "calm": 124,
+          "normal": 180,
+          "high": 176
+        },
+        "test": {
+          "calm": 40,
+          "normal": 48,
+          "high": 384
+        }
+      },
+      "quantile_edges": [
+        0.005787017739818774,
+        0.00963528924171301
+      ],
+      "majority_baseline_f1": 0.052083333333333336,
+      "stratified_random_f1": 0.25443228765457165,
+      "encoder_f1": 0.5035137020367066,
+      "head_mode": "classification"
+    },
+    {
+      "fold_id": "wf_fold_3",
+      "class_distribution": {
+        "train": {
+          "calm": 1800,
+          "normal": 1800,
+          "high": 1800
+        },
+        "val": {
+          "calm": 48,
+          "normal": 40,
+          "high": 384
+        },
+        "test": {
+          "calm": 48,
+          "normal": 312,
+          "high": 80
+        }
+      },
+      "quantile_edges": [
+        0.005837633004819972,
+        0.00967345162945777
+      ],
+      "majority_baseline_f1": 0.06557377049180328,
+      "stratified_random_f1": 0.28428157715896846,
+      "encoder_f1": 0.3150168033680959,
+      "head_mode": "classification"
+    },
+    {
+      "fold_id": "wf_fold_4",
+      "class_distribution": {
+        "train": {
+          "calm": 1956,
+          "normal": 1956,
+          "high": 1960
+        },
+        "val": {
+          "calm": 52,
+          "normal": 348,
+          "high": 40
+        },
+        "test": {
+          "calm": 176,
+          "normal": 192,
+          "high": 76
+        }
+      },
+      "quantile_edges": [
+        0.005922674151580698,
+        0.010218964606414662
+      ],
+      "majority_baseline_f1": 0.09743589743589744,
+      "stratified_random_f1": 0.32173461693828026,
+      "encoder_f1": 0.34073133886111157,
+      "head_mode": "classification"
+    },
+    {
+      "fold_id": "wf_fold_5",
+      "class_distribution": {
+        "train": {
+          "calm": 2104,
+          "normal": 2104,
+          "high": 2104
+        },
+        "val": {
+          "calm": 188,
+          "normal": 168,
+          "high": 88
+        },
+        "test": {
+          "calm": 104,
+          "normal": 203,
+          "high": 104
+        }
+      },
+      "quantile_edges": [
+        0.006068963081270213,
+        0.009995156571786089
+      ],
+      "majority_baseline_f1": 0.13462783171521034,
+      "stratified_random_f1": 0.32299654620385604,
+      "encoder_f1": 0.41955799131726845,
+      "head_mode": "classification"
+    }
+  ]
+}

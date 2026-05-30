@@ -1,0 +1,206 @@
+{
+  "generated_at_utc": "2026-05-30T14:23:36Z",
+  "training_package_id": "canonical",
+  "encoders": [
+    "finbert_fed_adjacent"
+  ],
+  "source_types": [
+    "fomc_statement",
+    "fomc_minutes",
+    "fomc_meeting_transcript",
+    "fomc_press_conference",
+    "chair_speech",
+    "governor_speech",
+    "congressional_testimony",
+    "beige_book",
+    "regional_research",
+    "ny_fed_liberty_street",
+    "gss_factor_decomposition"
+  ],
+  "per_source_counts": {
+    "fomc_statement": 3364,
+    "fomc_minutes": 0,
+    "fomc_meeting_transcript": 156,
+    "fomc_press_conference": 0,
+    "chair_speech": 0,
+    "governor_speech": 0,
+    "congressional_testimony": 0,
+    "beige_book": 0,
+    "regional_research": 0,
+    "ny_fed_liberty_street": 0,
+    "gss_factor_decomposition": 138
+  },
+  "cells": [
+    {
+      "source_type": "fomc_statement",
+      "encoder_alias": "finbert_fed_adjacent",
+      "checkpoint": "yusufizzetmurat/finbert-fed-adjacent",
+      "support": 3364,
+      "macro_f1": 0.2893005818012594,
+      "weighted_f1": 0.33727411321993517,
+      "accuracy": 0.39417360285374553,
+      "per_class": {
+        "dovish": {
+          "precision": 0.30623520126282555,
+          "recall": 0.38645418326693226,
+          "f1": 0.34169969176574194,
+          "support": 1004
+        },
+        "hawkish": {
+          "precision": 0.1111111111111111,
+          "recall": 0.002352941176470588,
+          "f1": 0.004608294930875576,
+          "support": 850
+        },
+        "neutral": {
+          "precision": 0.45021645021645024,
+          "recall": 0.6198675496688741,
+          "f1": 0.5215937587071607,
+          "support": 1510
+        }
+      },
+      "label_support": {
+        "hawkish": 850,
+        "dovish": 1004,
+        "neutral": 1510
+      },
+      "latency_ms": {
+        "p50": 0.0552986457478255,
+        "p95": 0.062078965129330754
+      },
+      "kind": "stance",
+      "status": "ok"
+    },
+    {
+      "encoder_alias": "finbert_fed_adjacent",
+      "checkpoint": "yusufizzetmurat/finbert-fed-adjacent",
+      "source_type": "fomc_minutes",
+      "support": 0,
+      "status": "no_rows",
+      "kind": "stance"
+    },
+    {
+      "source_type": "fomc_meeting_transcript",
+      "encoder_alias": "finbert_fed_adjacent",
+      "checkpoint": "yusufizzetmurat/finbert-fed-adjacent",
+      "support": 156,
+      "macro_f1": 0.2448979591836735,
+      "weighted_f1": 0.4332810047095762,
+      "accuracy": 0.5769230769230769,
+      "per_class": {
+        "dovish": {
+          "precision": 0.5882352941176471,
+          "recall": 0.9782608695652174,
+          "f1": 0.7346938775510204,
+          "support": 92
+        },
+        "hawkish": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 46
+        },
+        "neutral": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 18
+        }
+      },
+      "label_support": {
+        "dovish": 92,
+        "hawkish": 46,
+        "neutral": 18
+      },
+      "latency_ms": {
+        "p50": 0.0595668243477121,
+        "p95": 0.08190849621314555
+      },
+      "kind": "stance",
+      "status": "ok"
+    },
+    {
+      "encoder_alias": "finbert_fed_adjacent",
+      "checkpoint": "yusufizzetmurat/finbert-fed-adjacent",
+      "source_type": "fomc_press_conference",
+      "support": 0,
+      "status": "no_rows",
+      "kind": "stance"
+    },
+    {
+      "encoder_alias": "finbert_fed_adjacent",
+      "checkpoint": "yusufizzetmurat/finbert-fed-adjacent",
+      "source_type": "chair_speech",
+      "support": 0,
+      "status": "no_rows",
+      "kind": "stance"
+    },
+    {
+      "encoder_alias": "finbert_fed_adjacent",
+      "checkpoint": "yusufizzetmurat/finbert-fed-adjacent",
+      "source_type": "governor_speech",
+      "support": 0,
+      "status": "no_rows",
+      "kind": "stance"
+    },
+    {
+      "encoder_alias": "finbert_fed_adjacent",
+      "checkpoint": "yusufizzetmurat/finbert-fed-adjacent",
+      "source_type": "congressional_testimony",
+      "support": 0,
+      "status": "no_rows",
+      "kind": "stance"
+    },
+    {
+      "encoder_alias": "finbert_fed_adjacent",
+      "checkpoint": "yusufizzetmurat/finbert-fed-adjacent",
+      "source_type": "beige_book",
+      "support": 0,
+      "status": "no_rows",
+      "kind": "stance"
+    },
+    {
+      "encoder_alias": "finbert_fed_adjacent",
+      "checkpoint": "yusufizzetmurat/finbert-fed-adjacent",
+      "source_type": "regional_research",
+      "support": 0,
+      "status": "no_rows",
+      "kind": "stance"
+    },
+    {
+      "encoder_alias": "finbert_fed_adjacent",
+      "checkpoint": "yusufizzetmurat/finbert-fed-adjacent",
+      "source_type": "ny_fed_liberty_street",
+      "support": 0,
+      "status": "no_rows",
+      "kind": "stance"
+    },
+    {
+      "source_type": "gss_factor_decomposition",
+      "encoder_alias": "finbert_fed_adjacent",
+      "checkpoint": "yusufizzetmurat/finbert-fed-adjacent",
+      "support": 138,
+      "kind": "continuous",
+      "targets": {
+        "gss_target_factor": {
+          "support": 138,
+          "pearson_r": -0.011363996524564863,
+          "spearman_r": -0.03557887608222282,
+          "zscore_rmse": 1.4222264211612472
+        },
+        "gss_path_factor": {
+          "support": 138,
+          "pearson_r": 0.3357098593037053,
+          "spearman_r": 0.34626818699042017,
+          "zscore_rmse": 1.1526405690381496
+        }
+      },
+      "latency_ms": {
+        "p50": 0.06658027996309102,
+        "p95": 0.24042930454015732
+      },
+      "status": "ok"
+    }
+  ],
+  "failures": []
+}
