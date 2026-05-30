@@ -256,12 +256,51 @@ def _parse_args() -> argparse.Namespace:
             "``1 + |true - argmax|`` so far-bin confusions pay more."
         ),
     )
+    # Pooled-text path. Default ``None`` keeps the text path off so the
+    # canonical sweep stays byte-identical; set to an encoder alias
+    # (resolved through ``app.models.registry.encoder_ref``) or a HF
+    # repo id to consume that encoder's pooled embeddings as a feature
+    # family. The companion ``--no-text-embeddings`` toggle zeros the
+    # slot while keeping input shape constant; together they match the
+    # loader predicate ``bool(text_encoder) and bool(use_text_embeddings)``.
+    parser.add_argument(
+        "--text-encoder",
+        dest="text_encoder",
+        type=str,
+        default=None,
+        help=(
+            "Encoder alias or HF repo id whose pooled FOMC statement "
+            "embeddings the loader attaches as a per-event feature "
+            "family. Default ``None`` keeps the text path off so the "
+            "canonical sweep stays byte-identical."
+        ),
+    )
+    parser.add_argument(
+        "--use-text-embeddings",
+        dest="use_text_embeddings",
+        action="store_true",
+        help=(
+            "Enable the pooled-text embedding slot when "
+            "``--text-encoder`` is set (default). No-op when "
+            "``--text-encoder`` is unset."
+        ),
+    )
+    parser.add_argument(
+        "--no-text-embeddings",
+        dest="use_text_embeddings",
+        action="store_false",
+        help=(
+            "Zero the pooled-text embedding slot while keeping the "
+            "model input shape constant."
+        ),
+    )
     parser.set_defaults(
         use_retrieval_analogs=False,
         use_regime_conditioning=False,
         use_statement_delta=False,
         use_vote_features=False,
         use_press_conf=False,
+        use_text_embeddings=True,
     )
     return parser.parse_args()
 
@@ -383,6 +422,8 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
     use_vote_features: bool = False,
     use_press_conf: bool = False,
     regime_loss: str = "ce",
+    text_encoder: str | None = None,
+    use_text_embeddings: bool = True,
 ) -> dict[str, Any]:
     # Imports happen here so the script is importable without a torch
     # install (useful for doc-only environments).
@@ -422,6 +463,8 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
             use_statement_delta=use_statement_delta,
             use_vote_features=use_vote_features,
             use_press_conf=use_press_conf,
+            text_encoder=text_encoder,
+            use_text_embeddings=use_text_embeddings,
             vol_target_horizon=vol_target_horizon,
             sequence_length=active_sequence_length,
         )
@@ -493,6 +536,10 @@ def main() -> int:
                     use_vote_features=bool(args.use_vote_features),
                     use_press_conf=bool(args.use_press_conf),
                     regime_loss=str(args.regime_loss),
+                    text_encoder=(
+                        str(args.text_encoder) if args.text_encoder else None
+                    ),
+                    use_text_embeddings=bool(args.use_text_embeddings),
                 )
             )
 
@@ -534,6 +581,10 @@ def main() -> int:
         "use_vote_features": bool(args.use_vote_features),
         "use_press_conf": bool(args.use_press_conf),
         "regime_loss": str(args.regime_loss),
+        "text_encoder": (
+            str(args.text_encoder) if args.text_encoder else None
+        ),
+        "use_text_embeddings": bool(args.use_text_embeddings),
         "trials": trials,
         "summary": summary,
     }

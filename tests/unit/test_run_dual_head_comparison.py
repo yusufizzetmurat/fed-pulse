@@ -53,6 +53,30 @@ def test_dual_head_runner_exposes_new_flags(monkeypatch):
     assert args.use_statement_delta is False
     assert args.use_vote_features is False
     assert args.use_press_conf is False
+    assert args.text_encoder is None
+    assert args.use_text_embeddings is True
+
+
+def test_dual_head_runner_text_encoder_opt_in(monkeypatch):
+    """``--text-encoder <alias>`` parses; ``--no-text-embeddings`` flips."""
+
+    from scripts.run_dual_head_comparison import _parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_dual_head_comparison",
+            "--training-package-id",
+            "tp_dummy",
+            "--text-encoder",
+            "finbert_fed_adjacent_xbank",
+            "--no-text-embeddings",
+        ],
+    )
+    args = _parse_args()
+    assert args.text_encoder == "finbert_fed_adjacent_xbank"
+    assert args.use_text_embeddings is False
 
 
 def test_dual_head_runner_accepts_opt_in_flags(monkeypatch):
@@ -278,6 +302,10 @@ def test_dual_head_runner_default_off_byte_identity(monkeypatch):
     assert loader_kwargs["rich_features"] is True
     assert loader_kwargs["vol_target_horizon"] == 10
     assert loader_kwargs["sequence_length"] == SEQUENCE_LENGTH
+    # Default-off: text path stays disabled (text_encoder=None gates the
+    # loader's ``use_text_path`` predicate regardless of the toggle).
+    assert loader_kwargs["text_encoder"] is None
+    assert loader_kwargs["use_text_embeddings"] is True
 
     train_kwargs = captured["train_calls"][0]
     model_config = train_kwargs["model_config"]
@@ -329,6 +357,31 @@ def test_dual_head_runner_opt_in_threads_through(monkeypatch):
     assert model_config.vol_target_horizon == 5
     assert model_config.sequence_length == 60
     assert model_config.use_regime_conditioning is True
+
+
+def test_dual_head_runner_text_encoder_threads_into_loader(monkeypatch):
+    """Setting ``text_encoder`` forwards the alias + toggle to the loader."""
+
+    pytest.importorskip("torch", reason="train_model import path needs torch")
+    from scripts import run_dual_head_comparison as runner
+
+    captured = _capture_calls(monkeypatch, runner)
+
+    runner._run_one_cell(
+        "dual",
+        seed=11,
+        training_package_id="tp_dummy",
+        fold_ids=["fold_001"],
+        epochs=1,
+        regression_alpha=0.5,
+        hidden_size=64,
+        text_encoder="finbert_fed_adjacent_xbank",
+        use_text_embeddings=False,
+    )
+
+    loader_kwargs = captured["loader_calls"][0]
+    assert loader_kwargs["text_encoder"] == "finbert_fed_adjacent_xbank"
+    assert loader_kwargs["use_text_embeddings"] is False
 
 
 # ---------------------------------------------------------------------------
