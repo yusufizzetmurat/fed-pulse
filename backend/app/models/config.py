@@ -520,6 +520,16 @@ class ModelConfig:
     multi_task_lambda_stance: float = 1.0
     multi_task_lambda_factor: float = 0.3
     multi_task_lambda_certainty: float = 0.3
+    # #470 regime-loss variant. ``"ce"`` (default) keeps the standard
+    # cross-entropy on the 3-class regime stance head byte-identical to
+    # every pre-#470 run. ``"ordinal_ce"`` swaps in the bin-distance-
+    # weighted CE in :func:`app.training.loss.ordinal_cross_entropy` so
+    # a ``calm -> high`` confusion costs 2x a ``calm -> normal``
+    # confusion — encodes the calm < normal < high label ordering into
+    # the gradient without changing the head shape or the checkpoint
+    # contract. The training loop reads this off the stashed module
+    # attribute when constructing the CE / MultiTaskLoss instance.
+    regime_loss_mode: str = "ce"
     # Steepens inverse-frequency class weights via ``raw[c] = 1 / (n_c + 1) ** power``.
     # ``1.0`` (default) is the legacy formula and preserves byte-identity with
     # pre-2026-05-25 sweep numbers; higher values force the gradient onto the
@@ -707,6 +717,7 @@ class ModelConfig:
             multi_task_lambda_stance=float(getattr(model, "multi_task_lambda_stance", 1.0)),
             multi_task_lambda_factor=float(getattr(model, "multi_task_lambda_factor", 0.3)),
             multi_task_lambda_certainty=float(getattr(model, "multi_task_lambda_certainty", 0.3)),
+            regime_loss_mode=str(getattr(model, "regime_loss_mode", "ce") or "ce"),
             class_weight_power=float(getattr(model, "class_weight_power", 1.0)),
             head_mode=str(getattr(model, "head_mode", "dual") or "dual"),
             regression_alpha=float(getattr(model, "regression_alpha", 0.5)),
@@ -980,6 +991,16 @@ class FeatureVector:
     # #444 vote-tally signed feature block. See ADR 0038.
     vote_features: list[float] | None = None
     vote_features_missing: float = 1.0
+    # #495 confounder-ablation block. Optional per-event control vector
+    # (year one-hot, meeting-kind one-hot, log token count, or any
+    # combination thereof) appended past the legacy tail blocks by
+    # ``as_rich_list`` only when populated. The width is determined by
+    # the ablation cell the runner constructs; the in-place adapter at
+    # the runner writes the same length onto every FeatureVector of a
+    # sequence so the per-bar input size stays consistent across the
+    # sequence. Default ``None`` keeps every legacy / non-ablation path
+    # byte-identical (no block appended, no widening).
+    confounder_features: list[float] | None = None
     rich_payload: bool = False
     # Phase 9 V2 (#195) classification target. The forward 10-trading-day
     # realised volatility lives on the target row (the last vector in
@@ -1305,6 +1326,13 @@ class FeatureVector:
                     RICH_VOTE_FEATURES_DIM - len(vote_block)
                 )
             out = out + vote_block + [float(self.vote_features_missing)]
+        # #495 confounder-ablation tail. Last block by construction so
+        # every other tail flag's slice math stays unchanged. Width is
+        # caller-determined (year FE / meeting-kind FE / log-token / any
+        # combo), so a downstream caller iterating slices must read it
+        # off the FeatureVector field directly.
+        if self.confounder_features is not None:
+            out = out + [float(v) for v in self.confounder_features]
         return out
 
 

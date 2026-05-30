@@ -343,6 +343,10 @@ def _audit_inventory_covers_every_field() -> set[str]:
         "statement_delta_embedding",
         # #444 vote-tally features (ADR 0038).
         "vote_features",
+        # #495 confounder controls — year FE / meeting-kind FE / log token_count
+        # appended past the vote-tally tail by ``FeatureVector.as_rich_list``
+        # only when ``scripts/run_confounder_ablation`` writes the slot.
+        "confounder_features",
         "rich_payload",
         "text_embedding_pooled",
         "text_embedding_missing",
