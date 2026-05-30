@@ -23,39 +23,55 @@ from app.data.sources.swanson_three_factor import (  # noqa: E402
 
 
 def _write_fixture_xlsx(path: Path, n: int = 3) -> None:
-    """Write a Swanson-shape xlsx fixture mirroring the upstream layout
-    (header row 1, date column second, three factor columns + a
-    sign-flipped LSAP column).
+    """Write a Swanson-shape xlsx fixture mirroring the upstream layout.
+
+    The real ``pre-and-post-ZLB-factors-extended.xlsx`` carries a single
+    title row at openpyxl row 1 ("Estimated Factors" / etc.), the
+    column-header row at openpyxl row 2 ("Federal Funds Rate factor",
+    "Forward Guidance factor", ...), and the data from row 3 onwards.
+    ``parse_entry``'s ``pd.read_excel(header=1)`` skips the title row
+    and uses the column-header row as the frame's columns; the previous
+    pandas-only fixture inserted the column-header row at openpyxl row 1
+    (the implicit ``to_excel`` header) which made ``header=1`` consume
+    the title row instead, every factor field then arrived as ``None``.
+
+    Write directly via openpyxl so the three rows land in the order the
+    parser expects.
     """
 
+    from openpyxl import Workbook
+
     dates = pd.date_range("2010-01-27", periods=n, freq="60D")
-    df = pd.DataFrame(
-        {
-            "Unnamed: 0": [None] * n,
-            "Unnamed: 1": dates,
-            "Federal Funds Rate factor": [-0.10 + i * 0.05 for i in range(n)],
-            "Forward Guidance factor": [0.20 + i * 0.01 for i in range(n)],
-            "LSAP factor": [-0.05 + i * 0.02 for i in range(n)],
-            " – LSAP factor": [0.05 - i * 0.02 for i in range(n)],
-        }
-    )
-    # Upstream has a single label row before the column headers; mimic
-    # that so pd.read_excel(header=1) picks up the right header row.
-    label_row = pd.DataFrame(
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    # Row 1 — single label row mirroring the upstream xlsx's title cell.
+    ws.append([None, None, "Estimated Factors", None, None, None])
+    # Row 2 — column headers consumed by ``pd.read_excel(header=1)``.
+    ws.append(
         [
-            {
-                "Unnamed: 0": None,
-                "Unnamed: 1": None,
-                "Federal Funds Rate factor": "Estimated Factors",
-                "Forward Guidance factor": None,
-                "LSAP factor": None,
-                " – LSAP factor": None,
-            }
+            "Unnamed: 0",
+            "Unnamed: 1",
+            "Federal Funds Rate factor",
+            "Forward Guidance factor",
+            "LSAP factor",
+            " – LSAP factor",
         ]
     )
-    full = pd.concat([label_row, df], ignore_index=True)
-    with pd.ExcelWriter(path, engine="openpyxl") as writer:
-        full.to_excel(writer, sheet_name="Data", index=False, header=True)
+    # Rows 3+ — data with the same dates + factor sequence the original
+    # fixture emitted.
+    for i in range(n):
+        ws.append(
+            [
+                None,
+                dates[i].to_pydatetime(),
+                -0.10 + i * 0.05,
+                0.20 + i * 0.01,
+                -0.05 + i * 0.02,
+                0.05 - i * 0.02,
+            ]
+        )
+    wb.save(path)
 
 
 class _FakeResponse:

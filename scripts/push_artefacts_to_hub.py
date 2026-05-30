@@ -323,31 +323,44 @@ class PushPlan:
     kind: str
 
 
-def _resolve_local_path(meta: dict[str, str]) -> Path:
+def _resolve_local_path(meta: dict[str, str]) -> Path | None:
+    """Resolve the local source path for one artefact, or ``None`` when
+    the artefact is already canonical on Hub.
+
+    After the #464 repoint the three DAPT encoder aliases now carry
+    their HF Hub slug (``yusufizzetmurat/finbert-fed-adjacent``) in
+    ``ref.repo`` rather than a ``/data/artifacts/...`` local path.
+    ``Path("yusufizzetmurat/finbert-fed-adjacent")`` would silently
+    resolve to a non-existent path under ``$CWD`` and the downstream
+    ``plan.local_path.exists()`` guard would short-circuit the push
+    without surfacing why. Returning ``None`` here lets ``_build_plans``
+    skip the plan with a clear "already on Hub" message — the upload
+    is intentionally a no-op when the registry already pins a Hub SHA;
+    operators pushing a fresh checkpoint should swap the entry to a
+    ``local_path: "/path/to/new/checkpoint"`` form before re-running.
+    """
     if "encoder_alias" in meta:
         ref = encoder_ref(meta["encoder_alias"])
         if ref is None:
             raise ValueError(f"Unknown encoder alias: {meta['encoder_alias']!r}")
-        # After the #464 repoint the three DAPT encoder aliases now
-        # carry their HF Hub slug (``yusufizzetmurat/finbert-fed-...``)
-        # in ``ref.repo``, not the original ``/data/artifacts/...``
-        # local path. ``Path("yusufizzetmurat/finbert-fed-adjacent")``
-        # silently resolves to a non-existent relative path under
-        # ``$CWD``; the downstream ``plan.local_path.exists()`` guard
-        # then short-circuits the push without surfacing an error. Fail
-        # fast with a clear message so the operator notices that the
-        # registry alias is already on Hub and either swaps to a
-        # ``local_path`` entry or skips the push.
         if is_hf_uri(ref.repo) or _HF_REPO_ID_RE.match(ref.repo):
-            raise ValueError(
-                f"Encoder alias {meta['encoder_alias']!r} resolves to the "
-                f"Hugging Face repo {ref.repo!r} (revision {ref.revision!r}), "
-                "so there is no local source folder to push. Set "
-                "ARTEFACT_SOURCES['<key>']['local_path'] to the freshly "
-                "trained checkpoint directory when pushing a new revision."
-            )
+            return None
         return Path(ref.repo)
     return REPO_ROOT / meta["local_path"]
+
+
+def _resolve_local_path_or_raise(meta: dict[str, str]) -> Path:
+    """Strict wrapper for callers that cannot handle an HF-only artefact."""
+    resolved = _resolve_local_path(meta)
+    if resolved is None:
+        alias = meta.get("encoder_alias", "?")
+        raise ValueError(
+            f"Encoder alias {alias!r} resolves to a Hugging Face Hub repo "
+            "rather than a local folder. Override "
+            "``ARTEFACT_SOURCES['<key>']['local_path']`` to the freshly "
+            "trained checkpoint directory before pushing a new revision."
+        )
+    return resolved
 
 
 def _build_plans(kinds: set[str] | None) -> list[PushPlan]:
@@ -364,6 +377,19 @@ def _build_plans(kinds: set[str] | None) -> list[PushPlan]:
             )
         parsed = parse_hf_uri(ref.hf_uri)
         local_path = _resolve_local_path(meta)
+        if local_path is None:
+            # Encoder alias resolves to an HF Hub slug — the registry
+            # already pins the canonical SHA, so there is no local
+            # checkpoint folder to upload. Skip with an explicit log line
+            # so the operator notices the plan was skipped intentionally
+            # instead of misreading silence as "uploaded".
+            print(
+                f"\n=== {key} ({meta['kind']}) ===\n"
+                f"    remote: {ref.hf_uri}\n"
+                f"    [skip] encoder alias {meta['encoder_alias']!r} is already on Hub; "
+                "set ARTEFACT_SOURCES['<key>']['local_path'] to push a fresh checkpoint."
+            )
+            continue
         plans.append(
             PushPlan(
                 artefact_key=key,
