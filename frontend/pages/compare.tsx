@@ -159,8 +159,7 @@ function MultiAxisDeltaCard({ delta }: { delta: MultiAxisDelta }) {
   const hasSignal =
     delta.stanceRankDelta != null ||
     delta.factorDelta != null ||
-    delta.certaintyShift !== "unknown" ||
-    delta.topicChanged != null;
+    delta.certaintyShift !== "unknown";
   if (!hasSignal) return null;
   const stanceDir =
     delta.stanceRankDelta == null
@@ -228,16 +227,6 @@ function MultiAxisDeltaCard({ delta }: { delta: MultiAxisDelta }) {
                 {delta.certaintyConfidenceDelta != null
                   ? `${delta.certaintyConfidenceDelta >= 0 ? "+" : ""}${delta.certaintyConfidenceDelta.toFixed(2)}`
                   : "—"}
-              </td>
-            </tr>
-            <tr>
-              <td className="px-4 py-2 font-mono">topic</td>
-              <td className="px-4 py-2 text-right text-xs text-muted-foreground" colSpan={2}>
-                {delta.topicChanged == null
-                  ? "—"
-                  : delta.topicChanged
-                  ? "main topic changed"
-                  : "main topic unchanged"}
               </td>
             </tr>
           </tbody>

@@ -745,16 +745,16 @@ def _make_partition_dataset(
 ) -> TensorDataset:
     """Pack one partition's tensors into a TensorDataset using a fixed contract.
 
-    Supported arities, in order:
+    Supported arities, in order (post-ADR-0044 — topic axis retired):
 
     - 2: ``(x, y)``
     - 3: ``(x, y, log_rv)`` -- #304 dual-head log(RV) target only
     - 4: ``(x, y, text_emb, text_missing)``
     - 5: text + log_rv combined
-    - 8: ``(x, y, factor, factor_mask, certainty, certainty_mask, topic, topic_mask)``
-    - 9: mt_aux + log_rv combined
-    - 10: text + multi-task combined
-    - 11: text + multi-task + log_rv combined
+    - 6: ``(x, y, factor, factor_mask, certainty, certainty_mask)``
+    - 7: mt_aux + log_rv combined
+    - 8: text + multi-task combined
+    - 9: text + multi-task + log_rv combined
 
     The multi-task aux ordering is fixed by :data:`_MULTI_TASK_AUX_KEYS` so
     :func:`_unpack_batch` can recover the tensors positionally. The
@@ -804,11 +804,11 @@ def _unpack_batch(
     """Decode a DataLoader batch into ``(x, y, text, text_missing, mt_aux, log_rv)``.
 
     Eight batch shapes are tolerated; see :func:`_make_partition_dataset`
-    for the arity-to-contents map. ``mt_aux`` is a 6-key dict (factor,
-    factor_mask, certainty, certainty_mask, topic, topic_mask) when the
-    multi-task path is active and ``None`` otherwise. ``log_rv`` is the
-    optional 1-D dual-head regression target tensor (#304); ``None``
-    on classification-only runs.
+    for the arity-to-contents map. ``mt_aux`` is a 4-key dict (factor,
+    factor_mask, certainty, certainty_mask) when the multi-task path is
+    active and ``None`` otherwise; the topic axis pair was retired in
+    ADR 0044. ``log_rv`` is the optional 1-D dual-head regression target
+    tensor (#304); ``None`` on classification-only runs.
     """
 
     arity = len(batch)
@@ -842,7 +842,7 @@ def _unpack_batch(
             and candidate.dim() == 1
             and candidate.dtype == torch.int64
             and int(candidate.size(0)) == batch_size_probe
-            and len(batch_list) - 1 in {2, 3, 4, 5, 8, 9, 10, 11}
+            and len(batch_list) - 1 in {2, 3, 4, 5, 6, 7, 8, 9}
         )
         if is_rates_index_candidate:
             # Value-range guard: rates_index is produced by torch.arange(N)
@@ -1311,8 +1311,8 @@ def _fit_axis_class_weights_from_mask(
     """Inverse-frequency class weights fit on masked rows of one axis (#273).
 
     Mirrors :func:`app.training.loaders.fit_class_weights` for the
-    multi-task path: each axis (stance, certainty, topic) computes its
-    own class weights using only the rows where the axis mask is True.
+    multi-task path: each axis (stance, certainty) computes its own
+    class weights using only the rows where the axis mask is True.
     Smoothing keeps an empty class from blowing the weight up; the
     weights are normalised so they sum to ``n_classes``.
 
@@ -1471,10 +1471,10 @@ def _maybe_add_dual_head_loss(
     """Augment an existing multi-task loss with the dual-head MSE.
 
     The multi-task path already pays the per-axis losses (stance CE +
-    factor SmoothL1 + certainty CE + topic CE) inside
-    :class:`MultiTaskLoss`; this helper preserves the full multi-task
-    objective and adds the dual-head log(RV) MSE on top so the four
-    axis classifiers keep learning under every head_mode.
+    factor SmoothL1 + certainty CE) inside :class:`MultiTaskLoss`; this
+    helper preserves the full multi-task objective and adds the dual-
+    head log(RV) MSE on top so the three axis branches keep learning
+    under every head_mode. (Topic was retired in ADR 0044.)
 
     Per-mode behaviour:
 
@@ -1487,9 +1487,9 @@ def _maybe_add_dual_head_loss(
       stance head's classification view is the secondary surface. The
       regression head is the primary learning signal here; the
       per-axis losses still contribute their (smaller) gradient so the
-      certainty / topic / factor heads continue to learn. The previous
+      certainty / factor branches continue to learn. The previous
       implementation discarded ``loss`` entirely, which silently
-      stopped the four axis classifiers under multi-task + regression.
+      stopped the three axis branches under multi-task + regression.
 
     ``logits_dict`` missing ``log_rv`` or ``batch_log_rv == None``
     short-circuits to ``loss`` to keep degenerate fixtures from
@@ -2834,7 +2834,7 @@ def train_model(
             print(
                 "[train_model] derived-text-features OFF: zeroed slices "
                 "[0], [10:25], [25:29], [29:35], [45:80] on x before "
-                "scaler fit; masked factor/certainty/topic on mt_aux",
+                "scaler fit; masked factor/certainty on mt_aux",
                 flush=True,
             )
         test_x = apply_rich_feature_scaler_tensor(test_x, rich_feature_scaler)
