@@ -51,7 +51,7 @@ import numpy as np
 
 from app.config import BACKEND_ROOT, DATA_DIR as DEFAULT_DATA_DIR
 from app.evaluation.classification_breakdown import compute_classification_breakdown
-from app.models.registry import resolve_by_role, revision_for
+from app.models.registry import encoder_ref, resolve_by_role, revision_for
 
 DEFAULT_OUTPUT_PATH = (
     BACKEND_ROOT.parent / "artifacts" / "experiments" / "finetune_pilot_b2.json"
@@ -440,13 +440,19 @@ def _train_and_eval_one_cell(  # noqa: PLR0913 — per-cell knobs surface as nam
 
     hf_token = _hf_token()
     revision = revision_for(encoder_alias)
+    # ``encoder_alias`` is the registry alias (e.g. ``finbert_fed_adjacent``);
+    # ``from_pretrained`` needs the underlying repo id (HF slug like
+    # ``yusufizzetmurat/finbert-fed-adjacent`` after #464, or a local
+    # path for unpinned-local entries). Look it up via ``encoder_ref``.
+    ref = encoder_ref(encoder_alias)
+    encoder_repo = ref.repo if ref is not None else encoder_alias
     tokenizer_kwargs: dict[str, Any] = {"token": hf_token} if hf_token else {}
     if revision:
         tokenizer_kwargs["revision"] = revision
-    tokenizer = AutoTokenizer.from_pretrained(encoder_alias, **tokenizer_kwargs)
+    tokenizer = AutoTokenizer.from_pretrained(encoder_repo, **tokenizer_kwargs)
 
     model = AutoModelForSequenceClassification.from_pretrained(
-        encoder_alias,
+        encoder_repo,
         num_labels=N_CLASSES,
         id2label=ID2LABEL,
         label2id=LABEL2ID,

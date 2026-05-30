@@ -137,11 +137,18 @@ def _train_single(
     hidden_size: int,
     epochs: int,
 ) -> dict[str, Any]:
-    from app.models.config import ModelConfig
+    from app.models.config import RICH_FEATURE_SIZE, ModelConfig
     from app.training.loaders import load_walk_forward_split
     from app.training.loop import train_model
 
     config = ModelConfig(
+        # The loader emits RICH_FEATURE_SIZE per bar; defaulting to the
+        # legacy 6-dim ``FEATURE_SIZE`` crashes the LSTM at
+        # ``input.size(-1) must be equal to input_size``. Pin the rich
+        # width here so the rates-heads sweep matches what the
+        # canonical-comparison runner does (see
+        # ``scripts/run_dual_head_comparison.py``).
+        input_size=RICH_FEATURE_SIZE,
         output_mode="classification",
         n_classes=3,
         hidden_size=hidden_size,
