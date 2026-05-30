@@ -410,9 +410,13 @@ def build_forecaster(
     model.vol_target_mode = vol_target_mode_value  # type: ignore[assignment]
     # #443/#444 round-trip the two new opt-in flags. Default-off path
     # behaves byte-identically; flag-on a future sweep that resumes off
-    # this checkpoint rebuilds with the same loader-tail widths.
-    model.use_statement_delta = use_statement_delta_flag  # type: ignore[assignment]
-    model.use_vote_features = use_vote_features_flag  # type: ignore[assignment]
+    # this checkpoint rebuilds with the same loader-tail widths. The
+    # ctor wires these as ``ForecasterBase`` attrs already; the explicit
+    # assignment here covers the flat_mlp path (which doesn't go through
+    # the recurrent base) and serves as the round-trip source the
+    # persisted run summary reads via ``ModelConfig.from_model``.
+    model.use_statement_delta = use_statement_delta_flag
+    model.use_vote_features = use_vote_features_flag
     # #480 round-trip the symbol-embedding dim so
     # ``ModelConfig.from_model`` recovers it on resume. The research
     # class set this in its ctor; stash it on the serving instance too
