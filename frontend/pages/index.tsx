@@ -507,7 +507,7 @@ export default function WorkspacePage() {
                   <EmptyState
                     variant="inline"
                     title="Sentiment breakdown unavailable."
-                    description="Load a sentiment model from the Settings page to populate stance, factor, certainty, and topic."
+                    description="Load a sentiment model from the Settings page to populate stance, factor, and certainty."
                   />
                 )}
                 {result.credibility ? (

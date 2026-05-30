@@ -120,38 +120,8 @@ function CertaintyCard({ certainty }: { certainty: NonNullable<MultiAxisResponse
   );
 }
 
-function TopicCard({ topic }: { topic: NonNullable<MultiAxisResponse["topic"]> }) {
-  const display = (topic.label ?? topic.primary ?? "other").toString();
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardDescription>Topic</CardDescription>
-        <CardTitle className="text-xl capitalize">
-          {display.replace(/_/g, " ")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>Confidence in main topic</span>
-          <span className="font-medium text-foreground">{topic.confidence.toFixed(2)}</span>
-        </div>
-        <Progress value={topic.confidence} />
-        {topic.secondary?.length ? (
-          <div className="flex flex-wrap gap-1.5 pt-1">
-            {topic.secondary.map((t) => (
-              <Badge key={t} variant="outline" className="capitalize">
-                {t.replace(/_/g, " ")}
-              </Badge>
-            ))}
-          </div>
-        ) : null}
-      </CardContent>
-    </Card>
-  );
-}
-
 export function MultiAxisCards({ multiAxis, previewMode }: MultiAxisCardsProps) {
-  if (!multiAxis.stance && !multiAxis.factor && !multiAxis.certainty && !multiAxis.topic) {
+  if (!multiAxis.stance && !multiAxis.factor && !multiAxis.certainty) {
     return null;
   }
   return (
@@ -161,11 +131,10 @@ export function MultiAxisCards({ multiAxis, previewMode }: MultiAxisCardsProps) 
           Sentiment breakdown preview · sample data
         </Badge>
       ) : null}
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {multiAxis.stance ? <StanceCard stance={multiAxis.stance} /> : null}
         {multiAxis.factor ? <FactorCard factor={multiAxis.factor} /> : null}
         {multiAxis.certainty ? <CertaintyCard certainty={multiAxis.certainty} /> : null}
-        {multiAxis.topic ? <TopicCard topic={multiAxis.topic} /> : null}
       </div>
     </div>
   );

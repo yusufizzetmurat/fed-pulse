@@ -724,7 +724,7 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help=(
             "Train classification with MultiTaskLoss over stance / factor / "
-            "certainty / topic instead of single-axis CrossEntropy. "
+            "certainty instead of single-axis CrossEntropy. "
             "Per-axis class weights fit on the train slice; per-row mask "
             "drops axes whose label is absent on a given row."
         ),
@@ -747,12 +747,6 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         default=0.3,
         help="Loss weight on the certainty branch.",
-    )
-    parser.add_argument(
-        "--multi-task-lambda-topic",
-        type=float,
-        default=0.3,
-        help="Loss weight on the topic branch.",
     )
     parser.add_argument(
         "--class-weight-power",
@@ -926,7 +920,7 @@ def _parse_args() -> argparse.Namespace:
             "forecaster head (#309). ``on`` (default) leaves the "
             "FeatureVector slots populated as in the pre-#309 baseline. "
             "``off`` zeros ``sentiment_score`` + the multi-axis stance / "
-            "certainty / topic slots so only the document-level encoder "
+            "certainty slots so only the document-level encoder "
             "path drives the forecaster. Used by "
             "``scripts/run_derived_features_ablation.py`` for the three-way "
             "comparison (baseline / ablation / replacement)."
@@ -1379,7 +1373,6 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
         multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
         multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
-        multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
         class_weight_power=float(getattr(args, "class_weight_power", 1.0)),
         head_mode=str(getattr(args, "head_mode", "classification") or "classification"),
         regression_alpha=float(getattr(args, "regression_alpha", 0.5)),
@@ -1643,7 +1636,6 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                                 multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
                                 multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
                                 multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
-                                multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
                                 class_weight_power=float(getattr(args, "class_weight_power", 1.0)),
                                 head_mode=str(getattr(args, "head_mode", "classification") or "classification"),
                                 regression_alpha=float(getattr(args, "regression_alpha", 0.5)),
@@ -1766,7 +1758,6 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                         multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
                         multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
                         multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
-                        multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
                         class_weight_power=float(getattr(args, "class_weight_power", 1.0)),
                         head_mode=str(getattr(args, "head_mode", "classification") or "classification"),
                         regression_alpha=float(getattr(args, "regression_alpha", 0.5)),

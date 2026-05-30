@@ -69,7 +69,6 @@ class _StubModelWithHeadMode:
     multi_task_lambda_stance = 1.0
     multi_task_lambda_factor = 0.3
     multi_task_lambda_certainty = 0.3
-    multi_task_lambda_topic = 0.3
     class_weight_power = 1.0
 
     # Dual-head joint-loss alpha (#304).

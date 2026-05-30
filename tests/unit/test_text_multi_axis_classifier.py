@@ -36,7 +36,8 @@ class _StubEncoder(nn.Module):
         return out
 
 
-def test_classifier_emits_four_axis_dict_from_stub_encoder() -> None:
+def test_classifier_emits_three_axis_dict_from_stub_encoder() -> None:
+    """Post-ADR-0044: topic branch retired; classifier emits stance / factor / certainty."""
     torch.manual_seed(0)
     encoder = _StubEncoder(hidden_size=16, vocab_size=30)
     model = TextMultiAxisClassifier(
@@ -50,11 +51,10 @@ def test_classifier_emits_four_axis_dict_from_stub_encoder() -> None:
     input_ids = torch.randint(0, 30, (2, 12))
     attention_mask = torch.ones_like(input_ids)
     out = model(input_ids=input_ids, attention_mask=attention_mask)
-    assert set(out.keys()) == {"stance", "factor", "certainty", "topic"}
+    assert set(out.keys()) == {"stance", "factor", "certainty"}
     assert out["stance"].shape == (2, 3)
     assert out["factor"].shape == (2,)
     assert out["certainty"].shape == (2, 3)
-    assert out["topic"].shape == (2, 4)
 
 
 def test_metadata_round_trips_encoder_provenance() -> None:

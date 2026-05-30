@@ -2,8 +2,8 @@
 
 The forecaster head currently reads two text paths in parallel:
 (a) the encoder-pooled embedding, and (b) lossy per-bar derived
-features (``sentiment_score``, multi-axis stance / certainty /
-topic). The #309 ablation toggles path (b) off so the three-way
+features (``sentiment_score``, multi-axis stance / certainty).
+The #309 ablation toggles path (b) off so the three-way
 comparison (baseline / ablation / replacement) can quantify whether
 the derived features carry forecaster-relevant signal over the
 document-level encoder path.
@@ -133,7 +133,7 @@ def test_zero_derived_text_features_legacy_6dim_skips_multi_axis() -> None:
 
 
 def test_zero_derived_text_features_masks_multi_task_aux() -> None:
-    """The factor / certainty / topic masks must all collapse to False."""
+    """The factor / certainty masks must all collapse to False (topic retired)."""
 
     n = 4
     aux = {
@@ -141,14 +141,11 @@ def test_zero_derived_text_features_masks_multi_task_aux() -> None:
         "factor_mask": torch.ones(n, dtype=torch.bool),
         "certainty": torch.zeros(n, dtype=torch.long),
         "certainty_mask": torch.ones(n, dtype=torch.bool),
-        "topic": torch.zeros(n, dtype=torch.long),
-        "topic_mask": torch.ones(n, dtype=torch.bool),
     }
     _x, new_aux = _zero_derived_text_features(None, aux)
     assert new_aux is not None
     assert not new_aux["factor_mask"].any()
     assert not new_aux["certainty_mask"].any()
-    assert not new_aux["topic_mask"].any()
     # Target tensors are NOT touched -- only the masks drop to False.
     assert torch.equal(new_aux["factor"], aux["factor"])
 

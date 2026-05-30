@@ -124,12 +124,6 @@ export function buildCompareRows(a: HistoryDetail, b: HistoryDetail): CsvRow[] {
     rb.multi_axis?.certainty?.confidence ?? null,
     maxis.certaintyConfidenceDelta,
   ));
-  rows.push(_row(
-    "multi_axis.topic.primary",
-    ra.multi_axis?.topic?.primary ?? null,
-    rb.multi_axis?.topic?.primary ?? null,
-    maxis.topicChanged == null ? "" : maxis.topicChanged ? "changed" : "unchanged",
-  ));
   return rows;
 }
 

@@ -250,25 +250,20 @@ class MultiAxisCertaintyCard(BaseModel):
     distribution: dict[str, float] = Field(default_factory=dict)
 
 
-class MultiAxisTopicCard(BaseModel):
-    """Topic prediction from the multi-task head."""
-
-    model_config = _FORBID_FROZEN_CONFIG
-
-    label: str = Field(..., description="macro | forward_guidance | market_reaction | other")
-    confidence: float = Field(..., ge=0.0, le=1.0)
-    distribution: dict[str, float] = Field(default_factory=dict)
-
-
 class MultiAxisBlock(BaseModel):
     """Multi-task head per-axis predictions surfaced on /analyze (#78).
 
-    The four axes mirror the multi-task head's four output branches.
+    The three axes mirror the multi-task head's three output branches.
     Stance reuses the canonical 3-class classifier (also exposed on
-    the legacy ``sentiment`` field for back-compat); the other three
-    branches are populated for the first time with this block. Axes
+    the legacy ``sentiment`` field for back-compat); the other two
+    branches were populated for the first time with this block. Axes
     whose checkpoint was trained on very few labels are flagged as
     low-confidence; the frontend renders a muted card in that case.
+
+    The topic axis was retired in ADR 0044 — no upstream FOMC or
+    cross-bank corpus shipped topic labels, and the only path that
+    ever populated ``axis_topic`` was an internal macro-release
+    augmentation that no longer fires on the rebuild path.
     """
 
     model_config = _FORBID_FROZEN_CONFIG
@@ -276,7 +271,6 @@ class MultiAxisBlock(BaseModel):
     stance: MultiAxisStanceCard
     factor: MultiAxisFactorCard | None = None
     certainty: MultiAxisCertaintyCard | None = None
-    topic: MultiAxisTopicCard | None = None
 
 
 class RatesReactionCard(BaseModel):

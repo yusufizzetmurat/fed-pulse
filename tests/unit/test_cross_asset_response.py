@@ -101,7 +101,6 @@ def _make_events_df(
                         "axis_time": "neutral",
                         "axis_certainty": "neutral",
                         "axis_factor": "neutral",
-                        "axis_topic": "neutral",
                         "credibility_drift_score": 0.0,
                         "credibility_realized_vs_stated_gap": 0.0,
                         "credibility_market_implied_gap": 0.0,

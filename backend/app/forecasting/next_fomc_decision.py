@@ -18,7 +18,7 @@ Feature families
 
 * ``ois``        -- 5-tenor pre-event OIS-implied curve + level/path/info
                     factors from :file:`mp_surprises.parquet`.
-* ``text``       -- multi-axis stance / time / certainty / factor / topic
+* ``text``       -- multi-axis stance / time / certainty / factor
                     from :file:`events.parquet`. Multi-source duplicates
                     collapse to one row per meeting; the statement is the
                     preferred document kind when available.
@@ -645,10 +645,11 @@ def _ois_feature_names() -> tuple[str, ...]:
 
 
 def _text_feature_names() -> tuple[str, ...]:
-    # 3 one-hot dims per axis * 5 axes = 15 dims.
+    # 3 one-hot dims per axis * 4 axes = 12 dims. The topic axis was
+    # retired in ADR 0044 (no upstream source ships topic labels).
     return tuple(
         f"axis_{axis}_{label}"
-        for axis in ("stance", "time", "certainty", "factor", "topic")
+        for axis in ("stance", "time", "certainty", "factor")
         for label in ("dovish", "neutral", "hawkish")
     )
 
@@ -695,7 +696,7 @@ def _extract_ois_features(row: pd.Series) -> list[float]:
 
 def _extract_text_features(row: pd.Series) -> list[float]:
     out: list[float] = []
-    for axis_col in ("axis_stance", "axis_time", "axis_certainty", "axis_factor", "axis_topic"):
+    for axis_col in ("axis_stance", "axis_time", "axis_certainty", "axis_factor"):
         d, n, h = _axis_to_float(row.get(axis_col))
         out.extend([d, n, h])
     return out

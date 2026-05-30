@@ -1,7 +1,7 @@
 """Factor-axis gating on the multi-axis classifier (#328).
 
 The text multi-axis classifier ships with four output branches
-(stance / factor / certainty / topic), but the canonical training
+(stance / factor / certainty), but the canonical training
 package today has 0 % ``axis_factor`` label coverage — the factor
 regression branch trains almost exclusively on the masked-out path,
 so its outputs are noise. ADR 0018 documents the decision to gate
@@ -17,7 +17,7 @@ service:
   consistent with the new default behaviour rather than the legacy
   one.
 - A coverage stamp above the gate emits a real factor value.
-- The other three cards (stance / certainty / topic) keep emitting
+- The other two cards (stance / certainty) keep emitting
   regardless of the factor stamp — gating is scoped to the factor
   card only.
 """
@@ -59,7 +59,6 @@ class _StubModel:
             "stance": torch.tensor([[0.1, 0.7, 0.2]]),
             "factor": torch.tensor([self._factor_value]),
             "certainty": torch.tensor([[0.6, 0.3, 0.1]]),
-            "topic": torch.tensor([[0.5, 0.2, 0.2, 0.1]]),
         }
 
 
@@ -125,15 +124,9 @@ def test_factor_card_absent_when_coverage_is_zero(monkeypatch) -> None:
     block = svc.score_text("FOMC statement body")
     assert block is not None
     assert block["factor"] is None
-    # The other three axes stay populated — the gate is scoped to factor.
+    # The other two axes stay populated — the gate is scoped to factor.
     assert block["stance"]["label"] in {"hawkish", "dovish", "neutral"}
     assert block["certainty"]["label"] in {"certain", "uncertain", "neutral"}
-    assert block["topic"]["label"] in {
-        "macro",
-        "forward_guidance",
-        "market_reaction",
-        "other",
-    }
 
 
 def test_factor_card_absent_when_coverage_below_threshold(monkeypatch) -> None:
@@ -318,12 +311,11 @@ def test_factor_coverage_fraction_helper_on_trainer_rows() -> None:
     def _row(factor_present: bool) -> _AxisRow:
         return _AxisRow(
             text="x",
-            targets={"stance": 0, "factor": 0.0, "certainty": 0, "topic": 0},
+            targets={"stance": 0, "factor": 0.0, "certainty": 0},
             masks={
                 "stance": True,
                 "factor": factor_present,
                 "certainty": False,
-                "topic": False,
             },
         )
 

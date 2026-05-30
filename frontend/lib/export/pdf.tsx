@@ -2,7 +2,7 @@
 //
 // Layout is intentionally text-only: title bar (date, symbol, horizon,
 // forecast mode), a multi-axis card grid (stance / factor / certainty /
-// topic), a forecast metrics block, and a model + series metadata footer.
+// certainty), a forecast metrics block, and a model + series metadata footer.
 // The forecast chart embed lives in the deferred bucket — @react-pdf does
 // not consume Recharts elements directly, and the cleanest path (snapshot
 // the DOM SVG via XMLSerializer and feed it back through <Svg>) collides
@@ -107,7 +107,6 @@ function MultiAxisCardGrid({ detail }: { detail: HistoryDetail }) {
   const stance = result.multi_axis?.stance;
   const factor = result.multi_axis?.factor;
   const certainty = result.multi_axis?.certainty;
-  const topic = result.multi_axis?.topic;
 
   return (
     <View style={styles.cardGrid}>
@@ -130,13 +129,6 @@ function MultiAxisCardGrid({ detail }: { detail: HistoryDetail }) {
         <Text style={styles.cardValue}>{certainty?.label ?? "—"}</Text>
         <Text style={styles.cardSubvalue}>
           confidence {fmtNumber(certainty?.confidence, 3)}
-        </Text>
-      </View>
-      <View style={styles.card}>
-        <Text style={styles.cardLabel}>Primary topic</Text>
-        <Text style={styles.cardValue}>{topic?.primary ?? "—"}</Text>
-        <Text style={styles.cardSubvalue}>
-          confidence {fmtNumber(topic?.confidence, 3)}
         </Text>
       </View>
     </View>
@@ -292,12 +284,6 @@ function CompareDocument({ a, b }: { a: HistoryDetail; b: HistoryDetail }) {
       fmtNumber(ra.multi_axis?.certainty?.confidence, 3),
       fmtNumber(rb.multi_axis?.certainty?.confidence, 3),
       fmtSigned(maxis.certaintyConfidenceDelta, 3),
-    ],
-    [
-      "topic.primary",
-      ra.multi_axis?.topic?.primary ?? "—",
-      rb.multi_axis?.topic?.primary ?? "—",
-      maxis.topicChanged == null ? "—" : maxis.topicChanged ? "changed" : "unchanged",
     ],
     [
       "regime.argmax",

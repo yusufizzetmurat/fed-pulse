@@ -117,17 +117,17 @@ POSITIVE_KINDS = ("minutes", "press_conference")
 # Pair-policy menu for ``build_training_pairs`` (#329). ``same_meeting``
 # is the pre-#329 default and preserves the original MNRL contract
 # byte-identical. ``shared_axis`` is the rebuild policy that draws
-# positives from statements which share an axis_stance / axis_factor /
-# axis_topic label across different meetings — supervision that
-# targets cross-meeting semantic similarity rather than
-# same-meeting-ness.
+# positives from statements which share an axis_stance / axis_factor
+# label across different meetings — supervision that targets
+# cross-meeting semantic similarity rather than same-meeting-ness.
+# (The topic axis was retired in ADR 0044.)
 PAIR_POLICIES = ("same_meeting", "shared_axis")
 DEFAULT_PAIR_POLICY = "same_meeting"
 
 # Axis columns the shared-axis policy reads from the events parquet.
 # Order matters: when more than one axis matches, the first hit wins
 # so the recorded ``positive_kind`` is deterministic across reruns.
-SHARED_AXIS_COLUMNS = ("axis_stance", "axis_factor", "axis_topic")
+SHARED_AXIS_COLUMNS = ("axis_stance", "axis_factor")
 
 
 @dataclass(frozen=True)
@@ -241,8 +241,8 @@ def build_training_pairs(  # noqa: C901 — flat column-validation guards keep t
 
     * ``shared_axis`` (#329 rebuild). Anchors are statements; positives
       are statements from a DIFFERENT meeting that share at least one
-      multi-axis label (``axis_stance`` / ``axis_factor`` /
-      ``axis_topic``). The first matching axis wins so
+      multi-axis label (``axis_stance`` / ``axis_factor``).
+      The first matching axis wins so
       ``positive_kind`` is deterministic across reruns. Rows missing
       every axis label are skipped (cannot match anyone); rows whose
       axis value is empty / NaN are treated as unlabelled and excluded
@@ -685,8 +685,8 @@ def _parse_args() -> argparse.Namespace:
             "uses minutes / press_conference rows released on the "
             "anchor's event_date — the pre-#329 recipe. 'shared_axis' "
             "draws positives from cross-meeting statements sharing an "
-            "axis_stance / axis_factor / axis_topic label and targets "
-            "cross-meeting semantic similarity directly."
+            "axis_stance / axis_factor label and targets cross-meeting "
+            "semantic similarity directly."
         ),
     )
     return parser.parse_args()

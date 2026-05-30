@@ -105,27 +105,24 @@ def test_stance_masked_mode_drops_stance_for_cross_bank_only() -> None:
     assert fomc.masks["certainty"] is True
     assert fomc.stance_sample_weight == 1.0
 
-    # Pin the natural per-row factor / topic masks on a cross-bank
-    # row. The gtfintechlab schema does not carry factor or topic
-    # labels (the trainer maps only stance + certainty + time), so
-    # the natural masks are False here. Any future change that
-    # leaks a cross-bank stance label onto the factor or topic
-    # mask under ``stance_masked`` would flip these — the regression
-    # would show up as the assertion firing.
+    # Pin the natural per-row factor mask on a cross-bank row. The
+    # gtfintechlab schema does not carry factor labels (the trainer
+    # maps only stance + certainty + time), so the natural mask is
+    # False here. Any future change that leaks a cross-bank stance
+    # label onto the factor mask under ``stance_masked`` would flip
+    # this — the regression would show up as the assertion firing.
     assert cross_bank.masks["factor"] is False
-    assert cross_bank.masks["topic"] is False
     # FOMC rows under ``stance_masked`` follow the same natural
-    # per-row factor / topic masks the gtfintechlab schema produces;
+    # per-row factor mask the gtfintechlab schema produces;
     # ``stance_masked`` rewrites are scoped to cross-bank rows only.
     assert fomc.masks["factor"] is False
-    assert fomc.masks["topic"] is False
 
 
 def test_weighted_mode_scales_only_stance_for_cross_bank() -> None:
     """The ``weighted`` arm leaves every mask intact and scales the
     cross-bank rows' stance weight by ``cross_bank_stance_weight``.
-    Other axes (certainty, factor, topic) are NOT scaled — the
-    weight rides on the stance branch alone."""
+    Other axes (certainty, factor) are NOT scaled — the weight rides
+    on the stance branch alone."""
 
     cross_bank = _axis_row_from_gtf(
         provenance="peer_reviewed_cross_bank",
@@ -269,38 +266,33 @@ def test_per_axis_provenance_log_splits_by_corpus(
 def _make_two_row_two_class_logits(
     *, target_classes: tuple[int, int], stance_logits: list[list[float]]
 ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], dict[str, torch.Tensor]]:
-    """Tiny 2-row, 2-class fixture with stance + factor + certainty + topic.
+    """Tiny 2-row, 2-class fixture with stance + factor + certainty.
 
     Only the stance axis is exercised by the gradient assertions; the
     other axes carry False masks so they contribute graph-attached
     zeros (matching the MultiTaskLoss empty-mask contract). The
-    factor / certainty / topic tensors are still ``requires_grad``
-    so the loss can graph-attach a zero through them — the gradient
-    on those tensors must be zero everywhere when their masks are
-    all-False.
+    factor / certainty tensors are still ``requires_grad`` so the loss
+    can graph-attach a zero through them — the gradient on those
+    tensors must be zero everywhere when their masks are all-False.
     """
 
     stance = torch.tensor(stance_logits, dtype=torch.float32, requires_grad=True)
     factor = torch.zeros(2, dtype=torch.float32, requires_grad=True)
     certainty = torch.zeros(2, 3, dtype=torch.float32, requires_grad=True)
-    topic = torch.zeros(2, 4, dtype=torch.float32, requires_grad=True)
     logits = {
         "stance": stance,
         "factor": factor,
         "certainty": certainty,
-        "topic": topic,
     }
     targets = {
         "stance": torch.tensor(list(target_classes), dtype=torch.long),
         "factor": torch.zeros(2, dtype=torch.float32),
         "certainty": torch.zeros(2, dtype=torch.long),
-        "topic": torch.zeros(2, dtype=torch.long),
     }
     masks = {
         "stance_mask": torch.tensor([True, True], dtype=torch.bool),
         "factor_mask": torch.tensor([False, False], dtype=torch.bool),
         "certainty_mask": torch.tensor([False, False], dtype=torch.bool),
-        "topic_mask": torch.tensor([False, False], dtype=torch.bool),
     }
     return logits, targets, masks
 
@@ -325,7 +317,7 @@ def test_weighted_stance_gradient_matches_analytical_2row_2class() -> None:
         stance_logits=[[2.0, 0.0], [0.0, 1.0]],
     )
     loss_fn = MultiTaskLoss(lambda_stance=1.0, lambda_factor=0.0,
-                            lambda_certainty=0.0, lambda_topic=0.0)
+                            lambda_certainty=0.0)
     weights = torch.tensor([1.0, 0.25], dtype=torch.float32)
 
     total, _ = _compute_weighted_total_loss(
@@ -363,7 +355,7 @@ def test_all_zero_weight_batch_emits_zero_stance_gradient() -> None:
         stance_logits=[[2.0, 0.0], [0.0, 1.0]],
     )
     loss_fn = MultiTaskLoss(lambda_stance=1.0, lambda_factor=0.0,
-                            lambda_certainty=0.0, lambda_topic=0.0)
+                            lambda_certainty=0.0)
     weights = torch.zeros(2, dtype=torch.float32)
 
     total, _ = _compute_weighted_total_loss(
@@ -401,7 +393,7 @@ def test_fomc_only_batch_byte_identical_to_unweighted_loss() -> None:
         stance_logits=[[2.0, 0.0], [0.0, 1.0]],
     )
     loss_fn = MultiTaskLoss(lambda_stance=1.0, lambda_factor=0.3,
-                            lambda_certainty=0.3, lambda_topic=0.3)
+                            lambda_certainty=0.3)
     weights = torch.ones(2, dtype=torch.float32)
 
     weighted_total, _ = _compute_weighted_total_loss(
@@ -420,11 +412,11 @@ def test_fomc_only_batch_byte_identical_to_unweighted_loss() -> None:
 
 def test_weighted_arm_leaves_other_axis_gradients_unchanged() -> None:
     """The cross-bank ``weighted`` arm scales only the stance branch.
-    Gradients on logits["factor"], logits["certainty"], and
-    logits["topic"] must be identical to the gradients produced by
-    the ``off`` baseline (i.e. ``MultiTaskLoss`` called without any
-    per-row weight). Tested with a populated mask on each non-stance
-    axis so the comparison is non-trivial."""
+    Gradients on logits["factor"] and logits["certainty"] must be
+    identical to the gradients produced by the ``off`` baseline (i.e.
+    ``MultiTaskLoss`` called without any per-row weight). Tested with
+    a populated mask on each non-stance axis so the comparison is
+    non-trivial."""
 
     def _seeded_batch(seed: int) -> tuple[
         dict[str, torch.Tensor],
@@ -435,19 +427,16 @@ def test_weighted_arm_leaves_other_axis_gradients_unchanged() -> None:
         stance = torch.randn(3, 3, requires_grad=True)
         factor = torch.randn(3, requires_grad=True)
         certainty = torch.randn(3, 3, requires_grad=True)
-        topic = torch.randn(3, 4, requires_grad=True)
         return (
             {
                 "stance": stance,
                 "factor": factor,
                 "certainty": certainty,
-                "topic": topic,
             },
             {
                 "stance": torch.tensor([0, 1, 2], dtype=torch.long),
                 "factor": torch.tensor([0.1, -0.4, 0.7], dtype=torch.float32),
                 "certainty": torch.tensor([0, 2, 1], dtype=torch.long),
-                "topic": torch.tensor([1, 3, 0], dtype=torch.long),
             },
             {
                 "stance_mask": torch.tensor([True, True, True], dtype=torch.bool),
@@ -455,12 +444,11 @@ def test_weighted_arm_leaves_other_axis_gradients_unchanged() -> None:
                 "certainty_mask": torch.tensor(
                     [True, True, True], dtype=torch.bool
                 ),
-                "topic_mask": torch.tensor([True, True, True], dtype=torch.bool),
             },
         )
 
     loss_fn = MultiTaskLoss(lambda_stance=1.0, lambda_factor=0.3,
-                            lambda_certainty=0.3, lambda_topic=0.3)
+                            lambda_certainty=0.3)
 
     # Weighted (cross-bank arm with non-unit weights).
     logits_w, targets_w, masks_w = _seeded_batch(seed=17)
@@ -485,7 +473,7 @@ def test_weighted_arm_leaves_other_axis_gradients_unchanged() -> None:
     )
     total_o.backward()
 
-    for axis in ("factor", "certainty", "topic"):
+    for axis in ("factor", "certainty"):
         assert logits_w[axis].grad is not None
         assert logits_o[axis].grad is not None
         torch.testing.assert_close(
@@ -538,11 +526,9 @@ def _two_row_batch(weights: list[float]) -> dict[str, "torch.Tensor"]:
         "target_stance": torch.tensor([0, 1], dtype=torch.long),
         "target_factor": torch.zeros(2, dtype=torch.float32),
         "target_certainty": torch.zeros(2, dtype=torch.long),
-        "target_topic": torch.zeros(2, dtype=torch.long),
         "mask_stance": torch.tensor([True, True], dtype=torch.bool),
         "mask_factor": torch.tensor([False, False], dtype=torch.bool),
         "mask_certainty": torch.tensor([False, False], dtype=torch.bool),
-        "mask_topic": torch.tensor([False, False], dtype=torch.bool),
         "stance_sample_weight": torch.tensor(weights, dtype=torch.float32),
         "source": ["fomc", "fomc"],
         "provenance": ["peer_reviewed", "peer_reviewed"],
@@ -570,19 +556,16 @@ def test_evaluate_threads_stance_sample_weight_through_loss() -> None:
     )
     factor_logits = torch.zeros(2, dtype=torch.float32)
     certainty_logits = torch.zeros(2, 3, dtype=torch.float32)
-    topic_logits = torch.zeros(2, 4, dtype=torch.float32)
     logits = {
         "stance": stance_logits,
         "factor": factor_logits,
         "certainty": certainty_logits,
-        "topic": topic_logits,
     }
     model = _ConstantLogitsModel(logits)
     loss_fn = MultiTaskLoss(
         lambda_stance=1.0,
         lambda_factor=0.0,
         lambda_certainty=0.0,
-        lambda_topic=0.0,
     )
 
     batch = _two_row_batch([1.0, 0.25])
@@ -607,13 +590,11 @@ def test_evaluate_threads_stance_sample_weight_through_loss() -> None:
         "stance": batch["target_stance"],
         "factor": batch["target_factor"],
         "certainty": batch["target_certainty"],
-        "topic": batch["target_topic"],
     }
     masks = {
         "stance_mask": batch["mask_stance"],
         "factor_mask": batch["mask_factor"],
         "certainty_mask": batch["mask_certainty"],
-        "topic_mask": batch["mask_topic"],
     }
     train_total, _ = _compute_weighted_total_loss(
         loss_fn=loss_fn,
@@ -669,14 +650,12 @@ def test_evaluate_runs_under_no_grad() -> None:
                 "stance": stance,
                 "factor": torch.zeros(2) * scale,
                 "certainty": torch.zeros(2, 3) * scale,
-                "topic": torch.zeros(2, 4) * scale,
             }
 
     loss_fn = MultiTaskLoss(
         lambda_stance=1.0,
         lambda_factor=0.0,
         lambda_certainty=0.0,
-        lambda_topic=0.0,
     )
 
     class _OneShotLoader:

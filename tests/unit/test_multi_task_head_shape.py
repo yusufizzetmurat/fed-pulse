@@ -10,7 +10,8 @@ from __future__ import annotations
 import torch
 
 
-def test_multi_task_head_emits_four_branches_with_expected_shapes() -> None:
+def test_multi_task_head_emits_three_branches_with_expected_shapes() -> None:
+    """Post-ADR-0044: topic branch retired; head emits stance / factor / certainty."""
     from app.models.multi_task_head import MultiTaskHead
 
     head = MultiTaskHead(
@@ -21,11 +22,10 @@ def test_multi_task_head_emits_four_branches_with_expected_shapes() -> None:
     pooled = torch.zeros(4, 32)
     out = head(pooled)
 
-    assert set(out.keys()) == {"stance", "factor", "certainty", "topic"}
+    assert set(out.keys()) == {"stance", "factor", "certainty"}
     assert out["stance"].shape == (4, 3)
     assert out["factor"].shape == (4,)
     assert out["certainty"].shape == (4, 3)
-    assert out["topic"].shape == (4, 4)
 
 
 def test_factor_branch_stays_in_minus_one_to_one_range() -> None:

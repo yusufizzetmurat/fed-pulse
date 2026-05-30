@@ -920,8 +920,7 @@ def _parse_args() -> argparse.Namespace:
             "Auxiliary-loss weight applied to the PhraseBank CE term "
             "when --enable-phrasebank-aux is on. Default 0.3 mirrors "
             "the multi-task LSTM-stage default lambdas in "
-            "MultiTaskLoss (lambda_factor / lambda_certainty / "
-            "lambda_topic)."
+            "MultiTaskLoss (lambda_factor / lambda_certainty)."
         ),
     )
     parser.add_argument(

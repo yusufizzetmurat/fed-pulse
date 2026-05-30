@@ -289,10 +289,6 @@ def _axes_time_ok(value: Any) -> bool:
     return value is None or isinstance(value, str)
 
 
-def _axes_topic_ok(value: Any) -> bool:
-    return value is None or isinstance(value, str)
-
-
 def _axes_dict_ok(series: pd.Series) -> pd.Series:
     def _ok(value: Any) -> bool:
         if value is None:
@@ -304,7 +300,6 @@ def _axes_dict_ok(series: pd.Series) -> pd.Series:
             and _axes_factor_ok(value.get("factor"))
             and _axes_certainty_ok(value.get("certainty"))
             and _axes_time_ok(value.get("time"))
-            and _axes_topic_ok(value.get("topic"))
         )
 
     return series.map(_ok)
@@ -330,7 +325,7 @@ _NORMALIZED_DOC_COLUMNS: dict[str, Column] = {
         checks=Check(_axes_dict_ok, element_wise=False),
         nullable=True,
         required=True,
-        description="Multi-axis label payload {stance, factor, certainty, topic}.",
+        description="Multi-axis label payload {stance, factor, certainty}.",
     ),
     # Optional flat axis columns surface on emitters that flatten the axes
     # dict (e.g. event_dataset_builder writes flat columns). Marked
@@ -352,11 +347,6 @@ _NORMALIZED_DOC_COLUMNS: dict[str, Column] = {
     ),
     "axis_factor": Column(
         checks=Check(_nullable_finite_in_range(-1.0, 1.0)),
-        nullable=True,
-        required=False,
-    ),
-    "axis_topic": Column(
-        checks=Check(_nullable_str_or_none, element_wise=False),
         nullable=True,
         required=False,
     ),
@@ -492,11 +482,6 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
     ),
     "axis_factor": Column(
         checks=Check(_nullable_finite_in_range(-1.0, 1.0)),
-        nullable=True,
-        required=True,
-    ),
-    "axis_topic": Column(
-        checks=Check(_nullable_str_or_none, element_wise=False),
         nullable=True,
         required=True,
     ),

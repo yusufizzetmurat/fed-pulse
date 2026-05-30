@@ -213,11 +213,13 @@ def test_unpack_batch_four_element() -> None:
 
 
 def test_unpack_batch_rejects_unexpected_arity() -> None:
-    # Arity 3 / 5 / 9 / 11 became valid post-#304 (the dual-head log_rv
-    # slot composes with the prior shapes); pick 6 -- still
-    # unsupported -- so the negative-path coverage stays.
+    # Arity 3 / 5 / 7 / 9 became valid post-#304 (the dual-head log_rv
+    # slot composes with the prior shapes), and arity 6 / 8 collapsed
+    # into the prior 8 / 10 mt slots after ADR 0044 retired the topic
+    # axis pair. Pick 10 — outside the valid range — so the negative-
+    # path coverage stays.
     with pytest.raises(ValueError, match="unexpected batch arity"):
-        _unpack_batch(tuple(torch.zeros(1) for _ in range(6)))
+        _unpack_batch(tuple(torch.zeros(1) for _ in range(10)))
 
 
 def test_evaluate_model_returns_inf_metrics_on_empty_loader() -> None:

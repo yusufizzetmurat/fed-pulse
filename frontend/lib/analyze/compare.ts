@@ -39,7 +39,6 @@ export interface MultiAxisDelta {
     | "more_tentative"
     | "unchanged"
     | "unknown";
-  topicChanged: boolean | null;
 }
 
 function asResult(detail: HistoryDetail): AnalyzeResult {
@@ -199,11 +198,6 @@ export function computeMultiAxisDelta(
       ? ma.certainty.confidence - mb.certainty.confidence
       : null;
 
-  const topicA = ma?.topic?.label ?? ma?.topic?.primary ?? null;
-  const topicB = mb?.topic?.label ?? mb?.topic?.primary ?? null;
-  const topicChanged =
-    topicA != null && topicB != null ? topicA !== topicB : null;
-
   return {
     stanceRankDelta,
     stanceConfidenceDelta,
@@ -211,7 +205,6 @@ export function computeMultiAxisDelta(
     factorConfidenceDelta,
     certaintyConfidenceDelta,
     certaintyShift,
-    topicChanged,
   };
 }
 
