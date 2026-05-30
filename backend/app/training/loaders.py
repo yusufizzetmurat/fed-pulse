@@ -19,6 +19,7 @@ from app.models.config import (
     DEFAULT_DATA_DIR,
     DEFAULT_TEXT_ADAPTER_DIM,
     DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
+    DEFAULT_VOL_TARGET_HORIZON,
     FEATURE_SIZE,
     MULTI_TASK_CERTAINTY_LABELS,
     MULTI_TASK_STANCE_LABELS,
@@ -27,6 +28,7 @@ from app.models.config import (
     RICH_PRESS_CONF_DIM,
     RICH_STATEMENT_DELTA_DIM,
     RICH_VOTE_FEATURES_DIM,
+    SUPPORTED_VOL_TARGET_HORIZONS,
     RichFeatureScalerParams,
     SEQUENCE_LENGTH,
     FeatureVector,
@@ -160,6 +162,27 @@ def _extract_required_float(record: dict[str, Any], keys: Sequence[str]) -> floa
         if key in record and record[key] not in {None, ""}:
             return float(record[key])
     raise ValueError(f"Missing required numeric field from keys: {', '.join(keys)}")
+
+
+def _resolve_forward_vol_column(horizon: int) -> str:
+    """Validate ``horizon`` and return the matching events-parquet column.
+
+    Centralises the column-name lookup so the two loader entry points
+    (:func:`_load_package_sequences_with_metadata` and the legacy
+    :func:`load_training_sequences_from_package`) share one validation
+    contract. Non-supported horizons raise ``ValueError`` with the
+    canonical horizon list so an operator-supplied
+    ``--target-horizon`` typo surfaces at loader entry rather than
+    after the package read.
+    """
+
+    horizon_int = int(horizon)
+    if horizon_int not in SUPPORTED_VOL_TARGET_HORIZONS:
+        raise ValueError(
+            f"unsupported vol_target_horizon={horizon!r}; expected one of "
+            f"{SUPPORTED_VOL_TARGET_HORIZONS}"
+        )
+    return f"forward_realized_vol_{horizon_int}d"
 
 
 def build_feature_vectors(
@@ -1772,6 +1795,7 @@ def _load_package_sequences_with_metadata(
     use_text_embeddings: bool = True,
     text_embedding_cache_dir: Path | str | None = None,
     encoder_lora: bool = False,
+    vol_target_horizon: int = DEFAULT_VOL_TARGET_HORIZON,
 ) -> list[tuple[list[FeatureVector], str, str]]:
     """Materialise every event in a training package as a sequence triple.
 
@@ -1793,6 +1817,7 @@ def _load_package_sequences_with_metadata(
             f"Unsupported target_mode: {target_mode!r}. "
             f"Choose one of {sorted(_VALID_TARGET_MODES)}."
         )
+    forward_vol_column = _resolve_forward_vol_column(vol_target_horizon)
 
     package_dir = _resolve_training_package_dir(training_package_id)
     frame = _read_events_frame(package_dir)
@@ -1979,14 +2004,23 @@ def _load_package_sequences_with_metadata(
         # axis, not an input feature. Tier 1 (Market-Only) needs it just
         # like tier 3 (Market+Rich+NLP); a missing target would crash the
         # per-fold quantile fit with "0 valid rows for n_classes=3".
-        forward_vol_value = _coerce_finite_float(
-            row.get("forward_realized_vol_10d")
-        )
+        # The ``forward_vol_column`` selector (default
+        # ``forward_realized_vol_10d``) routes the canonical y axis to
+        # the operator-chosen horizon; the per-row slot stays named
+        # ``forward_realized_vol_10d`` on the FeatureVector so downstream
+        # consumers (``vol_regime_class_for``, the dual-head MSE
+        # builder) keep reading the same attribute regardless of which
+        # horizon column was sourced.
+        forward_vol_value = _coerce_finite_float(row.get(forward_vol_column))
         # #236 GARCH(1,1) baseline + residual. Frozen into the events
         # parquet at build time (see ``app.data.garch_residual``);
         # the loader only reads them off the row and broadcasts onto
         # the target slot. Older events.parquet files without these
-        # columns degrade cleanly to ``None`` here.
+        # columns degrade cleanly to ``None`` here. The baseline/residual
+        # pair is currently only computed against the 10d horizon so
+        # the column names stay hard-coded here; non-10d horizons emit
+        # ``None`` on both and the GARCH-residual mode falls back to
+        # the raw target per ADR 0034.
         garch_baseline_value = _coerce_finite_float(
             row.get("forward_realized_vol_10d_garch_baseline")
         )
@@ -2282,6 +2316,7 @@ def load_walk_forward_split(
     text_embedding_cache_dir: Path | str | None = None,
     embargo_days: int = 0,
     encoder_lora: bool = False,
+    vol_target_horizon: int = DEFAULT_VOL_TARGET_HORIZON,
 ) -> WalkForwardSplit:
     """Return the (train, val, test) sequence partitions for one fold.
 
@@ -2362,6 +2397,7 @@ def load_walk_forward_split(
         use_text_embeddings=use_text_embeddings,
         text_embedding_cache_dir=text_embedding_cache_dir,
         encoder_lora=encoder_lora,
+        vol_target_horizon=vol_target_horizon,
     )
 
     train: list[list[FeatureVector]] = []
@@ -2485,6 +2521,7 @@ def load_training_sequences_from_package(
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
     use_text_embeddings: bool = True,
     text_embedding_cache_dir: Path | str | None = None,
+    vol_target_horizon: int = DEFAULT_VOL_TARGET_HORIZON,
 ) -> list[list[FeatureVector]]:
     """Load one prior-window sequence per FOMC event in a training package.
 
@@ -2825,7 +2862,7 @@ def load_training_sequences_from_package(
         # like tier 3 (Market+Rich+NLP); a missing target would crash the
         # per-fold quantile fit with "0 valid rows for n_classes=3".
         forward_vol_value = _coerce_finite_float(
-            row.get("forward_realized_vol_10d")
+            row.get(_resolve_forward_vol_column(vol_target_horizon))
         )
         # #236 GARCH(1,1) baseline + residual (see matched walk-forward
         # site above for the contract).

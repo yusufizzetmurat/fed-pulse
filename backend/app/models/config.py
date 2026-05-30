@@ -130,6 +130,15 @@ RICH_EXTRA_FEATURE_SIZE = (
 )
 RICH_FEATURE_SIZE = FEATURE_SIZE + RICH_EXTRA_FEATURE_SIZE
 
+# Supported supervised forward-vol horizons in trading days. The events
+# parquet ships ``forward_realized_vol_<H>d`` columns for every value
+# here (the data-builder writes them per
+# ``event_dataset_builder._FORWARD_VOL_MULTI_HORIZON_COLUMNS``); ``10``
+# remains the canonical y axis. The loader validates
+# ``ModelConfig.vol_target_horizon`` against this tuple at entry.
+SUPPORTED_VOL_TARGET_HORIZONS: tuple[int, ...] = (1, 3, 5, 10, 20, 30)
+DEFAULT_VOL_TARGET_HORIZON: int = 10
+
 # Slice offsets inside the rich vector. Used by the per-family
 # ablation path on the loader to zero an individual family without
 # changing the per-bar feature size; a downstream sweep can then
@@ -604,6 +613,20 @@ class ModelConfig:
     # convergence failure) fall back to the raw target so row alignment
     # with ``y`` is preserved. See #434 for the data side and ADR 0034.
     vol_target_mode: str = "raw"
+    # Supervised forward-vol horizon (in trading days). ``10`` (default,
+    # byte-identical to the pre-flag path) reads
+    # ``forward_realized_vol_10d`` off the events parquet as the y axis
+    # for both the classification quantile-fit and the dual-head MSE
+    # branch. Setting a different value routes the loader to populate
+    # the per-row ``forward_realized_vol_10d`` slot from
+    # ``forward_realized_vol_<H>d`` so downstream consumers
+    # (``vol_regime_class_for``, ``_build_partition_log_rv_target``,
+    # the dual-head finite guard) keep reading the same attribute. The
+    # value is validated against ``SUPPORTED_VOL_TARGET_HORIZONS`` at
+    # loader entry rather than ``__post_init__`` so checkpoint round-trip
+    # via ``_coerce_model_config`` does not fail on legacy payloads
+    # without the field.
+    vol_target_horizon: int = 10
     # #307 macro-regime conditioning toggle. ``False`` (default) keeps
     # the pre-#307 path byte-identical: the loader leaves
     # ``FeatureVector.macro_regime_features`` at ``None`` and
@@ -705,6 +728,10 @@ class ModelConfig:
             ),
             vol_target_mode=str(
                 getattr(model, "vol_target_mode", "raw") or "raw"
+            ),
+            vol_target_horizon=int(
+                getattr(model, "vol_target_horizon", DEFAULT_VOL_TARGET_HORIZON)
+                or DEFAULT_VOL_TARGET_HORIZON
             ),
             use_regime_conditioning=bool(
                 getattr(model, "use_regime_conditioning", False)

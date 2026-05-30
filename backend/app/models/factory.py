@@ -160,6 +160,7 @@ def build_forecaster(
             "rates_alpha",
             "rates_target_mode",
             "vol_target_mode",
+            "vol_target_horizon",
             "use_regime_conditioning",
             "use_sep",
             "use_press_conf",
@@ -211,6 +212,11 @@ def build_forecaster(
         # the regression / dual head trained against.
         flat.vol_target_mode = str(
             getattr(resolved, "vol_target_mode", "raw") or "raw"
+        )  # type: ignore[assignment]
+        # Round-trip the supervised forward-vol horizon so
+        # ``ModelConfig.from_model`` recovers it on resume.
+        flat.vol_target_horizon = int(
+            getattr(resolved, "vol_target_horizon", 10) or 10
         )  # type: ignore[assignment]
         return flat
 
@@ -268,6 +274,14 @@ def build_forecaster(
     # does not see the unrecognised kwarg.
     vol_target_mode_value = str(
         kwargs.pop("vol_target_mode", "raw") or "raw"
+    )
+    # Supervised forward-vol horizon. Loader-side knob (the loader
+    # routes the per-row ``forward_realized_vol_10d`` slot to the
+    # chosen column); the model ctor does not consume it. Stash it back
+    # on the built module so ``ModelConfig.from_model`` round-trips it
+    # onto the persisted run summary.
+    vol_target_horizon_value = int(
+        kwargs.pop("vol_target_horizon", 10) or 10
     )
     # #317 finding #8: fail fast at the factory rather than silently
     # zeroing rates_heads when output_mode='regression'. The operator
@@ -408,6 +422,7 @@ def build_forecaster(
     # #435 round-trip the forward-vol target derivation onto the built
     # module so ``ModelConfig.from_model`` recovers it on resume.
     model.vol_target_mode = vol_target_mode_value  # type: ignore[assignment]
+    model.vol_target_horizon = vol_target_horizon_value  # type: ignore[assignment]
     # #443/#444 round-trip the two new opt-in flags. Default-off path
     # behaves byte-identically; flag-on a future sweep that resumes off
     # this checkpoint rebuilds with the same loader-tail widths. The

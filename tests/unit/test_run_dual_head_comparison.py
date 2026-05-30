@@ -44,6 +44,8 @@ def test_dual_head_runner_exposes_new_flags(monkeypatch):
     )
     args = _parse_args()
     assert args.rates_target_mode == "raw"
+    assert args.vol_target_mode == "raw"
+    assert args.target_horizon == 10
     assert args.use_retrieval_analogs is False
     assert args.use_regime_conditioning is False
     assert args.use_statement_delta is False
@@ -63,6 +65,10 @@ def test_dual_head_runner_accepts_opt_in_flags(monkeypatch):
             "tp_dummy",
             "--rates-target-mode",
             "fomc_attributable",
+            "--vol-target-mode",
+            "garch_residual",
+            "--target-horizon",
+            "5",
             "--use-retrieval-analogs",
             "--use-regime-conditioning",
             "--use-statement-delta",
@@ -72,11 +78,49 @@ def test_dual_head_runner_accepts_opt_in_flags(monkeypatch):
     )
     args = _parse_args()
     assert args.rates_target_mode == "fomc_attributable"
+    assert args.vol_target_mode == "garch_residual"
+    assert args.target_horizon == 5
     assert args.use_retrieval_analogs is True
     assert args.use_regime_conditioning is True
     assert args.use_statement_delta is True
     assert args.use_vote_features is True
     assert args.use_press_conf is True
+
+
+def test_dual_head_runner_rejects_unknown_vol_target_mode(monkeypatch):
+    from scripts.run_dual_head_comparison import _parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_dual_head_comparison",
+            "--training-package-id",
+            "tp_dummy",
+            "--vol-target-mode",
+            "definitely_not_a_mode",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        _parse_args()
+
+
+def test_dual_head_runner_rejects_unsupported_target_horizon(monkeypatch):
+    from scripts.run_dual_head_comparison import _parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_dual_head_comparison",
+            "--training-package-id",
+            "tp_dummy",
+            "--target-horizon",
+            "7",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        _parse_args()
 
 
 def test_dual_head_runner_rejects_unknown_rates_target_mode(monkeypatch):
@@ -226,10 +270,13 @@ def test_dual_head_runner_default_off_byte_identity(monkeypatch):
     assert loader_kwargs["use_vote_features"] is False
     assert loader_kwargs["use_press_conf"] is False
     assert loader_kwargs["rich_features"] is True
+    assert loader_kwargs["vol_target_horizon"] == 10
 
     train_kwargs = captured["train_calls"][0]
     model_config = train_kwargs["model_config"]
     assert model_config.rates_target_mode == "raw"
+    assert model_config.vol_target_mode == "raw"
+    assert model_config.vol_target_horizon == 10
     assert model_config.use_regime_conditioning is False
 
 
@@ -248,6 +295,8 @@ def test_dual_head_runner_opt_in_threads_through(monkeypatch):
         regression_alpha=0.5,
         hidden_size=64,
         rates_target_mode="fomc_attributable",
+        vol_target_mode="garch_residual",
+        vol_target_horizon=5,
         use_retrieval_analogs=True,
         use_regime_conditioning=True,
         use_statement_delta=True,
@@ -261,10 +310,13 @@ def test_dual_head_runner_opt_in_threads_through(monkeypatch):
     assert loader_kwargs["use_statement_delta"] is True
     assert loader_kwargs["use_vote_features"] is True
     assert loader_kwargs["use_press_conf"] is True
+    assert loader_kwargs["vol_target_horizon"] == 5
 
     train_kwargs = captured["train_calls"][0]
     model_config = train_kwargs["model_config"]
     assert model_config.rates_target_mode == "fomc_attributable"
+    assert model_config.vol_target_mode == "garch_residual"
+    assert model_config.vol_target_horizon == 5
     assert model_config.use_regime_conditioning is True
 
 
