@@ -46,6 +46,9 @@ def test_dual_head_runner_exposes_new_flags(monkeypatch):
     assert args.rates_target_mode == "raw"
     assert args.use_retrieval_analogs is False
     assert args.use_regime_conditioning is False
+    assert args.use_statement_delta is False
+    assert args.use_vote_features is False
+    assert args.use_press_conf is False
 
 
 def test_dual_head_runner_accepts_opt_in_flags(monkeypatch):
@@ -62,12 +65,18 @@ def test_dual_head_runner_accepts_opt_in_flags(monkeypatch):
             "fomc_attributable",
             "--use-retrieval-analogs",
             "--use-regime-conditioning",
+            "--use-statement-delta",
+            "--use-vote-features",
+            "--use-press-conf",
         ],
     )
     args = _parse_args()
     assert args.rates_target_mode == "fomc_attributable"
     assert args.use_retrieval_analogs is True
     assert args.use_regime_conditioning is True
+    assert args.use_statement_delta is True
+    assert args.use_vote_features is True
+    assert args.use_press_conf is True
 
 
 def test_dual_head_runner_rejects_unknown_rates_target_mode(monkeypatch):
@@ -210,9 +219,12 @@ def test_dual_head_runner_default_off_byte_identity(monkeypatch):
     assert result["head_mode"] == "dual"
     assert len(captured["loader_calls"]) == 1
     loader_kwargs = captured["loader_calls"][0]
-    # Default-off contract: both opt-in loader flags pass False.
+    # Default-off contract: every opt-in loader flag passes False.
     assert loader_kwargs["use_retrieval_analogs"] is False
     assert loader_kwargs["use_regime_conditioning"] is False
+    assert loader_kwargs["use_statement_delta"] is False
+    assert loader_kwargs["use_vote_features"] is False
+    assert loader_kwargs["use_press_conf"] is False
     assert loader_kwargs["rich_features"] is True
 
     train_kwargs = captured["train_calls"][0]
@@ -238,11 +250,17 @@ def test_dual_head_runner_opt_in_threads_through(monkeypatch):
         rates_target_mode="fomc_attributable",
         use_retrieval_analogs=True,
         use_regime_conditioning=True,
+        use_statement_delta=True,
+        use_vote_features=True,
+        use_press_conf=True,
     )
 
     loader_kwargs = captured["loader_calls"][0]
     assert loader_kwargs["use_retrieval_analogs"] is True
     assert loader_kwargs["use_regime_conditioning"] is True
+    assert loader_kwargs["use_statement_delta"] is True
+    assert loader_kwargs["use_vote_features"] is True
+    assert loader_kwargs["use_press_conf"] is True
 
     train_kwargs = captured["train_calls"][0]
     model_config = train_kwargs["model_config"]

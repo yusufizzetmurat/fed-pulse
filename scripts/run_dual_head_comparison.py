@@ -155,9 +155,47 @@ def _parse_args() -> argparse.Namespace:
         action="store_false",
         help="Disable the macro-regime block + gate (default).",
     )
+    # #443 / #444 / press-conf pass-through. Off by default so the
+    # canonical sweep stays byte-identical; on, each adds its own
+    # feature block to the rich-feature slice via the loader kwargs.
+    parser.add_argument(
+        "--use-statement-delta",
+        dest="use_statement_delta",
+        action="store_true",
+        help=(
+            "Attach the #443 statement-delta embedding (768-d) + missing "
+            "flag to every supervised event. Reads the "
+            "``statement_delta_embedding`` column on events.parquet; rows "
+            "without a strict-prior statement carry zeros + missing=1.0."
+        ),
+    )
+    parser.add_argument(
+        "--use-vote-features",
+        dest="use_vote_features",
+        action="store_true",
+        help=(
+            "Attach the #444 vote-tally feature block (votes_for_norm, "
+            "votes_against_norm, is_unanimous, direction_sign) to each "
+            "statement event. Non-statement rows carry zeros + missing=1.0."
+        ),
+    )
+    parser.add_argument(
+        "--use-press-conf",
+        dest="use_press_conf",
+        action="store_true",
+        help=(
+            "Attach the press-conference Q&A slot to each statement event "
+            "from press_conf_qa.parquet under the training package. "
+            "Statements without a matching press-conf row carry the "
+            "missing flag."
+        ),
+    )
     parser.set_defaults(
         use_retrieval_analogs=False,
         use_regime_conditioning=False,
+        use_statement_delta=False,
+        use_vote_features=False,
+        use_press_conf=False,
     )
     return parser.parse_args()
 
@@ -272,6 +310,9 @@ def _run_one_cell(
     rates_target_mode: str = "raw",
     use_retrieval_analogs: bool = False,
     use_regime_conditioning: bool = False,
+    use_statement_delta: bool = False,
+    use_vote_features: bool = False,
+    use_press_conf: bool = False,
 ) -> dict[str, Any]:
     # Imports happen here so the script is importable without a torch
     # install (useful for doc-only environments).
@@ -300,6 +341,9 @@ def _run_one_cell(
             rich_features=True,
             use_retrieval_analogs=use_retrieval_analogs,
             use_regime_conditioning=use_regime_conditioning,
+            use_statement_delta=use_statement_delta,
+            use_vote_features=use_vote_features,
+            use_press_conf=use_press_conf,
         )
         result = train_model(
             model_config=config,
@@ -362,6 +406,9 @@ def main() -> int:
                     rates_target_mode=str(args.rates_target_mode),
                     use_retrieval_analogs=bool(args.use_retrieval_analogs),
                     use_regime_conditioning=bool(args.use_regime_conditioning),
+                    use_statement_delta=bool(args.use_statement_delta),
+                    use_vote_features=bool(args.use_vote_features),
+                    use_press_conf=bool(args.use_press_conf),
                 )
             )
 
@@ -396,6 +443,9 @@ def main() -> int:
         ),
         "use_retrieval_analogs": bool(args.use_retrieval_analogs),
         "use_regime_conditioning": bool(args.use_regime_conditioning),
+        "use_statement_delta": bool(args.use_statement_delta),
+        "use_vote_features": bool(args.use_vote_features),
+        "use_press_conf": bool(args.use_press_conf),
         "trials": trials,
         "summary": summary,
     }
