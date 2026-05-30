@@ -514,6 +514,21 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
         nullable=True,
         required=False,
     ),
+    # Merged ``multi_axis_extras`` payload from every record in the
+    # (source, event_date, event_kind) bucket. Carries the GSS / Swanson
+    # bp-scale factor decompositions and the gtfintechlab dataset-
+    # revision tags so downstream trainers do not have to rejoin to
+    # ``registry_normalized.parquet`` to read out-of-bounds-for-axis_*
+    # numeric features. ``None`` when the bucket has no extras; per-key
+    # nulls are dropped at merge time in ``event_dataset_builder``.
+    "multi_axis_extras": Column(
+        checks=Check(
+            lambda s: s.map(lambda v: v is None or isinstance(v, dict)),
+            element_wise=False,
+        ),
+        nullable=True,
+        required=False,
+    ),
     "credibility_drift_score": Column(float, nullable=False, required=True, coerce=True),
     "credibility_realized_vs_stated_gap": Column(
         float, nullable=False, required=True, coerce=True

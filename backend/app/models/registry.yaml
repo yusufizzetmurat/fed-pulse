@@ -126,17 +126,27 @@ encoders:
     inference_features: []
 
   finbert_fed_adjacent:
-    repo: /data/artifacts/continued_pretraining/finbert_fed_adjacent_20260515T104824Z_s11/checkpoint
-    revision: "20260515T104824Z"
+    repo: yusufizzetmurat/finbert-fed-adjacent
+    revision: "332e31e166e859deba81535bfeec410b3c6e7023"
     gated: false
     task: masked_lm
+    role: classifier
     description: |
       FinBERT continued-pretrained on BIS speeches (+ optional local Fed-adjacent
       auxiliary). Produced by ``make finbert-fed-adjacent-pretrain``; pinned to
       the 2026-05-15 GPU run whose embedding cache lives at
       ``data/raw/embeddings/finbert_fed_adjacent_20260515T104.parquet``. The
-      bake-off CLI now treats this encoder as runnable; cross-bank-supervised
-      variants ride under ``finbert_fed_adjacent_xbank``.
+      Hugging Face mirror (``yusufizzetmurat/finbert-fed-adjacent``) is the
+      canonical source so a fresh machine resolves weights through
+      ``snapshot_download`` instead of a host-specific ``/data/`` path that
+      only exists on the original GPU box. Bake-off CLI treats this encoder
+      as runnable; cross-bank-supervised variants ride under
+      ``finbert_fed_adjacent_xbank``.
+
+      Carries ``role: classifier`` per ADR 0019 — re-pointed from the
+      unproduced ``finbert_fomc_only`` substrate (the FOMC-only DAPT GPU run
+      was never executed and the placeholder blocked every classifier-role
+      sweep on Runpod). The cross-bank DAPT encoder retains ``role: retrieval``.
     inference_features:
       - text_embedding
       - text_embedding_missing
@@ -161,7 +171,6 @@ encoders:
     revision: ""
     gated: false
     task: masked_lm
-    role: classifier
     description: |
       Round 3 (#242) corpus-ablation sibling of ``finbert_fed_adjacent``.
       Continued-pretrained on FOMC statements + minutes ONLY (~48 docs,
@@ -171,11 +180,11 @@ encoders:
       ``encoder_ref`` treats this as "unpinned local" and the bake-off
       CLI will refuse to load it until the path + revision are filled in.
 
-      Carries ``role: classifier`` under ADR 0019 — the canonical
-      classifier substrate. Bundle A.2 / A.4 returned null on vol-regime
-      against the cross-bank DAPT encoder, so the FOMC-only DAPT
-      substrate keeps the headline classifier role and the cross-bank
-      DAPT encoder owns the retrieval role only.
+      Originally tagged ``role: classifier`` per ADR 0019. The classifier
+      role was re-pointed to ``finbert_fed_adjacent`` because the FOMC-only
+      DAPT GPU run was never executed and the unresolvable placeholder hard-
+      failed every classifier-role sweep on Runpod (#463). Re-tag this entry
+      once the corpus-ablation pretrain lands a real checkpoint.
     inference_features:
       - text_embedding
       - text_embedding_missing
@@ -197,8 +206,8 @@ encoders:
       - text_embedding_missing
 
   finbert_fed_adjacent_xbank:
-    repo: /data/artifacts/phase3/finetune_batch_20260519T190604Z/finbert_fed_adjacent_s11/hf_checkpoints
-    revision: "20260519T190604Z_s11"
+    repo: yusufizzetmurat/finbert-fed-adjacent-xbank
+    revision: "178fcfaa70f7949bd4b703f36e4c45746e279bce"
     gated: false
     task: stance_classification
     description: |
@@ -212,13 +221,15 @@ encoders:
       stance head); the remaining four seeds are kept on disk under
       ``finetune_batch_20260519T190604Z/finbert_fed_adjacent_s{29,47,71,97}``
       for reproducibility but the embedding cache builds against s11.
+      Resolved via the Hugging Face mirror so fresh machines pull the
+      weights through ``snapshot_download`` (#464).
     inference_features:
       - text_embedding
       - text_embedding_missing
 
   finbert_fed_adjacent_xbank_dapt:
-    repo: /data/artifacts/continued_pretraining/finbert_fed_adjacent_xbank_dapt_20260525T185524Z_s11/checkpoint
-    revision: "20260525T185524Z_s11"
+    repo: yusufizzetmurat/finbert-fed-adjacent-xbank-dapt
+    revision: "50677e3a0a84e2ce66089c902de2a5438c13d28e"
     gated: false
     task: masked_lm
     role: retrieval
@@ -230,15 +241,15 @@ encoders:
       speeches firehose — pure pretrain extension, no FOMC / local
       Fed-adjacent JSON, so the downstream fine-tune target is unchanged
       and there is no target leakage. Produced by
-      ``make finbert-fed-adjacent-xbank-dapt-pretrain``. Revision stays
-      empty until the first GPU run lands a checkpoint; same unpinned-
-      local guard as ``finbert_fomc_only`` applies.
+      ``make finbert-fed-adjacent-xbank-dapt-pretrain`` (2026-05-25 run
+      s11). Resolved via the Hugging Face mirror so fresh machines pull
+      the weights through ``snapshot_download`` (#464).
 
       Carries ``role: retrieval`` under ADR 0019 — the canonical
       retrieval substrate. Bundle A.2 / A.4 showed the cross-bank
       supervised + DAPT layers null on the headline classifier target,
       so this encoder owns the retrieval role only; the classifier role
-      is held by ``finbert_fomc_only``.
+      now sits on ``finbert_fed_adjacent`` (re-pointed under #463).
     inference_features:
       - text_embedding
       - text_embedding_missing
@@ -432,12 +443,22 @@ artefacts:
 
   training_package:
     hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-training-package
-    revision: "b9a71cc97a00c6108eabcc1d004352b0701eac6f"
+    revision: "b0320d8731753bc5bf4a05b9dcd57898c3f84fbd"
     eager: false
     description: |
       Canonical training package for ``make reproduce-all``. Pulled to
       ``data/processed/canonical/`` via
       ``huggingface_hub.snapshot_download(repo_type='dataset')``.
+      Rebuilt 2026-05-30 against the fresh source-corpus pulls (#487-#489)
+      with every optional family populated (rates panel, GARCH residual,
+      statement delta, vote tally, multi-horizon vol, per-asset vol).
+      Events.parquet carries the merged ``multi_axis_extras`` payload so
+      GSS / Swanson bp-scale factor decompositions reach the trainer
+      without a re-join to ``registry_normalized.parquet``; rates panel
+      extended back to 1990-01-01 so pre-2008 statements (~1.7k rows)
+      carry treas_2y / treas_10y features at 73.8% instead of 0%. The
+      pre-rebuild row at b9a71cc97a is preserved on the Hub for
+      reproducibility but is no longer the resolution target.
     inference_features: []
 
   embedding_caches:
