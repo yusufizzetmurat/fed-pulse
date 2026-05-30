@@ -34,7 +34,6 @@ function makeDetail(): HistoryDetail {
         stance: { label: "hawkish", confidence: 0.91 },
         factor: { value: 0.42, confidence: 0.18 },
         certainty: { label: "decisive", confidence: 0.74 },
-        topic: { primary: "inflation", confidence: 0.66 },
       },
       credibility: {
         drift_score: 0.21,

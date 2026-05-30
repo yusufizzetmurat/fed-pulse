@@ -45,7 +45,6 @@ function makeDetail(overrides: Partial<HistoryDetail> = {}): HistoryDetail {
         stance: { label: "hawkish", confidence: 0.91 },
         factor: { value: 0.42, confidence: 0.18 },
         certainty: { label: "decisive", confidence: 0.74 },
-        topic: { primary: "inflation", confidence: 0.66 },
       },
       series: {
         forecast_band_source: "conformal",
@@ -95,7 +94,6 @@ describe("compare PDF export", () => {
           stance: { label: "dovish", confidence: 0.83 },
           factor: { value: -0.31, confidence: 0.22 },
           certainty: { label: "measured", confidence: 0.61 },
-          topic: { primary: "employment", confidence: 0.55 },
         },
       } as HistoryDetail["payload"],
     });
