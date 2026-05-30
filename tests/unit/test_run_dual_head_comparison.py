@@ -55,6 +55,26 @@ def test_dual_head_runner_exposes_new_flags(monkeypatch):
     assert args.use_press_conf is False
     assert args.text_encoder is None
     assert args.use_text_embeddings is True
+    assert args.use_mp_surprise is True
+
+
+def test_dual_head_runner_no_mp_surprise_flag(monkeypatch):
+    """``--no-mp-surprise`` flips the loader toggle to False."""
+
+    from scripts.run_dual_head_comparison import _parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_dual_head_comparison",
+            "--training-package-id",
+            "tp_dummy",
+            "--no-mp-surprise",
+        ],
+    )
+    args = _parse_args()
+    assert args.use_mp_surprise is False
 
 
 def test_dual_head_runner_text_encoder_opt_in(monkeypatch):
@@ -453,6 +473,8 @@ def test_dual_head_runner_default_off_byte_identity(monkeypatch):
     # loader's ``use_text_path`` predicate regardless of the toggle).
     assert loader_kwargs["text_encoder"] is None
     assert loader_kwargs["use_text_embeddings"] is True
+    # mp_surprise defaults on to match the loader default.
+    assert loader_kwargs["use_mp_surprise"] is True
 
     train_kwargs = captured["train_calls"][0]
     model_config = train_kwargs["model_config"]
@@ -461,6 +483,29 @@ def test_dual_head_runner_default_off_byte_identity(monkeypatch):
     assert model_config.vol_target_horizon == 10
     assert model_config.sequence_length == SEQUENCE_LENGTH
     assert model_config.use_regime_conditioning is False
+
+
+def test_dual_head_runner_no_mp_surprise_threads_into_loader(monkeypatch):
+    """``use_mp_surprise=False`` reaches the loader as the kwarg."""
+
+    pytest.importorskip("torch", reason="train_model import path needs torch")
+    from scripts import run_dual_head_comparison as runner
+
+    captured = _capture_calls(monkeypatch, runner)
+
+    runner._run_one_cell(
+        "dual",
+        seed=11,
+        training_package_id="tp_dummy",
+        fold_ids=["fold_001"],
+        epochs=1,
+        regression_alpha=0.5,
+        hidden_size=64,
+        use_mp_surprise=False,
+    )
+
+    loader_kwargs = captured["loader_calls"][0]
+    assert loader_kwargs["use_mp_surprise"] is False
 
 
 def test_dual_head_runner_opt_in_threads_through(monkeypatch):

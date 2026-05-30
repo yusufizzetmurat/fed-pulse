@@ -255,6 +255,32 @@ def _parse_args() -> argparse.Namespace:
             "+ missing=1.0."
         ),
     )
+    # mp_surprise rich-feature block toggle. Default True matches
+    # ``load_walk_forward_split`` so canonical runs stay byte-identical.
+    # ``--no-mp-surprise`` zeros the mp_surprise block (and its missing
+    # flags) end-to-end, isolating the feature's contribution to the
+    # joint loss at the loader boundary rather than the model.
+    parser.add_argument(
+        "--use-mp-surprise",
+        dest="use_mp_surprise",
+        action="store_true",
+        help=(
+            "Attach the mp_surprise (monetary-policy surprise) feature "
+            "block from data/external/fred/mp_surprises.parquet to each "
+            "statement event. On by default."
+        ),
+    )
+    parser.add_argument(
+        "--no-mp-surprise",
+        dest="use_mp_surprise",
+        action="store_false",
+        help=(
+            "Zero the mp_surprise feature block end-to-end so the "
+            "loader returns the same shape with zeros in the mp_surprise "
+            "slot. Use to isolate the block's contribution."
+        ),
+    )
+    parser.set_defaults(use_mp_surprise=True)
     # #470 regime-loss variant. ``ce`` keeps the standard CE on the
     # 3-class regime head; ``ordinal_ce`` swaps in bin-distance-weighted
     # CE so a calm->high miss costs 2x a calm->normal miss.
@@ -488,6 +514,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
     use_text_embeddings: bool = True,
     vol_regime_label_mode: str = "per_fold_quantile",
     absolute_vol_thresholds: tuple[float, float] | None = None,
+    use_mp_surprise: bool = True,
 ) -> dict[str, Any]:
     # Imports happen here so the script is importable without a torch
     # install (useful for doc-only environments).
@@ -549,6 +576,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
             use_vix_features=use_vix_features,
             vol_target_horizon=vol_target_horizon,
             sequence_length=active_sequence_length,
+            use_mp_surprise=use_mp_surprise,
         )
         result = train_model(
             model_config=config,
@@ -667,6 +695,7 @@ def main() -> int:
                     use_text_embeddings=bool(args.use_text_embeddings),
                     vol_regime_label_mode=str(args.vol_regime_label_mode),
                     absolute_vol_thresholds=absolute_thresholds,
+                    use_mp_surprise=bool(args.use_mp_surprise),
                 )
             )
 
@@ -730,6 +759,7 @@ def main() -> int:
         ),
         "absolute_calm_max_annualized": args.absolute_calm_max,
         "absolute_high_min_annualized": args.absolute_high_min,
+        "use_mp_surprise": bool(args.use_mp_surprise),
         "trials": trials,
         "summary": summary,
     }
