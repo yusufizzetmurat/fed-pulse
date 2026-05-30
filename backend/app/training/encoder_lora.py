@@ -122,7 +122,7 @@ def build_lora_encoder(
             "encoder build"
         )
 
-    tokenizer = AutoTokenizer.from_pretrained(ref.repo, revision=ref.revision)
+    tokenizer = AutoTokenizer.from_pretrained(ref.repo, revision=ref.revision)  # type: ignore[no-untyped-call]
     base_encoder = AutoModel.from_pretrained(ref.repo, revision=ref.revision)
     base_encoder.requires_grad_(False)
 
