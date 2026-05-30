@@ -171,8 +171,14 @@ def fit_platt_per_class(
         b = torch.tensor(0.0, requires_grad=True)
         optimiser = torch.optim.LBFGS([a, b], lr=lr, max_iter=max_iter)
 
-        def _closure(a: torch.Tensor = a, b: torch.Tensor = b, z: torch.Tensor = z, y: torch.Tensor = y) -> torch.Tensor:
-            optimiser.zero_grad()
+        def _closure(
+            a: torch.Tensor = a,
+            b: torch.Tensor = b,
+            z: torch.Tensor = z,
+            y: torch.Tensor = y,
+            opt: torch.optim.LBFGS = optimiser,
+        ) -> torch.Tensor:
+            opt.zero_grad()
             logit = a * z + b
             loss = F.binary_cross_entropy_with_logits(logit, y)
             loss.backward()  # type: ignore[no-untyped-call]

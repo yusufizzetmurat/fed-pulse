@@ -1471,7 +1471,7 @@ def _apply_calibration_to_softmax(
     temperature_value: float | None = None
 
     temperature_raw = sidecar.get("temperature")
-    if isinstance(temperature_raw, (int, float)) and float(temperature_raw) > 0.0:
+    if isinstance(temperature_raw, int | float) and float(temperature_raw) > 0.0:
         temperature_value = float(temperature_raw)
         working = working / temperature_value
 
