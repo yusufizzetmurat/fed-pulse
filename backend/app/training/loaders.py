@@ -24,6 +24,9 @@ from app.models.config import (
     MULTI_TASK_STANCE_LABELS,
     RICH_FEATURE_SIZE,
     RICH_LINGUISTIC_DIM,
+    RICH_PRESS_CONF_DIM,
+    RICH_STATEMENT_DELTA_DIM,
+    RICH_VOTE_FEATURES_DIM,
     RichFeatureScalerParams,
     SEQUENCE_LENGTH,
     FeatureVector,
@@ -2153,21 +2156,39 @@ def _load_package_sequences_with_metadata(
                 vector.sep_features = None
                 vector.sep_features_missing = 1.0
             # #214 press-conf Q&A block broadcast onto every bar.
+            # When the user opted in via ``use_press_conf`` but this
+            # specific event has no Q&A row, zero-fill instead of leaving
+            # the field at ``None`` -- otherwise ``as_rich_list`` skips
+            # the block and the per-bar tensor goes ragged across events.
             if press_conf_block_list is not None:
                 vector.press_conf_features = list(press_conf_block_list)
+            elif use_press_conf:
+                vector.press_conf_features = [0.0] * RICH_PRESS_CONF_DIM
             else:
                 vector.press_conf_features = None
-            # #443 statement-delta embedding broadcast.
+            # #443 statement-delta embedding broadcast. Same uniform-width
+            # contract as press-conf: when ``use_statement_delta`` is on
+            # but the row carries None (non-statement event or cold-start
+            # statement without a strict-prior), zero-fill the 768-d slot
+            # and flip missing=1.0 so the consumer's per-bar tensor stays
+            # uniform.
             if statement_delta_list is not None:
                 vector.statement_delta_embedding = list(statement_delta_list)
                 vector.statement_delta_embedding_missing = 0.0
+            elif use_statement_delta:
+                vector.statement_delta_embedding = [0.0] * RICH_STATEMENT_DELTA_DIM
+                vector.statement_delta_embedding_missing = 1.0
             else:
                 vector.statement_delta_embedding = None
                 vector.statement_delta_embedding_missing = 1.0
-            # #444 vote-tally feature broadcast.
+            # #444 vote-tally feature broadcast. Same uniform-width
+            # contract: opt-in + missing row -> zero block + missing=1.0.
             if vote_features_list is not None:
                 vector.vote_features = list(vote_features_list)
                 vector.vote_features_missing = 0.0
+            elif use_vote_features:
+                vector.vote_features = [0.0] * RICH_VOTE_FEATURES_DIM
+                vector.vote_features_missing = 1.0
             else:
                 vector.vote_features = None
                 vector.vote_features_missing = 1.0
@@ -2951,21 +2972,39 @@ def load_training_sequences_from_package(
                 vector.sep_features = None
                 vector.sep_features_missing = 1.0
             # #214 press-conf Q&A block broadcast onto every bar.
+            # When the user opted in via ``use_press_conf`` but this
+            # specific event has no Q&A row, zero-fill instead of leaving
+            # the field at ``None`` -- otherwise ``as_rich_list`` skips
+            # the block and the per-bar tensor goes ragged across events.
             if press_conf_block_list is not None:
                 vector.press_conf_features = list(press_conf_block_list)
+            elif use_press_conf:
+                vector.press_conf_features = [0.0] * RICH_PRESS_CONF_DIM
             else:
                 vector.press_conf_features = None
-            # #443 statement-delta embedding broadcast.
+            # #443 statement-delta embedding broadcast. Same uniform-width
+            # contract as press-conf: when ``use_statement_delta`` is on
+            # but the row carries None (non-statement event or cold-start
+            # statement without a strict-prior), zero-fill the 768-d slot
+            # and flip missing=1.0 so the consumer's per-bar tensor stays
+            # uniform.
             if statement_delta_list is not None:
                 vector.statement_delta_embedding = list(statement_delta_list)
                 vector.statement_delta_embedding_missing = 0.0
+            elif use_statement_delta:
+                vector.statement_delta_embedding = [0.0] * RICH_STATEMENT_DELTA_DIM
+                vector.statement_delta_embedding_missing = 1.0
             else:
                 vector.statement_delta_embedding = None
                 vector.statement_delta_embedding_missing = 1.0
-            # #444 vote-tally feature broadcast.
+            # #444 vote-tally feature broadcast. Same uniform-width
+            # contract: opt-in + missing row -> zero block + missing=1.0.
             if vote_features_list is not None:
                 vector.vote_features = list(vote_features_list)
                 vector.vote_features_missing = 0.0
+            elif use_vote_features:
+                vector.vote_features = [0.0] * RICH_VOTE_FEATURES_DIM
+                vector.vote_features_missing = 1.0
             else:
                 vector.vote_features = None
                 vector.vote_features_missing = 1.0
