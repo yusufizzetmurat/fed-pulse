@@ -331,6 +331,9 @@ def _run_one_cell(
         rates_heads=rates_heads,
         rates_target_mode=rates_target_mode,
         use_regime_conditioning=use_regime_conditioning,
+        use_press_conf=use_press_conf,
+        use_statement_delta=use_statement_delta,
+        use_vote_features=use_vote_features,
     )
 
     per_fold: list[dict[str, Any]] = []

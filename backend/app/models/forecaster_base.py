@@ -39,6 +39,10 @@ from app.models.config import (
     RICH_PRESS_CONF_DIM,
     RICH_SEP_DIM,
     RICH_SEP_MISSING_DIM,
+    RICH_STATEMENT_DELTA_DIM,
+    RICH_STATEMENT_DELTA_MISSING_DIM,
+    RICH_VOTE_FEATURES_DIM,
+    RICH_VOTE_FEATURES_MISSING_DIM,
     SEQUENCE_LENGTH,
 )
 from app.models.dlinear import DLinear
@@ -93,6 +97,8 @@ class ForecasterBase(nn.Module):
         use_regime_conditioning: bool = False,
         use_sep: bool = False,
         use_press_conf: bool = False,
+        use_statement_delta: bool = False,
+        use_vote_features: bool = False,
     ):
         super().__init__()
         if model_type not in _ALLOWED_MODEL_TYPES:
@@ -225,6 +231,30 @@ class ForecasterBase(nn.Module):
         else:
             press_conf_tail_dim = 0
         self.press_conf_tail_dim = press_conf_tail_dim
+        # #443 statement-delta tail. The loader appends
+        # ``RICH_STATEMENT_DELTA_DIM + RICH_STATEMENT_DELTA_MISSING_DIM``
+        # extra scalars past the press-conf tail on every per-bar tensor
+        # when the flag is on; the recurrent core has to widen by the
+        # same amount or the LSTM input projection rejects the tensor.
+        self.use_statement_delta = bool(use_statement_delta)
+        if self.use_statement_delta:
+            statement_delta_tail_dim = (
+                RICH_STATEMENT_DELTA_DIM + RICH_STATEMENT_DELTA_MISSING_DIM
+            )
+        else:
+            statement_delta_tail_dim = 0
+        self.statement_delta_tail_dim = statement_delta_tail_dim
+        # #444 vote-tally tail. Same uniform-width contract; appended
+        # after the statement-delta tail in the documented order
+        # (regime, SEP, press-conf, statement-delta, vote).
+        self.use_vote_features = bool(use_vote_features)
+        if self.use_vote_features:
+            vote_features_tail_dim = (
+                RICH_VOTE_FEATURES_DIM + RICH_VOTE_FEATURES_MISSING_DIM
+            )
+        else:
+            vote_features_tail_dim = 0
+        self.vote_features_tail_dim = vote_features_tail_dim
         self.text_embedding_dim = int(text_embedding_dim or 0)
         self.text_adapter_dim = int(text_adapter_dim or 0)
         self._text_path_active = self.text_embedding_dim > 0 and self.text_adapter_dim > 0
@@ -250,6 +280,8 @@ class ForecasterBase(nn.Module):
             + regime_tail_dim
             + sep_tail_dim
             + press_conf_tail_dim
+            + statement_delta_tail_dim
+            + vote_features_tail_dim
         )
         self.lstm_input_size = lstm_input_size
         lstm_dropout = dropout if num_layers > 1 else 0.0

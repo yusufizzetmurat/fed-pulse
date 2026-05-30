@@ -362,6 +362,8 @@ def build_forecaster(
             use_regime_conditioning=use_regime_conditioning_flag,
             use_sep=use_sep_flag,
             use_press_conf=use_press_conf_flag,
+            use_statement_delta=use_statement_delta_flag,
+            use_vote_features=use_vote_features_flag,
             **kwargs,
         )
     else:
@@ -372,6 +374,8 @@ def build_forecaster(
             use_regime_conditioning=use_regime_conditioning_flag,
             use_sep=use_sep_flag,
             use_press_conf=use_press_conf_flag,
+            use_statement_delta=use_statement_delta_flag,
+            use_vote_features=use_vote_features_flag,
             symbol_embedding_dim=symbol_embedding_dim_value,
             **kwargs,
         )
