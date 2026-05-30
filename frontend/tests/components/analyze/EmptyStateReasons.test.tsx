@@ -10,10 +10,10 @@ function render(ui: React.ReactElement) {
 }
 
 describe("Inline 'awaiting checkpoint' reasons", () => {
-  it("MultiAxisInterpretation explains why no axes are present when all four are null", () => {
+  it("MultiAxisInterpretation explains why no axes are present when all three are null", () => {
     render(
       <MultiAxisInterpretation
-        multiAxis={{ stance: null, factor: null, certainty: null, topic: null }}
+        multiAxis={{ stance: null, factor: null, certainty: null }}
       />,
     );
     expect(
@@ -29,7 +29,6 @@ describe("Inline 'awaiting checkpoint' reasons", () => {
           stance: { label: "hawkish", confidence: 0.7 },
           factor: null,
           certainty: null,
-          topic: null,
         }}
       />,
     );

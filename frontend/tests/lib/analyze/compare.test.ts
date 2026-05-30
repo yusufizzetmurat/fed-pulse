@@ -18,7 +18,6 @@ function makeMultiAxisDelta(overrides: Partial<MultiAxisDelta> = {}): MultiAxisD
     factorConfidenceDelta: null,
     certaintyConfidenceDelta: null,
     certaintyShift: "unknown",
-    topicChanged: null,
     ...overrides,
   };
 }
@@ -154,7 +153,6 @@ describe("computeMultiAxisDelta", () => {
           stance: { label: "hawkish", confidence: 0.9 },
           factor: { value: 0.4, confidence: 0.2 },
           certainty: { label: "decisive", confidence: 0.7 },
-          topic: { primary: "inflation", confidence: 0.6 },
         },
       },
     });
@@ -164,7 +162,6 @@ describe("computeMultiAxisDelta", () => {
           stance: { label: "dovish", confidence: 0.8 },
           factor: { value: -0.1, confidence: 0.25 },
           certainty: { label: "tentative", confidence: 0.55 },
-          topic: { primary: "growth", confidence: 0.5 },
         },
       },
     });
@@ -175,7 +172,6 @@ describe("computeMultiAxisDelta", () => {
     expect(d.factorConfidenceDelta).toBeCloseTo(-0.05, 5);
     expect(d.certaintyShift).toBe("more_decisive");
     expect(d.certaintyConfidenceDelta).toBeCloseTo(0.15, 5);
-    expect(d.topicChanged).toBe(true);
   });
 
   it("returns nulls when the axis is missing on either side", () => {
@@ -189,7 +185,6 @@ describe("computeMultiAxisDelta", () => {
     expect(d.stanceRankDelta).toBe(null);
     expect(d.factorDelta).toBe(null);
     expect(d.certaintyShift).toBe("unknown");
-    expect(d.topicChanged).toBe(null);
   });
 });
 

@@ -96,22 +96,23 @@ def test_unknown_head_mode_raises() -> None:
 
 
 def test_forward_multi_task_emits_log_rv_branch_on_dual_head() -> None:
-    """The log_rv branch must appear alongside the 4 classification axes."""
+    """The log_rv branch must appear alongside the 3 classification axes
+    (topic was retired in ADR 0044)."""
 
     model = _build_model("dual")
     x = torch.zeros((4, 20, model.input_size))
     out = model.forward_multi_task(x)
-    assert set(out.keys()) == {"stance", "factor", "certainty", "topic", "log_rv"}
+    assert set(out.keys()) == {"stance", "factor", "certainty", "log_rv"}
     assert out["log_rv"].shape == (4,)
 
 
 def test_forward_multi_task_omits_log_rv_on_classification_only() -> None:
-    """Default head_mode must keep the existing 4-axis dict shape."""
+    """Default head_mode must keep the existing 3-axis dict shape."""
 
     model = _build_model("classification")
     x = torch.zeros((4, 20, model.input_size))
     out = model.forward_multi_task(x)
-    assert set(out.keys()) == {"stance", "factor", "certainty", "topic"}
+    assert set(out.keys()) == {"stance", "factor", "certainty"}
 
 
 # ---------------------------------------------------------------------------

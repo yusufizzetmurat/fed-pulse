@@ -5,7 +5,7 @@ Two paths the builder routes between:
 - ``TextMultiAxisClassifier`` checkpoint present → all four cards
   populated from the classifier service.
 - No checkpoint → stance card sourced from the existing sentiment
-  classifier output; factor / certainty / topic stay None.
+  classifier output; factor / certainty stay None (topic retired in ADR 0044).
 
 The frontend renders None cards as absent (no placeholder), so the
 contract is "stance always present; the others fill when the
@@ -43,12 +43,12 @@ def test_multi_axis_block_falls_back_to_sentiment_when_classifier_absent(
     assert abs(distribution["hawkish"] - 0.82) < 1e-6
     assert block["factor"] is None
     assert block["certainty"] is None
-    assert block["topic"] is None
+    assert "topic" not in block
 
 
 def test_multi_axis_block_uses_classifier_when_checkpoint_loaded(monkeypatch) -> None:
     """When the classifier returns a populated block, the /analyze
-    response surfaces it verbatim (all four cards with real values)."""
+    response surfaces it verbatim (all three cards with real values)."""
 
     from app.main import _build_multi_axis_block
     from app.services import multi_axis_classifier as svc
@@ -64,16 +64,6 @@ def test_multi_axis_block_uses_classifier_when_checkpoint_loaded(monkeypatch) ->
             "label": "uncertain",
             "confidence": 0.65,
             "distribution": {"certain": 0.18, "uncertain": 0.65, "neutral": 0.17},
-        },
-        "topic": {
-            "label": "forward_guidance",
-            "confidence": 0.58,
-            "distribution": {
-                "macro": 0.20,
-                "forward_guidance": 0.58,
-                "market_reaction": 0.12,
-                "other": 0.10,
-            },
         },
     }
     monkeypatch.setattr(svc, "score_text", lambda _text: classifier_block)
