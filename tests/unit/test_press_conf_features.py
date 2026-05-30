@@ -277,7 +277,6 @@ def test_loader_concats_qa_onto_statement_raw_text_under_lora(
             "axis_time": None,
             "axis_certainty": None,
             "axis_factor": None,
-            "axis_topic": None,
             "axis_time_label": None,
             "axis_certain_label": None,
             "credibility_drift_score": 0.0,

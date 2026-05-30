@@ -192,9 +192,6 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             multi_task_lambda_certainty=float(
                 raw.get("multi_task_lambda_certainty", 0.3)
             ),
-            multi_task_lambda_topic=float(
-                raw.get("multi_task_lambda_topic", 0.3)
-            ),
             # #214: round-trip press-conf opt-in.
             use_press_conf=bool(raw.get("use_press_conf", False)),
             # #443/#444: forward the two new opt-in flags so a checkpoint

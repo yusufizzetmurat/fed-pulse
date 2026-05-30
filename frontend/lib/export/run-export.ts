@@ -23,7 +23,6 @@ export function buildRunSummaryRows(detail: HistoryDetail): CsvRow[] {
   const stance = result.multi_axis?.stance;
   const factor = result.multi_axis?.factor;
   const certainty = result.multi_axis?.certainty;
-  const topic = result.multi_axis?.topic;
   const credibility = result.credibility;
   const regime = result.regime_classification;
 
@@ -58,8 +57,6 @@ export function buildRunSummaryRows(detail: HistoryDetail): CsvRow[] {
     ["multi_axis.factor.confidence", factor?.confidence ?? null],
     ["multi_axis.certainty.label", certainty?.label ?? null],
     ["multi_axis.certainty.confidence", certainty?.confidence ?? null],
-    ["multi_axis.topic.primary", topic?.label ?? topic?.primary ?? null],
-    ["multi_axis.topic.confidence", topic?.confidence ?? null],
     ["credibility.drift_score", credibility?.drift_score ?? null],
     ["credibility.realized_vs_stated_gap", credibility?.realized_vs_stated_gap ?? null],
     ["credibility.market_implied_gap", credibility?.market_implied_gap ?? null],

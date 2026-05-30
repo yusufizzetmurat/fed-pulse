@@ -22,7 +22,6 @@ from app.models.config import (
     FEATURE_SIZE,
     MULTI_TASK_CERTAINTY_LABELS,
     MULTI_TASK_STANCE_LABELS,
-    MULTI_TASK_TOPIC_LABELS,
     RICH_FEATURE_SIZE,
     RICH_LINGUISTIC_DIM,
     RichFeatureScalerParams,
@@ -1325,24 +1324,6 @@ def _attach_rich_features(
                 target_certainty_idx = MULTI_TASK_CERTAINTY_LABELS.index("neutral")
             target_certainty_present = True
 
-    target_topic_idx = -1
-    target_topic_present = False
-    topic_raw = event_row.get("axis_topic")
-    topic_str = (
-        str(topic_raw).strip().lower()
-        if isinstance(topic_raw, str) and str(topic_raw).strip()
-        else None
-    )
-    if topic_str is not None:
-        for canonical in MULTI_TASK_TOPIC_LABELS[:-1]:
-            if canonical in topic_str:
-                target_topic_idx = MULTI_TASK_TOPIC_LABELS.index(canonical)
-                target_topic_present = True
-                break
-        if not target_topic_present:
-            target_topic_idx = MULTI_TASK_TOPIC_LABELS.index("other")
-            target_topic_present = True
-
     for vector in vectors:
         vector.credibility_drift_score = cred_drift
         vector.credibility_realized_vs_stated_gap = cred_realized
@@ -1365,8 +1346,6 @@ def _attach_rich_features(
         vector.target_factor_present = target_factor_present
         vector.target_certainty_idx = target_certainty_idx
         vector.target_certainty_present = target_certainty_present
-        vector.target_topic_idx = target_topic_idx
-        vector.target_topic_present = target_topic_present
         vector.rich_payload = True
 
 
@@ -3402,8 +3381,6 @@ def _build_multi_task_target_tensors(
     factor_masks: list[bool] = []
     certainty_targets: list[int] = []
     certainty_masks: list[bool] = []
-    topic_targets: list[int] = []
-    topic_masks: list[bool] = []
 
     for sequence_group in sequence_groups:
         if len(sequence_group) < SEQUENCE_LENGTH + 1:
@@ -3433,11 +3410,6 @@ def _build_multi_task_target_tensors(
             certainty_targets.append(max(certainty_idx, 0))
             certainty_masks.append(certainty_present)
 
-            topic_idx = int(getattr(target_row, "target_topic_idx", -1) or 0)
-            topic_present = bool(getattr(target_row, "target_topic_present", False))
-            topic_targets.append(max(topic_idx, 0))
-            topic_masks.append(topic_present)
-
     if not stance_targets:
         return None
     return {
@@ -3447,8 +3419,6 @@ def _build_multi_task_target_tensors(
         "factor_mask": torch.tensor(factor_masks, dtype=torch.bool),
         "certainty": torch.tensor(certainty_targets, dtype=torch.long),
         "certainty_mask": torch.tensor(certainty_masks, dtype=torch.bool),
-        "topic": torch.tensor(topic_targets, dtype=torch.long),
-        "topic_mask": torch.tensor(topic_masks, dtype=torch.bool),
     }
 
 

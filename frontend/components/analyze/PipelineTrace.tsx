@@ -106,10 +106,6 @@ function multiAxisSummary(multiAxis: MultiAxisResponse): string {
   if (multiAxis.stance) parts.push(`stance ${multiAxis.stance.label}`);
   if (multiAxis.factor) parts.push(`factor ${multiAxis.factor.value.toFixed(2)}`);
   if (multiAxis.certainty) parts.push(`certainty ${multiAxis.certainty.label}`);
-  if (multiAxis.topic)
-    parts.push(
-      `topic ${(multiAxis.topic.label ?? multiAxis.topic.primary ?? "—").toString()}`,
-    );
   return parts.join(" · ") || "no sentiment labels";
 }
 
@@ -219,7 +215,7 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
     key: "multi-axis",
     title: "Sentiment breakdown",
     blurb:
-      "Four predictions from the same shared model — stance, hawkish / dovish score, certainty, and topic — calibrated against the labelled FOMC corpus.",
+      "Three predictions from the same shared model — stance, hawkish / dovish score, and certainty — calibrated against the labelled FOMC corpus.",
     icon: <Workflow className="h-3.5 w-3.5" />,
     state: multiAxis ? "ok" : "absent",
     summary: multiAxis ? multiAxisSummary(multiAxis) : "Sentiment model not loaded",
@@ -248,15 +244,6 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
               {multiAxis.certainty ? `· ${multiAxis.certainty.confidence.toFixed(2)}` : ""}
             </span>
           </li>
-          <li className="flex items-center justify-between">
-            <span className="text-muted-foreground">topic</span>
-            <span className="numeric capitalize">
-              {(multiAxis.topic?.label ?? multiAxis.topic?.primary ?? "—")
-                .toString()
-                .replace(/_/g, " ")}{" "}
-              {multiAxis.topic ? `· ${multiAxis.topic.confidence.toFixed(2)}` : ""}
-            </span>
-          </li>
         </ul>
         <div className="grid gap-2 sm:grid-cols-2">
           {multiAxis.stance ? (
@@ -281,9 +268,6 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
           ) : null}
           {multiAxis.certainty ? (
             <MiniBar label="certainty confidence" value={multiAxis.certainty.confidence} />
-          ) : null}
-          {multiAxis.topic ? (
-            <MiniBar label="topic confidence" value={multiAxis.topic.confidence} />
           ) : null}
         </div>
       </div>

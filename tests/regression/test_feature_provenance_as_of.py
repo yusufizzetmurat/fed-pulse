@@ -223,7 +223,6 @@ def _event_row(
         "axis_time": None,
         "axis_certainty": None,
         "axis_factor": None,
-        "axis_topic": None,
         "axis_time_label": None,
         "axis_certain_label": None,
         "credibility_drift_score": 0.0,
@@ -355,8 +354,6 @@ def _audit_inventory_covers_every_field() -> set[str]:
         "target_factor_present",
         "target_certainty_idx",
         "target_certainty_present",
-        "target_topic_idx",
-        "target_topic_present",
     }
     declared = (
         set(_TRAINING_DELTA_COLUMNS)

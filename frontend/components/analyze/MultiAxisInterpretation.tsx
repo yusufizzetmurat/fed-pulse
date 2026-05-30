@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Compass, Gauge, Layers, Target } from "lucide-react";
+import { Compass, Gauge, Target } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { KpiTile } from "@/components/ui/kpi-tile";
@@ -96,26 +96,6 @@ function CertaintyTile({
   );
 }
 
-function TopicTile({ topic }: { topic: NonNullable<MultiAxisResponse["topic"]> }) {
-  const display = (topic.label ?? topic.primary ?? "other").toString();
-  return (
-    <KpiTile
-      label="Topic"
-      icon={<Layers className="h-3.5 w-3.5" />}
-      value={
-        <span className="capitalize">{display.replace(/_/g, " ")}</span>
-      }
-      delta={topic.confidence}
-      deltaFormatter={(v) => v.toFixed(2)}
-      caption={
-        topic.secondary?.length
-          ? `also: ${topic.secondary.map((t) => t.replace(/_/g, " ")).join(", ")}`
-          : "main topic"
-      }
-    />
-  );
-}
-
 export function MultiAxisInterpretation({
   multiAxis,
   history,
@@ -124,7 +104,7 @@ export function MultiAxisInterpretation({
   const factorHistory = history?.factor;
   const certaintyHistory = history?.certainty;
   const allAxesNull =
-    !multiAxis.stance && !multiAxis.factor && !multiAxis.certainty && !multiAxis.topic;
+    !multiAxis.stance && !multiAxis.factor && !multiAxis.certainty;
 
   if (allAxesNull) {
     return (
@@ -136,7 +116,7 @@ export function MultiAxisInterpretation({
           The sentiment model ran but produced no labels for any axis. This usually means
           the active model file is missing, or the passage is too short for the model to
           read. Load a sentiment model, or paste a longer FOMC statement to populate stance,
-          factor, certainty, and topic.
+          factor, and certainty.
         </p>
       </div>
     );
@@ -161,7 +141,6 @@ export function MultiAxisInterpretation({
         {multiAxis.certainty ? (
           <CertaintyTile certainty={multiAxis.certainty} history={certaintyHistory} />
         ) : null}
-        {multiAxis.topic ? <TopicTile topic={multiAxis.topic} /> : null}
       </div>
     </div>
   );

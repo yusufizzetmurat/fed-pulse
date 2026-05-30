@@ -96,7 +96,6 @@ def _event_row(**overrides) -> dict:
         "axis_time": None,
         "axis_certainty": None,
         "axis_factor": None,
-        "axis_topic": None,
         "credibility_drift_score": 0.0,
         "credibility_realized_vs_stated_gap": 0.0,
         "credibility_market_implied_gap": 0.0,

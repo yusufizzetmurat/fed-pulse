@@ -141,7 +141,6 @@ export interface ClassificationBreakdownResponse {
 
 export type StanceAxis = "hawkish" | "dovish" | "neutral";
 export type CertaintyAxis = "certain" | "uncertain" | "neutral";
-export type TopicAxis = "macro" | "forward_guidance" | "market_reaction" | "other";
 
 export interface MultiAxisStance {
   label: StanceAxis;
@@ -161,22 +160,10 @@ export interface MultiAxisCertainty {
   distribution?: Partial<Record<CertaintyAxis, number>>;
 }
 
-export interface MultiAxisTopic {
-  label: TopicAxis | string;
-  confidence: number;
-  distribution?: Partial<Record<string, number>>;
-  // Back-compat aliases that older fixtures use. ``primary`` mirrors
-  // ``label`` and ``secondary`` lists alternate topics the model
-  // considered. New code should prefer ``label`` + ``distribution``.
-  primary?: string;
-  secondary?: string[];
-}
-
 export interface MultiAxisResponse {
   stance: MultiAxisStance | null;
   factor: MultiAxisFactor | null;
   certainty: MultiAxisCertainty | null;
-  topic: MultiAxisTopic | null;
 }
 
 export interface XaiTokenAttribution {

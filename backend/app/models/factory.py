@@ -152,7 +152,6 @@ def build_forecaster(
             "multi_task_lambda_stance",
             "multi_task_lambda_factor",
             "multi_task_lambda_certainty",
-            "multi_task_lambda_topic",
             "class_weight_power",
             "regression_alpha",
             "use_derived_text_features",
@@ -194,7 +193,6 @@ def build_forecaster(
         flat.multi_task_lambda_stance = float(resolved.multi_task_lambda_stance)  # type: ignore[assignment]
         flat.multi_task_lambda_factor = float(resolved.multi_task_lambda_factor)  # type: ignore[assignment]
         flat.multi_task_lambda_certainty = float(resolved.multi_task_lambda_certainty)  # type: ignore[assignment]
-        flat.multi_task_lambda_topic = float(resolved.multi_task_lambda_topic)  # type: ignore[assignment]
         flat.class_weight_power = float(resolved.class_weight_power)  # type: ignore[assignment]
         flat.regression_alpha = float(resolved.regression_alpha)  # type: ignore[assignment]
         flat.use_derived_text_features = bool(resolved.use_derived_text_features)  # type: ignore[assignment]
@@ -233,7 +231,6 @@ def build_forecaster(
     multi_task_lambda_stance = float(kwargs.pop("multi_task_lambda_stance", 1.0))
     multi_task_lambda_factor = float(kwargs.pop("multi_task_lambda_factor", 0.3))
     multi_task_lambda_certainty = float(kwargs.pop("multi_task_lambda_certainty", 0.3))
-    multi_task_lambda_topic = float(kwargs.pop("multi_task_lambda_topic", 0.3))
     class_weight_power = float(kwargs.pop("class_weight_power", 1.0))
     # #304 dual-head methodology. ``regression_alpha`` is a loss-side
     # knob (the training loop reads it from the model attribute);
@@ -387,7 +384,6 @@ def build_forecaster(
     model.multi_task_lambda_stance = multi_task_lambda_stance  # type: ignore[assignment]
     model.multi_task_lambda_factor = multi_task_lambda_factor  # type: ignore[assignment]
     model.multi_task_lambda_certainty = multi_task_lambda_certainty  # type: ignore[assignment]
-    model.multi_task_lambda_topic = multi_task_lambda_topic  # type: ignore[assignment]
     model.class_weight_power = class_weight_power  # type: ignore[assignment]
     # #304 / #309 -- stash the loss + loader flags so
     # ``ModelConfig.from_model`` round-trips them onto the persisted

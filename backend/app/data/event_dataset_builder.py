@@ -45,7 +45,7 @@ Schema (one row per event x kind x horizon x asset):
 - ``token_count``               Whitespace-token count of ``text`` (used as
                                  a coarse truncation budget upstream)
 - ``axis_stance``               ``hawkish | dovish | neutral`` or None
-- ``axis_time``, ``axis_certainty``, ``axis_factor``, ``axis_topic``
+- ``axis_time``, ``axis_certainty``, ``axis_factor``
                                 Multi-axis labels (None when unavailable)
 - ``credibility_*``             Four credibility-vector axes
 - ``prior_window_sha256``       sha256 over the concatenated prior bars,
@@ -593,7 +593,6 @@ def _aggregate_events(rows: Iterable[_RegistryRow]) -> list[_EventDoc]:
             "time": None,
             "certainty": None,
             "factor": None,
-            "topic": None,
         }
         # gtfintechlab cross-bank corpora ship two extra categorical labels
         # ("time_label" forward/not-forward, "certain_label" certain/uncertain)
@@ -623,7 +622,7 @@ def _aggregate_events(rows: Iterable[_RegistryRow]) -> list[_EventDoc]:
         for r in bucket_sorted:
             if multi_axis["stance"] is None and r.mapped_label:
                 multi_axis["stance"] = r.mapped_label
-            for axis_name in ("time", "certainty", "factor", "topic"):
+            for axis_name in ("time", "certainty", "factor"):
                 if multi_axis[axis_name] is None:
                     val = r.axes.get(axis_name)
                     if val is not None:
@@ -1693,7 +1692,6 @@ def _build_event_rows(
                     doc.multi_axis.get("certainty")
                 ),
                 "axis_factor": _encode_axis_factor(doc.multi_axis.get("factor")),
-                "axis_topic": doc.multi_axis.get("topic"),
                 "axis_time_label": doc.time_label,
                 "axis_certain_label": doc.certain_label,
                 "multi_axis_extras": doc.multi_axis_extras or None,
@@ -1925,7 +1923,6 @@ COLUMN_ORDER = (
     "axis_time",
     "axis_certainty",
     "axis_factor",
-    "axis_topic",
     "axis_time_label",
     "axis_certain_label",
     # Merged ``multi_axis_extras`` payload from the bucketed source rows.

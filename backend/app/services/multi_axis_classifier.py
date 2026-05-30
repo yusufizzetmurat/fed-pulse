@@ -30,7 +30,6 @@ from app.config import MODEL_CHECKPOINT_DIR
 from app.models.config import (
     MULTI_TASK_CERTAINTY_LABELS,
     MULTI_TASK_STANCE_LABELS,
-    MULTI_TASK_TOPIC_LABELS,
 )
 from app.models.text_multi_axis_classifier import TextMultiAxisClassifier
 
@@ -377,9 +376,10 @@ def score_text(text: str) -> dict[str, Any] | None:
 
     Returns ``None`` when no checkpoint is loaded. The output shape
     matches the ``MultiAxisBlock`` Pydantic schema in
-    ``app.schemas`` — keys for stance / factor / certainty / topic
-    each carrying ``label``, ``confidence``, and (where applicable)
-    a per-class distribution.
+    ``app.schemas`` — keys for stance / factor / certainty each
+    carrying ``label``, ``confidence``, and (where applicable) a
+    per-class distribution. The topic axis was retired in ADR 0044
+    (no upstream source ships topic labels).
 
     The factor card is gated on the persisted factor-axis label
     coverage (#328): when the active checkpoint's training pool
@@ -423,14 +423,6 @@ def score_text(text: str) -> dict[str, Any] | None:
         for i in range(len(MULTI_TASK_CERTAINTY_LABELS))
     }
 
-    topic_probs = torch.softmax(logits["topic"], dim=-1)[0]
-    topic_idx = int(topic_probs.argmax().item())
-    topic_label = MULTI_TASK_TOPIC_LABELS[topic_idx]
-    topic_dist = {
-        MULTI_TASK_TOPIC_LABELS[i]: float(topic_probs[i].item())
-        for i in range(len(MULTI_TASK_TOPIC_LABELS))
-    }
-
     factor_card = _build_factor_card(state, logits)
 
     return {
@@ -444,11 +436,6 @@ def score_text(text: str) -> dict[str, Any] | None:
             "label": certainty_label,
             "confidence": float(certainty_probs[certainty_idx].item()),
             "distribution": certainty_dist,
-        },
-        "topic": {
-            "label": topic_label,
-            "confidence": float(topic_probs[topic_idx].item()),
-            "distribution": topic_dist,
         },
     }
 

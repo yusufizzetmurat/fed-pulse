@@ -98,7 +98,6 @@ def _make_events_df(event_dates: list[str], stance_labels: list[str] | None = No
                 "axis_time": "neutral",
                 "axis_certainty": "neutral",
                 "axis_factor": "neutral",
-                "axis_topic": "neutral",
                 "credibility_drift_score": 0.0,
                 "credibility_realized_vs_stated_gap": 0.0,
                 "credibility_market_implied_gap": 0.0,

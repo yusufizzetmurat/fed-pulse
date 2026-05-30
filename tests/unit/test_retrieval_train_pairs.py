@@ -183,7 +183,6 @@ def _shared_axis_events_frame() -> pd.DataFrame:
             ),
             "axis_stance": "dovish",
             "axis_factor": "labor",
-            "axis_topic": "crisis",
         },
         {
             **_make_row(
@@ -193,7 +192,6 @@ def _shared_axis_events_frame() -> pd.DataFrame:
             ),
             "axis_stance": "dovish",
             "axis_factor": "labor",
-            "axis_topic": "crisis",
         },
         {
             **_make_row(
@@ -203,7 +201,6 @@ def _shared_axis_events_frame() -> pd.DataFrame:
             ),
             "axis_stance": "hawkish",
             "axis_factor": "inflation",
-            "axis_topic": "normalization",
         },
         {
             **_make_row(
@@ -213,7 +210,6 @@ def _shared_axis_events_frame() -> pd.DataFrame:
             ),
             "axis_stance": "hawkish",
             "axis_factor": "inflation",
-            "axis_topic": "normalization",
         },
     ]
     return pd.DataFrame(rows)
@@ -239,7 +235,6 @@ def test_shared_axis_pair_policy_drops_unlabelled_rows() -> None:
     # Wipe one row's axis labels — it must contribute zero pairs.
     events.loc[events["text"] == "2008 crisis dovish statement", "axis_stance"] = None
     events.loc[events["text"] == "2008 crisis dovish statement", "axis_factor"] = None
-    events.loc[events["text"] == "2008 crisis dovish statement", "axis_topic"] = None
     pairs = ret_train.build_training_pairs(events, pair_policy="shared_axis")
     anchors = {p.anchor for p in pairs}
     positives = {p.positive for p in pairs}
