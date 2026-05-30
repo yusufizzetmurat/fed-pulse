@@ -36,8 +36,8 @@ ENCODERS: dict[str, str] = {
     "gtfintechlab_fomc_roberta": "gtfintechlab/FOMC-RoBERTa",
     "gtfintechlab_fomc_roberta_any_exp": "gtfintechlab/fomc-roberta-any-exp",
     "deberta_v3_base": "microsoft/deberta-v3-base",
-    "finbert_fed_adjacent": "/data/artifacts/continued_pretraining/finbert_fed_adjacent_20260515T104824Z_s11/checkpoint",
-    "bert_base_fed_adjacent": "/data/artifacts/continued_pretraining/bert_base_fed_adjacent_20260515T112132Z_s11/checkpoint",
+    "finbert_fed_adjacent": "yusufizzetmurat/finbert-fed-adjacent",
+    "bert_base_fed_adjacent": "local/bert-base-fed-adjacent",
     "bge_large_en_v15": "BAAI/bge-large-en-v1.5",
     "nomic_embed_text_v15": "nomic-ai/nomic-embed-text-v1.5",
 }

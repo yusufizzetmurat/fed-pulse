@@ -46,6 +46,10 @@ dependencies = [
   "pypdf>=5.0.0",
   "pdfplumber>=0.11.0",
   "python-docx>=1.1.0",
+  # pandas.read_excel(engine="openpyxl") consumes the Swanson 2021
+  # three-factor xlsx mirror (#420). Pinned so the swanson_three_factor
+  # adapter resolves cleanly in fresh container builds.
+  "openpyxl>=3.1",
   "httpx>=0.27.0",
   "SQLAlchemy>=2.0",
   # SQLAlchemy 2.0 pulls greenlet on Linux CPython but the dep isn't
@@ -75,6 +79,28 @@ gpu = []
 where = ["."]
 include = ["app*"]
 exclude = ["tests*", "models", "*.pyc"]
+
+# The production image and the dev-cpu stack are CPU-only. Since torch
+# 2.12 the default Linux wheel on PyPI is the CUDA build, which declares
+# `cuda-toolkit==13.0.x; platform_system == "Linux"` (plus the nvidia-*
+# runtime stack) as a hard dependency. A lock generated on macOS never
+# sees those Linux-only deps, so the hashed install on the Linux build
+# host trips `--require-hashes` ("hashes are required ... cuda-toolkit").
+# Force the `+cpu` build (no CUDA deps) from the PyTorch CPU index — the
+# same wheel that runs in every CPU container (Docker runs Linux images
+# on macOS too). `make lock` drives `uv pip compile`, which ignores
+# [tool.uv.sources], so the override + index below are the levers that
+# interface honors; `--emit-index-url` (in the Makefile) writes the CPU
+# index into the lock so the hashed `pip install` can locate the wheel.
+# Bump the override pin in lockstep when upgrading torch. The GPU stack
+# stays in requirements-gpu-cu121.txt / `make dev-gpu`.
+[tool.uv]
+override-dependencies = ["torch==2.12.0+cpu"]
+index-strategy = "unsafe-best-match"
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 
 [tool.ruff]
 line-length = 100

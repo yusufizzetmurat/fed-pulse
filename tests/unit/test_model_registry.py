@@ -83,3 +83,41 @@ def test_round3_corpus_ablation_placeholders_are_registered_but_unpinned() -> No
         assert not is_pinned(alias), (
             f"is_pinned should be False for the placeholder alias {alias!r}"
         )
+
+
+def test_role_tagged_aliases_resolve_to_pinned_non_placeholder_repos() -> None:
+    """Regression guard for #463 / #464: every alias carrying a ``role:``
+    tag must point at a resolvable repo with a pinned revision.
+
+    A role-tagged entry that hangs off ``local/<name>`` with empty
+    revision is the failure mode the issue describes — every
+    ``resolve_by_role(role)`` callsite (the classifier and retrieval
+    training entrypoints) crashes at ``from_pretrained`` instead of
+    producing a clean fail-fast at registry-lookup time.
+    """
+
+    from app.models.registry import KNOWN_ROLES, encoder_ref, load_registry
+
+    load_registry.cache_clear()
+    registry = load_registry()
+    seen: set[str] = set()
+    for ref in registry.values():
+        if ref.alias in seen:
+            continue
+        seen.add(ref.alias)
+        if ref.role is None:
+            continue
+        assert ref.role in KNOWN_ROLES, (
+            f"{ref.alias!r} carries unknown role {ref.role!r}; "
+            f"known roles: {KNOWN_ROLES}"
+        )
+        assert ref.revision, (
+            f"role-tagged alias {ref.alias!r} (role={ref.role!r}) has empty "
+            "revision — Runpod sweeps will hard-fail at from_pretrained. "
+            "Either pin a revision or drop the role tag."
+        )
+        assert not ref.repo.startswith("local/"), (
+            f"role-tagged alias {ref.alias!r} (role={ref.role!r}) points "
+            f"at the unresolvable placeholder repo {ref.repo!r}. Move the "
+            "role tag to a produced encoder (#463)."
+        )

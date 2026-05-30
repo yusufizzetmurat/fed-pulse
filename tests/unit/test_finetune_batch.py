@@ -37,12 +37,16 @@ def test_encoders_keys_are_unique_local_labels() -> None:
 
 def test_encoders_registry_adds_sentence_embedding_and_fed_adjacent_encoders() -> None:
     """Sprint 2 extends the bake-off with FinBERT-FedAdjacent + 2 sentence-embedding entries.
-    Phase A/B/C pinned ``finbert_fed_adjacent`` to the 2026-05-15 local checkpoint dir; the
-    ``local/finbert-fed-adjacent`` placeholder was retired when the revision was filled in.
+    The ``finbert_fed_adjacent`` checkpoint resolves through the Hugging Face mirror
+    (``yusufizzetmurat/finbert-fed-adjacent``) after #464 moved the bake-off off the
+    stale Runpod ``/data/artifacts/...`` filesystem path. The HF repo id matches the
+    ``repo:`` field on the matching ``registry.yaml`` entry so the bake-off,
+    inference, and reproducibility surfaces resolve to identical weights.
     """
 
-    assert finetune_batch.ENCODERS["finbert_fed_adjacent"].endswith(
-        "finbert_fed_adjacent_20260515T104824Z_s11/checkpoint"
+    assert (
+        finetune_batch.ENCODERS["finbert_fed_adjacent"]
+        == "yusufizzetmurat/finbert-fed-adjacent"
     )
     assert finetune_batch.ENCODERS["bge_large_en_v15"] == "BAAI/bge-large-en-v1.5"
     assert finetune_batch.ENCODERS["nomic_embed_text_v15"] == "nomic-ai/nomic-embed-text-v1.5"
