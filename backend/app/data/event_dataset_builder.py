@@ -354,7 +354,7 @@ def _encode_axis_time(value: Any) -> float | None:
     """
     if value is None:
         return None
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return float(value)
     if isinstance(value, str):
         s = value.strip().lower()
@@ -371,7 +371,7 @@ def _encode_axis_certainty(value: Any) -> float | None:
     """
     if value is None:
         return None
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return float(value)
     if isinstance(value, str):
         s = value.strip().lower()
