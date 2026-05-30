@@ -187,7 +187,7 @@ class ComparisonResult:
         return dataclasses.asdict(self)
 
 
-def compare_two(
+def compare_two(  # noqa: PLR0913 -- bootstrap knobs + Holm placeholder are independent kwargs by design
     sweep_path: Path,
     label_a: str,
     label_b: str,
@@ -226,7 +226,7 @@ def compare_two(
     )
 
 
-def compute_paired_comparisons(
+def compute_paired_comparisons(  # noqa: PLR0913 -- bootstrap knobs surface as named kwargs by design
     sweep_paths: Sequence[Path],
     comparison_pairs: Sequence[tuple[str, str]],
     metric: str,
