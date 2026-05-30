@@ -603,6 +603,17 @@ class ModelConfig:
     # contract. The training loop reads this off the stashed module
     # attribute when constructing the CE / MultiTaskLoss instance.
     regime_loss_mode: str = "ce"
+    # ``focal`` mode only. Lin et al. 2017's (1 - p_true) ** gamma modulating
+    # factor on the regime-axis CE. Default 2.0 matches the paper. The training
+    # loop reads this off the stashed module attribute when constructing the
+    # focal CE branch (``app.training.loss.focal_cross_entropy``); ignored under
+    # any other ``regime_loss_mode`` so default-on runs stay byte-identical.
+    focal_gamma: float = 2.0
+    # ``class_balanced`` mode only. Cui et al. 2019's effective-number
+    # reweighting hyperparameter. ``beta -> 1`` mimics inverse-frequency
+    # weights; ``beta = 0`` collapses to uniform. Default 0.999 mirrors the
+    # paper's CIFAR-LT recipe. Ignored under any other ``regime_loss_mode``.
+    class_balanced_beta: float = 0.999
     # Steepens inverse-frequency class weights via ``raw[c] = 1 / (n_c + 1) ** power``.
     # ``1.0`` (default) is the legacy formula and preserves byte-identity with
     # pre-2026-05-25 sweep numbers; higher values force the gradient onto the
