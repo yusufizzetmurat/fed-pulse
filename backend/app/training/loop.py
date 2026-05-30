@@ -69,6 +69,36 @@ VOL_TARGET_MODES: tuple[str, ...] = ("raw", "garch_residual")
 DEFAULT_VOL_TARGET_MODE: str = "raw"
 
 
+class _RegimeOrdinalCELoss(nn.Module):
+    """nn.Module wrapper around :func:`ordinal_cross_entropy` (#470).
+
+    The single-task regime classification path calls ``loss_fn(predictions,
+    batch_y)`` in many places; wrapping the functional ordinal CE in a
+    module keeps the call shape identical to ``nn.CrossEntropyLoss`` so
+    the dispatch only needs to flip the constructor.
+    """
+
+    def __init__(self, *, weight: torch.Tensor | None = None) -> None:
+        super().__init__()
+        self.register_buffer(
+            "_class_weight",
+            weight if weight is not None else torch.empty(0),
+        )
+
+    @property
+    def weight(self) -> torch.Tensor | None:
+        # ``weight`` mirrors ``nn.CrossEntropyLoss.weight`` so the
+        # per-batch eval bookkeeping that introspects ``loss_fn.weight``
+        # for weighted-mean math reads it back identically.
+        buf = self.get_buffer("_class_weight")
+        return buf if buf.numel() > 0 else None
+
+    def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        from app.training.loss import ordinal_cross_entropy
+
+        return ordinal_cross_entropy(logits, target, weight=self.weight)
+
+
 def _resolve_device(device: str | torch.device | None = None) -> torch.device:
     if device is not None:
         return torch.device(device)
@@ -3304,6 +3334,17 @@ def train_model(
     # forward path emits raw logits in classification mode so
     # CrossEntropyLoss can apply log_softmax internally.
     _active_output_mode = str(getattr(work_model, "output_mode", "regression"))
+    # #470 regime-loss variant. Read the mode off the model attribute the
+    # factory stashed so checkpoint round-trips reuse the same loss the
+    # original run trained under. ``ce`` keeps the legacy CE path; the
+    # single-task classification branch uses :class:`_RegimeOrdinalCELoss`,
+    # a thin nn.Module wrapper that dispatches to F.cross_entropy or
+    # :func:`ordinal_cross_entropy` while preserving the
+    # ``loss_fn(predictions, batch_y)`` call shape every downstream call
+    # site assumes.
+    _active_regime_loss_mode = str(
+        getattr(work_model, "regime_loss_mode", "ce") or "ce"
+    )
     loss_fn: nn.Module
     if _active_output_mode == "classification":
         # A1 (#206) -- pass the per-fold class weights when available.
@@ -3316,7 +3357,10 @@ def train_model(
             class_weight_tensor = torch.tensor(
                 list(weights_tuple), dtype=torch.float32, device=device_obj
             )
-        loss_fn = nn.CrossEntropyLoss(weight=class_weight_tensor)
+        if _active_regime_loss_mode == "ordinal_ce":
+            loss_fn = _RegimeOrdinalCELoss(weight=class_weight_tensor)
+        else:
+            loss_fn = nn.CrossEntropyLoss(weight=class_weight_tensor)
     else:
         loss_fn = nn.SmoothL1Loss(beta=0.02)
 
@@ -3360,6 +3404,7 @@ def train_model(
             lambda_stance=float(getattr(active_model_config, "multi_task_lambda_stance", 1.0)),
             lambda_factor=float(getattr(active_model_config, "multi_task_lambda_factor", 0.3)),
             lambda_certainty=float(getattr(active_model_config, "multi_task_lambda_certainty", 0.3)),
+            regime_loss_mode=_active_regime_loss_mode,
         ).to(device_obj)
         # Stash the per-axis weights + lambdas on a plain dict so the
         # TrainingRunSummary -> torch.save round-trip carries them onto
@@ -3378,6 +3423,7 @@ def train_model(
                 "factor": float(multi_task_loss_fn.lambda_factor),
                 "certainty": float(multi_task_loss_fn.lambda_certainty),
             },
+            "regime_loss_mode": _active_regime_loss_mode,
         }
         print(
             "[train_model] multi_task_loss active: "

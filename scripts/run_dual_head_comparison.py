@@ -223,6 +223,22 @@ def _parse_args() -> argparse.Namespace:
             "missing flag."
         ),
     )
+    # #470 regime-loss variant. ``ce`` keeps the standard CE on the
+    # 3-class regime head; ``ordinal_ce`` swaps in bin-distance-weighted
+    # CE so a calm->high miss costs 2x a calm->normal miss.
+    parser.add_argument(
+        "--regime-loss",
+        dest="regime_loss",
+        type=str,
+        choices=("ce", "ordinal_ce"),
+        default="ce",
+        help=(
+            "Regime-axis loss kernel. ``ce`` (default) keeps the standard "
+            "cross-entropy byte-identical to the pre-#470 canonical "
+            "sweep; ``ordinal_ce`` weights each row's CE by "
+            "``1 + |true - argmax|`` so far-bin confusions pay more."
+        ),
+    )
     parser.set_defaults(
         use_retrieval_analogs=False,
         use_regime_conditioning=False,
@@ -348,6 +364,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
     use_statement_delta: bool = False,
     use_vote_features: bool = False,
     use_press_conf: bool = False,
+    regime_loss: str = "ce",
 ) -> dict[str, Any]:
     # Imports happen here so the script is importable without a torch
     # install (useful for doc-only environments).
@@ -371,6 +388,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
         use_press_conf=use_press_conf,
         use_statement_delta=use_statement_delta,
         use_vote_features=use_vote_features,
+        regime_loss_mode=regime_loss,
     )
 
     per_fold: list[dict[str, Any]] = []
@@ -452,6 +470,7 @@ def main() -> int:
                     use_statement_delta=bool(args.use_statement_delta),
                     use_vote_features=bool(args.use_vote_features),
                     use_press_conf=bool(args.use_press_conf),
+                    regime_loss=str(args.regime_loss),
                 )
             )
 
@@ -491,6 +510,7 @@ def main() -> int:
         "use_statement_delta": bool(args.use_statement_delta),
         "use_vote_features": bool(args.use_vote_features),
         "use_press_conf": bool(args.use_press_conf),
+        "regime_loss": str(args.regime_loss),
         "trials": trials,
         "summary": summary,
     }
