@@ -827,6 +827,8 @@ class ModelConfig:
             multi_task_lambda_certainty=float(getattr(model, "multi_task_lambda_certainty", 0.3)),
             regime_loss_mode=str(getattr(model, "regime_loss_mode", "ce") or "ce"),
             class_weight_power=float(getattr(model, "class_weight_power", 1.0)),
+            focal_gamma=float(getattr(model, "focal_gamma", 2.0)),
+            class_balanced_beta=float(getattr(model, "class_balanced_beta", 0.999)),
             head_mode=str(getattr(model, "head_mode", "dual") or "dual"),
             regression_alpha=float(getattr(model, "regression_alpha", 0.5)),
             use_derived_text_features=bool(

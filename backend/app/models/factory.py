@@ -154,6 +154,12 @@ def build_forecaster(
             "multi_task_lambda_certainty",
             "regime_loss_mode",
             "class_weight_power",
+            # #502 focal + class_balanced loss-side hyperparameters.
+            # The flat_mlp ctor does not consume them; the trainer reads
+            # them off the stashed module attribute when constructing
+            # the loss kernel.
+            "focal_gamma",
+            "class_balanced_beta",
             "regression_alpha",
             "use_derived_text_features",
             "rates_head_mode",
@@ -210,6 +216,8 @@ def build_forecaster(
         flat.multi_task_lambda_certainty = float(resolved.multi_task_lambda_certainty)  # type: ignore[assignment]
         flat.regime_loss_mode = str(resolved.regime_loss_mode or "ce")  # type: ignore[assignment]
         flat.class_weight_power = float(resolved.class_weight_power)  # type: ignore[assignment]
+        flat.focal_gamma = float(resolved.focal_gamma)  # type: ignore[assignment]
+        flat.class_balanced_beta = float(resolved.class_balanced_beta)  # type: ignore[assignment]
         flat.regression_alpha = float(resolved.regression_alpha)  # type: ignore[assignment]
         flat.use_derived_text_features = bool(resolved.use_derived_text_features)  # type: ignore[assignment]
         flat.rates_heads = flat_rates_heads  # type: ignore[assignment]
@@ -284,6 +292,12 @@ def build_forecaster(
     # unrecognised kwarg.
     regime_loss_mode_value = str(kwargs.pop("regime_loss_mode", "ce") or "ce")
     class_weight_power = float(kwargs.pop("class_weight_power", 1.0))
+    # #502 focal + class_balanced regime-loss hyperparameters. Pure
+    # loss-side knobs the trainer reads off the stashed module
+    # attribute when constructing the loss kernel; pop here so the
+    # ForecasterModel ctor does not see the unrecognised kwargs.
+    focal_gamma_value = float(kwargs.pop("focal_gamma", 2.0))
+    class_balanced_beta_value = float(kwargs.pop("class_balanced_beta", 0.999))
     # #304 dual-head methodology. ``regression_alpha`` is a loss-side
     # knob (the training loop reads it from the model attribute);
     # ``head_mode`` is forwarded to the ForecasterModel constructor so
@@ -519,6 +533,8 @@ def build_forecaster(
     model.multi_task_lambda_certainty = multi_task_lambda_certainty  # type: ignore[assignment]
     model.regime_loss_mode = regime_loss_mode_value  # type: ignore[assignment]
     model.class_weight_power = class_weight_power  # type: ignore[assignment]
+    model.focal_gamma = focal_gamma_value  # type: ignore[assignment]
+    model.class_balanced_beta = class_balanced_beta_value  # type: ignore[assignment]
     # #304 / #309 -- stash the loss + loader flags so
     # ``ModelConfig.from_model`` round-trips them onto the persisted
     # checkpoint payload. ``head_mode`` itself was already passed to
