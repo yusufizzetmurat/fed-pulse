@@ -26,6 +26,36 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--include-kaggle", action="store_true", help="Include Kaggle ingestion.")
     parser.add_argument("--include-scraped", action="store_true", help="Include scraped ingestion.")
     parser.add_argument(
+        "--include-op-fed",
+        action="store_true",
+        help="Include Op-Fed sentence-level annotations (Keith et al. 2025).",
+    )
+    parser.add_argument(
+        "--include-swanson-three-factor",
+        action="store_true",
+        help="Include Swanson 2021 three-factor decomposition.",
+    )
+    parser.add_argument(
+        "--include-gss-factors",
+        action="store_true",
+        help="Include GSS factor decomposition (offline-PDF-derived; needs prior CSV extraction).",
+    )
+    parser.add_argument(
+        "--include-gtfintechlab-fed",
+        action="store_true",
+        help="Include gtfintechlab/federal_reserve_system multi-axis labels.",
+    )
+    parser.add_argument(
+        "--include-gtfintechlab-cross-bank",
+        action="store_true",
+        help="Include gtfintechlab cross-bank datasets (ECB / BoJ / BoE / BoC / RBA).",
+    )
+    parser.add_argument(
+        "--include-fomc-archive",
+        action="store_true",
+        help="Include vtasca FOMC archive (HF dataset).",
+    )
+    parser.add_argument(
         "--all-sources",
         action="store_true",
         help="Include all sources (overrides source-specific flags).",
@@ -71,7 +101,26 @@ def main() -> int:
     include_hf = args.all_sources or args.include_hf
     include_kaggle = args.all_sources or args.include_kaggle
     include_scraped = args.all_sources or args.include_scraped
-    if not (include_hf or include_kaggle or include_scraped):
+    include_op_fed = args.all_sources or args.include_op_fed
+    include_swanson = args.all_sources or args.include_swanson_three_factor
+    include_gss = args.all_sources or args.include_gss_factors
+    include_gtf_fed = args.all_sources or args.include_gtfintechlab_fed
+    include_gtf_xbank = args.all_sources or args.include_gtfintechlab_cross_bank
+    include_fomc_archive = args.all_sources or args.include_fomc_archive
+    selected_any = any(
+        (
+            include_hf,
+            include_kaggle,
+            include_scraped,
+            include_op_fed,
+            include_swanson,
+            include_gss,
+            include_gtf_fed,
+            include_gtf_xbank,
+            include_fomc_archive,
+        )
+    )
+    if not selected_any:
         include_hf = include_kaggle = include_scraped = True
 
     training_package_id = args.training_package_id or _auto_training_package_id(
@@ -92,6 +141,18 @@ def main() -> int:
         ingest_cmd.append("--include-kaggle")
     if include_scraped:
         ingest_cmd.append("--include-scraped")
+    if include_op_fed:
+        ingest_cmd.append("--include-op-fed")
+    if include_swanson:
+        ingest_cmd.append("--include-swanson-three-factor")
+    if include_gss:
+        ingest_cmd.append("--include-gss-factors")
+    if include_gtf_fed:
+        ingest_cmd.append("--include-gtfintechlab-fed")
+    if include_gtf_xbank:
+        ingest_cmd.append("--include-gtfintechlab-cross-bank")
+    if include_fomc_archive:
+        ingest_cmd.append("--include-fomc-archive")
 
     normalize_cmd = [
         python_exec,

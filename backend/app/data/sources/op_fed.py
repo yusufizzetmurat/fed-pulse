@@ -152,7 +152,14 @@ class OpFedScraper:
         return count
 
 
-register(OpFedScraper())
+# Only register when imported as a module. When the file runs under
+# `python -m app.data.sources.op_fed`, Python first imports the
+# package (which imports this file as a module and registers the
+# scraper), then re-executes this file as __main__. Without the guard
+# the second pass tries to register again and the registry raises a
+# duplicate-source_type error.
+if __name__ != "__main__":
+    register(OpFedScraper())
 
 
 def pull_op_fed_csv(

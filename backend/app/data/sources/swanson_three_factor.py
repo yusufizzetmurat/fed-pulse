@@ -202,7 +202,14 @@ def _parse_swanson_row(row: dict[str, Any]) -> dict[str, Any] | None:
         # pandas Timestamp / datetime
         iso_date = raw_date.strftime("%Y-%m-%d")
     except AttributeError:
-        iso_date = str(raw_date)[:10]
+        # xlsx text cells (e.g. "12/16/2015") don't have strftime. Coerce
+        # to a Timestamp via pandas so the registry sees ISO format.
+        import pandas as pd
+
+        parsed_dt = pd.to_datetime(str(raw_date), errors="coerce")
+        if pd.isna(parsed_dt):
+            return None
+        iso_date = parsed_dt.strftime("%Y-%m-%d")
     if not iso_date or len(iso_date) < 10:
         return None
 
@@ -250,7 +257,11 @@ def _parse_swanson_row(row: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-register(SwansonThreeFactorScraper())
+# Only register when imported as a module; see op_fed.py for the same
+# guard's rationale (python -m re-executes this file as __main__ after
+# the package init already imported and registered it).
+if __name__ != "__main__":
+    register(SwansonThreeFactorScraper())
 
 
 if __name__ == "__main__":

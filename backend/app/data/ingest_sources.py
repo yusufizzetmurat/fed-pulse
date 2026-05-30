@@ -709,7 +709,13 @@ def _iter_swanson_three_factor_records(
         try:
             event_date = raw_date.strftime("%Y-%m-%d")  # type: ignore[union-attr]
         except AttributeError:
-            event_date = str(raw_date)[:10]
+            # Some xlsx cells are stored as text (e.g. "12/16/2015")
+            # rather than Excel date serials, so .strftime raises.
+            # Coerce through pd.to_datetime so the schema gate sees ISO.
+            parsed_dt = pd.to_datetime(str(raw_date), errors="coerce")
+            if pd.isna(parsed_dt):
+                continue
+            event_date = parsed_dt.strftime("%Y-%m-%d")
         if not event_date or len(event_date) < 10:
             continue
 
