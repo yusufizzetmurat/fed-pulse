@@ -3300,6 +3300,52 @@ def vol_regime_class_for(value: float | None, quantiles: Sequence[float]) -> int
     return len(quantiles)
 
 
+def vol_regime_absolute_class_for(
+    value: float | None, thresholds: tuple[float, float]
+) -> int:
+    """Map a forward-vol value to a 3-class regime index using absolute cutoffs.
+
+    Alternative to :func:`vol_regime_class_for` (#472): replaces the
+    per-fold quantile bins -- whose cutoffs drift between folds and
+    carry no economic meaning -- with a fixed pair of thresholds
+    ``(calm_max, high_min)`` so every fold's "calm" / "normal" / "high"
+    cell refers to the same vol level. Returns ``0`` (calm) when
+    ``value < calm_max``, ``1`` (normal) when ``calm_max <= value <
+    high_min``, ``2`` (high) when ``value >= high_min``. Returns ``-1``
+    for missing (``None`` / NaN) values so the caller drops the row
+    from the classification training set -- matches the contract of
+    :func:`vol_regime_class_for`.
+
+    The thresholds are expressed in the SAME per-period unit as
+    ``forward_realized_vol_10d`` (per-period standard deviation of log
+    returns over 10 trading days; NOT annualized). Convert from a
+    human-readable annualized vol via
+    ``vol_per_period = vol_annualized / sqrt(252 / 10)`` (equivalently
+    ``vol_annualized = vol_per_period * sqrt(25.2)``). The
+    :class:`app.models.config.ModelConfig` defaults derive
+    ``calm_max`` from 12% annualized and ``high_min`` from 22%
+    annualized; the caller in :mod:`scripts.run_dual_head_comparison`
+    converts user-supplied annualized percentages before passing them
+    through.
+
+    Caveat: when a fold's test slice has zero rows above ``high_min``
+    (e.g. early-2010s windows where realised vol never crossed 22%
+    annualised), the test partition's class-2 cell is empty and
+    macro-F1 reflects that. This is intentional: "calm" / "normal" /
+    "high" become a stable economic definition rather than a per-fold
+    artefact.
+    """
+
+    if value is None or value != value:
+        return -1
+    calm_max, high_min = thresholds
+    if value < calm_max:
+        return 0
+    if value < high_min:
+        return 1
+    return 2
+
+
 def collect_forward_vols(
     sequence_groups: Sequence[Sequence[FeatureVector]],
     *,

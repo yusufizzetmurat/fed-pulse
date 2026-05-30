@@ -162,6 +162,11 @@ def build_forecaster(
             "rates_target_mode",
             "vol_target_mode",
             "vol_target_horizon",
+            # #472 vol-regime labelling mode + absolute thresholds are
+            # loop / loader-side knobs; the flat_mlp ctor does not
+            # consume them.
+            "vol_regime_label_mode",
+            "absolute_vol_thresholds",
             "use_regime_conditioning",
             "use_sep",
             "use_press_conf",
@@ -220,6 +225,32 @@ def build_forecaster(
         flat.vol_target_horizon = int(
             getattr(resolved, "vol_target_horizon", 10) or 10
         )  # type: ignore[assignment]
+        # #472 round-trip the vol-regime labelling knobs onto the flat_mlp
+        # module so the persisted run summary records which contract the
+        # classification target trained under.
+        from app.models.config import (
+            DEFAULT_ABSOLUTE_VOL_THRESHOLDS,
+            DEFAULT_VOL_REGIME_LABEL_MODE,
+        )
+
+        flat.vol_regime_label_mode = str(
+            getattr(resolved, "vol_regime_label_mode", DEFAULT_VOL_REGIME_LABEL_MODE)
+            or DEFAULT_VOL_REGIME_LABEL_MODE
+        )  # type: ignore[assignment]
+        _flat_thresholds_raw = getattr(
+            resolved, "absolute_vol_thresholds", DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+        )
+        if _flat_thresholds_raw is None:
+            flat.absolute_vol_thresholds = DEFAULT_ABSOLUTE_VOL_THRESHOLDS  # type: ignore[assignment]
+        else:
+            _flat_seq = tuple(_flat_thresholds_raw)
+            if len(_flat_seq) != 2:
+                flat.absolute_vol_thresholds = DEFAULT_ABSOLUTE_VOL_THRESHOLDS  # type: ignore[assignment]
+            else:
+                flat.absolute_vol_thresholds = (  # type: ignore[assignment]
+                    float(_flat_seq[0]),
+                    float(_flat_seq[1]),
+                )
         return flat
 
     kwargs = resolved.to_dict()
@@ -282,6 +313,34 @@ def build_forecaster(
     vol_target_mode_value = str(
         kwargs.pop("vol_target_mode", "raw") or "raw"
     )
+    # #472 vol-regime labelling mode + absolute thresholds. Both are
+    # loop / loader-side knobs (the trainer selects between
+    # ``fit_vol_regime_quantiles`` and the fixed thresholds; the loader
+    # uses the resulting cutoffs in ``vol_regime_class_for``). Pop here
+    # so the ForecasterModel ctor never sees the unrecognised kwargs.
+    # Stash back on the built module so ``ModelConfig.from_model``
+    # round-trips both onto the persisted run summary regardless of
+    # whether the run also wires the absolute branch.
+    from app.models.config import (
+        DEFAULT_ABSOLUTE_VOL_THRESHOLDS,
+        DEFAULT_VOL_REGIME_LABEL_MODE,
+    )
+
+    vol_regime_label_mode_value = str(
+        kwargs.pop("vol_regime_label_mode", DEFAULT_VOL_REGIME_LABEL_MODE)
+        or DEFAULT_VOL_REGIME_LABEL_MODE
+    )
+    _absolute_thresholds_raw = kwargs.pop(
+        "absolute_vol_thresholds", DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+    )
+    if _absolute_thresholds_raw is None:
+        absolute_vol_thresholds_value: tuple[float, float] = DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+    else:
+        _seq = tuple(_absolute_thresholds_raw)
+        if len(_seq) != 2:
+            absolute_vol_thresholds_value = DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+        else:
+            absolute_vol_thresholds_value = (float(_seq[0]), float(_seq[1]))
     # Supervised forward-vol horizon. Loader-side knob (the loader
     # routes the per-row ``forward_realized_vol_10d`` slot to the
     # chosen column); the model ctor does not consume it. Stash it back
@@ -431,6 +490,11 @@ def build_forecaster(
     # module so ``ModelConfig.from_model`` recovers it on resume.
     model.vol_target_mode = vol_target_mode_value  # type: ignore[assignment]
     model.vol_target_horizon = vol_target_horizon_value  # type: ignore[assignment]
+    # #472 round-trip the vol-regime labelling knobs so a resumed
+    # checkpoint reuses the same calm / normal / high contract the
+    # original run trained under.
+    model.vol_regime_label_mode = vol_regime_label_mode_value  # type: ignore[assignment]
+    model.absolute_vol_thresholds = absolute_vol_thresholds_value  # type: ignore[assignment]
     # #443/#444 round-trip the two new opt-in flags. Default-off path
     # behaves byte-identically; flag-on a future sweep that resumes off
     # this checkpoint rebuilds with the same loader-tail widths. The
