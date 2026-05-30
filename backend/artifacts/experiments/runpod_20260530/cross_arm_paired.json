@@ -1,0 +1,256 @@
+{
+  "reference_arm": "canonical",
+  "headline": [
+    {
+      "arm": "canonical",
+      "classification": {
+        "n": 25,
+        "mean": 0.39487964372360856,
+        "std": 0.09196177358561897
+      },
+      "dual": {
+        "n": 25,
+        "mean": 0.4497924679784498,
+        "std": 0.11131744788748818
+      },
+      "regression": {
+        "n": 25,
+        "mean": 0.19250931856343667,
+        "std": 0.08755529297414194
+      }
+    },
+    {
+      "arm": "statement_delta",
+      "classification": {
+        "n": 25,
+        "mean": 0.4005753924116641,
+        "std": 0.06191462281488251
+      },
+      "dual": {
+        "n": 25,
+        "mean": 0.3922527822561967,
+        "std": 0.0635749665499232
+      },
+      "regression": {
+        "n": 25,
+        "mean": 0.260192884795029,
+        "std": 0.08768542471558168
+      }
+    },
+    {
+      "arm": "vote_tally",
+      "classification": {
+        "n": 25,
+        "mean": 0.39442428402120483,
+        "std": 0.0703193122669556
+      },
+      "dual": {
+        "n": 25,
+        "mean": 0.38143724261562545,
+        "std": 0.06921394387210386
+      },
+      "regression": {
+        "n": 25,
+        "mean": 0.21276861163885222,
+        "std": 0.07506438728582615
+      }
+    },
+    {
+      "arm": "press_conf",
+      "classification": {
+        "n": 25,
+        "mean": 0.3768583021808598,
+        "std": 0.07147198457405785
+      },
+      "dual": {
+        "n": 25,
+        "mean": 0.3825770199423472,
+        "std": 0.06937183426215304
+      },
+      "regression": {
+        "n": 25,
+        "mean": 0.20660718297891725,
+        "std": 0.08006554842078246
+      }
+    },
+    {
+      "arm": "surprise",
+      "classification": {
+        "n": 25,
+        "mean": 0.38048619946753964,
+        "std": 0.06962182712062351
+      },
+      "dual": {
+        "n": 25,
+        "mean": 0.39327538503560605,
+        "std": 0.07176913786092598
+      },
+      "regression": {
+        "n": 25,
+        "mean": 0.37403188908419494,
+        "std": 0.08186288684420041
+      }
+    },
+    {
+      "arm": "retrieval",
+      "classification": {
+        "n": 25,
+        "mean": 0.39487964372360856,
+        "std": 0.09196177358561897
+      },
+      "dual": {
+        "n": 25,
+        "mean": 0.4321664109315001,
+        "std": 0.10763234441976764
+      },
+      "regression": {
+        "n": 25,
+        "mean": 0.19250931856343667,
+        "std": 0.08755529297414194
+      }
+    },
+    {
+      "arm": "regime",
+      "classification": {
+        "n": 25,
+        "mean": 0.357402469108447,
+        "std": 0.08110388568669263
+      },
+      "dual": {
+        "n": 25,
+        "mean": 0.3531107392367814,
+        "std": 0.08521724463928766
+      },
+      "regression": {
+        "n": 25,
+        "mean": 0.24891356142811497,
+        "std": 0.10137301798473977
+      }
+    }
+  ],
+  "paired_dual": [
+    {
+      "arm": "statement_delta",
+      "head_mode": "dual",
+      "n_pairs": 25,
+      "mean_delta": -0.05753968572225309,
+      "std_delta": 0.08982887205049371,
+      "wilcoxon_stat": 62.0,
+      "p_value": 0.005578815937042236,
+      "p_value_holm": 0.022315263748168945
+    },
+    {
+      "arm": "vote_tally",
+      "head_mode": "dual",
+      "n_pairs": 25,
+      "mean_delta": -0.06835522536282435,
+      "std_delta": 0.08443353096859407,
+      "wilcoxon_stat": 43.0,
+      "p_value": 0.0007149577140808105,
+      "p_value_holm": 0.0035747885704040527
+    },
+    {
+      "arm": "press_conf",
+      "head_mode": "dual",
+      "n_pairs": 25,
+      "mean_delta": -0.06721544803610256,
+      "std_delta": 0.1126080183359912,
+      "wilcoxon_stat": 70.0,
+      "p_value": 0.011453330516815186,
+      "p_value_holm": 0.02290666103363037
+    },
+    {
+      "arm": "surprise",
+      "head_mode": "dual",
+      "n_pairs": 25,
+      "mean_delta": -0.05651708294284379,
+      "std_delta": 0.0889813712993001,
+      "wilcoxon_stat": 63.0,
+      "p_value": 0.006129205226898193,
+      "p_value_holm": 0.022315263748168945
+    },
+    {
+      "arm": "retrieval",
+      "head_mode": "dual",
+      "n_pairs": 25,
+      "mean_delta": -0.017626057046949698,
+      "std_delta": 0.05596324991664659,
+      "wilcoxon_stat": 9.0,
+      "p_value": 0.12890625,
+      "p_value_holm": 0.12890625
+    },
+    {
+      "arm": "regime",
+      "head_mode": "dual",
+      "n_pairs": 25,
+      "mean_delta": -0.09668172874166847,
+      "std_delta": 0.1105555818569838,
+      "wilcoxon_stat": 35.0,
+      "p_value": 0.0002498030662536621,
+      "p_value_holm": 0.0014988183975219727
+    }
+  ],
+  "paired_classification": [
+    {
+      "arm": "statement_delta",
+      "head_mode": "classification",
+      "n_pairs": 25,
+      "mean_delta": 0.0056957486880555375,
+      "std_delta": 0.08059325519161732,
+      "wilcoxon_stat": 152.0,
+      "p_value": 0.7914759516716003,
+      "p_value_holm": 1.0
+    },
+    {
+      "arm": "vote_tally",
+      "head_mode": "classification",
+      "n_pairs": 25,
+      "mean_delta": -0.00045535970240369707,
+      "std_delta": 0.08006678719242304,
+      "wilcoxon_stat": 156.0,
+      "p_value": 0.8739878535270691,
+      "p_value_holm": 1.0
+    },
+    {
+      "arm": "press_conf",
+      "head_mode": "classification",
+      "n_pairs": 25,
+      "mean_delta": -0.0180213415427487,
+      "std_delta": 0.0794123500944516,
+      "wilcoxon_stat": 123.0,
+      "p_value": 0.2996123433113098,
+      "p_value_holm": 1.0
+    },
+    {
+      "arm": "surprise",
+      "head_mode": "classification",
+      "n_pairs": 25,
+      "mean_delta": -0.014393444256068859,
+      "std_delta": 0.08232413810963804,
+      "wilcoxon_stat": 133.0,
+      "p_value": 0.4418373703956604,
+      "p_value_holm": 1.0
+    },
+    {
+      "arm": "retrieval",
+      "head_mode": "classification",
+      "n_pairs": 25,
+      "mean_delta": 0.0,
+      "std_delta": 0.0,
+      "wilcoxon_stat": NaN,
+      "p_value": NaN,
+      "p_value_holm": 1.0
+    },
+    {
+      "arm": "regime",
+      "head_mode": "classification",
+      "n_pairs": 25,
+      "mean_delta": -0.03747717461516161,
+      "std_delta": 0.09358467040242642,
+      "wilcoxon_stat": 103.0,
+      "p_value": 0.1134914755821228,
+      "p_value_holm": 0.6809488534927368
+    }
+  ],
+  "markdown": "### Headline table: per-arm \u00d7 head_mode mean F1 (n=25 unless noted)\n\n| Arm | class | dual | regression |\n|---|---:|---:|---:|\n| canonical | 0.3949 \u00b1 0.0920 | 0.4498 \u00b1 0.1113 | 0.1925 \u00b1 0.0876 |\n| statement_delta | 0.4006 \u00b1 0.0619 | 0.3923 \u00b1 0.0636 | 0.2602 \u00b1 0.0877 |\n| vote_tally | 0.3944 \u00b1 0.0703 | 0.3814 \u00b1 0.0692 | 0.2128 \u00b1 0.0751 |\n| press_conf | 0.3769 \u00b1 0.0715 | 0.3826 \u00b1 0.0694 | 0.2066 \u00b1 0.0801 |\n| surprise | 0.3805 \u00b1 0.0696 | 0.3933 \u00b1 0.0718 | 0.3740 \u00b1 0.0819 |\n| retrieval | 0.3949 \u00b1 0.0920 | 0.4322 \u00b1 0.1076 | 0.1925 \u00b1 0.0876 |\n| regime | 0.3574 \u00b1 0.0811 | 0.3531 \u00b1 0.0852 | 0.2489 \u00b1 0.1014 |\n\n### Dual-head paired Wilcoxon vs canonical (Holm-corrected)\n\n| Arm | n | mean \u0394 | W | p | p (Holm) | verdict |\n|---|---:|---:|---:|---:|---:|---|\n| statement_delta | 25 | -0.0575 | 62.0 | 0.0056 | 0.0223 | significant \u2193 |\n| vote_tally | 25 | -0.0684 | 43.0 | 0.0007 | 0.0036 | significant \u2193 |\n| press_conf | 25 | -0.0672 | 70.0 | 0.0115 | 0.0229 | significant \u2193 |\n| surprise | 25 | -0.0565 | 63.0 | 0.0061 | 0.0223 | significant \u2193 |\n| retrieval | 25 | -0.0176 | 9.0 | 0.1289 | 0.1289 | null |\n| regime | 25 | -0.0967 | 35.0 | 0.0002 | 0.0015 | significant \u2193 |\n\n### Classification-only paired Wilcoxon vs canonical (Holm-corrected)\n\n| Arm | n | mean \u0394 | W | p | p (Holm) | verdict |\n|---|---:|---:|---:|---:|---:|---|\n| statement_delta | 25 | +0.0057 | 152.0 | 0.7915 | 1.0000 | null |\n| vote_tally | 25 | -0.0005 | 156.0 | 0.8740 | 1.0000 | null |\n| press_conf | 25 | -0.0180 | 123.0 | 0.2996 | 1.0000 | null |\n| surprise | 25 | -0.0144 | 133.0 | 0.4418 | 1.0000 | null |\n| retrieval | 25 | +0.0000 | nan | nan | 1.0000 | null |\n| regime | 25 | -0.0375 | 103.0 | 0.1135 | 0.6809 | null |"
+}
