@@ -38,6 +38,16 @@ A ``calm -> high`` confusion therefore costs 2x a ``calm -> normal``
 confusion, encoding the ordinal structure of the bucketed vol-regime
 labels (``calm < normal < high``) into the loss without changing the
 head architecture or introducing distribution-output complexity.
+
+Regime-axis loss extensions (#502). Two additional kernels round out
+the imbalance-focused options. ``focal`` (Lin et al. 2017) multiplies
+each row's CE by ``(1 - p_true) ** gamma`` so confident wrong
+predictions dominate the gradient; the per-class weight tensor (when
+present) composes multiplicatively. ``class_balanced`` (Cui et al.
+2019) replaces the inverse-frequency class weight with the
+effective-number weight ``(1 - beta) / (1 - beta ** n_c)`` — the
+per-class counts come from the same train-slice machinery the standard
+CE path already uses, only the weight derivation changes.
 """
 
 from __future__ import annotations
@@ -90,6 +100,93 @@ def ordinal_cross_entropy(
     return per_row.mean()
 
 
+def focal_cross_entropy(
+    logits: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    gamma: float = 2.0,
+    weight: torch.Tensor | None = None,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """Focal loss (Lin et al. 2017): ``(1 - p_true) ** gamma`` weighted CE.
+
+    ``gamma`` is the focusing parameter (literature default 2.0); a row
+    where the model already assigns near-1 probability to the true class
+    contributes essentially no loss, while a confident wrong prediction
+    pays close to the unweighted CE. ``weight`` (optional per-class
+    vector) composes multiplicatively with the per-sample focal weight
+    so a rare-class miss is amplified by both factors.
+
+    ``reduction='mean'`` returns the mean over rows; ``'none'`` returns
+    the per-row tensor so the caller can fold in its own sample
+    weighting.
+    """
+
+    log_probs = F.log_softmax(logits, dim=-1)
+    target_expanded = target.unsqueeze(-1)
+    log_p_true = log_probs.gather(-1, target_expanded).squeeze(-1)
+    p_true = log_p_true.exp()
+    # Detach the focal modulating factor — Lin et al. 2017 + the reference
+    # RetinaNet implementation treat ``(1 - p_t) ** gamma`` as a fixed
+    # per-sample weight so the gradient flows only through ``-log p_true``.
+    # Keeping it in-graph introduces an extra term that destabilises
+    # training on small batches (the FOMC corpus is the use case here).
+    focal_weight = (1.0 - p_true).clamp(min=0.0).pow(float(gamma)).detach()
+    per_row = focal_weight * (-log_p_true)
+    if weight is not None:
+        per_row = per_row * weight[target]
+    if reduction == "none":
+        return per_row
+    if reduction == "sum":
+        return per_row.sum()
+    # Match ``F.cross_entropy(..., weight=..., reduction='mean')``
+    # semantics: when class weights are present, normalise by their sum
+    # over the targets so the loss scale is comparable to the unweighted
+    # path, not by raw row count.
+    if weight is not None:
+        return per_row.sum() / weight[target].sum()
+    return per_row.mean()
+
+
+def class_balanced_weights(
+    class_counts: torch.Tensor | list[int] | tuple[int, ...],
+    *,
+    beta: float = 0.999,
+) -> torch.Tensor:
+    """Effective-number class weights (Cui et al. 2019).
+
+    Per-class weight is ``(1 - beta) / (1 - beta ** n_c)`` where ``n_c``
+    is the per-class sample count on the train slice. Normalised so the
+    weights sum to ``n_classes`` to match the convention used by
+    :func:`app.training.loaders.fit_class_weights` (inverse-frequency
+    path) and keep the loss magnitude comparable across modes.
+
+    Classes with zero samples fall back to the value the limit
+    ``(1 - beta) / (1 - beta ** n) -> 1 / n`` produces on a count of 1,
+    so an empty class still receives a finite, well-behaved weight.
+    """
+
+    if isinstance(class_counts, torch.Tensor):
+        counts = class_counts.detach().to(dtype=torch.float64, device="cpu")
+    else:
+        counts = torch.tensor(
+            [float(c) for c in class_counts], dtype=torch.float64
+        )
+    if counts.numel() == 0:
+        return torch.zeros(0, dtype=torch.float32)
+    beta_v = float(beta)
+    # Empty classes are floored to a count of 1 so the denominator
+    # ``1 - beta ** n_c`` stays strictly positive.
+    safe_counts = torch.where(counts > 0, counts, torch.ones_like(counts))
+    effective_num = 1.0 - torch.pow(torch.tensor(beta_v, dtype=torch.float64), safe_counts)
+    raw = (1.0 - beta_v) / effective_num
+    total = raw.sum()
+    if float(total.item()) <= 0.0:
+        return torch.ones(counts.numel(), dtype=torch.float32)
+    normalised = raw / total * float(counts.numel())
+    return normalised.to(dtype=torch.float32)
+
+
 class MultiTaskLoss(nn.Module):
     """Per-axis weighted + masked loss for the multi-task head.
 
@@ -103,8 +200,15 @@ class MultiTaskLoss(nn.Module):
     multi-task run reproduces byte-identically. ``'ordinal_ce'`` swaps
     in :func:`ordinal_cross_entropy` so the 3-class regime stance head
     pays distance-weighted CE — picked when the regime label space
-    carries ordinal structure (``calm < normal < high``).
+    carries ordinal structure (``calm < normal < high``). ``'focal'``
+    routes through :func:`focal_cross_entropy` with the configured
+    ``focal_gamma`` so confident-wrong rows dominate. ``'class_balanced'``
+    behaves like ``'ce'`` at the kernel level — the per-class effective-
+    number weight is built upstream (see :func:`class_balanced_weights`)
+    and passed in via ``stance_weight``.
     """
+
+    _SUPPORTED_REGIME_LOSS_MODES = frozenset({"ce", "ordinal_ce", "focal", "class_balanced"})
 
     def __init__(  # noqa: PLR0913 — per-axis class weights + lambdas surface as named kwargs by design
         self,
@@ -116,6 +220,7 @@ class MultiTaskLoss(nn.Module):
         lambda_certainty: float = 0.3,
         factor_smooth_l1_beta: float = 0.02,
         regime_loss_mode: str = "ce",
+        focal_gamma: float = 2.0,
     ) -> None:
         super().__init__()
         self.register_buffer(
@@ -130,11 +235,13 @@ class MultiTaskLoss(nn.Module):
         self.lambda_factor = float(lambda_factor)
         self.lambda_certainty = float(lambda_certainty)
         self.factor_smooth_l1_beta = float(factor_smooth_l1_beta)
-        if regime_loss_mode not in {"ce", "ordinal_ce"}:
+        if regime_loss_mode not in self._SUPPORTED_REGIME_LOSS_MODES:
             raise ValueError(
-                f"regime_loss_mode must be 'ce' or 'ordinal_ce'; got {regime_loss_mode!r}"
+                "regime_loss_mode must be one of "
+                f"{sorted(self._SUPPORTED_REGIME_LOSS_MODES)}; got {regime_loss_mode!r}"
             )
         self.regime_loss_mode = str(regime_loss_mode)
+        self.focal_gamma = float(focal_gamma)
 
     def _stance_weight_or_none(self) -> torch.Tensor | None:
         buf = self.get_buffer("_stance_weight")
@@ -181,6 +288,7 @@ class MultiTaskLoss(nn.Module):
             weight=self._stance_weight_or_none(),
             sample_weight=stance_sample_weight,
             loss_mode=self.regime_loss_mode,
+            focal_gamma=self.focal_gamma,
         )
         factor_loss = self._masked_regression_loss(
             logits["factor"],
@@ -216,6 +324,7 @@ class MultiTaskLoss(nn.Module):
         weight: torch.Tensor | None,
         sample_weight: torch.Tensor | None = None,
         loss_mode: str = "ce",
+        focal_gamma: float = 2.0,
     ) -> torch.Tensor:
         """Mean CE loss over masked rows; zero when no rows are masked.
 
@@ -235,10 +344,13 @@ class MultiTaskLoss(nn.Module):
         case so backward stays well-defined and contributes no
         gradient through the stance head.
 
-        ``loss_mode='ordinal_ce'`` routes the per-row CE through
-        :func:`ordinal_cross_entropy` so the row weight bakes in
-        ``1 + |target - argmax|``; ``'ce'`` (the default) is the
-        standard cross-entropy path the certainty branch always uses.
+        ``loss_mode`` selects the per-row kernel: ``'ordinal_ce'`` routes
+        through :func:`ordinal_cross_entropy`; ``'focal'`` routes through
+        :func:`focal_cross_entropy` with the configured ``focal_gamma``;
+        ``'ce'`` and ``'class_balanced'`` both use the standard
+        :func:`F.cross_entropy` path (the class-balanced weighting is
+        baked into the ``weight`` tensor upstream so the kernel itself
+        stays vanilla CE).
         """
 
         if mask.numel() == 0 or not mask.any():
@@ -250,11 +362,27 @@ class MultiTaskLoss(nn.Module):
                 return ordinal_cross_entropy(
                     active_logits, active_target, weight=weight, reduction="mean"
                 )
+            if loss_mode == "focal":
+                return focal_cross_entropy(
+                    active_logits,
+                    active_target,
+                    gamma=focal_gamma,
+                    weight=weight,
+                    reduction="mean",
+                )
             return F.cross_entropy(active_logits, active_target, weight=weight)
         active_sample_weight = sample_weight[mask]
         if loss_mode == "ordinal_ce":
             per_row = ordinal_cross_entropy(
                 active_logits, active_target, weight=weight, reduction="none"
+            )
+        elif loss_mode == "focal":
+            per_row = focal_cross_entropy(
+                active_logits,
+                active_target,
+                gamma=focal_gamma,
+                weight=weight,
+                reduction="none",
             )
         else:
             per_row = F.cross_entropy(
