@@ -159,6 +159,9 @@ _SNAPSHOT_COLUMNS: tuple[str, ...] = (
     # #444 vote-tally missing flag. The 4-scalar signed block rides on
     # `vote_features` (`list[float] | None`) and is exempt below.
     "vote_features_missing",
+    # #478 VIX term-structure missing flag. The 6-scalar block rides on
+    # `vix_features` (`list[float] | None`) and is exempt below.
+    "vix_features_missing",
 )
 
 
@@ -343,6 +346,11 @@ def _audit_inventory_covers_every_field() -> set[str]:
         "statement_delta_embedding",
         # #444 vote-tally features (ADR 0038).
         "vote_features",
+        # #478 VIX term-structure + VRP block. Six strict-prior scalars
+        # read off the ^VIX family at T-1 plus the asset's own close
+        # history for the realised baseline; the per-feature row in
+        # ``docs/feature-provenance-audit.md`` pins the contract.
+        "vix_features",
         # #495 confounder controls — year FE / meeting-kind FE / log token_count
         # appended past the vote-tally tail by ``FeatureVector.as_rich_list``
         # only when ``scripts/run_confounder_ablation`` writes the slot.

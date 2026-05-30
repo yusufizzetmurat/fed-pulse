@@ -633,6 +633,20 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
     "forward_realized_vol_10d_gbpusd": Column(
         float, nullable=True, required=False, coerce=True
     ),
+    # ----- #478 VIX term-structure + VRP at T-1 -----
+    # Six nullable scalars read strictly before event_date from the
+    # ^VIX family cross-asset series plus the asset's own close history
+    # for the realised baseline. required=False so older events.parquet
+    # files (pre #478) validate. Per-scalar None on pre-coverage events
+    # (^VIX1M / ^VIX3M / ^VIX6M before 2008) or asset-history gaps.
+    "vix_t_minus_1": Column(float, nullable=True, required=False, coerce=True),
+    "vix1m_t_minus_1": Column(float, nullable=True, required=False, coerce=True),
+    "vix3m_t_minus_1": Column(float, nullable=True, required=False, coerce=True),
+    "vix6m_t_minus_1": Column(float, nullable=True, required=False, coerce=True),
+    "vix_3m_over_1m_slope": Column(
+        float, nullable=True, required=False, coerce=True
+    ),
+    "vrp_t_minus_1": Column(float, nullable=True, required=False, coerce=True),
     "concurrent_macro_release": Column(
         bool, nullable=False, required=True, coerce=True
     ),

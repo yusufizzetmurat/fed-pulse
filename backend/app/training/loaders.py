@@ -27,6 +27,7 @@ from app.models.config import (
     RICH_LINGUISTIC_DIM,
     RICH_PRESS_CONF_DIM,
     RICH_STATEMENT_DELTA_DIM,
+    RICH_VIX_FEATURES_DIM,
     RICH_VOTE_FEATURES_DIM,
     SUPPORTED_VOL_TARGET_HORIZONS,
     RichFeatureScalerParams,
@@ -1553,6 +1554,49 @@ def _compute_vote_features_for_event(
     ]
 
 
+_VIX_FEATURE_COLUMNS: tuple[str, ...] = (
+    "vix_t_minus_1",
+    "vix1m_t_minus_1",
+    "vix3m_t_minus_1",
+    "vix6m_t_minus_1",
+    "vix_3m_over_1m_slope",
+    "vrp_t_minus_1",
+)
+
+
+def _compute_vix_features_for_event(
+    row: Any,
+) -> list[float] | None:
+    """Compose the #478 6-scalar block off the events.parquet VIX columns.
+
+    Returns ``None`` when every column is missing — the events.parquet
+    predates #478 entirely or every per-scalar value collapsed to
+    ``None`` (event sits before ^VIX history, or every ^VIX-family fetch
+    failed). The caller flips the missing flag and zero-fills in that
+    case. Per-column ``None`` on a partially-populated row is coerced to
+    ``0.0`` so the per-bar tensor stays a uniform width across events;
+    the paired missing flag is still ``0.0`` because at least one scalar
+    landed and the model can latch onto whatever did. The per-event
+    coverage gap is documented on the per-feature row of
+    ``docs/feature-provenance-audit.md``.
+    """
+
+    if not hasattr(row, "get"):
+        return None
+    values: list[float] = []
+    any_populated = False
+    for column in _VIX_FEATURE_COLUMNS:
+        coerced = _coerce_finite_float(row.get(column))
+        if coerced is None:
+            values.append(0.0)
+        else:
+            values.append(coerced)
+            any_populated = True
+    if not any_populated:
+        return None
+    return values
+
+
 def _read_statement_delta_embedding(
     row: Any,
 ) -> list[float] | None:
@@ -1793,6 +1837,7 @@ def _load_package_sequences_with_metadata(
     use_press_conf: bool = False,
     use_statement_delta: bool = False,
     use_vote_features: bool = False,
+    use_vix_features: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -2146,6 +2191,14 @@ def _load_package_sequences_with_metadata(
             vote_features_list = _compute_vote_features_for_event(row)
         else:
             vote_features_list = None
+        # #478 VIX term-structure + VRP block. Gated by
+        # ``use_vix_features``; pre-coverage events or rows where every
+        # ^VIX scalar collapsed to ``None`` → block returns ``None`` and
+        # the missing flag fires.
+        if use_vix_features:
+            vix_features_list = _compute_vix_features_for_event(row)
+        else:
+            vix_features_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
             vector.forward_realized_vol_10d_garch_baseline = garch_baseline_value
@@ -2231,6 +2284,18 @@ def _load_package_sequences_with_metadata(
             else:
                 vector.vote_features = None
                 vector.vote_features_missing = 1.0
+            # #478 VIX term-structure broadcast. Same uniform-width
+            # contract: opt-in + pre-coverage row -> zero block +
+            # missing=1.0.
+            if vix_features_list is not None:
+                vector.vix_features = list(vix_features_list)
+                vector.vix_features_missing = 0.0
+            elif use_vix_features:
+                vector.vix_features = [0.0] * RICH_VIX_FEATURES_DIM
+                vector.vix_features_missing = 1.0
+            else:
+                vector.vix_features = None
+                vector.vix_features_missing = 1.0
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -2314,6 +2379,7 @@ def load_walk_forward_split(
     use_press_conf: bool = False,
     use_statement_delta: bool = False,
     use_vote_features: bool = False,
+    use_vix_features: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -2405,6 +2471,7 @@ def load_walk_forward_split(
         use_press_conf=use_press_conf,
         use_statement_delta=use_statement_delta,
         use_vote_features=use_vote_features,
+        use_vix_features=use_vix_features,
         text_encoder=text_encoder,
         text_adapter_dim=text_adapter_dim,
         text_pool_lambda_inv_days=text_pool_lambda_inv_days,
@@ -2531,6 +2598,7 @@ def load_training_sequences_from_package(
     use_press_conf: bool = False,
     use_statement_delta: bool = False,
     use_vote_features: bool = False,
+    use_vix_features: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -2982,6 +3050,12 @@ def load_training_sequences_from_package(
             vote_features_list = _compute_vote_features_for_event(row)
         else:
             vote_features_list = None
+        # #478 VIX term-structure + VRP block (matched site to the
+        # walk-forward loader path).
+        if use_vix_features:
+            vix_features_list = _compute_vix_features_for_event(row)
+        else:
+            vix_features_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
             vector.forward_realized_vol_10d_garch_baseline = garch_baseline_value
@@ -3061,6 +3135,17 @@ def load_training_sequences_from_package(
             else:
                 vector.vote_features = None
                 vector.vote_features_missing = 1.0
+            # #478 VIX term-structure broadcast (matched site to the
+            # walk-forward loader path).
+            if vix_features_list is not None:
+                vector.vix_features = list(vix_features_list)
+                vector.vix_features_missing = 0.0
+            elif use_vix_features:
+                vector.vix_features = [0.0] * RICH_VIX_FEATURES_DIM
+                vector.vix_features_missing = 1.0
+            else:
+                vector.vix_features = None
+                vector.vix_features_missing = 1.0
         if rich_features:
             _attach_rich_features(
                 vectors,

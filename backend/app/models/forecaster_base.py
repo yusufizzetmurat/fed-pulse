@@ -41,6 +41,8 @@ from app.models.config import (
     RICH_SEP_MISSING_DIM,
     RICH_STATEMENT_DELTA_DIM,
     RICH_STATEMENT_DELTA_MISSING_DIM,
+    RICH_VIX_FEATURES_DIM,
+    RICH_VIX_FEATURES_MISSING_DIM,
     RICH_VOTE_FEATURES_DIM,
     RICH_VOTE_FEATURES_MISSING_DIM,
     SEQUENCE_LENGTH,
@@ -99,6 +101,7 @@ class ForecasterBase(nn.Module):
         use_press_conf: bool = False,
         use_statement_delta: bool = False,
         use_vote_features: bool = False,
+        use_vix_features: bool = False,
     ):
         super().__init__()
         if model_type not in _ALLOWED_MODEL_TYPES:
@@ -255,6 +258,17 @@ class ForecasterBase(nn.Module):
         else:
             vote_features_tail_dim = 0
         self.vote_features_tail_dim = vote_features_tail_dim
+        # #478 VIX term-structure tail. Same uniform-width contract;
+        # appended after the vote tail in the documented order
+        # (regime, SEP, press-conf, statement-delta, vote, vix).
+        self.use_vix_features = bool(use_vix_features)
+        if self.use_vix_features:
+            vix_features_tail_dim = (
+                RICH_VIX_FEATURES_DIM + RICH_VIX_FEATURES_MISSING_DIM
+            )
+        else:
+            vix_features_tail_dim = 0
+        self.vix_features_tail_dim = vix_features_tail_dim
         self.text_embedding_dim = int(text_embedding_dim or 0)
         self.text_adapter_dim = int(text_adapter_dim or 0)
         self._text_path_active = self.text_embedding_dim > 0 and self.text_adapter_dim > 0
@@ -282,6 +296,7 @@ class ForecasterBase(nn.Module):
             + press_conf_tail_dim
             + statement_delta_tail_dim
             + vote_features_tail_dim
+            + vix_features_tail_dim
         )
         self.lstm_input_size = lstm_input_size
         lstm_dropout = dropout if num_layers > 1 else 0.0
