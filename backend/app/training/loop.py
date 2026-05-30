@@ -45,6 +45,7 @@ from app.training.loaders import (
     fit_rich_feature_scaler_tensor,
     fit_vol_regime_quantiles,
     load_training_sequences_from_data,
+    vol_regime_class_for,
 )
 
 _logger = logging.getLogger(__name__)
@@ -97,6 +98,42 @@ class _RegimeOrdinalCELoss(nn.Module):
         from app.training.loss import ordinal_cross_entropy
 
         return ordinal_cross_entropy(logits, target, weight=self.weight)
+
+
+class _RegimeFocalLoss(nn.Module):
+    """nn.Module wrapper around :func:`focal_cross_entropy` (#502).
+
+    Mirrors :class:`_RegimeOrdinalCELoss` so the single-task dispatch
+    only needs to flip the constructor when ``regime_loss_mode='focal'``.
+    """
+
+    def __init__(self, *, weight: torch.Tensor | None = None, gamma: float = 2.0) -> None:
+        super().__init__()
+        self.register_buffer(
+            "_class_weight",
+            weight if weight is not None else torch.empty(0),
+        )
+        self.gamma = float(gamma)
+
+    @property
+    def weight(self) -> torch.Tensor | None:
+        # ``weight`` mirrors ``nn.CrossEntropyLoss.weight`` so the
+        # per-batch eval bookkeeping that introspects ``loss_fn.weight``
+        # for the weighted-mean reconstruction reads it back identically.
+        # Note: the reconstructed mean is a class-weighted CE, NOT the
+        # focal loss this module returns from ``forward``. The reported
+        # ``regime_loss`` cell on focal runs therefore reflects the
+        # underlying class-weighted CE for cross-mode comparability;
+        # the focal training signal is what the optimiser sees.
+        buf = self.get_buffer("_class_weight")
+        return buf if buf.numel() > 0 else None
+
+    def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        from app.training.loss import focal_cross_entropy
+
+        return focal_cross_entropy(
+            logits, target, gamma=self.gamma, weight=self.weight
+        )
 
 
 def _resolve_device(device: str | torch.device | None = None) -> torch.device:
@@ -2647,13 +2684,39 @@ def train_model(
             # skips the fit and leaves the weight tuple empty, so the
             # downstream ``CrossEntropyLoss(weight=None)`` path runs
             # for direct A1-on-vs-A1-off comparison.
+            # #502 ``class_balanced`` reuses the same per-class counts
+            # the inverse-frequency path computes; capture them here so
+            # the loss-construction site can rebuild the effective-number
+            # weights without iterating the train slice again.
+            _cb_counts: list[int] = [0] * n_classes_active
+            for _v in train_forward_vols:
+                if _v is None or _v != _v:
+                    continue
+                _cls = vol_regime_class_for(_v, fitted_quantiles)
+                if 0 <= _cls < n_classes_active:
+                    _cb_counts[_cls] += 1
+            _train_per_class_counts: tuple[int, ...] = tuple(_cb_counts)
             if use_class_weights:
-                fitted_class_weights = fit_class_weights(
-                    train_forward_vols,
-                    fitted_quantiles,
-                    n_classes=n_classes_active,
-                    power=float(getattr(active_model_config, "class_weight_power", 1.0)),
+                _active_regime_loss_mode_for_cw = str(
+                    getattr(active_model_config, "regime_loss_mode", "ce") or "ce"
                 )
+                if _active_regime_loss_mode_for_cw == "class_balanced":
+                    # Effective-number weights replace the inverse-
+                    # frequency weights; the kernel stays vanilla CE.
+                    from app.training.loss import class_balanced_weights as _cb_weights
+
+                    _cb_tensor = _cb_weights(
+                        _train_per_class_counts,
+                        beta=float(getattr(active_model_config, "class_balanced_beta", 0.999)),
+                    )
+                    fitted_class_weights = tuple(float(v) for v in _cb_tensor.tolist())
+                else:
+                    fitted_class_weights = fit_class_weights(
+                        train_forward_vols,
+                        fitted_quantiles,
+                        n_classes=n_classes_active,
+                        power=float(getattr(active_model_config, "class_weight_power", 1.0)),
+                    )
             else:
                 fitted_class_weights = ()
         else:
@@ -3359,7 +3422,15 @@ def train_model(
             )
         if _active_regime_loss_mode == "ordinal_ce":
             loss_fn = _RegimeOrdinalCELoss(weight=class_weight_tensor)
+        elif _active_regime_loss_mode == "focal":
+            loss_fn = _RegimeFocalLoss(
+                weight=class_weight_tensor,
+                gamma=float(getattr(active_model_config, "focal_gamma", 2.0)),
+            )
         else:
+            # ``ce`` and ``class_balanced`` share the vanilla CE kernel;
+            # the class-balanced effective-number weights have already
+            # replaced the inverse-frequency weights in ``class_weight_tensor``.
             loss_fn = nn.CrossEntropyLoss(weight=class_weight_tensor)
     else:
         loss_fn = nn.SmoothL1Loss(beta=0.02)
@@ -3405,6 +3476,7 @@ def train_model(
             lambda_factor=float(getattr(active_model_config, "multi_task_lambda_factor", 0.3)),
             lambda_certainty=float(getattr(active_model_config, "multi_task_lambda_certainty", 0.3)),
             regime_loss_mode=_active_regime_loss_mode,
+            focal_gamma=float(getattr(active_model_config, "focal_gamma", 2.0)),
         ).to(device_obj)
         # Stash the per-axis weights + lambdas on a plain dict so the
         # TrainingRunSummary -> torch.save round-trip carries them onto
