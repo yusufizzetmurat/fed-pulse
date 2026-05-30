@@ -108,7 +108,7 @@ logs:
 	docker compose logs -f --tail=200
 
 lock:
-	docker compose run --rm backend bash -c "pip install --quiet uv && uv pip compile --generate-hashes --python-platform x86_64-unknown-linux-gnu --output-file requirements.lock pyproject.toml"
+	docker compose run --rm backend bash -c "pip install --quiet uv && uv pip compile --generate-hashes --python-version 3.11 --python-platform x86_64-unknown-linux-gnu --emit-index-url --output-file requirements.lock pyproject.toml"
 
 verify:
 	docker compose run --rm backend bash /app/scripts/verify_smoke.sh
