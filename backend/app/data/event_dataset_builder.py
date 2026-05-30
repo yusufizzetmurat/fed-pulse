@@ -350,9 +350,12 @@ def _encode_axis_time(value: Any) -> float | None:
     Accepts a numeric passthrough (already in [-10, 10] range), the
     two known gtfintechlab string categories, or returns ``None`` for
     anything else so the nullable ``axis_time`` column carries honest
-    absence instead of a schema-fail value.
+    absence instead of a schema-fail value. ``bool`` is rejected
+    explicitly — ``isinstance(True, int)`` is ``True`` in Python, so a
+    boolean would silently coerce to 1.0 / 0.0 and pass the bounded
+    range check, masking an upstream loader that mis-typed the field.
     """
-    if value is None:
+    if value is None or isinstance(value, bool):
         return None
     if isinstance(value, int | float):
         return float(value)
@@ -368,8 +371,9 @@ def _encode_axis_certainty(value: Any) -> float | None:
     Accepts a regression-typed numeric in [0, 1] (passthrough), the
     two known gtfintechlab string categories (``certain`` -> 1.0 /
     ``uncertain`` -> 0.0), or ``None``. Unknown shapes return ``None``.
+    ``bool`` is rejected explicitly — see :func:`_encode_axis_time`.
     """
-    if value is None:
+    if value is None or isinstance(value, bool):
         return None
     if isinstance(value, int | float):
         return float(value)
@@ -391,9 +395,11 @@ def _encode_axis_factor(value: Any) -> float | None:
     that fall outside that range so the schema gate stays green; the
     bp-scale factor decompositions (GSS / Swanson) are preserved on
     ``multi_axis_extras`` and read by consumers that want them.
-    Out-of-range / unparseable inputs land at ``None``.
+    Out-of-range / unparseable inputs land at ``None``. ``bool`` is
+    rejected explicitly (subclasses ``int``) and negative-zero
+    normalises to ``0.0`` so the parquet round-trip stays byte-identical.
     """
-    if value is None:
+    if value is None or isinstance(value, bool):
         return None
     try:
         f = float(value)
@@ -402,7 +408,10 @@ def _encode_axis_factor(value: Any) -> float | None:
     if math.isnan(f):
         return None
     if -1.0 <= f <= 1.0:
-        return f
+        # Normalise -0.0 → 0.0; pyarrow rewrites -0.0 to 0.0 on the
+        # parquet round-trip, so emitting either is unsafe for the
+        # byte-determinism contract documented at the top of the module.
+        return f if f != 0.0 else 0.0
     return None
 
 # When multiple registry sources cover the same (event_date, event_kind),

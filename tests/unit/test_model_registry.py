@@ -116,8 +116,19 @@ def test_role_tagged_aliases_resolve_to_pinned_non_placeholder_repos() -> None:
             "revision — Runpod sweeps will hard-fail at from_pretrained. "
             "Either pin a revision or drop the role tag."
         )
+        # Reject every shape that does not resolve on a fresh checkout:
+        # ``local/<name>`` placeholders AND absolute filesystem paths
+        # (``/data/artifacts/...``) that only existed on the original
+        # GPU host. A role-tagged encoder must resolve through HF Hub
+        # (``owner/name`` slug) or via ``hf://`` URI so a fresh Runpod
+        # box can pull the weights at ``from_pretrained`` time.
         assert not ref.repo.startswith("local/"), (
             f"role-tagged alias {ref.alias!r} (role={ref.role!r}) points "
             f"at the unresolvable placeholder repo {ref.repo!r}. Move the "
             "role tag to a produced encoder (#463)."
+        )
+        assert not ref.repo.startswith("/"), (
+            f"role-tagged alias {ref.alias!r} (role={ref.role!r}) points "
+            f"at the host-only absolute path {ref.repo!r}. Move the role "
+            "tag to an HF-hub-resolvable encoder (#464)."
         )

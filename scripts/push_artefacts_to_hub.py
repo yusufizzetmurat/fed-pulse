@@ -70,7 +70,9 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.models.registry import (  # noqa: E402
+    _HF_REPO_ID_RE,
     encoder_ref,
+    is_hf_uri,
     load_artefacts,
     parse_hf_uri,
 )
@@ -326,6 +328,24 @@ def _resolve_local_path(meta: dict[str, str]) -> Path:
         ref = encoder_ref(meta["encoder_alias"])
         if ref is None:
             raise ValueError(f"Unknown encoder alias: {meta['encoder_alias']!r}")
+        # After the #464 repoint the three DAPT encoder aliases now
+        # carry their HF Hub slug (``yusufizzetmurat/finbert-fed-...``)
+        # in ``ref.repo``, not the original ``/data/artifacts/...``
+        # local path. ``Path("yusufizzetmurat/finbert-fed-adjacent")``
+        # silently resolves to a non-existent relative path under
+        # ``$CWD``; the downstream ``plan.local_path.exists()`` guard
+        # then short-circuits the push without surfacing an error. Fail
+        # fast with a clear message so the operator notices that the
+        # registry alias is already on Hub and either swaps to a
+        # ``local_path`` entry or skips the push.
+        if is_hf_uri(ref.repo) or _HF_REPO_ID_RE.match(ref.repo):
+            raise ValueError(
+                f"Encoder alias {meta['encoder_alias']!r} resolves to the "
+                f"Hugging Face repo {ref.repo!r} (revision {ref.revision!r}), "
+                "so there is no local source folder to push. Set "
+                "ARTEFACT_SOURCES['<key>']['local_path'] to the freshly "
+                "trained checkpoint directory when pushing a new revision."
+            )
         return Path(ref.repo)
     return REPO_ROOT / meta["local_path"]
 
