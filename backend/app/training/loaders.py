@@ -2077,6 +2077,15 @@ def _load_package_sequences_with_metadata(
         garch_residual_value = _coerce_finite_float(
             row.get("forward_realized_vol_10d_garch_residual")
         )
+        # #471 multi-horizon auxiliary vol targets. Each value rides on
+        # the same event row alongside ``forward_realized_vol_10d``; the
+        # per-fold aux-target builder reads them off the target row of
+        # each supervised sequence. Pre-#480 parquets without the column
+        # degrade to ``None`` here and the aux head sees the row masked.
+        forward_vol_aux_values: dict[int, float | None] = {
+            h: _coerce_finite_float(row.get(f"forward_realized_vol_{h}d"))
+            for h in (1, 3, 5, 20, 30)
+        }
         # #292 rates-complex strict-forward 5d yield change targets.
         # Each value rides on the same event row alongside
         # forward_realized_vol_10d; the per-fold target builder
@@ -2201,6 +2210,11 @@ def _load_package_sequences_with_metadata(
             vix_features_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
+            vector.forward_realized_vol_1d = forward_vol_aux_values[1]
+            vector.forward_realized_vol_3d = forward_vol_aux_values[3]
+            vector.forward_realized_vol_5d = forward_vol_aux_values[5]
+            vector.forward_realized_vol_20d = forward_vol_aux_values[20]
+            vector.forward_realized_vol_30d = forward_vol_aux_values[30]
             vector.forward_realized_vol_10d_garch_baseline = garch_baseline_value
             vector.forward_realized_vol_10d_garch_residual = garch_residual_value
             vector.target_yield_2y_change_5d = rates_2y_value
@@ -2956,6 +2970,12 @@ def load_training_sequences_from_package(
         garch_residual_value = _coerce_finite_float(
             row.get("forward_realized_vol_10d_garch_residual")
         )
+        # #471 multi-horizon auxiliary vol targets (matched site to the
+        # walk-forward loader above). Pre-#480 parquets degrade to ``None``.
+        forward_vol_aux_values: dict[int, float | None] = {
+            h: _coerce_finite_float(row.get(f"forward_realized_vol_{h}d"))
+            for h in (1, 3, 5, 20, 30)
+        }
         # #292 rates-complex strict-forward 5d yield change targets.
         # Each value rides on the same event row alongside
         # forward_realized_vol_10d; the per-fold target builder
@@ -3058,6 +3078,11 @@ def load_training_sequences_from_package(
             vix_features_list = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
+            vector.forward_realized_vol_1d = forward_vol_aux_values[1]
+            vector.forward_realized_vol_3d = forward_vol_aux_values[3]
+            vector.forward_realized_vol_5d = forward_vol_aux_values[5]
+            vector.forward_realized_vol_20d = forward_vol_aux_values[20]
+            vector.forward_realized_vol_30d = forward_vol_aux_values[30]
             vector.forward_realized_vol_10d_garch_baseline = garch_baseline_value
             vector.forward_realized_vol_10d_garch_residual = garch_residual_value
             vector.target_yield_2y_change_5d = rates_2y_value

@@ -260,6 +260,7 @@ def _coerce_model_config(model_config: ModelConfig | dict[str, Any] | None = Non
             # must coerce back so downstream equality + tuple-typed slots
             # stay correct on resume.
             "absolute_vol_thresholds",
+            "aux_horizons",
         }
         kwargs: dict[str, Any] = {}
         for key, value in model_config.items():
@@ -267,6 +268,8 @@ def _coerce_model_config(model_config: ModelConfig | dict[str, Any] | None = Non
                 continue
             if key == "rates_heads":
                 kwargs[key] = tuple(str(v).lower() for v in (value or ()))
+            elif key == "aux_horizons":
+                kwargs[key] = tuple(int(v) for v in (value or ()))
             elif key in tuple_fields:
                 kwargs[key] = tuple(float(v) for v in (value or ()))
             else:
@@ -815,6 +818,7 @@ def _make_partition_dataset(
     mt_aux: dict[str, torch.Tensor] | None,
     log_rv: torch.Tensor | None = None,
     rates_index: torch.Tensor | None = None,
+    aux_log_rv: torch.Tensor | None = None,
 ) -> TensorDataset:
     """Pack one partition's tensors into a TensorDataset using a fixed contract.
 
@@ -843,6 +847,15 @@ def _make_partition_dataset(
     is trained against under ``head_mode`` in ``{regression, dual}``.
     The tensor sits at the end of the tuple regardless of whether the
     multi-task aux block precedes it so the contract is composable.
+
+    The optional ``aux_log_rv`` tensor (#471) carries the per-horizon
+    standardised log-vol targets stacked column-wise; it is folded
+    INTO ``log_rv`` so the dataset arity stays unchanged. When ``log_rv``
+    is 1-D (no aux) the column count is 1 and the train step slices
+    ``[:, 0]`` (recovered via ``.unsqueeze(-1)`` for the rank-1 input
+    so the slice operates on a uniform 2-D tensor). When aux horizons
+    are mounted the column count is ``1 + len(aux_horizons)`` and the
+    aux columns ride alongside the primary.
     """
 
     tensors: list[torch.Tensor] = [x, y]
@@ -857,7 +870,16 @@ def _make_partition_dataset(
                 )
             tensors.append(mt_aux[key])
     if log_rv is not None:
-        tensors.append(log_rv)
+        if aux_log_rv is not None:
+            # Stack primary (1-D) into a (N, 1+H) tensor; col 0 stays
+            # the primary log_rv, col 1..H carry the aux horizons in
+            # the same column order ``aux_horizons`` was passed to the
+            # partition builder. Keeps the dataset arity contract
+            # byte-identical to pre-#471 when ``aux_log_rv`` is None.
+            stacked = torch.cat([log_rv.unsqueeze(-1), aux_log_rv], dim=-1)
+            tensors.append(stacked)
+        else:
+            tensors.append(log_rv)
     if rates_index is not None:
         tensors.append(rates_index)
     return TensorDataset(*tensors)
@@ -874,14 +896,19 @@ def _unpack_batch(
     torch.Tensor | None,
     torch.Tensor | None,
 ]:
-    """Decode a DataLoader batch into ``(x, y, text, text_missing, mt_aux, log_rv)``.
+    """Decode a DataLoader batch into ``(x, y, text, text_missing, mt_aux, log_rv, rates_index)``.
 
     Eight batch shapes are tolerated; see :func:`_make_partition_dataset`
     for the arity-to-contents map. ``mt_aux`` is a 4-key dict (factor,
     factor_mask, certainty, certainty_mask) when the multi-task path is
     active and ``None`` otherwise; the topic axis pair was retired in
-    ADR 0044. ``log_rv`` is the optional 1-D dual-head regression target
-    tensor (#304); ``None`` on classification-only runs.
+    ADR 0044. ``log_rv`` is the dual-head regression target tensor
+    (#304); ``None`` on classification-only runs. When ``aux_horizons``
+    (#471) is non-empty the partition builder folds the per-horizon
+    stacked targets into ``log_rv`` as a 2-D ``(N, 1+H)`` tensor with
+    the primary at column 0 and the aux horizons in columns 1..H; the
+    train step splits the columns at the loss-construction site so
+    the unpack tuple shape stays unchanged.
     """
 
     arity = len(batch)
@@ -1483,6 +1510,9 @@ def _combine_dual_head_loss(
     batch_log_rv: torch.Tensor | None,
     head_mode: str,
     regression_alpha: float,
+    batch_aux_log_rv: torch.Tensor | None = None,
+    aux_horizons: tuple[int, ...] = (),
+    aux_horizon_alpha: float = 0.0,
 ) -> torch.Tensor:
     """Combine the classification CE with the #304 log(RV) MSE term.
 
@@ -1529,11 +1559,93 @@ def _combine_dual_head_loss(
     log_rv_pred = logits_dict["log_rv"]
     mse_loss = F.mse_loss(log_rv_pred, batch_log_rv.to(log_rv_pred.dtype))
     _assert_dual_head_scales_balanced(ce_loss, mse_loss)
+    aux_term = _maybe_aux_horizon_mse(
+        logits_dict=logits_dict,
+        batch_aux_log_rv=batch_aux_log_rv,
+        aux_horizons=aux_horizons,
+        aux_horizon_alpha=aux_horizon_alpha,
+    )
     if head_mode == "regression":
-        return mse_loss
+        return mse_loss + aux_term
     if alpha >= 1.0:
-        return mse_loss
-    return (1.0 - alpha) * ce_loss + alpha * mse_loss
+        return mse_loss + aux_term
+    return (1.0 - alpha) * ce_loss + alpha * mse_loss + aux_term
+
+
+def _split_log_rv_into_primary_and_aux(
+    combined: torch.Tensor | None,
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    """Split the joint ``log_rv`` tensor into the primary + aux blocks (#471).
+
+    The partition builder folds the aux-horizon stack into ``log_rv`` as
+    a 2-D ``(N, 1+H)`` tensor so the dataset arity stays unchanged.
+    When ``combined`` is ``None`` or 1-D the byte-identical pre-#471
+    contract holds: ``(combined, None)``. When 2-D the primary
+    1-D tensor at column 0 + the 2-D aux tensor at columns 1..H are
+    returned; an ``H == 0`` (1-column) tensor degrades to no-aux so a
+    future caller that emits a wrapped primary still composes cleanly.
+    """
+
+    if combined is None:
+        return None, None
+    if combined.dim() == 1:
+        return combined, None
+    primary = combined[:, 0]
+    if combined.size(1) <= 1:
+        return primary, None
+    return primary, combined[:, 1:]
+
+
+def _maybe_aux_horizon_mse(
+    *,
+    logits_dict: dict[str, torch.Tensor],
+    batch_aux_log_rv: torch.Tensor | None,
+    aux_horizons: tuple[int, ...],
+    aux_horizon_alpha: float,
+) -> torch.Tensor:
+    """Aux MSE: ``alpha * mean_h MSE(pred_h, target_h)`` (#471).
+
+    Returns a graph-attached scalar zero when no aux heads are mounted
+    or the batch carries no aux targets (degenerate fixture). Otherwise
+    averages the per-horizon MSE before scaling by ``alpha`` so the
+    effective aux budget is the same regardless of how many horizons
+    are mounted -- doubling ``aux_horizons`` does not double the aux
+    gradient relative to the primary loss.
+    """
+
+    if not aux_horizons or batch_aux_log_rv is None:
+        # Graph-attached zero so backward stays defined when the caller
+        # adds the term unconditionally. Use the log_rv head's tensor
+        # when available so the zero rides the same device/dtype.
+        anchor = logits_dict.get("log_rv")
+        if anchor is None:
+            anchor = next(iter(logits_dict.values()))
+        return anchor.sum() * 0.0
+    alpha = float(aux_horizon_alpha)
+    if alpha <= 0.0:
+        anchor = logits_dict.get("log_rv")
+        if anchor is None:
+            anchor = next(iter(logits_dict.values()))
+        return anchor.sum() * 0.0
+    total: torch.Tensor | None = None
+    n_contributed = 0
+    for col, horizon in enumerate(aux_horizons):
+        key = f"aux_log_rv_{int(horizon)}d"
+        if key not in logits_dict:
+            continue
+        pred = logits_dict[key]
+        target = batch_aux_log_rv[:, col].to(pred.dtype)
+        mse = F.mse_loss(pred, target)
+        total = mse if total is None else total + mse
+        n_contributed += 1
+    if total is not None and n_contributed > 0:
+        total = alpha * total / float(n_contributed)
+    if total is None:
+        anchor = logits_dict.get("log_rv")
+        if anchor is None:
+            anchor = next(iter(logits_dict.values()))
+        return anchor.sum() * 0.0
+    return total
 
 
 def _maybe_add_dual_head_loss(
@@ -1543,6 +1655,9 @@ def _maybe_add_dual_head_loss(
     batch_log_rv: torch.Tensor | None,
     head_mode: str,
     regression_alpha: float,
+    batch_aux_log_rv: torch.Tensor | None = None,
+    aux_horizons: tuple[int, ...] = (),
+    aux_horizon_alpha: float = 0.0,
 ) -> torch.Tensor:
     """Augment an existing multi-task loss with the dual-head MSE.
 
@@ -1580,14 +1695,20 @@ def _maybe_add_dual_head_loss(
     log_rv_pred = logits_dict["log_rv"]
     mse_loss = F.mse_loss(log_rv_pred, batch_log_rv.to(log_rv_pred.dtype))
     _assert_dual_head_scales_balanced(loss, mse_loss)
+    aux_term = _maybe_aux_horizon_mse(
+        logits_dict=logits_dict,
+        batch_aux_log_rv=batch_aux_log_rv,
+        aux_horizons=aux_horizons,
+        aux_horizon_alpha=aux_horizon_alpha,
+    )
     if head_mode == "regression":
-        return loss + mse_loss
+        return loss + mse_loss + aux_term
     alpha = float(regression_alpha)
     if alpha <= 0.0:
-        return loss
+        return loss + aux_term
     if alpha >= 1.0:
-        return mse_loss
-    return (1.0 - alpha) * loss + alpha * mse_loss
+        return mse_loss + aux_term
+    return (1.0 - alpha) * loss + alpha * mse_loss + aux_term
 
 
 # One-shot diagnostic: warn (once per process) when the CE side and the
@@ -1905,6 +2026,112 @@ def _build_partition_log_rv_target(
     return standardised, scaler_out
 
 
+def _build_partition_aux_log_rv_targets(
+    sequence_groups: "Sequence[Sequence[FeatureVector]]",
+    *,
+    aux_horizons: "Sequence[int]",
+    vol_regime_quantiles: "Sequence[float]",
+    aux_log_rv_scalers: "dict[int, tuple[float, float]] | None" = None,
+    sequence_length: int = SEQUENCE_LENGTH,
+) -> "tuple[torch.Tensor | None, dict[int, tuple[float, float]] | None]":
+    """Materialise per-partition aux log-vol targets for #471.
+
+    Returns ``(stacked, scalers)`` where ``stacked`` is a 2D
+    ``torch.float32`` of shape ``(N, len(aux_horizons))`` (column order
+    matches ``aux_horizons``) and ``scalers`` is a per-horizon
+    standardiser dict (mean, std). The row count + ordering match the
+    classification ``y`` tensor :func:`_build_partition_tensors` emits
+    so the TensorDataset row invariant holds when both tensors are
+    packed alongside.
+
+    The per-row gate mirrors :func:`_build_partition_log_rv_target`:
+    same group-level pre-filter on ``forward_realized_vol_10d`` (so the
+    row counts agree across the primary + aux paths), then per-row
+    ``vol_regime_class_for`` gate against the same quantiles. Rows
+    whose aux horizon target is missing / non-finite / non-positive
+    fall back to the primary log_rv value so the column shape stays
+    rectangular (the alternative — masking — would force an aux mask
+    tensor pair per horizon and double the dataset payload). The
+    fallback rate is logged once per partition + horizon so the
+    operator can grep how often the data side dropped an aux row.
+
+    Standardisation is fitted per horizon on the train slice only (no
+    look-ahead) and echoed back on val / test so the partitions share
+    the train-fit transform.
+    """
+
+    from app.training.loaders import vol_regime_class_for
+
+    horizons = [int(h) for h in aux_horizons]
+    if not horizons:
+        return None, aux_log_rv_scalers
+
+    per_horizon_values: dict[int, list[float]] = {h: [] for h in horizons}
+    fallback_counts: dict[int, int] = {h: 0 for h in horizons}
+    for sequence_group in sequence_groups:
+        if len(sequence_group) < sequence_length + 1:
+            continue
+        leading_target = sequence_group[sequence_length]
+        leading_vol = getattr(leading_target, "forward_realized_vol_10d", None)
+        if leading_vol is None or (
+            isinstance(leading_vol, float) and leading_vol != leading_vol
+        ):
+            continue
+        for idx in range(sequence_length, len(sequence_group)):
+            target_row = sequence_group[idx]
+            cls_idx = vol_regime_class_for(
+                getattr(target_row, "forward_realized_vol_10d", None),
+                vol_regime_quantiles,
+            )
+            if cls_idx < 0:
+                continue
+            primary_vol = getattr(target_row, "forward_realized_vol_10d", None)
+            if not _is_finite_positive_forward_vol(primary_vol):
+                continue
+            # mypy: narrowed at runtime by the guard above
+            primary_log = math.log(float(primary_vol))  # type: ignore[arg-type]
+            for horizon in horizons:
+                attr = f"forward_realized_vol_{horizon}d"
+                aux_vol = getattr(target_row, attr, None)
+                if _is_finite_positive_forward_vol(aux_vol):
+                    per_horizon_values[horizon].append(
+                        math.log(float(aux_vol))  # type: ignore[arg-type]
+                    )
+                else:
+                    fallback_counts[horizon] += 1
+                    per_horizon_values[horizon].append(primary_log)
+
+    if not per_horizon_values[horizons[0]]:
+        return None, aux_log_rv_scalers
+
+    columns: list[torch.Tensor] = []
+    scalers_out: dict[int, tuple[float, float]] = (
+        dict(aux_log_rv_scalers) if aux_log_rv_scalers else {}
+    )
+    for horizon in horizons:
+        raw = torch.tensor(per_horizon_values[horizon], dtype=torch.float32)
+        if horizon in scalers_out:
+            mean_v, std_v = scalers_out[horizon]
+        else:
+            mean_v = float(raw.mean().item())
+            std_v = float(raw.std(unbiased=False).item())
+            if std_v < 1e-6:
+                std_v = 1.0
+            scalers_out[horizon] = (mean_v, std_v)
+        columns.append((raw - mean_v) / std_v)
+        if fallback_counts[horizon]:
+            _logger.warning(
+                "[aux-horizon] horizon=%dd: %d row(s) had missing or "
+                "non-positive forward_realized_vol_%dd; fell back to "
+                "log(forward_realized_vol_10d)",
+                horizon,
+                fallback_counts[horizon],
+                horizon,
+            )
+    stacked = torch.stack(columns, dim=1)
+    return stacked, scalers_out
+
+
 def _evaluate_model(
     model: nn.Module,
     loader: DataLoader[Any],
@@ -2052,9 +2279,15 @@ def _evaluate_model(
                 batch_text,
                 batch_text_missing,
                 batch_mt_aux,
-                batch_log_rv,
+                batch_log_rv_combined,
                 _batch_rates_index,
             ) = _unpack_batch(batch)
+            # Eval ignores the aux-horizon columns — the headline metrics
+            # only surface the primary log_rv MAE / RMSE / R². The
+            # aux-horizon eval surface is left as a follow-up.
+            batch_log_rv, _batch_aux_log_rv = _split_log_rv_into_primary_and_aux(
+                batch_log_rv_combined
+            )
             if multi_task_active and batch_mt_aux is None:
                 raise RuntimeError(
                     "multi_task_loss_fn is active but the DataLoader yielded "
@@ -2657,6 +2890,22 @@ def train_model(
     test_rates_targets: RatesPartitionTensors | None = None
     rates_scalers: dict[str, Any] = {}
     rates_edges: dict[str, Any] = {}
+    # #471 multi-horizon aux regression targets. Each entry maps a
+    # horizon int to its per-partition standardised log-vol target
+    # tensor (built from the same group/row filter the primary log_rv
+    # builder uses). Empty when ``aux_horizons=()`` so the partition
+    # tensor pack is byte-identical to the pre-#471 path.
+    active_aux_horizons: tuple[int, ...] = tuple(
+        int(h) for h in getattr(active_model_config, "aux_horizons", ()) or ()
+    )
+    active_aux_horizon_alpha = float(
+        getattr(active_model_config, "aux_horizon_alpha", 0.3)
+    )
+    aux_horizons_active = bool(active_aux_horizons)
+    train_aux_log_rv: torch.Tensor | None = None
+    val_aux_log_rv: torch.Tensor | None = None
+    test_aux_log_rv: torch.Tensor | None = None
+    aux_log_rv_scalers: dict[int, tuple[float, float]] | None = None
     # ``ModelConfig.sequence_length=0`` means "use module default" so
     # checkpoints saved before #530 keep the byte-identical 20-bar window.
     active_sequence_length = int(
@@ -2834,6 +3083,15 @@ def train_model(
                 vol_target_mode=active_vol_target_mode,
                 sequence_length=active_sequence_length,
             )
+            if aux_horizons_active:
+                train_aux_log_rv, aux_log_rv_scalers = (
+                    _build_partition_aux_log_rv_targets(
+                        train_groups,
+                        aux_horizons=active_aux_horizons,
+                        vol_regime_quantiles=fitted_quantiles,
+                        sequence_length=active_sequence_length,
+                    )
+                )
         # #292 rates heads -- per-partition targets fitted on train.
         if rates_heads_active and active_output_mode == "classification":
             from app.training.rates_targets import build_partition_rates_targets
@@ -2900,6 +3158,19 @@ def train_model(
                 vol_target_mode=active_vol_target_mode,
                 sequence_length=active_sequence_length,
             )
+            # Skip val/test aux build when the train call returned without
+            # fitting scalers (degenerate empty-train fixture). Without
+            # this guard ``_build_partition_aux_log_rv_targets`` would
+            # silently re-fit the per-horizon mean/std on the val slice,
+            # leaking the held-out distribution into the standardiser.
+            if aux_horizons_active and aux_log_rv_scalers:
+                val_aux_log_rv, _ = _build_partition_aux_log_rv_targets(
+                    val_groups,
+                    aux_horizons=active_aux_horizons,
+                    vol_regime_quantiles=fitted_quantiles,
+                    aux_log_rv_scalers=aux_log_rv_scalers,
+                    sequence_length=active_sequence_length,
+                )
         if rates_heads_active and active_output_mode == "classification":
             from app.training.rates_targets import build_partition_rates_targets
 
@@ -2954,6 +3225,15 @@ def train_model(
                 vol_target_mode=active_vol_target_mode,
                 sequence_length=active_sequence_length,
             )
+            # Same train-only-scaler guard as the val branch above.
+            if aux_horizons_active and aux_log_rv_scalers:
+                test_aux_log_rv, _ = _build_partition_aux_log_rv_targets(
+                    test_groups,
+                    aux_horizons=active_aux_horizons,
+                    vol_regime_quantiles=fitted_quantiles,
+                    aux_log_rv_scalers=aux_log_rv_scalers,
+                    sequence_length=active_sequence_length,
+                )
         if rates_heads_active and active_output_mode == "classification":
             from app.training.rates_targets import build_partition_rates_targets
 
@@ -3071,6 +3351,7 @@ def train_model(
         # tensor over the full active_sequence_groups list, then split
         # below alongside (x, y) so the row alignment invariant holds.
         legacy_full_log_rv: torch.Tensor | None = None
+        legacy_full_aux_log_rv: torch.Tensor | None = None
         if dual_head_active and active_output_mode == "classification":
             legacy_full_log_rv, log_rv_scaler = _build_partition_log_rv_target(
                 active_sequence_groups,
@@ -3078,6 +3359,15 @@ def train_model(
                 vol_target_mode=active_vol_target_mode,
                 sequence_length=active_sequence_length,
             )
+            if aux_horizons_active:
+                legacy_full_aux_log_rv, aux_log_rv_scalers = (
+                    _build_partition_aux_log_rv_targets(
+                        active_sequence_groups,
+                        aux_horizons=active_aux_horizons,
+                        vol_regime_quantiles=legacy_fitted_quantiles,
+                        sequence_length=active_sequence_length,
+                    )
+                )
         text_emb_tensor, text_missing_tensor, _text_emb_dim = _build_text_embedding_tensors(
             active_sequence_groups,
             fallback_in_dim=fallback_text_in_dim,
@@ -3167,6 +3457,9 @@ def train_model(
         if legacy_full_log_rv is not None:
             train_log_rv = legacy_full_log_rv[: len(train_x)]
             val_log_rv = legacy_full_log_rv[len(train_x) :]
+        if legacy_full_aux_log_rv is not None:
+            train_aux_log_rv = legacy_full_aux_log_rv[: len(train_x)]
+            val_aux_log_rv = legacy_full_aux_log_rv[len(train_x) :]
         # Legacy path has no real held-out test partition; the val
         # tensors serve as both early-stopping and final-report eval.
         test_x = val_x
@@ -3175,6 +3468,8 @@ def train_model(
         test_text_missing = val_text_missing
         if legacy_full_log_rv is not None:
             test_log_rv = val_log_rv
+        if legacy_full_aux_log_rv is not None:
+            test_aux_log_rv = val_aux_log_rv
 
     # Empty-tensor guard for the walk-forward branch. The legacy branch
     # already short-circuits above on (x, y) == (None, None).
@@ -3271,6 +3566,10 @@ def train_model(
     train_log_rv = _move_to_device(train_log_rv, device_obj)
     val_log_rv = _move_to_device(val_log_rv, device_obj)
     test_log_rv = _move_to_device(test_log_rv, device_obj)
+    # #471 aux-horizon targets ride alongside log_rv on the same device.
+    train_aux_log_rv = _move_to_device(train_aux_log_rv, device_obj)
+    val_aux_log_rv = _move_to_device(val_aux_log_rv, device_obj)
+    test_aux_log_rv = _move_to_device(test_aux_log_rv, device_obj)
     # Tensors now live on the target device, so DataLoader pinning is
     # neither needed nor supported (PyTorch raises on pinning a CUDA
     # tensor). The original pin-memory comment about deprecation
@@ -3294,6 +3593,7 @@ def train_model(
         train_mt_aux,
         train_log_rv,
         rates_index=train_rates_index,
+        aux_log_rv=train_aux_log_rv,
     )
 
     # Early-stopping val loader: when the walk-forward branch supplied
@@ -3315,6 +3615,7 @@ def train_model(
         val_mt_aux_used = train_mt_aux
         val_log_rv_used = train_log_rv
         val_rates_targets_used = train_rates_targets
+        val_aux_log_rv_used = train_aux_log_rv
     else:
         val_x_used = val_x
         val_y_used = val_y
@@ -3323,6 +3624,7 @@ def train_model(
         val_mt_aux_used = val_mt_aux
         val_log_rv_used = val_log_rv
         val_rates_targets_used = val_rates_targets
+        val_aux_log_rv_used = val_aux_log_rv
 
     val_rates_index = (
         torch.arange(int(val_x_used.size(0)), dtype=torch.int64, device=val_x_used.device)
@@ -3337,6 +3639,7 @@ def train_model(
         val_mt_aux_used,
         val_log_rv_used,
         rates_index=val_rates_index,
+        aux_log_rv=val_aux_log_rv_used,
     )
 
     if test_x is not None and test_y is not None and len(test_x) > 0:
@@ -3353,6 +3656,7 @@ def train_model(
             test_mt_aux,
             test_log_rv,
             rates_index=test_rates_index,
+            aux_log_rv=test_aux_log_rv,
         )
     else:
         test_dataset = None
@@ -3762,9 +4066,18 @@ def train_model(
                 batch_text,
                 batch_text_missing,
                 batch_mt_aux,
-                batch_log_rv,
+                batch_log_rv_combined,
                 batch_rates_index,
             ) = _unpack_batch(batch)
+            # #471 split the (N, 1+H) joint log_rv tensor into the
+            # primary 1-D ``batch_log_rv`` (column 0) and the per-horizon
+            # 2-D ``batch_aux_log_rv`` (columns 1..H). When aux horizons
+            # are inactive the partition builder emitted the legacy 1-D
+            # tensor; this branch leaves ``batch_aux_log_rv`` at ``None``
+            # and ``batch_log_rv`` byte-identical to the pre-#471 path.
+            batch_log_rv, batch_aux_log_rv = _split_log_rv_into_primary_and_aux(
+                batch_log_rv_combined
+            )
             # Tensors are already on the target device; the .to() calls
             # below were the hot kernel-launch source the perf rewrite
             # eliminates.
@@ -3840,6 +4153,9 @@ def train_model(
                         batch_log_rv=batch_log_rv,
                         head_mode=active_head_mode,
                         regression_alpha=regression_alpha,
+                        batch_aux_log_rv=batch_aux_log_rv,
+                        aux_horizons=active_aux_horizons,
+                        aux_horizon_alpha=active_aux_horizon_alpha,
                     )
                     rates_loss = _build_rates_batch_loss(
                         logits_dict=logits_dict,
@@ -3876,6 +4192,9 @@ def train_model(
                         batch_log_rv=batch_log_rv,
                         head_mode=active_head_mode,
                         regression_alpha=regression_alpha,
+                        batch_aux_log_rv=batch_aux_log_rv,
+                        aux_horizons=active_aux_horizons,
+                        aux_horizon_alpha=active_aux_horizon_alpha,
                     )
                     rates_loss = _build_rates_batch_loss(
                         logits_dict=logits_dict,
