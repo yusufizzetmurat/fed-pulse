@@ -140,6 +140,10 @@ ignore = [
 # Tests are intentionally not a package (no __init__.py) so pytest can
 # autodiscover, and test fixtures naturally pile up positional arguments.
 "tests/**/*.py" = ["C901", "PLR0913", "INP001"]
+# Scripts are top-level entrypoints, not a package; CLI builders accept a
+# fan-out of keyword arguments by design. Mirrors the root-level ruff.toml
+# rule so root- and backend-rooted invocations agree.
+"scripts/**/*.py" = ["C901", "PLR0913", "INP001"]
 # Existing files that already exceed the C901 / PLR0913 thresholds. The
 # rules are wired in to catch *new* violations during review; refactoring
 # the entries below into per-file ignores is intentional — they map the
