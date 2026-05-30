@@ -443,7 +443,7 @@ artefacts:
 
   training_package:
     hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-training-package
-    revision: "b0320d8731753bc5bf4a05b9dcd57898c3f84fbd"
+    revision: "a045140c88506b7d0b86bd2f8e80101b65c078bf"
     eager: false
     description: |
       Canonical training package for ``make reproduce-all``. Pulled to
@@ -451,14 +451,18 @@ artefacts:
       ``huggingface_hub.snapshot_download(repo_type='dataset')``.
       Rebuilt 2026-05-30 against the fresh source-corpus pulls (#487-#489)
       with every optional family populated (rates panel, GARCH residual,
-      statement delta, vote tally, multi-horizon vol, per-asset vol).
-      Events.parquet carries the merged ``multi_axis_extras`` payload so
-      GSS / Swanson bp-scale factor decompositions reach the trainer
-      without a re-join to ``registry_normalized.parquet``; rates panel
-      extended back to 1990-01-01 so pre-2008 statements (~1.7k rows)
-      carry treas_2y / treas_10y features at 73.8% instead of 0%. The
-      pre-rebuild row at b9a71cc97a is preserved on the Hub for
-      reproducibility but is no longer the resolution target.
+      statement delta, vote tally, multi-horizon vol, per-asset vol) and
+      the #443 ``statement_delta_embedding`` column populated end-to-end
+      via ``--delta-encoder finbert_fed_adjacent`` (1427/7172 rows, every
+      statement event with a strict-prior statement). Events.parquet
+      carries the merged ``multi_axis_extras`` payload so GSS / Swanson
+      bp-scale factor decompositions reach the trainer without a re-join
+      to ``registry_normalized.parquet``; rates panel extended back to
+      1990-01-01 so pre-2008 statements (~1.7k rows) carry treas_2y /
+      treas_10y features at 73.8% instead of 0%. Prior rows at
+      b0320d8731 (pre-delta-encoder) and b9a71cc97a (pre-2026-05-30
+      rebuild) are preserved on the Hub for reproducibility but are no
+      longer the resolution target.
     inference_features: []
 
   embedding_caches:

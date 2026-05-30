@@ -2400,7 +2400,78 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "first usable event moves later in the calendar."
         ),
     )
+    parser.add_argument(
+        "--delta-encoder",
+        default=None,
+        help=(
+            "Registry alias (or owner/repo HF id) of the encoder used to "
+            "embed the #443 statement-delta spans (inserted / deleted / "
+            "substituted) into the 768-d statement_delta_embedding column. "
+            "Resolves through models/registry.yaml when an alias is given "
+            "(picks up the pinned revision); a raw owner/repo id loads "
+            "at HEAD. Without this flag the column stays None on every "
+            "row and the loader collapses to the missing-1.0 slot."
+        ),
+    )
     return parser.parse_args(argv)
+
+
+def _build_delta_encoder_callable(repo_or_alias: str):
+    """Resolve ``repo_or_alias`` and return a ``Callable[[str], list[float]]``.
+
+    Loads the encoder once on import, mean-pools its last-hidden-state
+    over the non-pad tokens, and returns a 768-d list per call. CUDA
+    used opportunistically. The pooled width is asserted against
+    :data:`STATEMENT_DELTA_EMBEDDING_DIM` so a mismatched encoder fails
+    at build time rather than silently writing odd-width rows.
+    """
+
+    import torch
+    from transformers import AutoModel, AutoTokenizer
+
+    from app.models.registry import encoder_ref
+
+    ref = encoder_ref(repo_or_alias)
+    repo = ref.repo if ref is not None else repo_or_alias
+    revision = ref.revision if ref is not None else None
+
+    tokenizer = AutoTokenizer.from_pretrained(repo, revision=revision)
+    model = AutoModel.from_pretrained(repo, revision=revision)
+    model.eval()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    print(
+        f"[event-rows] delta encoder loaded: alias={repo_or_alias!r} "
+        f"repo={repo!r} revision={revision!r} device={device}"
+    )
+
+    @torch.no_grad()
+    def encode_text(text: str) -> list[float]:
+        inputs = tokenizer(
+            text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=512,
+            padding=False,
+        )
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        outputs = model(**inputs)
+        hidden = outputs.last_hidden_state  # (1, T, H)
+        mask = inputs["attention_mask"].unsqueeze(-1).float()  # (1, T, 1)
+        summed = (hidden * mask).sum(dim=1)  # (1, H)
+        denom = mask.sum(dim=1).clamp(min=1.0)  # (1, 1)
+        pooled = (summed / denom).squeeze(0)  # (H,)
+        vec = pooled.detach().cpu().tolist()
+        if len(vec) != STATEMENT_DELTA_EMBEDDING_DIM:
+            raise SystemExit(
+                f"--delta-encoder produced width {len(vec)} but the "
+                f"statement_delta_embedding column expects "
+                f"{STATEMENT_DELTA_EMBEDDING_DIM}. Pin a BERT-base "
+                "encoder (e.g. finbert_fed_adjacent)."
+            )
+        return vec
+
+    return encode_text
 
 
 def _resolve_embedding_path(raw: str | None) -> Path | None:
@@ -2449,6 +2520,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         else None
     )
 
+    delta_encoder = (
+        _build_delta_encoder_callable(args.delta_encoder)
+        if args.delta_encoder
+        else None
+    )
+
     # Collapsed view
     summary = _BuildSummary()
     df = build_event_rows(
@@ -2464,6 +2541,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         macro_release_calendar=macro_calendar,
         rates_panel_path=args.rates_panel_path,
         rates_horizon=int(args.rates_horizon),
+        delta_encoder=delta_encoder,
         per_asset_target_cache_dir=per_asset_target_cache_dir,
         prior_window_days=int(args.prior_window),
     )
@@ -2505,6 +2583,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             keep_all_sources=True,
             rates_panel_path=args.rates_panel_path,
             rates_horizon=int(args.rates_horizon),
+            delta_encoder=delta_encoder,
             per_asset_target_cache_dir=per_asset_target_cache_dir,
             prior_window_days=int(args.prior_window),
         )
