@@ -17,7 +17,7 @@ The retrieval encoder shipped under #294 was trained with `MultipleNegativesRank
 
 The downstream product question the `/analyze/analogs` panel answers is cross-meeting semantic similarity: *"When has the Fed previously sounded like this?"* Two statements from different meetings expressing the same stance are negatives under the original recipe. Hand-labelled recall@k probes flagged the resulting encoder as degenerate — same-meeting siblings dominated the top-k and cross-meeting analogs collapsed to date-adjacent rows.
 
-ADR 0019 already split the canonical encoder into a classifier substrate (`finbert_fomc_only`) and a retrieval substrate (`finbert_fed_adjacent_xbank_dapt`). The retrieval substrate's justification was the multilingual-fed pretrain, not the contrastive recipe layered on top. The recipe is what this ADR replaces.
+ADR 0019 already split the canonical encoder into a classifier substrate (originally `finbert_fomc_only`, re-pointed to `finbert_fed_adjacent` per the 2026-05-30 addendum after the FOMC-only DAPT pretrain was deferred) and a retrieval substrate (`finbert_fed_adjacent_xbank_dapt`). The retrieval substrate's justification was the multilingual-fed pretrain, not the contrastive recipe layered on top. The recipe is what this ADR replaces.
 
 ## Decision
 

@@ -108,7 +108,7 @@ logs:
 	docker compose logs -f --tail=200
 
 lock:
-	docker compose run --rm backend bash -c "pip install --quiet uv && uv pip compile --generate-hashes --output-file requirements.lock pyproject.toml"
+	docker compose run --rm backend bash -c "pip install --quiet uv && uv pip compile --generate-hashes --python-version 3.11 --python-platform x86_64-unknown-linux-gnu --emit-index-url --output-file requirements.lock pyproject.toml"
 
 verify:
 	docker compose run --rm backend bash /app/scripts/verify_smoke.sh
@@ -784,7 +784,11 @@ build-mp-surprises:
 # event_dataset_builder when emitting rates-complex forward targets and
 # pre-meeting expectation features. Requires FRED_API_KEY in .env on
 # first run; subsequent runs reuse the per-series JSON cache.
-RATES_PANEL_START ?= 2008-01-01
+# Extended back to 1990 so pre-2008 FOMC statements (~1.7k rows on the
+# v3 TP) carry rates_panel features instead of dropping into the no-op
+# cell on every rates-head sweep. FRED's DGS10 / DGS2 / DFF series
+# cover 1990 cleanly; older dates fall back to NaN per source coverage.
+RATES_PANEL_START ?= 1990-01-01
 RATES_PANEL_END ?= today
 build-rates-panel:
 	@test -f .env || (echo ".env required for FRED_API_KEY"; exit 1)

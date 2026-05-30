@@ -14,7 +14,7 @@ A standalone harness at `backend/app/data/finetune_pilot_b2.py`. The harness:
 - Reads `forward_realized_vol_10d` per event from `events.parquet`, joins on `event_date`.
 - Walks the canonical 4-fold walk-forward protocol (`fold_manifest_expanding_walk_forward.json`).
 - Per fold, fits 3-class vol-regime tertile cutoffs on the TRAIN slice only via `app.training.loaders.fit_vol_regime_quantiles`, then assigns the 3-class label to every row via `vol_regime_class_for`. Rows whose forward-vol is missing fall out of the kept set.
-- Constructs `AutoModelForSequenceClassification.from_pretrained(encoder_alias, num_labels=3)` against the canonical classifier-role encoder per ADR 0019 (defaults to `finbert_fomc_only`, fallback `finbert_fed_adjacent`). Operator overrides via `--encoder-alias`.
+- Constructs `AutoModelForSequenceClassification.from_pretrained(encoder_alias, num_labels=3)` against the canonical classifier-role encoder per ADR 0019. After the 2026-05-30 addendum re-pointed `role: classifier` off the unproduced `finbert_fomc_only` placeholder, this resolves to `finbert_fed_adjacent`; the alias fallback remains `finbert_fed_adjacent`. Operator overrides via `--encoder-alias`.
 - Fine-tunes for 5 epochs at AdamW `lr=2e-5`, `weight_decay=0.01`, `train_batch_size=16`, `max_length=256`.
 - Evaluates on the test slice; emits the per-(seed, fold) `classification_breakdown` block via `compute_classification_breakdown` so the result drops into the existing §6 tier table without bespoke aggregation.
 - Writes a sweep artefact at `backend/artifacts/experiments/finetune_pilot_b2.json` whose schema mirrors `dual_head_comparison_canonical.json` (per-trial cells with `metrics`, per-fold `tertile_cutoffs`, summary block with macro-F1 mean + std + block-bootstrap CI).
@@ -46,7 +46,7 @@ The 3-class vol-regime label is fitted per fold on the TRAIN slice only via `fit
 
 ## Encoder + scope
 
-The default encoder alias resolves via `resolve_by_role("classifier")` per ADR 0019, returning `finbert_fomc_only` against the current `registry.yaml`. Operator overrides via `--encoder-alias` for sibling runs against `BAAI/bge-large-en-v1.5`, `finbert_fed_adjacent`, or any other registered encoder. The fallback to `finbert_fed_adjacent` mirrors `train_text_multi_axis_classifier.py::DEFAULT_ENCODER_ALIAS` so the harness inherits the same unpinned-local guard the other classification entrypoints have.
+The default encoder alias resolves via `resolve_by_role("classifier")` per ADR 0019, returning `finbert_fed_adjacent` against the current `registry.yaml` (the 2026-05-30 addendum moved the role tag off the unproduced `finbert_fomc_only` placeholder onto the produced FinBERT-BIS DAPT substrate). Operator overrides via `--encoder-alias` for sibling runs against `BAAI/bge-large-en-v1.5`, `finbert_fed_adjacent_xbank_dapt`, or any other registered encoder. The alias fallback (also `finbert_fed_adjacent`) mirrors `train_text_multi_axis_classifier.py::DEFAULT_ENCODER_ALIAS` so the harness inherits the same unpinned-local guard the other classification entrypoints have.
 
 The harness does NOT touch the LSTM-on-frozen-embeddings path. `make canonical-comparison` stays byte-identical to pre-#213 — both the embedding cache and `app.train_forecaster` are unchanged. The §6 tier table populated by the canonical comparison is unaffected; the B2 row is its own placeholder pending the GPU sweep.
 

@@ -326,6 +326,94 @@ _INTRA_MEETING_AXIS_ENCODING: dict[str, dict[str, float]] = {
     "axis_factor": _FACTOR_ENCODING,
 }
 
+# Bounded numeric encodings for the gtfintechlab categorical axes when
+# they bubble up through ``normalize_labels._Record.axes`` as strings.
+# ``EventRowSchema`` requires ``axis_time`` ∈ [-10, 10] and
+# ``axis_certainty`` ∈ [0, 1]; passing the raw strings through fails the
+# schema gate (every TP build that includes gtfintechlab cross-bank
+# rows). ``axis_*_label`` columns continue to carry the categorical
+# representation for consumers that want it; the numeric encoding here
+# only fills the bounded axis columns.
+_AXIS_TIME_STR_TO_NUMERIC: dict[str, float] = {
+    "forward looking": 1.0,
+    "not forward looking": -1.0,
+}
+_AXIS_CERTAINTY_STR_TO_NUMERIC: dict[str, float] = {
+    "certain": 1.0,
+    "uncertain": 0.0,
+}
+
+
+def _encode_axis_time(value: Any) -> float | None:
+    """Coerce ``axes.time`` to a schema-bounded numeric or ``None``.
+
+    Accepts a numeric passthrough (already in [-10, 10] range), the
+    two known gtfintechlab string categories, or returns ``None`` for
+    anything else so the nullable ``axis_time`` column carries honest
+    absence instead of a schema-fail value. ``bool`` is rejected
+    explicitly — ``isinstance(True, int)`` is ``True`` in Python, so a
+    boolean would silently coerce to 1.0 / 0.0 and pass the bounded
+    range check, masking an upstream loader that mis-typed the field.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        s = value.strip().lower()
+        return _AXIS_TIME_STR_TO_NUMERIC.get(s)
+    return None
+
+
+def _encode_axis_certainty(value: Any) -> float | None:
+    """Coerce ``axes.certainty`` to a schema-bounded numeric or ``None``.
+
+    Accepts a regression-typed numeric in [0, 1] (passthrough), the
+    two known gtfintechlab string categories (``certain`` -> 1.0 /
+    ``uncertain`` -> 0.0), or ``None``. Unknown shapes return ``None``.
+    ``bool`` is rejected explicitly — see :func:`_encode_axis_time`.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in _AXIS_CERTAINTY_STR_TO_NUMERIC:
+            return _AXIS_CERTAINTY_STR_TO_NUMERIC[s]
+        try:
+            return float(s)
+        except ValueError:
+            return None
+    return None
+
+
+def _encode_axis_factor(value: Any) -> float | None:
+    """Coerce ``axes.factor`` to a schema-bounded numeric or ``None``.
+
+    ``EventRowSchema`` bounds ``axis_factor`` to [-1, 1]. Drop values
+    that fall outside that range so the schema gate stays green; the
+    bp-scale factor decompositions (GSS / Swanson) are preserved on
+    ``multi_axis_extras`` and read by consumers that want them.
+    Out-of-range / unparseable inputs land at ``None``. ``bool`` is
+    rejected explicitly (subclasses ``int``) and negative-zero
+    normalises to ``0.0`` so the parquet round-trip stays byte-identical.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(f):
+        return None
+    if -1.0 <= f <= 1.0:
+        # Normalise -0.0 → 0.0; pyarrow rewrites -0.0 to 0.0 on the
+        # parquet round-trip, so emitting either is unsafe for the
+        # byte-determinism contract documented at the top of the module.
+        return f if f != 0.0 else 0.0
+    return None
+
 # When multiple registry sources cover the same (event_date, event_kind),
 # pick the row with the highest preference rank. This avoids near-duplicate
 # event rows while keeping the choice deterministic. Higher-quality / more
@@ -375,6 +463,15 @@ class _EventDoc:
     # 0.0 in the rich-feature slot.
     time_label: str | None = None       # "forward looking" / "not forward looking"
     certain_label: str | None = None    # "certain" / "uncertain"
+    # Merged ``multi_axis_extras`` payload from every record in the bucket.
+    # Carries the GSS / Swanson bp-scale factor decompositions
+    # (``gss_target_factor`` / ``gss_path_factor`` /
+    # ``swanson_target_factor`` / ``swanson_forward_guidance_factor`` /
+    # ``swanson_lsap_factor``) plus the gtfintechlab dataset-revision tags.
+    # The bounded numeric ``axis_*`` columns can only hold values in the
+    # schema range, so the bp-scale factors are stranded unless they ride
+    # this dict onto events.parquet.
+    multi_axis_extras: dict[str, Any] = field(default_factory=dict)
 
     @property
     def source_record_id(self) -> str:
@@ -506,6 +603,15 @@ def _aggregate_events(rows: Iterable[_RegistryRow]) -> list[_EventDoc]:
         # leakage between adjacent (source, date, kind) groups.
         time_label: str | None = None
         certain_label: str | None = None
+        # Merged extras across the bucket. First-wins per key so the
+        # earliest-sorted record's value sticks; tie-break is deterministic
+        # via ``bucket_sorted`` (source_record_id ordering). Each ingester
+        # parks per-row scalars on ``multi_axis_extras`` (gss_target_factor,
+        # swanson_target_factor, etc.) and the bucket aggregator merges
+        # them onto the event row so downstream trainers do not have to
+        # rejoin to ``registry_normalized.parquet`` to read GSS / Swanson
+        # decompositions or the gtfintechlab dataset-revision tags.
+        merged_extras: dict[str, Any] = {}
         # Use the first row whose mapped_label or axes carry a value as the
         # document-level label. Deterministic because bucket is sorted.
         # ``val is not None`` (not truthy) preserves legitimate zeros for
@@ -530,6 +636,11 @@ def _aggregate_events(rows: Iterable[_RegistryRow]) -> list[_EventDoc]:
                 candidate = r.multi_axis_extras.get("gtfintechlab_certain_label")
                 if isinstance(candidate, str) and candidate.strip():
                     certain_label = candidate.strip().lower()
+            for k, v in (r.multi_axis_extras or {}).items():
+                if v is None:
+                    continue
+                if k not in merged_extras:
+                    merged_extras[k] = v
         docs.append(
             _EventDoc(
                 source=source,
@@ -538,6 +649,7 @@ def _aggregate_events(rows: Iterable[_RegistryRow]) -> list[_EventDoc]:
                 text=text,
                 record_ids=[r.source_record_id for r in bucket_sorted],
                 multi_axis=multi_axis,
+                multi_axis_extras=merged_extras,
                 time_label=time_label,
                 certain_label=certain_label,
             )
@@ -1576,12 +1688,15 @@ def _build_event_rows(
                 "text": doc.text,
                 "token_count": token_count,
                 "axis_stance": doc.multi_axis.get("stance"),
-                "axis_time": doc.multi_axis.get("time"),
-                "axis_certainty": doc.multi_axis.get("certainty"),
-                "axis_factor": doc.multi_axis.get("factor"),
+                "axis_time": _encode_axis_time(doc.multi_axis.get("time")),
+                "axis_certainty": _encode_axis_certainty(
+                    doc.multi_axis.get("certainty")
+                ),
+                "axis_factor": _encode_axis_factor(doc.multi_axis.get("factor")),
                 "axis_topic": doc.multi_axis.get("topic"),
                 "axis_time_label": doc.time_label,
                 "axis_certain_label": doc.certain_label,
+                "multi_axis_extras": doc.multi_axis_extras or None,
                 "credibility_drift_score": float(cred.drift_score),
                 "credibility_realized_vs_stated_gap": float(cred.realized_vs_stated_gap),
                 "credibility_market_implied_gap": float(cred.market_implied_gap),
@@ -1813,6 +1928,12 @@ COLUMN_ORDER = (
     "axis_topic",
     "axis_time_label",
     "axis_certain_label",
+    # Merged ``multi_axis_extras`` payload from the bucketed source rows.
+    # Carries GSS / Swanson bp-scale factor decompositions
+    # (``gss_target_factor`` / ``swanson_target_factor`` etc.) and the
+    # gtfintechlab dataset-revision tags. Nullable; ``None`` when the
+    # bucket has no extras to merge.
+    "multi_axis_extras",
     "credibility_drift_score",
     "credibility_realized_vs_stated_gap",
     "credibility_market_implied_gap",

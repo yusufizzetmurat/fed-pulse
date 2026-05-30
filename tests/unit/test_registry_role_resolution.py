@@ -20,19 +20,23 @@ def _reset_registry_cache() -> None:
     load_registry.cache_clear()
 
 
-def test_classifier_role_resolves_to_fomc_only() -> None:
-    """``role: classifier`` returns the FOMC-only DAPT substrate.
+def test_classifier_role_resolves_to_fed_adjacent() -> None:
+    """``role: classifier`` returns ``finbert_fed_adjacent``.
 
-    Per ADR 0019 the headline classifier substrate is the pre-cross-bank
-    encoder (``finbert_fomc_only``), not the cross-bank DAPT encoder.
-    The cross-bank DAPT encoder owns the retrieval role only.
+    Per ADR 0019 the classifier substrate was originally pinned to
+    ``finbert_fomc_only`` (the corpus-ablation sibling). That GPU run
+    was never executed and the placeholder hard-failed every classifier-
+    role sweep on Runpod (#463). The role tag re-points to
+    ``finbert_fed_adjacent`` — the produced FinBERT-BIS DAPT substrate
+    with weights mirrored on Hugging Face Hub. Cross-bank DAPT keeps
+    the retrieval role only.
     """
     _reset_registry_cache()
     from app.models.registry import resolve_by_role
 
     alias = resolve_by_role("classifier")
-    assert alias == "finbert_fomc_only", (
-        f"expected classifier substrate to resolve to 'finbert_fomc_only'; got {alias!r}"
+    assert alias == "finbert_fed_adjacent", (
+        f"expected classifier substrate to resolve to 'finbert_fed_adjacent'; got {alias!r}"
     )
 
 
@@ -83,13 +87,20 @@ def test_role_tags_present_on_canonical_entries() -> None:
     _reset_registry_cache()
     from app.models.registry import encoder_ref
 
-    classifier = encoder_ref("finbert_fomc_only")
+    classifier = encoder_ref("finbert_fed_adjacent")
     assert classifier is not None
     assert classifier.role == "classifier"
 
     retrieval = encoder_ref("finbert_fed_adjacent_xbank_dapt")
     assert retrieval is not None
     assert retrieval.role == "retrieval"
+
+    # The unproduced corpus-ablation sibling no longer carries the
+    # classifier role; it stays in the registry as a placeholder for
+    # the deferred FOMC-only DAPT pretrain.
+    fomc_only = encoder_ref("finbert_fomc_only")
+    assert fomc_only is not None
+    assert fomc_only.role is None
 
 
 def test_legacy_registry_without_roles_still_loads(tmp_path: Path) -> None:
