@@ -294,6 +294,51 @@ def _parse_args() -> argparse.Namespace:
             "model input shape constant."
         ),
     )
+    # #472 vol-regime labelling mode. ``per_fold_quantile`` (default,
+    # byte-identical) keeps the per-fold (q33, q67) cutoffs the canonical
+    # sweep fits each fold; ``absolute`` swaps in the fixed
+    # ``(calm_max, high_min)`` pair so every fold's calm / normal / high
+    # cells refer to the same economic vol level.
+    parser.add_argument(
+        "--vol-regime-label-mode",
+        dest="vol_regime_label_mode",
+        type=str,
+        choices=("per_fold_quantile", "absolute"),
+        default="per_fold_quantile",
+        help=(
+            "Vol-regime labelling mode. ``per_fold_quantile`` (default) "
+            "fits per-fold quantile cutoffs on the train slice each fold; "
+            "``absolute`` uses a fixed (calm_max, high_min) pair so every "
+            "fold's calm / normal / high cells refer to the same vol "
+            "level."
+        ),
+    )
+    parser.add_argument(
+        "--absolute-calm-max",
+        dest="absolute_calm_max",
+        type=float,
+        default=None,
+        help=(
+            "calm_max boundary in ANNUALIZED vol units (e.g. 12.0 for "
+            "12%%); converted to per-period via "
+            "vol_per_period = vol_annualized / sqrt(252 / 10) before "
+            "passing to ModelConfig. Only consumed when "
+            "--vol-regime-label-mode=absolute. Default: 12%%."
+        ),
+    )
+    parser.add_argument(
+        "--absolute-high-min",
+        dest="absolute_high_min",
+        type=float,
+        default=None,
+        help=(
+            "high_min boundary in ANNUALIZED vol units (e.g. 22.0 for "
+            "22%%); converted to per-period via "
+            "vol_per_period = vol_annualized / sqrt(252 / 10) before "
+            "passing to ModelConfig. Only consumed when "
+            "--vol-regime-label-mode=absolute. Default: 22%%."
+        ),
+    )
     parser.set_defaults(
         use_retrieval_analogs=False,
         use_regime_conditioning=False,
@@ -424,15 +469,27 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
     regime_loss: str = "ce",
     text_encoder: str | None = None,
     use_text_embeddings: bool = True,
+    vol_regime_label_mode: str = "per_fold_quantile",
+    absolute_vol_thresholds: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     # Imports happen here so the script is importable without a torch
     # install (useful for doc-only environments).
-    from app.models.config import RICH_FEATURE_SIZE, SEQUENCE_LENGTH, ModelConfig
+    from app.models.config import (
+        DEFAULT_ABSOLUTE_VOL_THRESHOLDS,
+        RICH_FEATURE_SIZE,
+        SEQUENCE_LENGTH,
+        ModelConfig,
+    )
     from app.training.loaders import load_walk_forward_split
     from app.training.loop import train_model
 
     active_sequence_length = int(sequence_length) if sequence_length else SEQUENCE_LENGTH
     rates_heads = _resolve_auto_rates_heads(rates_target_mode, rates_heads=None)
+    resolved_absolute_thresholds: tuple[float, float] = (
+        absolute_vol_thresholds
+        if absolute_vol_thresholds is not None
+        else DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+    )
     config = ModelConfig(
         input_size=RICH_FEATURE_SIZE,
         output_mode="classification",
@@ -450,6 +507,8 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
         use_statement_delta=use_statement_delta,
         use_vote_features=use_vote_features,
         regime_loss_mode=regime_loss,
+        vol_regime_label_mode=vol_regime_label_mode,
+        absolute_vol_thresholds=resolved_absolute_thresholds,
     )
 
     per_fold: list[dict[str, Any]] = []
@@ -495,6 +554,41 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
     }
 
 
+def _resolve_absolute_thresholds(
+    label_mode: str,
+    calm_max_annualized: float | None,
+    high_min_annualized: float | None,
+) -> tuple[float, float] | None:
+    """Convert CLI annualized vol percentages to per-period thresholds.
+
+    Returns ``None`` when ``label_mode != 'absolute'`` so the default
+    ModelConfig threshold pair is used; when ``absolute`` is requested
+    but the operator did not supply explicit values, returns ``None``
+    too so the canonical defaults (12% / 22% annualized) flow through.
+    The CLI accepts percentages either as a fraction (``0.12``) or as
+    a percent (``12.0``); values >= 1.0 are treated as percent so the
+    operator can type the integer they read in the docstring.
+    """
+
+    from app.models.config import ANNUALIZATION_SQRT_10D
+
+    if label_mode != "absolute":
+        return None
+    if calm_max_annualized is None and high_min_annualized is None:
+        return None
+
+    def _normalize(v: float | None, fallback: float) -> float:
+        if v is None:
+            return fallback
+        if v >= 1.0:
+            return float(v) / 100.0
+        return float(v)
+
+    calm_max = _normalize(calm_max_annualized, 0.12)
+    high_min = _normalize(high_min_annualized, 0.22)
+    return calm_max / ANNUALIZATION_SQRT_10D, high_min / ANNUALIZATION_SQRT_10D
+
+
 def main() -> int:
     ensure_compile_safe()
     args = _parse_args()
@@ -508,6 +602,13 @@ def main() -> int:
             "[dual_head_comparison] auto-activating rates heads for "
             f"rates_target_mode={args.rates_target_mode}"
         )
+    from app.models.config import DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+
+    absolute_thresholds = _resolve_absolute_thresholds(
+        str(args.vol_regime_label_mode),
+        args.absolute_calm_max,
+        args.absolute_high_min,
+    )
 
     trials: dict[str, list[dict[str, Any]]] = {mode: [] for mode in args.head_modes}
     for head_mode in args.head_modes:
@@ -540,6 +641,8 @@ def main() -> int:
                         str(args.text_encoder) if args.text_encoder else None
                     ),
                     use_text_embeddings=bool(args.use_text_embeddings),
+                    vol_regime_label_mode=str(args.vol_regime_label_mode),
+                    absolute_vol_thresholds=absolute_thresholds,
                 )
             )
 
@@ -585,6 +688,23 @@ def main() -> int:
             str(args.text_encoder) if args.text_encoder else None
         ),
         "use_text_embeddings": bool(args.use_text_embeddings),
+        "vol_regime_label_mode": str(args.vol_regime_label_mode),
+        # When absolute mode is on, persist the EFFECTIVE thresholds
+        # (CLI values when set, defaults otherwise) so the artefact
+        # unambiguously records what trained -- avoids the "did
+        # absolute mode use defaults or quantile mode" ambiguity that
+        # would otherwise need source-code reading to resolve.
+        "absolute_vol_thresholds": (
+            list(absolute_thresholds)
+            if absolute_thresholds is not None
+            else (
+                list(DEFAULT_ABSOLUTE_VOL_THRESHOLDS)
+                if str(args.vol_regime_label_mode) == "absolute"
+                else None
+            )
+        ),
+        "absolute_calm_max_annualized": args.absolute_calm_max,
+        "absolute_high_min_annualized": args.absolute_high_min,
         "trials": trials,
         "summary": summary,
     }

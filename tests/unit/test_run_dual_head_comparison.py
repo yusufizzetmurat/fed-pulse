@@ -170,6 +170,153 @@ def test_dual_head_runner_rejects_unknown_rates_target_mode(monkeypatch):
         _parse_args()
 
 
+# ---------------------------------------------------------------------------
+# #472 vol-regime label mode: parser surface + ModelConfig wiring
+# ---------------------------------------------------------------------------
+
+
+def test_dual_head_runner_vol_regime_label_mode_defaults_off(monkeypatch):
+    """Default invocation keeps the byte-identical per-fold quantile path."""
+
+    from scripts.run_dual_head_comparison import _parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_dual_head_comparison",
+            "--training-package-id",
+            "tp_dummy",
+        ],
+    )
+    args = _parse_args()
+    assert args.vol_regime_label_mode == "per_fold_quantile"
+    assert args.absolute_calm_max is None
+    assert args.absolute_high_min is None
+
+
+def test_dual_head_runner_accepts_absolute_label_mode_with_overrides(monkeypatch):
+    """Operator can opt into absolute labelling and override the cutoffs."""
+
+    from scripts.run_dual_head_comparison import _parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_dual_head_comparison",
+            "--training-package-id",
+            "tp_dummy",
+            "--vol-regime-label-mode",
+            "absolute",
+            "--absolute-calm-max",
+            "10.0",
+            "--absolute-high-min",
+            "25.0",
+        ],
+    )
+    args = _parse_args()
+    assert args.vol_regime_label_mode == "absolute"
+    assert args.absolute_calm_max == pytest.approx(10.0)
+    assert args.absolute_high_min == pytest.approx(25.0)
+
+
+def test_dual_head_runner_rejects_unknown_vol_regime_label_mode(monkeypatch):
+    """argparse rejects any value outside the allowed enum."""
+
+    from scripts.run_dual_head_comparison import _parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_dual_head_comparison",
+            "--training-package-id",
+            "tp_dummy",
+            "--vol-regime-label-mode",
+            "definitely_not_a_mode",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        _parse_args()
+
+
+def test_dual_head_runner_default_label_mode_threads_per_fold_quantile(monkeypatch):
+    """Default invocation builds a ModelConfig with the quantile path on."""
+
+    pytest.importorskip("torch", reason="train_model import path needs torch")
+    from app.models.config import DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+    from scripts import run_dual_head_comparison as runner
+
+    captured = _capture_calls(monkeypatch, runner)
+
+    runner._run_one_cell(
+        "dual",
+        seed=11,
+        training_package_id="tp_dummy",
+        fold_ids=["fold_001"],
+        epochs=1,
+        regression_alpha=0.5,
+        hidden_size=64,
+    )
+
+    train_kwargs = captured["train_calls"][0]
+    model_config = train_kwargs["model_config"]
+    assert model_config.vol_regime_label_mode == "per_fold_quantile"
+    assert model_config.absolute_vol_thresholds == DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+
+
+def test_dual_head_runner_absolute_label_mode_threads_through(monkeypatch):
+    """``absolute`` opts the trainer into the fixed-threshold branch."""
+
+    pytest.importorskip("torch", reason="train_model import path needs torch")
+    from scripts import run_dual_head_comparison as runner
+
+    captured = _capture_calls(monkeypatch, runner)
+
+    thresholds = (0.03, 0.05)
+    runner._run_one_cell(
+        "dual",
+        seed=11,
+        training_package_id="tp_dummy",
+        fold_ids=["fold_001"],
+        epochs=1,
+        regression_alpha=0.5,
+        hidden_size=64,
+        vol_regime_label_mode="absolute",
+        absolute_vol_thresholds=thresholds,
+    )
+
+    train_kwargs = captured["train_calls"][0]
+    model_config = train_kwargs["model_config"]
+    assert model_config.vol_regime_label_mode == "absolute"
+    assert model_config.absolute_vol_thresholds == thresholds
+
+
+def test_resolve_absolute_thresholds_converts_annualized_percent(monkeypatch):
+    """Annualized percent inputs convert to per-period units via sqrt(25.2)."""
+
+    import math
+
+    from scripts.run_dual_head_comparison import _resolve_absolute_thresholds
+
+    out = _resolve_absolute_thresholds("absolute", 12.0, 22.0)
+    assert out is not None
+    calm, high = out
+    assert calm == pytest.approx(0.12 / math.sqrt(25.2))
+    assert high == pytest.approx(0.22 / math.sqrt(25.2))
+
+
+def test_resolve_absolute_thresholds_returns_none_on_quantile_mode():
+    """Quantile mode never converts cutoffs even if values are supplied."""
+
+    from scripts.run_dual_head_comparison import _resolve_absolute_thresholds
+
+    assert (
+        _resolve_absolute_thresholds("per_fold_quantile", 12.0, 22.0) is None
+    )
+
+
 def test_per_family_runner_exposes_new_flags(monkeypatch):
     from scripts.run_per_family_ablation import _parse_args
 

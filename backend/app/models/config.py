@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -138,6 +139,30 @@ RICH_FEATURE_SIZE = FEATURE_SIZE + RICH_EXTRA_FEATURE_SIZE
 # ``ModelConfig.vol_target_horizon`` against this tuple at entry.
 SUPPORTED_VOL_TARGET_HORIZONS: tuple[int, ...] = (1, 3, 5, 10, 20, 30)
 DEFAULT_VOL_TARGET_HORIZON: int = 10
+
+# #472 vol-regime labelling modes. ``per_fold_quantile`` (default,
+# byte-identical) fits per-fold (q33, q67) cutoffs on the train slice;
+# ``absolute`` uses a fixed pair of cutoffs so every fold's
+# calm / normal / high cells refer to the same vol level (no per-fold
+# bin drift). The literal vocabulary is pinned here so the CLI
+# ``choices=`` tuple and the loop dispatch agree.
+VOL_REGIME_LABEL_MODES: tuple[str, ...] = ("per_fold_quantile", "absolute")
+DEFAULT_VOL_REGIME_LABEL_MODE: str = "per_fold_quantile"
+# Annualized-to-per-period conversion for ``forward_realized_vol_10d``
+# (per-period standard deviation of log returns over 10 trading days):
+# ``vol_annualized = vol_per_period * sqrt(252 / 10)``. The defaults
+# below pin ``calm_max`` at 12% annualized and ``high_min`` at 22%
+# annualized -- the economic boundaries documented in the issue --
+# expressed in the SAME per-period unit as
+# ``forward_realized_vol_10d`` so the loader can compare without
+# rescaling. ``vol_regime_absolute_class_for`` consumes this tuple.
+ANNUALIZATION_SQRT_10D: float = math.sqrt(252.0 / 10.0)
+DEFAULT_ABSOLUTE_VOL_CALM_MAX_ANNUALIZED: float = 0.12
+DEFAULT_ABSOLUTE_VOL_HIGH_MIN_ANNUALIZED: float = 0.22
+DEFAULT_ABSOLUTE_VOL_THRESHOLDS: tuple[float, float] = (
+    DEFAULT_ABSOLUTE_VOL_CALM_MAX_ANNUALIZED / ANNUALIZATION_SQRT_10D,
+    DEFAULT_ABSOLUTE_VOL_HIGH_MIN_ANNUALIZED / ANNUALIZATION_SQRT_10D,
+)
 
 # Slice offsets inside the rich vector. Used by the per-family
 # ablation path on the loader to zero an individual family without
@@ -423,6 +448,24 @@ SYMBOL_ID_LOOKUP: dict[str, int] = {sym: idx for idx, sym in enumerate(SUPPORTED
 N_SUPPORTED_SYMBOLS: int = len(SUPPORTED_SYMBOLS)
 
 
+def _coerce_absolute_vol_thresholds(value: Any) -> tuple[float, float]:
+    """Round-trip helper for :attr:`ModelConfig.absolute_vol_thresholds`.
+
+    Accepts ``None`` (legacy checkpoint without the field), a length-2
+    sequence, or already-typed tuple and returns the canonical
+    ``(calm_max, high_min)`` float pair. Falls back to
+    :data:`DEFAULT_ABSOLUTE_VOL_THRESHOLDS` when the payload is missing
+    so pre-#472 checkpoints deserialise into the byte-identical default.
+    """
+
+    if value is None:
+        return DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+    seq = tuple(value)
+    if len(seq) != 2:
+        return DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+    return float(seq[0]), float(seq[1])
+
+
 @dataclass(frozen=True)
 class ModelConfig:
     input_size: int = FEATURE_SIZE
@@ -456,6 +499,25 @@ class ModelConfig:
     n_classes: int = 3
     vol_regime_quantiles: tuple[float, ...] = ()
     vol_regime_target: str = "forward_realized_vol_10d"
+    # #472 vol-regime labelling mode. ``per_fold_quantile`` (default,
+    # byte-identical) fits per-fold (q33, q67) cutoffs on the train
+    # slice each fold; ``absolute`` uses the fixed
+    # ``absolute_vol_thresholds`` pair so every fold's calm / normal /
+    # high cells refer to the same economic vol level. On the
+    # ``absolute`` path the per-fold quantile fit is skipped and the
+    # absolute thresholds flow through every downstream consumer
+    # (``vol_regime_class_for`` / ``_build_partition_log_rv_target`` /
+    # the multi-task target builder) so row alignment with ``y`` is
+    # preserved.
+    vol_regime_label_mode: str = DEFAULT_VOL_REGIME_LABEL_MODE
+    # Per-period (calm_max, high_min) cutoffs the absolute labelling
+    # path bins ``forward_realized_vol_10d`` into. The defaults convert
+    # 12% / 22% annualized -- the economic boundaries documented in
+    # the issue -- via ``vol_per_period = vol_annualized /
+    # sqrt(252 / 10)`` so the cutoffs share the same per-period unit as
+    # the target column. Setting custom values is expected via the
+    # canonical-sweep CLI (annualized percent in, per-period out).
+    absolute_vol_thresholds: tuple[float, float] = DEFAULT_ABSOLUTE_VOL_THRESHOLDS
     # Phase B (#227) LR-schedule selector. ``plateau`` is the legacy
     # ReduceLROnPlateau path (locked by the determinism regression).
     # ``cosine_warmup`` builds a OneCycleLR over the configured epoch
@@ -699,6 +761,13 @@ class ModelConfig:
             vol_regime_target=str(
                 getattr(model, "vol_regime_target", "forward_realized_vol_10d")
                 or "forward_realized_vol_10d"
+            ),
+            vol_regime_label_mode=str(
+                getattr(model, "vol_regime_label_mode", DEFAULT_VOL_REGIME_LABEL_MODE)
+                or DEFAULT_VOL_REGIME_LABEL_MODE
+            ),
+            absolute_vol_thresholds=_coerce_absolute_vol_thresholds(
+                getattr(model, "absolute_vol_thresholds", DEFAULT_ABSOLUTE_VOL_THRESHOLDS)
             ),
             lr_schedule=str(getattr(model, "lr_schedule", "plateau") or "plateau"),
             sequence_length=int(getattr(model, "sequence_length", 0) or 0),

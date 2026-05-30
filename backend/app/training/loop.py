@@ -18,6 +18,7 @@ from app.determinism import enable_deterministic_mode, make_generator, seed_work
 from app.evaluation.metrics import EvaluationMetrics, TrainingResult, TrainingRunSummary
 from app.models.config import (
     BEST_MODEL_PATH,
+    DEFAULT_ABSOLUTE_VOL_THRESHOLDS,
     DEFAULT_BATCH_SIZE,
     DEFAULT_DROPOUT,
     DEFAULT_EARLY_STOPPING_PATIENCE,
@@ -28,6 +29,7 @@ from app.models.config import (
     DEFAULT_LEARNING_RATE,
     DEFAULT_NUM_LAYERS,
     DEFAULT_VALIDATION_SPLIT,
+    DEFAULT_VOL_REGIME_LABEL_MODE,
     FEATURE_SIZE,
     SEQUENCE_LENGTH,
     FeatureVector,
@@ -254,6 +256,10 @@ def _coerce_model_config(model_config: ModelConfig | dict[str, Any] | None = Non
         tuple_fields = {
             "rates_heads",
             "vol_regime_quantiles",
+            # JSON round-trips tuples as lists; #472 absolute thresholds
+            # must coerce back so downstream equality + tuple-typed slots
+            # stay correct on resume.
+            "absolute_vol_thresholds",
         }
         kwargs: dict[str, Any] = {}
         for key, value in model_config.items():
@@ -2676,19 +2682,46 @@ def train_model(
             train_forward_vols = collect_forward_vols(
                 train_groups, sequence_length=active_sequence_length
             )
-            fitted_quantiles = fit_vol_regime_quantiles(
-                train_forward_vols, n_classes=n_classes_active
+            # #472 vol-regime labelling mode. ``per_fold_quantile``
+            # (default, byte-identical) fits per-fold (q33, q67) cutoffs
+            # on the train slice; ``absolute`` skips the fit and feeds
+            # the fixed ``(calm_max, high_min)`` pair through every
+            # downstream consumer (``vol_regime_class_for`` /
+            # ``_build_partition_log_rv_target`` / multi-task target
+            # builder) so the same bin contract holds across folds. The
+            # absolute thresholds flow through the ``vol_regime_quantiles``
+            # slot deliberately: ``vol_regime_class_for`` already maps a
+            # value to a class index by less-than comparison against an
+            # ordered tuple of cutoffs, so reusing the slot keeps the
+            # row-alignment / class-weight / log_rv-target paths
+            # byte-identical to the quantile branch.
+            _active_label_mode = str(
+                getattr(active_model_config, "vol_regime_label_mode", DEFAULT_VOL_REGIME_LABEL_MODE)
+                or DEFAULT_VOL_REGIME_LABEL_MODE
             )
-            if not fitted_quantiles:
-                raise ValueError(
-                    "vol-regime classification requires >= n_classes valid "
-                    "forward_realized_vol_10d targets on the train slice; "
-                    f"got {len(train_forward_vols)} valid rows for "
-                    f"n_classes={n_classes_active}."
+            if _active_label_mode == "absolute":
+                fitted_quantiles = tuple(
+                    float(v) for v in getattr(
+                        active_model_config, "absolute_vol_thresholds", DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+                    )
                 )
-            active_model_config = dataclasses.replace(
-                active_model_config, vol_regime_quantiles=fitted_quantiles
-            )
+                active_model_config = dataclasses.replace(
+                    active_model_config, vol_regime_quantiles=fitted_quantiles
+                )
+            else:
+                fitted_quantiles = fit_vol_regime_quantiles(
+                    train_forward_vols, n_classes=n_classes_active
+                )
+                if not fitted_quantiles:
+                    raise ValueError(
+                        "vol-regime classification requires >= n_classes valid "
+                        "forward_realized_vol_10d targets on the train slice; "
+                        f"got {len(train_forward_vols)} valid rows for "
+                        f"n_classes={n_classes_active}."
+                    )
+                active_model_config = dataclasses.replace(
+                    active_model_config, vol_regime_quantiles=fitted_quantiles
+                )
             # A1 (#206) per-fold class weighting. Counts each class in
             # the train slice under the just-fitted quantile cutoffs,
             # then builds inverse-frequency weights so the loss path
@@ -2997,19 +3030,34 @@ def train_model(
         legacy_fitted_quantiles: tuple[float, ...] = ()
         if active_output_mode == "classification":
             n_classes_active = int(getattr(active_model_config, "n_classes", 3) or 3)
-            legacy_forward_vols = collect_forward_vols(
-                active_sequence_groups, sequence_length=active_sequence_length
+            # #472 absolute labelling mirrors the walk-forward branch: skip
+            # the per-fold quantile fit and route the fixed thresholds
+            # through ``vol_regime_quantiles`` so the existing class-index
+            # mapping path stays byte-identical on the absolute branch.
+            _active_label_mode_legacy = str(
+                getattr(active_model_config, "vol_regime_label_mode", DEFAULT_VOL_REGIME_LABEL_MODE)
+                or DEFAULT_VOL_REGIME_LABEL_MODE
             )
-            legacy_fitted_quantiles = fit_vol_regime_quantiles(
-                legacy_forward_vols, n_classes=n_classes_active
-            )
-            if not legacy_fitted_quantiles:
-                raise ValueError(
-                    "vol-regime classification requires >= n_classes valid "
-                    "forward_realized_vol_10d targets on the legacy single-list "
-                    f"path; got {len(legacy_forward_vols)} valid rows for "
-                    f"n_classes={n_classes_active}."
+            if _active_label_mode_legacy == "absolute":
+                legacy_fitted_quantiles = tuple(
+                    float(v) for v in getattr(
+                        active_model_config, "absolute_vol_thresholds", DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+                    )
                 )
+            else:
+                legacy_forward_vols = collect_forward_vols(
+                    active_sequence_groups, sequence_length=active_sequence_length
+                )
+                legacy_fitted_quantiles = fit_vol_regime_quantiles(
+                    legacy_forward_vols, n_classes=n_classes_active
+                )
+                if not legacy_fitted_quantiles:
+                    raise ValueError(
+                        "vol-regime classification requires >= n_classes valid "
+                        "forward_realized_vol_10d targets on the legacy single-list "
+                        f"path; got {len(legacy_forward_vols)} valid rows for "
+                        f"n_classes={n_classes_active}."
+                    )
             active_model_config = dataclasses.replace(
                 active_model_config, vol_regime_quantiles=legacy_fitted_quantiles
             )
