@@ -199,6 +199,14 @@ CROSS_ASSET_SYMBOLS: tuple[tuple[str, str], ...] = (
     # literature consistently uses as a regime predictor.
     ("^VIX3M", "vix3m_close"),
     ("^IRX", "irx_close"),
+    # #478 VIX term-structure + VRP block. ^VIX1M is the 1-month CBOE
+    # volatility index (rolled constant-maturity); ^VIX6M is the 6-month
+    # series. Coverage: ^VIX from 1990, ^VIX3M from 2007-12, ^VIX1M and
+    # ^VIX6M from 2008-01 (CBOE constant-maturity series start).
+    # Pre-coverage events emit ``None`` on the per-event VIX-term
+    # columns and the loader's missing-flag pattern handles them.
+    ("^VIX1M", "vix1m_close"),
+    ("^VIX6M", "vix6m_close"),
 )
 # Per-asset forward realised-vol targets (#481). One column per symbol
 # carries the strict-forward 10-trading-day realised vol of log returns
@@ -874,6 +882,100 @@ def _log_returns(closes: Sequence[float]) -> list[float]:
     return out
 
 
+def _vix_term_structure_features(
+    *,
+    as_of: _dt.date,
+    series_by_symbol: dict[str, _CloseSeries],
+    asset_series: _CloseSeries,
+) -> dict[str, float | None]:
+    """Compose the #478 VIX term-structure + VRP block for one event.
+
+    Reads the four constant-maturity VIX series (``^VIX`` 1990+,
+    ``^VIX1M`` 2008+, ``^VIX3M`` 2007-12+, ``^VIX6M`` 2008+) and the
+    asset close series strictly before ``as_of``. Emits six nullable
+    scalars:
+
+    - ``vix_t_minus_1`` — 30-day ATM implied vol at T-1.
+    - ``vix1m_t_minus_1`` — 1-month constant-maturity implied vol at T-1.
+    - ``vix3m_t_minus_1`` — 3-month constant-maturity implied vol at T-1.
+    - ``vix6m_t_minus_1`` — 6-month constant-maturity implied vol at T-1.
+    - ``vix_3m_over_1m_slope`` — ``vix3m / vix1m`` ratio at T-1 (>1.0
+      contango, <1.0 backwardation; the textbook stressed-market signal).
+    - ``vrp_t_minus_1`` — volatility risk premium at T-1: the implied
+      30-day vol on a daily scale (``vix/100/sqrt(252)``) minus the
+      trailing 30-trading-day realised vol of asset log returns. Both
+      legs read strictly before ``as_of``.
+
+    Any per-scalar input gap (pre-coverage event, holiday with no quote,
+    asset history too short for the realised baseline) collapses that
+    scalar to ``None``. Downstream the loader's missing-flag pattern
+    fills zeros and flips the paired ``vix_features_missing`` flag.
+    """
+
+    out: dict[str, float | None] = {
+        "vix_t_minus_1": None,
+        "vix1m_t_minus_1": None,
+        "vix3m_t_minus_1": None,
+        "vix6m_t_minus_1": None,
+        "vix_3m_over_1m_slope": None,
+        "vrp_t_minus_1": None,
+    }
+    field_to_symbol = {field: sym for sym, field in CROSS_ASSET_SYMBOLS}
+    column_for_field = {
+        "vix_close": "vix_t_minus_1",
+        "vix1m_close": "vix1m_t_minus_1",
+        "vix3m_close": "vix3m_t_minus_1",
+        "vix6m_close": "vix6m_t_minus_1",
+    }
+    for field_name, column in column_for_field.items():
+        symbol = field_to_symbol.get(field_name)
+        if symbol is None:
+            continue
+        series = series_by_symbol.get(symbol)
+        if series is None or not series.dates:
+            continue
+        idx = series.index_strictly_before(as_of)
+        if idx < 0:
+            continue
+        close = series.close[idx]
+        if close > 0:
+            out[column] = float(close)
+    vix1m = out["vix1m_t_minus_1"]
+    vix3m = out["vix3m_t_minus_1"]
+    if vix1m is not None and vix3m is not None and vix1m > 0:
+        out["vix_3m_over_1m_slope"] = float(vix3m) / float(vix1m)
+    vix = out["vix_t_minus_1"]
+    if vix is not None:
+        implied_daily = float(vix) / 100.0 / (252.0 ** 0.5)
+        realized = _rolling_realized_vol_t_minus_1(asset_series, as_of, window=30)
+        if realized is not None:
+            out["vrp_t_minus_1"] = implied_daily - realized
+    return out
+
+
+def _rolling_realized_vol_t_minus_1(
+    series: _CloseSeries, as_of: _dt.date, *, window: int
+) -> float | None:
+    """Sample std of log returns over the trailing ``window`` bars at T-1.
+
+    Strict-prior: reads ``series.close`` indices ``[base - window .. base]``
+    where ``base = index_strictly_before(as_of)``; the resulting ``window``
+    log returns are all dated strictly before ``as_of``.
+    """
+
+    base = series.index_strictly_before(as_of)
+    if base < window:
+        return None
+    closes = series.close[base - window : base + 1]
+    rets = _log_returns(closes)
+    if len(rets) < 2:
+        return None
+    n = len(rets)
+    mean = sum(rets) / n
+    variance = sum((v - mean) ** 2 for v in rets) / (n - 1)
+    return float(variance ** 0.5)
+
+
 def _build_cross_asset_lookup(
     series_by_symbol: dict[str, _CloseSeries],
 ) -> dict[_dt.date, dict[str, float]]:
@@ -1473,6 +1575,7 @@ def _build_event_rows(
     concurrent_macro_window_days: int = CONCURRENT_MACRO_TRADING_DAY_RADIUS,
     intra_meeting_shift: dict[str, float] | None = None,
     cross_asset_lookup: dict[_dt.date, dict[str, float]] | None = None,
+    cross_asset_series: dict[str, _CloseSeries] | None = None,
     rates_lookup: RatesPanelLookup | None = None,
     rates_horizon: int = 5,
     prior_statement_text: str | None = None,
@@ -1522,6 +1625,17 @@ def _build_event_rows(
         bench_targets = _realized_returns(bench_series, as_of_date, horizons) or {}
 
     vol_shift = _volatility_shift(asset_series, as_of_date)
+    # #478 VIX term-structure + VRP at T-1. Reads strictly-prior closes
+    # from the ^VIX family cross-asset series plus the asset series for
+    # the realised baseline. Pre-coverage events (notably ^VIX1M /
+    # ^VIX3M / ^VIX6M before 2008) emit ``None`` on the affected
+    # scalars; the loader's missing-flag pattern handles the per-event
+    # widening.
+    vix_term_block = _vix_term_structure_features(
+        as_of=as_of_date,
+        series_by_symbol=cross_asset_series or {},
+        asset_series=asset_series,
+    )
     # Phase 9 V2 (#195) target: realised volatility over the next 10
     # trading days. Class labels (calm / normal / high) are NOT
     # assigned here -- the per-fold quantile cutoffs are computed at
@@ -1842,6 +1956,12 @@ def _build_event_rows(
                 # series is absent or the event sits within the forward
                 # window of the series tail.
                 **per_asset_target_values,
+                # --- #478 VIX term-structure + VRP at T-1 ---
+                # Strict-prior scalars read off the ^VIX family
+                # cross-asset series plus the asset's own close history
+                # for the realised baseline. Per-scalar ``None`` when
+                # the underlying series is missing or pre-coverage.
+                **{k: _maybe_float(v) for k, v in vix_term_block.items()},
             }
         )
     return rows
@@ -1962,6 +2082,16 @@ COLUMN_ORDER = (
     # cover the other indices, dollar index, VIX, and the three major
     # FX pairs. All nullable, required=False so older parquets validate.
     *(per_asset_target_column(sym) for sym in PER_ASSET_TARGET_SYMBOLS),
+    # #478 VIX term-structure + VRP at T-1. Six nullable scalars read
+    # strictly before event_date. ``None`` per scalar on pre-coverage
+    # events (^VIX1M / ^VIX3M / ^VIX6M before 2008) or asset-history
+    # gaps; downstream loader handles the per-event missing flag.
+    "vix_t_minus_1",
+    "vix1m_t_minus_1",
+    "vix3m_t_minus_1",
+    "vix6m_t_minus_1",
+    "vix_3m_over_1m_slope",
+    "vrp_t_minus_1",
     "concurrent_macro_release",
     "intra_meeting_stance_shift",
     "intra_meeting_certainty_shift",
@@ -2225,6 +2355,7 @@ def build_event_rows(
             concurrent_macro_window_days=concurrent_macro_window_days,
             intra_meeting_shift=intra_meeting_shifts.get(doc.event_date),
             cross_asset_lookup=cross_asset_lookup,
+            cross_asset_series=cross_asset_series,
             rates_lookup=rates_lookup,
             rates_horizon=rates_horizon,
             prior_statement_text=prior_statement_text,

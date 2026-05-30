@@ -117,6 +117,14 @@ RICH_STATEMENT_DELTA_MISSING_DIM = 1
 # #444 vote tally + dissent block (ADR 0038).
 RICH_VOTE_FEATURES_DIM = 4
 RICH_VOTE_FEATURES_MISSING_DIM = 1
+# #478 VIX term-structure + VRP at T-1. Six strict-prior scalars
+# (vix, vix1m, vix3m, vix6m, vix_3m_over_1m_slope, vrp) plus a paired
+# missing flag. Opt-in via ``--use-vix-features``; appended past the
+# vote-tally tail by ``FeatureVector.as_rich_list`` only when the
+# loader populates the slot, so the legacy default path keeps the
+# byte-identical pre-#478 per-bar feature size.
+RICH_VIX_FEATURES_DIM = 6
+RICH_VIX_FEATURES_MISSING_DIM = 1
 RICH_EXTRA_FEATURE_SIZE = (
     RICH_CREDIBILITY_DIM
     + RICH_LINGUISTIC_DIM
@@ -342,14 +350,15 @@ def rich_feature_size_with_blocks(
     use_press_conf: bool = False,
     use_statement_delta: bool = False,
     use_vote_features: bool = False,
+    use_vix_features: bool = False,
 ) -> int:
     """Combined helper: the per-bar size with every opt-in tail block.
 
-    All five blocks are independent — any combination can be on. The
+    All six blocks are independent — any combination can be on. The
     append order on ``as_rich_list`` is fixed: regime, SEP, press-conf,
-    statement-delta, vote-features. A downstream caller iterating
-    slices knows where each block sits without ambiguity given the five
-    flags.
+    statement-delta, vote-features, vix-features. A downstream caller
+    iterating slices knows where each block sits without ambiguity given
+    the six flags.
     """
 
     size = RICH_FEATURE_SIZE
@@ -363,6 +372,8 @@ def rich_feature_size_with_blocks(
         size += RICH_STATEMENT_DELTA_DIM + RICH_STATEMENT_DELTA_MISSING_DIM
     if bool(use_vote_features):
         size += RICH_VOTE_FEATURES_DIM + RICH_VOTE_FEATURES_MISSING_DIM
+    if bool(use_vix_features):
+        size += RICH_VIX_FEATURES_DIM + RICH_VIX_FEATURES_MISSING_DIM
     return size
 
 
@@ -723,6 +734,8 @@ class ModelConfig:
     use_statement_delta: bool = False
     # #444 vote-tally opt-in (ADR 0038).
     use_vote_features: bool = False
+    # #478 VIX term-structure + VRP at T-1.
+    use_vix_features: bool = False
     # #480 symbol-conditioned regime head. ``0`` (default) keeps the
     # regime / dual-head wiring byte-identical to the symbol-agnostic
     # canonical: no embedding module, no widened head input, no new
@@ -823,6 +836,9 @@ class ModelConfig:
             ),
             use_vote_features=bool(
                 getattr(model, "use_vote_features", False)
+            ),
+            use_vix_features=bool(
+                getattr(model, "use_vix_features", False)
             ),
             symbol_embedding_dim=int(
                 getattr(model, "symbol_embedding_dim", 0) or 0
@@ -1060,6 +1076,13 @@ class FeatureVector:
     # #444 vote-tally signed feature block. See ADR 0038.
     vote_features: list[float] | None = None
     vote_features_missing: float = 1.0
+    # #478 VIX term-structure + VRP at T-1. Six strict-prior scalars
+    # plus a paired missing flag. The block is appended past the
+    # vote-tally tail by ``as_rich_list`` only when the loader
+    # populates the slot under ``--use-vix-features``; default ``None``
+    # keeps the regression / legacy paths byte-identical.
+    vix_features: list[float] | None = None
+    vix_features_missing: float = 1.0
     # #495 confounder-ablation block. Optional per-event control vector
     # (year one-hot, meeting-kind one-hot, log token count, or any
     # combination thereof) appended past the legacy tail blocks by
@@ -1395,6 +1418,18 @@ class FeatureVector:
                     RICH_VOTE_FEATURES_DIM - len(vote_block)
                 )
             out = out + vote_block + [float(self.vote_features_missing)]
+        # #478 VIX term-structure + VRP tail. Sits after vote and
+        # before the confounder block so every other tail flag's slice
+        # math stays unchanged.
+        if self.vix_features is not None:
+            vix_block = [
+                float(v) for v in self.vix_features[:RICH_VIX_FEATURES_DIM]
+            ]
+            if len(vix_block) < RICH_VIX_FEATURES_DIM:
+                vix_block = vix_block + [0.0] * (
+                    RICH_VIX_FEATURES_DIM - len(vix_block)
+                )
+            out = out + vix_block + [float(self.vix_features_missing)]
         # #495 confounder-ablation tail. Last block by construction so
         # every other tail flag's slice math stays unchanged. Width is
         # caller-determined (year FE / meeting-kind FE / log-token / any

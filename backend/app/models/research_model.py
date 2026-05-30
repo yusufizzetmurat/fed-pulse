@@ -75,6 +75,7 @@ class ForecasterResearchModel(ForecasterBase):
         use_press_conf: bool = False,
         use_statement_delta: bool = False,
         use_vote_features: bool = False,
+        use_vix_features: bool = False,
         symbol_embedding_dim: int = 0,
         n_symbols: int = 0,
     ):
@@ -114,6 +115,7 @@ class ForecasterResearchModel(ForecasterBase):
             use_press_conf=use_press_conf,
             use_statement_delta=use_statement_delta,
             use_vote_features=use_vote_features,
+            use_vix_features=use_vix_features,
         )
         # Head dispatch -- classification mounts the MultiTaskHead, the
         # optional log(RV) regression head, and the per-rates-head pair

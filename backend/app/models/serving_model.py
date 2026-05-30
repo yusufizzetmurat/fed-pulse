@@ -88,6 +88,7 @@ class ForecasterServingModel(ForecasterBase):
         use_press_conf: bool = False,
         use_statement_delta: bool = False,
         use_vote_features: bool = False,
+        use_vix_features: bool = False,
     ):
         if output_mode not in {"regression", "classification"}:
             raise ValueError(
@@ -121,6 +122,7 @@ class ForecasterServingModel(ForecasterBase):
             use_press_conf=use_press_conf,
             use_statement_delta=use_statement_delta,
             use_vote_features=use_vote_features,
+            use_vix_features=use_vix_features,
         )
         self.output_mode = output_mode
         self.n_classes = int(n_classes)

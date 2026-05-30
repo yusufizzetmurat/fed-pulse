@@ -172,6 +172,7 @@ def build_forecaster(
             "use_press_conf",
             "use_statement_delta",
             "use_vote_features",
+            "use_vix_features",
             # #480 symbol-conditioned regime head is research-only on the
             # recurrent class. The flat_mlp ctor does not consume it.
             "symbol_embedding_dim",
@@ -420,6 +421,8 @@ def build_forecaster(
     # #443/#444 statement-delta + vote-features opt-in flags.
     use_statement_delta_flag = bool(kwargs.pop("use_statement_delta", False))
     use_vote_features_flag = bool(kwargs.pop("use_vote_features", False))
+    # #478 VIX term-structure + VRP opt-in flag.
+    use_vix_features_flag = bool(kwargs.pop("use_vix_features", False))
     # #480 symbol-conditioned regime head. Pop here so the serving
     # constructor (which does not accept the kwarg in v1) does not
     # receive it. The research class consumes the kwarg directly to
@@ -444,6 +447,7 @@ def build_forecaster(
             use_press_conf=use_press_conf_flag,
             use_statement_delta=use_statement_delta_flag,
             use_vote_features=use_vote_features_flag,
+            use_vix_features=use_vix_features_flag,
             **kwargs,
         )
     else:
@@ -456,6 +460,7 @@ def build_forecaster(
             use_press_conf=use_press_conf_flag,
             use_statement_delta=use_statement_delta_flag,
             use_vote_features=use_vote_features_flag,
+            use_vix_features=use_vix_features_flag,
             symbol_embedding_dim=symbol_embedding_dim_value,
             **kwargs,
         )
@@ -504,6 +509,7 @@ def build_forecaster(
     # persisted run summary reads via ``ModelConfig.from_model``.
     model.use_statement_delta = use_statement_delta_flag
     model.use_vote_features = use_vote_features_flag
+    model.use_vix_features = use_vix_features_flag
     # #480 round-trip the symbol-embedding dim so
     # ``ModelConfig.from_model`` recovers it on resume. The research
     # class set this in its ctor; stash it on the serving instance too
