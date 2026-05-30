@@ -1361,7 +1361,15 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         output_mode=output_mode,
         n_classes=n_classes,
         lr_schedule=str(getattr(args, "lr_schedule", "plateau") or "plateau"),
-        sequence_length=int(getattr(args, "sequence_length", 0) or 0),
+        # Persist the resolved length (post 0-sentinel coercion) so the
+        # run-summary value matches what actually trained and stays
+        # comparable across runners. ``run_dual_head_comparison`` stores
+        # the resolved int the same way.
+        sequence_length=(
+            int(getattr(args, "sequence_length", 0))
+            if int(getattr(args, "sequence_length", 0) or 0) > 0
+            else SEQUENCE_LENGTH
+        ),
         use_time_decay=bool(getattr(args, "use_time_decay", True)),
         encoder_lora=bool(getattr(args, "encoder_lora", False)),
         lora_curriculum_freeze_epoch=getattr(args, "lora_freeze_epoch", None),
@@ -2735,6 +2743,12 @@ def main() -> int:
 
     package_sequences: list[list[FeatureVector]] | None = None
     walk_forward_splits: dict[str, WalkForwardSplit] | None = None
+    # ``args.sequence_length=0`` is the "fall back to the module default"
+    # sentinel; resolve it once so the package + legacy branches and the
+    # window-count arithmetic in either branch see the same int.
+    resolved_sequence_length = (
+        int(args.sequence_length) if int(args.sequence_length) > 0 else SEQUENCE_LENGTH
+    )
     if use_package_path:
         print(f"Training-package id: {args.training_package_id}")
         print(f"Target mode: {args.target_mode}")
@@ -2810,6 +2824,7 @@ def main() -> int:
                         text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
                         use_text_embeddings=bool(args.use_text_embeddings),
                         embargo_days=int(args.embargo_days),
+                        sequence_length=resolved_sequence_length,
                     )
                     if multi_encoder_mode_main:
                         # Key by (encoder, fold) so the sweep can route
@@ -2834,7 +2849,7 @@ def main() -> int:
                 for s in walk_forward_splits.values()
             )
             window_count = sum(
-                sum(max(0, len(seq) - SEQUENCE_LENGTH) for seq in (s.train + s.val + s.test))
+                sum(max(0, len(seq) - resolved_sequence_length) for seq in (s.train + s.val + s.test))
                 for s in walk_forward_splits.values()
             )
         else:
@@ -2864,6 +2879,7 @@ def main() -> int:
                     # Single-fold uses split_tag, not manifest dates -- embargo
                     # passes through but the loader will no-op on this path.
                     embargo_days=int(args.embargo_days),
+                    sequence_length=resolved_sequence_length,
                 )
                 if multi_encoder_mode_main:
                     walk_forward_splits[(encoder_arg, "_single_fold")] = split
@@ -2884,7 +2900,7 @@ def main() -> int:
                 len(seq) for seq in (example_split.train + example_split.val + example_split.test)
             )
             window_count = sum(
-                max(0, len(seq) - SEQUENCE_LENGTH)
+                max(0, len(seq) - resolved_sequence_length)
                 for seq in (example_split.train + example_split.val + example_split.test)
             )
         print(f"Device: {device}")
@@ -2903,10 +2919,14 @@ def main() -> int:
             )
             return 1
     else:
-        sequences, summaries = inspect_training_data_sources(data_dir)
+        sequences, summaries = inspect_training_data_sources(
+            data_dir, sequence_length=resolved_sequence_length
+        )
         sequence_count = len(sequences)
         observation_count = sum(len(sequence) for sequence in sequences)
-        window_count = sum(max(0, len(sequence) - SEQUENCE_LENGTH) for sequence in sequences)
+        window_count = sum(
+            max(0, len(sequence) - resolved_sequence_length) for sequence in sequences
+        )
 
         _print_data_inventory(
             data_dir,

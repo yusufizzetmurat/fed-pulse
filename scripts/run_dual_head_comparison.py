@@ -153,6 +153,23 @@ def _parse_args() -> argparse.Namespace:
             "parquet (populated by the multi-horizon data builder)."
         ),
     )
+    # Prior-bar window length. Default matches the canonical 20-bar
+    # window so the pre-existing sweep stays byte-identical; override
+    # for the longer-window arm (e.g. 60) against a TP whose
+    # ``prior_bars_json`` carries the matching wider window.
+    from app.models.config import SEQUENCE_LENGTH
+
+    parser.add_argument(
+        "--sequence-length",
+        type=int,
+        default=SEQUENCE_LENGTH,
+        help=(
+            "Prior-bar window length per supervised event. Default "
+            f"{SEQUENCE_LENGTH} matches the canonical lookback. Override "
+            "against a TP whose prior_bars_json carries the matching "
+            "wider window (e.g. 60)."
+        ),
+    )
     # #306 retrieval-augmented input features. Off by default so the
     # canonical sweep stays byte-identical.
     parser.add_argument(
@@ -359,6 +376,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
     rates_target_mode: str = "raw",
     vol_target_mode: str = "raw",
     vol_target_horizon: int = 10,
+    sequence_length: int | None = None,
     use_retrieval_analogs: bool = False,
     use_regime_conditioning: bool = False,
     use_statement_delta: bool = False,
@@ -368,10 +386,11 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
 ) -> dict[str, Any]:
     # Imports happen here so the script is importable without a torch
     # install (useful for doc-only environments).
-    from app.models.config import RICH_FEATURE_SIZE, ModelConfig
+    from app.models.config import RICH_FEATURE_SIZE, SEQUENCE_LENGTH, ModelConfig
     from app.training.loaders import load_walk_forward_split
     from app.training.loop import train_model
 
+    active_sequence_length = int(sequence_length) if sequence_length else SEQUENCE_LENGTH
     rates_heads = _resolve_auto_rates_heads(rates_target_mode, rates_heads=None)
     config = ModelConfig(
         input_size=RICH_FEATURE_SIZE,
@@ -384,6 +403,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
         rates_target_mode=rates_target_mode,
         vol_target_mode=vol_target_mode,
         vol_target_horizon=vol_target_horizon,
+        sequence_length=active_sequence_length,
         use_regime_conditioning=use_regime_conditioning,
         use_press_conf=use_press_conf,
         use_statement_delta=use_statement_delta,
@@ -403,6 +423,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
             use_vote_features=use_vote_features,
             use_press_conf=use_press_conf,
             vol_target_horizon=vol_target_horizon,
+            sequence_length=active_sequence_length,
         )
         result = train_model(
             model_config=config,
@@ -465,6 +486,7 @@ def main() -> int:
                     rates_target_mode=str(args.rates_target_mode),
                     vol_target_mode=str(args.vol_target_mode),
                     vol_target_horizon=int(args.target_horizon),
+                    sequence_length=int(args.sequence_length),
                     use_retrieval_analogs=bool(args.use_retrieval_analogs),
                     use_regime_conditioning=bool(args.use_regime_conditioning),
                     use_statement_delta=bool(args.use_statement_delta),
@@ -505,6 +527,7 @@ def main() -> int:
         ),
         "vol_target_mode": str(args.vol_target_mode),
         "vol_target_horizon": int(args.target_horizon),
+        "sequence_length": int(args.sequence_length),
         "use_retrieval_analogs": bool(args.use_retrieval_analogs),
         "use_regime_conditioning": bool(args.use_regime_conditioning),
         "use_statement_delta": bool(args.use_statement_delta),

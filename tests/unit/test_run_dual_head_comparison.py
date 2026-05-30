@@ -31,6 +31,7 @@ import pytest
 def test_dual_head_runner_exposes_new_flags(monkeypatch):
     """The three new flags ship on the canonical sweep runner."""
 
+    from app.models.config import SEQUENCE_LENGTH
     from scripts.run_dual_head_comparison import _parse_args
 
     monkeypatch.setattr(
@@ -46,6 +47,7 @@ def test_dual_head_runner_exposes_new_flags(monkeypatch):
     assert args.rates_target_mode == "raw"
     assert args.vol_target_mode == "raw"
     assert args.target_horizon == 10
+    assert args.sequence_length == SEQUENCE_LENGTH
     assert args.use_retrieval_analogs is False
     assert args.use_regime_conditioning is False
     assert args.use_statement_delta is False
@@ -69,6 +71,8 @@ def test_dual_head_runner_accepts_opt_in_flags(monkeypatch):
             "garch_residual",
             "--target-horizon",
             "5",
+            "--sequence-length",
+            "60",
             "--use-retrieval-analogs",
             "--use-regime-conditioning",
             "--use-statement-delta",
@@ -80,6 +84,7 @@ def test_dual_head_runner_accepts_opt_in_flags(monkeypatch):
     assert args.rates_target_mode == "fomc_attributable"
     assert args.vol_target_mode == "garch_residual"
     assert args.target_horizon == 5
+    assert args.sequence_length == 60
     assert args.use_retrieval_analogs is True
     assert args.use_regime_conditioning is True
     assert args.use_statement_delta is True
@@ -246,6 +251,7 @@ def test_dual_head_runner_default_off_byte_identity(monkeypatch):
     """Default invocation matches the pre-PR canonical loader kwargs."""
 
     pytest.importorskip("torch", reason="train_model import path needs torch")
+    from app.models.config import SEQUENCE_LENGTH
     from scripts import run_dual_head_comparison as runner
 
     captured = _capture_calls(monkeypatch, runner)
@@ -271,12 +277,14 @@ def test_dual_head_runner_default_off_byte_identity(monkeypatch):
     assert loader_kwargs["use_press_conf"] is False
     assert loader_kwargs["rich_features"] is True
     assert loader_kwargs["vol_target_horizon"] == 10
+    assert loader_kwargs["sequence_length"] == SEQUENCE_LENGTH
 
     train_kwargs = captured["train_calls"][0]
     model_config = train_kwargs["model_config"]
     assert model_config.rates_target_mode == "raw"
     assert model_config.vol_target_mode == "raw"
     assert model_config.vol_target_horizon == 10
+    assert model_config.sequence_length == SEQUENCE_LENGTH
     assert model_config.use_regime_conditioning is False
 
 
@@ -297,6 +305,7 @@ def test_dual_head_runner_opt_in_threads_through(monkeypatch):
         rates_target_mode="fomc_attributable",
         vol_target_mode="garch_residual",
         vol_target_horizon=5,
+        sequence_length=60,
         use_retrieval_analogs=True,
         use_regime_conditioning=True,
         use_statement_delta=True,
@@ -311,12 +320,14 @@ def test_dual_head_runner_opt_in_threads_through(monkeypatch):
     assert loader_kwargs["use_vote_features"] is True
     assert loader_kwargs["use_press_conf"] is True
     assert loader_kwargs["vol_target_horizon"] == 5
+    assert loader_kwargs["sequence_length"] == 60
 
     train_kwargs = captured["train_calls"][0]
     model_config = train_kwargs["model_config"]
     assert model_config.rates_target_mode == "fomc_attributable"
     assert model_config.vol_target_mode == "garch_residual"
     assert model_config.vol_target_horizon == 5
+    assert model_config.sequence_length == 60
     assert model_config.use_regime_conditioning is True
 
 

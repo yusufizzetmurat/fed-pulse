@@ -310,6 +310,8 @@ def _load_record_groups(path: Path) -> tuple[list[list[dict[str, Any]]], str]:
 
 def inspect_training_data_sources(
     data_dir: str | Path | None = None,
+    *,
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> tuple[list[list[FeatureVector]], list[TrainingDataSourceSummary]]:
     root = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
     if not root.exists():
@@ -340,7 +342,7 @@ def inspect_training_data_sources(
 
             record_count = sum(len(group) for group in groups)
             vectors_for_path = [build_feature_vectors(group) for group in groups]
-            usable = [vector_group for vector_group in vectors_for_path if len(vector_group) >= SEQUENCE_LENGTH + 1]
+            usable = [vector_group for vector_group in vectors_for_path if len(vector_group) >= sequence_length + 1]
             sequences.extend(usable)
             summaries.append(
                 TrainingDataSourceSummary(
@@ -504,8 +506,10 @@ def _append_event_day_target(
 
     The Phase 8 ``events.parquet`` carries 20 trading-day prior bars but
     no event-day bar; the downstream training-tensor builder needs a
-    ``SEQUENCE_LENGTH + 1`` row to compute one supervised (window,
-    target) pair per event.
+    ``sequence_length + 1`` row to compute one supervised (window,
+    target) pair per event. The default ``sequence_length`` is the
+    module-level ``SEQUENCE_LENGTH=20`` but the loader threads the
+    chosen value through end-to-end (#476).
 
     Two derivations are supported via ``target_mode``:
 
@@ -2533,6 +2537,7 @@ def load_training_sequences_from_package(
     use_text_embeddings: bool = True,
     text_embedding_cache_dir: Path | str | None = None,
     vol_target_horizon: int = DEFAULT_VOL_TARGET_HORIZON,
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> list[list[FeatureVector]]:
     """Load one prior-window sequence per FOMC event in a training package.
 
@@ -2834,7 +2839,7 @@ def load_training_sequences_from_package(
         except ValueError:
             continue
         bars = _parse_prior_bars(row.get("prior_bars_json"))
-        if len(bars) < SEQUENCE_LENGTH:
+        if len(bars) < sequence_length:
             continue
         row_text_hash = str(row.get("text_hash", ""))
         sentiment_score = _stance_to_sentiment(row.get("axis_stance"))
@@ -2843,7 +2848,7 @@ def load_training_sequences_from_package(
             event_date=event_date,
             sentiment_score=sentiment_score,
         )
-        if len(vectors) < SEQUENCE_LENGTH:
+        if len(vectors) < sequence_length:
             continue
         realized_return = _coerce_finite_float(row.get("realized_return"))
         abnormal_return = _coerce_finite_float(row.get("abnormal_return"))
@@ -3297,22 +3302,25 @@ def vol_regime_class_for(value: float | None, quantiles: Sequence[float]) -> int
 
 def collect_forward_vols(
     sequence_groups: Sequence[Sequence[FeatureVector]],
+    *,
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> list[float]:
     """Pull the forward-vol target off every supervised target row.
 
-    A "target" row is the bar at index ``SEQUENCE_LENGTH`` in a sequence
+    A "target" row is the bar at index ``sequence_length`` in a sequence
     group (the event-day bar appended by ``_append_event_day_target``).
     Non-target bars are skipped because their ``forward_realized_vol_10d``
     is irrelevant to the y axis. Rows whose target column is null /
     NaN are dropped so the caller (per-fold quantile fit) only sees
-    valid floats.
+    valid floats. ``sequence_length`` defaults to ``SEQUENCE_LENGTH`` so
+    pre-existing callers keep their byte-identical row counts.
     """
 
     out: list[float] = []
     for sequence_group in sequence_groups:
-        if len(sequence_group) < SEQUENCE_LENGTH + 1:
+        if len(sequence_group) < sequence_length + 1:
             continue
-        for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
+        for idx in range(sequence_length, len(sequence_group)):
             value = getattr(sequence_group[idx], "forward_realized_vol_10d", None)
             if value is None:
                 continue
@@ -3322,7 +3330,11 @@ def collect_forward_vols(
     return out
 
 
-def fit_close_scale(sequence_groups: Sequence[Sequence[FeatureVector]]) -> float:
+def fit_close_scale(
+    sequence_groups: Sequence[Sequence[FeatureVector]],
+    *,
+    sequence_length: int = SEQUENCE_LENGTH,
+) -> float:
     """Compute the per-fold close-price normaliser from the training rows.
 
     The forecaster normalises the close target by dividing by a positive
@@ -3346,9 +3358,9 @@ def fit_close_scale(sequence_groups: Sequence[Sequence[FeatureVector]]) -> float
 
     target_closes: list[float] = []
     for group in sequence_groups:
-        if len(group) < SEQUENCE_LENGTH + 1:
+        if len(group) < sequence_length + 1:
             continue
-        for idx in range(SEQUENCE_LENGTH, len(group)):
+        for idx in range(sequence_length, len(group)):
             target = group[idx]
             value = float(target.market_close)
             if value > 0.0:
@@ -3364,6 +3376,7 @@ def _build_training_tensors(
     *,
     output_mode: str = "regression",
     vol_regime_quantiles: Sequence[float] = (),
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> tuple[torch.Tensor | None, torch.Tensor | None, float]:
     """Materialise the (x, y, close_scale) triple for the training path.
 
@@ -3385,7 +3398,11 @@ def _build_training_tensors(
     ``FeatureVector`` constructed without the rich-feature loader).
     """
 
-    fitted_scale = float(close_scale) if close_scale is not None else fit_close_scale(sequence_groups)
+    fitted_scale = (
+        float(close_scale)
+        if close_scale is not None
+        else fit_close_scale(sequence_groups, sequence_length=sequence_length)
+    )
 
     use_rich = False
     for sequence_group in sequence_groups:
@@ -3402,10 +3419,10 @@ def _build_training_tensors(
     is_classification = output_mode == "classification"
 
     for sequence_group in sequence_groups:
-        if len(sequence_group) < SEQUENCE_LENGTH + 1:
+        if len(sequence_group) < sequence_length + 1:
             continue
-        for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
-            window = sequence_group[idx - SEQUENCE_LENGTH : idx]
+        for idx in range(sequence_length, len(sequence_group)):
+            window = sequence_group[idx - sequence_length : idx]
             target = sequence_group[idx]
             if is_classification:
                 cls_idx = vol_regime_class_for(
@@ -3447,6 +3464,7 @@ def _build_multi_task_target_tensors(
     sequence_groups: Sequence[Sequence[FeatureVector]],
     *,
     vol_regime_quantiles: Sequence[float],
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> dict[str, torch.Tensor] | None:
     """Materialise per-axis targets aligned with ``_build_training_tensors``.
 
@@ -3470,9 +3488,9 @@ def _build_multi_task_target_tensors(
     certainty_masks: list[bool] = []
 
     for sequence_group in sequence_groups:
-        if len(sequence_group) < SEQUENCE_LENGTH + 1:
+        if len(sequence_group) < sequence_length + 1:
             continue
-        for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
+        for idx in range(sequence_length, len(sequence_group)):
             target_row = sequence_group[idx]
             cls_idx = vol_regime_class_for(
                 getattr(target_row, "forward_realized_vol_10d", None),
@@ -3513,12 +3531,13 @@ def _build_text_embedding_tensors(
     sequence_groups: Sequence[Sequence[FeatureVector]],
     *,
     fallback_in_dim: int = 0,
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> tuple[torch.Tensor | None, torch.Tensor | None, int]:
     """Materialise the (pooled, missing_flag, in_dim) triple per training window.
 
     For each window the per-event pooled embedding lives on every
     ``FeatureVector`` in the group; the helper reads the embedding
-    off the LAST prior bar (index ``SEQUENCE_LENGTH - 1``) so the
+    off the LAST prior bar (index ``sequence_length - 1``) so the
     chosen vector matches the supervised window the trainer sees.
     Missing rows materialise a zero ``in_dim``-vector + a ``1.0``
     missing flag so the model's adapter projects the same zero slot
@@ -3556,9 +3575,9 @@ def _build_text_embedding_tensors(
     pooled_rows: list[list[float]] = []
     missing_rows: list[list[float]] = []
     for sequence_group in sequence_groups:
-        if len(sequence_group) < SEQUENCE_LENGTH + 1:
+        if len(sequence_group) < sequence_length + 1:
             continue
-        for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
+        for idx in range(sequence_length, len(sequence_group)):
             anchor = sequence_group[idx - 1]
             pooled_payload = list(getattr(anchor, "text_embedding_pooled", []) or [])
             missing_flag = float(getattr(anchor, "text_embedding_missing", 1.0))
