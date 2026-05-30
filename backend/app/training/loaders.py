@@ -1796,6 +1796,7 @@ def _load_package_sequences_with_metadata(
     text_embedding_cache_dir: Path | str | None = None,
     encoder_lora: bool = False,
     vol_target_horizon: int = DEFAULT_VOL_TARGET_HORIZON,
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> list[tuple[list[FeatureVector], str, str]]:
     """Materialise every event in a training package as a sequence triple.
 
@@ -1966,7 +1967,7 @@ def _load_package_sequences_with_metadata(
         except ValueError:
             continue
         bars = _parse_prior_bars(row.get("prior_bars_json"))
-        if len(bars) < SEQUENCE_LENGTH:
+        if len(bars) < sequence_length:
             continue
         row_text_hash = str(row.get("text_hash", ""))
         sentiment_score = _stance_to_sentiment(row.get("axis_stance"))
@@ -1975,7 +1976,7 @@ def _load_package_sequences_with_metadata(
             event_date=event_date,
             sentiment_score=sentiment_score,
         )
-        if len(vectors) < SEQUENCE_LENGTH:
+        if len(vectors) < sequence_length:
             continue
         realized_return = _coerce_finite_float(row.get("realized_return"))
         abnormal_return = _coerce_finite_float(row.get("abnormal_return"))
@@ -2317,6 +2318,7 @@ def load_walk_forward_split(
     embargo_days: int = 0,
     encoder_lora: bool = False,
     vol_target_horizon: int = DEFAULT_VOL_TARGET_HORIZON,
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> WalkForwardSplit:
     """Return the (train, val, test) sequence partitions for one fold.
 
@@ -2360,6 +2362,14 @@ def load_walk_forward_split(
     are split-tag-driven and have no manifest dates to anchor the
     embargo against).
 
+    ``sequence_length`` gates the minimum prior-bar count an event must
+    carry to survive the loader. Defaults to the module-level
+    ``SEQUENCE_LENGTH`` (20) so existing callers get byte-identical
+    behaviour; override (e.g. 60) to drive the longer-window arm
+    against a TP whose ``prior_bars_json`` carries the matching wider
+    window. Rows whose prior-bar list is shorter than ``sequence_length``
+    are dropped from every partition.
+
     Raises ``ValueError`` when the chosen partition produces an empty
     test list: a sweep that silently runs on no held-out events is the
     research-quality footgun this refactor was written to remove.
@@ -2398,6 +2408,7 @@ def load_walk_forward_split(
         text_embedding_cache_dir=text_embedding_cache_dir,
         encoder_lora=encoder_lora,
         vol_target_horizon=vol_target_horizon,
+        sequence_length=sequence_length,
     )
 
     train: list[list[FeatureVector]] = []
