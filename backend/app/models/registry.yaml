@@ -255,8 +255,9 @@ encoders:
       - text_embedding_missing
 
   finbert_fed_adjacent_xbank_aux_stance_masked:
-    repo: /data/artifacts/text_multi_axis/text_multi_axis_20260525T105459Z/hf_checkpoints
-    revision: "20260525T105459Z"
+    repo: yusufizzetmurat/finbert-fed-adjacent-xbank-aux-stance-masked
+    hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent-xbank-aux-stance-masked
+    revision: "8cfedd05b73903abd30b646becc2f4660bb36524"
     gated: false
     task: stance_classification
     description: |
@@ -276,8 +277,9 @@ encoders:
       - text_embedding_missing
 
   finbert_fed_adjacent_xbank_aux_weighted:
-    repo: /data/artifacts/text_multi_axis/text_multi_axis_20260525T110428Z/hf_checkpoints
-    revision: "20260525T110428Z"
+    repo: yusufizzetmurat/finbert-fed-adjacent-xbank-aux-weighted
+    hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent-xbank-aux-weighted
+    revision: "9be23ae09e3133ef4bb13fe6b068bfe24fd8b319"
     gated: false
     task: stance_classification
     description: |
@@ -295,8 +297,9 @@ encoders:
       - text_embedding_missing
 
   finbert_fed_adjacent_xbank_dapt_retrieval:
-    repo: /data/artifacts/retrieval/finbert_fed_adjacent_xbank_dapt_retrieval/checkpoint
-    revision: ""
+    repo: yusufizzetmurat/finbert-fed-adjacent-xbank-dapt-retrieval
+    hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent-xbank-dapt-retrieval
+    revision: "766c09d5c65a420eeebc7d4bf74e615509ded03d"
     gated: false
     task: sentence_embedding
     description: |
@@ -318,8 +321,9 @@ encoders:
       - text_embedding_missing
 
   trajectory_lstm:
-    repo: /data/artifacts/trajectory/trajectory_lstm/model.pt
-    revision: ""
+    repo: yusufizzetmurat/fed-pulse-trajectory-lstm
+    hf_uri: hf://yusufizzetmurat/fed-pulse-trajectory-lstm
+    revision: "ac4d45acbe5ba841a7b2e14167f02561d90ed7c4"
     gated: false
     task: trajectory_classification
     description: |
@@ -335,8 +339,9 @@ encoders:
     inference_features: []
 
   trajectory_transformer:
-    repo: /data/artifacts/trajectory/trajectory_transformer/model.pt
-    revision: ""
+    repo: yusufizzetmurat/fed-pulse-trajectory-transformer
+    hf_uri: hf://yusufizzetmurat/fed-pulse-trajectory-transformer
+    revision: "6312ed6a5d679d7a9ac56ec2700207860ba9237f"
     gated: false
     task: trajectory_classification
     description: |
