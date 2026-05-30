@@ -465,6 +465,23 @@ artefacts:
       longer the resolution target.
     inference_features: []
 
+  training_package_60bar:
+    hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-training-package
+    revision: "51cce38ebe58166042933876d8e23bdcb76b8306"
+    eager: false
+    description: |
+      60-bar prior-window variant of the canonical training package
+      (#209/#476). Identical events, labels, splits, and fold manifest
+      to the canonical pin; the only difference is ``prior_bars_json``
+      carries 60 trailing bars instead of 20. Rebuilt 2026-05-30 with
+      the same ``--delta-encoder finbert_fed_adjacent`` pass so
+      statement_delta_embedding stays populated (1427/7172 rows).
+      Pulled to ``data/processed/canonical_60bar/`` via the same
+      ``snapshot_download(repo_type='dataset', revision=...)`` recipe
+      as the canonical TP. Consumed by the ``seq_len_60`` sweep arm
+      once the loader's ``sequence_length`` plumbing lands.
+    inference_features: []
+
   embedding_caches:
     hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-embedding-caches
     revision: "89c3bc119182b9a39a4f96d18bd238a5adbcdfba"
