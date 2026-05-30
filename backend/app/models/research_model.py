@@ -78,6 +78,7 @@ class ForecasterResearchModel(ForecasterBase):
         use_vix_features: bool = False,
         symbol_embedding_dim: int = 0,
         n_symbols: int = 0,
+        aux_horizons: tuple[int, ...] = (),
     ):
         if output_mode not in {"regression", "classification"}:
             raise ValueError(
@@ -178,6 +179,31 @@ class ForecasterResearchModel(ForecasterBase):
                 )
             else:
                 self.regression_head = None
+            # #471 multi-horizon auxiliary regression heads. Mount only
+            # when the primary log-RV regression head is also mounted --
+            # the aux heads share the encoder + recurrent core and only
+            # differ from the primary in their supervised target column
+            # (``forward_realized_vol_<H>d`` for each H). Aux heads stay
+            # empty when ``head_mode='classification'`` because the joint
+            # loss has no primary regression branch for them to compose
+            # with; the same head-mode + aux-horizons combination is
+            # rejected at the factory to surface the misconfiguration
+            # early. ``aux_horizons=()`` (default) leaves the ModuleDict
+            # empty so the state_dict shape is byte-identical to the
+            # pre-#471 path.
+            self.aux_horizons: tuple[int, ...] = tuple(
+                int(h) for h in aux_horizons or ()
+            )
+            self.aux_regression_heads: nn.ModuleDict = nn.ModuleDict()
+            if self.aux_horizons and self.regression_head is not None:
+                for horizon in self.aux_horizons:
+                    self.aux_regression_heads[f"h{int(horizon)}"] = nn.Sequential(
+                        nn.LayerNorm(head_input_size),
+                        nn.Linear(head_input_size, head_hidden_size),
+                        nn.GELU(),
+                        nn.Dropout(dropout),
+                        nn.Linear(head_hidden_size, 1),
+                    )
             self.rates_heads_active: tuple[str, ...] = tuple(
                 str(name).lower() for name in rates_heads or ()
             )
@@ -226,6 +252,8 @@ class ForecasterResearchModel(ForecasterBase):
             self.rates_aux_classification = bool(rates_aux_classification)
             self.rates_regression_heads = nn.ModuleDict()
             self.rates_classification_heads = nn.ModuleDict()
+            self.aux_horizons = ()
+            self.aux_regression_heads = nn.ModuleDict()
 
     def _pool_with_symbol(
         self,
@@ -289,6 +317,10 @@ class ForecasterResearchModel(ForecasterBase):
             ):
                 log_rv_pred = self.regression_head(head_input).squeeze(-1)
                 stashed["log_rv"] = log_rv_pred.detach()
+                for horizon in self.aux_horizons:
+                    key = f"h{int(horizon)}"
+                    aux_pred = self.aux_regression_heads[key](head_input).squeeze(-1)
+                    stashed[f"aux_log_rv_{int(horizon)}d"] = aux_pred.detach()
             for name in self.rates_heads_active:
                 bps_pred = self.rates_regression_heads[name](pooled_step).squeeze(-1)
                 stashed[f"rates_{name}_bps"] = bps_pred.detach()
@@ -346,6 +378,10 @@ class ForecasterResearchModel(ForecasterBase):
         ):
             log_rv_pred = self.regression_head(head_input).squeeze(-1)
             multi_task["log_rv"] = log_rv_pred
+            for horizon in self.aux_horizons:
+                key = f"h{int(horizon)}"
+                aux_pred = self.aux_regression_heads[key](head_input).squeeze(-1)
+                multi_task[f"aux_log_rv_{int(horizon)}d"] = aux_pred
         for name in self.rates_heads_active:
             bps_pred = self.rates_regression_heads[name](pooled_step).squeeze(-1)
             multi_task[f"rates_{name}_bps"] = bps_pred

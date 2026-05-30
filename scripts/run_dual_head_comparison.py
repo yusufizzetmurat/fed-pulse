@@ -297,6 +297,35 @@ def _parse_args() -> argparse.Namespace:
             "``1 + |true - argmax|`` so far-bin confusions pay more."
         ),
     )
+    # #471 multi-horizon auxiliary regression heads. Empty default
+    # (no aux heads mounted) keeps every existing canonical sweep
+    # byte-identical. ``--aux-horizons 5,20`` mounts one parallel
+    # regression head per listed horizon; each head shares the
+    # encoder + recurrent core with the primary log-RV head and is
+    # supervised against ``forward_realized_vol_<H>d``.
+    parser.add_argument(
+        "--aux-horizons",
+        dest="aux_horizons",
+        type=_parse_aux_horizons,
+        default=(),
+        help=(
+            "Comma-separated forward-vol horizons to mount as auxiliary "
+            "regression targets alongside the canonical 10d primary. "
+            "Example: '--aux-horizons 5,20'. Each entry must be a "
+            "supported horizon other than 10. Empty default leaves the "
+            "joint loss byte-identical to the pre-#471 path."
+        ),
+    )
+    parser.add_argument(
+        "--aux-horizon-alpha",
+        type=float,
+        default=0.3,
+        help=(
+            "Weight on each auxiliary horizon's MSE term in the joint "
+            "loss (single scalar shared across every aux horizon). "
+            "Default 0.3 mirrors the multi-task aux convention."
+        ),
+    )
     # Pooled-text path. Default ``None`` keeps the text path off so the
     # canonical sweep stays byte-identical; set to an encoder alias
     # (resolved through ``app.models.registry.encoder_ref``) or a HF
@@ -390,6 +419,40 @@ def _parse_args() -> argparse.Namespace:
         use_vix_features=False,
     )
     return parser.parse_args()
+
+
+def _parse_aux_horizons(value: str) -> tuple[int, ...]:
+    """Parse the ``--aux-horizons`` CLI value into a validated tuple.
+
+    Accepts a comma-separated list of integers (e.g. ``"5,20"``).
+    Rejects any entry not in the supported aux set
+    (``{1, 3, 5, 20, 30}``) so the misconfiguration surfaces at parse
+    time rather than after the loader read.
+    """
+
+    from app.models.config import SUPPORTED_VOL_TARGET_HORIZONS
+
+    if not value or not value.strip():
+        return ()
+    parts = [chunk.strip() for chunk in value.split(",") if chunk.strip()]
+    horizons: list[int] = []
+    allowed = tuple(h for h in SUPPORTED_VOL_TARGET_HORIZONS if h != 10)
+    for chunk in parts:
+        try:
+            horizon = int(chunk)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                f"--aux-horizons entry {chunk!r} is not an integer"
+            ) from exc
+        if horizon not in allowed:
+            raise argparse.ArgumentTypeError(
+                f"--aux-horizons entry {horizon} is not in the allowed "
+                f"set {allowed} (10 is the primary and excluded)"
+            )
+        horizons.append(horizon)
+    # Preserve operator-supplied ordering so the column order on the
+    # aux target tensor is reproducible across runs.
+    return tuple(horizons)
 
 
 def _resolve_fold_ids(training_package_id: str, override: list[str] | None) -> list[str]:
@@ -515,6 +578,8 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
     vol_regime_label_mode: str = "per_fold_quantile",
     absolute_vol_thresholds: tuple[float, float] | None = None,
     use_mp_surprise: bool = True,
+    aux_horizons: tuple[int, ...] = (),
+    aux_horizon_alpha: float = 0.3,
 ) -> dict[str, Any]:
     # Imports happen here so the script is importable without a torch
     # install (useful for doc-only environments).
@@ -558,6 +623,8 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
         regime_loss_mode=regime_loss,
         vol_regime_label_mode=vol_regime_label_mode,
         absolute_vol_thresholds=resolved_absolute_thresholds,
+        aux_horizons=tuple(aux_horizons),
+        aux_horizon_alpha=float(aux_horizon_alpha),
     )
 
     per_fold: list[dict[str, Any]] = []
@@ -696,6 +763,8 @@ def main() -> int:
                     vol_regime_label_mode=str(args.vol_regime_label_mode),
                     absolute_vol_thresholds=absolute_thresholds,
                     use_mp_surprise=bool(args.use_mp_surprise),
+                    aux_horizons=tuple(args.aux_horizons),
+                    aux_horizon_alpha=float(args.aux_horizon_alpha),
                 )
             )
 
@@ -760,6 +829,8 @@ def main() -> int:
         "absolute_calm_max_annualized": args.absolute_calm_max,
         "absolute_high_min_annualized": args.absolute_high_min,
         "use_mp_surprise": bool(args.use_mp_surprise),
+        "aux_horizons": list(args.aux_horizons),
+        "aux_horizon_alpha": float(args.aux_horizon_alpha),
         "trials": trials,
         "summary": summary,
     }

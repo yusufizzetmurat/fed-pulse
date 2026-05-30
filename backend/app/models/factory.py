@@ -176,6 +176,13 @@ def build_forecaster(
             # #480 symbol-conditioned regime head is research-only on the
             # recurrent class. The flat_mlp ctor does not consume it.
             "symbol_embedding_dim",
+            # #471 multi-horizon aux regression heads. The flat_mlp ctor
+            # does not mount the recurrent log-RV head's architecture,
+            # so the aux heads are not wired into it either. Drop both
+            # the head-list and the loss-side alpha so the kwargs
+            # dispatch stays a strict shape contract.
+            "aux_horizons",
+            "aux_horizon_alpha",
         ):
             flat_kwargs.pop(drop, None)
         flat_rates_heads = tuple(
@@ -431,6 +438,42 @@ def build_forecaster(
     # response-surface picker. Default 0 keeps the legacy path
     # byte-identical (no embedding module, no widening).
     symbol_embedding_dim_value = int(kwargs.pop("symbol_embedding_dim", 0) or 0)
+    # #471 multi-horizon aux regression heads. Pop here so the serving
+    # constructor (which does not accept the kwarg) does not receive
+    # it. The research class consumes ``aux_horizons`` directly to
+    # mount one parallel log-RV head per horizon; ``aux_horizon_alpha``
+    # is a loss-side knob the training loop reads off the stashed
+    # module attribute, so the model ctor never sees it.
+    aux_horizons_value: tuple[int, ...] = tuple(
+        int(v) for v in kwargs.pop("aux_horizons", ()) or ()
+    )
+    aux_horizon_alpha_value = float(kwargs.pop("aux_horizon_alpha", 0.3))
+    # Validate aux horizons are in the supported set and don't include
+    # the canonical primary (10). Reject early instead of mounting heads
+    # that the loss path cannot supervise. The empty-tuple default
+    # short-circuits cleanly.
+    if aux_horizons_value:
+        from app.models.config import SUPPORTED_VOL_TARGET_HORIZONS
+        invalid = [
+            h for h in aux_horizons_value
+            if h not in SUPPORTED_VOL_TARGET_HORIZONS or h == 10
+        ]
+        if invalid:
+            raise ValueError(
+                f"aux_horizons={aux_horizons_value} contains unsupported entries "
+                f"{invalid}. Allowed: any non-empty subset of "
+                f"{tuple(h for h in SUPPORTED_VOL_TARGET_HORIZONS if h != 10)}."
+            )
+        # Aux heads share the architecture of the primary log-RV head
+        # (head_mode in {regression, dual}). Reject classification mode
+        # so the misconfiguration surfaces before training fires.
+        head_mode_value = str(kwargs.get("head_mode", "dual") or "dual")
+        if head_mode_value == "classification":
+            raise ValueError(
+                f"aux_horizons={aux_horizons_value} requires head_mode in "
+                "{'regression', 'dual'} (the aux heads share the architecture "
+                f"of the primary log-RV head). Got head_mode={head_mode_value!r}."
+            )
     model: ForecasterResearchModel | ForecasterServingModel
     if role == "serving":
         # Serving construction trims the loss-side / sweep-side knobs the
@@ -462,6 +505,7 @@ def build_forecaster(
             use_vote_features=use_vote_features_flag,
             use_vix_features=use_vix_features_flag,
             symbol_embedding_dim=symbol_embedding_dim_value,
+            aux_horizons=aux_horizons_value,
             **kwargs,
         )
     # mypy reads ``nn.Module`` attribute writes as ``Tensor | Module``;
@@ -517,6 +561,14 @@ def build_forecaster(
     # which role built the module.
     if not hasattr(model, "symbol_embedding_dim"):
         model.symbol_embedding_dim = symbol_embedding_dim_value
+    # #471 round-trip the aux-horizons tuple + alpha so
+    # ``ModelConfig.from_model`` recovers them on resume. The research
+    # class set ``aux_horizons`` in its ctor; the serving class never
+    # mounts the heads, so the tuple stashes empty there. ``aux_horizon_alpha``
+    # is loss-side only -- the model ctor never sees it.
+    if not hasattr(model, "aux_horizons"):
+        model.aux_horizons = aux_horizons_value
+    model.aux_horizon_alpha = aux_horizon_alpha_value  # type: ignore[assignment]
     return model
 
 

@@ -172,6 +172,88 @@ def test_dual_head_runner_rejects_unsupported_target_horizon(monkeypatch):
         _parse_args()
 
 
+def test_dual_head_runner_aux_horizons_default_empty(monkeypatch):
+    """``--aux-horizons`` defaults to an empty tuple (#471 default-off)."""
+
+    from scripts.run_dual_head_comparison import _parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_dual_head_comparison",
+            "--training-package-id",
+            "tp_dummy",
+        ],
+    )
+    args = _parse_args()
+    assert args.aux_horizons == ()
+    assert args.aux_horizon_alpha == 0.3
+
+
+def test_dual_head_runner_aux_horizons_accepts_csv(monkeypatch):
+    """``--aux-horizons 5,20`` parses into a 2-tuple of ints."""
+
+    from scripts.run_dual_head_comparison import _parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_dual_head_comparison",
+            "--training-package-id",
+            "tp_dummy",
+            "--aux-horizons",
+            "5,20",
+            "--aux-horizon-alpha",
+            "0.5",
+        ],
+    )
+    args = _parse_args()
+    assert args.aux_horizons == (5, 20)
+    assert args.aux_horizon_alpha == 0.5
+
+
+def test_dual_head_runner_rejects_invalid_aux_horizon(monkeypatch):
+    """An aux horizon outside ``{1, 3, 5, 20, 30}`` fails parse."""
+
+    from scripts.run_dual_head_comparison import _parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_dual_head_comparison",
+            "--training-package-id",
+            "tp_dummy",
+            "--aux-horizons",
+            "7",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        _parse_args()
+
+
+def test_dual_head_runner_rejects_primary_horizon_in_aux(monkeypatch):
+    """10d is the primary and must be rejected from the aux tuple."""
+
+    from scripts.run_dual_head_comparison import _parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_dual_head_comparison",
+            "--training-package-id",
+            "tp_dummy",
+            "--aux-horizons",
+            "10",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        _parse_args()
+
+
 def test_dual_head_runner_rejects_unknown_rates_target_mode(monkeypatch):
     from scripts.run_dual_head_comparison import _parse_args
 
@@ -506,6 +588,32 @@ def test_dual_head_runner_no_mp_surprise_threads_into_loader(monkeypatch):
 
     loader_kwargs = captured["loader_calls"][0]
     assert loader_kwargs["use_mp_surprise"] is False
+
+
+def test_dual_head_runner_aux_horizons_threads_through(monkeypatch):
+    """``--aux-horizons`` lands on the ModelConfig the runner builds."""
+
+    pytest.importorskip("torch", reason="train_model import path needs torch")
+    from scripts import run_dual_head_comparison as runner
+
+    captured = _capture_calls(monkeypatch, runner)
+
+    runner._run_one_cell(
+        "dual",
+        seed=11,
+        training_package_id="tp_dummy",
+        fold_ids=["fold_001"],
+        epochs=1,
+        regression_alpha=0.5,
+        hidden_size=64,
+        aux_horizons=(5, 20),
+        aux_horizon_alpha=0.4,
+    )
+
+    train_kwargs = captured["train_calls"][0]
+    model_config = train_kwargs["model_config"]
+    assert model_config.aux_horizons == (5, 20)
+    assert model_config.aux_horizon_alpha == 0.4
 
 
 def test_dual_head_runner_opt_in_threads_through(monkeypatch):

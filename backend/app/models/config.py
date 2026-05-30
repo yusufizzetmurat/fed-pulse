@@ -747,6 +747,21 @@ class ModelConfig:
     # to a follow-up because the response surface still emits one card
     # per statement (no per-symbol picker yet). See ADR + #480.
     symbol_embedding_dim: int = 0
+    # #471 multi-horizon auxiliary regression targets. Empty tuple
+    # (default) keeps the dual-head log-RV path byte-identical: no aux
+    # heads mount, no aux MSE term enters the joint loss, and the
+    # state_dict shape is unchanged. Each value in the tuple must be a
+    # supported forward-vol horizon other than 10 (the canonical primary
+    # target); the model factory mounts one parallel regression head per
+    # entry (same architecture as the canonical log-RV head) and the
+    # training loop adds an auxiliary
+    # ``aux_horizon_alpha * MSE(log(forward_realized_vol_<H>d_pred), target)``
+    # term to the joint loss for each mounted head. Applies to any
+    # ``head_mode`` whose forward emits the primary ``log_rv`` head
+    # (``regression`` and ``dual`` -- ``classification`` has no
+    # regression branch to mount aux heads against). See #471.
+    aux_horizons: tuple[int, ...] = ()
+    aux_horizon_alpha: float = 0.3
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -842,6 +857,12 @@ class ModelConfig:
             ),
             symbol_embedding_dim=int(
                 getattr(model, "symbol_embedding_dim", 0) or 0
+            ),
+            aux_horizons=tuple(
+                int(v) for v in getattr(model, "aux_horizons", ()) or ()
+            ),
+            aux_horizon_alpha=float(
+                getattr(model, "aux_horizon_alpha", 0.3)
             ),
         )
 
