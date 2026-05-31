@@ -144,7 +144,11 @@ export async function fetchHistoryRealizedBatch(
   for (let i = 0; i < runIds.length; i += HISTORY_REALIZED_CHUNK) {
     chunks.push(runIds.slice(i, i + HISTORY_REALIZED_CHUNK) as string[]);
   }
-  const responses = await Promise.all(
+  // ``allSettled`` so a transient failure on one chunk does not blank the
+  // whole table — the surviving chunks' rows still render and the failed
+  // chunk's ids fall under ``missing`` so the caller can show them as
+  // unresolved.
+  const settled = await Promise.allSettled(
     chunks.map((chunk) =>
       axios
         .get(`${baseUrl}/history-realized`, {
@@ -156,10 +160,14 @@ export async function fetchHistoryRealizedBatch(
   );
   const items: HistoryRealizedBatchResponse["items"] = {};
   const missing: string[] = [];
-  for (const r of responses) {
-    Object.assign(items, r.items);
-    missing.push(...r.missing);
-  }
+  settled.forEach((result, idx) => {
+    if (result.status === "fulfilled") {
+      Object.assign(items, result.value.items);
+      missing.push(...result.value.missing);
+    } else {
+      missing.push(...chunks[idx]);
+    }
+  });
   return { items, missing };
 }
 
