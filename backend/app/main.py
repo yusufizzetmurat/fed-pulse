@@ -101,6 +101,7 @@ from app.services.market_data import (
 )
 from app.services.policy_action_extractor import extract_policy_action
 from app.services.text_encoder import analyze_text
+from app.services.forecaster_text_embedding import encode_text_pooled
 
 logger = logging.getLogger(__name__)
 
@@ -587,7 +588,17 @@ def _build_analyze_response(
         steps=horizon_steps,
     )
 
-    history_vectors = build_feature_vectors(market_history, sentiment_score=float(sentiment["score"]), document_date=payload.date)
+    # Encode the pasted statement once so the forecaster's text channel is
+    # populated at inference. Without it the model degenerates to a market-
+    # only predictor. None on load failure -> loader emits the missing-flag
+    # and the text slot zero-pads.
+    pooled_text_embedding = encode_text_pooled(payload.text)
+    history_vectors = build_feature_vectors(
+        market_history,
+        sentiment_score=float(sentiment["score"]),
+        document_date=payload.date,
+        text_embedding=pooled_text_embedding,
+    )
     forecast = forecast_quantitative_series(
         vectors=history_vectors,
         forecast_mode=mode,
@@ -1558,10 +1569,12 @@ async def analyze_market(payload: AnalyzeRequest) -> MarketReactionPanel:
         symbol=payload.symbol,
         history_length=30,
     )
+    pooled_text_embedding = encode_text_pooled(payload.text)
     history_vectors = build_feature_vectors(
         market_history,
         sentiment_score=float(sentiment["score"]),
         document_date=payload.date,
+        text_embedding=pooled_text_embedding,
     )
     try:
         result = await run_in_threadpool(

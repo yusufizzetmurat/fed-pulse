@@ -1302,6 +1302,17 @@ class FeatureVector:
         if previous_volatility is not None:
             volatility_change = float(market_volatility) - float(previous_volatility)
 
+        # Route the supplied embedding into BOTH the legacy
+        # ``text_embedding`` field and the rich-feature
+        # ``text_embedding_pooled`` field that the post-#173 forecaster
+        # tensor builder reads. ``text_embedding_missing`` flips to 0.0
+        # when an embedding is supplied so the model uses the channel
+        # instead of the absent-text zero-pad.
+        pooled: list[float] = []
+        missing = 1.0
+        if text_embedding is not None and len(text_embedding) > 0:
+            pooled = [float(v) for v in text_embedding]
+            missing = 0.0
         return cls(
             date=date,
             sentiment_score=float(sentiment_score),
@@ -1311,6 +1322,8 @@ class FeatureVector:
             volatility_change=float(volatility_change),
             elapsed_time=float(elapsed_time),
             text_embedding=list(text_embedding) if text_embedding is not None else None,
+            text_embedding_pooled=pooled,
+            text_embedding_missing=missing,
         )
 
     def as_list(self, close_scale: float = DEFAULT_CLOSE_SCALE) -> list[float]:
