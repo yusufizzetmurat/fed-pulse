@@ -660,6 +660,48 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
     # tail (regime / sep / press_conf / statement_delta / vote / vix) is
     # widened inside ``ForecasterBase.__init__`` via the per-tail
     # ``*_tail_dim`` accumulators; widening here would double-count.
+    # Text-channel resolution. The loader already loads the encoder
+    # and emits per-event pooled embeddings when both ``text_encoder``
+    # and ``use_text_embeddings`` are truthy, but the model only
+    # consumes the channel when BOTH ``text_embedding_dim`` and
+    # ``text_adapter_dim`` are positive on ModelConfig. Before #546
+    # this runner threaded neither, so every text-encoder arm trained
+    # against a 0-width text channel (i.e. the no-text baseline). The
+    # block below resolves the encoder's native hidden_size off the
+    # registry-pinned config and sets both dims so the model actually
+    # consumes the embeddings. The 128-dim adapter target mirrors the
+    # forecaster_credibility default.
+    resolved_text_embedding_dim = 0
+    resolved_text_adapter_dim = 0
+    resolved_text_channel = "scalar"
+    if text_encoder and use_text_embeddings:
+        from app.models.registry import encoder_ref
+
+        ref = encoder_ref(text_encoder)
+        if ref is None:
+            raise ValueError(
+                f"text_encoder={text_encoder!r} did not resolve via "
+                "app.models.registry.encoder_ref. Add it to "
+                "backend/app/models/registry.yaml or pass a valid alias."
+            )
+        from transformers import AutoConfig
+
+        encoder_config = AutoConfig.from_pretrained(
+            ref.repo, revision=ref.revision or None
+        )
+        resolved_text_embedding_dim = int(
+            getattr(encoder_config, "hidden_size", 0) or 0
+        )
+        if resolved_text_embedding_dim <= 0:
+            raise ValueError(
+                f"text_encoder={text_encoder!r} resolved a config but "
+                f"hidden_size was {resolved_text_embedding_dim!r}. The "
+                "encoder cannot drive the text channel without a positive "
+                "hidden_size on its transformer config."
+            )
+        resolved_text_adapter_dim = 128
+        resolved_text_channel = "embeddings"
+
     config = ModelConfig(
         input_size=RICH_FEATURE_SIZE,
         output_mode="classification",
@@ -685,6 +727,9 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
         absolute_vol_thresholds=resolved_absolute_thresholds,
         aux_horizons=tuple(aux_horizons),
         aux_horizon_alpha=float(aux_horizon_alpha),
+        text_channel=resolved_text_channel,
+        text_embedding_dim=resolved_text_embedding_dim,
+        text_adapter_dim=resolved_text_adapter_dim,
     )
 
     per_fold: list[dict[str, Any]] = []

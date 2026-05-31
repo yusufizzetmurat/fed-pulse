@@ -759,6 +759,72 @@ def test_dual_head_runner_text_encoder_threads_into_loader(monkeypatch):
     assert loader_kwargs["use_text_embeddings"] is False
 
 
+def test_dual_head_runner_text_encoder_activates_model_text_channel(monkeypatch):
+    """``text_encoder`` + ``use_text_embeddings`` activate the model text channel.
+
+    Pre-#546 runner threaded the loader-side toggle but left ModelConfig at
+    text_embedding_dim=0 / text_adapter_dim=0, so the model silently
+    ignored the embeddings the loader emitted (the encoder bake-off
+    no-op surfaced in §6.38). This pins the regression: when the text
+    encoder is set, the model's text channel must be non-zero on both
+    dims AND the channel mode must be ``embeddings``.
+    """
+
+    pytest.importorskip("torch", reason="train_model import path needs torch")
+    pytest.importorskip("transformers", reason="encoder hidden_size resolution")
+    from scripts import run_dual_head_comparison as runner
+
+    captured = _capture_calls(monkeypatch, runner)
+
+    runner._run_one_cell(
+        "dual",
+        seed=11,
+        training_package_id="tp_dummy",
+        fold_ids=["fold_001"],
+        epochs=1,
+        regression_alpha=0.5,
+        hidden_size=64,
+        text_encoder="finbert_fed_adjacent",
+        use_text_embeddings=True,
+    )
+
+    train_kwargs = captured["train_calls"][0]
+    model_config = train_kwargs["model_config"]
+    assert model_config.text_embedding_dim > 0, (
+        "text_encoder set with use_text_embeddings=True must resolve a "
+        "positive hidden_size onto ModelConfig.text_embedding_dim; "
+        "otherwise ForecasterBase ignores the loader-emitted embeddings."
+    )
+    assert model_config.text_adapter_dim > 0
+    assert model_config.text_channel == "embeddings"
+
+
+def test_dual_head_runner_text_encoder_unset_keeps_text_channel_off(monkeypatch):
+    """Default invocation must keep the text channel at the byte-identical
+    no-text path (both dims 0, channel='scalar')."""
+
+    pytest.importorskip("torch", reason="train_model import path needs torch")
+    from scripts import run_dual_head_comparison as runner
+
+    captured = _capture_calls(monkeypatch, runner)
+
+    runner._run_one_cell(
+        "dual",
+        seed=11,
+        training_package_id="tp_dummy",
+        fold_ids=["fold_001"],
+        epochs=1,
+        regression_alpha=0.5,
+        hidden_size=64,
+    )
+
+    train_kwargs = captured["train_calls"][0]
+    model_config = train_kwargs["model_config"]
+    assert model_config.text_embedding_dim == 0
+    assert model_config.text_adapter_dim == 0
+    assert model_config.text_channel == "scalar"
+
+
 # ---------------------------------------------------------------------------
 # #401 follow-up: auto-activate rates heads when rates_target_mode != raw.
 # Without rates heads mounted, --rates-target-mode is a no-op and the
