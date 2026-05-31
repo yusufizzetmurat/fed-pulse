@@ -117,9 +117,22 @@ def _standardize(x_tr: np.ndarray, x_te: np.ndarray) -> tuple[np.ndarray, np.nda
 
 
 def _train_fusion_fold(
-    data: dict[str, np.ndarray], tr: np.ndarray, te: np.ndarray, *, seed: int, epochs: int
+    data: dict[str, np.ndarray],
+    tr: np.ndarray,
+    te: np.ndarray,
+    *,
+    seed: int,
+    epochs: int,
+    info_nce_weight: float = 0.1,
+    patience: int = 10,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Train on a fold; return (fused_pred, market_only_pred, test_gate) in RV space."""
+    """Train on a fold with early stopping; return (fused, market_only, gate) in RV space.
+
+    Mirrors the bake-off DL discipline: a time-ordered validation split (last 20%
+    of the train fold) drives early stopping, and the HAR-residual target is
+    standardized — so when text carries no generalizable signal the model stops
+    early and collapses toward the HAR floor instead of overfitting.
+    """
 
     import torch
 
@@ -128,54 +141,76 @@ def _train_fusion_fold(
 
     enable_deterministic_mode(seed)
     har, tgt = data["har"], data["targets"]
-    # HAR floor: per-target OLS; model learns the residual, predictions add HAR back
-    har_te_pred = np.column_stack(
-        [_fit_predict_ols(har[tr], tgt[tr, k], har[te]) for k in range(tgt.shape[1])]
-    )
-    har_tr_pred = np.column_stack(
-        [_fit_predict_ols(har[tr], tgt[tr, k], har[tr]) for k in range(tgt.shape[1])]
-    )
-    resid_tr = tgt[tr] - har_tr_pred
-    mf_tr, mf_te = _standardize(data["market_feat"][tr], data["market_feat"][te])
-    # text embeddings standardized on text-present train rows to avoid zero-row skew
-    present = data["text_mask"][tr] > 0
-    ref = data["text_emb"][tr][present] if present.any() else data["text_emb"][tr]
+    nt = tgt.shape[1]
+    har_te_pred = np.column_stack([_fit_predict_ols(har[tr], tgt[tr, k], har[te]) for k in range(nt)])
+    har_tr_pred = np.column_stack([_fit_predict_ols(har[tr], tgt[tr, k], har[tr]) for k in range(nt)])
+    resid = tgt[tr] - har_tr_pred
+
+    n = len(tr)
+    n_val = max(1, n // 5)
+    core, val = slice(0, n - n_val), slice(n - n_val, n)
+
+    # standardize on the training-core only (no val/test leakage)
+    mf = data["market_feat"][tr]
+    mfm, mfs = mf[core].mean(0), mf[core].std(0)
+    mfs = np.where(mfs > 0, mfs, 1.0)
+    mf_std = (mf - mfm) / mfs
+    mf_te = (data["market_feat"][te] - mfm) / mfs
+    emb, mask_tr = data["text_emb"][tr], data["text_mask"][tr]
+    present = mask_tr[core] > 0
+    ref = emb[core][present] if present.any() else emb[core]
     em, es = ref.mean(0), ref.std(0)
     es = np.where(es > 0, es, 1.0)
-    te_emb_tr = ((data["text_emb"][tr] - em) / es) * data["text_mask"][tr][:, None]
-    te_emb_te = ((data["text_emb"][te] - em) / es) * data["text_mask"][te][:, None]
+    emb_std = ((emb - em) / es) * mask_tr[:, None]
+    emb_te = ((data["text_emb"][te] - em) / es) * data["text_mask"][te][:, None]
+    ym, ys = resid[core].mean(0), resid[core].std(0)
+    ys = np.where(ys > 0, ys, 1.0)
+    resid_std = (resid - ym) / ys
 
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = build_model(data["text_emb"].shape[1], mf_tr.shape[1], tgt.shape[1]).to(dev)
+    model = build_model(emb.shape[1], mf.shape[1], nt).to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 
-    def _batch(idx: np.ndarray) -> dict[str, Any]:
-        return {
-            "text_emb": torch.tensor(te_emb_tr[idx], dtype=torch.float32, device=dev),
-            "market_feat": torch.tensor(mf_tr[idx], dtype=torch.float32, device=dev),
-            "text_mask": torch.tensor(data["text_mask"][tr][idx], dtype=torch.float32, device=dev),
-            "targets": torch.tensor(resid_tr[idx], dtype=torch.float32, device=dev),
-        }
+    def tt(a: np.ndarray) -> "torch.Tensor":
+        return torch.tensor(a, dtype=torch.float32, device=dev)
 
+    emb_t, mf_t, mask_t, y_t = tt(emb_std), tt(mf_std), tt(mask_tr), tt(resid_std)
+    vb = {"text_emb": emb_t[val], "market_feat": mf_t[val], "text_mask": mask_t[val]}
+
+    core_pos = np.arange(0, n - n_val)
     rng = np.random.default_rng(seed)
-    model.train()
+    best, best_state, bad = float("inf"), None, 0
     for _ in range(epochs):
-        order = rng.permutation(len(tr))
-        for start in range(0, len(order), 256):
+        model.train()
+        order = rng.permutation(len(core_pos))
+        for s in range(0, len(order), 256):
+            b = core_pos[order[s : s + 256]]
             opt.zero_grad()
-            loss = fusion_loss(model, _batch(order[start : start + 256]))["loss"]
+            batch = {"text_emb": emb_t[b], "market_feat": mf_t[b], "text_mask": mask_t[b], "targets": y_t[b]}
+            loss = fusion_loss(model, batch, info_nce_weight=info_nce_weight)["loss"]
             loss.backward()  # type: ignore[no-untyped-call]
             opt.step()
+        model.eval()
+        with torch.no_grad():
+            vpred = model(vb["text_emb"], vb["market_feat"], vb["text_mask"])["pred"]
+            vloss = float(torch.nn.functional.huber_loss(vpred, y_t[val]))
+        if vloss < best - 1e-6:
+            best, bad = vloss, 0
+            best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        else:
+            bad += 1
+            if bad >= patience:
+                break
+    if best_state is not None:
+        model.load_state_dict(best_state)
 
     model.eval()
     with torch.no_grad():
-        tem = torch.tensor(te_emb_te, dtype=torch.float32, device=dev)
-        mfe = torch.tensor(mf_te, dtype=torch.float32, device=dev)
-        msk = torch.tensor(data["text_mask"][te], dtype=torch.float32, device=dev)
+        tem, mfe, msk = tt(emb_te), tt(mf_te), tt(data["text_mask"][te])
         fused = model(tem, mfe, msk)
         mkt_only = model(tem, mfe, torch.zeros_like(msk))  # gate forced off
-    fused_pred = har_te_pred + fused["pred"].cpu().numpy()
-    mkt_pred = har_te_pred + mkt_only["pred"].cpu().numpy()
+    fused_pred = har_te_pred + (fused["pred"].cpu().numpy() * ys + ym)
+    mkt_pred = har_te_pred + (mkt_only["pred"].cpu().numpy() * ys + ym)
     return fused_pred, mkt_pred, fused["gate"].cpu().numpy()
 
 
