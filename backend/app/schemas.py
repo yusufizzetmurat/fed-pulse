@@ -1057,6 +1057,22 @@ class AnalogCard(BaseModel):
             "NOT a model feature. Do not feed back into a downstream model."
         ),
     )
+    # #299 — realized S&P forward returns starting from the first trading
+    # day after the analog event_date. Surfaces actionable market
+    # behaviour for the quant-facing dashboard so a user can see what
+    # happened after similar past statements. These are MARKET DATA
+    # OVERLAYS (yfinance ^GSPC close-to-close), not training labels — safe
+    # to surface even when ``subsequent_vol_regime`` is intentionally
+    # suppressed. None when the historical market data is unavailable
+    # (e.g. early-history dates with sparse coverage).
+    subsequent_close_pct_5d: float | None = Field(
+        default=None,
+        description="S&P 500 close-to-close % return over the 5 trading days starting the day after event_date.",
+    )
+    subsequent_close_pct_20d: float | None = Field(
+        default=None,
+        description="S&P 500 close-to-close % return over the 20 trading days starting the day after event_date.",
+    )
     excerpt: str = Field(..., description="First ~280 characters of the analog statement.")
 
 
