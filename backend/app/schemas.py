@@ -8,6 +8,44 @@ _STRICT_REQUEST_CONFIG = ConfigDict(extra="forbid", strict=True, frozen=True)
 # Response models stay open to extras so the OpenAPI snapshot does not churn;
 # `frozen` still blocks mutation after construction.
 _FORBID_FROZEN_CONFIG = ConfigDict(frozen=True)
+# #99 strict response config: enables Pydantic v2 strict mode so the
+# numeric fields refuse cross-type coercion at construction time.
+# Concretely it rejects:
+#   - float -> int field   (a numpy.float64 leak into lookback_days)
+#   - str   -> any numeric (string concat artefacts)
+#   - bool  -> any numeric (True/False misuse)
+# Pydantic v2 strict_float still accepts a bare ``int`` (treated as a
+# lossless promotion), so a numpy.int64 leak into close/volatility
+# is NOT caught here -- the guard is asymmetric across the numeric
+# directions. It also accepts numpy.float64 against a float field
+# because numpy.float64 is a subclass of Python float. Decimal and
+# Fraction are likewise silently coerced for float fields in practice
+# (pydantic/pydantic#11131) despite the docs implying otherwise. The
+# value-add is the directional rejections above; the asymmetry is
+# documented so the next audit pass knows what gap remains.
+# Applied to the two leaf-level numeric response models whose
+# service-layer builders have been audited end-to-end
+# (MarketDataResponse and PredictionResponse).
+#
+# Scope caveat (Pydantic v2 semantics): strict=True is model-local.
+# When a model with strict=True is populated as a nested field of a
+# non-strict outer model (e.g. AnalyzeResponse), the outer model's
+# non-strict coercion governs the validation pass and the nested
+# strict guard does NOT re-fire on field values coming from the
+# outer dict. Strict therefore catches numpy at direct-construction
+# sites (services that build the model by name, tests that
+# round-trip it, fixture factories) but not at FastAPI's
+# response-serialisation boundary when the outer AnalyzeResponse is
+# still _FORBID_FROZEN_CONFIG. The follow-up #99 PR that flips
+# AnalyzeResponse to strict will close that hole; the leaf-level
+# strict here still adds value for the direct-construction path,
+# which is where the service builders actually live.
+#
+# Remaining response models (SentimentResponse, ChunkAttentionDiagnostics,
+# ModelDiagnostics, XaiResponse, HistoryEntry, AnalyzeResponse) wait
+# on matching audit passes -- this PR is the first half of the #99
+# rollout.
+_STRICT_RESPONSE_CONFIG = ConfigDict(strict=True, frozen=True)
 
 
 class AnalyzeRequest(BaseModel):
@@ -52,7 +90,7 @@ class SentimentResponse(BaseModel):
 
 
 class MarketDataResponse(BaseModel):
-    model_config = _FORBID_FROZEN_CONFIG
+    model_config = _STRICT_RESPONSE_CONFIG
 
     symbol: str
     requested_date: str
@@ -63,7 +101,7 @@ class MarketDataResponse(BaseModel):
 
 
 class PredictionResponse(BaseModel):
-    model_config = _FORBID_FROZEN_CONFIG
+    model_config = _STRICT_RESPONSE_CONFIG
 
     close: float
     volatility: float
