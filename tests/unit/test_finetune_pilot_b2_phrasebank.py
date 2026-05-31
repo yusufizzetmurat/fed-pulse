@@ -181,16 +181,18 @@ def test_default_off_metrics_have_zero_aux_fields(
     assert cell_a["phrasebank_aux_train_loss"] is None
     assert 0.0 <= cell_a["macro_f1"] <= 1.0
 
-    # Determinism check: byte-identical metrics across two same-seed
-    # runs on the same corpus catches anything that would silently
-    # shift behaviour (device move, optimizer regression, loader order
-    # drift, etc.). Loss values + macro_f1 must match exactly.
-    assert cell_a["macro_f1"] == pytest.approx(cell_b["macro_f1"], abs=1e-9), (
+    # Determinism check: same-seed runs on the same corpus must
+    # produce bit-identical metrics. CPU PyTorch with a properly
+    # seeded RNG is deterministic; a regression that introduced a
+    # device move, an optimizer change, or a loader-order shift would
+    # break this exact equality. No tolerance -- if a future change
+    # introduces float drift we want the test to flag it loudly.
+    assert cell_a["macro_f1"] == cell_b["macro_f1"], (
         f"aux-off determinism broken: macro_f1 {cell_a['macro_f1']} != {cell_b['macro_f1']}"
     )
-    assert cell_a["accuracy"] == pytest.approx(cell_b["accuracy"], abs=1e-9)
-    assert cell_a["weighted_f1"] == pytest.approx(cell_b["weighted_f1"], abs=1e-9)
-    assert cell_a["train_loss"] == pytest.approx(cell_b["train_loss"], abs=1e-9)
+    assert cell_a["accuracy"] == cell_b["accuracy"]
+    assert cell_a["weighted_f1"] == cell_b["weighted_f1"]
+    assert cell_a["train_loss"] == cell_b["train_loss"]
 
 
 def test_aux_on_metrics_report_finite_aux_loss(
