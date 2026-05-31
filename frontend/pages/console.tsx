@@ -46,7 +46,7 @@ function formatPct(value: number | null | undefined): string {
 
 function deltaTone(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return "text-muted-foreground";
-  return value >= 0 ? "text-emerald-500" : "text-destructive";
+  return value >= 0 ? "text-emerald-700" : "text-red-700";
 }
 
 export default function ConsolePage(): JSX.Element {
@@ -159,7 +159,7 @@ export default function ConsolePage(): JSX.Element {
                 {running ? "Running…" : "Run analysis"}
               </Button>
               {error && (
-                <span className="text-xs text-destructive" role="alert">
+                <span className="text-xs text-red-700" role="alert">
                   {error}
                 </span>
               )}
@@ -443,7 +443,7 @@ function BacktestPanel({ baseUrl }: { baseUrl: string }): JSX.Element {
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
         {error && (
-          <span className="text-xs text-destructive" role="alert">
+          <span className="text-xs text-red-700" role="alert">
             {error}
           </span>
         )}
