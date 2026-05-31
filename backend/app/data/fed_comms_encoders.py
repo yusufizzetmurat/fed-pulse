@@ -45,24 +45,45 @@ def _pool(hidden: Any, attn: Any, mode: str) -> Any:
     return (hidden * mask).sum(1) / mask.sum(1).clamp(min=1e-9)
 
 
-def _embed_one(text: str, tok: Any, model: Any, *, pooling: str, prefix: str, max_len: int) -> Any:
-    """Chunk a document, encode each chunk, mean-pool chunk vectors → one vector."""
+def _embed_one(
+    text: str,
+    tok: Any,
+    model: Any,
+    *,
+    pooling: str,
+    prefix: str,
+    max_len: int,
+    max_chunks: int = 64,
+) -> Any:
+    """Chunk a document, encode all chunks in one forward, mean-pool chunk vectors.
+
+    Chunk tensors are built directly from special-token ids (robust across BERT /
+    RoBERTa tokenizers, no `prepare_for_model`). Capped at `max_chunks` (~32K
+    tokens) to bound memory on the longest minutes; this rarely truncates since
+    most documents are well under that.
+    """
 
     import torch
 
     ids = tok(prefix + text, add_special_tokens=False)["input_ids"]
     body = max_len - 2  # room for [CLS]/[SEP]
-    chunks = [ids[i : i + body] for i in range(0, max(len(ids), 1), body)] or [[]]
-    vecs = []
+    chunks = [ids[i : i + body] for i in range(0, max(len(ids), 1), body)][:max_chunks] or [[]]
+    cls, sep = tok.cls_token_id, tok.sep_token_id
+    pad = tok.pad_token_id if tok.pad_token_id is not None else 0
+    seqs, masks = [], []
     for chunk in chunks:
-        enc = tok.prepare_for_model(
-            chunk, return_tensors="pt", padding="max_length", max_length=max_len, truncation=True
-        )
-        enc = {k: v.to(model.device) for k, v in enc.items()}
-        with torch.no_grad():
-            out = model(**enc)
-        vecs.append(_pool(out.last_hidden_state, enc["attention_mask"], pooling)[0])
-    return torch.stack(vecs).mean(0).cpu().numpy()
+        seq = [cls, *chunk, sep]
+        attn = [1] * len(seq)
+        if len(seq) < max_len:
+            n = max_len - len(seq)
+            seq, attn = seq + [pad] * n, attn + [0] * n
+        seqs.append(seq)
+        masks.append(attn)
+    input_ids = torch.tensor(seqs, device=model.device)
+    attn_t = torch.tensor(masks, device=model.device)
+    with torch.no_grad():
+        out = model(input_ids=input_ids, attention_mask=attn_t)
+    return _pool(out.last_hidden_state, attn_t, pooling).mean(0).cpu().numpy()
 
 
 def build_corpus_embeddings_automodel(
