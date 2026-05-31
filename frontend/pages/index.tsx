@@ -19,6 +19,7 @@ import { HistoricalContextBadge } from "@/components/analyze/HistoricalContextBa
 import { SentenceStrikeXaiPanel } from "@/components/analyze/SentenceStrikeXaiPanel";
 import { StatementDeltaCard } from "@/components/analyze/StatementDeltaCard";
 import { TldrCard } from "@/components/analyze/TldrCard";
+import { VolatilityOutlookCard } from "@/components/analyze/VolatilityOutlookCard";
 import { WorkspaceMetaStrip } from "@/components/analyze/WorkspaceMetaStrip";
 import { TrajectoryPanel } from "@/components/analyze/TrajectoryPanel";
 import { WatchlistChips } from "@/components/analyze/WatchlistChips";
@@ -29,6 +30,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   fetchHistoryRealizedBatch,
+  fetchRealizedVolForecast,
   postAnalyze,
   postAnalyzeAnalogs,
   postAnalyzeMarket,
@@ -48,6 +50,7 @@ import type {
   HistoryEntry,
   Horizon,
   MarketReactionPanelResponse,
+  RealizedVolForecastResponse,
 } from "@/lib/analyze/types";
 import {
   DEFAULT_HORIZON,
@@ -115,6 +118,9 @@ export default function WorkspacePage() {
   const [loading, setLoading] = React.useState(false);
   const { apiBaseUrl } = useSharedContext();
   const [historyEntries, setHistoryEntries] = React.useState<RegimeHistoryEntry[]>([]);
+  const [volForecast, setVolForecast] = React.useState<RealizedVolForecastResponse | null>(null);
+  const [volForecastLoading, setVolForecastLoading] = React.useState(false);
+  const [volForecastError, setVolForecastError] = React.useState<string | null>(null);
   const coverage = useSharedCoverage(request.symbol);
   const recentHistory = useSharedRecentHistory(request.symbol, 12);
 
@@ -240,6 +246,40 @@ export default function WorkspacePage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBaseUrl, recentHistory.data]);
+
+  // The volatility outlook card is market-only and refreshes per symbol;
+  // it does not wait for /analyze. A 503 from the backend (model artifact
+  // missing on a fresh checkout) is surfaced as an inline error message
+  // rather than blanking the card.
+  React.useEffect(() => {
+    const controller = new AbortController();
+    setVolForecastLoading(true);
+    setVolForecastError(null);
+    (async () => {
+      try {
+        const data = await fetchRealizedVolForecast(
+          apiBaseUrl,
+          request.symbol,
+          controller.signal,
+        );
+        if (!controller.signal.aborted) {
+          setVolForecast(data);
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          setVolForecast(null);
+          setVolForecastError(errorMessage(err, "Forecast unavailable."));
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setVolForecastLoading(false);
+        }
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl, request.symbol]);
 
   // #317 finding #14: monotonic seq for /analyze/market fetches. A
   // second submit before the first market fetch resolves bumps the
@@ -459,6 +499,12 @@ export default function WorkspacePage() {
           <WatchlistChips
             currentSymbol={request.symbol}
             onSelect={(symbol) => setRequest((prev) => ({ ...prev, symbol }))}
+          />
+
+          <VolatilityOutlookCard
+            forecast={volForecast}
+            loading={volForecastLoading}
+            error={volForecastError}
           />
 
           {loading && !result ? (

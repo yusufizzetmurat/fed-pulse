@@ -53,6 +53,8 @@ from app.schemas import (
     MarketReactionPanel,
     NextFomcForecastResponse,
     RatesReactionCard,
+    RealizedVolForecastResponse,
+    RealizedVolHorizonForecast,
     ResearchArtifactsResponse,
     BacktestRequest,
     BacktestResponse,
@@ -1570,6 +1572,99 @@ def next_fomc_forecast() -> NextFomcForecastResponse:
     artifacts_dir = DATA_DIR / "artifacts" / "next_fomc"
     payload = load_next_fomc_artifacts(artifacts_dir)
     return NextFomcForecastResponse(**payload)
+
+
+_RV_HISTORY_DAYS = 60
+_RV_MIN_DAYS = 22
+
+
+def _load_rv_history(symbol: str) -> tuple[list[float], list[str]]:
+    """Pull the last 60 daily realized-vol values for ``symbol``.
+
+    Prefers the Alpha Vantage 5-min intraday RV parquet (the same series
+    the production model was trained on). When the parquet is missing we
+    fall back to a yfinance daily close-to-close squared-log-return proxy
+    so the card still renders on a fresh checkout. Returns RV (variance)
+    units in chronological order plus their ISO date stamps.
+    """
+
+    import pandas as pd
+
+    from app.data.intraday_realized import DEFAULT_RV_PARQUET
+
+    if DEFAULT_RV_PARQUET.exists():
+        df = pd.read_parquet(DEFAULT_RV_PARQUET)
+        if "rv" in df.columns and "date" in df.columns:
+            df = df.sort_values("date").tail(_RV_HISTORY_DAYS)
+            rv = df["rv"].astype(float).tolist()
+            dates = df["date"].astype(str).tolist()
+            if len(rv) >= _RV_MIN_DAYS:
+                return rv, dates
+
+    # yfinance fallback — close-to-close log-return squared as a daily RV proxy.
+    import yfinance as yf
+
+    ticker = yf.Ticker(symbol)
+    frame = ticker.history(period="120d", auto_adjust=True)
+    if frame is None or frame.empty:
+        raise RuntimeError(f"no market history available for {symbol}")
+    close = frame["Close"].astype(float).dropna()
+    if hasattr(close, "columns"):
+        close = close.iloc[:, 0].dropna()
+    if len(close) < _RV_MIN_DAYS + 1:
+        raise RuntimeError(f"insufficient market history for {symbol}")
+    import numpy as np
+
+    r = np.diff(np.log(close.to_numpy()))
+    rv_arr = (r * r).astype(float)
+    dates = [d.strftime("%Y-%m-%d") for d in close.index[1:]]
+    rv = rv_arr.tolist()
+    if len(rv) > _RV_HISTORY_DAYS:
+        rv = rv[-_RV_HISTORY_DAYS:]
+        dates = dates[-_RV_HISTORY_DAYS:]
+    return rv, dates
+
+
+@app.get("/forecast/realized-vol", response_model=RealizedVolForecastResponse)
+async def forecast_realized_vol(
+    symbol: str = Query("^GSPC", description="Market ticker; defaults to S&P 500."),
+) -> RealizedVolForecastResponse:
+    """Multi-horizon QLIKE-DLq RV forecast for the volatility-outlook card.
+
+    Reads recent daily realized variance (intraday parquet preferred,
+    yfinance close-to-close fallback) and runs the cached ensemble +
+    conformal bands. Returns a 503 with a structured error when the
+    artifact cannot be loaded or the history is insufficient.
+    """
+
+    from app.services.rv_forecaster import (
+        RvForecasterUnavailable,
+        predict_rv,
+    )
+
+    try:
+        rv_hist, hist_dates = await run_in_threadpool(_load_rv_history, symbol)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail={"error": "history_unavailable", "message": str(exc)}) from exc
+
+    try:
+        out = await run_in_threadpool(predict_rv, rv_hist)
+    except RvForecasterUnavailable as exc:
+        raise HTTPException(status_code=503, detail={"error": "model_unavailable", "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail={"error": "history_invalid", "message": str(exc)}) from exc
+    except Exception as exc:  # pragma: no cover -- defensive against torch/HF surprises
+        logger.warning("rv_forecast_failed", exc_info=True)
+        raise HTTPException(status_code=503, detail={"error": "forecast_failed", "message": str(exc)}) from exc
+
+    horizons = [RealizedVolHorizonForecast(**h) for h in out["horizons"]]
+    return RealizedVolForecastResponse(
+        symbol=symbol,
+        horizons=horizons,
+        history=rv_hist,
+        history_dates=hist_dates,
+        model_revision=out["model_revision"],
+    )
 
 
 # ---------------------------------------------------------------------------

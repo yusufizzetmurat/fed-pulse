@@ -17,6 +17,7 @@ import type {
   HistoryRealizedResponse,
   MarketReactionPanelResponse,
   NextFomcForecastResponse,
+  RealizedVolForecastResponse,
   ResearchArtifactsResponse,
   ResearchRegistryResponse,
   SettingsCheckpointsResponse,
@@ -267,6 +268,18 @@ export async function fetchNextFomcForecast(
 ): Promise<NextFomcForecastResponse> {
   const response = await axios.get(`${baseUrl}/forecasts/next-fomc`);
   return response.data as NextFomcForecastResponse;
+}
+
+export async function fetchRealizedVolForecast(
+  baseUrl: string,
+  symbol: string = "^GSPC",
+  signal?: AbortSignal,
+): Promise<RealizedVolForecastResponse> {
+  const response = await axios.get(`${baseUrl}/forecast/realized-vol`, {
+    params: { symbol },
+    signal,
+  });
+  return response.data as RealizedVolForecastResponse;
 }
 
 export async function fetchResearchRegistry(
