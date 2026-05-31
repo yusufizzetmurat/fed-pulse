@@ -44,48 +44,25 @@ def test_response_model_is_frozen():
         response.label = "DOVISH"
 
 
-def test_market_data_response_strict_rejects_numpy_float() -> None:
-    """#99 (first half): MarketDataResponse must reject numpy.float64.
-
-    Pre-#99 the response model was frozen but not strict; numpy values
-    silently coerced to Python floats which masked service-layer leaks
-    that downstream consumers had to defend against. After this PR
-    every numeric field on the response MUST receive a built-in float
-    or int; if a service forgets the ``float(...)`` cast on a numpy
-    value the response build fails loud.
-    """
-
-    pytest.importorskip("numpy")
-    import numpy as np
+def test_market_data_response_strict_rejects_float_for_int() -> None:
+    """#99: strict_int refuses a bare ``float`` (incl. numpy.float64
+    via subclass) in an ``int`` field."""
 
     from app.schemas import MarketDataResponse
-
-    ok = MarketDataResponse(
-        symbol="^GSPC",
-        requested_date="2024-09-18",
-        date_used="2024-09-18",
-        lookback_days=14,
-        close=5400.0,
-        volatility_5d=0.012,
-    )
-    assert ok.close == 5400.0
 
     with pytest.raises(ValidationError):
         MarketDataResponse(
             symbol="^GSPC",
             requested_date="2024-09-18",
             date_used="2024-09-18",
-            lookback_days=14,
-            close=np.float64(5400.0),
+            lookback_days=14.0,  # float, not int
+            close=5400.0,
             volatility_5d=0.012,
         )
 
 
-def test_prediction_response_strict_rejects_numpy_float() -> None:
-    """#99 (first half): PredictionResponse must reject numpy.float64."""
-
-    pytest.importorskip("numpy")
-    import numpy as np
+def test_prediction_response_strict_rejects_string_for_float() -> None:
+    """#99: strict_float refuses string coercion into a float field."""
 
     from app.schemas import PredictionResponse
 
@@ -93,6 +70,15 @@ def test_prediction_response_strict_rejects_numpy_float() -> None:
     assert ok.close == 5400.0
 
     with pytest.raises(ValidationError):
-        PredictionResponse(
-            close=np.float64(5400.0), volatility=0.012, horizon="3d"
-        )
+        PredictionResponse(close="5400.0", volatility=0.012, horizon="3d")
+
+
+def test_prediction_response_strict_rejects_bool_for_float() -> None:
+    """#99: strict_float refuses ``bool`` even though ``bool`` is an
+    ``int`` subclass — a True/False leak into close/volatility now
+    fails loud at construction."""
+
+    from app.schemas import PredictionResponse
+
+    with pytest.raises(ValidationError):
+        PredictionResponse(close=True, volatility=0.012, horizon="3d")

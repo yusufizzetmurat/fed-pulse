@@ -8,13 +8,22 @@ _STRICT_REQUEST_CONFIG = ConfigDict(extra="forbid", strict=True, frozen=True)
 # Response models stay open to extras so the OpenAPI snapshot does not churn;
 # `frozen` still blocks mutation after construction.
 _FORBID_FROZEN_CONFIG = ConfigDict(frozen=True)
-# #99 strict response config: type-checks numeric fields against
-# Python built-ins so numpy.float64 / numpy.int64 leaks fail loud
-# when the model is constructed DIRECTLY (by-name in services,
-# internal builders, fixtures). Applied to the two leaf-level
-# numeric response models whose service-layer builders have been
-# audited end-to-end and confirmed to cast every numeric field via
-# float(...) (MarketDataResponse and PredictionResponse).
+# #99 strict response config: enables Pydantic v2 strict mode so the
+# numeric fields refuse cross-type coercion at construction time.
+# Concretely it rejects:
+#   - float -> int field   (a numpy.float64 leak into lookback_days)
+#   - str   -> any numeric (string concat artefacts)
+#   - bool  -> any numeric (True/False misuse)
+# Pydantic v2 strict_float still accepts a bare ``int`` (treated as a
+# lossless promotion), so a numpy.int64 leak into close/volatility
+# is NOT caught here -- the guard is asymmetric across the numeric
+# directions. It also accepts numpy.float64 against a float field
+# because numpy.float64 is a subclass of Python float. The value-add
+# is the directional rejections above; the asymmetry is documented
+# so the next audit pass knows what gap remains.
+# Applied to the two leaf-level numeric response models whose
+# service-layer builders have been audited end-to-end
+# (MarketDataResponse and PredictionResponse).
 #
 # Scope caveat (Pydantic v2 semantics): strict=True is model-local.
 # When a model with strict=True is populated as a nested field of a
