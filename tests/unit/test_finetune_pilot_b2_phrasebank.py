@@ -141,11 +141,15 @@ def _make_fomc_corpus() -> tuple[list[str], list[int], list[str], list[int]]:
 def test_default_off_metrics_have_zero_aux_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With aux off, the metrics dict reports zero rows + zero lambda.
+    """With aux off, the metrics dict reports zero rows + zero lambda
+    AND two runs with the same seed are byte-identical.
 
     The default-off path is the byte-identity contract: an operator
     who never flips ``--enable-phrasebank-aux`` sees a B2 cell that
-    is equivalent to the pre-#33 harness.
+    is equivalent to the pre-#33 harness. The two-run determinism
+    check (#425) catches device-placement drift and inadvertent
+    optimizer / loader changes that the original 'is the value between
+    0 and 1' assertion would miss.
     """
 
     torch = _torch_or_skip()
@@ -153,27 +157,40 @@ def test_default_off_metrics_have_zero_aux_fields(
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
 
     train_texts, train_labels, test_texts, test_labels = _make_fomc_corpus()
-    cell = finetune_pilot_b2._train_and_eval_one_cell(
-        train_texts=train_texts,
-        train_labels=train_labels,
-        test_texts=test_texts,
-        test_labels=test_labels,
-        encoder_alias=_stub_alias(),
-        seed=11,
-        epochs=1,
-        train_batch_size=2,
-        eval_batch_size=2,
-        learning_rate=5e-5,
-        weight_decay=0.0,
-        max_length=32,
-        phrasebank_rows=None,
-        phrasebank_aux_lambda=0.0,
+    cell_kwargs = {
+        "train_texts": train_texts,
+        "train_labels": train_labels,
+        "test_texts": test_texts,
+        "test_labels": test_labels,
+        "encoder_alias": _stub_alias(),
+        "seed": 11,
+        "epochs": 1,
+        "train_batch_size": 2,
+        "eval_batch_size": 2,
+        "learning_rate": 5e-5,
+        "weight_decay": 0.0,
+        "max_length": 32,
+        "phrasebank_rows": None,
+        "phrasebank_aux_lambda": 0.0,
+    }
+    cell_a = finetune_pilot_b2._train_and_eval_one_cell(**cell_kwargs)
+    cell_b = finetune_pilot_b2._train_and_eval_one_cell(**cell_kwargs)
+
+    assert cell_a["phrasebank_aux_lambda"] == 0.0
+    assert cell_a["phrasebank_aux_rows"] == 0
+    assert cell_a["phrasebank_aux_train_loss"] is None
+    assert 0.0 <= cell_a["macro_f1"] <= 1.0
+
+    # Determinism check: byte-identical metrics across two same-seed
+    # runs on the same corpus catches anything that would silently
+    # shift behaviour (device move, optimizer regression, loader order
+    # drift, etc.). Loss values + macro_f1 must match exactly.
+    assert cell_a["macro_f1"] == pytest.approx(cell_b["macro_f1"], abs=1e-9), (
+        f"aux-off determinism broken: macro_f1 {cell_a['macro_f1']} != {cell_b['macro_f1']}"
     )
-    assert cell["phrasebank_aux_lambda"] == 0.0
-    assert cell["phrasebank_aux_rows"] == 0
-    assert cell["phrasebank_aux_train_loss"] is None
-    # Headline metric set unchanged from the pre-#33 contract.
-    assert 0.0 <= cell["macro_f1"] <= 1.0
+    assert cell_a["accuracy"] == pytest.approx(cell_b["accuracy"], abs=1e-9)
+    assert cell_a["weighted_f1"] == pytest.approx(cell_b["weighted_f1"], abs=1e-9)
+    assert cell_a["train_loss"] == pytest.approx(cell_b["train_loss"], abs=1e-9)
 
 
 def test_aux_on_metrics_report_finite_aux_loss(

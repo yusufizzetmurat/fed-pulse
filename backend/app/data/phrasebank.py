@@ -64,12 +64,13 @@ LABEL2ID: dict[str, int] = {label: idx for idx, label in enumerate(PHRASEBANK_LA
 ID2LABEL: dict[int, str] = dict(enumerate(PHRASEBANK_LABELS))
 N_CLASSES = len(PHRASEBANK_LABELS)
 
-# HF dataset revision pin -- left None until the first run reports the
-# resolved sha. Mirrors the BIS-MLM pin pattern in
-# ``continued_pretraining.py``: pinning the revision is what makes the
-# DAPT manifest reproducible; the auxiliary head inherits the same
-# discipline so the row order + label assignment never drift silently.
-DEFAULT_REVISION: str | None = None
+# HF dataset revision pin (#425). Named ref ``"main"`` is the
+# weakest stable pin -- it survives HF Hub mirror drift but does NOT
+# protect against an upstream main-branch rewrite. The canonical
+# sweep is expected to swap this for the 40-char SHA it resolves at
+# load time so the aux artefact is fully reproducible. Mirrors the
+# BIS-MLM pin discipline in ``continued_pretraining.py``.
+DEFAULT_REVISION: str | None = "main"
 
 DEFAULT_CACHE_ROOT = DATA_DIR / "external" / "phrasebank"
 
