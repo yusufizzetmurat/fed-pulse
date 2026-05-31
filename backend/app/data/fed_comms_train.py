@@ -366,6 +366,17 @@ def run(
                 f"h{h}_text_vs_mkt": _oos_r2(fused[sel, k], true[sel, k], mkt[sel, k])
                 for k, h in enumerate(horizons)
             },
+            # block-bootstrap CI of the text-vs-market gap within the era, so a
+            # positive point estimate (e.g. the FOMC-window slice) is testable
+            # rather than taken at face value on a small overlapping-window sample.
+            **{
+                f"h{h}_text_vs_mkt_ci": list(
+                    _block_bootstrap_r2_ci(
+                        fused[sel, k], true[sel, k], mkt[sel, k], block=max(h, 1), seed=seed
+                    )
+                )
+                for k, h in enumerate(horizons)
+            },
         }
         for era, sel in eras.items()
         if sel.sum() > 20

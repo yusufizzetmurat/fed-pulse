@@ -62,13 +62,30 @@ def _forward_log_rv_windows(rv: np.ndarray, horizons: tuple[int, ...]) -> dict[i
 # rv/volume/downside are positive → log; jump-share ∈ [0,1) → identity. The two
 # corr_* second-moment targets are trailing cross-asset correlations ∈ [−1,1] →
 # identity (same case as jump); their daily columns are merged onto rv_df in
-# build() from the market cache, so a frame without them simply omits them.
-MEASURES = ("rv", "volume", "downside", "jump", "corr_tnx", "corr_dxy")
+# build() from the market cache, so a frame without them simply omits them. The
+# rate_vol_* targets are trailing realized vol of daily Treasury-yield changes
+# (strictly positive → log, same case as rv); likewise merged from the cache.
+MEASURES = (
+    "rv",
+    "volume",
+    "downside",
+    "jump",
+    "corr_tnx",
+    "corr_dxy",
+    "rate_vol_2y",
+    "rate_vol_10y",
+)
 
 # Correlation measures live in their own daily columns (not raw RV fields). The
 # trailing window guarantees the early span is NaN until it is full.
 _CORR_MEASURES = ("corr_tnx", "corr_dxy")
 _CORR_CLIP = 0.999  # keep targets strictly inside (−1, 1) for numerical safety
+
+# Interest-rate realized-vol measures: trailing-window std of daily yield CHANGES
+# (Δyield, not log returns — yields are levels). Like corr_*, they live in their
+# own daily columns merged onto rv_df from the market cache, so a cache-less
+# frame omits them. Unlike corr_*, vol is strictly positive → log lags/targets.
+_RATE_VOL_MEASURES = ("rate_vol_2y", "rate_vol_10y")
 
 
 def _measure_raw(rv_df: Any, measure: str) -> tuple[np.ndarray, bool]:
@@ -87,16 +104,25 @@ def _measure_raw(rv_df: Any, measure: str) -> tuple[np.ndarray, bool]:
     if measure in _CORR_MEASURES:  # trailing cross-asset correlation ∈ [−1,1]
         c = rv_df[measure].to_numpy(dtype=np.float64)
         return np.clip(c, -_CORR_CLIP, _CORR_CLIP), False
+    if measure in _RATE_VOL_MEASURES:  # trailing realized vol of Δyield, > 0 → log
+        return rv_df[measure].to_numpy(dtype=np.float64), True
     raise ValueError(f"unknown measure {measure!r}")
 
 
 def _measure_present(rv_df: Any, measure: str) -> bool:
-    """Whether the raw column(s) a measure needs are in rv_df (corr_* may be absent)."""
+    """Whether the raw column(s) a measure needs are in rv_df.
 
-    return measure not in _CORR_MEASURES or measure in rv_df.columns
+    corr_* and rate_vol_* live in their own daily columns merged from the market
+    cache in build(); a cache-less frame (e.g. the unit-test fixture) omits them.
+    """
+
+    if measure in _CORR_MEASURES or measure in _RATE_VOL_MEASURES:
+        return measure in rv_df.columns
+    return True
 
 
 _CORR_WINDOW = 22  # trailing trading days for the realized-correlation estimate
+_RATE_VOL_WINDOW = 22  # trailing trading days for the yield-change realized-vol estimate
 
 
 def _trailing_corr(a: np.ndarray, b: np.ndarray, window: int) -> np.ndarray:
@@ -173,6 +199,124 @@ def _correlation_columns(
         "corr_tnx": _trailing_corr(gspc_ret, tnx_chg, _CORR_WINDOW),
         "corr_dxy": _trailing_corr(gspc_ret, dxy_ret, _CORR_WINDOW),
     }
+
+
+def _trailing_vol(chg: np.ndarray, window: int) -> np.ndarray:
+    """Trailing realized volatility (std) of a daily change series.
+
+    vol[t] uses only the ``window`` changes ending at t (data ≤ t), so as a
+    feature it is backward-looking and leak-safe; the first ``window``−1 entries
+    are NaN until the window is full (and chg[0] is itself NaN, the first diff).
+    Population std (ddof=0). NaN inputs inside a window propagate to NaN.
+    """
+
+    n = len(chg)
+    out = np.full(n, np.nan)
+    for t in range(window - 1, n):
+        x = chg[t - window + 1 : t + 1]
+        if not np.isfinite(x).all():
+            continue
+        v = float(x.std())
+        out[t] = v if v > 0.0 else np.nan  # degenerate constant window → NaN, not log(0)
+    return out
+
+
+def _rate_vol_columns(dates: Any, market_cache_dir: Path | str) -> dict[str, np.ndarray]:
+    """Trailing 22-day realized vol of daily Treasury-yield CHANGES, aligned to `dates`.
+
+    rate_vol_2y[t] = std of Δ(2Y yield) over the trailing window ending at t;
+    rate_vol_10y[t] = std of Δ(10Y yield) likewise. Yields are levels, so the
+    daily signal is the first difference Δyield (in percentage-point units, e.g.
+    a 4.01→4.00 move is −0.01), NOT a log return. The std is left raw (not
+    annualized) and carries the units of a daily yield change; downstream the
+    measure is log-transformed (vol > 0) like rv. Series are left-joined onto the
+    RV dates and small gaps forward-filled (no bfill → no leak) before the window.
+
+    The 2Y yield is read from the FRED DGS2 cache (the most Fed-sensitive tenor);
+    the 10Y from TNX.parquet. If DGS2 cannot be loaded cleanly we fall back to the
+    3M bill (IRX.parquet) and emit rate_vol_3m instead — the caller reports which.
+    """
+
+    import pandas as pd
+
+    from app.data.dense_daily_dataset import load_market_cache
+
+    base = pd.DataFrame({"date": pd.Series(dates).astype(str)})
+
+    def _trailing_for(level: np.ndarray) -> np.ndarray:
+        chg = np.full(len(level), np.nan)
+        chg[1:] = level[1:] - level[:-1]  # daily yield change (Δyield, level diff)
+        return _trailing_vol(chg, _RATE_VOL_WINDOW)
+
+    def _merge_level(df: Any, name: str) -> np.ndarray:
+        s = df[["date", "close"]].rename(columns={"close": name}).copy()
+        s["date"] = s["date"].astype(str)
+        merged = base.merge(s, on="date", how="left").ffill()
+        return np.asarray(merged[name].to_numpy(dtype=np.float64), dtype=np.float64)
+
+    series = load_market_cache(market_cache_dir, symbols=("TNX", "IRX"))
+    out: dict[str, np.ndarray] = {}
+
+    tnx = series.get("TNX")
+    out["rate_vol_10y"] = (
+        _trailing_for(_merge_level(tnx, "TNX"))
+        if tnx is not None
+        else np.full(len(base), np.nan)
+    )
+
+    two_year = _load_dgs2_levels(base["date"].tolist(), market_cache_dir)
+    if two_year is not None:
+        out["rate_vol_2y"] = _trailing_for(two_year)
+    else:  # documented fallback: 3M bill (IRX) under the rate_vol_2y key so the
+        # short-tenor measure is still populated when DGS2 is unloadable.
+        irx = series.get("IRX")
+        print(
+            "[fed_comms_dataset] WARNING: DGS2 FRED cache unavailable; "
+            "substituting IRX 3M bill for the 2Y under the rate_vol_2y key"
+        )
+        out["rate_vol_2y"] = (
+            _trailing_for(_merge_level(irx, "IRX"))
+            if irx is not None
+            else np.full(len(base), np.nan)
+        )
+    return out
+
+
+def _load_dgs2_levels(dates: list[str], market_cache_dir: Path | str) -> np.ndarray | None:
+    """2Y yield levels (FRED DGS2) aligned + ffilled to `dates`; None if uncached.
+
+    Reuses :func:`app.services.fred_client.fetch_fred_series`, which serves the
+    on-disk ``DGS2.json`` cache without any network call or API key when present.
+    FRED encodes missing observations as the literal '.', which the client maps to
+    None; we drop those before the as-of merge so a holiday gap is forward-filled
+    rather than poisoning a window with NaN. The cache lives under the FRED cache
+    dir, NOT the market cache; we resolve it relative to DATA_DIR like mp_surprise.
+    """
+
+    import pandas as pd
+
+    from app.services.fred_client import DEFAULT_CACHE_DIR as FRED_CACHE_DIR
+    from app.services.fred_client import fetch_fred_series
+
+    if not (FRED_CACHE_DIR / "DGS2.json").exists():
+        return None
+    try:
+        resp = fetch_fred_series("DGS2", cache_dir=FRED_CACHE_DIR)
+    except Exception as exc:  # noqa: BLE001 — any load failure → documented 3M fallback
+        print(f"[fed_comms_dataset] WARNING: DGS2 load failed ({exc!r})")
+        return None
+    rows = [
+        {"date": obs.date, "DGS2": float(obs.value)}
+        for obs in resp.observations
+        if obs.value is not None and obs.date
+    ]
+    if not rows:
+        return None
+    s = pd.DataFrame(rows)
+    s["date"] = s["date"].astype(str)
+    base = pd.DataFrame({"date": pd.Series(dates).astype(str)})
+    merged = base.merge(s, on="date", how="left").ffill()
+    return np.asarray(merged["DGS2"].to_numpy(dtype=np.float64), dtype=np.float64)
 
 
 def _forward_target(raw: np.ndarray, h: int, *, is_log: bool) -> np.ndarray:
@@ -415,6 +559,11 @@ def build(
         corr = _correlation_columns(rv_df["date"], market_cache_dir)
         for name, col in corr.items():
             rv_df[name] = col
+        # Trailing realized vol of daily yield changes (2Y from FRED DGS2, 10Y
+        # from TNX) — the Fed's home-turf rate-vol targets. Merged the same way.
+        rate_vol = _rate_vol_columns(rv_df["date"], market_cache_dir)
+        for name, col in rate_vol.items():
+            rv_df[name] = col
     surprise = None
     if mp_surprise_path is not None and Path(mp_surprise_path).exists():
         surprise = pd.read_parquet(mp_surprise_path)
@@ -436,7 +585,7 @@ def build(
             f"[fed_comms_dataset] surprise: present={surprise is not None} "
             f"nonneutral_level_frac={nz:.3f}"
         )
-        for m in _CORR_MEASURES:
+        for m in (*_CORR_MEASURES, *_RATE_VOL_MEASURES):
             fwd_col = f"{m}_fwd_{max(horizons)}"
             if fwd_col in daily.columns:
                 v = daily[fwd_col].to_numpy(dtype=np.float64)
