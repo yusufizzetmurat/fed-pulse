@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useSharedSymbols } from "@/lib/analyze/shared-context";
+import { useSymbols } from "@/lib/analyze/useSymbols";
 import type { SymbolDescriptor } from "@/lib/analyze/types";
 
 interface AssetPickerProps {
@@ -38,7 +38,7 @@ export function AssetPicker({
   disabled,
   placeholder = "Pick an asset",
 }: AssetPickerProps) {
-  const { symbols } = useSharedSymbols();
+  const { symbols } = useSymbols();
   // Inject the current value if /symbols hasn't returned it yet so the
   // controlled Select never renders an empty trigger after a deep-link.
   const expanded = React.useMemo(() => {

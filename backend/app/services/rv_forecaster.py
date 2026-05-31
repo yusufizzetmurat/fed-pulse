@@ -20,7 +20,7 @@ import json
 import os
 import threading
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 
 import numpy as np
 
@@ -96,7 +96,7 @@ def _download_artifact(target_dir: Path) -> dict[str, Any]:
         raise RvForecasterUnavailable(
             f"HF download failed for {HF_REPO_ID!r}: {exc}"
         ) from exc
-    return spec
+    return cast(dict[str, Any], spec)
 
 
 def _load_spec(model_dir: Path) -> dict[str, Any]:
@@ -110,7 +110,7 @@ def _load_spec(model_dir: Path) -> dict[str, Any]:
         for fname in row["seed_state_dicts"]:
             if not (model_dir / fname).exists():
                 return _download_artifact(model_dir)
-    return spec
+    return cast(dict[str, Any], spec)
 
 
 def _load_eval(model_dir: Path) -> dict[str, Any] | None:
@@ -120,7 +120,7 @@ def _load_eval(model_dir: Path) -> dict[str, Any] | None:
     if not p.exists():
         return None
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        return cast(dict[str, Any], json.loads(p.read_text(encoding="utf-8")))
     except (json.JSONDecodeError, OSError):
         return None
 
