@@ -59,6 +59,11 @@ _SEQ_LEN = 22  # sequence window length (one trading month), matching the seq-LS
 _RS_POS_COL = 3
 _RS_NEG_COL = 4
 
+# Bound the model's deviation from the HAR floor (in log-RV units) at both train
+# and inference, so an exp-loss can't blow up on an early/divergent prediction.
+# True residuals are well under 1; ±6 is generous yet prevents var=exp(−80)≈0.
+_RESID_CLAMP = 6.0
+
 
 def _feature_matrix(rv_path: Path | str) -> dict[str, np.ndarray]:
     """Build the bake-off's `full` per-day feature matrix + HAR lags + targets.
@@ -259,8 +264,8 @@ def _train_arch_fold(
     log_true_t = torch.tensor(tgt_tr.reshape(-1, 1), dtype=torch.float32, device=dev)
 
     def qlike_loss(resid_std: torch.Tensor, har: torch.Tensor, log_true: torch.Tensor) -> Any:
-        log_pred = har + (resid_std * rs + rm)
-        log_pred = torch.clamp(log_pred, -_LOGV_CLAMP, _LOGV_CLAMP)
+        resid = torch.clamp(resid_std * rs + rm, -_RESID_CLAMP, _RESID_CLAMP)
+        log_pred = torch.clamp(har + resid, -_LOGV_CLAMP, _LOGV_CLAMP)
         log_true_c = torch.clamp(log_true, -_LOGV_CLAMP, _LOGV_CLAMP)
         var_pred = torch.exp(log_pred) + _EPS
         var_true = torch.exp(log_true_c)
@@ -298,7 +303,7 @@ def _train_arch_fold(
     model.eval()
     with torch.no_grad():
         resid_std = model(xte).cpu().numpy()
-    resid_pred = resid_std[:, 0] * rs + rm
+    resid_pred = np.clip(resid_std[:, 0] * rs + rm, -_RESID_CLAMP, _RESID_CLAMP)
     return cast(np.ndarray, har_te_pred + resid_pred)
 
 
