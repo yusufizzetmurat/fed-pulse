@@ -57,6 +57,10 @@ def daily_realized_measures(
     h = np.asarray(highs, dtype=np.float64)
     low = np.asarray(lows, dtype=np.float64)
     ok = (h > 0) & (low > 0)
+    # High-frequency range-based integrated variance: the per-bar Parkinson
+    # estimate (1/(4 ln2))·ln(H/L)² SUMMED over the day's bars — deliberately on
+    # the same daily-sum scale as RV=Σrᵢ² (NOT the single-observation daily
+    # estimator, which divides by n). Validation: parkinson/rv median ≈ 1.09.
     parkinson = float(np.sum(np.log(h[ok] / low[ok]) ** 2) / (4 * np.log(2))) if ok.any() else 0.0
     rvol = float(np.sum(np.asarray(volumes, dtype=np.float64)))
     return {

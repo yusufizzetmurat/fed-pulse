@@ -43,7 +43,8 @@ _DATE_RE = re.compile(r"(\d{8})")
 class FedDoc:
     doc_type: str  # statement | minutes | press_conference | speech | testimony
     date: str  # YYYY-MM-DD (release/delivery date)
-    timestamp_et: str  # ISO 'YYYY-MM-DD HH:MM' ET
+    timestamp_et: str  # ISO 'YYYY-MM-DD HH:MM' ET; when time_known is False the
+    # time is a 00:00 date sentinel — do NOT use for intraday ordering
     time_known: bool  # True for fixed-time FOMC texts, False for speeches/testimony
     speaker: str | None
     title: str
@@ -73,12 +74,17 @@ def _speaker_from_url(url: str) -> str | None:
 
 
 def _assign_timestamp(doc_type: str, date_iso: str) -> tuple[str, bool]:
-    """(timestamp_et, time_known) — fixed ET time for FOMC texts, else 09:00 placeholder."""
+    """(timestamp_et, time_known) — fixed ET time for FOMC texts, else date sentinel.
+
+    For speeches/testimony the intraday time is unknown; we return a 00:00
+    *date sentinel* (NOT a real time) and time_known=False. Consumers must align
+    these at daily granularity and never use timestamp_et for intraday ordering.
+    """
 
     fixed = _RELEASE_ET.get(doc_type)
     if fixed is not None:
         return f"{date_iso} {fixed}", True
-    return f"{date_iso} 09:00", False  # date-only; placeholder, time_known=False
+    return f"{date_iso} 00:00", False
 
 
 def _clean_html_text(html: str) -> str:
@@ -182,7 +188,9 @@ def discover_urls(client: Any, *, start_year: int, end_year: int) -> dict[str, l
     for stmt in found["statement"]:
         d = _date_from_url(stmt)
         if d:
-            found["press_conference"].add(f"/mediacenter/files/FOMCpresconf{d.replace('-', '')}.pdf")
+            found["press_conference"].add(
+                f"/mediacenter/files/FOMCpresconf{d.replace('-', '')}.pdf"
+            )
     return {k: sorted(v) for k, v in found.items()}
 
 

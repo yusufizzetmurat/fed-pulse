@@ -67,7 +67,10 @@ def _market_block(cache_dir: Path | str, dates: "Any", log_rv: np.ndarray) -> np
         s = series[name][["date", "close"]].rename(columns={"close": name})
         s["date"] = s["date"].astype(str)
         base = base.merge(s, on="date", how="left")
-    base = base.ffill().bfill()
+    # ffill only — propagate the last *known* close into market holidays/gaps.
+    # No bfill: it would pull a future value backward into a leading gap (leak).
+    # VIX/TNX/IRX all predate the RV window, so no leading NaN remains here.
+    base = base.ffill()
     vix = base["VIX"].to_numpy(dtype=np.float64)
     log_iv = np.log((vix / 100.0) ** 2 / 252.0 + _EPS)  # daily implied variance, log scale
     vix_chg5 = np.log(vix / np.concatenate([vix[:5], vix[:-5]]) + _EPS)
@@ -121,7 +124,8 @@ def run(
             tr, te = idx[np.array(tr_l)], idx[np.array(te_l)]
             ytr, yte = y[tr], y[te]
             har_pred = _fit_predict_ols(har[tr], ytr, har[te])
-            resid = (ytr - _fit_predict_ols(har[tr], ytr, har[tr])).reshape(-1, 1)
+            har_fit_tr = _fit_predict_ols(har[tr], ytr, har[tr])  # in-sample HAR for residual
+            resid = (ytr - har_fit_tr).reshape(-1, 1)
             pools["har"].extend(har_pred.tolist())
             pools["harplus"].extend(_fit_predict_ols(harplus[tr], ytr, harplus[te]).tolist())
             dl_resid = _train_fold(full[tr], resid, full[te], seed=seed, epochs=300, device="cpu")
@@ -141,8 +145,11 @@ def run(
         lo, hi = _bootstrap_r2_ci(p[best_mkt], p["true"], p["base"], seed=seed)
         row["dl_ci90"] = [lo, hi]
         if "har_iv" in row:
+            # Incremental skill of IV *over HAR*: HAR predictions are the baseline
+            # (denominator), so this CI is the marginal-R² of adding IV, distinct
+            # from the vs-mean R² in the table. <0 ⇒ IV does not help beyond HAR.
             lo2, hi2 = _bootstrap_r2_ci(p["har_iv"], p["true"], p["har"], seed=seed)
-            row["har_iv_vs_har_ci90"] = [lo2, hi2]  # lift of IV over HAR, CI
+            row["har_iv_vs_har_ci90"] = [lo2, hi2]
         results["by_horizon"][f"h{h}"] = row
     return results
 
