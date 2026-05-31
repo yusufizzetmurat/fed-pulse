@@ -209,11 +209,43 @@ def test_per_asset_target_column_is_not_zero_on_missing() -> None:
     series = _dense_trading_series(closes)
     as_of = series.dates[pre_bars]
     result = edb._forward_realized_vol(series, as_of, window=window)
+    # The missing-data path must return the ``None`` singleton, not
+    # a numeric zero (which would silently look like the calmest-
+    # possible-vol regime to downstream consumers). The identity check
+    # is the actual contract here; the pre-#486 ``!= 0.0`` follow-up
+    # was tautological (``None != 0.0`` is trivially True in Python)
+    # and the ``isinstance`` rewrite was equally inert after the
+    # identity check narrows ``result`` to ``None``. One assertion is
+    # all the contract needs.
     assert result is None
-    # Type-check the missing-data path against a 0.0-typed comparison.
-    # ``None != 0.0`` is trivially True so the pre-#486 assertion was
-    # tautological -- the real anti-regression is that the function
-    # returns the ``None`` singleton, not a numeric zero (which would
-    # silently look like the calmest-possible-vol regime to downstream
-    # consumers). The identity check above pins the contract.
-    assert not isinstance(result, (int, float))
+
+
+def test_supported_symbols_is_a_subset_of_per_asset_target_symbols() -> None:
+    """#486 cross-module invariant.
+
+    ``SUPPORTED_SYMBOLS`` (``app.models.config``) keys the symbol-conditioned
+    head's ``nn.Embedding`` and is byte-stable by contract — every existing
+    checkpoint relies on the id <-> symbol map being immutable, so we cannot
+    delete or reorder entries without breaking rehydrate.
+    ``PER_ASSET_TARGET_SYMBOLS`` (this module) keys the per-asset forward-vol
+    target columns on events.parquet and grows freely as upstream symbol
+    coverage expands.
+
+    The two sets are intentionally distinct but the subset invariant must
+    hold: every symbol the embedding head can id must also have a per-asset
+    target column the trainer can supervise. A future symbol added to
+    ``SUPPORTED_SYMBOLS`` without a matching ``PER_ASSET_TARGET_SYMBOLS``
+    entry would leave the head with id k=K but no per-asset target column
+    to supervise against — a silent training-time bug this test forbids.
+    """
+
+    from app.models.config import SUPPORTED_SYMBOLS
+
+    missing = set(SUPPORTED_SYMBOLS) - set(edb.PER_ASSET_TARGET_SYMBOLS)
+    assert missing == set(), (
+        f"SUPPORTED_SYMBOLS contains symbols not in PER_ASSET_TARGET_SYMBOLS: "
+        f"{sorted(missing)}. Add them to "
+        "``backend/app/data/event_dataset_builder.PER_ASSET_TARGET_SYMBOLS`` so "
+        "the per-asset target columns exist for every symbol the embedding head "
+        "can id."
+    )
