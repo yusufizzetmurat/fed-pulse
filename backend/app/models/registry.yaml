@@ -122,6 +122,8 @@ encoders:
     revision: voyage-finance-2
     gated: true
     task: sentence_embedding
+    api_only: true
+    hidden_size: 1024
     description: |
       Voyage AI voyage-finance-2 sentence-embedding encoder (1024-dim,
       finance-tuned). Served by Voyage's hosted REST API, not the
@@ -129,7 +131,13 @@ encoders:
       ``scripts/cache_voyage_embeddings.py`` rather than going through
       ``app.data.embedding_cache``. ``VOYAGE_API_KEY`` must be set;
       Voyage does not publish a checkpoint sha, so the revision field
-      pins the model name itself.
+      pins the model name itself. ``api_only: true`` tells every code
+      path that would otherwise call ``AutoConfig.from_pretrained``
+      / ``AutoModel.from_pretrained`` against ``ref.repo`` to read the
+      cached embeddings off disk instead (the from_pretrained call
+      would 404 against the API-only repo); ``hidden_size: 1024``
+      surfaces the encoder's native pooled-vector dim without needing
+      to instantiate the model.
     inference_features: []
 
   finbert_fed_adjacent:

@@ -69,6 +69,26 @@ class EncoderRef:
     # review of the repo — the flag tells transformers it is OK to
     # download and execute Python from the HF repo at load time.
     trust_remote_code: bool = False
+    # #556 opt-in for encoders served by an API rather than an HF
+    # checkpoint (e.g. voyage-finance-2 via the Voyage REST API).
+    # When True, every code path that would otherwise call
+    # ``AutoConfig`` / ``AutoModel`` / ``AutoTokenizer`` against
+    # ``ref.repo`` must instead read the cached embeddings off disk
+    # and skip the model load — the from_pretrained call would 404
+    # because the repo is the API model name, not an HF artifact.
+    # Pairs with ``hidden_size`` below so consumers (e.g. the dual-
+    # head runner's text-channel resolution) can read the encoder's
+    # native pooled-vector dim from the registry without instantiating
+    # the model.
+    api_only: bool = False
+    # #556 explicit hidden_size annotation for API-only encoders. The
+    # runner's text-channel resolution discovers the encoder dim via
+    # ``AutoConfig.from_pretrained`` for HF encoders; for API-only
+    # encoders that path 404s, so the registry must carry the dim
+    # explicitly. ``0`` (default) is sentinel-for-unset: HF encoders
+    # leave it at 0 and the consumer falls back to the AutoConfig
+    # discovery path.
+    hidden_size: int = 0
 
 
 @lru_cache(maxsize=1)
@@ -92,6 +112,8 @@ def load_registry(path: Path | None = None) -> dict[str, EncoderRef]:
             role=str(raw_role) if raw_role is not None else None,
             inference_features=tuple(str(v) for v in raw_features),
             trust_remote_code=bool(fields.get("trust_remote_code", False)),
+            api_only=bool(fields.get("api_only", False)),
+            hidden_size=int(fields.get("hidden_size", 0) or 0),
         )
         by_repo[ref.repo] = ref
         by_repo[ref.alias] = ref

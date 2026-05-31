@@ -684,23 +684,43 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
                 "app.models.registry.encoder_ref. Add it to "
                 "backend/app/models/registry.yaml or pass a valid alias."
             )
-        from transformers import AutoConfig
+        # #556 api_only short-circuit. Voyage (and any future API-served
+        # encoder) cannot be loaded via ``AutoConfig.from_pretrained``
+        # because ``ref.repo`` is the API model name, not an HF artifact
+        # -- the call 404s. The registry carries ``hidden_size``
+        # explicitly for these encoders so the runner reads it without
+        # instantiating the model. Cached embeddings on disk (built by
+        # ``scripts/cache_voyage_embeddings.py``) feed the loader's text
+        # path as usual.
+        if getattr(ref, "api_only", False):
+            resolved_text_embedding_dim = int(getattr(ref, "hidden_size", 0) or 0)
+            if resolved_text_embedding_dim <= 0:
+                raise ValueError(
+                    f"text_encoder={text_encoder!r} is api_only but "
+                    f"hidden_size is {resolved_text_embedding_dim!r} in "
+                    "the registry. API-only encoders must carry an "
+                    "explicit positive ``hidden_size`` so the runner "
+                    "can route the text channel without loading the "
+                    "model."
+                )
+        else:
+            from transformers import AutoConfig
 
-        encoder_config = AutoConfig.from_pretrained(
-            ref.repo,
-            revision=ref.revision or None,
-            trust_remote_code=bool(getattr(ref, "trust_remote_code", False)),
-        )
-        resolved_text_embedding_dim = int(
-            getattr(encoder_config, "hidden_size", 0) or 0
-        )
-        if resolved_text_embedding_dim <= 0:
-            raise ValueError(
-                f"text_encoder={text_encoder!r} resolved a config but "
-                f"hidden_size was {resolved_text_embedding_dim!r}. The "
-                "encoder cannot drive the text channel without a positive "
-                "hidden_size on its transformer config."
+            encoder_config = AutoConfig.from_pretrained(
+                ref.repo,
+                revision=ref.revision or None,
+                trust_remote_code=bool(getattr(ref, "trust_remote_code", False)),
             )
+            resolved_text_embedding_dim = int(
+                getattr(encoder_config, "hidden_size", 0) or 0
+            )
+            if resolved_text_embedding_dim <= 0:
+                raise ValueError(
+                    f"text_encoder={text_encoder!r} resolved a config but "
+                    f"hidden_size was {resolved_text_embedding_dim!r}. The "
+                    "encoder cannot drive the text channel without a positive "
+                    "hidden_size on its transformer config."
+                )
         resolved_text_adapter_dim = 128
         resolved_text_channel = "embeddings"
 
