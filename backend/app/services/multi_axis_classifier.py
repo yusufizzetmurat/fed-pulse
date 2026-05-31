@@ -263,7 +263,11 @@ def _load_state() -> "_ClassifierState | _LoadFailure":
             raise ValueError(
                 f"Encoder alias {encoder_alias!r} is unpinned in registry.yaml"
             )
-        tokenizer = AutoTokenizer.from_pretrained(ref.repo, revision=ref.revision)  # type: ignore[no-untyped-call]
+        tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
+            ref.repo,
+            revision=ref.revision,
+            trust_remote_code=bool(getattr(ref, "trust_remote_code", False)),
+        )
         model = TextMultiAxisClassifier.from_encoder_alias(
             encoder_alias=encoder_alias,
             head_hidden_size=head_hidden_size,

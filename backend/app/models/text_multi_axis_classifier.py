@@ -104,7 +104,11 @@ class TextMultiAxisClassifier(nn.Module):
                 "registry. Multi-axis classifier training refuses unpinned "
                 "encoders to keep checkpoint provenance unambiguous."
             )
-        encoder = AutoModel.from_pretrained(ref.repo, revision=ref.revision)
+        encoder = AutoModel.from_pretrained(
+            ref.repo,
+            revision=ref.revision,
+            trust_remote_code=bool(getattr(ref, "trust_remote_code", False)),
+        )
         hidden_size = int(getattr(encoder.config, "hidden_size", 0))
         if hidden_size <= 0:
             raise ValueError(

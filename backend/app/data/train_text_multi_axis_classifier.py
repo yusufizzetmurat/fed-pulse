@@ -1134,7 +1134,11 @@ def main(argv: list[str] | None = None) -> int:
             f"Encoder alias {args.encoder_alias!r} is unpinned in registry.yaml; "
             "add a revision before training."
         )
-    tokenizer = AutoTokenizer.from_pretrained(ref.repo, revision=ref.revision)
+    tokenizer = AutoTokenizer.from_pretrained(
+        ref.repo,
+        revision=ref.revision,
+        trust_remote_code=bool(getattr(ref, "trust_remote_code", False)),
+    )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = TextMultiAxisClassifier.from_encoder_alias(
