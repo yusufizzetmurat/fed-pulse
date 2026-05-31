@@ -17,12 +17,27 @@ import pytest
 from app.services import trajectory as svc
 
 
+@pytest.fixture(autouse=True)
+def _reset_trajectory_state():
+    """Reset the singleton both before and after each test.
+
+    A test that crashes mid-run leaves module-level ``_state`` in a
+    stale shape (either a real state from a fixture or the sticky
+    sentinel from this very PR). Without the after-yield reset the
+    next test inherits the pollution; matches the analogs.py test
+    isolation pattern surfaced in the #551 review.
+    """
+
+    svc.reset_state()
+    yield
+    svc.reset_state()
+
+
 def test_get_state_returns_none_when_bundle_missing(
     monkeypatch, tmp_path: Path
 ) -> None:
     """A missing bundle directory degrades to ``None`` without raising."""
 
-    svc.reset_state()
     monkeypatch.setenv("FED_PULSE_TRAJECTORY_DIR", str(tmp_path / "absent"))
     assert svc.get_state() is None
 
@@ -39,7 +54,6 @@ def test_load_failure_is_sticky_after_first_call(
     :class:`_LoadFailure` sentinel breaks the loop.
     """
 
-    svc.reset_state()
     monkeypatch.setenv(
         "FED_PULSE_TRAJECTORY_DIR", str(tmp_path / "absent")
     )
@@ -83,7 +97,6 @@ def test_reset_state_clears_sticky_load_failure(
 ) -> None:
     """``reset_state`` must drop the sticky ``_LoadFailure`` sentinel."""
 
-    svc.reset_state()
     monkeypatch.setenv(
         "FED_PULSE_TRAJECTORY_DIR", str(tmp_path / "absent")
     )

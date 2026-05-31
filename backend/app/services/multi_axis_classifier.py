@@ -240,7 +240,10 @@ def _load_state() -> "_ClassifierState | _LoadFailure":
     try:
         payload = torch.load(path, map_location="cpu", weights_only=False)
     except Exception as exc:
-        _logger.warning("multi_axis_checkpoint_load_failed path=%s", path, exc_info=True)
+        # No log here -- get_classifier emits exactly one structured
+        # warning when it caches the _LoadFailure sentinel. Mirrors the
+        # analogs.py contract (#410): _load_state stays silent so the
+        # double-log surfaced in the #551 review pass does not recur.
         return _LoadFailure(
             reason=f"torch_load_failed path={path} error={type(exc).__name__}: {exc}"
         )
@@ -275,9 +278,9 @@ def _load_state() -> "_ClassifierState | _LoadFailure":
                 len(unexpected),
             )
     except Exception as exc:
-        _logger.warning(
-            "multi_axis_classifier_build_failed path=%s", path, exc_info=True
-        )
+        # Silent here (the single warning fires in get_classifier when
+        # the sentinel is first cached). The partial_load warning above
+        # is informational rather than a failure so it stays put.
         return _LoadFailure(
             reason=f"model_build_failed encoder={encoder_alias} error={type(exc).__name__}: {exc}"
         )

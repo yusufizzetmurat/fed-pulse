@@ -248,9 +248,11 @@ def _load_npz_arrays(
         npz = np.load(npz_path, allow_pickle=False)
         embeddings = np.asarray(npz["embeddings"], dtype=np.float32)
     except Exception:  # pragma: no cover — guarded so a malformed npz never 500s the worker
-        _logger.warning(
-            "trajectory_bundle_load_failed path=%s", bundle_dir, exc_info=True
-        )
+        # Silent; the caller (_load_state) returns _LoadFailure and
+        # get_state emits the single structured warning at the cache
+        # boundary. The partial-fallback warnings below (missing
+        # feature_mean / feature_std) are informational because the
+        # load still succeeds with the documented zero/one fallback.
         return None
     if "feature_mean" in npz.files:
         feature_mean = np.asarray(npz["feature_mean"], dtype=np.float32)
@@ -330,9 +332,8 @@ def _load_state() -> "_TrajectoryState | _LoadFailure":
     try:
         metadata = pd.read_parquet(bundle_dir / PARQUET_NAME)
     except Exception as exc:  # pragma: no cover
-        _logger.warning(
-            "trajectory_bundle_load_failed path=%s", bundle_dir, exc_info=True
-        )
+        # Silent here -- get_state emits one structured warning when
+        # the sentinel is first cached (per the analogs.py contract).
         return _LoadFailure(
             reason=f"metadata_load_failed path={bundle_dir} error={type(exc).__name__}: {exc}"
         )
@@ -344,9 +345,7 @@ def _load_state() -> "_TrajectoryState | _LoadFailure":
     try:
         model, config = load_model(bundle_dir / MODEL_NAME)
     except Exception as exc:
-        _logger.warning(
-            "trajectory_model_load_failed path=%s", bundle_dir, exc_info=True
-        )
+        # Silent here; single warning at the get_state caching boundary.
         return _LoadFailure(
             reason=f"model_load_failed path={bundle_dir / MODEL_NAME} error={type(exc).__name__}: {exc}"
         )
@@ -395,13 +394,15 @@ def _load_state() -> "_TrajectoryState | _LoadFailure":
 def get_state() -> "_TrajectoryState | None":
     """Return the cached state, building it on first call.
 
-    Double-checked locking: the lock-free pre-check serves the steady
-    state, the lock is only contested on cold start, and the actual
-    bundle load (HF + torch + npz) runs OUTSIDE the lock so concurrent
-    first-hit requests do not serialize on the slow path. We accept
-    that two simultaneous first hits may both call ``_load_state``;
-    the second result is discarded by the compare-and-assign under the
-    lock so the worker still ends up with a single shared state.
+    Double-checked locking with the lock-free pre-check on the steady
+    state. The load runs INSIDE the lock so concurrent first-hit
+    callers serialize on the cold start; this trades a multi-second
+    serialization window on the very first request for correctness
+    against the failure-wins-over-success race surfaced in the #551
+    review (an out-of-lock load could have two concurrent calls
+    return divergent outcomes, with the failure cached if it grabbed
+    the lock first). Matches the analogs.py + multi_axis_classifier.py
+    pattern; the pre-#551 outside-lock optimisation is gone.
 
     Per #454, a load failure is cached as a sticky :class:`_LoadFailure`
     sentinel so subsequent calls return ``None`` without re-attempting
@@ -414,17 +415,28 @@ def get_state() -> "_TrajectoryState | None":
     cached = _state
     if cached is not _UNSET:
         return None if isinstance(cached, _LoadFailure) else cached
-    # Build outside the lock so a concurrent first-hit caller does not
-    # block on a multi-second torch.load. The worst case is duplicate
-    # work; correctness is preserved by the compare-and-assign below.
-    candidate = _load_state()
     with _state_lock:
-        if _state is _UNSET:
-            _state = candidate
-            if isinstance(candidate, _LoadFailure):
-                _logger.warning("trajectory_load_failed reason=%s", candidate.reason)
-        current = _state
-        return None if isinstance(current, _LoadFailure) else current
+        cached = _state
+        if cached is not _UNSET:
+            return None if isinstance(cached, _LoadFailure) else cached
+        loaded = _load_state()
+        _state = loaded
+        if isinstance(loaded, _LoadFailure):
+            _logger.warning("trajectory_load_failed reason=%s", loaded.reason)
+            # Surface the failure on the /health contract surface so
+            # an operator can distinguish "never tried" (UNSET) from
+            # "tried and failed" (the sticky sentinel). Pre-#551 the
+            # status read ``uninitialised`` forever after a load
+            # failure -- the same silent-uninitialised problem the
+            # sticky cache fix shifts from _state onto _contract_status
+            # unless we also record here.
+            _record_contract_status(
+                status="load_failed",
+                checkpoint_path=_resolve_bundle_dir(),
+                message=loaded.reason,
+            )
+            return None
+        return loaded
 
 
 def reset_state() -> None:
