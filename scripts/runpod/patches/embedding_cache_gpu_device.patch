@@ -1,0 +1,20 @@
+diff --git a/backend/app/data/embedding_cache.py b/backend/app/data/embedding_cache.py
+index 388d173..9c4782d 100644
+--- a/backend/app/data/embedding_cache.py
++++ b/backend/app/data/embedding_cache.py
+@@ -268,6 +268,15 @@ def build_cache(
+     sentence_embedding = ref.task in SENTENCE_EMBEDDING_TASKS
+     tokenizer, model = _load_encoder(ref)
+     model.eval()
++    # LOCAL POD TWEAK (uncommitted; mirrors #553 contract): place the encoder on
++    # GPU so the build uses the idle Blackwell card instead of CPU (~10x slower).
++    import os as _os
++    import torch as _torch
++    _device = (
++        _os.environ.get("FED_PULSE_EMBEDDING_CACHE_DEVICE", "").strip()
++        or ("cuda" if _torch.cuda.is_available() else "cpu")
++    )
++    model = model.to(_device)
+ 
+     pending_inputs: list[str] = []
+     pending_meta: list[tuple[str, str, str, int, str]] = []  # (record_id, doc_id, event_date, chunk_index, preview)
