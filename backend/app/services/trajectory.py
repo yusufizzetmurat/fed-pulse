@@ -85,7 +85,24 @@ class _TrajectoryState:
         return int(self.embeddings.shape[0])
 
 
-_state: _TrajectoryState | None = None
+@dataclass(frozen=True)
+class _LoadFailure:
+    """Sticky sentinel cached when the trajectory bundle cannot be loaded.
+
+    Distinct from the ``None`` ``get_state`` returns so the cache can
+    tell "never tried" (the initial ``_UNSET`` state) from "tried and
+    failed". Per #410 / #454: once a failure is cached, subsequent
+    ``get_state`` calls return ``None`` without re-attempting the load
+    and without re-emitting the warning, so a broken bundle on a sweep
+    does not flood logs. Call :func:`reset_state` to clear the sticky
+    sentinel once the underlying breakage is fixed.
+    """
+
+    reason: str
+
+
+_UNSET: Any = object()
+_state: "_TrajectoryState | _LoadFailure | object" = _UNSET
 _state_lock = threading.Lock()
 
 # #393: structured surface for the inference-contract validation. The
@@ -302,30 +319,34 @@ def _load_conformal(bundle_dir: Path) -> tuple[float | None, float | None]:
     return q, a
 
 
-def _load_state() -> _TrajectoryState | None:
+def _load_state() -> "_TrajectoryState | _LoadFailure":
     bundle_dir = _resolve_bundle_dir()
     if not bundle_available():
         _logger.info("trajectory_bundle_missing path=%s", bundle_dir)
-        return None
+        return _LoadFailure(reason=f"bundle_missing path={bundle_dir}")
     try:
         metadata = pd.read_parquet(bundle_dir / PARQUET_NAME)
-    except Exception:  # pragma: no cover
+    except Exception as exc:  # pragma: no cover
         _logger.warning(
             "trajectory_bundle_load_failed path=%s", bundle_dir, exc_info=True
         )
-        return None
+        return _LoadFailure(
+            reason=f"metadata_load_failed path={bundle_dir} error={type(exc).__name__}: {exc}"
+        )
     loaded = _load_npz_arrays(bundle_dir / NPZ_NAME, bundle_dir)
     if loaded is None:
-        return None
+        return _LoadFailure(reason=f"npz_arrays_load_failed path={bundle_dir / NPZ_NAME}")
     embeddings, feature_mean, feature_std = loaded
 
     try:
         model, config = load_model(bundle_dir / MODEL_NAME)
-    except Exception:
+    except Exception as exc:
         _logger.warning(
             "trajectory_model_load_failed path=%s", bundle_dir, exc_info=True
         )
-        return None
+        return _LoadFailure(
+            reason=f"model_load_failed path={bundle_dir / MODEL_NAME} error={type(exc).__name__}: {exc}"
+        )
 
     # #393: validate the inference-contract sidecar against the loaded
     # trajectory model's forward signature. A sidecar declaring kwargs
@@ -368,7 +389,7 @@ def _load_state() -> _TrajectoryState | None:
     )
 
 
-def get_state() -> _TrajectoryState | None:
+def get_state() -> "_TrajectoryState | None":
     """Return the cached state, building it on first call.
 
     Double-checked locking: the lock-free pre-check serves the steady
@@ -378,25 +399,42 @@ def get_state() -> _TrajectoryState | None:
     that two simultaneous first hits may both call ``_load_state``;
     the second result is discarded by the compare-and-assign under the
     lock so the worker still ends up with a single shared state.
+
+    Per #454, a load failure is cached as a sticky :class:`_LoadFailure`
+    sentinel so subsequent calls return ``None`` without re-attempting
+    the load and without re-emitting the warning. Call
+    :func:`reset_state` (or restart the worker) to clear the sticky
+    failure once the underlying breakage is fixed.
     """
 
     global _state
-    if _state is not None:
-        return _state
+    cached = _state
+    if cached is not _UNSET:
+        return None if isinstance(cached, _LoadFailure) else cached  # type: ignore[return-value]
     # Build outside the lock so a concurrent first-hit caller does not
     # block on a multi-second torch.load. The worst case is duplicate
     # work; correctness is preserved by the compare-and-assign below.
     candidate = _load_state()
     with _state_lock:
-        if _state is None:
+        if _state is _UNSET:
             _state = candidate
-        return _state
+            if isinstance(candidate, _LoadFailure):
+                _logger.warning("trajectory_load_failed reason=%s", candidate.reason)
+        current = _state
+        return None if isinstance(current, _LoadFailure) else current  # type: ignore[return-value]
 
 
 def reset_state() -> None:
+    """Drop the singleton so the next call rebuilds (test hook + refresh).
+
+    Also clears a sticky :class:`_LoadFailure` cached by #454, so an
+    operator who fixed the underlying breakage can recover without a
+    process restart.
+    """
+
     global _state
     with _state_lock:
-        _state = None
+        _state = _UNSET
     _record_contract_status(
         status="uninitialised",
         checkpoint_path=None,
