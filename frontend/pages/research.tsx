@@ -525,7 +525,6 @@ export default function ResearchPage() {
                 <TabsTrigger value="bakeoff">Bake-off</TabsTrigger>
                 <TabsTrigger value="transfer">Transfer</TabsTrigger>
                 <TabsTrigger value="decisions">Decisions</TabsTrigger>
-                <TabsTrigger value="jobs">Jobs</TabsTrigger>
                 <TabsTrigger value="files">Downloads</TabsTrigger>
               </TabsList>
               <TabsContent value="bakeoff" className="space-y-3">
@@ -554,8 +553,6 @@ export default function ResearchPage() {
               </TabsContent>
               <TabsContent value="decisions">
                 <DecisionsLink />
-              </TabsContent>
-              <TabsContent value="jobs">
               </TabsContent>
               <TabsContent value="files">
                 <ArtifactsExplorer sections={data.sections} />
