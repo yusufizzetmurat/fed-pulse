@@ -102,7 +102,10 @@ class _LoadFailure:
 
 
 _UNSET: Any = object()
-_state: "_TrajectoryState | _LoadFailure | object" = _UNSET
+# ``Any`` so mypy --strict accepts the three-state union (unset / failure /
+# state) without insisting on a TypeAlias the runtime ``isinstance`` checks
+# do not need. Matches the analogs.py pattern (#410).
+_state: Any = _UNSET
 _state_lock = threading.Lock()
 
 # #393: structured surface for the inference-contract validation. The
@@ -410,7 +413,7 @@ def get_state() -> "_TrajectoryState | None":
     global _state
     cached = _state
     if cached is not _UNSET:
-        return None if isinstance(cached, _LoadFailure) else cached  # type: ignore[return-value]
+        return None if isinstance(cached, _LoadFailure) else cached
     # Build outside the lock so a concurrent first-hit caller does not
     # block on a multi-second torch.load. The worst case is duplicate
     # work; correctness is preserved by the compare-and-assign below.
@@ -421,7 +424,7 @@ def get_state() -> "_TrajectoryState | None":
             if isinstance(candidate, _LoadFailure):
                 _logger.warning("trajectory_load_failed reason=%s", candidate.reason)
         current = _state
-        return None if isinstance(current, _LoadFailure) else current  # type: ignore[return-value]
+        return None if isinstance(current, _LoadFailure) else current
 
 
 def reset_state() -> None:

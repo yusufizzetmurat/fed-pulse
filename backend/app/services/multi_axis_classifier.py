@@ -82,7 +82,10 @@ class _LoadFailure:
 
 
 _UNSET: Any = object()
-_state: "_ClassifierState | _LoadFailure | object" = _UNSET
+# ``Any`` so mypy --strict accepts the three-state union (unset / failure /
+# state) without insisting on a TypeAlias the runtime ``isinstance`` checks
+# do not need. Matches the analogs.py pattern (#410).
+_state: Any = _UNSET
 _state_lock = threading.Lock()
 
 
@@ -363,7 +366,7 @@ def get_loaded_encoder_alias() -> str | None:
         state = _state
     if state is _UNSET or isinstance(state, _LoadFailure):
         return None
-    return state.encoder_alias  # type: ignore[union-attr]
+    return str(state.encoder_alias)
 
 
 def get_classifier() -> "_ClassifierState | None":
@@ -381,11 +384,11 @@ def get_classifier() -> "_ClassifierState | None":
     global _state
     cached = _state
     if cached is not _UNSET:
-        return None if isinstance(cached, _LoadFailure) else cached  # type: ignore[return-value]
+        return None if isinstance(cached, _LoadFailure) else cached
     with _state_lock:
         cached = _state
         if cached is not _UNSET:
-            return None if isinstance(cached, _LoadFailure) else cached  # type: ignore[return-value]
+            return None if isinstance(cached, _LoadFailure) else cached
         loaded = _load_state()
         _state = loaded
         if isinstance(loaded, _LoadFailure):
