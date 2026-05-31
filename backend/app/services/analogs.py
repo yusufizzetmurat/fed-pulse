@@ -23,6 +23,7 @@ missing checkpoint never crashes the worker.
 from __future__ import annotations
 
 import dataclasses
+from functools import lru_cache
 import logging
 import os
 import threading
@@ -377,7 +378,14 @@ def find_analogs(
 
 
 def render_analog_cards(hits: list[AnalogHit]) -> list[dict[str, Any]]:
-    """Adapt :class:`AnalogHit` rows to the ``AnalogCard`` schema shape."""
+    """Adapt :class:`AnalogHit` rows to the ``AnalogCard`` schema shape.
+
+    Augments each card with realized 5d/20d S&P close-to-close returns
+    starting the trading day after ``event_date`` (#299 quant-facing
+    overlay). Returns ``None`` for either field when the historical
+    market data is unavailable so the dashboard can render a graceful
+    empty state.
+    """
 
     return [
         {
@@ -385,10 +393,54 @@ def render_analog_cards(hits: list[AnalogHit]) -> list[dict[str, Any]]:
             "similarity": hit.similarity,
             "axis_stance": hit.axis_stance,
             "subsequent_vol_regime": hit.subsequent_vol_regime,
+            "subsequent_close_pct_5d": _subsequent_close_pct(hit.event_date, horizon=5),
+            "subsequent_close_pct_20d": _subsequent_close_pct(hit.event_date, horizon=20),
             "excerpt": hit.excerpt,
         }
         for hit in hits
     ]
+
+
+@lru_cache(maxsize=512)
+def _subsequent_close_pct(event_date: str, *, horizon: int) -> float | None:
+    """S&P 500 close-to-close % return over ``horizon`` trading days
+    from the event-day close.
+
+    The denominator is the close ON ``event_date`` (or the nearest
+    prior trading day when event_date itself is non-trading), matching
+    the standard event-study convention quoted by Bloomberg / FactSet.
+    The numerator is the close ``horizon`` trading days *forward* of
+    that anchor.
+
+    ``None`` when historical data is sparse (e.g. early history), when
+    yfinance is unavailable, when fewer than ``horizon`` forward
+    trading days are present, or when the event-day close lookup
+    fails. LRU-cached per (date, horizon) so the same analog row is
+    not refetched on every query.
+    """
+
+    from app.services.market_data import fetch_market_snapshot, fetch_realized_forward
+
+    try:
+        snapshot = fetch_market_snapshot(target_date=event_date, symbol="^GSPC")
+        forward = fetch_realized_forward(
+            target_date=event_date,
+            symbol="^GSPC",
+            steps=horizon,
+            lookback_days=45,
+        )
+    except Exception:
+        return None
+    if len(forward) < horizon:
+        return None
+    try:
+        start = float(snapshot["close"])
+        end = float(forward[horizon - 1]["close"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if start <= 0:
+        return None
+    return round((end / start - 1.0) * 100.0, 4)
 
 
 __all__ = [

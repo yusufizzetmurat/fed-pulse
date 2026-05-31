@@ -262,6 +262,105 @@ def load_cross_bank_transfer(artifacts_root: Path) -> dict[str, Any]:
     }
 
 
+REGISTRY_MANIFEST_PATH = Path(__file__).resolve().parent / "manifests" / "encoder_registry.json"
+
+
+def load_research_registry(
+    surface: str = "dual",
+    include_rejected: bool = False,
+) -> dict[str, Any]:
+    """Quant-facing encoder bake-off registry filtered by Δ surface.
+
+    The manifest at ``manifests/encoder_registry.json`` is the canonical
+    machine-readable source for the §6.41 results table. Each row is
+    annotated with ``delta_dual`` / ``delta_cls`` vs the baseline; by
+    default the response includes only rows with ``Δ >= 0`` on the
+    active surface so the dashboard does not surface negative-lift
+    encoders. Pass ``include_rejected=True`` to see the full table.
+    """
+
+    if surface not in {"dual", "cls"}:
+        raise ValueError(f"unsupported surface {surface!r}; expected dual|cls")
+
+    try:
+        payload = json.loads(REGISTRY_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        LOGGER.warning("research_registry: failed to load manifest: %s", exc)
+        return {
+            "available": False,
+            "surface": surface,
+            "baseline": None,
+            "rows": [],
+            "rejected_count": 0,
+            "training_package_id": "",
+            "head": "",
+            "seeds": [],
+            "source_wiki_section": "",
+        }
+
+    baseline = payload.get("baseline") or {}
+    baseline_dual = _safe_float_or_none(baseline.get("dual_f1"))
+    baseline_cls = _safe_float_or_none(baseline.get("cls_f1"))
+
+    rows: list[dict[str, Any]] = []
+    rejected = 0
+    for row in payload.get("rows") or []:
+        row_dual = _safe_float_or_none(row.get("dual_f1"))
+        row_cls = _safe_float_or_none(row.get("cls_f1"))
+        delta_dual = (
+            None if row_dual is None or baseline_dual is None else round(row_dual - baseline_dual, 4)
+        )
+        delta_cls = (
+            None if row_cls is None or baseline_cls is None else round(row_cls - baseline_cls, 4)
+        )
+        active_delta = delta_dual if surface == "dual" else delta_cls
+        is_winner = active_delta is not None and active_delta >= 0
+
+        if not is_winner and not include_rejected:
+            rejected += 1
+            continue
+
+        rows.append(
+            {
+                "encoder_alias": str(row.get("encoder_alias", "")),
+                "encoder_display": str(row.get("encoder_display", row.get("encoder_alias", ""))),
+                "dual_f1": row_dual,
+                "cls_f1": row_cls,
+                "regression_f1": _safe_float_or_none(row.get("regression_f1")),
+                "delta_dual": delta_dual,
+                "delta_cls": delta_cls,
+                "is_winner": is_winner,
+                "checkpoint_relpath": row.get("checkpoint_relpath"),
+                "cache_uri": row.get("cache_uri"),
+                "notes": str(row.get("notes", "")),
+            }
+        )
+
+    baseline_out = (
+        {
+            "label": str(baseline.get("label", "baseline")),
+            "dual_f1": baseline_dual,
+            "cls_f1": baseline_cls,
+            "regression_f1": _safe_float_or_none(baseline.get("regression_f1")),
+        }
+        if baseline
+        else None
+    )
+
+    seeds = payload.get("seeds") or []
+    return {
+        "available": bool(rows) or include_rejected,
+        "surface": surface,
+        "baseline": baseline_out,
+        "rows": rows,
+        "rejected_count": rejected,
+        "training_package_id": str(payload.get("training_package_id", "")),
+        "head": str(payload.get("head", "")),
+        "seeds": [int(s) for s in seeds if isinstance(s, int | float)],
+        "source_wiki_section": str(payload.get("source_wiki_section", "")),
+    }
+
+
 def _safe_float(value: Any) -> float:
     if value is None:
         return 0.0

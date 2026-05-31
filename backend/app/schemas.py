@@ -1057,6 +1057,22 @@ class AnalogCard(BaseModel):
             "NOT a model feature. Do not feed back into a downstream model."
         ),
     )
+    # #299 — realized S&P forward returns measured from the event-day
+    # close (Bloomberg / FactSet convention). The denominator is the
+    # close on ``event_date`` (or the nearest prior trading day) and
+    # the numerator is the close ``N`` trading days forward of that
+    # anchor. These are MARKET DATA OVERLAYS (yfinance ^GSPC), not
+    # training labels — safe to surface even when the supervised
+    # ``subsequent_vol_regime`` bucket is intentionally suppressed.
+    # None when the historical market data is unavailable.
+    subsequent_close_pct_5d: float | None = Field(
+        default=None,
+        description="S&P 500 close-to-close % return over the 5 trading days following the event-day close.",
+    )
+    subsequent_close_pct_20d: float | None = Field(
+        default=None,
+        description="S&P 500 close-to-close % return over the 20 trading days following the event-day close.",
+    )
     excerpt: str = Field(..., description="First ~280 characters of the analog statement.")
 
 
@@ -1234,3 +1250,62 @@ class TrajectoryResponse(BaseModel):
             "available."
         ),
     )
+
+
+class ResearchRegistryBaseline(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    label: str
+    dual_f1: float | None = None
+    cls_f1: float | None = None
+    regression_f1: float | None = None
+
+
+class ResearchRegistryRow(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    encoder_alias: str
+    encoder_display: str
+    dual_f1: float | None = None
+    cls_f1: float | None = None
+    regression_f1: float | None = None
+    delta_dual: float | None = Field(
+        default=None,
+        description="Δ macro-F1 on the dual-head surface vs no-text baseline.",
+    )
+    delta_cls: float | None = Field(
+        default=None,
+        description="Δ macro-F1 on the classification-only surface vs no-text baseline.",
+    )
+    is_winner: bool = Field(
+        default=False,
+        description="True iff the active surfaces Δ is >= 0 (non-negative lift).",
+    )
+    checkpoint_relpath: str | None = None
+    cache_uri: str | None = Field(
+        default=None,
+        description="hf:// URI of the shareable embedding cache parquet, if published.",
+    )
+    notes: str = ""
+
+
+class ResearchRegistryResponse(BaseModel):
+    """Quant-facing encoder registry response (§6.41 manifest).
+
+    Filtered by default to non-negative Δ on the requested surface so
+    the dashboard does not surface negative-lift encoders. Use
+    ?include_rejected=true to see the full table including nulls and
+    negatives.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    available: bool
+    surface: Literal["dual", "cls"]
+    baseline: ResearchRegistryBaseline | None = None
+    rows: list[ResearchRegistryRow] = Field(default_factory=list)
+    rejected_count: int = 0
+    training_package_id: str = ""
+    head: str = ""
+    seeds: list[int] = Field(default_factory=list)
+    source_wiki_section: str = ""
