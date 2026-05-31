@@ -1,8 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render as rtlRender, screen, fireEvent } from "@testing-library/react";
 
 import { AnalyzeForm } from "@/components/analyze/AnalyzeForm";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type { AnalyzeRequest } from "@/lib/analyze/types";
+
+// AnalyzeForm uses Tooltip primitives for the picker-scope info icons
+// (#474/#475). Radix tooltips require a TooltipProvider ancestor; the
+// production app mounts one at the page root (see pages/_app.js).
+function render(ui: React.ReactElement) {
+  return rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+}
 
 function baseRequest(): AnalyzeRequest {
   return {
@@ -52,5 +60,17 @@ describe("AnalyzeForm", () => {
       />
     );
     expect(screen.getByRole("button", { name: /running analysis/i })).toBeDisabled();
+  });
+
+  it("exposes picker-scope info icons next to the Asset and Horizon labels (#474/#475)", () => {
+    render(
+      <AnalyzeForm value={baseRequest()} onChange={vi.fn()} onSubmit={vi.fn()} loading={false} />
+    );
+    expect(
+      screen.getByLabelText("What does the asset picker affect?")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("What does the horizon picker affect?")
+    ).toBeInTheDocument();
   });
 });
