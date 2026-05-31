@@ -493,7 +493,6 @@ export default function DecisionsPage() {
             </h1>
             <p className="max-w-2xl text-muted-foreground">
               Next-FOMC rate-decision forecast as an ordinal class with the OIS-implied baseline alongside.
-              Reads <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">data/artifacts/next_fomc/</code>.
             </p>
           </div>
 
@@ -533,23 +532,13 @@ export default function DecisionsPage() {
           ) : (
             <Card>
               <CardHeader>
-                <CardTitle>No forecast available.</CardTitle>
+                <CardTitle>No forecast available yet.</CardTitle>
                 <CardDescription>
-                  Train a checkpoint to populate this page. The forecaster reads from{" "}
-                  <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-                    data/artifacts/next_fomc/
-                  </code>
-                  .
+                  A rate-decision forecast for the next FOMC meeting will appear here once the
+                  decision model has been trained against the current data window.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-2 text-sm text-muted-foreground">
-                <p>
-                  Run{" "}
-                  <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-                    make next-fomc TRAINING_PACKAGE_ID=&lt;id&gt;
-                  </code>{" "}
-                  to publish a forecast.
-                </p>
                 {data?.upcoming_meeting ? (
                   <p>
                     Next scheduled meeting:{" "}

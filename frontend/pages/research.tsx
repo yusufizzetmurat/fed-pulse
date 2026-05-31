@@ -508,8 +508,7 @@ export default function ResearchPage() {
             <p className="max-w-2xl text-sm text-muted-foreground">
               Research artefacts the model is built on. The Bake-off compares text encoders.
               The Transfer matrix shows how a model trained on one central bank&apos;s statements
-              performs on another&apos;s. Decisions and Jobs link to training runs. Files lists the
-              raw artefact JSONs you can download.
+              performs on another&apos;s. Files lists the raw artefact JSONs you can download.
             </p>
           </div>
 

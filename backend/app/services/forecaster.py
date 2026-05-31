@@ -1590,6 +1590,13 @@ def get_model_artifact_metadata(
             }
         )
     base_metadata.setdefault("encoder_key", _resolve_encoder_key())
+    # The internal _model_artifact_metadata cache holds a
+    # ``RichFeatureScalerParams`` dataclass under ``rich_feature_scaler``
+    # so the inference-time scaler-apply path can read it; the public
+    # facing metadata is JSON-serialised into the /analyze response and
+    # the analysis_runs.payload column, where a dataclass would crash
+    # ``json.dumps``. Strip it here so callers get a serialisable dict.
+    base_metadata.pop("rich_feature_scaler", None)
     return base_metadata
 
 

@@ -163,12 +163,14 @@ describe("DecisionsPage", () => {
     fetchNextFomcForecastMock.mockReset();
   });
 
-  it("renders the empty state with the make instruction", async () => {
+  it("renders the empty state with the next-meeting context", async () => {
     fetchNextFomcForecastMock.mockResolvedValue(EMPTY_RESPONSE);
     const { default: DecisionsPage } = await import("@/pages/decisions");
     render(<DecisionsPage />);
     await waitFor(() => expect(screen.getByText(/No forecast available/i)).toBeInTheDocument());
-    expect(screen.getByText(/make next-fomc/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/rate-decision forecast for the next FOMC meeting/i),
+    ).toBeInTheDocument();
     expect(screen.getByText(/2026-06-16/)).toBeInTheDocument();
   });
 

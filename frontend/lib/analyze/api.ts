@@ -126,6 +126,12 @@ export async function fetchHistoryRealized(
 // used to fan out N parallel per-row requests; this collapses them to
 // one round trip. Deleted runs and yfinance failures land under
 // ``missing`` so a single broken row does not nuke the table render.
+//
+// The backend caps ``ids`` at 50 per call (see ``/history-realized``);
+// chunk locally so the caller can pass any number of ids without
+// hitting a 422.
+const HISTORY_REALIZED_CHUNK = 50;
+
 export async function fetchHistoryRealizedBatch(
   baseUrl: string,
   runIds: readonly string[],
@@ -134,11 +140,35 @@ export async function fetchHistoryRealizedBatch(
   if (runIds.length === 0) {
     return { items: {}, missing: [] };
   }
-  const response = await axios.get(`${baseUrl}/history-realized`, {
-    params: { ids: runIds.join(",") },
-    signal,
+  const chunks: string[][] = [];
+  for (let i = 0; i < runIds.length; i += HISTORY_REALIZED_CHUNK) {
+    chunks.push(runIds.slice(i, i + HISTORY_REALIZED_CHUNK) as string[]);
+  }
+  // ``allSettled`` so a transient failure on one chunk does not blank the
+  // whole table — the surviving chunks' rows still render and the failed
+  // chunk's ids fall under ``missing`` so the caller can show them as
+  // unresolved.
+  const settled = await Promise.allSettled(
+    chunks.map((chunk) =>
+      axios
+        .get(`${baseUrl}/history-realized`, {
+          params: { ids: chunk.join(",") },
+          signal,
+        })
+        .then((r) => r.data as HistoryRealizedBatchResponse),
+    ),
+  );
+  const items: HistoryRealizedBatchResponse["items"] = {};
+  const missing: string[] = [];
+  settled.forEach((result, idx) => {
+    if (result.status === "fulfilled") {
+      Object.assign(items, result.value.items);
+      missing.push(...result.value.missing);
+    } else {
+      missing.push(...chunks[idx]);
+    }
   });
-  return response.data as HistoryRealizedBatchResponse;
+  return { items, missing };
 }
 
 export async function fetchEvaluationCoverage(
