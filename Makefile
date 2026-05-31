@@ -186,6 +186,54 @@ pull-op-fed:
 	docker compose run --rm backend \
 		python -m app.data.sources.op_fed $(if $(FORCE),--force,)
 
+# Intraday pivot (Round 6 / Path 2): backfill SPY 1-min bars for the
+# 13:30-15:00 ET window of every FOMC day in a training package's
+# events.parquet. Lands at data/external/polygon/spx_intraday_fomc_days.parquet.
+# Requires POLYGON_API_KEY in .env.
+pull-intraday-spx:
+	@test -n "$(EVENTS_PARQUET)" || (echo "EVENTS_PARQUET=<path to events.parquet> is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.polygon_spx --events-parquet "$(EVENTS_PARQUET)"
+
+# Intraday pivot: full-history raw-bar backfill via Alpha Vantage (deep
+# 1-min history back to 2000). Writes the same schema as pull-intraday-spx
+# to data/external/alphavantage_bars/, so build-intraday-events reads it via
+# --bars-cache-dir. Requires ALPHA_VANTAGE_API_KEY. SINCE floors the dates.
+pull-intraday-spx-av:
+	@test -n "$(EVENTS_PARQUET)" || (echo "EVENTS_PARQUET=<path to events.parquet> is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.alphavantage_spx \
+			--events-parquet "$(EVENTS_PARQUET)" --raw-bars \
+			$(if $(SINCE),--since $(SINCE),)
+
+# Intraday pivot: build intraday_events.parquet (pre-announcement bar
+# sequence + immediate/delayed reaction targets) from the cached bars and
+# a training package's FOMC statements.
+build-intraday-events:
+	@test -n "$(EVENTS_PARQUET)" || (echo "EVENTS_PARQUET=<path> is required"; exit 1)
+	@test -n "$(OUT)" || (echo "OUT=<path to intraday_events.parquet> is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.intraday_event_builder \
+			--events-parquet "$(EVENTS_PARQUET)" --out "$(OUT)"
+
+# Intraday pivot: train + walk-forward-evaluate the direction model on the
+# intraday_events dataset (both target windows, full + market-only baselines).
+train-intraday-direction:
+	@test -n "$(EVENTS)" || (echo "EVENTS=<path to intraday_events.parquet> is required"; exit 1)
+	@test -n "$(OUT_DIR)" || (echo "OUT_DIR=<artifacts dir> is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.intraday_direction_train \
+			--events "$(EVENTS)" --out-dir "$(OUT_DIR)" --seed $(SEED)
+
+# Intraday pivot: train + walk-forward-evaluate the reaction-MAGNITUDE
+# regressor (out-of-sample R2 / RMSE / Spearman, both windows).
+train-intraday-magnitude:
+	@test -n "$(EVENTS)" || (echo "EVENTS=<path to intraday_events.parquet> is required"; exit 1)
+	@test -n "$(OUT_DIR)" || (echo "OUT_DIR=<artifacts dir> is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.intraday_magnitude_train \
+			--events "$(EVENTS)" --out-dir "$(OUT_DIR)" --seed $(SEED)
+
 # Swanson 2021 three-factor xlsx pulled from UCI mirror (#420).
 # Lands at data/external/swanson/pre-and-post-ZLB-factors-extended.xlsx
 # so the subsequent `python -m app.data.ingest_sources

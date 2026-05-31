@@ -151,6 +151,9 @@ ignore = [
 # active wherever it does not yet appear here.
 "app/audit.py" = ["PLR0913"]
 "app/data/alphavantage_spx.py" = ["PLR0913"]
+"app/data/polygon_spx.py" = ["PLR0913"]
+"app/data/intraday_direction_train.py" = ["PLR0913"]
+"app/data/intraday_magnitude_train.py" = ["PLR0913"]
 "app/data/attention_ablation.py" = ["PLR0913", "C901"]
 "app/data/build_training_package.py" = ["PLR0913", "C901"]
 "app/data/chunk_embedding_retrieval.py" = ["PLR0913", "C901"]

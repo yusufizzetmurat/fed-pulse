@@ -56,6 +56,18 @@ DEFAULT_REQUEST_INTERVAL_SECONDS = 13.0
 DEFAULT_ANNOUNCEMENT_TIME = datetime.time(hour=14, minute=0)
 DEFAULT_WINDOW_MINUTES = 30
 
+# --- Intraday-pivot raw-bar backfill -------------------------------------
+# Separate cache + filename from the window-returns parquet above, but the
+# SAME schema polygon_spx writes, so polygon_spx.load_intraday_bars reads
+# this dir unchanged (provider-agnostic bar cache). The raw 13:30-15:00 ET
+# slice feeds intraday_event_builder for the pivot's larger corpus.
+RAW_BARS_PARQUET = "spx_intraday_fomc_days.parquet"
+DEFAULT_RAW_BARS_CACHE_DIR = DATA_DIR / "external" / "alphavantage_bars"
+DEFAULT_RAW_WINDOW_START = datetime.time(13, 30)
+DEFAULT_RAW_WINDOW_END = datetime.time(15, 0)
+# The 15-minute-delayed plan documents entitlement=delayed for US equities.
+DEFAULT_ENTITLEMENT = "delayed"
+
 
 @dataclass(frozen=True)
 class IntradayBar:
@@ -129,6 +141,7 @@ def fetch_intraday_minute_bars(
     symbol: str = DEFAULT_SYMBOL,
     interval: str = DEFAULT_INTERVAL,
     month: str | None = None,
+    entitlement: str | None = None,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     client: httpx.Client | None = None,
 ) -> list[IntradayBar]:
@@ -137,7 +150,10 @@ def fetch_intraday_minute_bars(
     ``month`` is a ``YYYY-MM`` string (e.g. ``"2024-01"``). When None,
     Alpha Vantage returns the most recent month available — usually
     fine for live operations but explicit months are preferred for
-    deterministic backfills.
+    deterministic backfills. ``entitlement`` (e.g. ``"delayed"``) is
+    appended when set; the 15-minute-delayed plan documents it for US
+    equity/ETF requests (historical month pulls work with or without it,
+    but passing it keeps us correct for the plan's entitlement model).
     """
 
     params: dict[str, str] = {
@@ -152,6 +168,8 @@ def fetch_intraday_minute_bars(
     }
     if month is not None:
         params["month"] = month
+    if entitlement is not None:
+        params["entitlement"] = entitlement
     owns_client = client is None
     if owns_client:
         client = httpx.Client(timeout=timeout_seconds)
@@ -376,9 +394,7 @@ def backfill_fomc_days(
                 announcement_time=announcement_time,
                 window_minutes=window_minutes,
             ):
-                rows_by_date[
-                    datetime.date.fromisoformat(window_row.event_date)
-                ].append(window_row)
+                rows_by_date[datetime.date.fromisoformat(window_row.event_date)].append(window_row)
     finally:
         if owns_client:
             client.close()
@@ -434,26 +450,158 @@ def load_window_returns(
     frame = pd.read_parquet(parquet_path)
     if frame.empty:
         return {}
-    return {
-        str(row["event_date"]): float(row["return_pct"])
-        for _, row in frame.iterrows()
-    }
+    return {str(row["event_date"]): float(row["return_pct"]) for _, row in frame.iterrows()}
+
+
+def _filter_raw_window(
+    bars: Sequence[IntradayBar],
+    event_date: datetime.date,
+    *,
+    window_start: datetime.time,
+    window_end: datetime.time,
+) -> list[IntradayBar]:
+    """Bars on ``event_date`` with ET time in [start, end] inclusive."""
+
+    d = event_date.isoformat()
+    lo = f"{d} {window_start.strftime('%H:%M:00')}"
+    hi = f"{d} {window_end.strftime('%H:%M:00')}"
+    return [b for b in bars if lo <= b.timestamp_et <= hi]
+
+
+def backfill_fomc_days_raw_bars(
+    *,
+    fomc_dates: Iterable[datetime.date],
+    cache_dir: Path | str = DEFAULT_RAW_BARS_CACHE_DIR,
+    api_key: str | None = None,
+    request_interval_seconds: float = DEFAULT_REQUEST_INTERVAL_SECONDS,
+    symbol: str = DEFAULT_SYMBOL,
+    window_start: datetime.time = DEFAULT_RAW_WINDOW_START,
+    window_end: datetime.time = DEFAULT_RAW_WINDOW_END,
+    entitlement: str | None = DEFAULT_ENTITLEMENT,
+    sleep_fn: Any = time.sleep,
+    client: httpx.Client | None = None,
+) -> Path:
+    """Persist the raw 13:30-15:00 ET bar slice per FOMC day.
+
+    Writes the SAME parquet schema as ``polygon_spx`` (event_date,
+    timestamp_et, OHLCV, symbol, fetched_at_utc) so
+    ``polygon_spx.load_intraday_bars`` reads this cache unchanged. One
+    Alpha Vantage call per (year, month) serves every FOMC date in it.
+    """
+
+    import pandas as pd
+
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    parquet_path = cache_dir / RAW_BARS_PARQUET
+
+    date_list = sorted(set(fomc_dates))
+    if not date_list:
+        raise ValueError("backfill_fomc_days_raw_bars called with an empty fomc_dates iterable")
+    months = _months_covering(date_list)
+    resolved_key = api_key or _api_key_from_env()
+    fetched_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    flat: list[dict[str, Any]] = []
+    http_client = client if client is not None else httpx.Client(timeout=DEFAULT_TIMEOUT_SECONDS)
+    try:
+        for i, month in enumerate(months):
+            if i > 0 and request_interval_seconds > 0:
+                sleep_fn(float(request_interval_seconds))
+            bars = fetch_intraday_minute_bars(
+                api_key=resolved_key,
+                symbol=symbol,
+                interval=DEFAULT_INTERVAL,
+                month=month,
+                entitlement=entitlement,
+                client=http_client,
+            )
+            month_dates = [d for d in date_list if f"{d.year:04d}-{d.month:02d}" == month]
+            for event_date in month_dates:
+                for bar in _filter_raw_window(
+                    bars, event_date, window_start=window_start, window_end=window_end
+                ):
+                    flat.append(
+                        {
+                            "event_date": event_date.isoformat(),
+                            "timestamp_et": bar.timestamp_et,
+                            "open": bar.open,
+                            "high": bar.high,
+                            "low": bar.low,
+                            "close": bar.close,
+                            "volume": bar.volume,
+                            "symbol": symbol,
+                            "fetched_at_utc": fetched_at,
+                        }
+                    )
+    finally:
+        if client is None:
+            http_client.close()
+
+    frame = pd.DataFrame(
+        flat,
+        columns=[
+            "event_date",
+            "timestamp_et",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "symbol",
+            "fetched_at_utc",
+        ],
+    )
+    if not frame.empty:
+        frame = frame.sort_values(["event_date", "timestamp_et"]).reset_index(drop=True)
+    frame.to_parquet(parquet_path, index=False)
+    _write_sources_lock_entry(
+        cache_dir,
+        parquet_path,
+        sha256=_file_sha256(parquet_path),
+        rows=len(frame),
+        months_fetched=months,
+    )
+    covered = frame["event_date"].nunique() if not frame.empty else 0
+    print(
+        f"[alphavantage_spx] wrote {len(frame)} bars across {covered}/{len(date_list)} "
+        f"FOMC day(s) to {parquet_path} ({len(months)} month(s) fetched)"
+    )
+    return parquet_path
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Backfill SPY 1-min closes around each FOMC announcement."
     )
-    parser.add_argument(
+    src = parser.add_mutually_exclusive_group(required=True)
+    src.add_argument(
         "--fomc-dates",
         nargs="+",
-        required=True,
         help="One or more YYYY-MM-DD FOMC event dates.",
+    )
+    src.add_argument(
+        "--events-parquet",
+        type=Path,
+        help="Training package events.parquet; FOMC statement dates are read from it.",
+    )
+    parser.add_argument(
+        "--raw-bars",
+        action="store_true",
+        help="Persist the raw 13:30-15:00 ET bar slice (intraday-pivot corpus) "
+        "instead of the +/-30min window-return scalar.",
+    )
+    parser.add_argument(
+        "--since",
+        type=datetime.date.fromisoformat,
+        default=None,
+        help="Drop event dates before this YYYY-MM-DD.",
     )
     parser.add_argument(
         "--cache-dir",
         type=Path,
-        default=DEFAULT_CACHE_DIR,
+        default=None,
+        help="Defaults to the window-returns cache, or the raw-bars cache with --raw-bars.",
     )
     parser.add_argument(
         "--request-interval-seconds",
@@ -465,14 +613,30 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    from app.data.polygon_spx import fomc_dates_from_events_parquet
+
     args = _parse_args()
-    fomc_dates = [datetime.date.fromisoformat(s) for s in args.fomc_dates]
-    backfill_fomc_days(
-        fomc_dates=fomc_dates,
-        cache_dir=args.cache_dir,
-        request_interval_seconds=float(args.request_interval_seconds),
-        symbol=str(args.symbol),
-    )
+    if args.fomc_dates:
+        fomc_dates = [datetime.date.fromisoformat(s) for s in args.fomc_dates]
+        if args.since is not None:
+            fomc_dates = [d for d in fomc_dates if d >= args.since]
+    else:
+        fomc_dates = fomc_dates_from_events_parquet(args.events_parquet, min_date=args.since)
+
+    if args.raw_bars:
+        backfill_fomc_days_raw_bars(
+            fomc_dates=fomc_dates,
+            cache_dir=args.cache_dir or DEFAULT_RAW_BARS_CACHE_DIR,
+            request_interval_seconds=float(args.request_interval_seconds),
+            symbol=str(args.symbol),
+        )
+    else:
+        backfill_fomc_days(
+            fomc_dates=fomc_dates,
+            cache_dir=args.cache_dir or DEFAULT_CACHE_DIR,
+            request_interval_seconds=float(args.request_interval_seconds),
+            symbol=str(args.symbol),
+        )
     return 0
 
 
