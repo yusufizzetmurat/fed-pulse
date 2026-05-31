@@ -83,9 +83,14 @@ describe("AnalyzeForm", () => {
     await user.hover(
       screen.getByLabelText("What does the asset picker affect?")
     );
-    expect(
-      await screen.findByText(/asset-independent/i)
-    ).toBeInTheDocument();
+    // Radix renders the tooltip content in a portal AND in an
+    // aria-describedby region for screen readers, so findByText matches
+    // multiple nodes by design. findAllByText asserts at least one of
+    // them surfaces the scope-clarification copy — that's the contract
+    // the user actually experiences (the substring is unique to this
+    // tooltip, so >=1 match is the right invariant).
+    const matches = await screen.findAllByText(/asset-independent/i);
+    expect(matches.length).toBeGreaterThan(0);
   });
 
   it("horizon tooltip reveals the scope-clarification text on hover (#474)", async () => {
@@ -96,8 +101,7 @@ describe("AnalyzeForm", () => {
     await user.hover(
       screen.getByLabelText("What does the horizon picker affect?")
     );
-    expect(
-      await screen.findByText(/autoregressive prediction block/i)
-    ).toBeInTheDocument();
+    const matches = await screen.findAllByText(/autoregressive prediction block/i);
+    expect(matches.length).toBeGreaterThan(0);
   });
 });
