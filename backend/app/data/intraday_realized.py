@@ -34,31 +34,60 @@ DEFAULT_SYMBOL = "SPY"
 MIN_RETURNS_PER_DAY = 20  # drop half-days / sparse sessions
 
 
-def daily_realized_measures(closes: list[float]) -> dict[str, float] | None:
-    """Realized measures from one day's intraday closes (chronological)."""
+def daily_realized_measures(
+    closes: list[float],
+    highs: list[float],
+    lows: list[float],
+    volumes: list[float],
+) -> dict[str, float] | None:
+    """Realized measures from one day's intraday OHLCV bars (chronological)."""
 
     c = np.asarray(closes, dtype=np.float64)
     if len(c) < MIN_RETURNS_PER_DAY + 1 or np.any(c <= 0):
         return None
     r = np.diff(np.log(c))  # 5-minute log returns
+    n = len(r)
     rv = float(np.sum(r**2))
     rs_pos = float(np.sum(r[r > 0] ** 2))
     rs_neg = float(np.sum(r[r < 0] ** 2))
     bv = float((np.pi / 2) * np.sum(np.abs(r[1:]) * np.abs(r[:-1])))
-    n = len(r)
     rq = float((n / 3) * np.sum(r**4))
-    return {"rv": rv, "rs_pos": rs_pos, "rs_neg": rs_neg, "bv": bv, "rq": rq, "n_ret": float(n)}
+    rskew = float(np.sqrt(n) * np.sum(r**3) / (np.sum(r**2) ** 1.5)) if rv > 0 else 0.0
+    rkurt = float(n * np.sum(r**4) / (np.sum(r**2) ** 2)) if rv > 0 else 0.0
+    h = np.asarray(highs, dtype=np.float64)
+    low = np.asarray(lows, dtype=np.float64)
+    ok = (h > 0) & (low > 0)
+    parkinson = float(np.sum(np.log(h[ok] / low[ok]) ** 2) / (4 * np.log(2))) if ok.any() else 0.0
+    rvol = float(np.sum(np.asarray(volumes, dtype=np.float64)))
+    return {
+        "rv": rv,
+        "rs_pos": rs_pos,
+        "rs_neg": rs_neg,
+        "bv": bv,
+        "rq": rq,
+        "rskew": rskew,
+        "rkurt": rkurt,
+        "parkinson": parkinson,
+        "rvol": rvol,
+        "n_ret": float(n),
+    }
 
 
 def _measures_by_day(bars: list[Any]) -> dict[str, dict[str, float]]:
     """Group AV intraday bars by ET date → daily realized measures."""
 
-    by_date: dict[str, list[float]] = {}
+    by_date: dict[str, list[Any]] = {}
     for bar in bars:
-        by_date.setdefault(bar.timestamp_et[:10], []).append(bar.close)
+        by_date.setdefault(bar.timestamp_et[:10], []).append(bar)
     out: dict[str, dict[str, float]] = {}
-    for date_iso, closes in by_date.items():
-        m = daily_realized_measures(closes)
+    for date_iso, day in by_date.items():
+        day.sort(key=lambda b: b.timestamp_et)
+        m = daily_realized_measures(
+            [b.close for b in day],
+            [b.high for b in day],
+            [b.low for b in day],
+            [b.volume for b in day],
+        )
         if m is not None:
             out[date_iso] = m
     return out
