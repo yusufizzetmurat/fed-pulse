@@ -8,6 +8,17 @@ _STRICT_REQUEST_CONFIG = ConfigDict(extra="forbid", strict=True, frozen=True)
 # Response models stay open to extras so the OpenAPI snapshot does not churn;
 # `frozen` still blocks mutation after construction.
 _FORBID_FROZEN_CONFIG = ConfigDict(frozen=True)
+# #99 strict response config: type-checks numeric fields against
+# Python built-ins so numpy.float64 / numpy.int64 leaks fail loud at
+# the response boundary instead of silently coercing. Applied to the
+# two leaf-level response models whose service-layer builders have
+# been audited end-to-end and confirmed to cast every numeric field
+# via float(...) (MarketDataResponse and PredictionResponse). The
+# remaining response models (SentimentResponse, ChunkAttentionDiagnostics,
+# ModelDiagnostics, XaiResponse, HistoryEntry, AnalyzeResponse) wait
+# on matching audit passes -- this PR is the first half of the #99
+# rollout.
+_STRICT_RESPONSE_CONFIG = ConfigDict(strict=True, frozen=True)
 
 
 class AnalyzeRequest(BaseModel):
@@ -52,7 +63,7 @@ class SentimentResponse(BaseModel):
 
 
 class MarketDataResponse(BaseModel):
-    model_config = _FORBID_FROZEN_CONFIG
+    model_config = _STRICT_RESPONSE_CONFIG
 
     symbol: str
     requested_date: str
@@ -63,7 +74,7 @@ class MarketDataResponse(BaseModel):
 
 
 class PredictionResponse(BaseModel):
-    model_config = _FORBID_FROZEN_CONFIG
+    model_config = _STRICT_RESPONSE_CONFIG
 
     close: float
     volatility: float
