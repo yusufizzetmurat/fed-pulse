@@ -73,11 +73,12 @@ export default function HistoryDetailPage() {
 
   const result = React.useMemo(() => detailToResult(detail), [detail]);
   const stance = detail ? toStance(detail.stance) : "unknown";
+  const pageTitle = detail ? `Run ${detail.document_date} — Fed Pulse` : "History run — Fed Pulse";
 
   return (
     <>
       <Head>
-        <title>{detail ? `Run ${detail.document_date} — Fed Pulse` : "History run — Fed Pulse"}</title>
+        <title>{pageTitle}</title>
       </Head>
       <div className="min-h-screen bg-background text-foreground">
         <Header />
@@ -115,7 +116,7 @@ export default function HistoryDetailPage() {
                   </Badge>
                 </h1>
               ) : (
-                <h1 className="text-2xl font-semibold tracking-tight">History run</h1>
+                <Skeleton className="h-8 w-64" />
               )}
             </div>
             {detail ? (

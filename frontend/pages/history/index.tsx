@@ -34,6 +34,16 @@ import type { HistoryEntry, Stance } from "@/lib/analyze/types";
 
 const STANCE_VALUES: Stance[] = ["hawkish", "neutral", "dovish"];
 const REGIME_VALUES = ["calm", "normal", "high"] as const;
+const DEFAULT_PAGE_SIZE = 50;
+const PAGE_SIZE_CAP = 200;
+
+function parsePageSize(value: string | string[] | undefined): number {
+  if (!value) return DEFAULT_PAGE_SIZE;
+  const raw = Array.isArray(value) ? value[0] : value;
+  const n = Number.parseInt(String(raw), 10);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_PAGE_SIZE;
+  return Math.min(n, PAGE_SIZE_CAP);
+}
 
 type RegimeValue = (typeof REGIME_VALUES)[number];
 
@@ -91,7 +101,11 @@ function readFilters(query: Record<string, string | string[] | undefined>): Filt
   };
 }
 
-function serialiseFilters(filters: Filters, search: string): Record<string, string> {
+function serialiseFilters(
+  filters: Filters,
+  search: string,
+  pageSize: number,
+): Record<string, string> {
   const out: Record<string, string> = {};
   if (filters.stances.size > 0) out.stance = [...filters.stances].join(",");
   if (filters.regimes.size > 0) out.regime = [...filters.regimes].join(",");
@@ -100,6 +114,7 @@ function serialiseFilters(filters: Filters, search: string): Record<string, stri
   if (filters.dateStart) out.start = filters.dateStart;
   if (filters.dateEnd) out.end = filters.dateEnd;
   if (search) out.q = search;
+  if (pageSize !== DEFAULT_PAGE_SIZE) out.size = String(pageSize);
   return out;
 }
 
@@ -165,14 +180,16 @@ export default function HistoryPage() {
 
   const [filters, setFilters] = React.useState<Filters>(emptyFilters);
   const [search, setSearch] = React.useState("");
+  const [pageSize, setPageSize] = React.useState<number>(DEFAULT_PAGE_SIZE);
+  const [loadingMore, setLoadingMore] = React.useState(false);
   const [reloadVersion, setReloadVersion] = React.useState(0);
   const reload = React.useCallback(() => {
     setReloadVersion((value) => value + 1);
   }, []);
 
-  // Hydrate filters from URL once router is ready. Only runs on mount /
-  // first ready; subsequent edits flow through pushUrl() and don't
-  // re-hydrate (avoiding the round-trip loop).
+  // Hydrate filters and page size from URL once router is ready. Only
+  // runs on mount / first ready; subsequent edits flow through pushUrl()
+  // and don't re-hydrate (avoiding the round-trip loop).
   const hydratedRef = React.useRef(false);
   React.useEffect(() => {
     if (!router.isReady || hydratedRef.current) return;
@@ -180,15 +197,41 @@ export default function HistoryPage() {
     setFilters(readFilters(router.query as Record<string, string | string[] | undefined>));
     const q = router.query.q;
     setSearch(typeof q === "string" ? q : "");
+    setPageSize(parsePageSize(router.query.size));
   }, [router.isReady, router.query]);
 
   // Mirror filter state to URL.
   const pushUrl = React.useCallback(
-    (nextFilters: Filters, nextSearch: string) => {
-      const params = serialiseFilters(nextFilters, nextSearch);
+    (nextFilters: Filters, nextSearch: string, nextSize: number) => {
+      const params = serialiseFilters(nextFilters, nextSearch, nextSize);
       router.replace({ pathname: "/history", query: params }, undefined, { shallow: true });
     },
     [router],
+  );
+
+  const hydrateRealized = React.useCallback(
+    async (rows: HistoryEntry[], signal: AbortSignal) => {
+      if (rows.length === 0) return;
+      try {
+        const batch = await fetchHistoryRealizedBatch(
+          apiBaseUrl,
+          rows.map((row) => row.id),
+          signal,
+        );
+        if (signal.aborted) return;
+        const lookup = batch.items;
+        setItems((prev) =>
+          prev.map((entry) => {
+            const realized = lookup[entry.id];
+            if (!realized) return entry;
+            return { ...entry, realized_regime: realized.realized_regime ?? null };
+          }),
+        );
+      } catch {
+        // Best-effort.
+      }
+    },
+    [apiBaseUrl],
   );
 
   React.useEffect(() => {
@@ -197,24 +240,11 @@ export default function HistoryPage() {
     setLoading(true);
     (async () => {
       try {
-        const result = await fetchHistory(apiBaseUrl, { limit: 200, offset: 0 }, signal);
+        const result = await fetchHistory(apiBaseUrl, { limit: pageSize, offset: 0 }, signal);
         if (signal.aborted) return;
         setItems(result.items.map((row) => ({ ...row, realized_regime: null })));
         setTotal(result.total);
-        const ids = result.items.map((row) => row.id);
-        try {
-          const batch = await fetchHistoryRealizedBatch(apiBaseUrl, ids, signal);
-          if (signal.aborted) return;
-          setItems((prev) =>
-            prev.map((entry) => {
-              const realized = batch.items[entry.id];
-              if (!realized) return entry;
-              return { ...entry, realized_regime: realized.realized_regime ?? null };
-            }),
-          );
-        } catch {
-          // Best-effort.
-        }
+        await hydrateRealized(result.items, signal);
       } catch (err) {
         if (!signal.aborted) {
           toast.error((err as Error).message || "Failed to load history.");
@@ -226,7 +256,32 @@ export default function HistoryPage() {
     return () => {
       controller.abort();
     };
-  }, [apiBaseUrl, reloadVersion]);
+  }, [apiBaseUrl, reloadVersion, pageSize, hydrateRealized]);
+
+  const handleShowMore = React.useCallback(async () => {
+    if (loadingMore) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    setLoadingMore(true);
+    try {
+      const result = await fetchHistory(
+        apiBaseUrl,
+        { limit: pageSize, offset: items.length },
+        signal,
+      );
+      if (signal.aborted) return;
+      const fresh = result.items.map((row) => ({ ...row, realized_regime: null }));
+      setItems((prev) => [...prev, ...fresh]);
+      setTotal(result.total);
+      await hydrateRealized(result.items, signal);
+    } catch (err) {
+      if (!signal.aborted) {
+        toast.error((err as Error).message || "Failed to load more history.");
+      }
+    } finally {
+      if (!signal.aborted) setLoadingMore(false);
+    }
+  }, [apiBaseUrl, hydrateRealized, items.length, loadingMore, pageSize]);
 
   const handleDelete = React.useCallback(
     async (id: string) => {
@@ -289,11 +344,11 @@ export default function HistoryPage() {
     (delta: Partial<Filters>) => {
       setFilters((prev) => {
         const next = { ...prev, ...delta } as Filters;
-        pushUrl(next, search);
+        pushUrl(next, search, pageSize);
         return next;
       });
     },
-    [pushUrl, search],
+    [pageSize, pushUrl, search],
   );
 
   const toggleInSet = <T extends string>(set: Set<T>, value: T): Set<T> => {
@@ -307,8 +362,27 @@ export default function HistoryPage() {
     const next = emptyFilters();
     setFilters(next);
     setSearch("");
-    pushUrl(next, "");
+    pushUrl(next, "", pageSize);
   };
+
+  // Aggregate hit-rate from the realized data already fetched. Counts a
+  // row as resolved when both the predicted argmax and the realized
+  // regime are present; hits are exact matches between the two.
+  const hitStats = React.useMemo(() => {
+    let resolved = 0;
+    let hits = 0;
+    for (const row of visibleRows) {
+      if (!row.argmax_regime || !row.realized_regime) continue;
+      resolved += 1;
+      if (row.argmax_regime === row.realized_regime) hits += 1;
+    }
+    return { resolved, hits };
+  }, [visibleRows]);
+
+  const hitRatePct =
+    hitStats.resolved > 0 ? (hitStats.hits / hitStats.resolved) * 100 : null;
+
+  const hasMore = items.length < total;
 
   const filtersActive =
     filters.stances.size > 0 ||
@@ -471,6 +545,26 @@ export default function HistoryPage() {
             </p>
           </div>
 
+          <div
+            className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
+            aria-label="History hit-rate summary"
+          >
+            <span>
+              Shown <span className="numeric text-foreground">{visibleRows.length}</span>
+            </span>
+            <span aria-hidden="true">·</span>
+            <span>
+              resolved <span className="numeric text-foreground">{hitStats.resolved}</span>
+            </span>
+            <span aria-hidden="true">·</span>
+            <span>
+              hit-rate{" "}
+              <span className="numeric text-foreground">
+                {hitRatePct == null ? "—" : `${hitRatePct.toFixed(1)}%`}
+              </span>
+            </span>
+          </div>
+
           <HistoryTimelineChart rows={visibleRows as HistoryTimelineRow[]} />
 
           <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
@@ -604,7 +698,7 @@ export default function HistoryPage() {
                   onChange={(event) => {
                     const next = event.target.value;
                     setSearch(next);
-                    pushUrl(filters, next);
+                    pushUrl(filters, next, pageSize);
                   }}
                 />
               </div>
@@ -649,6 +743,21 @@ export default function HistoryPage() {
                   )}
                 </CardContent>
               </Card>
+
+              {!loading && hasMore ? (
+                <div className="flex items-center justify-center pt-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleShowMore}
+                    disabled={loadingMore}
+                  >
+                    {loadingMore
+                      ? "Loading…"
+                      : `Show more (${items.length} of ${total})`}
+                  </Button>
+                </div>
+              ) : null}
             </div>
           </div>
         </main>
