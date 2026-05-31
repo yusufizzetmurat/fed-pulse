@@ -100,3 +100,64 @@ def test_factor_branch_stays_in_minus_one_to_one_range() -> None:
     out = model(input_ids=input_ids, attention_mask=torch.ones_like(input_ids))
     assert torch.all(out["factor"] >= -1.0)
     assert torch.all(out["factor"] <= 1.0)
+
+
+def test_from_encoder_alias_forwards_trust_remote_code(monkeypatch) -> None:
+    """#557: from_encoder_alias must thread the registry's trust_remote_code.
+
+    Pre-fix the call site loaded the encoder without honoring the
+    registry flag; nomic-style encoders that ship custom modeling
+    code would raise. Monkey-patches AutoModel + encoder_ref so the
+    test runs without hitting the HF Hub.
+    """
+
+    captured = {}
+
+    def _fake_from_pretrained(repo, **kwargs):
+        captured["repo"] = repo
+        captured["kwargs"] = kwargs
+        config = type("FakeConfig", (), {"hidden_size": 16})()
+        encoder = type(
+            "FakeEncoder",
+            (),
+            {"config": config, "__init__": lambda self: None},
+        )()
+        return encoder
+
+    class _FakeRef:
+        repo = "fake/nomic-style-encoder"
+        revision = "deadbeef"
+        trust_remote_code = True
+
+    # from_encoder_alias does an inline ``from transformers import
+    # AutoModel`` so the monkey-patch has to land on the transformers
+    # module symbol that import resolves to, not a non-existent module
+    # attribute on the classifier module itself.
+    import transformers
+
+    monkeypatch.setattr(
+        transformers,
+        "AutoModel",
+        type("FakeAutoModel", (), {"from_pretrained": staticmethod(_fake_from_pretrained)}),
+    )
+    import app.models.registry as registry
+    monkeypatch.setattr(registry, "encoder_ref", lambda alias: _FakeRef())
+
+    try:
+        TextMultiAxisClassifier.from_encoder_alias(
+            encoder_alias="fake_nomic",
+            head_hidden_size=8,
+            dropout=0.0,
+        )
+    except Exception:
+        # Construction may fail downstream (the fake encoder doesn't
+        # have a real forward) -- we only care that the from_pretrained
+        # call received trust_remote_code=True from the registry flag.
+        pass
+
+    assert captured.get("kwargs", {}).get("trust_remote_code") is True, (
+        "TextMultiAxisClassifier.from_encoder_alias did not forward "
+        "trust_remote_code from the registry-pinned EncoderRef. The fix "
+        "is to pass trust_remote_code=ref.trust_remote_code on the "
+        "AutoModel.from_pretrained call."
+    )

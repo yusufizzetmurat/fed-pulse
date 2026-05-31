@@ -449,8 +449,13 @@ def _train_and_eval_one_cell(  # noqa: PLR0913 — per-cell knobs surface as nam
     tokenizer_kwargs: dict[str, Any] = {"token": hf_token} if hf_token else {}
     if revision:
         tokenizer_kwargs["revision"] = revision
+    if ref is not None and getattr(ref, "trust_remote_code", False):
+        tokenizer_kwargs["trust_remote_code"] = True
     tokenizer = AutoTokenizer.from_pretrained(encoder_repo, **tokenizer_kwargs)
 
+    model_kwargs: dict[str, Any] = {}
+    if ref is not None and getattr(ref, "trust_remote_code", False):
+        model_kwargs["trust_remote_code"] = True
     model = AutoModelForSequenceClassification.from_pretrained(
         encoder_repo,
         num_labels=N_CLASSES,
@@ -459,6 +464,7 @@ def _train_and_eval_one_cell(  # noqa: PLR0913 — per-cell knobs surface as nam
         ignore_mismatched_sizes=True,
         token=hf_token,
         revision=revision,
+        **model_kwargs,
     )
 
     # Auxiliary 3-class linear head over the encoder's pooled output.

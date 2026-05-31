@@ -2580,9 +2580,14 @@ def _build_delta_encoder_callable(repo_or_alias: str):
     ref = encoder_ref(repo_or_alias)
     repo = ref.repo if ref is not None else repo_or_alias
     revision = ref.revision if ref is not None else None
+    trust = bool(getattr(ref, "trust_remote_code", False)) if ref is not None else False
 
-    tokenizer = AutoTokenizer.from_pretrained(repo, revision=revision)
-    model = AutoModel.from_pretrained(repo, revision=revision)
+    tokenizer = AutoTokenizer.from_pretrained(
+        repo, revision=revision, trust_remote_code=trust
+    )
+    model = AutoModel.from_pretrained(
+        repo, revision=revision, trust_remote_code=trust
+    )
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
