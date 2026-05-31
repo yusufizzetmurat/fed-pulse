@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render as rtlRender, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { AnalyzeForm } from "@/components/analyze/AnalyzeForm";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -71,6 +72,32 @@ describe("AnalyzeForm", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByLabelText("What does the horizon picker affect?")
+    ).toBeInTheDocument();
+  });
+
+  it("asset tooltip reveals the scope-clarification text on hover (#475)", async () => {
+    const user = userEvent.setup();
+    render(
+      <AnalyzeForm value={baseRequest()} onChange={vi.fn()} onSubmit={vi.fn()} loading={false} />
+    );
+    await user.hover(
+      screen.getByLabelText("What does the asset picker affect?")
+    );
+    expect(
+      await screen.findByText(/asset-independent/i)
+    ).toBeInTheDocument();
+  });
+
+  it("horizon tooltip reveals the scope-clarification text on hover (#474)", async () => {
+    const user = userEvent.setup();
+    render(
+      <AnalyzeForm value={baseRequest()} onChange={vi.fn()} onSubmit={vi.fn()} loading={false} />
+    );
+    await user.hover(
+      screen.getByLabelText("What does the horizon picker affect?")
+    );
+    expect(
+      await screen.findByText(/autoregressive prediction block/i)
     ).toBeInTheDocument();
   });
 });
