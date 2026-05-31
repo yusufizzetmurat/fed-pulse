@@ -64,11 +64,14 @@ LABEL2ID: dict[str, int] = {label: idx for idx, label in enumerate(PHRASEBANK_LA
 ID2LABEL: dict[int, str] = dict(enumerate(PHRASEBANK_LABELS))
 N_CLASSES = len(PHRASEBANK_LABELS)
 
-# HF dataset revision pin -- left None until the first run reports the
-# resolved sha. Mirrors the BIS-MLM pin pattern in
-# ``continued_pretraining.py``: pinning the revision is what makes the
-# DAPT manifest reproducible; the auxiliary head inherits the same
-# discipline so the row order + label assignment never drift silently.
+# HF dataset revision pin (#425). Left None until the first canonical
+# sweep resolves a 40-char SHA -- a named ref like "main" would add a
+# cache-filename change with zero reproducibility upside (both `None`
+# and `"main"` resolve to the mutable HEAD of takala/financial_phrasebank
+# main). Mirrors the BIS-MLM pin discipline in
+# ``continued_pretraining.py``: the SHA is the only pin that protects
+# the aux artefact from upstream branch rewrites.
+# TODO(#425): pin to the SHA the next canonical sweep prints out.
 DEFAULT_REVISION: str | None = None
 
 DEFAULT_CACHE_ROOT = DATA_DIR / "external" / "phrasebank"
