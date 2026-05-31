@@ -356,7 +356,7 @@ def load_research_registry(
         "rejected_count": rejected,
         "training_package_id": str(payload.get("training_package_id", "")),
         "head": str(payload.get("head", "")),
-        "seeds": [int(s) for s in seeds if isinstance(s, (int, float))],
+        "seeds": [int(s) for s in seeds if isinstance(s, int | float)],
         "source_wiki_section": str(payload.get("source_wiki_section", "")),
     }
 
