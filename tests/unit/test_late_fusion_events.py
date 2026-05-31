@@ -48,9 +48,9 @@ def test_window_returns_and_direction() -> None:
     out = build_event_windows(bars)
     assert len(out) == 1
     row = out.iloc[0]
-    assert row["close_1400"] == 100.0
-    assert row["close_1430"] == 101.0
-    assert row["close_1500"] == 100.5
+    assert row["px_1400"] == 100.0
+    assert row["px_1430"] == 101.0
+    assert row["px_1500"] == 100.5
     # immediate reaction up -> dir 1, magnitude = |log(101/100)|
     assert row["dir_immediate"] == 1
     assert row["mag_immediate"] == pytest.approx(abs(np.log(101 / 100)))
@@ -66,6 +66,35 @@ def test_pre_window_excludes_announcement_bar() -> None:
     out = build_event_windows(bars).iloc[0]
     # the 14:00 bar must NOT be counted in the pre-window
     assert out["n_pre_bars"] == 2  # 13:30 and 13:45 only
+
+
+def test_mark_uses_bar_open_so_announcement_minute_is_in_the_reaction() -> None:
+    # The 14:00 bar holds the announcement jump: it OPENS at 100 (pre-reaction) and
+    # CLOSES at 103 (post-jump). The reaction target must capture that jump (use the
+    # open as the 14:00 mark), and the pre-window must NOT see the post-jump close.
+    bars = pd.DataFrame(
+        [
+            {"event_date": "2024-03-20", "timestamp_et": "2024-03-20 13:30:00",
+             "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 1.0, "symbol": "SPY"},
+            {"event_date": "2024-03-20", "timestamp_et": "2024-03-20 13:59:00",
+             "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 1.0, "symbol": "SPY"},
+            # announcement minute: opens pre-reaction at 100, jumps to close 103
+            {"event_date": "2024-03-20", "timestamp_et": "2024-03-20 14:00:00",
+             "open": 100.0, "high": 103.0, "low": 100.0, "close": 103.0, "volume": 50.0, "symbol": "SPY"},
+            {"event_date": "2024-03-20", "timestamp_et": "2024-03-20 14:30:00",
+             "open": 104.0, "high": 104.0, "low": 104.0, "close": 104.0, "volume": 5.0, "symbol": "SPY"},
+            {"event_date": "2024-03-20", "timestamp_et": "2024-03-20 15:00:00",
+             "open": 104.0, "high": 104.0, "low": 104.0, "close": 104.0, "volume": 5.0, "symbol": "SPY"},
+        ]
+    )
+    row = build_event_windows(bars).iloc[0]
+    # 14:00 mark = OPEN of the 14:00 bar = 100 (pre-reaction), NOT the 103 close
+    assert row["px_1400"] == 100.0
+    # immediate reaction 100 -> 104 captures the full jump (would be ~0 if it used
+    # the contaminated 103 close as the start)
+    assert row["ret_immediate"] == pytest.approx(np.log(104 / 100))
+    # pre-window return is flat (100/100) — the announcement jump did NOT leak in
+    assert row["pre_ret"] == pytest.approx(0.0)
 
 
 def test_cross_day_contamination_raises() -> None:
@@ -85,7 +114,7 @@ def test_missing_anchor_flagged_not_dropped() -> None:
     )
     out = build_event_windows(bars).iloc[0]
     assert out["has_anchors"] == 0
-    assert out["close_1430"] is None
+    assert out["px_1430"] is None
     assert out["ret_immediate"] is None
 
 

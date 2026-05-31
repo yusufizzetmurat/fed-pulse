@@ -38,12 +38,22 @@ _DELAYED_END = time(15, 0)
 _PRE_START = time(13, 30)
 
 
-def _price_at(day_bars: pd.DataFrame, clock: time) -> float | None:
-    """Close of the 1-minute bar stamped exactly at ``clock``; None if absent."""
+def _open_at(day_bars: pd.DataFrame, clock: time) -> float | None:
+    """Instantaneous mark price at ``clock`` — the OPEN of the bar stamped ``clock``.
+
+    AlphaVantage labels 1-minute bars by interval START (verified empirically: on
+    2024-09-18 the announcement jump lands entirely inside the bar stamped 14:00,
+    on 15x volume, while the 13:59 bar is quiescent). So the OPEN of the 14:00 bar
+    is the price at 14:00:00 — the announcement instant, before any reaction — and
+    the CLOSE of the 14:00 bar already contains the first reaction minute. Using
+    opens as marks keeps pre-announcement features strictly pre-reaction and lets
+    the reaction window capture the full announcement-minute move. Returns None if
+    the bar is absent.
+    """
     match = day_bars[day_bars["_t"] == clock]
     if match.empty:
         return None
-    return float(match["close"].iloc[0])
+    return float(match["open"].iloc[0])
 
 
 def _log_change(numer: float | None, denom: float | None) -> float | None:
@@ -56,8 +66,13 @@ def build_event_windows(bars: pd.DataFrame) -> pd.DataFrame:
     """Reduce raw 1-minute bars to one reaction row per FOMC event date.
 
     Output columns: event_date, pre_close, pre_ret, pre_rv, pre_volume, n_pre_bars,
-    close_1400, close_1430, close_1500, ret_immediate/dir_immediate/mag_immediate,
-    ret_delayed/dir_delayed/mag_delayed, n_bars.
+    px_1400, px_1430, px_1500, ret_immediate/dir_immediate/mag_immediate,
+    ret_delayed/dir_delayed/mag_delayed, n_bars, has_anchors.
+
+    Mark prices are bar OPENS (instantaneous prices at the mark instant); see
+    ``_open_at``. The reaction is measured from the 14:00 announcement instant, so
+    the announcement-minute move is included in ret_immediate, not leaked into the
+    pre-window.
     """
     frame = bars.copy()
     frame["timestamp_et"] = pd.to_datetime(frame["timestamp_et"])
@@ -70,33 +85,37 @@ def build_event_windows(bars: pd.DataFrame) -> pd.DataFrame:
         # Alignment invariant #1: every bar for this event must fall on the event's
         # own calendar date. Cross-day contamination is a real misalignment risk
         # (e.g. a join pulling adjacent-day bars) and would corrupt the windows.
+        # str(...)[:10] normalises event_date whether it is a str, date, or Timestamp.
+        event_date_str = str(event_date)[:10]
         bar_dates = day["timestamp_et"].dt.strftime("%Y-%m-%d").unique()
-        if list(bar_dates) != [str(event_date)]:
+        if list(bar_dates) != [event_date_str]:
             raise ValueError(
-                f"{event_date}: bars span foreign dates {list(bar_dates)}"
+                f"{event_date_str}: bars span foreign dates {list(bar_dates)}"
             )
 
+        # Pre-window: bars strictly before the announcement minute. Realized vol
+        # from pre-window closes is pure pre-announcement.
         pre = day[(day["_t"] >= _PRE_START) & (day["_t"] < _ANNOUNCE)]
-        close_1400 = _price_at(day, _ANNOUNCE)
-        close_1430 = _price_at(day, _IMMEDIATE_END)
-        close_1500 = _price_at(day, _DELAYED_END)
-        close_1330 = _price_at(day, _PRE_START)
+        px_1330 = _open_at(day, _PRE_START)
+        px_1400 = _open_at(day, _ANNOUNCE)  # announcement instant (pre-reaction)
+        px_1430 = _open_at(day, _IMMEDIATE_END)
+        px_1500 = _open_at(day, _DELAYED_END)
 
         pre_logrets = np.diff(np.log(pre["close"].to_numpy())) if len(pre) > 1 else np.array([])
-        ret_immediate = _log_change(close_1430, close_1400)
-        ret_delayed = _log_change(close_1500, close_1430)
+        ret_immediate = _log_change(px_1430, px_1400)  # full reaction incl. 14:00 min
+        ret_delayed = _log_change(px_1500, px_1430)
 
         rows.append(
             {
-                "event_date": str(event_date),
-                "pre_close": close_1400,
-                "pre_ret": _log_change(close_1400, close_1330),
+                "event_date": event_date_str,
+                "pre_close": px_1400,
+                "pre_ret": _log_change(px_1400, px_1330),
                 "pre_rv": float(np.std(pre_logrets)) if pre_logrets.size else None,
                 "pre_volume": float(pre["volume"].sum()),
                 "n_pre_bars": int(len(pre)),
-                "close_1400": close_1400,
-                "close_1430": close_1430,
-                "close_1500": close_1500,
+                "px_1400": px_1400,
+                "px_1430": px_1430,
+                "px_1500": px_1500,
                 "ret_immediate": ret_immediate,
                 "dir_immediate": None if ret_immediate is None else int(ret_immediate > 0),
                 "mag_immediate": None if ret_immediate is None else abs(ret_immediate),
@@ -105,7 +124,7 @@ def build_event_windows(bars: pd.DataFrame) -> pd.DataFrame:
                 "mag_delayed": None if ret_delayed is None else abs(ret_delayed),
                 "n_bars": int(len(day)),
                 "has_anchors": int(
-                    None not in (close_1330, close_1400, close_1430, close_1500)
+                    None not in (px_1330, px_1400, px_1430, px_1500)
                 ),
             }
         )
@@ -158,6 +177,14 @@ def join_sep_features(events: pd.DataFrame, sep_long: pd.DataFrame) -> pd.DataFr
         return out
 
     sep = sep_long.copy()
+    sep_key = ["meeting_date", "variable", "horizon"]
+    sep_dupes = int(sep.duplicated(sep_key).sum())
+    if sep_dupes:
+        logger.warning(
+            "%d duplicate SEP (meeting_date, variable, horizon) rows; keeping first",
+            sep_dupes,
+        )
+        sep = sep.drop_duplicates(sep_key, keep="first")
     ct_mid = (sep["central_low"] + sep["central_high"]) / 2
     ct_width = sep["central_high"] - sep["central_low"]
     range_width = sep["range_high"] - sep["range_low"]
@@ -206,7 +233,16 @@ def build(
     """Assemble the clean-room event-frame table and write it to parquet."""
     bars = pd.read_parquet(bars_path)
     corpus = pd.read_parquet(corpus_path)
-    sep_long = pd.read_parquet(sep_path) if sep_path.exists() else pd.DataFrame()
+    if sep_path.exists():
+        sep_long = pd.read_parquet(sep_path)
+    else:
+        # SEP is a required input for this rebuild; a missing file would silently
+        # produce a structurally different parquet (no sep_* columns). Surface it.
+        logger.warning(
+            "SEP file %s not found; building WITHOUT sep_point_*/sep_disp_* columns",
+            sep_path,
+        )
+        sep_long = pd.DataFrame()
 
     events = build_event_windows(bars)
     incomplete = int((events["has_anchors"] == 0).sum())
