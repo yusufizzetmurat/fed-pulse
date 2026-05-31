@@ -20,3 +20,19 @@ def test_forward_log_rv_target() -> None:
     y3 = f._forward_log_rv(rv, 3)
     assert np.isclose(y3[0], np.log((2 + 4 + 8) / 3))
     assert np.isnan(y3[-1]) and np.isnan(y3[-3])
+
+
+def test_qlike_perfect_prediction_is_zero() -> None:
+    true = np.log(np.array([1e-4, 4e-4, 9e-4, 1.6e-3]))
+    assert np.isclose(f._qlike(true, true), 0.0, atol=1e-9)
+
+
+def test_qlike_penalizes_underprediction_of_spike_more() -> None:
+    # one spike day, off-by the same multiplicative factor in log space
+    true = np.array([np.log(1e-4), np.log(1e-2)])  # second day is a 100x variance spike
+    delta = np.log(2.0)  # factor-of-2 miss either direction
+    under = true.copy()
+    under[1] -= delta  # under-predict the spike's variance
+    over = true.copy()
+    over[1] += delta  # over-predict it by the same factor
+    assert f._qlike(under, true) > f._qlike(over, true)
