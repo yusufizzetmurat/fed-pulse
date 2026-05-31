@@ -166,3 +166,28 @@ def test_llm_features_slice_emits_attached_vector() -> None:
     rich = fv.as_rich_list()
     assert rich[RICH_LLM_FEATURE_SLICE] == one_hot
     assert rich[RICH_LLM_FEATURE_MISSING_SLICE] == [0.0]
+
+
+def test_doc_length_default_off_does_not_widen() -> None:
+    """``doc_length=None`` (default) keeps the per-bar vector at
+    ``RICH_FEATURE_SIZE``. The #543 slot does not contribute when the
+    loader has not populated it."""
+
+    fv = _base_vector()
+    assert fv.doc_length is None
+    rich = fv.as_rich_list()
+    assert len(rich) == RICH_FEATURE_SIZE
+
+
+def test_doc_length_appended_when_populated() -> None:
+    """A populated ``doc_length`` lands as a single scalar past the
+    existing tail blocks. The slot adds exactly ``RICH_DOC_LENGTH_DIM``
+    (= 1) to the per-bar vector length."""
+
+    from app.models.config import RICH_DOC_LENGTH_DIM
+
+    fv = _base_vector()
+    fv.doc_length = 7.5
+    rich = fv.as_rich_list()
+    assert len(rich) == RICH_FEATURE_SIZE + RICH_DOC_LENGTH_DIM
+    assert rich[-1] == 7.5

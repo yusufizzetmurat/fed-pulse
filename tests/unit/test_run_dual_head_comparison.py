@@ -77,6 +77,33 @@ def test_dual_head_runner_no_mp_surprise_flag(monkeypatch):
     assert args.use_mp_surprise is False
 
 
+def test_dual_head_runner_doc_length_flag(monkeypatch):
+    """``--use-doc-length`` opts in; default keeps the flag off."""
+
+    from scripts.run_dual_head_comparison import _parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_dual_head_comparison", "--training-package-id", "tp_dummy"],
+    )
+    args = _parse_args()
+    assert args.use_doc_length is False
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_dual_head_comparison",
+            "--training-package-id",
+            "tp_dummy",
+            "--use-doc-length",
+        ],
+    )
+    args = _parse_args()
+    assert args.use_doc_length is True
+
+
 def test_dual_head_runner_regime_loss_focal_choice_accepted(monkeypatch):
     """``--regime-loss focal`` parses + ``--focal-gamma`` overrides default."""
 

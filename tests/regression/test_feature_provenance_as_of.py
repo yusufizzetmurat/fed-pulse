@@ -351,6 +351,11 @@ def _audit_inventory_covers_every_field() -> set[str]:
         # history for the realised baseline; the per-feature row in
         # ``docs/feature-provenance-audit.md`` pins the contract.
         "vix_features",
+        # #543 doc_length scalar. ``log(1 + token_count)`` per supervised
+        # event, broadcast onto every bar by the loader when
+        # ``--use-doc-length`` is on. Single observable at T from the
+        # released document itself; no leak surface.
+        "doc_length",
         # #495 confounder controls — year FE / meeting-kind FE / log token_count
         # appended past the vote-tally tail by ``FeatureVector.as_rich_list``
         # only when ``scripts/run_confounder_ablation`` writes the slot.

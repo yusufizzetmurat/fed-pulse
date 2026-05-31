@@ -5,6 +5,7 @@ import dataclasses
 import datetime
 import json
 import logging
+import math
 import os
 import warnings
 from pathlib import Path
@@ -1838,6 +1839,7 @@ def _load_package_sequences_with_metadata(
     use_statement_delta: bool = False,
     use_vote_features: bool = False,
     use_vix_features: bool = False,
+    use_doc_length: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -2208,6 +2210,18 @@ def _load_package_sequences_with_metadata(
             vix_features_list = _compute_vix_features_for_event(row)
         else:
             vix_features_list = None
+        # #543 doc_length per-event scalar. Computed from ``token_count``
+        # on events.parquet (whitespace-split token count of the row's
+        # text body). Broadcast onto every bar inside the vector loop
+        # so the per-bar input vector stays uniform across the sequence.
+        if use_doc_length:
+            try:
+                _tok = int(row.get("token_count") or 0)
+            except (TypeError, ValueError):
+                _tok = 0
+            doc_length_value: float | None = math.log1p(max(0, _tok))
+        else:
+            doc_length_value = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
             vector.forward_realized_vol_1d = forward_vol_aux_values[1]
@@ -2310,6 +2324,14 @@ def _load_package_sequences_with_metadata(
             else:
                 vector.vix_features = None
                 vector.vix_features_missing = 1.0
+            # #543 doc_length scalar broadcast. ``doc_length_value`` is
+            # ``None`` when ``use_doc_length`` is off; the conditional
+            # append in ``FeatureVector.as_rich_list`` then skips the
+            # slot entirely so the default path stays byte-identical.
+            if doc_length_value is not None:
+                vector.doc_length = float(doc_length_value)
+            else:
+                vector.doc_length = None
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -2394,6 +2416,7 @@ def load_walk_forward_split(
     use_statement_delta: bool = False,
     use_vote_features: bool = False,
     use_vix_features: bool = False,
+    use_doc_length: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -2486,6 +2509,7 @@ def load_walk_forward_split(
         use_statement_delta=use_statement_delta,
         use_vote_features=use_vote_features,
         use_vix_features=use_vix_features,
+        use_doc_length=use_doc_length,
         text_encoder=text_encoder,
         text_adapter_dim=text_adapter_dim,
         text_pool_lambda_inv_days=text_pool_lambda_inv_days,
@@ -2613,6 +2637,7 @@ def load_training_sequences_from_package(
     use_statement_delta: bool = False,
     use_vote_features: bool = False,
     use_vix_features: bool = False,
+    use_doc_length: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -3076,6 +3101,17 @@ def load_training_sequences_from_package(
             vix_features_list = _compute_vix_features_for_event(row)
         else:
             vix_features_list = None
+        # #543 doc_length per-event scalar (matched site to the
+        # walk-forward loader path). Computed from ``token_count`` on
+        # events.parquet and broadcast onto every bar in the loop below.
+        if use_doc_length:
+            try:
+                _tok = int(row.get("token_count") or 0)
+            except (TypeError, ValueError):
+                _tok = 0
+            doc_length_value: float | None = math.log1p(max(0, _tok))
+        else:
+            doc_length_value = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
             vector.forward_realized_vol_1d = forward_vol_aux_values[1]
