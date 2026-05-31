@@ -504,7 +504,7 @@ artefacts:
 
   training_package_vix:
     hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-training-package
-    revision: "aae4de0965345aeffbd58f9746fd0ecacccf5ead"
+    revision: "347d3e30465a170b4504358f4ace7a88c1652f84"
     eager: false
     description: |
       VIX-extended variant of the canonical training package (#478).
