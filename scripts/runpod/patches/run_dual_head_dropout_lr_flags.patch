@@ -1,0 +1,50 @@
+diff --git a/scripts/run_dual_head_comparison.py b/scripts/run_dual_head_comparison.py
+index 9cb3c61..c2d9135 100644
+--- a/scripts/run_dual_head_comparison.py
++++ b/scripts/run_dual_head_comparison.py
+@@ -336,6 +336,11 @@ def _parse_args() -> argparse.Namespace:
+             "examples more aggressively. Ignored under other loss modes."
+         ),
+     )
++    # LOCAL POD TWEAK (uncommitted): expose dropout + learning_rate for the
++    # Stage-2 HP sweep. Defaults match ModelConfig.dropout / train_model.lr so
++    # every non-sweep call stays byte-identical.
++    parser.add_argument("--dropout", dest="dropout", type=float, default=0.15)
++    parser.add_argument("--learning-rate", dest="learning_rate", type=float, default=0.001)
+     # #502 class-balanced hyperparameter. Only consulted when
+     # ``--regime-loss class_balanced`` is set; ignored under every other
+     # mode.
+@@ -616,6 +621,8 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
+     epochs: int,
+     regression_alpha: float,
+     hidden_size: int,
++    dropout: float = 0.15,
++    learning_rate: float = 0.001,
+     rates_target_mode: str = "raw",
+     vol_target_mode: str = "raw",
+     vol_target_horizon: int = 10,
+@@ -709,6 +716,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
+         regression_alpha=regression_alpha,
+         n_classes=3,
+         hidden_size=hidden_size,
++        dropout=dropout,
+         rates_heads=rates_heads,
+         rates_target_mode=rates_target_mode,
+         vol_target_mode=vol_target_mode,
+@@ -760,6 +768,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
+             protocol=split.protocol,
+             epochs=epochs,
+             seed=seed,
++            learning_rate=learning_rate,
+             save_checkpoint=False,
+         )
+         per_fold.append(
+@@ -851,6 +860,8 @@ def main() -> int:
+                     epochs=args.epochs,
+                     regression_alpha=args.regression_alpha,
+                     hidden_size=args.hidden_size,
++                    dropout=float(args.dropout),
++                    learning_rate=float(args.learning_rate),
+                     rates_target_mode=str(args.rates_target_mode),
+                     vol_target_mode=str(args.vol_target_mode),
+                     vol_target_horizon=int(args.target_horizon),
