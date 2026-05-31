@@ -44,6 +44,9 @@ for module in (
     "app.services.forecaster",
     "app.services.market_data",
     "app.services.text_encoder",
+    "app.data.dense_daily_dataset",
+    "app.data.dense_forecast_train",
+    "app.data.dense_fomc_text",
     "app.training.manifest",
     "app.models.registry",
 ):
