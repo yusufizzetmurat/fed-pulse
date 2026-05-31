@@ -1627,7 +1627,13 @@ def _load_rv_history(symbol: str) -> tuple[list[float], list[str]]:
 
 @app.get("/forecast/realized-vol", response_model=RealizedVolForecastResponse)
 async def forecast_realized_vol(
-    symbol: str = Query("^GSPC", description="Market ticker; defaults to S&P 500."),
+    symbol: str = Query(
+        "^GSPC",
+        description="Market ticker; defaults to S&P 500.",
+        min_length=1,
+        max_length=32,
+        pattern=r"^[A-Za-z0-9._=^/-]+$",
+    ),
 ) -> RealizedVolForecastResponse:
     """Multi-horizon QLIKE-DLq RV forecast for the volatility-outlook card.
 
