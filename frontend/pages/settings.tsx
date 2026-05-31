@@ -70,6 +70,36 @@ function roleLabel(role: string): string {
   }
 }
 
+type ServiceKey = "forecaster" | "sentiment" | "other";
+
+const SERVICE_LABEL: Record<ServiceKey, string> = {
+  forecaster: "Forecaster",
+  sentiment: "Sentiment breakdown",
+  other: "Other",
+};
+
+const SERVICE_DESCRIPTION: Record<ServiceKey, string> = {
+  forecaster:
+    "Close + volatility model, its LoRA adapter, and the conformal calibration sidecar.",
+  sentiment: "Per-axis FOMC sentiment classifiers (hawk/dove, growth, inflation, policy, risk).",
+  other: "Other model files on disk.",
+};
+
+function serviceForRole(role: string): ServiceKey {
+  switch (role) {
+    case "forecaster":
+    case "lora_adapter":
+    case "calibration":
+      return "forecaster";
+    case "multi_axis":
+      return "sentiment";
+    default:
+      return "other";
+  }
+}
+
+const SERVICE_ORDER: ServiceKey[] = ["forecaster", "sentiment", "other"];
+
 function CheckpointRow({ checkpoint }: { checkpoint: SettingsCheckpoint }) {
   // #342: render the inference-contract surface. Legacy checkpoints
   // (no sidecar) carry ``inference_contract_status === "sidecar_absent"``
@@ -217,14 +247,18 @@ function ModelsSection() {
   }, [apiBaseUrl]);
 
   const grouped = React.useMemo(() => {
-    const buckets = new Map<string, SettingsCheckpoint[]>();
+    const buckets = new Map<ServiceKey, SettingsCheckpoint[]>();
     for (const cp of data) {
-      const role = cp.role || "other";
-      const list = buckets.get(role) ?? [];
+      const service = serviceForRole(cp.role || "");
+      const list = buckets.get(service) ?? [];
       list.push(cp);
-      buckets.set(role, list);
+      buckets.set(service, list);
     }
-    return [...buckets.entries()];
+    return SERVICE_ORDER.flatMap((service) => {
+      const list = buckets.get(service);
+      if (!list || list.length === 0) return [];
+      return [{ service, list }];
+    });
   }, [data]);
 
   return (
@@ -257,19 +291,39 @@ function ModelsSection() {
             description="Train a model and drop the checkpoint into the backend models directory to make it available here."
           />
         ) : (
-          <div className="space-y-4">
-            {grouped.map(([role, list]) => (
-              <section key={role} className="space-y-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {roleLabel(role)}
-                </h3>
-                <ul className="space-y-2">
-                  {list.map((cp) => (
-                    <CheckpointRow key={cp.filename} checkpoint={cp} />
-                  ))}
-                </ul>
-              </section>
-            ))}
+          <div className="space-y-5">
+            {grouped.map(({ service, list }) => {
+              const hasActive = list.some((cp) => cp.is_active);
+              return (
+                <section
+                  key={service}
+                  className="space-y-2"
+                  data-testid={`service-group-${service}`}
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`inline-block h-2.5 w-2.5 rounded-full ${
+                        hasActive ? "bg-up" : "bg-muted-foreground/40"
+                      }`}
+                      aria-hidden="true"
+                      data-testid={`service-dot-${service}-${hasActive ? "active" : "idle"}`}
+                    />
+                    <h3 className="text-sm font-semibold">{SERVICE_LABEL[service]}</h3>
+                    <span className="text-xs text-muted-foreground">
+                      {hasActive ? "loaded" : "no active file"}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {SERVICE_DESCRIPTION[service]}
+                  </p>
+                  <ul className="space-y-2">
+                    {list.map((cp) => (
+                      <CheckpointRow key={cp.relative_path || cp.filename} checkpoint={cp} />
+                    ))}
+                  </ul>
+                </section>
+              );
+            })}
           </div>
         )}
       </CardContent>
