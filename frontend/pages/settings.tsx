@@ -194,7 +194,6 @@ function CheckpointRow({ checkpoint }: { checkpoint: SettingsCheckpoint }) {
 function ModelsSection() {
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
   const [data, setData] = React.useState<SettingsCheckpoint[]>([]);
-  const [modelsDir, setModelsDir] = React.useState<string>("");
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -205,7 +204,6 @@ function ModelsSection() {
       .then((response) => {
         if (controller.signal.aborted) return;
         setData(response.checkpoints);
-        setModelsDir(response.models_dir);
         setError(null);
       })
       .catch((err) => {
@@ -234,15 +232,9 @@ function ModelsSection() {
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Models</CardTitle>
         <CardDescription>
-          {modelsDir ? (
-            <>
-              Read-only inventory of <code className="rounded bg-muted px-1 font-mono text-xs">{modelsDir}</code>.
-              The active flag points at the file each service is currently loaded from. To switch models,
-              drop a new file into the directory and restart the backend; live swap is intentionally disabled.
-            </>
-          ) : (
-            "Read-only inventory of the backend models directory."
-          )}
+          Read-only view of the model files the backend has loaded. The active flag points at the file
+          each service is currently serving from. To switch models, drop a new file into the backend
+          models directory and restart the backend; live swap is intentionally disabled.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -262,7 +254,7 @@ function ModelsSection() {
           <EmptyState
             variant="inline"
             title="No model files on disk."
-            description="Train a model and drop the checkpoint into the path above to make it available here."
+            description="Train a model and drop the checkpoint into the backend models directory to make it available here."
           />
         ) : (
           <div className="space-y-4">

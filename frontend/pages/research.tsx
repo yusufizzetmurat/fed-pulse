@@ -37,6 +37,17 @@ import type {
   TransferMatrixCell,
 } from "@/lib/analyze/types";
 
+// Map an artefact path or checkpoint identifier to a short, human-friendly
+// encoder label. Strips internal directories like
+// data/artifacts/continued_pretraining/<run>/... so the UI never leaks
+// container paths.
+function friendlyEncoderName(raw: string): string {
+  if (!raw) return raw;
+  const last = raw.split("/").filter(Boolean).pop() ?? raw;
+  const stem = last.replace(/\.(json|csv|parquet|pt|bin|md)$/i, "");
+  return stem || raw;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -532,7 +543,7 @@ export default function ResearchPage() {
                   <div className="flex flex-wrap gap-1.5">
                     {data.encoder_bakeoff.source_files.map((f) => (
                       <Badge key={f} variant="outline" className="font-mono text-[10px]">
-                        {f}
+                        {friendlyEncoderName(f)}
                       </Badge>
                     ))}
                   </div>
@@ -544,7 +555,7 @@ export default function ResearchPage() {
                   <div className="flex flex-wrap gap-1.5">
                     {data.cross_bank_transfer.source_files.map((f) => (
                       <Badge key={f} variant="outline" className="font-mono text-[10px]">
-                        {f}
+                        {friendlyEncoderName(f)}
                       </Badge>
                     ))}
                   </div>
