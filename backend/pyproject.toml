@@ -155,6 +155,7 @@ ignore = [
 "app/data/fed_comms_scrape.py" = ["PLR0913"]
 "app/data/gated_fusion.py" = ["PLR0913"]
 "app/data/fed_comms_train.py" = ["PLR0913"]
+"app/data/fed_comms_encoders.py" = ["PLR0913"]
 "app/data/dense_forecast_train.py" = ["PLR0913"]
 "app/data/dense_fomc_text.py" = ["PLR0913"]
 "app/data/dense_text_reconcile.py" = ["PLR0913"]
