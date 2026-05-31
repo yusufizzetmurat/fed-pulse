@@ -403,30 +403,38 @@ def render_analog_cards(hits: list[AnalogHit]) -> list[dict[str, Any]]:
 
 @lru_cache(maxsize=512)
 def _subsequent_close_pct(event_date: str, *, horizon: int) -> float | None:
-    """Return the S&P 500 close-to-close % return over ``horizon`` trading
-    days starting the day after ``event_date``.
+    """S&P 500 close-to-close % return over ``horizon`` trading days
+    from the event-day close.
 
-    ``None`` when the historical data is sparse (e.g. early history),
-    when yfinance is unavailable, or when fewer than ``horizon``
-    forward trading days are present. LRU-cached per (date, horizon)
-    so the same analog row is not refetched on every query.
+    The denominator is the close ON ``event_date`` (or the nearest
+    prior trading day when event_date itself is non-trading), matching
+    the standard event-study convention quoted by Bloomberg / FactSet.
+    The numerator is the close ``horizon`` trading days *forward* of
+    that anchor.
+
+    ``None`` when historical data is sparse (e.g. early history), when
+    yfinance is unavailable, when fewer than ``horizon`` forward
+    trading days are present, or when the event-day close lookup
+    fails. LRU-cached per (date, horizon) so the same analog row is
+    not refetched on every query.
     """
 
-    from app.services.market_data import fetch_realized_forward
+    from app.services.market_data import fetch_market_snapshot, fetch_realized_forward
 
     try:
+        snapshot = fetch_market_snapshot(target_date=event_date, symbol="^GSPC")
         forward = fetch_realized_forward(
             target_date=event_date,
             symbol="^GSPC",
             steps=horizon,
             lookback_days=45,
         )
-    except Exception:  # pragma: no cover — yfinance failures must not block analogs
+    except Exception:
         return None
     if len(forward) < horizon:
         return None
     try:
-        start = float(forward[0]["close"])
+        start = float(snapshot["close"])
         end = float(forward[horizon - 1]["close"])
     except (KeyError, TypeError, ValueError):
         return None

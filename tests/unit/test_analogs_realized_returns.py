@@ -47,7 +47,7 @@ def test_subsequent_close_pct_attached_to_each_card(monkeypatch: pytest.MonkeyPa
 def test_subsequent_close_pct_returns_none_when_market_fetch_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """yfinance failures must not block the analogs path."""
+    """yfinance failures on either fetch must not block the analogs path."""
 
     analogs_service._subsequent_close_pct.cache_clear()
 
@@ -55,7 +55,7 @@ def test_subsequent_close_pct_returns_none_when_market_fetch_raises(
         raise RuntimeError("yfinance offline")
 
     monkeypatch.setattr(
-        "app.services.market_data.fetch_realized_forward",
+        "app.services.market_data.fetch_market_snapshot",
         _boom,
     )
 
@@ -69,6 +69,11 @@ def test_subsequent_close_pct_returns_none_when_short_window(
     """Sparse forward windows produce None rather than fabricated returns."""
 
     analogs_service._subsequent_close_pct.cache_clear()
+
+    monkeypatch.setattr(
+        "app.services.market_data.fetch_market_snapshot",
+        lambda *_args, **_kwargs: {"close": 3200.0},
+    )
 
     def _short(*_args, **_kwargs) -> list[dict]:
         return [{"date": "2020-01-02", "close": 3257.0, "volatility_5d": 0.01}]
@@ -85,11 +90,17 @@ def test_subsequent_close_pct_returns_none_when_short_window(
 def test_subsequent_close_pct_computes_correct_return(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """5-day return = (close[4] / close[0] - 1) * 100, rounded to 4dp."""
+    """5d return = (close[event+5] / close[event] - 1) * 100 — uses the
+    event-day close as the denominator (Bloomberg convention)."""
 
     analogs_service._subsequent_close_pct.cache_clear()
 
     closes = [100.0, 101.0, 102.0, 103.0, 105.0]
+
+    monkeypatch.setattr(
+        "app.services.market_data.fetch_market_snapshot",
+        lambda *_args, **_kwargs: {"close": 100.0},
+    )
 
     def _series(*_args, **kwargs) -> list[dict]:
         steps = kwargs.get("steps") or 5
@@ -105,25 +116,30 @@ def test_subsequent_close_pct_computes_correct_return(
     assert out == pytest.approx(5.0, abs=1e-4)
 
 
-def test_subsequent_close_pct_handles_zero_start_close(
+def test_subsequent_close_pct_handles_zero_event_day_close(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Defensive: a zero start close would divide-by-zero — return None."""
+    """Defensive: a zero event-day close would divide-by-zero — return None."""
 
     analogs_service._subsequent_close_pct.cache_clear()
 
-    def _zero_start(*_args, **_kwargs) -> list[dict]:
+    monkeypatch.setattr(
+        "app.services.market_data.fetch_market_snapshot",
+        lambda *_args, **_kwargs: {"close": 0.0},
+    )
+
+    def _five(*_args, **_kwargs) -> list[dict]:
         return [
-            {"date": "2020-01-02", "close": 0.0, "volatility_5d": 0.01},
-            {"date": "2020-01-03", "close": 99.0, "volatility_5d": 0.01},
-            {"date": "2020-01-06", "close": 100.0, "volatility_5d": 0.01},
-            {"date": "2020-01-07", "close": 101.0, "volatility_5d": 0.01},
-            {"date": "2020-01-08", "close": 102.0, "volatility_5d": 0.01},
+            {"date": "2020-01-02", "close": 99.0, "volatility_5d": 0.01},
+            {"date": "2020-01-03", "close": 100.0, "volatility_5d": 0.01},
+            {"date": "2020-01-06", "close": 101.0, "volatility_5d": 0.01},
+            {"date": "2020-01-07", "close": 102.0, "volatility_5d": 0.01},
+            {"date": "2020-01-08", "close": 103.0, "volatility_5d": 0.01},
         ]
 
     monkeypatch.setattr(
         "app.services.market_data.fetch_realized_forward",
-        _zero_start,
+        _five,
     )
 
     out = analogs_service._subsequent_close_pct("2020-01-01", horizon=5)

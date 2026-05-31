@@ -173,7 +173,11 @@ export default function ConsolePage(): JSX.Element {
           <BacktestPanel />
         </div>
 
-        <RegistryStrip registry={registry} surface={surface} />
+        <RegistryStrip
+          registry={registry}
+          surface={surface}
+          includeRejected={includeRejected}
+        />
       </main>
     </>
   );
@@ -250,6 +254,11 @@ function ActiveCheckpointBar({
             <span>head={registry.head} · seeds={registry.seeds.join(",")}</span>
           </div>
         )}
+        <p className="text-xs text-muted-foreground">
+          Display only in v1: checkpoint selection drives the Registry strip
+          ranking; the analysis panels above use the backend&apos;s active
+          checkpoint. Server-side hot-swap lands in the follow-up PR.
+        </p>
       </CardContent>
     </Card>
   );
@@ -403,16 +412,21 @@ function BacktestPanel(): JSX.Element {
 function RegistryStrip({
   registry,
   surface,
+  includeRejected,
 }: {
   registry: ResearchRegistryResponse | null;
   surface: Surface;
+  includeRejected: boolean;
 }): JSX.Element | null {
   if (!registry) return null;
+  const title = includeRejected
+    ? "Registry (all encoders, losers dimmed)"
+    : `Registry (winners on ${surface})`;
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center justify-between">
-          <span>Registry (winners on {surface})</span>
+          <span>{title}</span>
           <span className="text-xs font-normal text-muted-foreground">
             wiki §{registry.source_wiki_section}
           </span>
@@ -433,7 +447,13 @@ function RegistryStrip({
             </thead>
             <tbody>
               {registry.rows.map((row) => (
-                <tr key={row.encoder_alias} className="border-t border-border">
+                <tr
+                  key={row.encoder_alias}
+                  className={cn(
+                    "border-t border-border",
+                    row.is_winner ? undefined : "opacity-50",
+                  )}
+                >
                   <td className="py-1 font-mono">{row.encoder_display}</td>
                   <td className="px-2 text-right font-mono">
                     {row.dual_f1?.toFixed(4) ?? "—"}
