@@ -1234,3 +1234,62 @@ class TrajectoryResponse(BaseModel):
             "available."
         ),
     )
+
+
+class ResearchRegistryBaseline(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    label: str
+    dual_f1: float | None = None
+    cls_f1: float | None = None
+    regression_f1: float | None = None
+
+
+class ResearchRegistryRow(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    encoder_alias: str
+    encoder_display: str
+    dual_f1: float | None = None
+    cls_f1: float | None = None
+    regression_f1: float | None = None
+    delta_dual: float | None = Field(
+        default=None,
+        description="Δ macro-F1 on the dual-head surface vs no-text baseline.",
+    )
+    delta_cls: float | None = Field(
+        default=None,
+        description="Δ macro-F1 on the classification-only surface vs no-text baseline.",
+    )
+    is_winner: bool = Field(
+        default=False,
+        description="True iff the active surfaces Δ is >= 0 (non-negative lift).",
+    )
+    checkpoint_relpath: str | None = None
+    cache_uri: str | None = Field(
+        default=None,
+        description="hf:// URI of the shareable embedding cache parquet, if published.",
+    )
+    notes: str = ""
+
+
+class ResearchRegistryResponse(BaseModel):
+    """Quant-facing encoder registry response (§6.41 manifest).
+
+    Filtered by default to non-negative Δ on the requested surface so
+    the dashboard does not surface negative-lift encoders. Use
+    ?include_rejected=true to see the full table including nulls and
+    negatives.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    available: bool
+    surface: Literal["dual", "cls"]
+    baseline: ResearchRegistryBaseline | None = None
+    rows: list[ResearchRegistryRow] = Field(default_factory=list)
+    rejected_count: int = 0
+    training_package_id: str = ""
+    head: str = ""
+    seeds: list[int] = Field(default_factory=list)
+    source_wiki_section: str = ""

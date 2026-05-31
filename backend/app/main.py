@@ -52,6 +52,7 @@ from app.schemas import (
     NextFomcForecastResponse,
     RatesReactionCard,
     ResearchArtifactsResponse,
+    ResearchRegistryResponse,
     SettingsCheckpoint,
     SettingsCheckpointsResponse,
     SymbolDescriptor,
@@ -77,6 +78,7 @@ from app.services.research_artifacts import (
     list_section_files,
     load_cross_bank_transfer,
     load_encoder_bakeoff,
+    load_research_registry,
 )
 from app.services.forecaster import (
     bootstrap_checkpoint,
@@ -1431,6 +1433,25 @@ def research_artifacts() -> ResearchArtifactsResponse:
         encoder_bakeoff=bakeoff,  # type: ignore[arg-type]
         cross_bank_transfer=transfer,  # type: ignore[arg-type]
     )
+
+
+@app.get("/research/registry", response_model=ResearchRegistryResponse)
+def research_registry(
+    surface: str = "dual",
+    include_rejected: bool = False,
+) -> ResearchRegistryResponse:
+    """Quant-facing encoder bake-off registry from the §6.41 manifest.
+
+    Filtered by default to rows with non-negative Δ on the active
+    surface (``dual`` or ``cls``) so the dashboard never surfaces
+    negative-lift encoders. Pass ``include_rejected=true`` to see the
+    full table including nulls/negatives.
+    """
+
+    if surface not in {"dual", "cls"}:
+        raise HTTPException(status_code=400, detail="surface must be 'dual' or 'cls'")
+    payload = load_research_registry(surface=surface, include_rejected=include_rejected)
+    return ResearchRegistryResponse(**payload)
 
 
 # ---------------------------------------------------------------------------
