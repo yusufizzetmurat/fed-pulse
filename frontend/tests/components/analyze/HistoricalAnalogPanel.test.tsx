@@ -12,6 +12,8 @@ function fixture(overrides: Partial<AnalogsResponse> = {}): AnalogsResponse {
         similarity: 0.82,
         axis_stance: "dovish",
         subsequent_vol_regime: "high",
+        subsequent_close_pct_5d: null,
+        subsequent_close_pct_20d: null,
         excerpt: "Information received since the Committee met in June indicates that the labor market remains strong and that economic activity has been rising at a moderate rate.",
       },
       {
@@ -19,6 +21,8 @@ function fixture(overrides: Partial<AnalogsResponse> = {}): AnalogsResponse {
         similarity: 0.71,
         axis_stance: "neutral",
         subsequent_vol_regime: "normal",
+        subsequent_close_pct_5d: null,
+        subsequent_close_pct_20d: null,
         excerpt: "Information received since the Federal Open Market Committee met in July suggests that economic activity is expanding at a moderate pace.",
       },
       {
@@ -26,6 +30,8 @@ function fixture(overrides: Partial<AnalogsResponse> = {}): AnalogsResponse {
         similarity: 0.65,
         axis_stance: "dovish",
         subsequent_vol_regime: "calm",
+        subsequent_close_pct_5d: null,
+        subsequent_close_pct_20d: null,
         excerpt: "Economic growth was moderate during the first half of the year, but the tightening of credit conditions has the potential to intensify the housing correction and to restrain economic growth more generally.",
       },
       {
@@ -33,6 +39,8 @@ function fixture(overrides: Partial<AnalogsResponse> = {}): AnalogsResponse {
         similarity: 0.21,
         axis_stance: "hawkish",
         subsequent_vol_regime: "normal",
+        subsequent_close_pct_5d: null,
+        subsequent_close_pct_20d: null,
         excerpt: "The Committee continues to believe that, against the background of its long-run goals of price stability and sustainable economic growth, the risks remain weighted mainly toward conditions that may generate economic weakness.",
       },
     ],
@@ -72,6 +80,8 @@ describe("HistoricalAnalogPanel", () => {
           similarity: 0.55,
           axis_stance: null,
           subsequent_vol_regime: "calm",
+        subsequent_close_pct_5d: null,
+        subsequent_close_pct_20d: null,
           excerpt: "Short excerpt.",
         },
       ],
@@ -134,6 +144,8 @@ describe("HistoricalAnalogPanel", () => {
       similarity: 0.78,
       axis_stance: "hawkish" as const,
       subsequent_vol_regime: "high" as const,
+        subsequent_close_pct_5d: null,
+        subsequent_close_pct_20d: null,
       excerpt: "x".repeat(280),
     };
     render(
@@ -159,6 +171,8 @@ describe("HistoricalAnalogPanel", () => {
       similarity: 0.62,
       axis_stance: "neutral" as const,
       subsequent_vol_regime: "normal" as const,
+        subsequent_close_pct_5d: null,
+        subsequent_close_pct_20d: null,
       excerpt: "Short statement under the 280 ceiling.",
     };
     render(
@@ -187,6 +201,8 @@ describe("HistoricalAnalogPanel", () => {
       similarity: 0.81,
       axis_stance: "dovish" as const,
       subsequent_vol_regime: "high" as const,
+        subsequent_close_pct_5d: null,
+        subsequent_close_pct_20d: null,
       excerpt: "Intermeeting statement excerpt.",
     };
     const sameDateCorrection = {

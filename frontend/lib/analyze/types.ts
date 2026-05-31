@@ -316,6 +316,11 @@ export interface AnalogCard {
   // ``forward_realized_vol_10d`` target so this label is the only
   // post-event signal available. Never feed back into a model.
   subsequent_vol_regime: AnalogVolRegime | null;
+  // #299: realized S&P 500 close-to-close % returns over 5 / 20 trading
+  // days starting the day after event_date. Market-data overlay (NOT a
+  // training label); null when the historical window is sparse.
+  subsequent_close_pct_5d: number | null;
+  subsequent_close_pct_20d: number | null;
   excerpt: string;
 }
 
@@ -600,4 +605,38 @@ export interface NextFomcForecastResponse {
   metrics_ex_pandemic: Record<string, NextFomcModelMetrics>;
   feature_attribution: NextFomcAttributionRow[];
   summary: Record<string, number>;
+}
+
+// #299: quant-facing research registry (§6.41 manifest)
+export interface ResearchRegistryBaseline {
+  label: string;
+  dual_f1: number | null;
+  cls_f1: number | null;
+  regression_f1: number | null;
+}
+
+export interface ResearchRegistryRow {
+  encoder_alias: string;
+  encoder_display: string;
+  dual_f1: number | null;
+  cls_f1: number | null;
+  regression_f1: number | null;
+  delta_dual: number | null;
+  delta_cls: number | null;
+  is_winner: boolean;
+  checkpoint_relpath: string | null;
+  cache_uri: string | null;
+  notes: string;
+}
+
+export interface ResearchRegistryResponse {
+  available: boolean;
+  surface: "dual" | "cls";
+  baseline: ResearchRegistryBaseline | null;
+  rows: ResearchRegistryRow[];
+  rejected_count: number;
+  training_package_id: string;
+  head: string;
+  seeds: number[];
+  source_wiki_section: string;
 }
