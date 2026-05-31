@@ -32,6 +32,9 @@ from app.data.fed_comms_scrape import DEFAULT_CORPUS_PARQUET
 
 DEFAULT_OUT_DIR = DATA_DIR / "processed" / "fed_comms_fusion"
 DEFAULT_MP_SURPRISE_PARQUET = DATA_DIR / "external" / "fred" / "mp_surprises.parquet"
+DEFAULT_MARKET_CACHE_DIR = (
+    DATA_DIR / "processed" / "tp_v3_full_rebuild_2026_05_30" / "_market_cache"
+)
 DEFAULT_HORIZONS = (1, 5, 22)
 _DOC_TYPES = ("statement", "minutes", "press_conference", "speech", "testimony")
 
@@ -56,8 +59,16 @@ def _forward_log_rv_windows(rv: np.ndarray, horizons: tuple[int, ...]) -> dict[i
 
 
 # Fair-target measures: name → (raw series from the RV parquet, log-transform?).
-# rv/volume/downside are positive → log; jump-share ∈ [0,1) → identity.
-MEASURES = ("rv", "volume", "downside", "jump")
+# rv/volume/downside are positive → log; jump-share ∈ [0,1) → identity. The two
+# corr_* second-moment targets are trailing cross-asset correlations ∈ [−1,1] →
+# identity (same case as jump); their daily columns are merged onto rv_df in
+# build() from the market cache, so a frame without them simply omits them.
+MEASURES = ("rv", "volume", "downside", "jump", "corr_tnx", "corr_dxy")
+
+# Correlation measures live in their own daily columns (not raw RV fields). The
+# trailing window guarantees the early span is NaN until it is full.
+_CORR_MEASURES = ("corr_tnx", "corr_dxy")
+_CORR_CLIP = 0.999  # keep targets strictly inside (−1, 1) for numerical safety
 
 
 def _measure_raw(rv_df: Any, measure: str) -> tuple[np.ndarray, bool]:
@@ -73,7 +84,95 @@ def _measure_raw(rv_df: Any, measure: str) -> tuple[np.ndarray, bool]:
     if measure == "jump":  # jump-variation share (RV−BV)₊/RV, bounded in [0,1)
         bv = rv_df["bv"].to_numpy(dtype=np.float64)
         return np.maximum(rv - bv, 0.0) / (rv + _EPS), False
+    if measure in _CORR_MEASURES:  # trailing cross-asset correlation ∈ [−1,1]
+        c = rv_df[measure].to_numpy(dtype=np.float64)
+        return np.clip(c, -_CORR_CLIP, _CORR_CLIP), False
     raise ValueError(f"unknown measure {measure!r}")
+
+
+def _measure_present(rv_df: Any, measure: str) -> bool:
+    """Whether the raw column(s) a measure needs are in rv_df (corr_* may be absent)."""
+
+    return measure not in _CORR_MEASURES or measure in rv_df.columns
+
+
+_CORR_WINDOW = 22  # trailing trading days for the realized-correlation estimate
+
+
+def _trailing_corr(a: np.ndarray, b: np.ndarray, window: int) -> np.ndarray:
+    """Trailing Pearson correlation of two aligned daily series.
+
+    corr[t] uses only the `window` observations ending at t (data ≤ t), so as a
+    feature it is backward-looking and leak-safe; the first window−1 entries are
+    NaN until the window is full. NaN inputs inside a window propagate to NaN.
+    """
+
+    n = len(a)
+    out = np.full(n, np.nan)
+    for t in range(window - 1, n):
+        x = a[t - window + 1 : t + 1]
+        y = b[t - window + 1 : t + 1]
+        if not (np.isfinite(x).all() and np.isfinite(y).all()):
+            continue
+        sx, sy = x.std(), y.std()
+        if sx <= 0.0 or sy <= 0.0:
+            continue
+        out[t] = float(np.corrcoef(x, y)[0, 1])
+    return out
+
+
+def _correlation_columns(
+    dates: Any, market_cache_dir: Path | str
+) -> dict[str, np.ndarray]:
+    """Trailing 22-day cross-asset correlations aligned to the RV `dates`.
+
+    corr_tnx[t] = corr(GSPC daily log return, TNX daily yield change) over the
+    trailing window ending at t; corr_dxy[t] = corr(GSPC log return, DXY log
+    return) likewise. GSPC/DXY use log returns; TNX is the 10y yield level, so we
+    use its daily first difference (yield change) as the bond signal. Series are
+    left-joined onto the RV dates and small gaps forward-filled before the window
+    is taken. Sign convention: a positive corr_tnx means equities and yields move
+    together (the post-2000 "good-news" regime) — equivalently equities and bond
+    PRICES move opposite, the familiar negative stock–bond price correlation.
+    """
+
+    import pandas as pd
+
+    from app.data.dense_daily_dataset import load_market_cache
+
+    series = load_market_cache(market_cache_dir, symbols=("GSPC", "TNX"))
+    base = pd.DataFrame({"date": pd.Series(dates).astype(str)})
+    # DXY is cached under the raw provider symbol DX-Y.NYB (not in _CACHE_FILES).
+    dxy_path = Path(market_cache_dir) / "DX-Y.NYB.parquet"
+    frames = {"GSPC": series.get("GSPC"), "TNX": series.get("TNX")}
+    if dxy_path.exists():
+        frames["DXY"] = pd.read_parquet(dxy_path)
+    elif series.get("GSPC") is not None:  # cache present but DXY missing → loud, not silent all-NaN
+        print(f"[fed_comms_dataset] WARNING: DXY cache not found at {dxy_path}; corr_dxy will be NaN")
+    for name, df in frames.items():
+        if df is None:
+            base[name] = np.nan
+            continue
+        s = df[["date", "close"]].rename(columns={"close": name}).copy()
+        s["date"] = s["date"].astype(str)
+        base = base.merge(s, on="date", how="left")
+    base = base.ffill()  # carry last known close into market holidays/gaps (no bfill → no leak)
+
+    def _log_ret(col: str) -> np.ndarray:
+        p = base[col].to_numpy(dtype=np.float64) if col in base.columns else np.full(len(base), np.nan)
+        r = np.full(len(p), np.nan)
+        r[1:] = np.log(p[1:] / p[:-1])
+        return r
+
+    gspc_ret = _log_ret("GSPC")
+    dxy_ret = _log_ret("DXY")
+    tnx = base["TNX"].to_numpy(dtype=np.float64) if "TNX" in base.columns else np.full(len(base), np.nan)
+    tnx_chg = np.full(len(tnx), np.nan)
+    tnx_chg[1:] = tnx[1:] - tnx[:-1]  # daily 10y yield change (level diff, not log)
+    return {
+        "corr_tnx": _trailing_corr(gspc_ret, tnx_chg, _CORR_WINDOW),
+        "corr_dxy": _trailing_corr(gspc_ret, dxy_ret, _CORR_WINDOW),
+    }
 
 
 def _forward_target(raw: np.ndarray, h: int, *, is_log: bool) -> np.ndarray:
@@ -231,10 +330,13 @@ def build_daily_fusion_frame(
 
     rv_df = rv_df.sort_values("date").reset_index(drop=True)
     trading_days = rv_df["date"].astype(str).tolist()
-    # precompute per-measure lags + forward targets
+    # precompute per-measure lags + forward targets. corr_* measures are emitted
+    # only when their daily columns are present (build() merges them from the
+    # market cache); a frame without them simply omits those columns.
+    measures = tuple(m for m in MEASURES if _measure_present(rv_df, m))
     lags: dict[str, np.ndarray] = {}
     fwds: dict[str, dict[int, np.ndarray]] = {}
-    for m in MEASURES:
+    for m in measures:
         raw, is_log = _measure_raw(rv_df, m)
         lags[m] = _har_lags(np.log(raw + _EPS) if is_log else raw)
         fwds[m] = {h: _forward_target(raw, h, is_log=is_log) for h in horizons}
@@ -262,7 +364,7 @@ def build_daily_fusion_frame(
     rows: list[dict[str, Any]] = []
     for i, day in enumerate(trading_days):
         row: dict[str, Any] = {"date": day}
-        for m in MEASURES:
+        for m in measures:
             row[f"{m}_daily"] = float(lags[m][i, 0])
             row[f"{m}_weekly"] = float(lags[m][i, 1])
             row[f"{m}_monthly"] = float(lags[m][i, 2])
@@ -297,6 +399,7 @@ def build(
     out_dir: Path | str = DEFAULT_OUT_DIR,
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
     mp_surprise_path: Path | str | None = DEFAULT_MP_SURPRISE_PARQUET,
+    market_cache_dir: Path | str | None = DEFAULT_MARKET_CACHE_DIR,
 ) -> tuple[Path, Path]:
     """Build + persist both tables; return (pairs_path, daily_path)."""
 
@@ -304,6 +407,14 @@ def build(
 
     corpus = pd.read_parquet(corpus_path)
     rv_df = pd.read_parquet(rv_path)
+    # Merge trailing cross-asset correlation targets onto the RV dates BEFORE the
+    # fusion frame is built, so _measure_raw can read them. Skip silently if the
+    # market cache is absent — the corr_* measures are then simply not emitted.
+    if market_cache_dir is not None and Path(market_cache_dir).exists():
+        rv_df = rv_df.sort_values("date").reset_index(drop=True)
+        corr = _correlation_columns(rv_df["date"], market_cache_dir)
+        for name, col in corr.items():
+            rv_df[name] = col
     surprise = None
     if mp_surprise_path is not None and Path(mp_surprise_path).exists():
         surprise = pd.read_parquet(mp_surprise_path)
@@ -325,6 +436,16 @@ def build(
             f"[fed_comms_dataset] surprise: present={surprise is not None} "
             f"nonneutral_level_frac={nz:.3f}"
         )
+        for m in _CORR_MEASURES:
+            fwd_col = f"{m}_fwd_{max(horizons)}"
+            if fwd_col in daily.columns:
+                v = daily[fwd_col].to_numpy(dtype=np.float64)
+                fin = v[np.isfinite(v)]
+                if fin.size:
+                    print(
+                        f"[fed_comms_dataset] {fwd_col}: coverage={fin.size / len(v):.3f} "
+                        f"mean={fin.mean():+.3f} range=[{fin.min():+.3f},{fin.max():+.3f}]"
+                    )
     return pairs_path, daily_path
 
 
@@ -334,12 +455,14 @@ def main() -> int:
     parser.add_argument("--rv-path", type=Path, default=DEFAULT_RV_PARQUET)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--mp-surprise-path", type=Path, default=DEFAULT_MP_SURPRISE_PARQUET)
+    parser.add_argument("--market-cache-dir", type=Path, default=DEFAULT_MARKET_CACHE_DIR)
     args = parser.parse_args()
     build(
         corpus_path=args.corpus_path,
         rv_path=args.rv_path,
         out_dir=args.out_dir,
         mp_surprise_path=args.mp_surprise_path,
+        market_cache_dir=args.market_cache_dir,
     )
     return 0
 

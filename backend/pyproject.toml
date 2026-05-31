@@ -153,6 +153,7 @@ ignore = [
 "app/data/alphavantage_spx.py" = ["PLR0913"]
 "app/data/intraday_realized.py" = ["PLR0913"]
 "app/data/fed_comms_scrape.py" = ["PLR0913"]
+"app/data/fed_comms_dataset.py" = ["PLR0913"]
 "app/data/gated_fusion.py" = ["PLR0913"]
 "app/data/fed_comms_train.py" = ["PLR0913"]
 "app/data/fed_comms_encoders.py" = ["PLR0913"]
