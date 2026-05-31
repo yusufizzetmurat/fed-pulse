@@ -52,6 +52,8 @@ from app.schemas import (
     NextFomcForecastResponse,
     RatesReactionCard,
     ResearchArtifactsResponse,
+    BacktestRequest,
+    BacktestResponse,
     ResearchRegistryResponse,
     SettingsCheckpoint,
     SettingsCheckpointsResponse,
@@ -1452,6 +1454,29 @@ def research_registry(
         raise HTTPException(status_code=400, detail="surface must be 'dual' or 'cls'")
     payload = load_research_registry(surface=surface, include_rejected=include_rejected)
     return ResearchRegistryResponse(**payload)
+
+
+@app.post("/research/backtest", response_model=BacktestResponse)
+def research_backtest(request: BacktestRequest) -> BacktestResponse:
+    """Run the stance-directional backtest engine on a caller-supplied
+    {date, position} series.
+
+    Frontend (or any caller) supplies the positions; this endpoint
+    looks up the S&P forward returns per date and aggregates Sharpe,
+    hit-rate, max-drawdown, and benchmark deltas. Decouples the
+    engine from any specific signal source so the same harness can
+    serve oracle backtests, history-driven backtests, and live-
+    classifier backtests interchangeably.
+    """
+
+    from app.evaluation.backtest import compute_backtest_metrics
+
+    payload = compute_backtest_metrics(
+        positions=[entry.model_dump() for entry in request.positions],
+        symbol=request.symbol,
+        horizon_days=request.horizon_days,
+    )
+    return BacktestResponse(**payload)
 
 
 # ---------------------------------------------------------------------------

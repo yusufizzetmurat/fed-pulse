@@ -4,6 +4,8 @@ import type {
   AnalogsResponse,
   AnalyzeRequest,
   AnalyzeResult,
+  BacktestPositionEntry,
+  BacktestResponse,
   ClassificationBreakdownResponse,
   EvaluationCoverageResponse,
   FomcCalendarResponse,
@@ -236,4 +238,16 @@ export async function fetchResearchRegistry(
   if (options?.includeRejected) params.include_rejected = true;
   const response = await axios.get(`${baseUrl}/research/registry`, { params });
   return response.data as ResearchRegistryResponse;
+}
+
+export async function postResearchBacktest(
+  baseUrl: string,
+  body: {
+    positions: BacktestPositionEntry[];
+    symbol?: string;
+    horizon_days?: number;
+  }
+): Promise<BacktestResponse> {
+  const response = await axios.post(`${baseUrl}/research/backtest`, body);
+  return response.data as BacktestResponse;
 }

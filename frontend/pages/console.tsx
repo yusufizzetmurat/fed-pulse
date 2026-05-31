@@ -15,12 +15,15 @@ import {
   fetchResearchRegistry,
   postAnalyze,
   postAnalyzeAnalogs,
+  postResearchBacktest,
   resolveApiBaseUrl,
 } from "@/lib/analyze/api";
 import { errorMessage } from "@/lib/analyze/errors";
 import type {
   AnalogsResponse,
   AnalyzeResult,
+  BacktestPositionEntry,
+  BacktestResponse,
   ResearchRegistryResponse,
 } from "@/lib/analyze/types";
 import { cn } from "@/lib/utils";
@@ -170,7 +173,7 @@ export default function ConsolePage(): JSX.Element {
           <StancePanel analyze={analyze} />
           <VolRegimePanel analyze={analyze} />
           <AnalogsPanel analogs={analogs} />
-          <BacktestPanel />
+          <BacktestPanel baseUrl={baseUrl} />
         </div>
 
         <RegistryStrip
@@ -393,17 +396,106 @@ function AnalogsPanel({ analogs }: { analogs: AnalogsResponse | null }): JSX.Ele
   );
 }
 
-function BacktestPanel(): JSX.Element {
+// #299 PR-B demo series: 8 historical FOMC dates with hard-coded
+// stance proxies (hawkish=-1 short S&P, dovish=+1 long, neutral=0).
+// The stances are conservative reads of the published Fed direction
+// at each meeting; this lets the backtest panel render real Sharpe
+// / HitRate / MaxDD numbers from real S&P forward returns without
+// needing the full predicted-stance fan-out infra. A follow-up PR
+// can swap this for live /analyze predictions over the same dates.
+const DEMO_BACKTEST_POSITIONS: BacktestPositionEntry[] = [
+  { date: "2022-03-16", position: -1 }, // 25bp hike, start of cycle
+  { date: "2022-06-15", position: -1 }, // 75bp hike, surprise
+  { date: "2022-11-02", position: -1 }, // 75bp hike, sustained tightening
+  { date: "2023-02-01", position: -1 }, // 25bp hike, decelerating
+  { date: "2023-07-26", position: -1 }, // 25bp hike, last in cycle
+  { date: "2023-12-13", position: 0 }, // hold, neutral
+  { date: "2024-03-20", position: 0 }, // hold, neutral
+  { date: "2024-09-18", position: 1 }, // 50bp cut, dovish
+];
+
+function BacktestPanel({ baseUrl }: { baseUrl: string }): JSX.Element {
+  const [result, setResult] = React.useState<BacktestResponse | null>(null);
+  const [running, setRunning] = React.useState<boolean>(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const run = React.useCallback(async () => {
+    setRunning(true);
+    setError(null);
+    try {
+      const response = await postResearchBacktest(baseUrl, {
+        positions: DEMO_BACKTEST_POSITIONS,
+        symbol: "^GSPC",
+        horizon_days: 5,
+      });
+      setResult(response);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setRunning(false);
+    }
+  }, [baseUrl]);
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Backtest (since 2018)</CardTitle>
+        <CardTitle className="flex items-center justify-between">
+          <span>Backtest (stance-directional, 5d)</span>
+          <Button size="sm" onClick={run} disabled={running}>
+            {running ? "Running…" : result ? "Re-run" : "Run backtest"}
+          </Button>
+        </CardTitle>
       </CardHeader>
-      <CardContent className="text-sm text-muted-foreground">
-        Stance-directional Sharpe / HitRate / MaxDD vs buy-and-hold ATM
-        straddle — lands in the #299 backtest follow-up PR. The engine
-        will compute the strategy from the active checkpoint&apos;s historical
-        FOMC predictions and stamp confidence intervals on each metric.
+      <CardContent className="space-y-2 text-sm">
+        {error && (
+          <span className="text-xs text-destructive" role="alert">
+            {error}
+          </span>
+        )}
+        {!result && !running && (
+          <p className="text-xs text-muted-foreground">
+            Demo series: 8 historical FOMC dates with proxied stances
+            (hawkish=-1 short S&amp;P, dovish=+1 long). Computes Sharpe /
+            HitRate / MaxDD vs buy-and-hold on real ^GSPC 5d forward
+            returns. Live predicted-stance backtest lands in v1.1.
+          </p>
+        )}
+        {result && (
+          <>
+            <div className="grid grid-cols-3 gap-3 text-sm">
+              <Row label="Sharpe" value={result.sharpe?.toFixed(2) ?? "—"} />
+              <Row
+                label="HitRate"
+                value={
+                  result.hit_rate != null
+                    ? `${(result.hit_rate * 100).toFixed(1)}%`
+                    : "—"
+                }
+              />
+              <Row
+                label="MaxDD"
+                value={
+                  result.max_dd_pct != null
+                    ? `${result.max_dd_pct.toFixed(2)}%`
+                    : "—"
+                }
+                tone={result.max_dd_pct != null && result.max_dd_pct < -5 ? "warn" : undefined}
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-3 text-xs text-muted-foreground">
+              <Row label="cum return" value={formatPct(result.cum_return_pct)} />
+              <Row label="buy-and-hold" value={formatPct(result.benchmark_cum_pct)} />
+              <Row
+                label="alpha"
+                value={formatPct(result.alpha_cum_pct)}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {result.n_trades} realized trades · horizon {result.horizon_days}d ·{" "}
+              {result.symbol}
+            </p>
+          </>
+        )}
       </CardContent>
     </Card>
   );
