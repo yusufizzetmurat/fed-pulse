@@ -217,6 +217,21 @@ CROSS_ASSET_SYMBOLS: tuple[tuple[str, str], ...] = (
 # listing, holiday, or the symbol cache failed to fetch) keeps the
 # column ``None`` so the regime classifier learns to skip rather than
 # treating an absent quote as a zero.
+#
+# Relationship to ``app.models.config.SUPPORTED_SYMBOLS`` (the
+# 5-symbol id table the symbol-conditioned regime head's nn.Embedding
+# is keyed off): SUPPORTED_SYMBOLS is a strict subset of this tuple.
+# The two cannot be merged because SUPPORTED_SYMBOLS is byte-stable by
+# contract -- the embedding ids are pinned forever so a checkpoint
+# trained against id k=2 always sees the same symbol at id 2 on
+# rehydrate (see the docstring on ``SUPPORTED_SYMBOLS``). This tuple
+# is data-only -- per-asset target columns on events.parquet, no id
+# stability requirement -- so it can grow independently as upstream
+# symbol coverage expands. The subset invariant
+# (``SUPPORTED_SYMBOLS <= PER_ASSET_TARGET_SYMBOLS``) is enforced by
+# ``tests/unit/test_per_asset_vol_columns.py`` so a future symbol
+# added to SUPPORTED_SYMBOLS without a matching per-asset target
+# column fails at test time.
 PER_ASSET_TARGET_SYMBOLS: tuple[str, ...] = (
     "^GSPC",
     "^NDX",
