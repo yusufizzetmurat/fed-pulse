@@ -28,6 +28,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fetchResearchArtifacts, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { friendlyEncoderName as friendlyEncoderAlias } from "@/lib/analyze/encoders";
 import { errorMessage } from "@/lib/analyze/errors";
 import type {
   ArtifactFile,
@@ -37,15 +38,14 @@ import type {
   TransferMatrixCell,
 } from "@/lib/analyze/types";
 
-// Map an artefact path or checkpoint identifier to a short, human-friendly
-// encoder label. Strips internal directories like
-// data/artifacts/continued_pretraining/<run>/... so the UI never leaks
-// container paths.
+// Strip an artefact path down to its file stem before mapping through the
+// shared encoder-alias lookup. Keeps internal directories like
+// data/artifacts/continued_pretraining/<run>/... out of the UI.
 function friendlyEncoderName(raw: string): string {
   if (!raw) return raw;
   const last = raw.split("/").filter(Boolean).pop() ?? raw;
   const stem = last.replace(/\.(json|csv|parquet|pt|bin|md)$/i, "");
-  return stem || raw;
+  return friendlyEncoderAlias(stem || raw);
 }
 
 function formatBytes(bytes: number): string {
