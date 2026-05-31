@@ -487,6 +487,27 @@ artefacts:
       once the loader's ``sequence_length`` plumbing lands.
     inference_features: []
 
+  training_package_vix:
+    hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-training-package
+    revision: "aae4de0965345aeffbd58f9746fd0ecacccf5ead"
+    eager: false
+    description: |
+      VIX-extended variant of the canonical training package (#478).
+      Identical events, labels, splits, and fold manifest to the
+      canonical pin; events.parquet carries the six new strict-prior
+      VIX columns (``vix_t_minus_1``, ``vix1m_t_minus_1``,
+      ``vix3m_t_minus_1``, ``vix6m_t_minus_1``,
+      ``vix_3m_over_1m_slope``, ``vrp_t_minus_1``) plus the
+      ``forward_realized_vol_10d_vix`` realised baseline. Rebuilt
+      laptop-side 2026-05-31 against the post-#478 event_dataset_builder
+      so the ``vix_features`` arm can exercise real values instead of
+      hitting the missing-flag fallback the canonical TP forces on it.
+      Pulled to ``data/processed/canonical_vix/`` via the same
+      ``snapshot_download(repo_type='dataset', revision=...)`` recipe
+      as the canonical TP. Consumed by ``--use-vix-features`` arms
+      against ``--training-package-id canonical_vix``.
+    inference_features: []
+
   embedding_caches:
     hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-embedding-caches
     revision: "89c3bc119182b9a39a4f96d18bd238a5adbcdfba"
