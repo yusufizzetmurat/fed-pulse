@@ -557,6 +557,10 @@ def _trial_metrics(summary: Any) -> dict[str, Any]:
             breakdown_payload = breakdown
         elif hasattr(breakdown, "to_dict"):
             breakdown_payload = breakdown.to_dict()
+    # Persist raw per-row predictions + targets so downstream block-bootstrap
+    # analyses can pool per-(seed, fold) cells without re-running training.
+    raw_preds = getattr(test, "predictions", None)
+    raw_targs = getattr(test, "targets", None)
     return {
         "regime_f1_macro": getattr(test, "regime_f1_macro", None),
         "regime_accuracy": getattr(test, "regime_accuracy", None),
@@ -565,6 +569,8 @@ def _trial_metrics(summary: Any) -> dict[str, Any]:
         "regression_mae_log_rv": getattr(test, "regression_mae_log_rv", None),
         "regression_loss": getattr(test, "regression_loss", None),
         "classification_breakdown": breakdown_payload,
+        "predictions": list(raw_preds) if raw_preds is not None else None,
+        "targets": list(raw_targs) if raw_targs is not None else None,
     }
 
 
