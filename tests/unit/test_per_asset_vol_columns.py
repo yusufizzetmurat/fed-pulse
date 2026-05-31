@@ -249,3 +249,31 @@ def test_supported_symbols_is_a_subset_of_per_asset_target_symbols() -> None:
         "the per-asset target columns exist for every symbol the embedding head "
         "can id."
     )
+
+
+def test_build_event_rows_threads_per_asset_force_refresh() -> None:
+    """#486 follow-up: ``--per-asset-target-force-refresh`` reaches the fetch.
+
+    Pre-fix the per-asset fetch hard-coded ``force_refresh=False`` so the
+    operator had to delete the parquet under ``data/external/yfinance/``
+    to invalidate a corrupted or stale cache. The CLI flag now threads
+    ``per_asset_target_force_refresh`` through ``build_event_rows`` to
+    every per-asset ``_fetch_close_series`` call.
+
+    Pinned via inspect.signature so a future refactor that drops the
+    kwarg or flips the default fails at test time.
+    """
+
+    import inspect
+
+    sig = inspect.signature(edb.build_event_rows)
+    assert "per_asset_target_force_refresh" in sig.parameters, (
+        "build_event_rows must accept the per_asset_target_force_refresh "
+        "kwarg so the CLI flag can reach the per-asset fetch path."
+    )
+    default = sig.parameters["per_asset_target_force_refresh"].default
+    assert default is False, (
+        "per_asset_target_force_refresh must default to False so the "
+        "post-#486 path stays byte-identical to the pre-#486 cache-once-"
+        "pinned-forever behaviour for callers that don't set it."
+    )
