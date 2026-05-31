@@ -129,10 +129,16 @@ def test_from_encoder_alias_forwards_trust_remote_code(monkeypatch) -> None:
         revision = "deadbeef"
         trust_remote_code = True
 
-    import app.models.text_multi_axis_classifier as mod
+    # from_encoder_alias does an inline ``from transformers import
+    # AutoModel`` so the monkey-patch has to land on the transformers
+    # module symbol that import resolves to, not a non-existent module
+    # attribute on the classifier module itself.
+    import transformers
 
     monkeypatch.setattr(
-        mod, "AutoModel", type("FakeAutoModel", (), {"from_pretrained": staticmethod(_fake_from_pretrained)})
+        transformers,
+        "AutoModel",
+        type("FakeAutoModel", (), {"from_pretrained": staticmethod(_fake_from_pretrained)}),
     )
     import app.models.registry as registry
     monkeypatch.setattr(registry, "encoder_ref", lambda alias: _FakeRef())
