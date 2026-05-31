@@ -112,6 +112,31 @@ def test_benchmark_and_alpha_signs() -> None:
     assert out["alpha_cum_pct"] == pytest.approx(-1.97, abs=0.05)
 
 
+def test_benchmark_compounds_over_neutral_dates_too() -> None:
+    """#564 review F1: a neutral position contributes nothing to the
+    strategy but its forward return must still appear in the
+    buy-and-hold benchmark. Otherwise alpha looks artificially good
+    when the neutral spans a market move the strategy missed."""
+
+    # 2 trades + 1 neutral. Strategy sees only the 2 active trades.
+    # Benchmark must include the neutral's forward return too.
+    out = backtest.compute_backtest_metrics(
+        _series([
+            ("2024-01-15", 1),   # +1.0% strategy, +1.0% benchmark
+            ("2024-02-15", 0),   # skipped strategy, -2.0% benchmark
+            ("2024-05-15", 1),   # +2.0% strategy, +2.0% benchmark
+        ])
+    )
+    # strategy cum: 1.01 * 1.02 - 1 ≈ +3.02%
+    # benchmark cum: 1.01 * 0.98 * 1.02 - 1 ≈ +0.96% (NOT 1.01 * 1.02 = +3.02)
+    assert out["n_trades"] == 2
+    assert out["cum_return_pct"] == pytest.approx(3.02, abs=0.02)
+    assert out["benchmark_cum_pct"] == pytest.approx(0.96, abs=0.05)
+    # If the bug were back (benchmark restricted to realized), this
+    # alpha would read ~0; the fix makes it ~+2.
+    assert out["alpha_cum_pct"] == pytest.approx(2.06, abs=0.05)
+
+
 def test_invalid_position_raises() -> None:
     """Position must be in {-1, 0, 1}."""
 

@@ -35,7 +35,15 @@ class BacktestTrade:
 
 
 def _validate_position(position: Any) -> int:
-    """Coerce + bound-check a position signal to {-1, 0, 1}."""
+    """Coerce + bound-check a position signal to {-1, 0, 1}.
+
+    Bool check is the load-bearing guard for direct engine callers
+    (tests, internal callers that build positions by name). The
+    schema layer (``BacktestPositionEntry`` with strict=True) catches
+    bool first at the endpoint boundary, but the engine accepts raw
+    dicts that bypass the schema — this guard is what stops a True/
+    False from riding through as 1/0 in that path.
+    """
 
     if isinstance(position, bool):
         raise ValueError(f"position must be int in {{-1,0,1}}, got bool")
@@ -148,7 +156,15 @@ def compute_backtest_metrics(
         }
 
     strategy_pcts = [t.strategy_return_pct for t in realized]
-    forward_pcts = [t.forward_return_pct for t in realized if t.forward_return_pct is not None]
+    # #564 review F1: benchmark compounds over EVERY trade with valid
+    # forward data (incl. neutral positions). Restricting to ``realized``
+    # would silently exclude neutral-position dates from the buy-and-hold
+    # comparison and make alpha look favorable when neutrals span moves
+    # the strategy missed. Full-window buy-and-hold is the standard
+    # baseline.
+    forward_pcts = [
+        t.forward_return_pct for t in trades if t.forward_return_pct is not None
+    ]
 
     mean = sum(strategy_pcts) / n_trades
     variance = (

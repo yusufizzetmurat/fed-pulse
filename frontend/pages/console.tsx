@@ -457,7 +457,12 @@ function BacktestPanel({ baseUrl }: { baseUrl: string }): JSX.Element {
             Demo series: 8 historical FOMC dates with proxied stances
             (hawkish=-1 short S&amp;P, dovish=+1 long). Computes Sharpe /
             HitRate / MaxDD vs buy-and-hold on real ^GSPC 5d forward
-            returns. Live predicted-stance backtest lands in v1.1.
+            returns. <strong>Note:</strong> the 2022&ndash;2024 window
+            covers the Fed hiking cycle&apos;s sharp equity sell-off, so
+            short-SPX bets dominate the sample. Hit-rate and Sharpe
+            reflect a directionally favorable period, not out-of-
+            sample model performance. Live predicted-stance backtest
+            lands in v1.1.
           </p>
         )}
         {result && (
@@ -491,8 +496,8 @@ function BacktestPanel({ baseUrl }: { baseUrl: string }): JSX.Element {
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              {result.n_trades} realized trades · horizon {result.horizon_days}d ·{" "}
-              {result.symbol}
+              {result.n_trades} / {result.trades.length} dates realized ·
+              horizon {result.horizon_days}d · {result.symbol}
             </p>
           </>
         )}
