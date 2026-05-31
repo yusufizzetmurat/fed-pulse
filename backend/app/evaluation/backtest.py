@@ -155,15 +155,24 @@ def compute_backtest_metrics(
             "symbol": symbol,
         }
 
-    strategy_pcts = [t.strategy_return_pct for t in realized]
+    # ``realized`` is already filtered to entries where
+    # strategy_return_pct is not None; the inner check below is for
+    # mypy's benefit (it cannot narrow on attribute access alone).
+    strategy_pcts: list[float] = [
+        t.strategy_return_pct
+        for t in realized
+        if t.strategy_return_pct is not None
+    ]
     # #564 review F1: benchmark compounds over EVERY trade with valid
     # forward data (incl. neutral positions). Restricting to ``realized``
     # would silently exclude neutral-position dates from the buy-and-hold
     # comparison and make alpha look favorable when neutrals span moves
     # the strategy missed. Full-window buy-and-hold is the standard
     # baseline.
-    forward_pcts = [
-        t.forward_return_pct for t in trades if t.forward_return_pct is not None
+    forward_pcts: list[float] = [
+        t.forward_return_pct
+        for t in trades
+        if t.forward_return_pct is not None
     ]
 
     mean = sum(strategy_pcts) / n_trades
