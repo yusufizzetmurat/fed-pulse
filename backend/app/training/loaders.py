@@ -1964,6 +1964,24 @@ def _load_package_sequences_with_metadata(
             cache_dir=cache_dir,
             registry_path=registry_for_lookup,
         )
+        # #554: fail loud when an encoder is configured but the lookup
+        # came back empty. Pre-fix the loader logged a per-batch WARNING
+        # on cache miss + then proceeded with empty embeddings, so the
+        # arm produced byte-identical output to the no-text baseline
+        # silently -- which is exactly how the wave-4 bake-off cells
+        # all looked the same (see §6.39 retraction). A single ERROR-
+        # level log at the load boundary surfaces the gap in run logs
+        # without raising (the empty-fallback path stays alive for the
+        # existing test surface that relies on it).
+        if not embedding_lookup:
+            _logger.error(
+                "text_encoder=%r is configured but the embedding cache "
+                "lookup returned empty -- every row will hit the no-text "
+                "fallback and the arm's output will be byte-identical to "
+                "the use_text_embeddings=False path. See PR #546 / §6.39 "
+                "for the methodology context.",
+                text_encoder,
+            )
     # ``embedding_event_dates`` is captured for symmetry with the
     # ``_read_chunk_embedding_lookup`` contract; the prior-4 pooler
     # consumes statement dates off ``prior_chronology`` further down,
@@ -2882,6 +2900,18 @@ def load_training_sequences_from_package(
             cache_dir=cache_dir,
             registry_path=registry_for_lookup,
         )
+        # #554 mirror site to the walk-forward loader. Same ERROR-level
+        # fail-loud signal when the cache lookup returns empty so a
+        # silent-fallback bake-off cannot recur on the legacy load path.
+        if not embedding_lookup:
+            _logger.error(
+                "text_encoder=%r is configured but the embedding cache "
+                "lookup returned empty -- every row will hit the no-text "
+                "fallback and the arm's output will be byte-identical to "
+                "the use_text_embeddings=False path. See PR #546 / §6.39 "
+                "for the methodology context.",
+                text_encoder,
+            )
     # Captured for symmetry; the prior-4 pooler reads dates off
     # ``prior_chronology`` so the dict is not consumed here.
     _ = embedding_event_dates

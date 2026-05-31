@@ -236,3 +236,47 @@ def test_build_cache_reuses_existing_parquet_without_network(tmp_path: Path, mon
         allow_network=False,
     )
     assert result.row_count == 1
+
+
+def test_resolve_cache_device_prefers_cuda_when_available(monkeypatch) -> None:
+    """#553: default to CUDA when ``torch.cuda.is_available()`` returns True.
+
+    Pre-#553 ``_load_encoder`` never moved the model off CPU even on a pod
+    with an idle GPU; rebuilding the wave-4 bake-off caches ran ~10× slower
+    than necessary. The default-on CUDA selection is the operational fix.
+    """
+
+    import torch
+
+    monkeypatch.delenv("FED_PULSE_EMBEDDING_CACHE_DEVICE", raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    assert ec._resolve_cache_device() == "cuda"
+
+
+def test_resolve_cache_device_falls_back_to_cpu_without_cuda(monkeypatch) -> None:
+    """CPU fallback keeps the laptop / CI builds byte-identical to pre-#553."""
+
+    import torch
+
+    monkeypatch.delenv("FED_PULSE_EMBEDDING_CACHE_DEVICE", raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert ec._resolve_cache_device() == "cpu"
+
+
+def test_resolve_cache_device_env_override_wins(monkeypatch) -> None:
+    """``FED_PULSE_EMBEDDING_CACHE_DEVICE`` forces a specific device.
+
+    Useful when the GPU is occupied by a training run and the operator
+    wants to share rather than queue. The override beats the
+    is_available probe in both directions.
+    """
+
+    import torch
+
+    monkeypatch.setenv("FED_PULSE_EMBEDDING_CACHE_DEVICE", "cpu")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    assert ec._resolve_cache_device() == "cpu"
+
+    monkeypatch.setenv("FED_PULSE_EMBEDDING_CACHE_DEVICE", "cuda")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert ec._resolve_cache_device() == "cuda"
