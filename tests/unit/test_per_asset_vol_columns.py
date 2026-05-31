@@ -208,8 +208,12 @@ def test_per_asset_target_column_is_not_zero_on_missing() -> None:
     closes = [100.0] * pre_bars + [100.0] * 3
     series = _dense_trading_series(closes)
     as_of = series.dates[pre_bars]
-    assert edb._forward_realized_vol(series, as_of, window=window) is None
-    # Explicit anti-regression: must NOT be coerced to 0.0 anywhere on
-    # the path. The orchestrator's per-asset attachment block reads
-    # ``None`` and writes ``None`` to the column.
-    assert edb._forward_realized_vol(series, as_of, window=window) != 0.0
+    result = edb._forward_realized_vol(series, as_of, window=window)
+    assert result is None
+    # Type-check the missing-data path against a 0.0-typed comparison.
+    # ``None != 0.0`` is trivially True so the pre-#486 assertion was
+    # tautological -- the real anti-regression is that the function
+    # returns the ``None`` singleton, not a numeric zero (which would
+    # silently look like the calmest-possible-vol regime to downstream
+    # consumers). The identity check above pins the contract.
+    assert not isinstance(result, (int, float))
