@@ -9,12 +9,28 @@ _STRICT_REQUEST_CONFIG = ConfigDict(extra="forbid", strict=True, frozen=True)
 # `frozen` still blocks mutation after construction.
 _FORBID_FROZEN_CONFIG = ConfigDict(frozen=True)
 # #99 strict response config: type-checks numeric fields against
-# Python built-ins so numpy.float64 / numpy.int64 leaks fail loud at
-# the response boundary instead of silently coercing. Applied to the
-# two leaf-level response models whose service-layer builders have
-# been audited end-to-end and confirmed to cast every numeric field
-# via float(...) (MarketDataResponse and PredictionResponse). The
-# remaining response models (SentimentResponse, ChunkAttentionDiagnostics,
+# Python built-ins so numpy.float64 / numpy.int64 leaks fail loud
+# when the model is constructed DIRECTLY (by-name in services,
+# internal builders, fixtures). Applied to the two leaf-level
+# numeric response models whose service-layer builders have been
+# audited end-to-end and confirmed to cast every numeric field via
+# float(...) (MarketDataResponse and PredictionResponse).
+#
+# Scope caveat (Pydantic v2 semantics): strict=True is model-local.
+# When a model with strict=True is populated as a nested field of a
+# non-strict outer model (e.g. AnalyzeResponse), the outer model's
+# non-strict coercion governs the validation pass and the nested
+# strict guard does NOT re-fire on field values coming from the
+# outer dict. Strict therefore catches numpy at direct-construction
+# sites (services that build the model by name, tests that
+# round-trip it, fixture factories) but not at FastAPI's
+# response-serialisation boundary when the outer AnalyzeResponse is
+# still _FORBID_FROZEN_CONFIG. The follow-up #99 PR that flips
+# AnalyzeResponse to strict will close that hole; the leaf-level
+# strict here still adds value for the direct-construction path,
+# which is where the service builders actually live.
+#
+# Remaining response models (SentimentResponse, ChunkAttentionDiagnostics,
 # ModelDiagnostics, XaiResponse, HistoryEntry, AnalyzeResponse) wait
 # on matching audit passes -- this PR is the first half of the #99
 # rollout.
