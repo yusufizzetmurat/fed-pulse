@@ -326,6 +326,18 @@ def _parse_args() -> argparse.Namespace:
             "input. Default on. Ignored when --no-rich-features is set."
         ),
     )
+    parser.add_argument(
+        "--use-vix-features",
+        dest="use_vix_features",
+        action="store_true",
+        help=(
+            "Append the #478 VIX term-structure + VRP 6-vector "
+            "(vix_t-1, vix1m/3m/6m_t-1, vix_3m_over_1m_slope, vrp_t-1) "
+            "to the per-bar input. Default off so the canonical no-vol "
+            "baseline stays unchanged."
+        ),
+    )
+    parser.set_defaults(use_vix_features=False)
     # B1 (#212) LLM-as-features. Default off so the existing
     # Tier 1/2/3 sweep baselines stay byte-identical with cached
     # extractions present on disk; --use-llm-features flips the per-event
@@ -1400,6 +1412,7 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         use_regime_conditioning=bool(getattr(args, "use_regime_conditioning", False)),
         use_sep=bool(getattr(args, "use_sep", False)),
         use_press_conf=bool(getattr(args, "use_press_conf", False)),
+        use_vix_features=bool(getattr(args, "use_vix_features", False)),
         symbol_embedding_dim=int(getattr(args, "symbol_embedding_dim", 0) or 0),
     )
 
@@ -1667,6 +1680,9 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                                 use_press_conf=bool(
                                     getattr(args, "use_press_conf", False)
                                 ),
+                                use_vix_features=bool(
+                                    getattr(args, "use_vix_features", False)
+                                ),
                             ),
                             "learning_rate": float(hp["learning_rate"]),
                             "epochs": int(hp["epochs"]),
@@ -1788,6 +1804,9 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                         use_sep=bool(getattr(args, "use_sep", False)),
                         use_press_conf=bool(
                             getattr(args, "use_press_conf", False)
+                        ),
+                        use_vix_features=bool(
+                            getattr(args, "use_vix_features", False)
                         ),
                     ),
                     "learning_rate": float(learning_rate),
@@ -2819,6 +2838,7 @@ def main() -> int:
                         use_regime_conditioning=bool(args.use_regime_conditioning),
                         use_sep=bool(args.use_sep),
                         use_press_conf=bool(getattr(args, "use_press_conf", False)),
+                        use_vix_features=bool(getattr(args, "use_vix_features", False)),
                         text_encoder=encoder_arg,
                         text_adapter_dim=int(args.text_adapter_dim),
                         text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
@@ -2872,6 +2892,7 @@ def main() -> int:
                     use_retrieval_analogs=bool(args.use_retrieval_analogs),
                     use_regime_conditioning=bool(args.use_regime_conditioning),
                     use_sep=bool(args.use_sep),
+                    use_vix_features=bool(getattr(args, "use_vix_features", False)),
                     text_encoder=encoder_arg,
                     text_adapter_dim=int(args.text_adapter_dim),
                     text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),

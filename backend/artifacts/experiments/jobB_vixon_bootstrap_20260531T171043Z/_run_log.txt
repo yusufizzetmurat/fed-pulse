@@ -1,0 +1,2001 @@
+Run B start: Sun May 31 17:11:58 UTC 2026
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+time="2026-05-31T20:11:58+03:00" level=warning msg="Found orphan containers ([swe599-redis]) for this project. If you removed or renamed this service in your compose file, you can run this command with the --remove-orphans flag to clean it up."
+ Container fed-pulse-backend-gpu-run-ece73c8da752 Creating 
+ Container fed-pulse-backend-gpu-run-ece73c8da752 Created 
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+arm 1/2 vixon_baseline
+WARNING compile_fallback_to_eager reason=triton_api_mismatch triton_module=/opt/venv/lib/python3.11/site-packages/triton/compiler/compiler.py
+[dual_head_comparison] writing -> /app/artifacts/experiments/jobB_vixon_bootstrap_20260531T171043Z/vixon_baseline.json
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[dual_head_comparison] folds=['wf_fold_1', 'wf_fold_2', 'wf_fold_3', 'wf_fold_4', 'wf_fold_5']
+[dual_head_comparison] head_mode=classification seed=11 epochs=40
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=classification seed=71 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=classification seed=97 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=classification seed=29 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=11 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[dual_head_comparison] head_mode=classification seed=47 epochs=40
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=29 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=classification seed=71 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=47 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[dual_head_comparison] head_mode=classification seed=97 epochs=40
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=71 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=11 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=29 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=97 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[dual_head_comparison] head_mode=regression seed=47 epochs=40
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=dual seed=11 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[dual_head_comparison] head_mode=regression seed=71 epochs=40
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=dual seed=29 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=97 epochs=40
+[dual_head_comparison] head_mode=dual seed=47 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=dual seed=71 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=dual seed=11 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=dual seed=97 epochs=40
+[dual_head_comparison] head_mode=dual seed=29 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] wrote /app/artifacts/experiments/jobB_vixon_bootstrap_20260531T171043Z/vixon_baseline.json
+[dual_head_comparison] head_mode=dual seed=47 epochs=40
+arm 2/2: VIX-on + bge text
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+WARNING compile_fallback_to_eager reason=triton_api_mismatch triton_module=/opt/venv/lib/python3.11/site-packages/triton/compiler/compiler.py
+[dual_head_comparison] writing -> /app/artifacts/experiments/jobB_vixon_bootstrap_20260531T171043Z/vixon_bge.json
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] folds=['wf_fold_1', 'wf_fold_2', 'wf_fold_3', 'wf_fold_4', 'wf_fold_5']
+[dual_head_comparison] head_mode=classification seed=11 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=dual seed=71 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=dual seed=97 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[dual_head_comparison] head_mode=classification seed=29 epochs=40
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] wrote /app/artifacts/experiments/jobB_vixon_bootstrap_20260531T171043Z/vixon_baseline.json
+arm 2/2 vixon_bge
+WARNING compile_fallback_to_eager reason=triton_api_mismatch triton_module=/opt/venv/lib/python3.11/site-packages/triton/compiler/compiler.py
+[dual_head_comparison] writing -> /app/artifacts/experiments/jobB_vixon_bootstrap_20260531T171043Z/vixon_bge.json
+[dual_head_comparison] folds=['wf_fold_1', 'wf_fold_2', 'wf_fold_3', 'wf_fold_4', 'wf_fold_5']
+[dual_head_comparison] head_mode=classification seed=11 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=classification seed=47 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=classification seed=29 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[dual_head_comparison] head_mode=classification seed=71 epochs=40
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=classification seed=47 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=classification seed=97 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=classification seed=71 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=11 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=classification seed=97 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=29 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=11 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=47 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=29 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=71 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=47 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=97 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=regression seed=71 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=dual seed=11 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[dual_head_comparison] head_mode=regression seed=97 epochs=40
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=dual seed=29 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[train_model] dual-head active: head_mode=regression regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=dual seed=11 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=dual seed=47 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=dual seed=29 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=dual seed=71 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=dual seed=47 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] head_mode=dual seed=97 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[dual_head_comparison] head_mode=dual seed=71 epochs=40
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] wrote /app/artifacts/experiments/jobB_vixon_bootstrap_20260531T171043Z/vixon_bge.json
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+DONE
+[dual_head_comparison] head_mode=dual seed=97 epochs=40
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+/app/app/training/loaders.py:2062: UserWarning: event-study target requested but volatility_shift is missing; falling back to prior_bars[-1].vol_5d for this target.
+  _append_event_day_target(
+[train_model] dual-head active: head_mode=dual regression_alpha=0.5
+/app/app/training/loop.py:4001: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler()
+/app/app/training/loop.py:4121: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
+[dual_head_comparison] wrote /app/artifacts/experiments/jobB_vixon_bootstrap_20260531T171043Z/vixon_bge.json
+DONE
