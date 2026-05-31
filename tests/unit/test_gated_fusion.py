@@ -57,3 +57,39 @@ def test_fusion_loss_trains_down() -> None:
         out["loss"].backward()
         opt.step()
     assert gf.fusion_loss(m, batch)["loss"].item() < first  # learns to overfit
+
+
+def test_supcon_pulls_same_label_together() -> None:
+    import torch
+    from app.data import gated_fusion as gf
+
+    torch.manual_seed(0)
+    # two clusters by label; aligned-with-label embeddings → lower loss than scrambled
+    z = torch.tensor([[1.0, 0.0], [0.9, 0.1], [0.0, 1.0], [0.1, 0.9]])
+    labels = torch.tensor([0, 0, 1, 1])
+    mask = torch.ones(4)
+    good = gf.supcon_loss(z, labels, mask, temperature=0.1)
+    scrambled = gf.supcon_loss(z, torch.tensor([0, 1, 0, 1]), mask, temperature=0.1)
+    assert good < scrambled
+    assert gf.supcon_loss(z, labels, torch.zeros(4), temperature=0.1).item() == 0.0
+
+
+def test_fusion_clf_loss_trains_down() -> None:
+    import torch
+    from app.data import gated_fusion as gf
+
+    torch.manual_seed(1)
+    m = gf.build_model(16, 4, 3, d_hidden=8)  # n_horizons=3 → 3-class logits
+    batch = {
+        "text_emb": torch.randn(12, 16),
+        "market_feat": torch.randn(12, 4),
+        "text_mask": torch.cat([torch.ones(8), torch.zeros(4)]),
+        "labels": torch.randint(0, 3, (12,)),
+    }
+    opt = torch.optim.Adam(m.parameters(), lr=1e-2)
+    first = gf.fusion_clf_loss(m, batch)["loss"].item()
+    for _ in range(60):
+        opt.zero_grad()
+        gf.fusion_clf_loss(m, batch)["loss"].backward()
+        opt.step()
+    assert gf.fusion_clf_loss(m, batch)["loss"].item() < first

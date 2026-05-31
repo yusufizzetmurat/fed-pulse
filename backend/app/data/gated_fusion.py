@@ -116,6 +116,60 @@ def fusion_loss(
     return {"loss": total, "supervised": sup, "info_nce": nce, "gate": out["gate"]}
 
 
+def supcon_loss(
+    z_text: torch.Tensor,
+    labels: torch.Tensor,
+    text_mask: torch.Tensor,
+    *,
+    temperature: float = 0.1,
+) -> torch.Tensor:
+    """Supervised contrastive loss (Khosla 2020) over text-present rows.
+
+    Unlike vanilla InfoNCE, same-label items are POSITIVES — so two statements
+    that precede the same vol regime are pulled together, not pushed apart. This
+    is the correct contrastive objective for a regime classifier and avoids the
+    false-negative feature-suppression failure mode at small corpus scale.
+    """
+
+    keep = text_mask.bool()
+    if int(keep.sum()) < 2:
+        return z_text.new_zeros(())
+    z = torch.nn.functional.normalize(z_text[keep], dim=1)
+    y = labels[keep]
+    n = z.shape[0]
+    sim = z @ z.t() / temperature
+    self_mask = ~torch.eye(n, dtype=torch.bool, device=z.device)
+    pos_mask = (y[:, None] == y[None, :]) & self_mask
+    sim = sim.masked_fill(~self_mask, float("-inf"))  # exclude self from the denominator
+    log_prob = sim - torch.logsumexp(sim, dim=1, keepdim=True)
+    log_prob = log_prob.masked_fill(~self_mask, 0.0)  # zero the −inf diagonal (avoid −inf·0 = NaN)
+    has_pos = pos_mask.any(1)
+    if int(has_pos.sum()) == 0:
+        return z_text.new_zeros(())
+    pos_log_prob = (log_prob * pos_mask).sum(1)[has_pos] / pos_mask.sum(1)[has_pos].clamp(min=1)
+    return -pos_log_prob.mean()
+
+
+def fusion_clf_loss(
+    model: GatedFusionForecaster,
+    batch: dict[str, torch.Tensor],
+    *,
+    supcon_weight: float = 0.1,
+    supcon_temp: float = 0.1,
+) -> dict[str, torch.Tensor]:
+    """Cross-entropy regime loss + λ·SupCon text alignment.
+
+    `batch` keys: text_emb, market_feat, text_mask, labels (B,) int64. The model's
+    `pred` head outputs `n_classes` logits (built with n_horizons=n_classes).
+    """
+
+    out = model(batch["text_emb"], batch["market_feat"], batch["text_mask"])
+    ce = torch.nn.functional.cross_entropy(out["pred"], batch["labels"])
+    sc = supcon_loss(out["z_text"], batch["labels"], batch["text_mask"], temperature=supcon_temp)
+    total = ce + supcon_weight * sc
+    return {"loss": total, "ce": ce, "supcon": sc, "gate": out["gate"], "logits": out["pred"]}
+
+
 def build_model(
     d_text: int, d_market: int, n_horizons: int, **kwargs: Any
 ) -> GatedFusionForecaster:
