@@ -48,6 +48,38 @@ def _forward_log_rv_windows(rv: np.ndarray, horizons: tuple[int, ...]) -> dict[i
     return out
 
 
+# Fair-target measures: name → (raw series from the RV parquet, log-transform?).
+# rv/volume/downside are positive → log; jump-share ∈ [0,1) → identity.
+MEASURES = ("rv", "volume", "downside", "jump")
+
+
+def _measure_raw(rv_df: Any, measure: str) -> tuple[np.ndarray, bool]:
+    """Raw daily series + whether it is log-transformed for lags/targets."""
+
+    rv = rv_df["rv"].to_numpy(dtype=np.float64)
+    if measure == "rv":
+        return rv, True
+    if measure == "volume":
+        return rv_df["rvol"].to_numpy(dtype=np.float64), True
+    if measure == "downside":
+        return rv_df["rs_neg"].to_numpy(dtype=np.float64), True
+    if measure == "jump":  # jump-variation share (RV−BV)₊/RV, bounded in [0,1)
+        bv = rv_df["bv"].to_numpy(dtype=np.float64)
+        return np.maximum(rv - bv, 0.0) / (rv + _EPS), False
+    raise ValueError(f"unknown measure {measure!r}")
+
+
+def _forward_target(raw: np.ndarray, h: int, *, is_log: bool) -> np.ndarray:
+    """Forward mean over t+1..t+h (log-mean for positive measures); NaN past the end."""
+
+    n = len(raw)
+    out = np.full(n, np.nan)
+    for t in range(n - h):
+        m = float(raw[t + 1 : t + 1 + h].mean())
+        out[t] = np.log(m + _EPS) if is_log else m
+    return out
+
+
 def _origin_after(date_iso: str, trading_days: list[str]) -> int | None:
     """Index of the first trading day strictly greater than date_iso (embargo)."""
 
@@ -101,19 +133,50 @@ def build_text_outcome_pairs(
     return pd.DataFrame(rows)
 
 
+def _statement_calendar(
+    corpus_sorted: Any, trading_days: list[str], *, cap: int = 60
+) -> tuple[np.ndarray, np.ndarray]:
+    """Trading-days since the last / until the next FOMC statement (capped)."""
+
+    import bisect
+
+    stmt = corpus_sorted[corpus_sorted["doc_type"] == "statement"]["date"].astype(str).tolist()
+    pos = sorted({p for p in (_as_of_index(d, trading_days) for d in stmt) if p is not None})
+    n = len(trading_days)
+    since = np.full(n, float(cap))
+    to = np.full(n, float(cap))
+    for i in range(n):
+        left = bisect.bisect_right(pos, i) - 1
+        if left >= 0:
+            since[i] = min(cap, i - pos[left])
+        right = bisect.bisect_right(pos, i)
+        if right < len(pos):
+            to[i] = min(cap, pos[right] - i)
+    return since, to
+
+
 def build_daily_fusion_frame(
     rv_df: Any, corpus: Any, *, horizons: tuple[int, ...] = DEFAULT_HORIZONS
 ) -> Any:
-    """Trading-day table: HAR target + reference to most-recent known communication."""
+    """Trading-day table: per-measure HAR lags + forward targets + most-recent comm.
+
+    For every measure in MEASURES, emits `{m}_daily/_weekly/_monthly` backward HAR
+    lags and `{m}_fwd_{h}` forward targets, so the trainer can pick any target
+    (rv / volume / downside / jump) with its own HAR-style floor — same leak-safe
+    construction, same text linkage.
+    """
 
     import pandas as pd
 
     rv_df = rv_df.sort_values("date").reset_index(drop=True)
     trading_days = rv_df["date"].astype(str).tolist()
-    rv = rv_df["rv"].to_numpy(dtype=np.float64)
-    log_rv = np.log(rv + _EPS)
-    har = _har_lags(log_rv)  # [daily, weekly, monthly] log-RV lags at each day
-    fwd = _forward_log_rv_windows(rv, horizons)
+    # precompute per-measure lags + forward targets
+    lags: dict[str, np.ndarray] = {}
+    fwds: dict[str, dict[int, np.ndarray]] = {}
+    for m in MEASURES:
+        raw, is_log = _measure_raw(rv_df, m)
+        lags[m] = _har_lags(np.log(raw + _EPS) if is_log else raw)
+        fwds[m] = {h: _forward_target(raw, h, is_log=is_log) for h in horizons}
 
     # most-recent communication known as of each trading day (any type)
     corpus_sorted = corpus.sort_values("date").reset_index(drop=True)
@@ -125,14 +188,23 @@ def build_daily_fusion_frame(
             j += 1
         last_doc_row[i] = j - 1  # index into corpus_sorted, or -1 if none yet
 
+    # FOMC-calendar features (scheduled, public → known at t, no leakage). These go
+    # into the MARKET baseline so the text contribution isolates statement CONTENT,
+    # not "is it an FOMC day" — the fairness condition for the volume target.
+    days_since_stmt, days_to_stmt = _statement_calendar(corpus_sorted, trading_days)
+
     rows: list[dict[str, Any]] = []
     for i, day in enumerate(trading_days):
-        row: dict[str, Any] = {
-            "date": day,
-            "har_daily": float(har[i, 0]),
-            "har_weekly": float(har[i, 1]),
-            "har_monthly": float(har[i, 2]),
-        }
+        row: dict[str, Any] = {"date": day}
+        for m in MEASURES:
+            row[f"{m}_daily"] = float(lags[m][i, 0])
+            row[f"{m}_weekly"] = float(lags[m][i, 1])
+            row[f"{m}_monthly"] = float(lags[m][i, 2])
+            for h in horizons:
+                val = fwds[m][h][i]
+                row[f"{m}_fwd_{h}"] = float(val) if np.isfinite(val) else np.nan
+        row["days_since_stmt"] = float(days_since_stmt[i])
+        row["days_to_stmt"] = float(days_to_stmt[i])
         di = int(last_doc_row[i])
         if di >= 0:
             doc = corpus_sorted.iloc[di]
@@ -146,13 +218,7 @@ def build_daily_fusion_frame(
             row["doc_type"] = None
             row["doc_age_days"] = -1
             row["has_text"] = False
-        valid = False
-        for h in horizons:
-            val = fwd[h][i]
-            row[f"rv_fwd_{h}"] = float(val) if np.isfinite(val) else np.nan
-            valid = valid or np.isfinite(val)
-        if valid:
-            rows.append(row)
+        rows.append(row)
     return pd.DataFrame(rows)
 
 

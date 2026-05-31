@@ -25,7 +25,7 @@ import numpy as np
 from app.config import DATA_DIR
 from app.data.dense_daily_dataset import walk_forward_splits
 from app.data.dense_forecast_train import _bootstrap_r2_ci, _fit_predict_ols, _oos_r2
-from app.data.fed_comms_dataset import DEFAULT_HORIZONS
+from app.data.fed_comms_dataset import DEFAULT_HORIZONS, MEASURES
 from app.data.intraday_rv_forecast import _market_block
 
 DEFAULT_FUSION_DIR = DATA_DIR / "processed" / "fed_comms_fusion"
@@ -68,16 +68,29 @@ def build_corpus_embeddings(
 
 
 def _assemble(
-    daily: Any, corpus: Any, emb_df: Any, market_cache_dir: Path | str, horizons: tuple[int, ...]
+    daily: Any,
+    corpus: Any,
+    emb_df: Any,
+    market_cache_dir: Path | str,
+    horizons: tuple[int, ...],
+    *,
+    measure: str = "rv",
 ) -> dict[str, Any]:
-    """Build per-day arrays: market features, text embedding+mask, targets, HAR lags."""
+    """Build per-day arrays for a target measure: market features, text, targets, HAR lags."""
 
     import pandas as pd
 
     daily = daily.sort_values("date").reset_index(drop=True)
-    har = daily[["har_daily", "har_weekly", "har_monthly"]].to_numpy(dtype=np.float64)
-    market = _market_block(market_cache_dir, daily["date"], har[:, 0])
-    market_feat = np.column_stack([har, market])
+    har = daily[[f"{measure}_daily", f"{measure}_weekly", f"{measure}_monthly"]].to_numpy(
+        dtype=np.float64
+    )
+    # cross-market block keyed off the RV daily lag (a stable vol proxy) regardless of target
+    rv_daily = daily["rv_daily"].to_numpy(dtype=np.float64)
+    market = _market_block(market_cache_dir, daily["date"], rv_daily)
+    # FOMC-calendar features: market baseline knows WHEN statements occur, so the
+    # text contribution isolates content rather than FOMC-day detection.
+    cal = daily[["days_since_stmt", "days_to_stmt"]].to_numpy(dtype=np.float64)
+    market_feat = np.column_stack([har, market, cal])
 
     emb_cols = [c for c in emb_df.columns if c.startswith("emb_")]
     dim = len(emb_cols)
@@ -96,7 +109,9 @@ def _assemble(
             text_mask[i] = 1.0
             doc_types[i] = str(row["doc_type"])
 
-    targets = np.column_stack([daily[f"rv_fwd_{h}"].to_numpy(dtype=np.float64) for h in horizons])
+    targets = np.column_stack(
+        [daily[f"{measure}_fwd_{h}"].to_numpy(dtype=np.float64) for h in horizons]
+    )
     valid = np.isfinite(targets).all(axis=1) & np.isfinite(market_feat).all(axis=1)
     return {
         "market_feat": market_feat,
@@ -247,6 +262,7 @@ def run(
     epochs: int = 60,
     n_folds: int = 5,
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
+    measure: str = "rv",
 ) -> dict[str, Any]:
     import pandas as pd
 
@@ -254,7 +270,7 @@ def run(
     daily = pd.read_parquet(fusion_dir / "daily_fusion.parquet")
     corpus = pd.read_parquet(corpus_path)
     emb_df = pd.read_parquet(emb_path)
-    data = _assemble(daily, corpus, emb_df, market_cache_dir, horizons)
+    data = _assemble(daily, corpus, emb_df, market_cache_dir, horizons, measure=measure)
 
     idx_all = np.where(data["valid"])[0]
     embargo = max(horizons) + 1
@@ -289,7 +305,7 @@ def run(
     mask = np.concatenate(pools["mask"])
     types = np.array([t if t is not None else "none" for t in pools["type"]])
 
-    results: dict[str, Any] = {"n_eval": int(true.shape[0]), "by_horizon": {}}
+    results: dict[str, Any] = {"n_eval": int(true.shape[0]), "measure": measure, "by_horizon": {}}
     active = mask > 0
     for k, h in enumerate(horizons):
         row: dict[str, Any] = {
@@ -329,6 +345,7 @@ def main() -> int:
     parser.add_argument("--emb-path", type=Path, required=True)
     parser.add_argument("--market-cache-dir", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--target", default="rv", choices=list(MEASURES))
     parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument("--seed", type=int, default=11)
     args = parser.parse_args()
@@ -339,10 +356,11 @@ def main() -> int:
         emb_path=args.emb_path,
         seed=args.seed,
         epochs=args.epochs,
+        measure=args.target,
     )
     args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / "fusion_bakeoff.json").write_text(json.dumps(res, indent=2), encoding="utf-8")
-    print(f"n_eval={res['n_eval']}  text_active_frac={res['text_active_frac']:.3f}")
+    print(f"target={res['measure']}  n_eval={res['n_eval']}  text_active_frac={res['text_active_frac']:.3f}")
     print(f"gate_by_type={ {k: round(v, 3) for k, v in res['gate_by_type'].items()} }")
     hdr = f"{'horizon':<8}{'HAR':>8}{'mkt':>8}{'fused':>8}{'txt-vs-mkt(iid)':>20}{'txt-vs-mkt(block)':>22}"
     print(hdr)

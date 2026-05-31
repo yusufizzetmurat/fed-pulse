@@ -26,7 +26,7 @@ import numpy as np
 
 from app.data.dense_daily_dataset import walk_forward_splits
 from app.data.dense_forecast_train import _fit_predict_ols
-from app.data.fed_comms_dataset import DEFAULT_HORIZONS
+from app.data.fed_comms_dataset import DEFAULT_HORIZONS, MEASURES
 from app.data.fed_comms_train import DEFAULT_FUSION_DIR, _assemble
 
 _N_CLASSES = 3
@@ -178,17 +178,18 @@ def run(
     epochs: int = 100,
     n_folds: int = 5,
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
+    measure: str = "rv",
 ) -> dict[str, Any]:
     import pandas as pd
 
     daily = pd.read_parquet(Path(fusion_dir) / "daily_fusion.parquet")
     corpus = pd.read_parquet(corpus_path)
     emb_df = pd.read_parquet(emb_path)
-    data = _assemble(daily, corpus, emb_df, market_cache_dir, horizons)
+    data = _assemble(daily, corpus, emb_df, market_cache_dir, horizons, measure=measure)
     idx_all = np.where(data["valid"])[0]
     folds = walk_forward_splits(len(idx_all), n_folds=n_folds, embargo=max(horizons) + 1)
 
-    results: dict[str, Any] = {"n_eval": 0, "by_horizon": {}}
+    results: dict[str, Any] = {"n_eval": 0, "measure": measure, "by_horizon": {}}
     for k, h in enumerate(horizons):
         pools: dict[str, list[np.ndarray]] = {
             kk: [] for kk in ("fused", "mkt", "har", "true", "gate", "mask")
@@ -225,6 +226,7 @@ def main() -> int:
     parser.add_argument("--emb-path", type=Path, required=True)
     parser.add_argument("--market-cache-dir", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--target", default="rv", choices=list(MEASURES))
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--seed", type=int, default=11)
     args = parser.parse_args()
@@ -235,10 +237,11 @@ def main() -> int:
         emb_path=args.emb_path,
         seed=args.seed,
         epochs=args.epochs,
+        measure=args.target,
     )
     args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / "regime_bakeoff.json").write_text(json.dumps(res, indent=2), encoding="utf-8")
-    print(f"n_eval={res['n_eval']}  (macro-F1; random floor ≈ 0.33)")
+    print(f"target={res['measure']} regime  n_eval={res['n_eval']}  (macro-F1; floor ≈ 0.33)")
     print(f"{'horizon':<8}{'major':>8}{'HAR':>8}{'mkt':>8}{'fused':>8}{'txt-vs-mkt_F1_block':>24}")
     for hk, r in res["by_horizon"].items():
         c = r["text_vs_mkt_f1_block_ci90"]

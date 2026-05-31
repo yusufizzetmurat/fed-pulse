@@ -7,7 +7,11 @@ from app.data import fed_comms_dataset as d
 
 
 def _rv_df(dates, rv):
-    return pd.DataFrame({"date": dates, "rv": rv})
+    rv = np.asarray(rv, float)
+    return pd.DataFrame({
+        "date": dates, "rv": rv, "rvol": rv * 1e6 + 1.0,
+        "bv": rv * 0.9, "rs_neg": rv * 0.5,
+    })
 
 
 def test_forward_windows_and_indices() -> None:
