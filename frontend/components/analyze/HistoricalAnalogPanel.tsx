@@ -17,7 +17,6 @@ import type {
   AnalogVolRegime,
   AnalogsResponse,
 } from "@/lib/analyze/types";
-import { EvidenceLink } from "@/components/analyze/EvidenceLink";
 
 const VOL_REGIME_ORDER: AnalogVolRegime[] = ["calm", "normal", "high"];
 
@@ -187,7 +186,6 @@ export function HistoricalAnalogPanel({
       <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
         Historical analogs
       </Badge>
-      <EvidenceLink section="6.16" label="Method notes · retrieval quality" />
     </div>
   );
 

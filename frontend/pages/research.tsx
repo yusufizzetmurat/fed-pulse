@@ -15,7 +15,6 @@ import {
 import { toast } from "sonner";
 
 import { DecisionsLink } from "@/components/research/DecisionsLink";
-import { JobsLink } from "@/components/research/JobsLink";
 import { Header } from "@/components/shell/header";
 import { StatusBar } from "@/components/shell/status-bar";
 import { Badge } from "@/components/ui/badge";
@@ -526,7 +525,6 @@ export default function ResearchPage() {
                 <TabsTrigger value="bakeoff">Bake-off</TabsTrigger>
                 <TabsTrigger value="transfer">Transfer</TabsTrigger>
                 <TabsTrigger value="decisions">Decisions</TabsTrigger>
-                <TabsTrigger value="jobs">Jobs</TabsTrigger>
                 <TabsTrigger value="files">Downloads</TabsTrigger>
               </TabsList>
               <TabsContent value="bakeoff" className="space-y-3">
@@ -555,9 +553,6 @@ export default function ResearchPage() {
               </TabsContent>
               <TabsContent value="decisions">
                 <DecisionsLink />
-              </TabsContent>
-              <TabsContent value="jobs">
-                <JobsLink />
               </TabsContent>
               <TabsContent value="files">
                 <ArtifactsExplorer sections={data.sections} />

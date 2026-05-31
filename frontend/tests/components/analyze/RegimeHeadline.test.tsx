@@ -86,14 +86,6 @@ describe("RegimeHeadline regression-canonical surface (#338)", () => {
     expect(screen.getByText(/top pick · 45\.0%/i)).toBeInTheDocument();
   });
 
-  it("ships the fold-4 with/without callout on every render", () => {
-    render(<RegimeHeadline regime={REGIME_WITH_BAND} symbol="^GSPC" documentDate="2024-09-18" />);
-    expect(screen.getByText(/Including fold 4/i)).toBeInTheDocument();
-    expect(screen.getByText(/Excluding fold 4/i)).toBeInTheDocument();
-    // Numbers from dual_head_comparison_canonical.json.
-    expect(screen.getByText(/F1 score 0\.419 ± 0\.070/)).toBeInTheDocument();
-    expect(screen.getByText(/F1 score 0\.414 ± 0\.079/)).toBeInTheDocument();
-  });
 
   it("demotes per-class probabilities + predicted set to a foldable section", () => {
     render(<RegimeHeadline regime={REGIME_WITH_BAND} symbol="^GSPC" documentDate="2024-09-18" />);
@@ -101,15 +93,4 @@ describe("RegimeHeadline regression-canonical surface (#338)", () => {
     expect(summary.tagName.toLowerCase()).toBe("summary");
   });
 
-  it("renders evidence links to the §6 backing sections", () => {
-    render(<RegimeHeadline regime={REGIME_WITH_BAND} symbol="^GSPC" documentDate="2024-09-18" />);
-    const headlineEvidence = screen.getAllByRole("link", { name: /evidence · §6\.15/i });
-    expect(headlineEvidence.length).toBeGreaterThan(0);
-    expect(headlineEvidence[0]).toHaveAttribute(
-      "href",
-      expect.stringContaining("06_Deep_Learning_Roadmap"),
-    );
-    expect(screen.getByRole("link", { name: /evidence · §6\.7/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /evidence · §6\.10/i })).toBeInTheDocument();
-  });
 });

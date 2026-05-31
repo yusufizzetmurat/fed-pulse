@@ -5,7 +5,6 @@ import { Badge } from "@/components/ui/badge";
 import { KpiTile } from "@/components/ui/kpi-tile";
 import { stanceLabel } from "@/lib/analyze/format";
 import type { MultiAxisResponse, MultiAxisStance } from "@/lib/analyze/types";
-import { EvidenceLink } from "@/components/analyze/EvidenceLink";
 
 interface MultiAxisInterpretationProps {
   multiAxis: MultiAxisResponse;
@@ -128,7 +127,6 @@ export function MultiAxisInterpretation({
         <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
           Sentiment breakdown
         </Badge>
-        <EvidenceLink section="6.13" label="Method notes · sentiment axes" />
         {!multiAxis.factor ? (
           <Badge variant="outline" className="text-[10px]" title="The factor card is hidden when the training data does not contain enough labelled examples to support a confident prediction.">
             factor · hidden (low confidence)

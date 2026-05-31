@@ -525,7 +525,6 @@ function RegistryStrip({
         <CardTitle className="flex items-center justify-between">
           <span>{title}</span>
           <span className="text-xs font-normal text-muted-foreground">
-            wiki §{registry.source_wiki_section}
           </span>
         </CardTitle>
       </CardHeader>
