@@ -30,13 +30,17 @@ from app.data.intraday_rv_forecast import _market_block
 
 DEFAULT_FUSION_DIR = DATA_DIR / "processed" / "fed_comms_fusion"
 _FRESH_DAYS = 5  # a communication counts as "active" text within this many trading days
-_EMB_DIM = 768
+_DEFAULT_EMB_DIM = 768  # fallback only; the real dim is read from the encoder/parquet
 
 
 def build_corpus_embeddings(
     corpus_path: Path | str, out_path: Path | str, *, force: bool = False
 ) -> Path:
-    """Cache url → mean-pooled FinBERT embedding for every communication."""
+    """Cache url → mean-pooled text embedding per communication (encoder-agnostic).
+
+    The embedding dimension is taken from the encoder, not assumed — so swapping
+    the encoder (e.g. 768-d FinBERT → 1024-d bge) needs no code change here.
+    """
 
     import pandas as pd
 
@@ -46,15 +50,20 @@ def build_corpus_embeddings(
     from app.services.text_encoder import encode_chunks
 
     corpus = pd.read_parquet(corpus_path)
-    rows: list[dict[str, Any]] = []
+    embs: list[tuple[str, np.ndarray | None]] = []
     for _, doc in corpus.iterrows():
         encs = encode_chunks(str(doc["text"]))
         vecs = [np.asarray(e.embedding, dtype=np.float64) for e in encs if e.embedding]
-        emb = np.mean(vecs, axis=0) if vecs else np.zeros(_EMB_DIM)
-        rows.append({"url": doc["url"], **{f"emb_{i}": float(emb[i]) for i in range(len(emb))}})
+        embs.append((str(doc["url"]), np.mean(vecs, axis=0) if vecs else None))
+    dim = next((len(v) for _, v in embs if v is not None), _DEFAULT_EMB_DIM)
+    rows = [
+        {"url": url, **{f"emb_{i}": float(e[i]) for i in range(dim)}}
+        for url, v in embs
+        for e in [v if v is not None else np.zeros(dim)]
+    ]
     out_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_parquet(out_path, index=False)
-    print(f"[fed_comms_train] wrote {len(rows)} doc embeddings to {out_path}")
+    print(f"[fed_comms_train] wrote {len(rows)} doc embeddings (dim={dim}) to {out_path}")
     return out_path
 
 
@@ -70,12 +79,13 @@ def _assemble(
     market = _market_block(market_cache_dir, daily["date"], har[:, 0])
     market_feat = np.column_stack([har, market])
 
-    emb_cols = [f"emb_{i}" for i in range(_EMB_DIM)]
+    emb_cols = [c for c in emb_df.columns if c.startswith("emb_")]
+    dim = len(emb_cols)
     url_to_emb = {r["url"]: r[emb_cols].to_numpy(dtype=np.float64) for _, r in emb_df.iterrows()}
     corpus_urls = corpus.sort_values("date").reset_index(drop=True)["url"].tolist()
 
     n = len(daily)
-    text_emb = np.zeros((n, _EMB_DIM))
+    text_emb = np.zeros((n, dim))
     text_mask = np.zeros(n)
     doc_types: list[str | None] = [None] * n
     for i, row in daily.iterrows():
@@ -136,7 +146,7 @@ def _train_fusion_fold(
     te_emb_te = ((data["text_emb"][te] - em) / es) * data["text_mask"][te][:, None]
 
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = build_model(_EMB_DIM, mf_tr.shape[1], tgt.shape[1]).to(dev)
+    model = build_model(data["text_emb"].shape[1], mf_tr.shape[1], tgt.shape[1]).to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 
     def _batch(idx: np.ndarray) -> dict[str, Any]:
