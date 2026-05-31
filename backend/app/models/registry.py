@@ -62,6 +62,13 @@ class EncoderRef:
     # that drops a feature mid-flight refuses to bind a checkpoint
     # trained against the old declaration.
     inference_features: tuple[str, ...] = ()
+    # #548 opt-in for HF encoders that ship custom modeling code
+    # (e.g. nomic-ai/nomic-bert-2048). Default False so every existing
+    # AutoConfig / AutoModel load stays in the standard transformers
+    # path. Flip to True at the registry row only after a security
+    # review of the repo — the flag tells transformers it is OK to
+    # download and execute Python from the HF repo at load time.
+    trust_remote_code: bool = False
 
 
 @lru_cache(maxsize=1)
@@ -84,6 +91,7 @@ def load_registry(path: Path | None = None) -> dict[str, EncoderRef]:
             description=str(fields.get("description", "")),
             role=str(raw_role) if raw_role is not None else None,
             inference_features=tuple(str(v) for v in raw_features),
+            trust_remote_code=bool(fields.get("trust_remote_code", False)),
         )
         by_repo[ref.repo] = ref
         by_repo[ref.alias] = ref

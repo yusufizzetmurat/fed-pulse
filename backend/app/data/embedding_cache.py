@@ -128,8 +128,13 @@ def _load_encoder(ref: EncoderRef):
     from transformers import AutoModel, AutoTokenizer  # type: ignore[import-not-found]
 
     revision = ref.revision or None
-    tokenizer = AutoTokenizer.from_pretrained(ref.repo, revision=revision)
-    model = AutoModel.from_pretrained(ref.repo, revision=revision)
+    trust = bool(getattr(ref, "trust_remote_code", False))
+    tokenizer = AutoTokenizer.from_pretrained(
+        ref.repo, revision=revision, trust_remote_code=trust
+    )
+    model = AutoModel.from_pretrained(
+        ref.repo, revision=revision, trust_remote_code=trust
+    )
     return tokenizer, model
 
 

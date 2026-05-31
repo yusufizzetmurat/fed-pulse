@@ -107,7 +107,14 @@ encoders:
     revision: b0753ae76394dd36bcfb912a46018088bca48be0
     gated: false
     task: sentence_embedding
-    description: Nomic embed text v1.5. Sentence-embedding encoder; second bake-off entry alongside BGE.
+    description: |
+      Nomic embed text v1.5. Sentence-embedding encoder; second bake-off
+      entry alongside BGE. Ships custom modeling code (``nomic-bert-2048``)
+      so ``trust_remote_code: true`` is required for ``AutoModel`` /
+      ``AutoConfig`` to consume the repo. Security envelope: only this
+      alias opts in; the registry default keeps every other encoder on
+      the standard transformers path.
+    trust_remote_code: true
     inference_features: []
 
   voyage_finance_2:

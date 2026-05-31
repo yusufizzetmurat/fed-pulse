@@ -687,7 +687,9 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
         from transformers import AutoConfig
 
         encoder_config = AutoConfig.from_pretrained(
-            ref.repo, revision=ref.revision or None
+            ref.repo,
+            revision=ref.revision or None,
+            trust_remote_code=bool(getattr(ref, "trust_remote_code", False)),
         )
         resolved_text_embedding_dim = int(
             getattr(encoder_config, "hidden_size", 0) or 0
