@@ -274,13 +274,16 @@ def run(
             "mkt_only": _oos_r2(mkt[:, k], true[:, k], base[:, k]),
             "fused": _oos_r2(fused[:, k], true[:, k], base[:, k]),
         }
-        lo, hi = _bootstrap_r2_ci(fused[:, k], true[:, k], har[:, k], seed=seed)
-        row["fused_vs_har_ci90"] = [lo, hi]
+        row["fused_vs_har_ci90"] = list(_bootstrap_r2_ci(fused[:, k], true[:, k], har[:, k], seed=seed))
+        # text isolation: fused vs the SAME model with the gate forced off (market-only).
+        # The difference is purely the text contribution; CI ≤ 0 ⇒ text adds nothing.
+        row["text_vs_mkt_ci90"] = list(_bootstrap_r2_ci(fused[:, k], true[:, k], mkt[:, k], seed=seed))
         if active.sum() > 5:
             row["fused_active"] = _oos_r2(fused[active, k], true[active, k], base[active, k])
-            row["har_active"] = _oos_r2(har[active, k], true[active, k], base[active, k])
-            la, ha = _bootstrap_r2_ci(fused[active, k], true[active, k], har[active, k], seed=seed)
-            row["fused_vs_har_active_ci90"] = [la, ha]
+            row["mkt_active"] = _oos_r2(mkt[active, k], true[active, k], base[active, k])
+            row["text_vs_mkt_active_ci90"] = list(
+                _bootstrap_r2_ci(fused[active, k], true[active, k], mkt[active, k], seed=seed)
+            )
         results["by_horizon"][f"h{h}"] = row
 
     results["text_active_frac"] = float(active.mean())
@@ -314,13 +317,14 @@ def main() -> int:
     (args.out_dir / "fusion_bakeoff.json").write_text(json.dumps(res, indent=2), encoding="utf-8")
     print(f"n_eval={res['n_eval']}  text_active_frac={res['text_active_frac']:.3f}")
     print(f"gate_by_type={ {k: round(v, 3) for k, v in res['gate_by_type'].items()} }")
-    print(f"{'horizon':<8}{'HAR':>8}{'mkt':>8}{'fused':>8}{'f-HAR_CI90':>20}{'fused_active':>14}")
+    hdr = f"{'horizon':<8}{'HAR':>8}{'mkt':>8}{'fused':>8}{'text-vs-mkt_CI90':>22}{'txt_act_CI90':>22}"
+    print(hdr)
     for hk, r in res["by_horizon"].items():
-        c = r["fused_vs_har_ci90"]
-        fa = f"{r.get('fused_active', float('nan')):.3f}"
+        c = r["text_vs_mkt_ci90"]
+        ca = r.get("text_vs_mkt_active_ci90", [float("nan"), float("nan")])
         print(
             f"{hk:<8}{r['har']:>8.3f}{r['mkt_only']:>8.3f}{r['fused']:>8.3f}"
-            f"{f'[{c[0]:+.3f},{c[1]:+.3f}]':>20}{fa:>14}"
+            f"{f'[{c[0]:+.3f},{c[1]:+.3f}]':>22}{f'[{ca[0]:+.3f},{ca[1]:+.3f}]':>22}"
         )
     return 0
 
