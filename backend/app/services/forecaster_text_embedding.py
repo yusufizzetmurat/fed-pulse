@@ -75,7 +75,7 @@ def _load_state() -> _PooledEncoderState | None:
         if getattr(ref, "trust_remote_code", False):
             kwargs["trust_remote_code"] = True
         try:
-            tokenizer = AutoTokenizer.from_pretrained(ref.repo, **kwargs)
+            tokenizer = AutoTokenizer.from_pretrained(ref.repo, **kwargs)  # type: ignore[no-untyped-call]
             model = AutoModel.from_pretrained(ref.repo, **kwargs)
         except Exception as exc:
             LOGGER.warning(
