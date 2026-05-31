@@ -479,8 +479,8 @@ def _standardise(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Fit per-column ``(mean, std)`` on train; apply to both.
 
-    Train-only fit honours the leakage rules in CLAUDE.md. Zero-variance
-    columns are passed through unchanged.
+    Train-only fit honours the project's no-leakage contract.
+    Zero-variance columns are passed through unchanged.
     """
 
     if X_train.size == 0:

@@ -125,7 +125,6 @@ fed-pulse/
 ├── scripts/                 one-shot utility scripts
 ├── tests/                   pytest suite (unit / property / contract / regression / e2e)
 ├── configs/                 ablation configs (YAML)
-├── CLAUDE.md                project conventions
 ├── Makefile                 the entry-point for every workflow
 ├── docker-compose.yml       dev stack (backend + frontend + GPU profile)
 ├── pyproject.toml           backend Python deps + ruff/mypy config
