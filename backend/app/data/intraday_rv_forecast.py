@@ -70,13 +70,25 @@ def _bootstrap_qlike_gain_ci(
     *,
     seed: int = 11,
     n_boot: int = 1000,
+    block: int = 1,
 ) -> list[float]:
-    """90% CI of mean QLIKE gain (base − pred); >0 throughout ⇒ pred beats base."""
+    """90% CI of mean QLIKE gain (base − pred); >0 throughout ⇒ pred beats base.
+
+    Moving-block bootstrap (block = horizon) so overlapping multi-day forward
+    targets don't inflate significance; block=1 reduces to the iid bootstrap.
+    """
 
     gain = _qlike_pointwise(base_pred, true) - _qlike_pointwise(pred, true)
     rng = np.random.default_rng(seed)
     n = len(gain)
-    boots = [float(gain[rng.integers(0, n, n)].mean()) for _ in range(n_boot)]
+    if n <= block:
+        return [float("nan"), float("nan")]
+    n_blocks = int(np.ceil(n / block))
+    boots = []
+    for _ in range(n_boot):
+        starts = rng.integers(0, n - block + 1, size=n_blocks)
+        idx = np.concatenate([np.arange(s, s + block) for s in starts])[:n]
+        boots.append(float(gain[idx].mean()))
     return [float(np.quantile(boots, 0.05)), float(np.quantile(boots, 0.95))]
 
 
@@ -289,7 +301,7 @@ def run(
         # Does the QLIKE-trained DL beat HAR on QLIKE? Bootstrap the per-point
         # QLIKE difference (HAR − dl_qlike); >0 throughout ⇒ DL wins on QLIKE.
         row["dl_qlike_vs_har_qlike_ci90"] = _bootstrap_qlike_gain_ci(
-            p["dl_qlike"], p["har"], p["true"], seed=seed
+            p["dl_qlike"], p["har"], p["true"], seed=seed, block=max(h, 1)
         )
         if "har_iv" in row:
             # Incremental skill of IV *over HAR*: HAR predictions are the baseline
