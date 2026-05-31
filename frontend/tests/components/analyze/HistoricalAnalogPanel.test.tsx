@@ -228,6 +228,8 @@ describe("HistoricalAnalogPanel", () => {
     // index size is formatted with toLocaleString — accept either
     // comma-grouped or plain formatting depending on test locale.
     const footer = screen.getByText(/model variant/i);
-    expect(within(footer).getByText(/finbert_fed_adjacent_xbank_dapt_retrieval/)).toBeInTheDocument();
+    const encoderEl = within(footer).getByText(/FinBERT \(Fed-adjacent \+ cross-bank DAPT\)/);
+    expect(encoderEl).toBeInTheDocument();
+    expect(encoderEl).toHaveAttribute("title", "finbert_fed_adjacent_xbank_dapt_retrieval");
   });
 });
