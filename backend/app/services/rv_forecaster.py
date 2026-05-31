@@ -77,7 +77,7 @@ def _download_artifact(target_dir: Path) -> dict[str, Any]:
             # eval sidecar is non-blocking; QLIKE gain just won't render
             pass
         spec = json.loads(spec_path.read_text(encoding="utf-8"))
-        for hk, row in spec["by_horizon"].items():
+        for row in spec["by_horizon"].values():
             for fname in row["seed_state_dicts"]:
                 _pull(fname)
     except RepositoryNotFoundError as exc:
@@ -87,6 +87,14 @@ def _download_artifact(target_dir: Path) -> dict[str, Any]:
     except (EntryNotFoundError, HfHubHTTPError) as exc:
         raise RvForecasterUnavailable(
             f"HF fetch failed for {HF_REPO_ID!r}: {exc}"
+        ) from exc
+    except OSError as exc:
+        # Catches the network-level failures (ConnectionError, timeouts,
+        # disk full) that hf_hub_download can raise outside the HF-specific
+        # exception hierarchy; surface them as the same "unavailable" 503
+        # the endpoint contract promises instead of bubbling up as 500.
+        raise RvForecasterUnavailable(
+            f"HF download failed for {HF_REPO_ID!r}: {exc}"
         ) from exc
     return spec
 
@@ -98,7 +106,7 @@ def _load_spec(model_dir: Path) -> dict[str, Any]:
     if not spec_path.exists():
         return _download_artifact(model_dir)
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
-    for hk, row in spec["by_horizon"].items():
+    for row in spec["by_horizon"].values():
         for fname in row["seed_state_dicts"]:
             if not (model_dir / fname).exists():
                 return _download_artifact(model_dir)
