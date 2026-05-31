@@ -3,7 +3,6 @@ import Head from "next/head";
 import { Terminal as TerminalIcon } from "lucide-react";
 
 import { Header } from "@/components/shell/header";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -122,7 +121,6 @@ export default function ConsolePage(): JSX.Element {
         <div className="flex items-center gap-3">
           <TerminalIcon className="h-5 w-5" />
           <h1 className="text-2xl font-semibold">FOMC Signal Terminal</h1>
-          <Badge variant="outline">v1</Badge>
         </div>
 
         <ActiveCheckpointBar
@@ -258,9 +256,8 @@ function ActiveCheckpointBar({
           </div>
         )}
         <p className="text-xs text-muted-foreground">
-          Display only in v1: checkpoint selection drives the Registry strip
-          ranking; the analysis panels above use the backend&apos;s active
-          checkpoint. Server-side hot-swap lands in the follow-up PR.
+          Display only: checkpoint selection drives the Registry strip ranking;
+          the analysis panels above run on the backend&apos;s active checkpoint.
         </p>
       </CardContent>
     </Card>
@@ -396,13 +393,11 @@ function AnalogsPanel({ analogs }: { analogs: AnalogsResponse | null }): JSX.Ele
   );
 }
 
-// #299 PR-B demo series: 8 historical FOMC dates with hard-coded
-// stance proxies (hawkish=-1 short S&P, dovish=+1 long, neutral=0).
-// The stances are conservative reads of the published Fed direction
-// at each meeting; this lets the backtest panel render real Sharpe
-// / HitRate / MaxDD numbers from real S&P forward returns without
-// needing the full predicted-stance fan-out infra. A follow-up PR
-// can swap this for live /analyze predictions over the same dates.
+// Historical FOMC dates with hard-coded stance proxies (hawkish=-1
+// short S&P, dovish=+1 long, neutral=0). Conservative reads of the
+// published Fed direction at each meeting so the backtest panel can
+// render real Sharpe / HitRate / MaxDD numbers from real S&P forward
+// returns without depending on a live predicted-stance fan-out.
 const DEMO_BACKTEST_POSITIONS: BacktestPositionEntry[] = [
   { date: "2022-03-16", position: -1 }, // 25bp hike, start of cycle
   { date: "2022-06-15", position: -1 }, // 75bp hike, surprise
@@ -454,15 +449,14 @@ function BacktestPanel({ baseUrl }: { baseUrl: string }): JSX.Element {
         )}
         {!result && !running && (
           <p className="text-xs text-muted-foreground">
-            Demo series: 8 historical FOMC dates with proxied stances
+            Eight historical FOMC dates with proxied stances
             (hawkish=-1 short S&amp;P, dovish=+1 long). Computes Sharpe /
             HitRate / MaxDD vs buy-and-hold on real ^GSPC 5d forward
             returns. <strong>Note:</strong> the 2022&ndash;2024 window
             covers the Fed hiking cycle&apos;s sharp equity sell-off, so
-            short-SPX bets dominate the sample. Hit-rate and Sharpe
-            reflect a directionally favorable period, not out-of-
-            sample model performance. Live predicted-stance backtest
-            lands in v1.1.
+            short-SPX bets dominate the sample &mdash; Sharpe and hit-rate
+            reflect a directionally favourable period, not out-of-sample
+            model skill.
           </p>
         )}
         {result && (
