@@ -115,6 +115,14 @@ export function TrajectoryPanel({
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
+  // Stabilise the request body across renders so the effect below
+  // depends on a single object identity, not three primitives that
+  // recompose on every parent re-render.
+  const requestBody = React.useMemo(
+    () => JSON.stringify({ as_of_date: asOfDate, history_length: historyLength }),
+    [asOfDate, historyLength],
+  );
+
   React.useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
@@ -124,10 +132,7 @@ export function TrajectoryPanel({
         const response = await fetch(`${apiBaseUrl}/analyze/trajectory`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            as_of_date: asOfDate,
-            history_length: historyLength,
-          }),
+          body: requestBody,
           signal: controller.signal,
         });
         if (!response.ok) {
@@ -145,7 +150,7 @@ export function TrajectoryPanel({
       }
     })();
     return () => controller.abort();
-  }, [apiBaseUrl, asOfDate, historyLength]);
+  }, [apiBaseUrl, requestBody]);
 
   if (loading) {
     return (
@@ -287,14 +292,14 @@ export function TrajectoryPanel({
             {hasLiftSignal && !liftEstablished ? (
               <Badge
                 variant="outline"
-                className="text-[10px] uppercase tracking-wide"
+                className="text-muted-foreground text-[10px] uppercase tracking-wide"
                 title={
                   data.delta_dir_acc != null && data.baseline_used
-                    ? `Improvement vs ${data.baseline_used}: ${(data.delta_dir_acc * 100).toFixed(1)}pp; needs at least 5pp.`
-                    : "No measurable improvement over simple baselines yet."
+                    ? `Directional accuracy vs ${data.baseline_used}: ${(data.delta_dir_acc * 100).toFixed(1)}pp; needs at least 5pp to claim a lift.`
+                    : "Directional accuracy matches the simple baseline within the lift threshold."
                 }
               >
-                no improvement over baseline
+                matches simple-baseline accuracy
               </Badge>
             ) : null}
             {liftEstablished ? (
@@ -306,7 +311,7 @@ export function TrajectoryPanel({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="h-72 w-full">
+        <div className="h-72 min-h-[270px] w-full">
           <ResponsiveContainer width="100%" height="100%">
             <ScatterChart margin={{ top: 12, right: 16, bottom: 12, left: 12 }}>
               <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="2 3" />
