@@ -1,0 +1,5170 @@
+{
+  "head_modes": [
+    "classification",
+    "regression",
+    "dual"
+  ],
+  "seeds": [
+    11,
+    29,
+    47,
+    71,
+    97
+  ],
+  "fold_ids": [
+    "wf_fold_1",
+    "wf_fold_2",
+    "wf_fold_3",
+    "wf_fold_4",
+    "wf_fold_5"
+  ],
+  "epochs": 40,
+  "regression_alpha": 0.7,
+  "training_package_id": "canonical",
+  "rates_target_mode": "raw",
+  "rates_heads": [],
+  "vol_target_mode": "raw",
+  "vol_target_horizon": 10,
+  "sequence_length": 20,
+  "use_retrieval_analogs": false,
+  "use_regime_conditioning": false,
+  "use_statement_delta": false,
+  "use_vote_features": false,
+  "use_press_conf": false,
+  "use_vix_features": false,
+  "use_doc_length": true,
+  "regime_loss": "focal",
+  "focal_gamma": 1.0,
+  "class_balanced_beta": 0.999,
+  "text_encoder": null,
+  "use_text_embeddings": true,
+  "vol_regime_label_mode": "per_fold_quantile",
+  "absolute_vol_thresholds": null,
+  "absolute_calm_max_annualized": null,
+  "absolute_high_min_annualized": null,
+  "use_mp_surprise": false,
+  "aux_horizons": [],
+  "aux_horizon_alpha": 0.3,
+  "trials": {
+    "classification": [
+      {
+        "head_mode": "classification",
+        "seed": 11,
+        "regression_alpha": 0.7,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.39869353427126925,
+              "regime_accuracy": 0.4000000059604645,
+              "regime_loss": 0.7209901613681727,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    10,
+                    12,
+                    6
+                  ],
+                  [
+                    4,
+                    13,
+                    28
+                  ],
+                  [
+                    5,
+                    17,
+                    25
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.5263157894736842,
+                    "recall": 0.35714285714285715,
+                    "f1": 0.425531914893617,
+                    "support": 28,
+                    "roc_auc": 0.7135093167701864,
+                    "pr_auc": 0.3895752478003722
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.30952380952380953,
+                    "recall": 0.28888888888888886,
+                    "f1": 0.29885057471264365,
+                    "support": 45,
+                    "roc_auc": 0.418962962962963,
+                    "pr_auc": 0.40469266995665265
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.423728813559322,
+                    "recall": 0.5319148936170213,
+                    "f1": 0.4716981132075472,
+                    "support": 47,
+                    "roc_auc": 0.4931506849315068,
+                    "pr_auc": 0.35614185414408145
+                  }
+                ],
+                "macro_precision": 0.4198561375189385,
+                "macro_recall": 0.3926488798829224,
+                "macro_f1": 0.39869353427126925,
+                "weighted_f1": 0.3961081733320413,
+                "macro_roc_auc": 0.5418743215548854,
+                "macro_pr_auc": 0.38346992396703544
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.5118723466549554,
+              "regime_accuracy": 0.7711864113807678,
+              "regime_loss": 0.37227867745747,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    6,
+                    4,
+                    0
+                  ],
+                  [
+                    7,
+                    3,
+                    2
+                  ],
+                  [
+                    10,
+                    4,
+                    82
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.2608695652173913,
+                    "recall": 0.6,
+                    "f1": 0.36363636363636365,
+                    "support": 10,
+                    "roc_auc": 0.9416666666666667,
+                    "pr_auc": 0.6177526264585088
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.2727272727272727,
+                    "recall": 0.25,
+                    "f1": 0.2608695652173913,
+                    "support": 12,
+                    "roc_auc": 0.7303459119496856,
+                    "pr_auc": 0.1933210868876049
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.9761904761904762,
+                    "recall": 0.8541666666666666,
+                    "f1": 0.9111111111111111,
+                    "support": 96,
+                    "roc_auc": 0.8944128787878788,
+                    "pr_auc": 0.9681616540171396
+                  }
+                ],
+                "macro_precision": 0.5032624380450467,
+                "macro_recall": 0.5680555555555555,
+                "macro_f1": 0.5118723466549554,
+                "weighted_f1": 0.7985886871664322,
+                "macro_roc_auc": 0.855475152468077,
+                "macro_pr_auc": 0.5930784557877511
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.25626660920778566,
+              "regime_accuracy": 0.2181818187236786,
+              "regime_loss": 0.789590859413147,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    10,
+                    0,
+                    2
+                  ],
+                  [
+                    63,
+                    0,
+                    15
+                  ],
+                  [
+                    6,
+                    0,
+                    14
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.12658227848101267,
+                    "recall": 0.8333333333333334,
+                    "f1": 0.2197802197802198,
+                    "support": 12,
+                    "roc_auc": 0.641156462585034,
+                    "pr_auc": 0.13941435413082204
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 78,
+                    "roc_auc": 0.31530448717948717,
+                    "pr_auc": 0.5919629480383773
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.45161290322580644,
+                    "recall": 0.7,
+                    "f1": 0.5490196078431372,
+                    "support": 20,
+                    "roc_auc": 0.7794444444444445,
+                    "pr_auc": 0.3336865875568059
+                  }
+                ],
+                "macro_precision": 0.1927317272356064,
+                "macro_recall": 0.5111111111111111,
+                "macro_f1": 0.25626660920778566,
+                "weighted_f1": 0.12379777085659437,
+                "macro_roc_auc": 0.5786351314029886,
+                "macro_pr_auc": 0.35502129657533504
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.36233685116683984,
+              "regime_accuracy": 0.45945945382118225,
+              "regime_loss": 0.725671875534688,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    8,
+                    35,
+                    1
+                  ],
+                  [
+                    5,
+                    40,
+                    3
+                  ],
+                  [
+                    0,
+                    16,
+                    3
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.6153846153846154,
+                    "recall": 0.18181818181818182,
+                    "f1": 0.2807017543859649,
+                    "support": 44,
+                    "roc_auc": 0.5902306648575305,
+                    "pr_auc": 0.48702333024003625
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.43956043956043955,
+                    "recall": 0.8333333333333334,
+                    "f1": 0.5755395683453238,
+                    "support": 48,
+                    "roc_auc": 0.5370370370370371,
+                    "pr_auc": 0.4731776388118612
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.42857142857142855,
+                    "recall": 0.15789473684210525,
+                    "f1": 0.23076923076923078,
+                    "support": 19,
+                    "roc_auc": 0.5360411899313501,
+                    "pr_auc": 0.2599146733929772
+                  }
+                ],
+                "macro_precision": 0.4945054945054945,
+                "macro_recall": 0.3910154173312068,
+                "macro_f1": 0.36233685116683984,
+                "weighted_f1": 0.3996521789024629,
+                "macro_roc_auc": 0.554436297275306,
+                "macro_pr_auc": 0.4067052141482916
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.5088636613437593,
+              "regime_accuracy": 0.5384615659713745,
+              "regime_loss": 0.7224641946645883,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    8,
+                    9,
+                    9
+                  ],
+                  [
+                    8,
+                    28,
+                    16
+                  ],
+                  [
+                    4,
+                    2,
+                    20
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.4,
+                    "recall": 0.3076923076923077,
+                    "f1": 0.34782608695652173,
+                    "support": 26,
+                    "roc_auc": 0.591715976331361,
+                    "pr_auc": 0.3226205365429559
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.717948717948718,
+                    "recall": 0.5384615384615384,
+                    "f1": 0.6153846153846153,
+                    "support": 52,
+                    "roc_auc": 0.6519970414201184,
+                    "pr_auc": 0.6395914857260196
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.4444444444444444,
+                    "recall": 0.7692307692307693,
+                    "f1": 0.5633802816901408,
+                    "support": 26,
+                    "roc_auc": 0.6903353057199211,
+                    "pr_auc": 0.5186215155560759
+                  }
+                ],
+                "macro_precision": 0.5207977207977208,
+                "macro_recall": 0.5384615384615384,
+                "macro_f1": 0.5088636613437593,
+                "weighted_f1": 0.5354938998539732,
+                "macro_roc_auc": 0.6446827744904668,
+                "macro_pr_auc": 0.49361117927501713
+              }
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "classification",
+        "seed": 29,
+        "regression_alpha": 0.7,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.3950228740144706,
+              "regime_accuracy": 0.4000000059604645,
+              "regime_loss": 0.7126209956991539,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    14,
+                    10,
+                    4
+                  ],
+                  [
+                    8,
+                    12,
+                    25
+                  ],
+                  [
+                    18,
+                    7,
+                    22
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.35,
+                    "recall": 0.5,
+                    "f1": 0.4117647058823529,
+                    "support": 28,
+                    "roc_auc": 0.7581521739130435,
+                    "pr_auc": 0.4076031400768068
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.41379310344827586,
+                    "recall": 0.26666666666666666,
+                    "f1": 0.32432432432432434,
+                    "support": 45,
+                    "roc_auc": 0.46903703703703703,
+                    "pr_auc": 0.46629503380059334
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.43137254901960786,
+                    "recall": 0.46808510638297873,
+                    "f1": 0.4489795918367347,
+                    "support": 47,
+                    "roc_auc": 0.5563975517341883,
+                    "pr_auc": 0.41077230647551594
+                  }
+                ],
+                "macro_precision": 0.3983885508226279,
+                "macro_recall": 0.4115839243498818,
+                "macro_f1": 0.3950228740144706,
+                "weighted_f1": 0.39355039313022505,
+                "macro_roc_auc": 0.5945289208947563,
+                "macro_pr_auc": 0.42822349345097205
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.5257944940265382,
+              "regime_accuracy": 0.7881355881690979,
+              "regime_loss": 0.38748922287407567,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    8,
+                    2,
+                    0
+                  ],
+                  [
+                    8,
+                    2,
+                    2
+                  ],
+                  [
+                    13,
+                    0,
+                    83
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.27586206896551724,
+                    "recall": 0.8,
+                    "f1": 0.4102564102564103,
+                    "support": 10,
+                    "roc_auc": 0.9092592592592592,
+                    "pr_auc": 0.45463870606517665
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.5,
+                    "recall": 0.16666666666666666,
+                    "f1": 0.25,
+                    "support": 12,
+                    "roc_auc": 0.6981132075471698,
+                    "pr_auc": 0.16316146056388292
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.9764705882352941,
+                    "recall": 0.8645833333333334,
+                    "f1": 0.9171270718232044,
+                    "support": 96,
+                    "roc_auc": 0.8778409090909091,
+                    "pr_auc": 0.9656047985391127
+                  }
+                ],
+                "macro_precision": 0.5841108857336038,
+                "macro_recall": 0.6104166666666667,
+                "macro_f1": 0.5257944940265382,
+                "weighted_f1": 0.8063284999795909,
+                "macro_roc_auc": 0.828404458632446,
+                "macro_pr_auc": 0.5278016550560575
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.4528550645571922,
+              "regime_accuracy": 0.4636363685131073,
+              "regime_loss": 0.6345650326121938,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    7,
+                    3,
+                    2
+                  ],
+                  [
+                    37,
+                    30,
+                    11
+                  ],
+                  [
+                    0,
+                    6,
+                    14
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.1590909090909091,
+                    "recall": 0.5833333333333334,
+                    "f1": 0.25,
+                    "support": 12,
+                    "roc_auc": 0.6301020408163265,
+                    "pr_auc": 0.14185102619235282
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.7692307692307693,
+                    "recall": 0.38461538461538464,
+                    "f1": 0.5128205128205128,
+                    "support": 78,
+                    "roc_auc": 0.3729967948717949,
+                    "pr_auc": 0.6970411161532977
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.5185185185185185,
+                    "recall": 0.7,
+                    "f1": 0.5957446808510639,
+                    "support": 20,
+                    "roc_auc": 0.8172222222222222,
+                    "pr_auc": 0.3978425205440233
+                  }
+                ],
+                "macro_precision": 0.482280065613399,
+                "macro_recall": 0.555982905982906,
+                "macro_f1": 0.4528550645571922,
+                "weighted_f1": 0.4992263056092843,
+                "macro_roc_auc": 0.6067736859701145,
+                "macro_pr_auc": 0.41224488762989125
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.34284877763138627,
+              "regime_accuracy": 0.36036035418510437,
+              "regime_loss": 0.7464234723955667,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    14,
+                    22,
+                    8
+                  ],
+                  [
+                    15,
+                    20,
+                    13
+                  ],
+                  [
+                    4,
+                    9,
+                    6
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.42424242424242425,
+                    "recall": 0.3181818181818182,
+                    "f1": 0.36363636363636365,
+                    "support": 44,
+                    "roc_auc": 0.6078697421981004,
+                    "pr_auc": 0.49716953175549783
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.39215686274509803,
+                    "recall": 0.4166666666666667,
+                    "f1": 0.40404040404040403,
+                    "support": 48,
+                    "roc_auc": 0.4947089947089947,
+                    "pr_auc": 0.41953878146123474
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.2222222222222222,
+                    "recall": 0.3157894736842105,
+                    "f1": 0.2608695652173913,
+                    "support": 19,
+                    "roc_auc": 0.5835240274599542,
+                    "pr_auc": 0.2508379009922784
+                  }
+                ],
+                "macro_precision": 0.34620716973658155,
+                "macro_recall": 0.3502126528442318,
+                "macro_f1": 0.34284877763138627,
+                "weighted_f1": 0.36351766786549394,
+                "macro_roc_auc": 0.5620342547890165,
+                "macro_pr_auc": 0.38918207140300365
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.42127229816792705,
+              "regime_accuracy": 0.49038460850715637,
+              "regime_loss": 0.6759040951728821,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    4,
+                    15,
+                    7
+                  ],
+                  [
+                    5,
+                    34,
+                    13
+                  ],
+                  [
+                    3,
+                    10,
+                    13
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.3333333333333333,
+                    "recall": 0.15384615384615385,
+                    "f1": 0.21052631578947367,
+                    "support": 26,
+                    "roc_auc": 0.5912228796844181,
+                    "pr_auc": 0.300390901519003
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.576271186440678,
+                    "recall": 0.6538461538461539,
+                    "f1": 0.6126126126126126,
+                    "support": 52,
+                    "roc_auc": 0.6431213017751479,
+                    "pr_auc": 0.6636236990031135
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.3939393939393939,
+                    "recall": 0.5,
+                    "f1": 0.4406779661016949,
+                    "support": 26,
+                    "roc_auc": 0.7273175542406312,
+                    "pr_auc": 0.5826252931393704
+                  }
+                ],
+                "macro_precision": 0.4345146379044684,
+                "macro_recall": 0.4358974358974359,
+                "macro_f1": 0.42127229816792705,
+                "weighted_f1": 0.4691073767790984,
+                "macro_roc_auc": 0.653887245233399,
+                "macro_pr_auc": 0.5155466312204956
+              }
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "classification",
+        "seed": 47,
+        "regression_alpha": 0.7,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.41721502908297187,
+              "regime_accuracy": 0.42500001192092896,
+              "regime_loss": 0.7178689101235407,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    20,
+                    5,
+                    3
+                  ],
+                  [
+                    12,
+                    10,
+                    23
+                  ],
+                  [
+                    19,
+                    7,
+                    21
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.39215686274509803,
+                    "recall": 0.7142857142857143,
+                    "f1": 0.5063291139240506,
+                    "support": 28,
+                    "roc_auc": 0.7631987577639752,
+                    "pr_auc": 0.4012096535170604
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.45454545454545453,
+                    "recall": 0.2222222222222222,
+                    "f1": 0.29850746268656714,
+                    "support": 45,
+                    "roc_auc": 0.4746666666666667,
+                    "pr_auc": 0.4299859621740163
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.44680851063829785,
+                    "recall": 0.44680851063829785,
+                    "f1": 0.44680851063829785,
+                    "support": 47,
+                    "roc_auc": 0.5485281259108131,
+                    "pr_auc": 0.4039436312920193
+                  }
+                ],
+                "macro_precision": 0.43117027597628343,
+                "macro_recall": 0.46110548238207816,
+                "macro_f1": 0.41721502908297187,
+                "weighted_f1": 0.4050837584230745,
+                "macro_roc_auc": 0.595464516780485,
+                "macro_pr_auc": 0.41171308232769865
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.575064064656022,
+              "regime_accuracy": 0.7881355881690979,
+              "regime_loss": 0.3972328158758454,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    10,
+                    0,
+                    0
+                  ],
+                  [
+                    7,
+                    3,
+                    2
+                  ],
+                  [
+                    11,
+                    5,
+                    80
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.35714285714285715,
+                    "recall": 1.0,
+                    "f1": 0.5263157894736842,
+                    "support": 10,
+                    "roc_auc": 0.9324074074074075,
+                    "pr_auc": 0.47805321667533945
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.375,
+                    "recall": 0.25,
+                    "f1": 0.3,
+                    "support": 12,
+                    "roc_auc": 0.7900943396226415,
+                    "pr_auc": 0.21908954251614204
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.975609756097561,
+                    "recall": 0.8333333333333334,
+                    "f1": 0.8988764044943819,
+                    "support": 96,
+                    "roc_auc": 0.890625,
+                    "pr_auc": 0.9728107799163735
+                  }
+                ],
+                "macro_precision": 0.5692508710801394,
+                "macro_recall": 0.6944444444444445,
+                "macro_f1": 0.575064064656022,
+                "weighted_f1": 0.8064007858152331,
+                "macro_roc_auc": 0.8710422490100163,
+                "macro_pr_auc": 0.5566511797026183
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.36275341819896273,
+              "regime_accuracy": 0.33636364340782166,
+              "regime_loss": 0.6566980199380354,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    7,
+                    3,
+                    2
+                  ],
+                  [
+                    49,
+                    16,
+                    13
+                  ],
+                  [
+                    2,
+                    4,
+                    14
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.1206896551724138,
+                    "recall": 0.5833333333333334,
+                    "f1": 0.2,
+                    "support": 12,
+                    "roc_auc": 0.6198979591836735,
+                    "pr_auc": 0.13759857161472716
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.6956521739130435,
+                    "recall": 0.20512820512820512,
+                    "f1": 0.31683168316831684,
+                    "support": 78,
+                    "roc_auc": 0.37419871794871795,
+                    "pr_auc": 0.6809376137580115
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.4827586206896552,
+                    "recall": 0.7,
+                    "f1": 0.5714285714285714,
+                    "support": 20,
+                    "roc_auc": 0.8244444444444444,
+                    "pr_auc": 0.49206454732939087
+                  }
+                ],
+                "macro_precision": 0.4330334832583708,
+                "macro_recall": 0.49615384615384617,
+                "macro_f1": 0.36275341819896273,
+                "weighted_f1": 0.3503767519609104,
+                "macro_roc_auc": 0.6061803738589453,
+                "macro_pr_auc": 0.4368669109007099
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.3862573099415205,
+              "regime_accuracy": 0.38738739490509033,
+              "regime_loss": 0.71289339127095,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    13,
+                    24,
+                    7
+                  ],
+                  [
+                    14,
+                    20,
+                    14
+                  ],
+                  [
+                    5,
+                    4,
+                    10
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.40625,
+                    "recall": 0.29545454545454547,
+                    "f1": 0.3421052631578948,
+                    "support": 44,
+                    "roc_auc": 0.6336499321573948,
+                    "pr_auc": 0.4978294113672073
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.4166666666666667,
+                    "recall": 0.4166666666666667,
+                    "f1": 0.4166666666666667,
+                    "support": 48,
+                    "roc_auc": 0.5367063492063492,
+                    "pr_auc": 0.5064364988390624
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.3225806451612903,
+                    "recall": 0.5263157894736842,
+                    "f1": 0.39999999999999997,
+                    "support": 19,
+                    "roc_auc": 0.6052631578947368,
+                    "pr_auc": 0.2895094321459856
+                  }
+                ],
+                "macro_precision": 0.38183243727598565,
+                "macro_recall": 0.41281233386496546,
+                "macro_f1": 0.3862573099415205,
+                "weighted_f1": 0.384257942152679,
+                "macro_roc_auc": 0.5918731464194936,
+                "macro_pr_auc": 0.43125844745075176
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.4437055721164871,
+              "regime_accuracy": 0.45192307233810425,
+              "regime_loss": 0.6908802069150485,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    10,
+                    7,
+                    9
+                  ],
+                  [
+                    10,
+                    22,
+                    20
+                  ],
+                  [
+                    3,
+                    8,
+                    15
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.43478260869565216,
+                    "recall": 0.38461538461538464,
+                    "f1": 0.40816326530612246,
+                    "support": 26,
+                    "roc_auc": 0.6282051282051282,
+                    "pr_auc": 0.3226314343033128
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.5945945945945946,
+                    "recall": 0.4230769230769231,
+                    "f1": 0.49438202247191015,
+                    "support": 52,
+                    "roc_auc": 0.606508875739645,
+                    "pr_auc": 0.5724757596812226
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.3409090909090909,
+                    "recall": 0.5769230769230769,
+                    "f1": 0.42857142857142855,
+                    "support": 26,
+                    "roc_auc": 0.6942800788954635,
+                    "pr_auc": 0.5202844692222441
+                  }
+                ],
+                "macro_precision": 0.4567620980664459,
+                "macro_recall": 0.4615384615384615,
+                "macro_f1": 0.4437055721164871,
+                "weighted_f1": 0.4563746847053428,
+                "macro_roc_auc": 0.6429980276134123,
+                "macro_pr_auc": 0.4717972210689265
+              }
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "classification",
+        "seed": 71,
+        "regression_alpha": 0.7,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.41889338731444,
+              "regime_accuracy": 0.44999998807907104,
+              "regime_loss": 0.7100859539150973,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    20,
+                    3,
+                    5
+                  ],
+                  [
+                    14,
+                    6,
+                    25
+                  ],
+                  [
+                    16,
+                    3,
+                    28
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.4,
+                    "recall": 0.7142857142857143,
+                    "f1": 0.5128205128205129,
+                    "support": 28,
+                    "roc_auc": 0.7740683229813664,
+                    "pr_auc": 0.423264063589465
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.5,
+                    "recall": 0.13333333333333333,
+                    "f1": 0.2105263157894737,
+                    "support": 45,
+                    "roc_auc": 0.4272592592592593,
+                    "pr_auc": 0.34483160572685306
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.4827586206896552,
+                    "recall": 0.5957446808510638,
+                    "f1": 0.5333333333333333,
+                    "support": 47,
+                    "roc_auc": 0.5820460507140776,
+                    "pr_auc": 0.4387066967681098
+                  }
+                ],
+                "macro_precision": 0.46091954022988507,
+                "macro_recall": 0.4811212428233705,
+                "macro_f1": 0.41889338731444,
+                "weighted_f1": 0.4074943769680612,
+                "macro_roc_auc": 0.5944578776515678,
+                "macro_pr_auc": 0.40226745536147596
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.5933600713012478,
+              "regime_accuracy": 0.8305084705352783,
+              "regime_loss": 0.3438929529008219,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    10,
+                    0,
+                    0
+                  ],
+                  [
+                    5,
+                    2,
+                    5
+                  ],
+                  [
+                    7,
+                    3,
+                    86
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.45454545454545453,
+                    "recall": 1.0,
+                    "f1": 0.625,
+                    "support": 10,
+                    "roc_auc": 0.975,
+                    "pr_auc": 0.7011806249306249
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.4,
+                    "recall": 0.16666666666666666,
+                    "f1": 0.23529411764705882,
+                    "support": 12,
+                    "roc_auc": 0.6069182389937107,
+                    "pr_auc": 0.1335965812586965
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.945054945054945,
+                    "recall": 0.8958333333333334,
+                    "f1": 0.9197860962566845,
+                    "support": 96,
+                    "roc_auc": 0.8759469696969697,
+                    "pr_auc": 0.9332896978334958
+                  }
+                ],
+                "macro_precision": 0.5998667998667998,
+                "macro_recall": 0.6875,
+                "macro_f1": 0.5933600713012478,
+                "weighted_f1": 0.8251948699356476,
+                "macro_roc_auc": 0.8192884028968934,
+                "macro_pr_auc": 0.5893556346742724
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.25636380527684877,
+              "regime_accuracy": 0.2454545497894287,
+              "regime_loss": 0.8361571929671547,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    10,
+                    1,
+                    1
+                  ],
+                  [
+                    50,
+                    10,
+                    18
+                  ],
+                  [
+                    6,
+                    7,
+                    7
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.15151515151515152,
+                    "recall": 0.8333333333333334,
+                    "f1": 0.25641025641025644,
+                    "support": 12,
+                    "roc_auc": 0.6615646258503401,
+                    "pr_auc": 0.15937781385438715
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.5555555555555556,
+                    "recall": 0.1282051282051282,
+                    "f1": 0.20833333333333334,
+                    "support": 78,
+                    "roc_auc": 0.30408653846153844,
+                    "pr_auc": 0.6138803197226064
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.2692307692307692,
+                    "recall": 0.35,
+                    "f1": 0.3043478260869565,
+                    "support": 20,
+                    "roc_auc": 0.76,
+                    "pr_auc": 0.3258184712950742
+                  }
+                ],
+                "macro_precision": 0.32543382543382543,
+                "macro_recall": 0.4371794871794872,
+                "macro_f1": 0.25636380527684877,
+                "weighted_f1": 0.23103526907874733,
+                "macro_roc_auc": 0.5752170547706262,
+                "macro_pr_auc": 0.36635886829068925
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.3426329066616836,
+              "regime_accuracy": 0.45945945382118225,
+              "regime_loss": 0.6762332174715383,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    44,
+                    0,
+                    0
+                  ],
+                  [
+                    40,
+                    3,
+                    5
+                  ],
+                  [
+                    11,
+                    4,
+                    4
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.4631578947368421,
+                    "recall": 1.0,
+                    "f1": 0.6330935251798561,
+                    "support": 44,
+                    "roc_auc": 0.5993894165535957,
+                    "pr_auc": 0.4366893201320974
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.42857142857142855,
+                    "recall": 0.0625,
+                    "f1": 0.10909090909090909,
+                    "support": 48,
+                    "roc_auc": 0.5443121693121693,
+                    "pr_auc": 0.49918049229478795
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.4444444444444444,
+                    "recall": 0.21052631578947367,
+                    "f1": 0.2857142857142857,
+                    "support": 19,
+                    "roc_auc": 0.584096109839817,
+                    "pr_auc": 0.2698559549353192
+                  }
+                ],
+                "macro_precision": 0.44539125591757167,
+                "macro_recall": 0.4243421052631579,
+                "macro_f1": 0.3426329066616836,
+                "weighted_f1": 0.34703648804368226,
+                "macro_roc_auc": 0.575932565235194,
+                "macro_pr_auc": 0.40190858912073485
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.5326278659611994,
+              "regime_accuracy": 0.5384615659713745,
+              "regime_loss": 0.6264864985759442,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    8,
+                    17,
+                    1
+                  ],
+                  [
+                    17,
+                    28,
+                    7
+                  ],
+                  [
+                    5,
+                    1,
+                    20
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.26666666666666666,
+                    "recall": 0.3076923076923077,
+                    "f1": 0.28571428571428575,
+                    "support": 26,
+                    "roc_auc": 0.621301775147929,
+                    "pr_auc": 0.3003183570465398
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.6086956521739131,
+                    "recall": 0.5384615384615384,
+                    "f1": 0.5714285714285715,
+                    "support": 52,
+                    "roc_auc": 0.6017011834319527,
+                    "pr_auc": 0.5351263651368001
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.7142857142857143,
+                    "recall": 0.7692307692307693,
+                    "f1": 0.7407407407407408,
+                    "support": 26,
+                    "roc_auc": 0.8052268244575936,
+                    "pr_auc": 0.6438828221775467
+                  }
+                ],
+                "macro_precision": 0.5298826777087647,
+                "macro_recall": 0.5384615384615384,
+                "macro_f1": 0.5326278659611994,
+                "weighted_f1": 0.5423280423280423,
+                "macro_roc_auc": 0.6760765943458251,
+                "macro_pr_auc": 0.49310918145362886
+              }
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "classification",
+        "seed": 97,
+        "regression_alpha": 0.7,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.37759652570280045,
+              "regime_accuracy": 0.4333333373069763,
+              "regime_loss": 0.7320554098788232,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    12,
+                    9,
+                    7
+                  ],
+                  [
+                    15,
+                    4,
+                    26
+                  ],
+                  [
+                    8,
+                    3,
+                    36
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.34285714285714286,
+                    "recall": 0.42857142857142855,
+                    "f1": 0.38095238095238093,
+                    "support": 28,
+                    "roc_auc": 0.7247670807453416,
+                    "pr_auc": 0.3621733156595892
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.25,
+                    "recall": 0.08888888888888889,
+                    "f1": 0.13114754098360656,
+                    "support": 45,
+                    "roc_auc": 0.44177777777777777,
+                    "pr_auc": 0.3361703550055433
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.5217391304347826,
+                    "recall": 0.7659574468085106,
+                    "f1": 0.6206896551724138,
+                    "support": 47,
+                    "roc_auc": 0.6053628679685223,
+                    "pr_auc": 0.4512040080970523
+                  }
+                ],
+                "macro_precision": 0.3715320910973085,
+                "macro_recall": 0.42780592142294266,
+                "macro_f1": 0.37759652570280045,
+                "weighted_f1": 0.3811726650336034,
+                "macro_roc_auc": 0.5906359088305472,
+                "macro_pr_auc": 0.38318255958739494
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.5181485181485181,
+              "regime_accuracy": 0.7627118825912476,
+              "regime_loss": 0.3824533332707518,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    8,
+                    2,
+                    0
+                  ],
+                  [
+                    4,
+                    2,
+                    6
+                  ],
+                  [
+                    11,
+                    5,
+                    80
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.34782608695652173,
+                    "recall": 0.8,
+                    "f1": 0.48484848484848486,
+                    "support": 10,
+                    "roc_auc": 0.950925925925926,
+                    "pr_auc": 0.5029396696616376
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.2222222222222222,
+                    "recall": 0.16666666666666666,
+                    "f1": 0.1904761904761905,
+                    "support": 12,
+                    "roc_auc": 0.6273584905660378,
+                    "pr_auc": 0.12870962551242224
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.9302325581395349,
+                    "recall": 0.8333333333333334,
+                    "f1": 0.8791208791208791,
+                    "support": 96,
+                    "roc_auc": 0.8707386363636364,
+                    "pr_auc": 0.9598952880663539
+                  }
+                ],
+                "macro_precision": 0.5000936224394262,
+                "macro_recall": 0.6,
+                "macro_f1": 0.5181485181485181,
+                "weighted_f1": 0.7756763011000299,
+                "macro_roc_auc": 0.8163410176185334,
+                "macro_pr_auc": 0.5305148610801379
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.24166666666666667,
+              "regime_accuracy": 0.2454545497894287,
+              "regime_loss": 0.7336087270216508,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    6,
+                    1,
+                    5
+                  ],
+                  [
+                    22,
+                    1,
+                    55
+                  ],
+                  [
+                    0,
+                    0,
+                    20
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.21428571428571427,
+                    "recall": 0.5,
+                    "f1": 0.3,
+                    "support": 12,
+                    "roc_auc": 0.6972789115646258,
+                    "pr_auc": 0.1827438860126699
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.5,
+                    "recall": 0.01282051282051282,
+                    "f1": 0.025,
+                    "support": 78,
+                    "roc_auc": 0.3609775641025641,
+                    "pr_auc": 0.6112090913919679
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.25,
+                    "recall": 1.0,
+                    "f1": 0.4,
+                    "support": 20,
+                    "roc_auc": 0.765,
+                    "pr_auc": 0.3407972715282719
+                  }
+                ],
+                "macro_precision": 0.32142857142857145,
+                "macro_recall": 0.5042735042735043,
+                "macro_f1": 0.24166666666666667,
+                "weighted_f1": 0.12318181818181818,
+                "macro_roc_auc": 0.60775215855573,
+                "macro_pr_auc": 0.37825008297763657
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.3588258114573904,
+              "regime_accuracy": 0.37837839126586914,
+              "regime_loss": 0.7294396473413438,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    12,
+                    30,
+                    2
+                  ],
+                  [
+                    13,
+                    24,
+                    11
+                  ],
+                  [
+                    5,
+                    8,
+                    6
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.4,
+                    "recall": 0.2727272727272727,
+                    "f1": 0.3243243243243243,
+                    "support": 44,
+                    "roc_auc": 0.5291723202170964,
+                    "pr_auc": 0.3881750742227252
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.3870967741935484,
+                    "recall": 0.5,
+                    "f1": 0.43636363636363634,
+                    "support": 48,
+                    "roc_auc": 0.4470899470899471,
+                    "pr_auc": 0.43200963085705596
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.3157894736842105,
+                    "recall": 0.3157894736842105,
+                    "f1": 0.3157894736842105,
+                    "support": 19,
+                    "roc_auc": 0.5675057208237986,
+                    "pr_auc": 0.2307116815637491
+                  }
+                ],
+                "macro_precision": 0.3676287492925863,
+                "macro_recall": 0.36283891547049435,
+                "macro_f1": 0.3588258114573904,
+                "weighted_f1": 0.371312836177701,
+                "macro_roc_auc": 0.5145893293769473,
+                "macro_pr_auc": 0.35029879554784343
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.4598172367538564,
+              "regime_accuracy": 0.5384615659713745,
+              "regime_loss": 0.6785586568025442,
+              "regression_rmse_log_rv": null,
+              "regression_mae_log_rv": null,
+              "regression_loss": null,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    3,
+                    15,
+                    8
+                  ],
+                  [
+                    2,
+                    33,
+                    17
+                  ],
+                  [
+                    1,
+                    5,
+                    20
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.5,
+                    "recall": 0.11538461538461539,
+                    "f1": 0.1875,
+                    "support": 26,
+                    "roc_auc": 0.623767258382643,
+                    "pr_auc": 0.4086605700004272
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.6226415094339622,
+                    "recall": 0.6346153846153846,
+                    "f1": 0.6285714285714284,
+                    "support": 52,
+                    "roc_auc": 0.6294378698224852,
+                    "pr_auc": 0.6209344154717849
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.4444444444444444,
+                    "recall": 0.7692307692307693,
+                    "f1": 0.5633802816901408,
+                    "support": 26,
+                    "roc_auc": 0.7716962524654832,
+                    "pr_auc": 0.572532907651457
+                  }
+                ],
+                "macro_precision": 0.5223619846261355,
+                "macro_recall": 0.5064102564102564,
+                "macro_f1": 0.4598172367538564,
+                "weighted_f1": 0.5020057847082493,
+                "macro_roc_auc": 0.6749671268902038,
+                "macro_pr_auc": 0.5340426310412231
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "regression": [
+      {
+        "head_mode": "regression",
+        "seed": 11,
+        "regression_alpha": 0.7,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.19615384615384612,
+              "regime_accuracy": 0.375,
+              "regime_loss": 0.7684118764497887,
+              "regression_rmse_log_rv": 0.8863238432118308,
+              "regression_mae_log_rv": 0.7802097937771274,
+              "regression_loss": 0.78556995504579,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    25,
+                    3
+                  ],
+                  [
+                    0,
+                    44,
+                    1
+                  ],
+                  [
+                    0,
+                    46,
+                    1
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 28,
+                    "roc_auc": 0.42391304347826086,
+                    "pr_auc": 0.21047526508273634
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.3826086956521739,
+                    "recall": 0.9777777777777777,
+                    "f1": 0.5499999999999999,
+                    "support": 45,
+                    "roc_auc": 0.43466666666666665,
+                    "pr_auc": 0.35007687324207826
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.2,
+                    "recall": 0.02127659574468085,
+                    "f1": 0.03846153846153846,
+                    "support": 47,
+                    "roc_auc": 0.3698630136986301,
+                    "pr_auc": 0.3108670724659755
+                  }
+                ],
+                "macro_precision": 0.19420289855072462,
+                "macro_recall": 0.3330181245074862,
+                "macro_f1": 0.19615384615384612,
+                "weighted_f1": 0.22131410256410253,
+                "macro_roc_auc": 0.4094809079478525,
+                "macro_pr_auc": 0.2904730702635967
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.06153846153846154,
+              "regime_accuracy": 0.10169491171836853,
+              "regime_loss": 0.7925921365366144,
+              "regression_rmse_log_rv": 0.892855603707263,
+              "regression_mae_log_rv": 0.8012159498945132,
+              "regression_loss": 0.7971911290714611,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    10,
+                    0
+                  ],
+                  [
+                    0,
+                    12,
+                    0
+                  ],
+                  [
+                    0,
+                    96,
+                    0
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 10,
+                    "roc_auc": 0.37962962962962965,
+                    "pr_auc": 0.06617894726613206
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.1016949152542373,
+                    "recall": 1.0,
+                    "f1": 0.18461538461538463,
+                    "support": 12,
+                    "roc_auc": 0.5172955974842768,
+                    "pr_auc": 0.10098481133505174
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 96,
+                    "roc_auc": 0.5629734848484849,
+                    "pr_auc": 0.8610313910684066
+                  }
+                ],
+                "macro_precision": 0.03389830508474576,
+                "macro_recall": 0.3333333333333333,
+                "macro_f1": 0.06153846153846154,
+                "weighted_f1": 0.01877444589308996,
+                "macro_roc_auc": 0.4866329039874637,
+                "macro_pr_auc": 0.3427317165565302
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.2765957446808511,
+              "regime_accuracy": 0.7090908885002136,
+              "regime_loss": 0.6221223679455844,
+              "regression_rmse_log_rv": 0.3990025425910883,
+              "regression_mae_log_rv": 0.2929232693298466,
+              "regression_loss": 0.15920302899415323,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    12,
+                    0
+                  ],
+                  [
+                    0,
+                    78,
+                    0
+                  ],
+                  [
+                    0,
+                    20,
+                    0
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 12,
+                    "roc_auc": 0.3358843537414966,
+                    "pr_auc": 0.07581551073332742
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.7090909090909091,
+                    "recall": 1.0,
+                    "f1": 0.8297872340425533,
+                    "support": 78,
+                    "roc_auc": 0.3842147435897436,
+                    "pr_auc": 0.6333664793793377
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 20,
+                    "roc_auc": 0.2288888888888889,
+                    "pr_auc": 0.1328230295034245
+                  }
+                ],
+                "macro_precision": 0.23636363636363636,
+                "macro_recall": 0.3333333333333333,
+                "macro_f1": 0.2765957446808511,
+                "weighted_f1": 0.588394584139265,
+                "macro_roc_auc": 0.31632932874004305,
+                "macro_pr_auc": 0.2806683398720298
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.2012578616352201,
+              "regime_accuracy": 0.4324324429035187,
+              "regime_loss": 0.7317246639179444,
+              "regression_rmse_log_rv": 0.7488880901382494,
+              "regression_mae_log_rv": 0.6101652363667617,
+              "regression_loss": 0.5608333715509147,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    44,
+                    0
+                  ],
+                  [
+                    0,
+                    48,
+                    0
+                  ],
+                  [
+                    0,
+                    19,
+                    0
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 44,
+                    "roc_auc": 0.5379918588873813,
+                    "pr_auc": 0.4151140363483343
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.43243243243243246,
+                    "recall": 1.0,
+                    "f1": 0.6037735849056604,
+                    "support": 48,
+                    "roc_auc": 0.5545634920634921,
+                    "pr_auc": 0.4903316865701694
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 19,
+                    "roc_auc": 0.46281464530892447,
+                    "pr_auc": 0.22787559922425563
+                  }
+                ],
+                "macro_precision": 0.14414414414414414,
+                "macro_recall": 0.3333333333333333,
+                "macro_f1": 0.2012578616352201,
+                "weighted_f1": 0.2610912799592045,
+                "macro_roc_auc": 0.5184566654199326,
+                "macro_pr_auc": 0.37777377404758644
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.2222222222222222,
+              "regime_accuracy": 0.5,
+              "regime_loss": 0.701128363609314,
+              "regression_rmse_log_rv": 0.7634918896675441,
+              "regression_mae_log_rv": 0.6115191349347767,
+              "regression_loss": 0.5829198655881174,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    26,
+                    0
+                  ],
+                  [
+                    0,
+                    52,
+                    0
+                  ],
+                  [
+                    0,
+                    26,
+                    0
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 26,
+                    "roc_auc": 0.4886587771203156,
+                    "pr_auc": 0.23887736752968114
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.5,
+                    "recall": 1.0,
+                    "f1": 0.6666666666666666,
+                    "support": 52,
+                    "roc_auc": 0.5162721893491125,
+                    "pr_auc": 0.49610451753107676
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 26,
+                    "roc_auc": 0.3826429980276134,
+                    "pr_auc": 0.19079765852295366
+                  }
+                ],
+                "macro_precision": 0.16666666666666666,
+                "macro_recall": 0.3333333333333333,
+                "macro_f1": 0.2222222222222222,
+                "weighted_f1": 0.3333333333333333,
+                "macro_roc_auc": 0.46252465483234717,
+                "macro_pr_auc": 0.3085931811945705
+              }
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "regression",
+        "seed": 29,
+        "regression_alpha": 0.7,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.16352201257861637,
+              "regime_accuracy": 0.32499998807907104,
+              "regime_loss": 0.7850512608635517,
+              "regression_rmse_log_rv": 0.8674676606131781,
+              "regression_mae_log_rv": 0.746567764232168,
+              "regression_loss": 0.7525001422097001,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    28,
+                    0
+                  ],
+                  [
+                    0,
+                    39,
+                    6
+                  ],
+                  [
+                    0,
+                    47,
+                    0
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 28,
+                    "roc_auc": 0.2682453416149068,
+                    "pr_auc": 0.153722343310903
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.34210526315789475,
+                    "recall": 0.8666666666666667,
+                    "f1": 0.4905660377358491,
+                    "support": 45,
+                    "roc_auc": 0.35288888888888886,
+                    "pr_auc": 0.31489244762977175
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 47,
+                    "roc_auc": 0.5339551151267852,
+                    "pr_auc": 0.38840476049155
+                  }
+                ],
+                "macro_precision": 0.11403508771929825,
+                "macro_recall": 0.2888888888888889,
+                "macro_f1": 0.16352201257861637,
+                "weighted_f1": 0.1839622641509434,
+                "macro_roc_auc": 0.38502978187686027,
+                "macro_pr_auc": 0.2856731838107416
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.32374682374682373,
+              "regime_accuracy": 0.5254237055778503,
+              "regime_loss": 0.668391848014573,
+              "regression_rmse_log_rv": 0.779279492075483,
+              "regression_mae_log_rv": 0.6849066040526002,
+              "regression_loss": 0.6072765267694227,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    10,
+                    0
+                  ],
+                  [
+                    0,
+                    11,
+                    1
+                  ],
+                  [
+                    0,
+                    45,
+                    51
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 10,
+                    "roc_auc": 0.1824074074074074,
+                    "pr_auc": 0.050280104307712514
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.16666666666666666,
+                    "recall": 0.9166666666666666,
+                    "f1": 0.28205128205128205,
+                    "support": 12,
+                    "roc_auc": 0.7468553459119497,
+                    "pr_auc": 0.18224961800628348
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.9807692307692307,
+                    "recall": 0.53125,
+                    "f1": 0.6891891891891891,
+                    "support": 96,
+                    "roc_auc": 0.8456439393939394,
+                    "pr_auc": 0.9605751489538412
+                  }
+                ],
+                "macro_precision": 0.38247863247863245,
+                "macro_recall": 0.48263888888888884,
+                "macro_f1": 0.32374682374682373,
+                "weighted_f1": 0.589379470735403,
+                "macro_roc_auc": 0.5916355642377655,
+                "macro_pr_auc": 0.3977016237559457
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.2765957446808511,
+              "regime_accuracy": 0.7090908885002136,
+              "regime_loss": 0.5289117553017356,
+              "regression_rmse_log_rv": 0.4253932293455784,
+              "regression_mae_log_rv": 0.31185872058426456,
+              "regression_loss": 0.18095939957305984,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    12,
+                    0
+                  ],
+                  [
+                    0,
+                    78,
+                    0
+                  ],
+                  [
+                    0,
+                    20,
+                    0
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 12,
+                    "roc_auc": 0.30272108843537415,
+                    "pr_auc": 0.07297474482215574
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.7090909090909091,
+                    "recall": 1.0,
+                    "f1": 0.8297872340425533,
+                    "support": 78,
+                    "roc_auc": 0.6502403846153846,
+                    "pr_auc": 0.7870047372054095
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 20,
+                    "roc_auc": 0.8044444444444444,
+                    "pr_auc": 0.4260424086628267
+                  }
+                ],
+                "macro_precision": 0.23636363636363636,
+                "macro_recall": 0.3333333333333333,
+                "macro_f1": 0.2765957446808511,
+                "weighted_f1": 0.588394584139265,
+                "macro_roc_auc": 0.585801972498401,
+                "macro_pr_auc": 0.428673963563464
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.2012578616352201,
+              "regime_accuracy": 0.4324324429035187,
+              "regime_loss": 0.7837122072138436,
+              "regression_rmse_log_rv": 0.8208244313782258,
+              "regression_mae_log_rv": 0.6746289001794549,
+              "regression_loss": 0.6737527471473878,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    44,
+                    0
+                  ],
+                  [
+                    0,
+                    48,
+                    0
+                  ],
+                  [
+                    0,
+                    19,
+                    0
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 44,
+                    "roc_auc": 0.3724559023066486,
+                    "pr_auc": 0.325014211060172
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.43243243243243246,
+                    "recall": 1.0,
+                    "f1": 0.6037735849056604,
+                    "support": 48,
+                    "roc_auc": 0.40476190476190477,
+                    "pr_auc": 0.42380967960185495
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 19,
+                    "roc_auc": 0.5703661327231121,
+                    "pr_auc": 0.2988153474470751
+                  }
+                ],
+                "macro_precision": 0.14414414414414414,
+                "macro_recall": 0.3333333333333333,
+                "macro_f1": 0.2012578616352201,
+                "weighted_f1": 0.2610912799592045,
+                "macro_roc_auc": 0.44919464659722186,
+                "macro_pr_auc": 0.34921307936970064
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.3847465886939571,
+              "regime_accuracy": 0.557692289352417,
+              "regime_loss": 0.681835073691148,
+              "regression_rmse_log_rv": 0.8518235667399899,
+              "regression_mae_log_rv": 0.6874024582077534,
+              "regression_loss": 0.7256033888536381,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    26,
+                    0
+                  ],
+                  [
+                    0,
+                    49,
+                    3
+                  ],
+                  [
+                    0,
+                    17,
+                    9
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 26,
+                    "roc_auc": 0.42110453648915186,
+                    "pr_auc": 0.2101062654616151
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.532608695652174,
+                    "recall": 0.9423076923076923,
+                    "f1": 0.6805555555555555,
+                    "support": 52,
+                    "roc_auc": 0.6024408284023669,
+                    "pr_auc": 0.5508567671091988
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.75,
+                    "recall": 0.34615384615384615,
+                    "f1": 0.4736842105263157,
+                    "support": 26,
+                    "roc_auc": 0.7046351084812623,
+                    "pr_auc": 0.5428687934701826
+                  }
+                ],
+                "macro_precision": 0.4275362318840579,
+                "macro_recall": 0.42948717948717946,
+                "macro_f1": 0.3847465886939571,
+                "weighted_f1": 0.45869883040935666,
+                "macro_roc_auc": 0.576060157790927,
+                "macro_pr_auc": 0.43461060868033213
+              }
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "regression",
+        "seed": 47,
+        "regression_alpha": 0.7,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.2508771929824561,
+              "regime_accuracy": 0.38333332538604736,
+              "regime_loss": 0.8064696564023023,
+              "regression_rmse_log_rv": 0.9033809090383208,
+              "regression_mae_log_rv": 0.7731536270487899,
+              "regression_loss": 0.8160970668149029,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    4,
+                    24,
+                    0
+                  ],
+                  [
+                    2,
+                    42,
+                    1
+                  ],
+                  [
+                    6,
+                    41,
+                    0
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.3333333333333333,
+                    "recall": 0.14285714285714285,
+                    "f1": 0.2,
+                    "support": 28,
+                    "roc_auc": 0.5535714285714286,
+                    "pr_auc": 0.3496071078436283
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.3925233644859813,
+                    "recall": 0.9333333333333333,
+                    "f1": 0.5526315789473684,
+                    "support": 45,
+                    "roc_auc": 0.6115555555555555,
+                    "pr_auc": 0.5107304804869749
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 47,
+                    "roc_auc": 0.5205479452054794,
+                    "pr_auc": 0.4100906613477935
+                  }
+                ],
+                "macro_precision": 0.2419522326064382,
+                "macro_recall": 0.35873015873015873,
+                "macro_f1": 0.2508771929824561,
+                "weighted_f1": 0.2539035087719298,
+                "macro_roc_auc": 0.5618916431108212,
+                "macro_pr_auc": 0.4234760832261322
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.0634920634920635,
+              "regime_accuracy": 0.10169491171836853,
+              "regime_loss": 1.0344023441864272,
+              "regression_rmse_log_rv": 0.9898509778019522,
+              "regression_mae_log_rv": 0.9039355134117907,
+              "regression_loss": 0.9798049582554808,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    10,
+                    0
+                  ],
+                  [
+                    0,
+                    12,
+                    0
+                  ],
+                  [
+                    4,
+                    92,
+                    0
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 10,
+                    "roc_auc": 0.25092592592592594,
+                    "pr_auc": 0.053009348110442216
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.10526315789473684,
+                    "recall": 1.0,
+                    "f1": 0.1904761904761905,
+                    "support": 12,
+                    "roc_auc": 0.5,
+                    "pr_auc": 0.10202321928407135
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 96,
+                    "roc_auc": 0.34422348484848486,
+                    "pr_auc": 0.7458840650188255
+                  }
+                ],
+                "macro_precision": 0.03508771929824561,
+                "macro_recall": 0.3333333333333333,
+                "macro_f1": 0.0634920634920635,
+                "weighted_f1": 0.019370460048426155,
+                "macro_roc_auc": 0.36504980359147027,
+                "macro_pr_auc": 0.3003055441377797
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.3968253968253968,
+              "regime_accuracy": 0.7272727489471436,
+              "regime_loss": 0.6467652407559481,
+              "regression_rmse_log_rv": 0.4139430014414081,
+              "regression_mae_log_rv": 0.32208985968450593,
+              "regression_loss": 0.17134880844232162,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    12,
+                    0
+                  ],
+                  [
+                    0,
+                    75,
+                    3
+                  ],
+                  [
+                    0,
+                    15,
+                    5
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 12,
+                    "roc_auc": 0.44387755102040816,
+                    "pr_auc": 0.09351074292855041
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.7352941176470589,
+                    "recall": 0.9615384615384616,
+                    "f1": 0.8333333333333333,
+                    "support": 78,
+                    "roc_auc": 0.6205929487179487,
+                    "pr_auc": 0.8089860561267492
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.625,
+                    "recall": 0.25,
+                    "f1": 0.35714285714285715,
+                    "support": 20,
+                    "roc_auc": 0.6683333333333333,
+                    "pr_auc": 0.3063300980396954
+                  }
+                ],
+                "macro_precision": 0.4534313725490196,
+                "macro_recall": 0.4038461538461539,
+                "macro_f1": 0.3968253968253968,
+                "weighted_f1": 0.6558441558441558,
+                "macro_roc_auc": 0.5776012776905634,
+                "macro_pr_auc": 0.40294229903166506
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.2012578616352201,
+              "regime_accuracy": 0.4324324429035187,
+              "regime_loss": 0.7065167324252426,
+              "regression_rmse_log_rv": 0.7757957014649617,
+              "regression_mae_log_rv": 0.595698508929025,
+              "regression_loss": 0.6018589704115119,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    44,
+                    0
+                  ],
+                  [
+                    0,
+                    48,
+                    0
+                  ],
+                  [
+                    0,
+                    19,
+                    0
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 44,
+                    "roc_auc": 0.46200814111261873,
+                    "pr_auc": 0.3413832887102327
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.43243243243243246,
+                    "recall": 1.0,
+                    "f1": 0.6037735849056604,
+                    "support": 48,
+                    "roc_auc": 0.5479497354497355,
+                    "pr_auc": 0.46768078946325325
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 19,
+                    "roc_auc": 0.6372997711670481,
+                    "pr_auc": 0.27829447486273556
+                  }
+                ],
+                "macro_precision": 0.14414414414414414,
+                "macro_recall": 0.3333333333333333,
+                "macro_f1": 0.2012578616352201,
+                "weighted_f1": 0.2610912799592045,
+                "macro_roc_auc": 0.5490858825764674,
+                "macro_pr_auc": 0.36245285101207386
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.248347272003186,
+              "regime_accuracy": 0.5096153616905212,
+              "regime_loss": 0.6803996104460496,
+              "regression_rmse_log_rv": 0.7893083326340309,
+              "regression_mae_log_rv": 0.644552594382101,
+              "regression_loss": 0.623007643965514,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    26,
+                    0
+                  ],
+                  [
+                    0,
+                    52,
+                    0
+                  ],
+                  [
+                    0,
+                    25,
+                    1
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 26,
+                    "roc_auc": 0.6000986193293886,
+                    "pr_auc": 0.2723519838546019
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.5048543689320388,
+                    "recall": 1.0,
+                    "f1": 0.6709677419354839,
+                    "support": 52,
+                    "roc_auc": 0.5891272189349113,
+                    "pr_auc": 0.5871067927807543
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 1.0,
+                    "recall": 0.038461538461538464,
+                    "f1": 0.07407407407407407,
+                    "support": 26,
+                    "roc_auc": 0.5739644970414202,
+                    "pr_auc": 0.3274019203730104
+                  }
+                ],
+                "macro_precision": 0.5016181229773463,
+                "macro_recall": 0.3461538461538462,
+                "macro_f1": 0.248347272003186,
+                "weighted_f1": 0.35400238948626045,
+                "macro_roc_auc": 0.5877301117685733,
+                "macro_pr_auc": 0.3956202323361222
+              }
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "regression",
+        "seed": 71,
+        "regression_alpha": 0.7,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.2517130508117225,
+              "regime_accuracy": 0.3083333373069763,
+              "regime_loss": 0.7454928918726479,
+              "regression_rmse_log_rv": 0.8680403799366276,
+              "regression_mae_log_rv": 0.7331700026115868,
+              "regression_loss": 0.7534941012005248,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    10,
+                    18,
+                    0
+                  ],
+                  [
+                    19,
+                    26,
+                    0
+                  ],
+                  [
+                    11,
+                    35,
+                    1
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.25,
+                    "recall": 0.35714285714285715,
+                    "f1": 0.2941176470588235,
+                    "support": 28,
+                    "roc_auc": 0.453027950310559,
+                    "pr_auc": 0.21385268747528716
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.3291139240506329,
+                    "recall": 0.5777777777777777,
+                    "f1": 0.4193548387096774,
+                    "support": 45,
+                    "roc_auc": 0.43377777777777776,
+                    "pr_auc": 0.3258870280974034
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 1.0,
+                    "recall": 0.02127659574468085,
+                    "f1": 0.04166666666666667,
+                    "support": 47,
+                    "roc_auc": 0.5313319731856602,
+                    "pr_auc": 0.4349077080599945
+                  }
+                ],
+                "macro_precision": 0.5263713080168776,
+                "macro_recall": 0.3187324102217719,
+                "macro_f1": 0.2517130508117225,
+                "weighted_f1": 0.24220495994096558,
+                "macro_roc_auc": 0.4727125670913323,
+                "macro_pr_auc": 0.32488247454422836
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.08513563882979691,
+              "regime_accuracy": 0.09322033822536469,
+              "regime_loss": 0.8768942184367422,
+              "regression_rmse_log_rv": 0.6220665849286244,
+              "regression_mae_log_rv": 0.5236788498143018,
+              "regression_loss": 0.38696683608476146,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    1,
+                    9,
+                    0
+                  ],
+                  [
+                    3,
+                    9,
+                    0
+                  ],
+                  [
+                    13,
+                    82,
+                    1
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.058823529411764705,
+                    "recall": 0.1,
+                    "f1": 0.07407407407407408,
+                    "support": 10,
+                    "roc_auc": 0.33425925925925926,
+                    "pr_auc": 0.06290094221695586
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.09,
+                    "recall": 0.75,
+                    "f1": 0.16071428571428573,
+                    "support": 12,
+                    "roc_auc": 0.4488993710691824,
+                    "pr_auc": 0.09850042741660317
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 1.0,
+                    "recall": 0.010416666666666666,
+                    "f1": 0.020618556701030924,
+                    "support": 96,
+                    "roc_auc": 0.15009469696969696,
+                    "pr_auc": 0.6624477992308719
+                  }
+                ],
+                "macro_precision": 0.3829411764705883,
+                "macro_recall": 0.2868055555555556,
+                "macro_f1": 0.08513563882979691,
+                "weighted_f1": 0.03939570858145033,
+                "macro_roc_auc": 0.3110844424327129,
+                "macro_pr_auc": 0.274616389621477
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.26210826210826216,
+              "regime_accuracy": 0.38181817531585693,
+              "regime_loss": 0.7330521399324591,
+              "regression_rmse_log_rv": 0.558070719223543,
+              "regression_mae_log_rv": 0.40080117666035553,
+              "regression_loss": 0.31144292765468257,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    8,
+                    4,
+                    0
+                  ],
+                  [
+                    39,
+                    34,
+                    5
+                  ],
+                  [
+                    19,
+                    1,
+                    0
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.12121212121212122,
+                    "recall": 0.6666666666666666,
+                    "f1": 0.20512820512820512,
+                    "support": 12,
+                    "roc_auc": 0.3835034013605442,
+                    "pr_auc": 0.08068617023706316
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.8717948717948718,
+                    "recall": 0.4358974358974359,
+                    "f1": 0.5811965811965812,
+                    "support": 78,
+                    "roc_auc": 0.6638621794871795,
+                    "pr_auc": 0.8338724212055573
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 20,
+                    "roc_auc": 0.3672222222222222,
+                    "pr_auc": 0.13368316850465584
+                  }
+                ],
+                "macro_precision": 0.331002331002331,
+                "macro_recall": 0.36752136752136755,
+                "macro_f1": 0.26210826210826216,
+                "weighted_f1": 0.43449883449883453,
+                "macro_roc_auc": 0.471529267689982,
+                "macro_pr_auc": 0.3494139199824254
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.22201607915893629,
+              "regime_accuracy": 0.4234234094619751,
+              "regime_loss": 0.7080467288494433,
+              "regression_rmse_log_rv": 0.7349610069316005,
+              "regression_mae_log_rv": 0.5841130083007319,
+              "regression_loss": 0.5401676817099121,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    2,
+                    42,
+                    0
+                  ],
+                  [
+                    3,
+                    45,
+                    0
+                  ],
+                  [
+                    0,
+                    19,
+                    0
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.4,
+                    "recall": 0.045454545454545456,
+                    "f1": 0.0816326530612245,
+                    "support": 44,
+                    "roc_auc": 0.501696065128901,
+                    "pr_auc": 0.3912726074834638
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.42452830188679247,
+                    "recall": 0.9375,
+                    "f1": 0.5844155844155844,
+                    "support": 48,
+                    "roc_auc": 0.5694444444444444,
+                    "pr_auc": 0.5167911846441309
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 19,
+                    "roc_auc": 0.4633867276887872,
+                    "pr_auc": 0.19976746908526657
+                  }
+                ],
+                "macro_precision": 0.2748427672955975,
+                "macro_recall": 0.32765151515151514,
+                "macro_f1": 0.22201607915893629,
+                "weighted_f1": 0.28507914222199937,
+                "macro_roc_auc": 0.5115090790873775,
+                "macro_pr_auc": 0.3692770870709538
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.29007158418923124,
+              "regime_accuracy": 0.4038461446762085,
+              "regime_loss": 0.727811914223891,
+              "regression_rmse_log_rv": 0.7784372541534479,
+              "regression_mae_log_rv": 0.6467238031059074,
+              "regression_loss": 0.6059645586539596,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    11,
+                    15,
+                    0
+                  ],
+                  [
+                    21,
+                    31,
+                    0
+                  ],
+                  [
+                    5,
+                    21,
+                    0
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.2972972972972973,
+                    "recall": 0.4230769230769231,
+                    "f1": 0.34920634920634924,
+                    "support": 26,
+                    "roc_auc": 0.51232741617357,
+                    "pr_auc": 0.34334894881494554
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.4626865671641791,
+                    "recall": 0.5961538461538461,
+                    "f1": 0.5210084033613446,
+                    "support": 52,
+                    "roc_auc": 0.40236686390532544,
+                    "pr_auc": 0.4178193472143626
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 26,
+                    "roc_auc": 0.43096646942800787,
+                    "pr_auc": 0.20830077618313386
+                  }
+                ],
+                "macro_precision": 0.25332795482049214,
+                "macro_recall": 0.3397435897435897,
+                "macro_f1": 0.29007158418923124,
+                "weighted_f1": 0.3478057889822596,
+                "macro_roc_auc": 0.44855358316896776,
+                "macro_pr_auc": 0.32315635740414733
+              }
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "regression",
+        "seed": 97,
+        "regression_alpha": 0.7,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.2963061387191071,
+              "regime_accuracy": 0.4000000059604645,
+              "regime_loss": 0.7650536484723786,
+              "regression_rmse_log_rv": 0.882537865567691,
+              "regression_mae_log_rv": 0.7565812043903861,
+              "regression_loss": 0.7788730841607758,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    9,
+                    0,
+                    19
+                  ],
+                  [
+                    8,
+                    0,
+                    37
+                  ],
+                  [
+                    8,
+                    0,
+                    39
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.36,
+                    "recall": 0.32142857142857145,
+                    "f1": 0.33962264150943394,
+                    "support": 28,
+                    "roc_auc": 0.6541149068322981,
+                    "pr_auc": 0.36833680880246955
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 45,
+                    "roc_auc": 0.5277037037037037,
+                    "pr_auc": 0.4329324482037628
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.4105263157894737,
+                    "recall": 0.8297872340425532,
+                    "f1": 0.5492957746478874,
+                    "support": 47,
+                    "roc_auc": 0.6196444185368697,
+                    "pr_auc": 0.4753076805867603
+                  }
+                ],
+                "macro_precision": 0.2568421052631579,
+                "macro_recall": 0.38373860182370817,
+                "macro_f1": 0.2963061387191071,
+                "weighted_f1": 0.2943861280892905,
+                "macro_roc_auc": 0.6004876763576238,
+                "macro_pr_auc": 0.4255256458643309
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.296998420221169,
+              "regime_accuracy": 0.7966101765632629,
+              "regime_loss": 0.5862665105674226,
+              "regression_rmse_log_rv": 0.9462460194206429,
+              "regression_mae_log_rv": 0.8408237687801405,
+              "regression_loss": 0.8953815292694117,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    0,
+                    10
+                  ],
+                  [
+                    1,
+                    0,
+                    11
+                  ],
+                  [
+                    2,
+                    0,
+                    94
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 10,
+                    "roc_auc": 0.6666666666666666,
+                    "pr_auc": 0.1339590465719104
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 12,
+                    "roc_auc": 0.49842767295597484,
+                    "pr_auc": 0.09907508525335221
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.8173913043478261,
+                    "recall": 0.9791666666666666,
+                    "f1": 0.8909952606635071,
+                    "support": 96,
+                    "roc_auc": 0.7566287878787878,
+                    "pr_auc": 0.9392797203807928
+                  }
+                ],
+                "macro_precision": 0.27246376811594203,
+                "macro_recall": 0.3263888888888889,
+                "macro_f1": 0.296998420221169,
+                "weighted_f1": 0.7248775002008193,
+                "macro_roc_auc": 0.6405743758338097,
+                "macro_pr_auc": 0.39077128406868517
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.2228817751395661,
+              "regime_accuracy": 0.22727273404598236,
+              "regime_loss": 0.9711881637573242,
+              "regression_rmse_log_rv": 0.40893366077291254,
+              "regression_mae_log_rv": 0.31963905832010575,
+              "regression_loss": 0.1672267389131355,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    7,
+                    0,
+                    5
+                  ],
+                  [
+                    32,
+                    0,
+                    46
+                  ],
+                  [
+                    2,
+                    0,
+                    18
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.17073170731707318,
+                    "recall": 0.5833333333333334,
+                    "f1": 0.2641509433962264,
+                    "support": 12,
+                    "roc_auc": 0.5943877551020408,
+                    "pr_auc": 0.12484025506643198
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 78,
+                    "roc_auc": 0.5232371794871795,
+                    "pr_auc": 0.7439230054647247
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.2608695652173913,
+                    "recall": 0.9,
+                    "f1": 0.40449438202247195,
+                    "support": 20,
+                    "roc_auc": 0.7811111111111111,
+                    "pr_auc": 0.37547002824778786
+                  }
+                ],
+                "macro_precision": 0.1438670908448215,
+                "macro_recall": 0.49444444444444446,
+                "macro_f1": 0.2228817751395661,
+                "weighted_f1": 0.1023608996473105,
+                "macro_roc_auc": 0.6329120152334439,
+                "macro_pr_auc": 0.41474442959298147
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.12589011902905556,
+              "regime_accuracy": 0.171171173453331,
+              "regime_loss": 0.8071410281030872,
+              "regression_rmse_log_rv": 0.7725814958193387,
+              "regression_mae_log_rv": 0.6317321182404821,
+              "regression_loss": 0.5968821676824467,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    3,
+                    0,
+                    41
+                  ],
+                  [
+                    3,
+                    0,
+                    45
+                  ],
+                  [
+                    3,
+                    0,
+                    16
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.3333333333333333,
+                    "recall": 0.06818181818181818,
+                    "f1": 0.11320754716981131,
+                    "support": 44,
+                    "roc_auc": 0.6139755766621439,
+                    "pr_auc": 0.45538059104411777
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 48,
+                    "roc_auc": 0.416005291005291,
+                    "pr_auc": 0.36620040392946357
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.1568627450980392,
+                    "recall": 0.8421052631578947,
+                    "f1": 0.2644628099173554,
+                    "support": 19,
+                    "roc_auc": 0.44336384439359267,
+                    "pr_auc": 0.24689309913770532
+                  }
+                ],
+                "macro_precision": 0.16339869281045752,
+                "macro_recall": 0.3034290271132376,
+                "macro_f1": 0.12589011902905556,
+                "weighted_f1": 0.0901434726477608,
+                "macro_roc_auc": 0.49111490402034247,
+                "macro_pr_auc": 0.3561580313704289
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.27936403146833905,
+              "regime_accuracy": 0.3173076808452606,
+              "regime_loss": 0.8465110430350671,
+              "regression_rmse_log_rv": 0.8154422617623747,
+              "regression_mae_log_rv": 0.6780349704204127,
+              "regression_loss": 0.6649460822681371,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    13,
+                    0,
+                    13
+                  ],
+                  [
+                    28,
+                    0,
+                    24
+                  ],
+                  [
+                    6,
+                    0,
+                    20
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.2765957446808511,
+                    "recall": 0.5,
+                    "f1": 0.3561643835616438,
+                    "support": 26,
+                    "roc_auc": 0.5507889546351085,
+                    "pr_auc": 0.24711844198254343
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 52,
+                    "roc_auc": 0.33394970414201186,
+                    "pr_auc": 0.39615264819352153
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.3508771929824561,
+                    "recall": 0.7692307692307693,
+                    "f1": 0.48192771084337344,
+                    "support": 26,
+                    "roc_auc": 0.7307692307692307,
+                    "pr_auc": 0.600837165210007
+                  }
+                ],
+                "macro_precision": 0.20915764588776908,
+                "macro_recall": 0.4230769230769231,
+                "macro_f1": 0.27936403146833905,
+                "weighted_f1": 0.20952302360125433,
+                "macro_roc_auc": 0.5385026298487837,
+                "macro_pr_auc": 0.41470275179535726
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "dual": [
+      {
+        "head_mode": "dual",
+        "seed": 11,
+        "regression_alpha": 0.7,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.4247893699493201,
+              "regime_accuracy": 0.42500001192092896,
+              "regime_loss": 0.7235841881650344,
+              "regression_rmse_log_rv": 0.8918132215905702,
+              "regression_mae_log_rv": 0.7691956179274712,
+              "regression_loss": 0.7953308222037515,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    13,
+                    9,
+                    6
+                  ],
+                  [
+                    7,
+                    15,
+                    23
+                  ],
+                  [
+                    10,
+                    14,
+                    23
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.43333333333333335,
+                    "recall": 0.4642857142857143,
+                    "f1": 0.4482758620689655,
+                    "support": 28,
+                    "roc_auc": 0.6731366459627329,
+                    "pr_auc": 0.3559327650133657
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.39473684210526316,
+                    "recall": 0.3333333333333333,
+                    "f1": 0.36144578313253006,
+                    "support": 45,
+                    "roc_auc": 0.461037037037037,
+                    "pr_auc": 0.46434740988260753
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.4423076923076923,
+                    "recall": 0.48936170212765956,
+                    "f1": 0.46464646464646464,
+                    "support": 47,
+                    "roc_auc": 0.503643252696007,
+                    "pr_auc": 0.36410737829670875
+                  }
+                ],
+                "macro_precision": 0.42345928924876297,
+                "macro_recall": 0.4289935832489024,
+                "macro_f1": 0.4247893699493201,
+                "weighted_f1": 0.4221264018106561,
+                "macro_roc_auc": 0.545938978565259,
+                "macro_pr_auc": 0.3947958510642273
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.548132183908046,
+              "regime_accuracy": 0.7457627058029175,
+              "regime_loss": 0.49993278414516124,
+              "regression_rmse_log_rv": 0.5614742367558432,
+              "regression_mae_log_rv": 0.4784064064339056,
+              "regression_loss": 0.31525331854055666,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    7,
+                    3,
+                    0
+                  ],
+                  [
+                    5,
+                    5,
+                    2
+                  ],
+                  [
+                    10,
+                    10,
+                    76
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.3181818181818182,
+                    "recall": 0.7,
+                    "f1": 0.4375,
+                    "support": 10,
+                    "roc_auc": 0.9296296296296296,
+                    "pr_auc": 0.6104522521416292
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.2777777777777778,
+                    "recall": 0.4166666666666667,
+                    "f1": 0.33333333333333337,
+                    "support": 12,
+                    "roc_auc": 0.7012578616352201,
+                    "pr_auc": 0.1664713717269394
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.9743589743589743,
+                    "recall": 0.7916666666666666,
+                    "f1": 0.8735632183908045,
+                    "support": 96,
+                    "roc_auc": 0.8816287878787878,
+                    "pr_auc": 0.9633243525547949
+                  }
+                ],
+                "macro_precision": 0.5234395234395234,
+                "macro_recall": 0.6361111111111111,
+                "macro_f1": 0.548132183908046,
+                "weighted_f1": 0.7816700759789597,
+                "macro_roc_auc": 0.8375054263812126,
+                "macro_pr_auc": 0.5800826588077879
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.2923344854379337,
+              "regime_accuracy": 0.290909081697464,
+              "regime_loss": 0.6964923620224,
+              "regression_rmse_log_rv": 0.41497665946866596,
+              "regression_mae_log_rv": 0.31384951260406524,
+              "regression_loss": 0.17220562790377314,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    7,
+                    2,
+                    3
+                  ],
+                  [
+                    34,
+                    7,
+                    37
+                  ],
+                  [
+                    2,
+                    0,
+                    18
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.16279069767441862,
+                    "recall": 0.5833333333333334,
+                    "f1": 0.2545454545454546,
+                    "support": 12,
+                    "roc_auc": 0.6751700680272109,
+                    "pr_auc": 0.1625512287865148
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.7777777777777778,
+                    "recall": 0.08974358974358974,
+                    "f1": 0.16091954022988506,
+                    "support": 78,
+                    "roc_auc": 0.42467948717948717,
+                    "pr_auc": 0.7330071194268991
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.3103448275862069,
+                    "recall": 0.9,
+                    "f1": 0.4615384615384615,
+                    "support": 20,
+                    "roc_auc": 0.7544444444444445,
+                    "pr_auc": 0.3075013396128796
+                  }
+                ],
+                "macro_precision": 0.41697110101280116,
+                "macro_recall": 0.5243589743589744,
+                "macro_f1": 0.2923344854379337,
+                "weighted_f1": 0.22579126202950656,
+                "macro_roc_auc": 0.6180979998837142,
+                "macro_pr_auc": 0.40101989594209786
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.4457872323084133,
+              "regime_accuracy": 0.46846845746040344,
+              "regime_loss": 0.6871413228190023,
+              "regression_rmse_log_rv": 0.7506215198201734,
+              "regression_mae_log_rv": 0.6235535863015029,
+              "regression_loss": 0.563432666017147,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    29,
+                    10,
+                    5
+                  ],
+                  [
+                    24,
+                    15,
+                    9
+                  ],
+                  [
+                    8,
+                    3,
+                    8
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.47540983606557374,
+                    "recall": 0.6590909090909091,
+                    "f1": 0.5523809523809523,
+                    "support": 44,
+                    "roc_auc": 0.6156716417910447,
+                    "pr_auc": 0.5179544260539426
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.5357142857142857,
+                    "recall": 0.3125,
+                    "f1": 0.39473684210526316,
+                    "support": 48,
+                    "roc_auc": 0.5234788359788359,
+                    "pr_auc": 0.5016459017273508
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.36363636363636365,
+                    "recall": 0.42105263157894735,
+                    "f1": 0.3902439024390244,
+                    "support": 19,
+                    "roc_auc": 0.6155606407322655,
+                    "pr_auc": 0.2801017480818357
+                  }
+                ],
+                "macro_precision": 0.458253495138741,
+                "macro_recall": 0.46421451355661886,
+                "macro_f1": 0.4457872323084133,
+                "weighted_f1": 0.456457337586991,
+                "macro_roc_auc": 0.5849037061673821,
+                "macro_pr_auc": 0.43323402528770966
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.4175027870680044,
+              "regime_accuracy": 0.4423076808452606,
+              "regime_loss": 0.6842577594977158,
+              "regression_rmse_log_rv": 0.8640393775712678,
+              "regression_mae_log_rv": 0.6917289080940043,
+              "regression_loss": 0.7465640459937439,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    6,
+                    11,
+                    9
+                  ],
+                  [
+                    15,
+                    24,
+                    13
+                  ],
+                  [
+                    5,
+                    5,
+                    16
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.23076923076923078,
+                    "recall": 0.23076923076923078,
+                    "f1": 0.23076923076923078,
+                    "support": 26,
+                    "roc_auc": 0.5660749506903353,
+                    "pr_auc": 0.27115217321887025
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.6,
+                    "recall": 0.46153846153846156,
+                    "f1": 0.5217391304347826,
+                    "support": 52,
+                    "roc_auc": 0.6346153846153846,
+                    "pr_auc": 0.6787005679043924
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.42105263157894735,
+                    "recall": 0.6153846153846154,
+                    "f1": 0.5,
+                    "support": 26,
+                    "roc_auc": 0.6834319526627219,
+                    "pr_auc": 0.5392883879924473
+                  }
+                ],
+                "macro_precision": 0.41727395411605933,
+                "macro_recall": 0.4358974358974359,
+                "macro_f1": 0.4175027870680044,
+                "weighted_f1": 0.443561872909699,
+                "macro_roc_auc": 0.6280407626561473,
+                "macro_pr_auc": 0.4963803763719033
+              }
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "dual",
+        "seed": 29,
+        "regression_alpha": 0.7,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.4038961038961039,
+              "regime_accuracy": 0.4000000059604645,
+              "regime_loss": 0.7305937238483492,
+              "regression_rmse_log_rv": 0.8817129693320477,
+              "regression_mae_log_rv": 0.7598276744189206,
+              "regression_loss": 0.7774177602883364,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    17,
+                    7,
+                    4
+                  ],
+                  [
+                    8,
+                    12,
+                    25
+                  ],
+                  [
+                    15,
+                    13,
+                    19
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.425,
+                    "recall": 0.6071428571428571,
+                    "f1": 0.5,
+                    "support": 28,
+                    "roc_auc": 0.7531055900621118,
+                    "pr_auc": 0.3819281734843198
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.375,
+                    "recall": 0.26666666666666666,
+                    "f1": 0.31168831168831174,
+                    "support": 45,
+                    "roc_auc": 0.44325925925925924,
+                    "pr_auc": 0.4172886783788312
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.3958333333333333,
+                    "recall": 0.40425531914893614,
+                    "f1": 0.39999999999999997,
+                    "support": 47,
+                    "roc_auc": 0.5389099387933547,
+                    "pr_auc": 0.3969392651667112
+                  }
+                ],
+                "macro_precision": 0.3986111111111111,
+                "macro_recall": 0.42602161431948665,
+                "macro_f1": 0.4038961038961039,
+                "weighted_f1": 0.39021645021645024,
+                "macro_roc_auc": 0.5784249293715752,
+                "macro_pr_auc": 0.39871870567662077
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.6068718449763882,
+              "regime_accuracy": 0.7881355881690979,
+              "regime_loss": 0.4261050764786995,
+              "regression_rmse_log_rv": 0.5438318690497282,
+              "regression_mae_log_rv": 0.46584914189021465,
+              "regression_loss": 0.2957531017941208,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    6,
+                    4,
+                    0
+                  ],
+                  [
+                    3,
+                    7,
+                    2
+                  ],
+                  [
+                    4,
+                    12,
+                    80
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.46153846153846156,
+                    "recall": 0.6,
+                    "f1": 0.5217391304347826,
+                    "support": 10,
+                    "roc_auc": 0.9592592592592593,
+                    "pr_auc": 0.5616144527986633
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.30434782608695654,
+                    "recall": 0.5833333333333334,
+                    "f1": 0.4,
+                    "support": 12,
+                    "roc_auc": 0.7452830188679245,
+                    "pr_auc": 0.1937715322166704
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.975609756097561,
+                    "recall": 0.8333333333333334,
+                    "f1": 0.8988764044943819,
+                    "support": 96,
+                    "roc_auc": 0.8863636363636364,
+                    "pr_auc": 0.9673289651397192
+                  }
+                ],
+                "macro_precision": 0.580498681240993,
+                "macro_recall": 0.6722222222222222,
+                "macro_f1": 0.6068718449763882,
+                "weighted_f1": 0.8161824248797329,
+                "macro_roc_auc": 0.8636353048302734,
+                "macro_pr_auc": 0.574238316718351
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.3712458452041785,
+              "regime_accuracy": 0.48181816935539246,
+              "regime_loss": 0.6061524206941779,
+              "regression_rmse_log_rv": 0.4760248893012163,
+              "regression_mae_log_rv": 0.35769808923783286,
+              "regression_loss": 0.22659969523423523,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    1,
+                    8,
+                    3
+                  ],
+                  [
+                    14,
+                    37,
+                    27
+                  ],
+                  [
+                    0,
+                    5,
+                    15
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.06666666666666667,
+                    "recall": 0.08333333333333333,
+                    "f1": 0.07407407407407407,
+                    "support": 12,
+                    "roc_auc": 0.6768707482993197,
+                    "pr_auc": 0.159216084557798
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.74,
+                    "recall": 0.47435897435897434,
+                    "f1": 0.578125,
+                    "support": 78,
+                    "roc_auc": 0.5693108974358975,
+                    "pr_auc": 0.7612299889989278
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.3333333333333333,
+                    "recall": 0.75,
+                    "f1": 0.46153846153846156,
+                    "support": 20,
+                    "roc_auc": 0.8172222222222222,
+                    "pr_auc": 0.44155111202350067
+                  }
+                ],
+                "macro_precision": 0.37999999999999995,
+                "macro_recall": 0.4358974358974359,
+                "macro_f1": 0.3712458452041785,
+                "weighted_f1": 0.5019400738150738,
+                "macro_roc_auc": 0.6878012893191464,
+                "macro_pr_auc": 0.4539990618600755
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.32854130726471154,
+              "regime_accuracy": 0.4234234094619751,
+              "regime_loss": 0.7316490437491209,
+              "regression_rmse_log_rv": 0.8307149440325506,
+              "regression_mae_log_rv": 0.6712638319277011,
+              "regression_loss": 0.6900873182390038,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    43,
+                    1
+                  ],
+                  [
+                    0,
+                    39,
+                    9
+                  ],
+                  [
+                    0,
+                    11,
+                    8
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 44,
+                    "roc_auc": 0.4854138398914518,
+                    "pr_auc": 0.4609926071476802
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.41935483870967744,
+                    "recall": 0.8125,
+                    "f1": 0.5531914893617021,
+                    "support": 48,
+                    "roc_auc": 0.3974867724867725,
+                    "pr_auc": 0.41214856171748765
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.4444444444444444,
+                    "recall": 0.42105263157894735,
+                    "f1": 0.43243243243243246,
+                    "support": 19,
+                    "roc_auc": 0.5709382151029748,
+                    "pr_auc": 0.2366853344371075
+                  }
+                ],
+                "macro_precision": 0.2879330943847073,
+                "macro_recall": 0.41118421052631576,
+                "macro_f1": 0.32854130726471154,
+                "weighted_f1": 0.3132379072574587,
+                "macro_roc_auc": 0.48461294249373305,
+                "macro_pr_auc": 0.3699421677674251
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.4348384225660687,
+              "regime_accuracy": 0.5288461446762085,
+              "regime_loss": 0.6630199093085068,
+              "regression_rmse_log_rv": 0.8629172921431181,
+              "regression_mae_log_rv": 0.6961853809636802,
+              "regression_loss": 0.7446262530796114,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    2,
+                    15,
+                    9
+                  ],
+                  [
+                    3,
+                    35,
+                    14
+                  ],
+                  [
+                    1,
+                    7,
+                    18
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.3333333333333333,
+                    "recall": 0.07692307692307693,
+                    "f1": 0.125,
+                    "support": 26,
+                    "roc_auc": 0.6055226824457594,
+                    "pr_auc": 0.35168623622471745
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.6140350877192983,
+                    "recall": 0.6730769230769231,
+                    "f1": 0.6422018348623854,
+                    "support": 52,
+                    "roc_auc": 0.6390532544378699,
+                    "pr_auc": 0.6163445837227858
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.43902439024390244,
+                    "recall": 0.6923076923076923,
+                    "f1": 0.5373134328358209,
+                    "support": 26,
+                    "roc_auc": 0.7199211045364892,
+                    "pr_auc": 0.5057390176032113
+                  }
+                ],
+                "macro_precision": 0.4621309370988447,
+                "macro_recall": 0.4807692307692308,
+                "macro_f1": 0.4348384225660687,
+                "weighted_f1": 0.4866792756401479,
+                "macro_roc_auc": 0.6548323471400395,
+                "macro_pr_auc": 0.49125661251690483
+              }
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "dual",
+        "seed": 47,
+        "regression_alpha": 0.7,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.4008520420479733,
+              "regime_accuracy": 0.4166666567325592,
+              "regime_loss": 0.7199617635477534,
+              "regression_rmse_log_rv": 0.8604839241381477,
+              "regression_mae_log_rv": 0.7423466004489455,
+              "regression_loss": 0.7404325837001854,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    20,
+                    7,
+                    1
+                  ],
+                  [
+                    11,
+                    8,
+                    26
+                  ],
+                  [
+                    24,
+                    1,
+                    22
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.36363636363636365,
+                    "recall": 0.7142857142857143,
+                    "f1": 0.48192771084337355,
+                    "support": 28,
+                    "roc_auc": 0.7686335403726708,
+                    "pr_auc": 0.443820624170342
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.5,
+                    "recall": 0.17777777777777778,
+                    "f1": 0.26229508196721313,
+                    "support": 45,
+                    "roc_auc": 0.4477037037037037,
+                    "pr_auc": 0.3923024848661645
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.4489795918367347,
+                    "recall": 0.46808510638297873,
+                    "f1": 0.4583333333333333,
+                    "support": 47,
+                    "roc_auc": 0.5287088312445352,
+                    "pr_auc": 0.3983526207660281
+                  }
+                ],
+                "macro_precision": 0.4375386518243661,
+                "macro_recall": 0.45338286614882356,
+                "macro_f1": 0.4008520420479733,
+                "weighted_f1": 0.39032434382338094,
+                "macro_roc_auc": 0.58168202510697,
+                "macro_pr_auc": 0.4114919099341782
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.5696934960015284,
+              "regime_accuracy": 0.7796609997749329,
+              "regime_loss": 0.38907867392240947,
+              "regression_rmse_log_rv": 0.553621916585471,
+              "regression_mae_log_rv": 0.4671614796428357,
+              "regression_loss": 0.3064972265237702,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    10,
+                    0,
+                    0
+                  ],
+                  [
+                    7,
+                    3,
+                    2
+                  ],
+                  [
+                    9,
+                    8,
+                    79
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.38461538461538464,
+                    "recall": 1.0,
+                    "f1": 0.5555555555555556,
+                    "support": 10,
+                    "roc_auc": 0.9666666666666667,
+                    "pr_auc": 0.6821202408702409
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.2727272727272727,
+                    "recall": 0.25,
+                    "f1": 0.2608695652173913,
+                    "support": 12,
+                    "roc_auc": 0.6462264150943396,
+                    "pr_auc": 0.1433764185646146
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.9753086419753086,
+                    "recall": 0.8229166666666666,
+                    "f1": 0.8926553672316384,
+                    "support": 96,
+                    "roc_auc": 0.8877840909090909,
+                    "pr_auc": 0.9527481849654144
+                  }
+                ],
+                "macro_precision": 0.5442170997726553,
+                "macro_recall": 0.6909722222222222,
+                "macro_f1": 0.5696934960015284,
+                "weighted_f1": 0.7998381829864537,
+                "macro_roc_auc": 0.8335590575566991,
+                "macro_pr_auc": 0.5927482814667566
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.3562597685404703,
+              "regime_accuracy": 0.33636364340782166,
+              "regime_loss": 0.6574005517092618,
+              "regression_rmse_log_rv": 0.4663153702877768,
+              "regression_mae_log_rv": 0.3940086304908618,
+              "regression_loss": 0.2174500245666264,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    9,
+                    3,
+                    0
+                  ],
+                  [
+                    50,
+                    19,
+                    9
+                  ],
+                  [
+                    3,
+                    8,
+                    9
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.14516129032258066,
+                    "recall": 0.75,
+                    "f1": 0.24324324324324328,
+                    "support": 12,
+                    "roc_auc": 0.6198979591836735,
+                    "pr_auc": 0.13827145874990726
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.6333333333333333,
+                    "recall": 0.24358974358974358,
+                    "f1": 0.3518518518518518,
+                    "support": 78,
+                    "roc_auc": 0.3369391025641026,
+                    "pr_auc": 0.6803277433193368
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.5,
+                    "recall": 0.45,
+                    "f1": 0.4736842105263158,
+                    "support": 20,
+                    "roc_auc": 0.8216666666666667,
+                    "pr_auc": 0.4036689967078373
+                  }
+                ],
+                "macro_precision": 0.42616487455197133,
+                "macro_recall": 0.4811965811965812,
+                "macro_f1": 0.3562597685404703,
+                "weighted_f1": 0.3621549779444516,
+                "macro_roc_auc": 0.5928345761381476,
+                "macro_pr_auc": 0.4074227329256938
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.4291666666666667,
+              "regime_accuracy": 0.477477490901947,
+              "regime_loss": 0.6736048348687315,
+              "regression_rmse_log_rv": 0.742273318872068,
+              "regression_mae_log_rv": 0.5943559660567893,
+              "regression_loss": 0.5509696799093547,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    25,
+                    16,
+                    3
+                  ],
+                  [
+                    20,
+                    24,
+                    4
+                  ],
+                  [
+                    7,
+                    8,
+                    4
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.4807692307692308,
+                    "recall": 0.5681818181818182,
+                    "f1": 0.5208333333333334,
+                    "support": 44,
+                    "roc_auc": 0.5980325644504749,
+                    "pr_auc": 0.4556192820873512
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.5,
+                    "recall": 0.5,
+                    "f1": 0.5,
+                    "support": 48,
+                    "roc_auc": 0.5416666666666666,
+                    "pr_auc": 0.45471209037177
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.36363636363636365,
+                    "recall": 0.21052631578947367,
+                    "f1": 0.26666666666666666,
+                    "support": 19,
+                    "roc_auc": 0.6069794050343249,
+                    "pr_auc": 0.2579232525945381
+                  }
+                ],
+                "macro_precision": 0.44813519813519814,
+                "macro_recall": 0.42623604465709725,
+                "macro_f1": 0.4291666666666667,
+                "weighted_f1": 0.4683183183183183,
+                "macro_roc_auc": 0.5822262120504887,
+                "macro_pr_auc": 0.3894182083512197
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.4719010641357492,
+              "regime_accuracy": 0.48076921701431274,
+              "regime_loss": 0.6957227358451257,
+              "regression_rmse_log_rv": 0.8479165814627561,
+              "regression_mae_log_rv": 0.6645709450732773,
+              "regression_loss": 0.7189625291194865,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    13,
+                    4,
+                    9
+                  ],
+                  [
+                    15,
+                    24,
+                    13
+                  ],
+                  [
+                    3,
+                    10,
+                    13
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.41935483870967744,
+                    "recall": 0.5,
+                    "f1": 0.45614035087719296,
+                    "support": 26,
+                    "roc_auc": 0.6390532544378699,
+                    "pr_auc": 0.3596936017974239
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.631578947368421,
+                    "recall": 0.46153846153846156,
+                    "f1": 0.5333333333333333,
+                    "support": 52,
+                    "roc_auc": 0.6187130177514792,
+                    "pr_auc": 0.5976740106119194
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.37142857142857144,
+                    "recall": 0.5,
+                    "f1": 0.42622950819672134,
+                    "support": 26,
+                    "roc_auc": 0.7011834319526628,
+                    "pr_auc": 0.5019122281536738
+                  }
+                ],
+                "macro_precision": 0.47412078583555667,
+                "macro_recall": 0.4871794871794872,
+                "macro_f1": 0.4719010641357492,
+                "weighted_f1": 0.48725913143514527,
+                "macro_roc_auc": 0.652983234714004,
+                "macro_pr_auc": 0.48642661352100564
+              }
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "dual",
+        "seed": 71,
+        "regression_alpha": 0.7,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.3414101049163891,
+              "regime_accuracy": 0.375,
+              "regime_loss": 0.707720977366744,
+              "regression_rmse_log_rv": 0.8677337605803034,
+              "regression_mae_log_rv": 0.7312735212404126,
+              "regression_loss": 0.7529618792508352,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    19,
+                    3,
+                    6
+                  ],
+                  [
+                    13,
+                    2,
+                    30
+                  ],
+                  [
+                    15,
+                    8,
+                    24
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.40425531914893614,
+                    "recall": 0.6785714285714286,
+                    "f1": 0.5066666666666666,
+                    "support": 28,
+                    "roc_auc": 0.7787267080745341,
+                    "pr_auc": 0.4343273675082392
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.15384615384615385,
+                    "recall": 0.044444444444444446,
+                    "f1": 0.06896551724137931,
+                    "support": 45,
+                    "roc_auc": 0.42103703703703704,
+                    "pr_auc": 0.3327916367193587
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.4,
+                    "recall": 0.5106382978723404,
+                    "f1": 0.4485981308411215,
+                    "support": 47,
+                    "roc_auc": 0.5590206936753134,
+                    "pr_auc": 0.4265961849114406
+                  }
+                ],
+                "macro_precision": 0.31936715766503004,
+                "macro_recall": 0.4112180569627378,
+                "macro_f1": 0.3414101049163891,
+                "weighted_f1": 0.3197852257671787,
+                "macro_roc_auc": 0.5862614795956281,
+                "macro_pr_auc": 0.39790506304634615
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.13657962109575011,
+              "regime_accuracy": 0.11864406615495682,
+              "regime_loss": 0.7871530278254364,
+              "regression_rmse_log_rv": 0.9692169623848498,
+              "regression_mae_log_rv": 0.883855415255589,
+              "regression_loss": 0.9393815201745153,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    3,
+                    4,
+                    3
+                  ],
+                  [
+                    3,
+                    7,
+                    2
+                  ],
+                  [
+                    15,
+                    77,
+                    4
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.14285714285714285,
+                    "recall": 0.3,
+                    "f1": 0.19354838709677416,
+                    "support": 10,
+                    "roc_auc": 0.7046296296296296,
+                    "pr_auc": 0.19468332911092137
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.07954545454545454,
+                    "recall": 0.5833333333333334,
+                    "f1": 0.13999999999999999,
+                    "support": 12,
+                    "roc_auc": 0.33726415094339623,
+                    "pr_auc": 0.07080249802309346
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.4444444444444444,
+                    "recall": 0.041666666666666664,
+                    "f1": 0.07619047619047618,
+                    "support": 96,
+                    "roc_auc": 0.36174242424242425,
+                    "pr_auc": 0.7320642366690592
+                  }
+                ],
+                "macro_precision": 0.22228234728234728,
+                "macro_recall": 0.30833333333333335,
+                "macro_f1": 0.13657962109575011,
+                "weighted_f1": 0.0926251659767242,
+                "macro_roc_auc": 0.46787873493848336,
+                "macro_pr_auc": 0.332516687934358
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.36678004535147396,
+              "regime_accuracy": 0.33636364340782166,
+              "regime_loss": 0.6905176325277849,
+              "regression_rmse_log_rv": 0.39289948391330226,
+              "regression_mae_log_rv": 0.30074988540304315,
+              "regression_loss": 0.15437000445933927,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    10,
+                    0,
+                    2
+                  ],
+                  [
+                    53,
+                    16,
+                    9
+                  ],
+                  [
+                    5,
+                    4,
+                    11
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.14705882352941177,
+                    "recall": 0.8333333333333334,
+                    "f1": 0.25,
+                    "support": 12,
+                    "roc_auc": 0.6828231292517006,
+                    "pr_auc": 0.1968781301806271
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.8,
+                    "recall": 0.20512820512820512,
+                    "f1": 0.326530612244898,
+                    "support": 78,
+                    "roc_auc": 0.4050480769230769,
+                    "pr_auc": 0.6441767835412889
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.5,
+                    "recall": 0.55,
+                    "f1": 0.5238095238095238,
+                    "support": 20,
+                    "roc_auc": 0.8266666666666667,
+                    "pr_auc": 0.41366643227641453
+                  }
+                ],
+                "macro_precision": 0.4823529411764706,
+                "macro_recall": 0.5294871794871795,
+                "macro_f1": 0.36678004535147396,
+                "weighted_f1": 0.3540507111935684,
+                "macro_roc_auc": 0.6381792909471481,
+                "macro_pr_auc": 0.4182404486661102
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.3217289929154336,
+              "regime_accuracy": 0.4144144058227539,
+              "regime_loss": 0.6804485240824416,
+              "regression_rmse_log_rv": 0.7340894443187795,
+              "regression_mae_log_rv": 0.5855809094065482,
+              "regression_loss": 0.5388873122602545,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    39,
+                    5,
+                    0
+                  ],
+                  [
+                    40,
+                    3,
+                    5
+                  ],
+                  [
+                    12,
+                    3,
+                    4
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.42857142857142855,
+                    "recall": 0.8863636363636364,
+                    "f1": 0.5777777777777778,
+                    "support": 44,
+                    "roc_auc": 0.6170284938941656,
+                    "pr_auc": 0.44970421754157447
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.2727272727272727,
+                    "recall": 0.0625,
+                    "f1": 0.10169491525423728,
+                    "support": 48,
+                    "roc_auc": 0.5876322751322751,
+                    "pr_auc": 0.5093640276471391
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.4444444444444444,
+                    "recall": 0.21052631578947367,
+                    "f1": 0.2857142857142857,
+                    "support": 19,
+                    "roc_auc": 0.6006864988558352,
+                    "pr_auc": 0.2829538318377078
+                  }
+                ],
+                "macro_precision": 0.38191438191438193,
+                "macro_recall": 0.38646331738437006,
+                "macro_f1": 0.3217289929154336,
+                "weighted_f1": 0.32191125750447785,
+                "macro_roc_auc": 0.6017824226274253,
+                "macro_pr_auc": 0.4140073590088071
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.46074446062866564,
+              "regime_accuracy": 0.4615384638309479,
+              "regime_loss": 0.6593474699900701,
+              "regression_rmse_log_rv": 0.7947773901931404,
+              "regression_mae_log_rv": 0.6508166384077273,
+              "regression_loss": 0.6316710999622194,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    11,
+                    9,
+                    6
+                  ],
+                  [
+                    20,
+                    17,
+                    15
+                  ],
+                  [
+                    5,
+                    1,
+                    20
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.3055555555555556,
+                    "recall": 0.4230769230769231,
+                    "f1": 0.3548387096774194,
+                    "support": 26,
+                    "roc_auc": 0.6301775147928994,
+                    "pr_auc": 0.3311438775896428
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.6296296296296297,
+                    "recall": 0.3269230769230769,
+                    "f1": 0.430379746835443,
+                    "support": 52,
+                    "roc_auc": 0.617603550295858,
+                    "pr_auc": 0.5350623136253992
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.4878048780487805,
+                    "recall": 0.7692307692307693,
+                    "f1": 0.5970149253731344,
+                    "support": 26,
+                    "roc_auc": 0.8012820512820513,
+                    "pr_auc": 0.668874587894432
+                  }
+                ],
+                "macro_precision": 0.47433002107798855,
+                "macro_recall": 0.5064102564102564,
+                "macro_f1": 0.46074446062866564,
+                "weighted_f1": 0.45315328218036,
+                "macro_roc_auc": 0.6830210387902697,
+                "macro_pr_auc": 0.5116935930364913
+              }
+            }
+          }
+        ]
+      },
+      {
+        "head_mode": "dual",
+        "seed": 97,
+        "regression_alpha": 0.7,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.3326313942265508,
+              "regime_accuracy": 0.40833333134651184,
+              "regime_loss": 0.7037179374745945,
+              "regression_rmse_log_rv": 0.8629760038184002,
+              "regression_mae_log_rv": 0.7354617253159328,
+              "regression_loss": 0.7447275831663754,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    13,
+                    4,
+                    11
+                  ],
+                  [
+                    8,
+                    0,
+                    37
+                  ],
+                  [
+                    9,
+                    2,
+                    36
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.43333333333333335,
+                    "recall": 0.4642857142857143,
+                    "f1": 0.4482758620689655,
+                    "support": 28,
+                    "roc_auc": 0.7476708074534162,
+                    "pr_auc": 0.3906054300713427
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 45,
+                    "roc_auc": 0.354962962962963,
+                    "pr_auc": 0.28646680265340924
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.42857142857142855,
+                    "recall": 0.7659574468085106,
+                    "f1": 0.5496183206106869,
+                    "support": 47,
+                    "roc_auc": 0.5668901194986884,
+                    "pr_auc": 0.4261086925204724
+                  }
+                ],
+                "macro_precision": 0.28730158730158734,
+                "macro_recall": 0.41008105369807496,
+                "macro_f1": 0.3326313942265508,
+                "weighted_f1": 0.31986487672194436,
+                "macro_roc_auc": 0.5565079633050225,
+                "macro_pr_auc": 0.3677269750817414
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.6194026284348865,
+              "regime_accuracy": 0.805084764957428,
+              "regime_loss": 0.33556347302461076,
+              "regression_rmse_log_rv": 0.5481626729607912,
+              "regression_mae_log_rv": 0.4713237025159395,
+              "regression_loss": 0.3004823160275194,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    7,
+                    3,
+                    0
+                  ],
+                  [
+                    4,
+                    6,
+                    2
+                  ],
+                  [
+                    4,
+                    10,
+                    82
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.4666666666666667,
+                    "recall": 0.7,
+                    "f1": 0.56,
+                    "support": 10,
+                    "roc_auc": 0.9638888888888889,
+                    "pr_auc": 0.7226937555198426
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.3157894736842105,
+                    "recall": 0.5,
+                    "f1": 0.3870967741935484,
+                    "support": 12,
+                    "roc_auc": 0.7185534591194969,
+                    "pr_auc": 0.1788522937009782
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.9761904761904762,
+                    "recall": 0.8541666666666666,
+                    "f1": 0.9111111111111111,
+                    "support": 96,
+                    "roc_auc": 0.8896780303030303,
+                    "pr_auc": 0.9567404583733706
+                  }
+                ],
+                "macro_precision": 0.5862155388471177,
+                "macro_recall": 0.6847222222222222,
+                "macro_f1": 0.6194026284348865,
+                "weighted_f1": 0.8280663386185529,
+                "macro_roc_auc": 0.8573734594371386,
+                "macro_pr_auc": 0.6194288358647305
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.4343977458468631,
+              "regime_accuracy": 0.4363636374473572,
+              "regime_loss": 0.6525510376149958,
+              "regression_rmse_log_rv": 0.4387288610320038,
+              "regression_mae_log_rv": 0.36736818400677296,
+              "regression_loss": 0.19248301350243932,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    8,
+                    2,
+                    2
+                  ],
+                  [
+                    41,
+                    28,
+                    9
+                  ],
+                  [
+                    0,
+                    8,
+                    12
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.16326530612244897,
+                    "recall": 0.6666666666666666,
+                    "f1": 0.2622950819672131,
+                    "support": 12,
+                    "roc_auc": 0.6139455782312925,
+                    "pr_auc": 0.1333641484742439
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.7368421052631579,
+                    "recall": 0.358974358974359,
+                    "f1": 0.4827586206896552,
+                    "support": 78,
+                    "roc_auc": 0.453125,
+                    "pr_auc": 0.7291409372361237
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.5217391304347826,
+                    "recall": 0.6,
+                    "f1": 0.5581395348837209,
+                    "support": 20,
+                    "roc_auc": 0.8838888888888888,
+                    "pr_auc": 0.5985843271356989
+                  }
+                ],
+                "macro_precision": 0.47394884727346315,
+                "macro_recall": 0.5418803418803418,
+                "macro_f1": 0.4343977458468631,
+                "weighted_f1": 0.47241367359158254,
+                "macro_roc_auc": 0.6503198223733938,
+                "macro_pr_auc": 0.4870298042820222
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.34560795981075937,
+              "regime_accuracy": 0.36936935782432556,
+              "regime_loss": 0.7998960818140632,
+              "regression_rmse_log_rv": 0.8000848486476007,
+              "regression_mae_log_rv": 0.6783831012141597,
+              "regression_loss": 0.6401357650354541,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    8,
+                    23,
+                    13
+                  ],
+                  [
+                    2,
+                    24,
+                    22
+                  ],
+                  [
+                    4,
+                    6,
+                    9
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.5714285714285714,
+                    "recall": 0.18181818181818182,
+                    "f1": 0.27586206896551724,
+                    "support": 44,
+                    "roc_auc": 0.6004070556309362,
+                    "pr_auc": 0.44785086243987093
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.4528301886792453,
+                    "recall": 0.5,
+                    "f1": 0.4752475247524752,
+                    "support": 48,
+                    "roc_auc": 0.5386904761904762,
+                    "pr_auc": 0.5156726063697938
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.20454545454545456,
+                    "recall": 0.47368421052631576,
+                    "f1": 0.28571428571428575,
+                    "support": 19,
+                    "roc_auc": 0.5663615560640732,
+                    "pr_auc": 0.25153206687063323
+                  }
+                ],
+                "macro_precision": 0.4096014048844237,
+                "macro_recall": 0.38516746411483255,
+                "macro_f1": 0.34560795981075937,
+                "weighted_f1": 0.3637692220826396,
+                "macro_roc_auc": 0.5684863626284952,
+                "macro_pr_auc": 0.40501851189343263
+              }
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.36411784177424694,
+              "regime_accuracy": 0.48076921701431274,
+              "regime_loss": 0.6810755454576932,
+              "regression_rmse_log_rv": 0.8148830529885362,
+              "regression_mae_log_rv": 0.6764105438487604,
+              "regression_loss": 0.6640343900479176,
+              "classification_breakdown": {
+                "n_classes": 3,
+                "confusion_matrix": [
+                  [
+                    0,
+                    18,
+                    8
+                  ],
+                  [
+                    0,
+                    30,
+                    22
+                  ],
+                  [
+                    0,
+                    6,
+                    20
+                  ]
+                ],
+                "per_class": [
+                  {
+                    "class_id": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "support": 26,
+                    "roc_auc": 0.653353057199211,
+                    "pr_auc": 0.38478153108920266
+                  },
+                  {
+                    "class_id": 1,
+                    "precision": 0.5555555555555556,
+                    "recall": 0.5769230769230769,
+                    "f1": 0.5660377358490566,
+                    "support": 52,
+                    "roc_auc": 0.6272189349112426,
+                    "pr_auc": 0.6471963180668261
+                  },
+                  {
+                    "class_id": 2,
+                    "precision": 0.4,
+                    "recall": 0.7692307692307693,
+                    "f1": 0.5263157894736842,
+                    "support": 26,
+                    "roc_auc": 0.7884615384615384,
+                    "pr_auc": 0.5904045577275114
+                  }
+                ],
+                "macro_precision": 0.31851851851851853,
+                "macro_recall": 0.44871794871794873,
+                "macro_f1": 0.36411784177424694,
+                "weighted_f1": 0.4145978152929493,
+                "macro_roc_auc": 0.6896778435239973,
+                "macro_pr_auc": 0.5407941356278467
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "classification": {
+      "regime_f1_macro": {
+        "mean": 0.4184301880113096,
+        "std": 0.09355371373140976,
+        "min": 0.24166666666666667,
+        "max": 0.5933600713012478,
+        "n": 25
+      },
+      "regression_rmse_log_rv": null
+    },
+    "regression": {
+      "regime_f1_macro": {
+        "mean": 0.23203688216718313,
+        "std": 0.08441723020729831,
+        "min": 0.06153846153846154,
+        "max": 0.3968253968253968,
+        "n": 25
+      },
+      "regression_rmse_log_rv": {
+        "mean": 0.7477978608146363,
+        "std": 0.17195716842486902,
+        "min": 0.3990025425910883,
+        "max": 0.9898509778019522,
+        "n": 25
+      }
+    },
+    "dual": {
+      "regime_f1_macro": {
+        "mean": 0.409008536598903,
+        "std": 0.10257873429270516,
+        "min": 0.13657962109575011,
+        "max": 0.6194026284348865,
+        "n": 25
+      },
+      "regression_rmse_log_rv": {
+        "mean": 0.7108916228499643,
+        "std": 0.17737475029374097,
+        "min": 0.39289948391330226,
+        "max": 0.9692169623848498,
+        "n": 25
+      }
+    }
+  }
+}
