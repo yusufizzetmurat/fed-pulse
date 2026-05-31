@@ -9,7 +9,6 @@ import type {
   RatesReactionCard as RatesReactionCardData,
   VolRegimeReactionCard as VolRegimeReactionCardData,
 } from "@/lib/analyze/types";
-import { EvidenceLink } from "@/components/analyze/EvidenceLink";
 
 const HEAD_LABELS: Record<RatesReactionCardData["head"], string> = {
   "2y": "2y yield",
@@ -184,7 +183,6 @@ export function MarketReactionPanel({ panel }: MarketReactionPanelProps) {
         <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
           Market reaction
         </Badge>
-        <EvidenceLink section="6.15" label="Method notes · rates and volatility cards" />
       </div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {panel.rates.map((card) => (

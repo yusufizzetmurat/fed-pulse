@@ -23,7 +23,6 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { EvidenceLink } from "@/components/analyze/EvidenceLink";
 
 export type TrajectoryStance = "hawkish" | "dovish" | "neutral";
 
@@ -303,7 +302,6 @@ export function TrajectoryPanel({
                 +{((data.delta_dir_acc ?? 0) * 100).toFixed(1)}pp vs baseline
               </Badge>
             ) : null}
-            <EvidenceLink section="6.17" label="Method notes · trajectory baselines" />
           </div>
         </CardTitle>
       </CardHeader>

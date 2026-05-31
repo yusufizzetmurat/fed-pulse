@@ -15,7 +15,6 @@ import {
 import { toast } from "sonner";
 
 import { DecisionsLink } from "@/components/research/DecisionsLink";
-import { JobsLink } from "@/components/research/JobsLink";
 import { Header } from "@/components/shell/header";
 import { StatusBar } from "@/components/shell/status-bar";
 import { Badge } from "@/components/ui/badge";
@@ -557,7 +556,6 @@ export default function ResearchPage() {
                 <DecisionsLink />
               </TabsContent>
               <TabsContent value="jobs">
-                <JobsLink />
               </TabsContent>
               <TabsContent value="files">
                 <ArtifactsExplorer sections={data.sections} />
