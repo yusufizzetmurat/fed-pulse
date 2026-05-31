@@ -699,6 +699,24 @@ class HistoryRealizedBatchResponse(BaseModel):
     missing: list[str]
 
 
+class HistoryEventStudyResponse(BaseModel):
+    """Forward 10-trading-day price path anchored on the event date.
+
+    Backs the event-study chart on /history/[id]: the realised close path
+    plus the bucketed realised regime label so the headline can read
+    "predicted X, realized Y".
+    """
+
+    event_date: str
+    symbol: str
+    forward_dates: list[str]
+    forward_close: list[float]
+    forward_log_returns: list[float]
+    realized_vol_10d: float | None = None
+    predicted_regime: str | None = None
+    realized_regime: str | None = None
+
+
 class EvaluationCoverageResponse(BaseModel):
     """Empirical conformal coverage aggregated across recent history runs.
 

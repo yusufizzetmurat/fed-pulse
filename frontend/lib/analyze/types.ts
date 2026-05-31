@@ -99,6 +99,17 @@ export interface HistoryRealizedBatchResponse {
   missing: string[];
 }
 
+export interface HistoryEventStudyResponse {
+  event_date: string;
+  symbol: string;
+  forward_dates: string[];
+  forward_close: number[];
+  forward_log_returns: number[];
+  realized_vol_10d?: number | null;
+  predicted_regime?: string | null;
+  realized_regime?: string | null;
+}
+
 export interface EvaluationCoverageResponse {
   nominal: number | null;
   empirical: number | null;

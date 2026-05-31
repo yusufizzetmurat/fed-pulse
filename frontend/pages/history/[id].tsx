@@ -18,12 +18,21 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetchHistoryRun, resolveApiBaseUrl } from "@/lib/analyze/api";
+import {
+  fetchHistoryEventStudy,
+  fetchHistoryRun,
+  resolveApiBaseUrl,
+} from "@/lib/analyze/api";
 import { errorMessage as toErrorMessage } from "@/lib/analyze/errors";
 import { downloadRunCsv } from "@/lib/export/run-export";
 import { downloadRunPdf } from "@/lib/export/pdf";
 import { stanceLabel, toStance } from "@/lib/analyze/format";
-import type { AnalyzeResult, HistoryDetail } from "@/lib/analyze/types";
+import type {
+  AnalyzeResult,
+  HistoryDetail,
+  HistoryEventStudyResponse,
+} from "@/lib/analyze/types";
+import { EventStudyChart } from "@/components/analyze/EventStudyChart";
 
 const PreviewPanels = dynamic(() => import("@/components/analyze/PreviewPanels"), {
   ssr: false,
@@ -41,6 +50,10 @@ export default function HistoryDetailPage() {
   const [detail, setDetail] = React.useState<HistoryDetail | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+
+  const [eventStudy, setEventStudy] = React.useState<HistoryEventStudyResponse | null>(null);
+  const [eventStudyLoading, setEventStudyLoading] = React.useState(false);
+  const [eventStudyError, setEventStudyError] = React.useState<string | null>(null);
 
   const runId = React.useMemo(() => {
     const value = router.query.id;
@@ -65,6 +78,28 @@ export default function HistoryDetailPage() {
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl, router.isReady, runId]);
+
+  React.useEffect(() => {
+    if (!router.isReady || !runId) return;
+    let cancelled = false;
+    setEventStudyLoading(true);
+    setEventStudyError(null);
+    setEventStudy(null);
+    fetchHistoryEventStudy(apiBaseUrl, runId)
+      .then((data) => {
+        if (!cancelled) setEventStudy(data);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setEventStudyError(toErrorMessage(err, "Event study unavailable."));
+      })
+      .finally(() => {
+        if (!cancelled) setEventStudyLoading(false);
       });
     return () => {
       cancelled = true;
@@ -178,6 +213,12 @@ export default function HistoryDetailPage() {
                   regimeRegression={result.regime_regression}
                 />
               ) : null}
+
+              <EventStudyChart
+                data={eventStudy}
+                loading={eventStudyLoading}
+                errorMessage={eventStudyError}
+              />
 
               {result.multi_axis ? (
                 <PreviewPanels slot="cards" multiAxis={result.multi_axis} />

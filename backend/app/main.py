@@ -3,6 +3,7 @@ import fcntl
 import io
 import json
 import logging
+import math
 import os
 import time
 from contextlib import asynccontextmanager, contextmanager
@@ -45,6 +46,7 @@ from app.schemas import (
     FomcCalendarResponse,
     HistoryDetail,
     HistoryEntry,
+    HistoryEventStudyResponse,
     HistoryList,
     HistoryRealizedBatchResponse,
     HistoryRealizedResponse,
@@ -94,6 +96,7 @@ from app.services.forecaster import (
     parse_horizon_steps,
 )
 from app.services.market_data import (
+    fetch_event_study_window,
     fetch_forward_trading_dates,
     fetch_market_history,
     fetch_market_snapshot,
@@ -1179,6 +1182,66 @@ def get_history_run_realized(
         return _build_realized_payload(row)
     except Exception as exc:  # pragma: no cover — yfinance failures bubble as 502
         raise HTTPException(status_code=502, detail=f"Market lookup failed: {exc}") from exc
+
+
+def _predicted_regime_from_payload(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    regime = payload.get("regime_classification")
+    if isinstance(regime, dict):
+        argmax = regime.get("argmax_class")
+        if isinstance(argmax, str) and argmax:
+            return argmax
+    return None
+
+
+def _realized_vol_from_log_returns(log_returns: list[float]) -> float | None:
+    if len(log_returns) < 2:
+        return None
+    mean = sum(log_returns) / len(log_returns)
+    var = sum((value - mean) ** 2 for value in log_returns) / (len(log_returns) - 1)
+    return math.sqrt(max(var, 0.0))
+
+
+@app.get("/history/{run_id}/event-study", response_model=HistoryEventStudyResponse)
+def get_history_run_event_study(
+    run_id: str, session: Session = Depends(get_session)
+) -> HistoryEventStudyResponse:
+    """Forward 10-trading-day close path + bucketed realised regime.
+
+    Powers the event-study chart on /history/[id]. Pulls the next 10
+    trading bars after the stored event date from yfinance, computes
+    log-returns and the realised-vol bucket, and surfaces both predicted
+    and realised regime labels for the headline.
+    """
+
+    row = get_run(session, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    try:
+        bars = fetch_event_study_window(
+            event_date=row.document_date,
+            symbol=row.symbol,
+            steps=10,
+            window_days=30,
+        )
+    except Exception as exc:  # pragma: no cover — yfinance failures bubble as 502
+        raise HTTPException(status_code=502, detail=f"Market lookup failed: {exc}") from exc
+
+    forward_dates = [str(bar["date"]) for bar in bars]
+    forward_close = [float(bar["close"]) for bar in bars]
+    forward_log_returns = [float(bar["log_return"]) for bar in bars]
+    realized_vol_10d = _realized_vol_from_log_returns(forward_log_returns)
+    return HistoryEventStudyResponse(
+        event_date=row.document_date,
+        symbol=row.symbol,
+        forward_dates=forward_dates,
+        forward_close=forward_close,
+        forward_log_returns=forward_log_returns,
+        realized_vol_10d=realized_vol_10d,
+        predicted_regime=_predicted_regime_from_payload(row.payload),
+        realized_regime=bucket_realized_regime(realized_vol_10d),
+    )
 
 
 @app.get("/history-realized", response_model=HistoryRealizedBatchResponse)

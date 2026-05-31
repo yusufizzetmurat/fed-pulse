@@ -10,6 +10,7 @@ import type {
   EvaluationCoverageResponse,
   FomcCalendarResponse,
   HistoryDetail,
+  HistoryEventStudyResponse,
   HistoryList,
   HistoryQuery,
   HistoryRealizedBatchResponse,
@@ -120,6 +121,15 @@ export async function fetchHistoryRealized(
 ): Promise<HistoryRealizedResponse> {
   const response = await axios.get(`${baseUrl}/history/${runId}/realized`, { signal });
   return response.data as HistoryRealizedResponse;
+}
+
+export async function fetchHistoryEventStudy(
+  baseUrl: string,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<HistoryEventStudyResponse> {
+  const response = await axios.get(`${baseUrl}/history/${runId}/event-study`, { signal });
+  return response.data as HistoryEventStudyResponse;
 }
 
 // Batched companion to ``fetchHistoryRealized``. The /history list page
