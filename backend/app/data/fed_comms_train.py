@@ -276,7 +276,7 @@ def run(
     embargo = max(horizons) + 1
     folds = walk_forward_splits(len(idx_all), n_folds=n_folds, embargo=embargo)
     pools: dict[str, list[Any]] = {
-        k: [] for k in ("har", "fused", "mkt", "true", "base", "gate", "mask", "type")
+        k: [] for k in ("har", "fused", "mkt", "true", "base", "gate", "mask", "type", "date")
     }
     for tr_l, te_l in folds:
         tr, te = idx_all[np.array(tr_l)], idx_all[np.array(te_l)]
@@ -295,6 +295,7 @@ def run(
         pools["gate"].append(gate)
         pools["mask"].append(data["text_mask"][te])
         pools["type"].extend([data["doc_types"][i] for i in te])
+        pools["date"].extend([data["dates"][i] for i in te])
 
     har = np.vstack(pools["har"])
     fused = np.vstack(pools["fused"])
@@ -304,6 +305,7 @@ def run(
     gate = np.concatenate(pools["gate"])
     mask = np.concatenate(pools["mask"])
     types = np.array([t if t is not None else "none" for t in pools["type"]])
+    dates = np.array(pools["date"])
 
     results: dict[str, Any] = {"n_eval": int(true.shape[0]), "measure": measure, "by_horizon": {}}
     active = mask > 0
@@ -334,6 +336,24 @@ def run(
         t: float(gate[(types == t) & active].mean())
         for t in sorted(set(types[active]))
         if ((types == t) & active).any()
+    }
+    # regime-stratified: text-vs-market R² within market eras (is the null an
+    # average that hides a regime-specific effect?)
+    eras = {
+        "pre2020": dates < "2020-01-01",
+        "covid2020": (dates >= "2020-01-01") & (dates < "2021-01-01"),
+        "recent2021+": dates >= "2021-01-01",
+    }
+    results["by_era"] = {
+        era: {
+            "n": int(sel.sum()),
+            **{
+                f"h{h}_text_vs_mkt": _oos_r2(fused[sel, k], true[sel, k], mkt[sel, k])
+                for k, h in enumerate(horizons)
+            },
+        }
+        for era, sel in eras.items()
+        if sel.sum() > 20
     }
     return results
 
