@@ -179,6 +179,10 @@ def build_forecaster(
             "use_statement_delta",
             "use_vote_features",
             "use_vix_features",
+            # #543 doc_length is a per-event scalar broadcast in the
+            # recurrent path only; the flat_mlp ctor never widens its
+            # input vector with it.
+            "use_doc_length",
             # #480 symbol-conditioned regime head is research-only on the
             # recurrent class. The flat_mlp ctor does not consume it.
             "symbol_embedding_dim",
@@ -444,6 +448,8 @@ def build_forecaster(
     use_vote_features_flag = bool(kwargs.pop("use_vote_features", False))
     # #478 VIX term-structure + VRP opt-in flag.
     use_vix_features_flag = bool(kwargs.pop("use_vix_features", False))
+    # #543 doc_length per-event scalar opt-in flag.
+    use_doc_length_flag = bool(kwargs.pop("use_doc_length", False))
     # #480 symbol-conditioned regime head. Pop here so the serving
     # constructor (which does not accept the kwarg in v1) does not
     # receive it. The research class consumes the kwarg directly to
@@ -505,6 +511,7 @@ def build_forecaster(
             use_statement_delta=use_statement_delta_flag,
             use_vote_features=use_vote_features_flag,
             use_vix_features=use_vix_features_flag,
+            use_doc_length=use_doc_length_flag,
             **kwargs,
         )
     else:
@@ -518,6 +525,7 @@ def build_forecaster(
             use_statement_delta=use_statement_delta_flag,
             use_vote_features=use_vote_features_flag,
             use_vix_features=use_vix_features_flag,
+            use_doc_length=use_doc_length_flag,
             symbol_embedding_dim=symbol_embedding_dim_value,
             aux_horizons=aux_horizons_value,
             **kwargs,
@@ -570,6 +578,7 @@ def build_forecaster(
     model.use_statement_delta = use_statement_delta_flag
     model.use_vote_features = use_vote_features_flag
     model.use_vix_features = use_vix_features_flag
+    model.use_doc_length = use_doc_length_flag
     # #480 round-trip the symbol-embedding dim so
     # ``ModelConfig.from_model`` recovers it on resume. The research
     # class set this in its ctor; stash it on the serving instance too

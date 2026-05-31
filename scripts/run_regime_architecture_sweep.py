@@ -75,7 +75,7 @@ def _build_common_args(args: argparse.Namespace) -> list[str]:
         "--vol-regime-classes",
         str(args.vol_regime_classes),
         "--rich-features",
-    ]
+    ] + (["--use-vix-features"] if getattr(args, "use_vix_features", False) else [])
 
 
 def _arch_args(
@@ -189,6 +189,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Root for per-architecture report JSONs.",
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--use-vix-features",
+        dest="use_vix_features",
+        action="store_true",
+        help=(
+            "Thread --use-vix-features through to each per-arch "
+            "train_forecaster invocation so the VIX 6-vector enters "
+            "the per-bar input. Default off."
+        ),
+    )
+    parser.set_defaults(use_vix_features=False)
     return parser.parse_args(argv)
 
 

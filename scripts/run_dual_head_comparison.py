@@ -255,6 +255,29 @@ def _parse_args() -> argparse.Namespace:
             "+ missing=1.0."
         ),
     )
+    # #543 doc_length scalar block. Off by default so the canonical
+    # sweep stays byte-identical; on, attaches ``log(1 + token_count)``
+    # as a single scalar broadcast onto every bar of every supervised
+    # event. Promoted out of the §6.38 confounder ablation cell that
+    # produced the largest single dual-head lift (+0.052 macro-F1).
+    parser.add_argument(
+        "--use-doc-length",
+        dest="use_doc_length",
+        action="store_true",
+        help=(
+            "Attach the doc_length scalar (log(1 + token_count)) to "
+            "every supervised event. Reads ``token_count`` off "
+            "events.parquet (whitespace token count of the row's text). "
+            "Default off."
+        ),
+    )
+    parser.add_argument(
+        "--no-doc-length",
+        dest="use_doc_length",
+        action="store_false",
+        help="Disable the doc_length block (default).",
+    )
+    parser.set_defaults(use_doc_length=False)
     # mp_surprise rich-feature block toggle. Default True matches
     # ``load_walk_forward_split`` so canonical runs stay byte-identical.
     # ``--no-mp-surprise`` zeros the mp_surprise block (and its missing
@@ -447,6 +470,7 @@ def _parse_args() -> argparse.Namespace:
         use_press_conf=False,
         use_text_embeddings=True,
         use_vix_features=False,
+        use_doc_length=False,
     )
     return parser.parse_args()
 
@@ -533,6 +557,10 @@ def _trial_metrics(summary: Any) -> dict[str, Any]:
             breakdown_payload = breakdown
         elif hasattr(breakdown, "to_dict"):
             breakdown_payload = breakdown.to_dict()
+    # Persist raw per-row predictions + targets so downstream block-bootstrap
+    # analyses can pool per-(seed, fold) cells without re-running training.
+    raw_preds = getattr(test, "predictions", None)
+    raw_targs = getattr(test, "targets", None)
     return {
         "regime_f1_macro": getattr(test, "regime_f1_macro", None),
         "regime_accuracy": getattr(test, "regime_accuracy", None),
@@ -541,6 +569,8 @@ def _trial_metrics(summary: Any) -> dict[str, Any]:
         "regression_mae_log_rv": getattr(test, "regression_mae_log_rv", None),
         "regression_loss": getattr(test, "regression_loss", None),
         "classification_breakdown": breakdown_payload,
+        "predictions": list(raw_preds) if raw_preds is not None else None,
+        "targets": list(raw_targs) if raw_targs is not None else None,
     }
 
 
@@ -602,6 +632,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
     use_vote_features: bool = False,
     use_press_conf: bool = False,
     use_vix_features: bool = False,
+    use_doc_length: bool = False,
     regime_loss: str = "ce",
     focal_gamma: float = 2.0,
     class_balanced_beta: float = 0.999,
@@ -635,6 +666,70 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
     # tail (regime / sep / press_conf / statement_delta / vote / vix) is
     # widened inside ``ForecasterBase.__init__`` via the per-tail
     # ``*_tail_dim`` accumulators; widening here would double-count.
+    # Text-channel resolution. The loader already loads the encoder
+    # and emits per-event pooled embeddings when both ``text_encoder``
+    # and ``use_text_embeddings`` are truthy, but the model only
+    # consumes the channel when BOTH ``text_embedding_dim`` and
+    # ``text_adapter_dim`` are positive on ModelConfig. Before #546
+    # this runner threaded neither, so every text-encoder arm trained
+    # against a 0-width text channel (i.e. the no-text baseline). The
+    # block below resolves the encoder's native hidden_size off the
+    # registry-pinned config and sets both dims so the model actually
+    # consumes the embeddings. The 128-dim adapter target mirrors the
+    # forecaster_credibility default.
+    resolved_text_embedding_dim = 0
+    resolved_text_adapter_dim = 0
+    resolved_text_channel = "scalar"
+    if text_encoder and use_text_embeddings:
+        from app.models.registry import encoder_ref
+
+        ref = encoder_ref(text_encoder)
+        if ref is None:
+            raise ValueError(
+                f"text_encoder={text_encoder!r} did not resolve via "
+                "app.models.registry.encoder_ref. Add it to "
+                "backend/app/models/registry.yaml or pass a valid alias."
+            )
+        # #556 api_only short-circuit. Voyage (and any future API-served
+        # encoder) cannot be loaded via ``AutoConfig.from_pretrained``
+        # because ``ref.repo`` is the API model name, not an HF artifact
+        # -- the call 404s. The registry carries ``hidden_size``
+        # explicitly for these encoders so the runner reads it without
+        # instantiating the model. Cached embeddings on disk (built by
+        # ``scripts/cache_voyage_embeddings.py``) feed the loader's text
+        # path as usual.
+        if getattr(ref, "api_only", False):
+            resolved_text_embedding_dim = int(getattr(ref, "hidden_size", 0) or 0)
+            if resolved_text_embedding_dim <= 0:
+                raise ValueError(
+                    f"text_encoder={text_encoder!r} is api_only but "
+                    f"hidden_size is {resolved_text_embedding_dim!r} in "
+                    "the registry. API-only encoders must carry an "
+                    "explicit positive ``hidden_size`` so the runner "
+                    "can route the text channel without loading the "
+                    "model."
+                )
+        else:
+            from transformers import AutoConfig
+
+            encoder_config = AutoConfig.from_pretrained(
+                ref.repo,
+                revision=ref.revision or None,
+                trust_remote_code=bool(getattr(ref, "trust_remote_code", False)),
+            )
+            resolved_text_embedding_dim = int(
+                getattr(encoder_config, "hidden_size", 0) or 0
+            )
+            if resolved_text_embedding_dim <= 0:
+                raise ValueError(
+                    f"text_encoder={text_encoder!r} resolved a config but "
+                    f"hidden_size was {resolved_text_embedding_dim!r}. The "
+                    "encoder cannot drive the text channel without a positive "
+                    "hidden_size on its transformer config."
+                )
+        resolved_text_adapter_dim = 128
+        resolved_text_channel = "embeddings"
+
     config = ModelConfig(
         input_size=RICH_FEATURE_SIZE,
         output_mode="classification",
@@ -652,6 +747,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
         use_statement_delta=use_statement_delta,
         use_vote_features=use_vote_features,
         use_vix_features=use_vix_features,
+        use_doc_length=use_doc_length,
         regime_loss_mode=regime_loss,
         focal_gamma=float(focal_gamma),
         class_balanced_beta=float(class_balanced_beta),
@@ -659,6 +755,9 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
         absolute_vol_thresholds=resolved_absolute_thresholds,
         aux_horizons=tuple(aux_horizons),
         aux_horizon_alpha=float(aux_horizon_alpha),
+        text_channel=resolved_text_channel,
+        text_embedding_dim=resolved_text_embedding_dim,
+        text_adapter_dim=resolved_text_adapter_dim,
     )
 
     per_fold: list[dict[str, Any]] = []
@@ -675,6 +774,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
             text_encoder=text_encoder,
             use_text_embeddings=use_text_embeddings,
             use_vix_features=use_vix_features,
+            use_doc_length=use_doc_length,
             vol_target_horizon=vol_target_horizon,
             sequence_length=active_sequence_length,
             use_mp_surprise=use_mp_surprise,
@@ -789,6 +889,7 @@ def main() -> int:
                     use_vote_features=bool(args.use_vote_features),
                     use_press_conf=bool(args.use_press_conf),
                     use_vix_features=bool(args.use_vix_features),
+                    use_doc_length=bool(args.use_doc_length),
                     regime_loss=str(args.regime_loss),
                     focal_gamma=float(args.focal_gamma),
                     class_balanced_beta=float(args.class_balanced_beta),
@@ -842,6 +943,7 @@ def main() -> int:
         "use_vote_features": bool(args.use_vote_features),
         "use_press_conf": bool(args.use_press_conf),
         "use_vix_features": bool(args.use_vix_features),
+        "use_doc_length": bool(args.use_doc_length),
         "regime_loss": str(args.regime_loss),
         "focal_gamma": float(args.focal_gamma),
         "class_balanced_beta": float(args.class_balanced_beta),

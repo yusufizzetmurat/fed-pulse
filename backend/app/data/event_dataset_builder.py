@@ -217,6 +217,21 @@ CROSS_ASSET_SYMBOLS: tuple[tuple[str, str], ...] = (
 # listing, holiday, or the symbol cache failed to fetch) keeps the
 # column ``None`` so the regime classifier learns to skip rather than
 # treating an absent quote as a zero.
+#
+# Relationship to ``app.models.config.SUPPORTED_SYMBOLS`` (the
+# 5-symbol id table the symbol-conditioned regime head's nn.Embedding
+# is keyed off): SUPPORTED_SYMBOLS is a strict subset of this tuple.
+# The two cannot be merged because SUPPORTED_SYMBOLS is byte-stable by
+# contract -- the embedding ids are pinned forever so a checkpoint
+# trained against id k=2 always sees the same symbol at id 2 on
+# rehydrate (see the docstring on ``SUPPORTED_SYMBOLS``). This tuple
+# is data-only -- per-asset target columns on events.parquet, no id
+# stability requirement -- so it can grow independently as upstream
+# symbol coverage expands. The subset invariant
+# (``SUPPORTED_SYMBOLS <= PER_ASSET_TARGET_SYMBOLS``) is enforced by
+# ``tests/unit/test_per_asset_vol_columns.py`` so a future symbol
+# added to SUPPORTED_SYMBOLS without a matching per-asset target
+# column fails at test time.
 PER_ASSET_TARGET_SYMBOLS: tuple[str, ...] = (
     "^GSPC",
     "^NDX",
@@ -2158,6 +2173,7 @@ def build_event_rows(
     delta_encoder: Any | None = None,
     per_asset_target_series: dict[str, _CloseSeries] | None = None,
     per_asset_target_cache_dir: Path | None = None,
+    per_asset_target_force_refresh: bool = False,
     prior_window_days: int = PRIOR_WINDOW_DAYS,
 ) -> pd.DataFrame:
     """Build the events DataFrame for one training package.
@@ -2285,7 +2301,11 @@ def build_event_rows(
                 continue
             try:
                 per_asset_target_series[sym] = _fetch_close_series(
-                    sym, start=earliest, end=latest, cache_dir=target_cache_dir
+                    sym,
+                    start=earliest,
+                    end=latest,
+                    cache_dir=target_cache_dir,
+                    force_refresh=per_asset_target_force_refresh,
                 )
             except Exception as exc:
                 # Broadened from RuntimeError to Exception (#481 review): yfinance
@@ -2515,7 +2535,24 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Where to cache the per-asset forward-vol target price series "
             "(#481). Defaults to <DATA_DIR>/external/yfinance. One parquet "
             "per symbol; a missing/failing symbol collapses its column to "
-            "None across all rows."
+            "None across all rows. The parquet filename uses yfinance's "
+            "raw symbol (e.g. ``DX-Y.NYB.parquet``, ``EURUSD=X.parquet``), "
+            "not the column slug on events.parquet (``dxy``, ``eurusd``) -- "
+            "the slug normalisation lives downstream on the column write, "
+            "not on the cache write, so the cache stays interoperable with "
+            "any yfinance consumer that addresses by raw symbol."
+        ),
+    )
+    parser.add_argument(
+        "--per-asset-target-force-refresh",
+        action="store_true",
+        help=(
+            "Bypass the cache for the per-asset forward-vol target "
+            "series and force a fresh yfinance fetch on every symbol. "
+            "Default off keeps the existing cache-once-pinned-forever "
+            "behaviour. Use when the upstream series has been revised "
+            "or when the cache parquet for one symbol is suspected "
+            "corrupted (delete-the-parquet is the alternative)."
         ),
     )
     parser.add_argument(
@@ -2565,9 +2602,14 @@ def _build_delta_encoder_callable(repo_or_alias: str):
     ref = encoder_ref(repo_or_alias)
     repo = ref.repo if ref is not None else repo_or_alias
     revision = ref.revision if ref is not None else None
+    trust = bool(getattr(ref, "trust_remote_code", False)) if ref is not None else False
 
-    tokenizer = AutoTokenizer.from_pretrained(repo, revision=revision)
-    model = AutoModel.from_pretrained(repo, revision=revision)
+    tokenizer = AutoTokenizer.from_pretrained(
+        repo, revision=revision, trust_remote_code=trust
+    )
+    model = AutoModel.from_pretrained(
+        repo, revision=revision, trust_remote_code=trust
+    )
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
@@ -2674,6 +2716,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         rates_horizon=int(args.rates_horizon),
         delta_encoder=delta_encoder,
         per_asset_target_cache_dir=per_asset_target_cache_dir,
+        per_asset_target_force_refresh=bool(args.per_asset_target_force_refresh),
         prior_window_days=int(args.prior_window),
     )
     output_path = Path(args.output)
@@ -2716,6 +2759,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             rates_horizon=int(args.rates_horizon),
             delta_encoder=delta_encoder,
             per_asset_target_cache_dir=per_asset_target_cache_dir,
+        per_asset_target_force_refresh=bool(args.per_asset_target_force_refresh),
             prior_window_days=int(args.prior_window),
         )
         full_output_path = Path(full_output_arg)

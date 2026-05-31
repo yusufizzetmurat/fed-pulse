@@ -34,6 +34,20 @@ def _reset_analogs_singleton():
     analogs_service.reset_state()
 
 
+@pytest.fixture(autouse=True)
+def _stub_realized_close_returns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#299: the analogs renderer now augments each card with realized
+    5d/20d S&P close-to-close returns. Stub the lookup to None so this
+    file's existing tests do not depend on network access; a dedicated
+    test file exercises the augmentation behaviour itself."""
+
+    monkeypatch.setattr(
+        analogs_service,
+        "_subsequent_close_pct",
+        lambda event_date, *, horizon: None,
+    )
+
+
 def _fixture_rows() -> list[dict]:
     rows = [
         {

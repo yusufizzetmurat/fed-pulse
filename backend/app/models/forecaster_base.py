@@ -33,6 +33,7 @@ from app.models.config import (
     DEFAULT_INITIAL_DECAY_RATE,
     DEFAULT_NUM_LAYERS,
     FEATURE_SIZE,
+    RICH_DOC_LENGTH_DIM,
     RICH_FEATURE_SIZE,
     RICH_MACRO_REGIME_DIM,
     RICH_MACRO_REGIME_MISSING_DIM,
@@ -102,6 +103,7 @@ class ForecasterBase(nn.Module):
         use_statement_delta: bool = False,
         use_vote_features: bool = False,
         use_vix_features: bool = False,
+        use_doc_length: bool = False,
     ):
         super().__init__()
         if model_type not in _ALLOWED_MODEL_TYPES:
@@ -269,6 +271,17 @@ class ForecasterBase(nn.Module):
         else:
             vix_features_tail_dim = 0
         self.vix_features_tail_dim = vix_features_tail_dim
+        # #543 doc_length tail. Single scalar (log(1 + token_count))
+        # broadcast onto every bar; no missing flag because every
+        # supervised row carries a non-empty text body. Appended after
+        # the vix tail in the documented order (regime, SEP, press-conf,
+        # statement-delta, vote, vix, doc_length).
+        self.use_doc_length = bool(use_doc_length)
+        if self.use_doc_length:
+            doc_length_tail_dim = RICH_DOC_LENGTH_DIM
+        else:
+            doc_length_tail_dim = 0
+        self.doc_length_tail_dim = doc_length_tail_dim
         self.text_embedding_dim = int(text_embedding_dim or 0)
         self.text_adapter_dim = int(text_adapter_dim or 0)
         self._text_path_active = self.text_embedding_dim > 0 and self.text_adapter_dim > 0
@@ -297,6 +310,7 @@ class ForecasterBase(nn.Module):
             + statement_delta_tail_dim
             + vote_features_tail_dim
             + vix_features_tail_dim
+            + doc_length_tail_dim
         )
         self.lstm_input_size = lstm_input_size
         lstm_dropout = dropout if num_layers > 1 else 0.0

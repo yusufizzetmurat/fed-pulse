@@ -19,11 +19,19 @@ from __future__ import annotations
 from pathlib import Path
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+from app import __file__ as _app_init_path
+
+_APP_DIR = Path(_app_init_path).parent
 
 
 def _read(rel_path: str) -> str:
-    return (_REPO_ROOT / rel_path).read_text(encoding="utf-8")
+    # Accepts both "models/config.py" and the legacy "backend/app/models/config.py"
+    # prefix. Resolves via the live ``app`` package so the same path works whether
+    # the test runs from the host repo root or inside the backend container (where
+    # ``backend/`` is the mount root and there is no nested ``backend/app/`` tree).
+    if rel_path.startswith("backend/app/"):
+        rel_path = rel_path[len("backend/app/"):]
+    return (_APP_DIR / rel_path).read_text(encoding="utf-8")
 
 
 def test_model_config_carries_encoder_lora_field() -> None:

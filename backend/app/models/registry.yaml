@@ -107,7 +107,14 @@ encoders:
     revision: b0753ae76394dd36bcfb912a46018088bca48be0
     gated: false
     task: sentence_embedding
-    description: Nomic embed text v1.5. Sentence-embedding encoder; second bake-off entry alongside BGE.
+    description: |
+      Nomic embed text v1.5. Sentence-embedding encoder; second bake-off
+      entry alongside BGE. Ships custom modeling code (``nomic-bert-2048``)
+      so ``trust_remote_code: true`` is required for ``AutoModel`` /
+      ``AutoConfig`` to consume the repo. Security envelope: only this
+      alias opts in; the registry default keeps every other encoder on
+      the standard transformers path.
+    trust_remote_code: true
     inference_features: []
 
   voyage_finance_2:
@@ -115,6 +122,8 @@ encoders:
     revision: voyage-finance-2
     gated: true
     task: sentence_embedding
+    api_only: true
+    hidden_size: 1024
     description: |
       Voyage AI voyage-finance-2 sentence-embedding encoder (1024-dim,
       finance-tuned). Served by Voyage's hosted REST API, not the
@@ -122,7 +131,13 @@ encoders:
       ``scripts/cache_voyage_embeddings.py`` rather than going through
       ``app.data.embedding_cache``. ``VOYAGE_API_KEY`` must be set;
       Voyage does not publish a checkpoint sha, so the revision field
-      pins the model name itself.
+      pins the model name itself. ``api_only: true`` tells every code
+      path that would otherwise call ``AutoConfig.from_pretrained``
+      / ``AutoModel.from_pretrained`` against ``ref.repo`` to read the
+      cached embeddings off disk instead (the from_pretrained call
+      would 404 against the API-only repo); ``hidden_size: 1024``
+      surfaces the encoder's native pooled-vector dim without needing
+      to instantiate the model.
     inference_features: []
 
   finbert_fed_adjacent:
@@ -408,15 +423,41 @@ artefacts:
 
   forecaster_canonical:
     hf_uri: hf://yusufizzetmurat/fed-pulse-forecaster
-    revision: "de318540e2c9def75c0b6068dcebf73fd22dbb1d"
+    revision: "2a178cb5470eb4f4cfe781b121fb5d3a4076632e"
     eager: true
     description: |
       Canonical multi-head forecaster checkpoint (#292). Loaded into
-      ``backend/models/forecaster_best.pt`` on first boot.
+      ``backend/models/forecaster_best.pt`` on first boot. The
+      ``2a178cb5`` revision adds the LoRA adapter sidecar
+      (``forecaster_best.pt.lora_adapter.pt``) and the conformal
+      calibration sidecar (``forecaster_calibration_fresh.pt``)
+      alongside the singleton checkpoint so a reproducer can pull
+      both layers in one snapshot.
     inference_features:
       - text_embedding
       - text_embedding_missing
       - credibility
+
+  multi_axis_text_classifier:
+    hf_uri: hf://yusufizzetmurat/fed-pulse-multi-axis-text-classifier
+    revision: "f3d2b524683a705f5940f71dc33e783bc20c2b8d"
+    eager: false
+    description: |
+      §6.41 multi-axis text classifier checkpoints. Each
+      ``text_multi_axis_seedNN.pt`` is a single-seed fine-tuned
+      ``finbert_fed_adjacent`` encoder with a multi-task
+      classification head (stance / factor / certainty);
+      ``text_multi_axis_best.pt`` is the singleton inference
+      checkpoint the ``/analyze`` multi-axis service loads from
+      ``backend/models/text_multi_axis_best.pt``. Seeds 11, 47, 97
+      are mirrored; seeds 29 and 71 ran pod-side and were not
+      retained as artefacts (canonical 5-seed mean was computed at
+      training time from the metrics, not from per-seed
+      checkpoints). MIT-licensed; backbone encoder pin is
+      ``encoder_finbert_fed_adjacent`` above.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
 
   rates_heads_canonical:
     hf_uri: hf://yusufizzetmurat/fed-pulse-rates-heads
@@ -485,6 +526,27 @@ artefacts:
       ``snapshot_download(repo_type='dataset', revision=...)`` recipe
       as the canonical TP. Consumed by the ``seq_len_60`` sweep arm
       once the loader's ``sequence_length`` plumbing lands.
+    inference_features: []
+
+  training_package_vix:
+    hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-training-package
+    revision: "347d3e30465a170b4504358f4ace7a88c1652f84"
+    eager: false
+    description: |
+      VIX-extended variant of the canonical training package (#478).
+      Identical events, labels, splits, and fold manifest to the
+      canonical pin; events.parquet carries the six new strict-prior
+      VIX columns (``vix_t_minus_1``, ``vix1m_t_minus_1``,
+      ``vix3m_t_minus_1``, ``vix6m_t_minus_1``,
+      ``vix_3m_over_1m_slope``, ``vrp_t_minus_1``) plus the
+      ``forward_realized_vol_10d_vix`` realised baseline. Rebuilt
+      laptop-side 2026-05-31 against the post-#478 event_dataset_builder
+      so the ``vix_features`` arm can exercise real values instead of
+      hitting the missing-flag fallback the canonical TP forces on it.
+      Pulled to ``data/processed/canonical_vix/`` via the same
+      ``snapshot_download(repo_type='dataset', revision=...)`` recipe
+      as the canonical TP. Consumed by ``--use-vix-features`` arms
+      against ``--training-package-id canonical_vix``.
     inference_features: []
 
   embedding_caches:

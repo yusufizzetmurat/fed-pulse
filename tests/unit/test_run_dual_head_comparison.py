@@ -77,6 +77,33 @@ def test_dual_head_runner_no_mp_surprise_flag(monkeypatch):
     assert args.use_mp_surprise is False
 
 
+def test_dual_head_runner_doc_length_flag(monkeypatch):
+    """``--use-doc-length`` opts in; default keeps the flag off."""
+
+    from scripts.run_dual_head_comparison import _parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_dual_head_comparison", "--training-package-id", "tp_dummy"],
+    )
+    args = _parse_args()
+    assert args.use_doc_length is False
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_dual_head_comparison",
+            "--training-package-id",
+            "tp_dummy",
+            "--use-doc-length",
+        ],
+    )
+    args = _parse_args()
+    assert args.use_doc_length is True
+
+
 def test_dual_head_runner_regime_loss_focal_choice_accepted(monkeypatch):
     """``--regime-loss focal`` parses + ``--focal-gamma`` overrides default."""
 
@@ -730,6 +757,130 @@ def test_dual_head_runner_text_encoder_threads_into_loader(monkeypatch):
     loader_kwargs = captured["loader_calls"][0]
     assert loader_kwargs["text_encoder"] == "finbert_fed_adjacent_xbank"
     assert loader_kwargs["use_text_embeddings"] is False
+
+
+def test_dual_head_runner_text_encoder_activates_model_text_channel(monkeypatch):
+    """``text_encoder`` + ``use_text_embeddings`` activate the model text channel.
+
+    Pre-#546 runner threaded the loader-side toggle but left ModelConfig at
+    text_embedding_dim=0 / text_adapter_dim=0, so the model silently
+    ignored the embeddings the loader emitted (the encoder bake-off
+    no-op surfaced in §6.38). This pins the regression: when the text
+    encoder is set, the model's text channel must be non-zero on both
+    dims AND the channel mode must be ``embeddings``.
+    """
+
+    pytest.importorskip("torch", reason="train_model import path needs torch")
+    pytest.importorskip("transformers", reason="encoder hidden_size resolution")
+    from scripts import run_dual_head_comparison as runner
+
+    captured = _capture_calls(monkeypatch, runner)
+
+    runner._run_one_cell(
+        "dual",
+        seed=11,
+        training_package_id="tp_dummy",
+        fold_ids=["fold_001"],
+        epochs=1,
+        regression_alpha=0.5,
+        hidden_size=64,
+        text_encoder="finbert_fed_adjacent",
+        use_text_embeddings=True,
+    )
+
+    train_kwargs = captured["train_calls"][0]
+    model_config = train_kwargs["model_config"]
+    assert model_config.text_embedding_dim > 0, (
+        "text_encoder set with use_text_embeddings=True must resolve a "
+        "positive hidden_size onto ModelConfig.text_embedding_dim; "
+        "otherwise ForecasterBase ignores the loader-emitted embeddings."
+    )
+    assert model_config.text_adapter_dim > 0
+    assert model_config.text_channel == "embeddings"
+
+
+def test_dual_head_runner_text_encoder_unset_keeps_text_channel_off(monkeypatch):
+    """Default invocation must keep the text channel at the byte-identical
+    no-text path (both dims 0, channel='scalar')."""
+
+    pytest.importorskip("torch", reason="train_model import path needs torch")
+    from scripts import run_dual_head_comparison as runner
+
+    captured = _capture_calls(monkeypatch, runner)
+
+    runner._run_one_cell(
+        "dual",
+        seed=11,
+        training_package_id="tp_dummy",
+        fold_ids=["fold_001"],
+        epochs=1,
+        regression_alpha=0.5,
+        hidden_size=64,
+    )
+
+    train_kwargs = captured["train_calls"][0]
+    model_config = train_kwargs["model_config"]
+    assert model_config.text_embedding_dim == 0
+    assert model_config.text_adapter_dim == 0
+    assert model_config.text_channel == "scalar"
+
+
+def test_dual_head_runner_api_only_encoder_skips_autoconfig(monkeypatch):
+    """#556: api_only encoders must read hidden_size off the registry.
+
+    Voyage is served by the Voyage REST API; ``ref.repo`` is the API
+    model name, not an HF artifact. The pre-#556 runner called
+    ``AutoConfig.from_pretrained`` against the repo and 404'd. The
+    api_only short-circuit reads the registry's explicit
+    ``hidden_size`` annotation instead — never instantiates the
+    model, never hits the HF Hub.
+
+    This test fakes a minimal EncoderRef-shaped object with the
+    api_only + hidden_size fields and confirms the runner builds a
+    ModelConfig with the registry's hidden_size on it AND does not
+    import / call AutoConfig.
+    """
+
+    pytest.importorskip("torch", reason="train_model import path needs torch")
+    from scripts import run_dual_head_comparison as runner
+
+    captured = _capture_calls(monkeypatch, runner)
+
+    class _FakeRef:
+        repo = "voyageai/voyage-finance-2"
+        revision = "voyage-finance-2"
+        trust_remote_code = False
+        api_only = True
+        hidden_size = 1024
+
+    monkeypatch.setattr(
+        runner, "_run_one_cell", runner._run_one_cell  # noop, just to verify import order
+    )
+    # Patch the registry resolver the runner imports lazily.
+    import app.models.registry as registry
+
+    monkeypatch.setattr(registry, "encoder_ref", lambda alias: _FakeRef())
+
+    runner._run_one_cell(
+        "dual",
+        seed=11,
+        training_package_id="tp_dummy",
+        fold_ids=["fold_001"],
+        epochs=1,
+        regression_alpha=0.5,
+        hidden_size=64,
+        text_encoder="voyage_finance_2",
+        use_text_embeddings=True,
+    )
+
+    train_kwargs = captured["train_calls"][0]
+    model_config = train_kwargs["model_config"]
+    assert model_config.text_embedding_dim == 1024, (
+        "api_only encoder must surface the registry's hidden_size onto "
+        "ModelConfig without calling AutoConfig"
+    )
+    assert model_config.text_adapter_dim == 128
+    assert model_config.text_channel == "embeddings"
 
 
 # ---------------------------------------------------------------------------

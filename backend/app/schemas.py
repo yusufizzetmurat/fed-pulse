@@ -8,6 +8,44 @@ _STRICT_REQUEST_CONFIG = ConfigDict(extra="forbid", strict=True, frozen=True)
 # Response models stay open to extras so the OpenAPI snapshot does not churn;
 # `frozen` still blocks mutation after construction.
 _FORBID_FROZEN_CONFIG = ConfigDict(frozen=True)
+# #99 strict response config: enables Pydantic v2 strict mode so the
+# numeric fields refuse cross-type coercion at construction time.
+# Concretely it rejects:
+#   - float -> int field   (a numpy.float64 leak into lookback_days)
+#   - str   -> any numeric (string concat artefacts)
+#   - bool  -> any numeric (True/False misuse)
+# Pydantic v2 strict_float still accepts a bare ``int`` (treated as a
+# lossless promotion), so a numpy.int64 leak into close/volatility
+# is NOT caught here -- the guard is asymmetric across the numeric
+# directions. It also accepts numpy.float64 against a float field
+# because numpy.float64 is a subclass of Python float. Decimal and
+# Fraction are likewise silently coerced for float fields in practice
+# (pydantic/pydantic#11131) despite the docs implying otherwise. The
+# value-add is the directional rejections above; the asymmetry is
+# documented so the next audit pass knows what gap remains.
+# Applied to the two leaf-level numeric response models whose
+# service-layer builders have been audited end-to-end
+# (MarketDataResponse and PredictionResponse).
+#
+# Scope caveat (Pydantic v2 semantics): strict=True is model-local.
+# When a model with strict=True is populated as a nested field of a
+# non-strict outer model (e.g. AnalyzeResponse), the outer model's
+# non-strict coercion governs the validation pass and the nested
+# strict guard does NOT re-fire on field values coming from the
+# outer dict. Strict therefore catches numpy at direct-construction
+# sites (services that build the model by name, tests that
+# round-trip it, fixture factories) but not at FastAPI's
+# response-serialisation boundary when the outer AnalyzeResponse is
+# still _FORBID_FROZEN_CONFIG. The follow-up #99 PR that flips
+# AnalyzeResponse to strict will close that hole; the leaf-level
+# strict here still adds value for the direct-construction path,
+# which is where the service builders actually live.
+#
+# Remaining response models (SentimentResponse, ChunkAttentionDiagnostics,
+# ModelDiagnostics, XaiResponse, HistoryEntry, AnalyzeResponse) wait
+# on matching audit passes -- this PR is the first half of the #99
+# rollout.
+_STRICT_RESPONSE_CONFIG = ConfigDict(strict=True, frozen=True)
 
 
 class AnalyzeRequest(BaseModel):
@@ -52,7 +90,7 @@ class SentimentResponse(BaseModel):
 
 
 class MarketDataResponse(BaseModel):
-    model_config = _FORBID_FROZEN_CONFIG
+    model_config = _STRICT_RESPONSE_CONFIG
 
     symbol: str
     requested_date: str
@@ -63,7 +101,7 @@ class MarketDataResponse(BaseModel):
 
 
 class PredictionResponse(BaseModel):
-    model_config = _FORBID_FROZEN_CONFIG
+    model_config = _STRICT_RESPONSE_CONFIG
 
     close: float
     volatility: float
@@ -1019,6 +1057,22 @@ class AnalogCard(BaseModel):
             "NOT a model feature. Do not feed back into a downstream model."
         ),
     )
+    # #299 — realized S&P forward returns measured from the event-day
+    # close (Bloomberg / FactSet convention). The denominator is the
+    # close on ``event_date`` (or the nearest prior trading day) and
+    # the numerator is the close ``N`` trading days forward of that
+    # anchor. These are MARKET DATA OVERLAYS (yfinance ^GSPC), not
+    # training labels — safe to surface even when the supervised
+    # ``subsequent_vol_regime`` bucket is intentionally suppressed.
+    # None when the historical market data is unavailable.
+    subsequent_close_pct_5d: float | None = Field(
+        default=None,
+        description="S&P 500 close-to-close % return over the 5 trading days following the event-day close.",
+    )
+    subsequent_close_pct_20d: float | None = Field(
+        default=None,
+        description="S&P 500 close-to-close % return over the 20 trading days following the event-day close.",
+    )
     excerpt: str = Field(..., description="First ~280 characters of the analog statement.")
 
 
@@ -1196,3 +1250,116 @@ class TrajectoryResponse(BaseModel):
             "available."
         ),
     )
+
+
+class ResearchRegistryBaseline(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    label: str
+    dual_f1: float | None = None
+    cls_f1: float | None = None
+    regression_f1: float | None = None
+
+
+class ResearchRegistryRow(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    encoder_alias: str
+    encoder_display: str
+    dual_f1: float | None = None
+    cls_f1: float | None = None
+    regression_f1: float | None = None
+    delta_dual: float | None = Field(
+        default=None,
+        description="Δ macro-F1 on the dual-head surface vs no-text baseline.",
+    )
+    delta_cls: float | None = Field(
+        default=None,
+        description="Δ macro-F1 on the classification-only surface vs no-text baseline.",
+    )
+    is_winner: bool = Field(
+        default=False,
+        description="True iff the active surfaces Δ is >= 0 (non-negative lift).",
+    )
+    checkpoint_relpath: str | None = None
+    cache_uri: str | None = Field(
+        default=None,
+        description="hf:// URI of the shareable embedding cache parquet, if published.",
+    )
+    notes: str = ""
+
+
+class ResearchRegistryResponse(BaseModel):
+    """Quant-facing encoder registry response (§6.41 manifest).
+
+    Filtered by default to non-negative Δ on the requested surface so
+    the dashboard does not surface negative-lift encoders. Use
+    ?include_rejected=true to see the full table including nulls and
+    negatives.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    available: bool
+    surface: Literal["dual", "cls"]
+    baseline: ResearchRegistryBaseline | None = None
+    rows: list[ResearchRegistryRow] = Field(default_factory=list)
+    rejected_count: int = 0
+    training_package_id: str = ""
+    head: str = ""
+    seeds: list[int] = Field(default_factory=list)
+    source_wiki_section: str = ""
+
+
+# #299 PR-B — stance-directional backtest engine
+
+class BacktestPositionEntry(BaseModel):
+    """One {date, position} signal in the backtest request."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    date: str = Field(..., description="ISO date YYYY-MM-DD of the signal.")
+    position: int = Field(..., description="Position in {-1, 0, 1}. Hawkish=-1, neutral=0, dovish=+1.")
+
+
+class BacktestRequest(BaseModel):
+    """Request body for POST /research/backtest."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    positions: list[BacktestPositionEntry] = Field(
+        ..., min_length=1, description="At least one signal entry."
+    )
+    symbol: str = Field("^GSPC", description="Market ticker for the strategy backtest.")
+    horizon_days: int = Field(
+        5,
+        ge=1,
+        le=60,
+        description="Forward holding period in trading days.",
+    )
+
+
+class BacktestTradeRow(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    date: str
+    position: int
+    forward_return_pct: float | None = None
+    strategy_return_pct: float | None = None
+
+
+class BacktestResponse(BaseModel):
+    """Aggregate backtest metrics for the quant terminal."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    trades: list[BacktestTradeRow] = Field(default_factory=list)
+    n_trades: int
+    sharpe: float | None = None
+    hit_rate: float | None = None
+    max_dd_pct: float | None = None
+    cum_return_pct: float | None = None
+    benchmark_cum_pct: float | None = None
+    alpha_cum_pct: float | None = None
+    horizon_days: int
+    symbol: str

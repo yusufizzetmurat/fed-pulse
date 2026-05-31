@@ -62,7 +62,30 @@ _contract_status: dict[str, Any] = {
 DEFAULT_FACTOR_COVERAGE_GATE = 0.01
 
 _logger = logging.getLogger(__name__)
-_state: "_ClassifierState | None" = None
+
+
+@dataclass(frozen=True)
+class _LoadFailure:
+    """Sticky sentinel cached when the checkpoint cannot be loaded.
+
+    Distinct from the ``None`` ``get_classifier`` returns so the cache
+    can tell "never tried" (the initial ``_UNSET`` state) from "tried
+    and failed". Per #410 / #454: once a failure is cached, subsequent
+    ``get_classifier`` calls return ``None`` without re-attempting the
+    load and without re-emitting the warning, so a broken checkpoint
+    on a sweep does not flood logs with one stack trace per /analyze
+    request. The reason string is what feeds the structured warning
+    emitted on the first failure.
+    """
+
+    reason: str
+
+
+_UNSET: Any = object()
+# ``Any`` so mypy --strict accepts the three-state union (unset / failure /
+# state) without insisting on a TypeAlias the runtime ``isinstance`` checks
+# do not need. Matches the analogs.py pattern (#410).
+_state: Any = _UNSET
 _state_lock = threading.Lock()
 
 
@@ -188,19 +211,20 @@ def _validate_contract(checkpoint_path: Path) -> tuple[bool, str]:
     return True, "ok"
 
 
-def _load_state() -> _ClassifierState | None:
+def _load_state() -> "_ClassifierState | _LoadFailure":
     """Build the singleton from the checkpoint payload.
 
-    Returns ``None`` when the checkpoint is missing — the caller then
-    routes /analyze through the legacy stance-only path without
-    raising. Any other failure (missing transformers, malformed
-    payload) is logged and also returns ``None`` so a broken
-    classifier never blocks the rest of the analyze flow.
+    Returns a :class:`_LoadFailure` sentinel when the checkpoint is
+    missing or any load step fails — the caller (``get_classifier``)
+    converts that to a ``None`` return for the public surface and
+    caches the sentinel so subsequent calls skip the broken load.
+    Raises only on the inference-contract incompatibility path (#393);
+    every other failure is captured as a structured sticky sentinel.
     """
 
     path = _resolve_checkpoint_path()
     if not path.exists():
-        return None
+        return _LoadFailure(reason=f"checkpoint_missing path={path}")
     # #393: validate the inference-contract sidecar before doing any
     # state-dict load. A sidecar declaring kwargs the forward
     # signature does not accept is a hard refusal -- raise so the
@@ -215,9 +239,14 @@ def _load_state() -> _ClassifierState | None:
         )
     try:
         payload = torch.load(path, map_location="cpu", weights_only=False)
-    except Exception:
-        _logger.warning("multi_axis_checkpoint_load_failed path=%s", path, exc_info=True)
-        return None
+    except Exception as exc:
+        # No log here -- get_classifier emits exactly one structured
+        # warning when it caches the _LoadFailure sentinel. Mirrors the
+        # analogs.py contract (#410): _load_state stays silent so the
+        # double-log surfaced in the #551 review pass does not recur.
+        return _LoadFailure(
+            reason=f"torch_load_failed path={path} error={type(exc).__name__}: {exc}"
+        )
 
     metadata = payload.get("metadata") or {}
     encoder_alias = str(metadata.get("encoder_alias") or "finbert_fed_adjacent")
@@ -234,7 +263,11 @@ def _load_state() -> _ClassifierState | None:
             raise ValueError(
                 f"Encoder alias {encoder_alias!r} is unpinned in registry.yaml"
             )
-        tokenizer = AutoTokenizer.from_pretrained(ref.repo, revision=ref.revision)  # type: ignore[no-untyped-call]
+        tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
+            ref.repo,
+            revision=ref.revision,
+            trust_remote_code=bool(getattr(ref, "trust_remote_code", False)),
+        )
         model = TextMultiAxisClassifier.from_encoder_alias(
             encoder_alias=encoder_alias,
             head_hidden_size=head_hidden_size,
@@ -248,11 +281,13 @@ def _load_state() -> _ClassifierState | None:
                 len(missing),
                 len(unexpected),
             )
-    except Exception:
-        _logger.warning(
-            "multi_axis_classifier_build_failed path=%s", path, exc_info=True
+    except Exception as exc:
+        # Silent here (the single warning fires in get_classifier when
+        # the sentinel is first cached). The partial_load warning above
+        # is informational rather than a failure so it stays put.
+        return _LoadFailure(
+            reason=f"model_build_failed encoder={encoder_alias} error={type(exc).__name__}: {exc}"
         )
-        return None
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -336,33 +371,50 @@ def get_loaded_encoder_alias() -> str | None:
 
     with _state_lock:
         state = _state
-    if state is None:
+    if state is _UNSET or isinstance(state, _LoadFailure):
         return None
-    return state.encoder_alias
+    return str(state.encoder_alias)
 
 
-def get_classifier() -> _ClassifierState | None:
+def get_classifier() -> "_ClassifierState | None":
     """Return the lazily-loaded classifier singleton (or None when absent).
 
     Thread-safe: callers that race on first use see one load. Subsequent
-    callers read the cached state without acquiring the lock.
+    callers read the cached state without acquiring the lock. Per #454,
+    a load failure is cached as a sticky :class:`_LoadFailure` sentinel
+    so subsequent calls return ``None`` without re-attempting the load
+    and without re-emitting the warning — call :func:`reset_classifier`
+    (or restart the worker) to clear the sticky failure once the
+    underlying breakage is fixed.
     """
 
     global _state
-    if _state is not None:
-        return _state
+    cached = _state
+    if cached is not _UNSET:
+        return None if isinstance(cached, _LoadFailure) else cached
     with _state_lock:
-        if _state is None:
-            _state = _load_state()
-        return _state
+        cached = _state
+        if cached is not _UNSET:
+            return None if isinstance(cached, _LoadFailure) else cached
+        loaded = _load_state()
+        _state = loaded
+        if isinstance(loaded, _LoadFailure):
+            _logger.warning("multi_axis_classifier_load_failed reason=%s", loaded.reason)
+            return None
+        return loaded
 
 
 def reset_classifier() -> None:
-    """Drop the singleton so the next call rebuilds (test hook + post-train refresh)."""
+    """Drop the singleton so the next call rebuilds (test hook + post-train refresh).
+
+    Also clears a sticky :class:`_LoadFailure` cached by #454, so an
+    operator who fixed the underlying breakage can recover without a
+    process restart.
+    """
 
     global _state
     with _state_lock:
-        _state = None
+        _state = _UNSET
     _record_contract_status(
         status="uninitialised",
         checkpoint_path=None,
