@@ -19,10 +19,11 @@ from pathlib import Path
 import pytest
 
 
-_LOOP_PATH = Path(__file__).resolve().parents[2] / "backend" / "app" / "training" / "loop.py"
-_TRAIN_FORECASTER_PATH = (
-    Path(__file__).resolve().parents[2] / "backend" / "app" / "train_forecaster.py"
-)
+import app.train_forecaster as _train_forecaster_mod
+from app.training import loop as _loop_mod
+
+_LOOP_PATH = Path(_loop_mod.__file__)
+_TRAIN_FORECASTER_PATH = Path(_train_forecaster_mod.__file__)
 
 
 def _read(path: Path) -> str:
