@@ -640,3 +640,31 @@ export interface ResearchRegistryResponse {
   seeds: number[];
   source_wiki_section: string;
 }
+
+// #299 PR-B — stance-directional backtest engine
+export type BacktestPosition = -1 | 0 | 1;
+
+export interface BacktestPositionEntry {
+  date: string;
+  position: BacktestPosition;
+}
+
+export interface BacktestTradeRow {
+  date: string;
+  position: number;
+  forward_return_pct: number | null;
+  strategy_return_pct: number | null;
+}
+
+export interface BacktestResponse {
+  trades: BacktestTradeRow[];
+  n_trades: number;
+  sharpe: number | null;
+  hit_rate: number | null;
+  max_dd_pct: number | null;
+  cum_return_pct: number | null;
+  benchmark_cum_pct: number | null;
+  alpha_cum_pct: number | null;
+  horizon_days: number;
+  symbol: string;
+}

@@ -1309,3 +1309,57 @@ class ResearchRegistryResponse(BaseModel):
     head: str = ""
     seeds: list[int] = Field(default_factory=list)
     source_wiki_section: str = ""
+
+
+# #299 PR-B — stance-directional backtest engine
+
+class BacktestPositionEntry(BaseModel):
+    """One {date, position} signal in the backtest request."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    date: str = Field(..., description="ISO date YYYY-MM-DD of the signal.")
+    position: int = Field(..., description="Position in {-1, 0, 1}. Hawkish=-1, neutral=0, dovish=+1.")
+
+
+class BacktestRequest(BaseModel):
+    """Request body for POST /research/backtest."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    positions: list[BacktestPositionEntry] = Field(
+        ..., min_length=1, description="At least one signal entry."
+    )
+    symbol: str = Field("^GSPC", description="Market ticker for the strategy backtest.")
+    horizon_days: int = Field(
+        5,
+        ge=1,
+        le=60,
+        description="Forward holding period in trading days.",
+    )
+
+
+class BacktestTradeRow(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    date: str
+    position: int
+    forward_return_pct: float | None = None
+    strategy_return_pct: float | None = None
+
+
+class BacktestResponse(BaseModel):
+    """Aggregate backtest metrics for the quant terminal."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    trades: list[BacktestTradeRow] = Field(default_factory=list)
+    n_trades: int
+    sharpe: float | None = None
+    hit_rate: float | None = None
+    max_dd_pct: float | None = None
+    cum_return_pct: float | None = None
+    benchmark_cum_pct: float | None = None
+    alpha_cum_pct: float | None = None
+    horizon_days: int
+    symbol: str
