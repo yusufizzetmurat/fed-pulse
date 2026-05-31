@@ -71,3 +71,42 @@ def test_daily_fusion_has_text_and_age() -> None:
     assert by_date["2020-01-03"]["doc_age_days"] == 0
     assert by_date["2020-01-06"]["doc_age_days"] == 1  # one trading day later
     assert by_date["2020-01-06"]["doc_type"] == "speech"
+
+
+def test_surprise_asof_join_is_leak_safe() -> None:
+    days = ["2020-01-02", "2020-01-03", "2020-01-06", "2020-01-07"]
+    rv = _rv_df(days, [1.0, 2.0, 4.0, 8.0])
+    corpus = pd.DataFrame(
+        [
+            {
+                "date": "2020-01-06",
+                "timestamp_et": "2020-01-06 14:00",
+                "doc_type": "statement",
+                "time_known": True,
+                "speaker": "monetary",
+                "text": "x" * 300,
+            }
+        ]
+    )
+    surprise = pd.DataFrame(
+        [
+            {
+                "date": "2020-01-06",
+                "mp_surprise_level": 12.5,
+                "mp_surprise_path_factor": -3.0,
+                "fed_info_factor": 4.0,
+            }
+        ]
+    )
+    daily = d.build_daily_fusion_frame(rv, corpus, horizons=(1,), surprise=surprise)
+    by_date = {r["date"]: r for _, r in daily.iterrows()}
+    # Strictly before the statement → neutral fill (no surprise is known yet).
+    assert by_date["2020-01-03"]["surprise_level"] == 0.0
+    assert by_date["2020-01-03"]["surprise_info"] == 0.0
+    # On the statement date and after → the statement's surprise is attached.
+    assert by_date["2020-01-06"]["surprise_level"] == 12.5
+    assert by_date["2020-01-06"]["surprise_path"] == -3.0
+    assert by_date["2020-01-07"]["surprise_level"] == 12.5  # carried forward
+    # Omitting the surprise frame leaves the columns at the neutral fill.
+    daily0 = d.build_daily_fusion_frame(rv, corpus, horizons=(1,))
+    assert (daily0["surprise_level"] == 0.0).all()

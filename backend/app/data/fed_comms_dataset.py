@@ -31,8 +31,15 @@ from app.data.intraday_rv_forecast import _EPS, _har_lags
 from app.data.fed_comms_scrape import DEFAULT_CORPUS_PARQUET
 
 DEFAULT_OUT_DIR = DATA_DIR / "processed" / "fed_comms_fusion"
+DEFAULT_MP_SURPRISE_PARQUET = DATA_DIR / "external" / "fred" / "mp_surprises.parquet"
 DEFAULT_HORIZONS = (1, 5, 22)
 _DOC_TYPES = ("statement", "minutes", "press_conference", "speech", "testimony")
+
+# Market-derived MP-surprise columns attached per trading day via an as-of join
+# on the most-recent FOMC statement. Filled with the neutral value below before
+# the first statement (no surprise is known yet).
+_SURPRISE_COLUMNS = ("surprise_level", "surprise_path", "surprise_info")
+_SURPRISE_NEUTRAL = 0.0
 
 
 def _forward_log_rv_windows(rv: np.ndarray, horizons: tuple[int, ...]) -> dict[int, np.ndarray]:
@@ -155,8 +162,62 @@ def _statement_calendar(
     return since, to
 
 
+def _statement_surprise_columns(
+    trading_days: list[str],
+    surprise: Any,
+) -> dict[str, np.ndarray]:
+    """As-of join the most-recent FOMC statement's surprise onto each trading day.
+
+    LEAK-SAFETY: a trading day t carries statement S's surprise only when
+    statement_date(S) ≤ t. We map each statement date to its as-of trading-day
+    index (latest trading day ≤ statement_date) via :func:`_as_of_index`, sort
+    those origins, and for day i pick the latest origin ≤ i — the same backward
+    bisect the FOMC-calendar features use. Days before the first statement get
+    the neutral fill (no surprise is known yet).
+    """
+
+    import bisect
+
+    n = len(trading_days)
+    cols = {c: np.full(n, _SURPRISE_NEUTRAL, dtype=np.float64) for c in _SURPRISE_COLUMNS}
+    if surprise is None or surprise.empty:
+        return cols
+    # The producer (mp_surprise) keys rows on `event_date`; accept either name.
+    date_col = "date" if "date" in surprise.columns else "event_date"
+    surprise = surprise.sort_values(date_col)  # so later-dated statement wins same origin
+    by_date = {str(r[date_col]): r for _, r in surprise.iterrows()}
+    # origin trading-day index → surprise row, for statements with a value.
+    origin_to_row: dict[int, Any] = {}
+    for d, row in by_date.items():
+        pos = _as_of_index(d, trading_days)
+        if pos is not None:
+            origin_to_row[pos] = row  # date-sorted above → later statement wins
+    origins = sorted(origin_to_row)
+    if not origins:
+        return cols
+    src = {
+        "surprise_level": "mp_surprise_level",
+        "surprise_path": "mp_surprise_path_factor",
+        "surprise_info": "fed_info_factor",
+    }
+    for i in range(n):
+        left = bisect.bisect_right(origins, i) - 1
+        if left < 0:
+            continue
+        row = origin_to_row[origins[left]]
+        for out_col, in_col in src.items():
+            val = row.get(in_col)
+            if val is not None and val == val:  # NaN-safe; keep neutral otherwise
+                cols[out_col][i] = float(val)
+    return cols
+
+
 def build_daily_fusion_frame(
-    rv_df: Any, corpus: Any, *, horizons: tuple[int, ...] = DEFAULT_HORIZONS
+    rv_df: Any,
+    corpus: Any,
+    *,
+    horizons: tuple[int, ...] = DEFAULT_HORIZONS,
+    surprise: Any = None,
 ) -> Any:
     """Trading-day table: per-measure HAR lags + forward targets + most-recent comm.
 
@@ -193,6 +254,11 @@ def build_daily_fusion_frame(
     # not "is it an FOMC day" — the fairness condition for the volume target.
     days_since_stmt, days_to_stmt = _statement_calendar(corpus_sorted, trading_days)
 
+    # Most-recent FOMC statement's market-derived MP surprise, as-of joined so a
+    # day t can only see a statement dated ≤ t (leak-safe). These are MARKET
+    # features — they feed both the gate-off market path and the fused path.
+    surprise_cols = _statement_surprise_columns(trading_days, surprise)
+
     rows: list[dict[str, Any]] = []
     for i, day in enumerate(trading_days):
         row: dict[str, Any] = {"date": day}
@@ -205,6 +271,8 @@ def build_daily_fusion_frame(
                 row[f"{m}_fwd_{h}"] = float(val) if np.isfinite(val) else np.nan
         row["days_since_stmt"] = float(days_since_stmt[i])
         row["days_to_stmt"] = float(days_to_stmt[i])
+        for c in _SURPRISE_COLUMNS:
+            row[c] = float(surprise_cols[c][i])
         di = int(last_doc_row[i])
         if di >= 0:
             doc = corpus_sorted.iloc[di]
@@ -228,6 +296,7 @@ def build(
     rv_path: Path | str = DEFAULT_RV_PARQUET,
     out_dir: Path | str = DEFAULT_OUT_DIR,
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
+    mp_surprise_path: Path | str | None = DEFAULT_MP_SURPRISE_PARQUET,
 ) -> tuple[Path, Path]:
     """Build + persist both tables; return (pairs_path, daily_path)."""
 
@@ -235,8 +304,11 @@ def build(
 
     corpus = pd.read_parquet(corpus_path)
     rv_df = pd.read_parquet(rv_path)
+    surprise = None
+    if mp_surprise_path is not None and Path(mp_surprise_path).exists():
+        surprise = pd.read_parquet(mp_surprise_path)
     pairs = build_text_outcome_pairs(corpus, rv_df, horizons=horizons)
-    daily = build_daily_fusion_frame(rv_df, corpus, horizons=horizons)
+    daily = build_daily_fusion_frame(rv_df, corpus, horizons=horizons, surprise=surprise)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     pairs_path = out_dir / "text_outcome_pairs.parquet"
@@ -247,6 +319,12 @@ def build(
     cov = float(daily["has_text"].mean()) if not daily.empty else 0.0
     print(f"[fed_comms_dataset] pairs={len(pairs)} by_type={by_type}")
     print(f"[fed_comms_dataset] daily={len(daily)} has_text_frac={cov:.3f} → {out_dir}")
+    if not daily.empty:
+        nz = float((daily["surprise_level"] != _SURPRISE_NEUTRAL).mean())
+        print(
+            f"[fed_comms_dataset] surprise: present={surprise is not None} "
+            f"nonneutral_level_frac={nz:.3f}"
+        )
     return pairs_path, daily_path
 
 
@@ -255,8 +333,14 @@ def main() -> int:
     parser.add_argument("--corpus-path", type=Path, default=DEFAULT_CORPUS_PARQUET)
     parser.add_argument("--rv-path", type=Path, default=DEFAULT_RV_PARQUET)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    parser.add_argument("--mp-surprise-path", type=Path, default=DEFAULT_MP_SURPRISE_PARQUET)
     args = parser.parse_args()
-    build(corpus_path=args.corpus_path, rv_path=args.rv_path, out_dir=args.out_dir)
+    build(
+        corpus_path=args.corpus_path,
+        rv_path=args.rv_path,
+        out_dir=args.out_dir,
+        mp_surprise_path=args.mp_surprise_path,
+    )
     return 0
 
 

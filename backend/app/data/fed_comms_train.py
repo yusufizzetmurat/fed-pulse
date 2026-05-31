@@ -90,7 +90,14 @@ def _assemble(
     # FOMC-calendar features: market baseline knows WHEN statements occur, so the
     # text contribution isolates content rather than FOMC-day detection.
     cal = daily[["days_since_stmt", "days_to_stmt"]].to_numpy(dtype=np.float64)
-    market_feat = np.column_stack([har, market, cal])
+    # Market-derived MP surprise of the most-recent statement (as-of joined,
+    # leak-safe). These are MARKET features → they feed both the gate-off market
+    # path and the fused path, so we can test whether the surprise improves the
+    # market forecast and whether text adds anything beyond market+surprise.
+    surprise = daily[["surprise_level", "surprise_path", "surprise_info"]].to_numpy(
+        dtype=np.float64
+    )
+    market_feat = np.column_stack([har, market, cal, surprise])
 
     emb_cols = [c for c in emb_df.columns if c.startswith("emb_")]
     dim = len(emb_cols)
@@ -122,6 +129,7 @@ def _assemble(
         "doc_types": doc_types,
         "valid": valid,
         "dates": daily["date"].astype(str).tolist(),
+        "days_since_stmt": daily["days_since_stmt"].to_numpy(dtype=np.float64),
     }
 
 
@@ -276,7 +284,8 @@ def run(
     embargo = max(horizons) + 1
     folds = walk_forward_splits(len(idx_all), n_folds=n_folds, embargo=embargo)
     pools: dict[str, list[Any]] = {
-        k: [] for k in ("har", "fused", "mkt", "true", "base", "gate", "mask", "type", "date")
+        k: []
+        for k in ("har", "fused", "mkt", "true", "base", "gate", "mask", "type", "date", "dss")
     }
     for tr_l, te_l in folds:
         tr, te = idx_all[np.array(tr_l)], idx_all[np.array(te_l)]
@@ -296,6 +305,7 @@ def run(
         pools["mask"].append(data["text_mask"][te])
         pools["type"].extend([data["doc_types"][i] for i in te])
         pools["date"].extend([data["dates"][i] for i in te])
+        pools["dss"].extend([float(data["days_since_stmt"][i]) for i in te])
 
     har = np.vstack(pools["har"])
     fused = np.vstack(pools["fused"])
@@ -306,6 +316,7 @@ def run(
     mask = np.concatenate(pools["mask"])
     types = np.array([t if t is not None else "none" for t in pools["type"]])
     dates = np.array(pools["date"])
+    days_since_stmt = np.array(pools["dss"], dtype=np.float64)
 
     results: dict[str, Any] = {"n_eval": int(true.shape[0]), "measure": measure, "by_horizon": {}}
     active = mask > 0
@@ -343,6 +354,10 @@ def run(
         "pre2020": dates < "2020-01-01",
         "covid2020": (dates >= "2020-01-01") & (dates < "2021-01-01"),
         "recent2021+": dates >= "2021-01-01",
+        # FOMC-adjacent days (≤ 3 trading days since the last statement): the
+        # text contribution over market+surprise read on the days the surprise
+        # is freshest.
+        "fomc_window": days_since_stmt <= 3,
     }
     results["by_era"] = {
         era: {
