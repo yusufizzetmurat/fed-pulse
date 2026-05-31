@@ -18,9 +18,11 @@ _FORBID_FROZEN_CONFIG = ConfigDict(frozen=True)
 # lossless promotion), so a numpy.int64 leak into close/volatility
 # is NOT caught here -- the guard is asymmetric across the numeric
 # directions. It also accepts numpy.float64 against a float field
-# because numpy.float64 is a subclass of Python float. The value-add
-# is the directional rejections above; the asymmetry is documented
-# so the next audit pass knows what gap remains.
+# because numpy.float64 is a subclass of Python float. Decimal and
+# Fraction are likewise silently coerced for float fields in practice
+# (pydantic/pydantic#11131) despite the docs implying otherwise. The
+# value-add is the directional rejections above; the asymmetry is
+# documented so the next audit pass knows what gap remains.
 # Applied to the two leaf-level numeric response models whose
 # service-layer builders have been audited end-to-end
 # (MarketDataResponse and PredictionResponse).

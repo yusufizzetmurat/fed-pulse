@@ -50,6 +50,16 @@ def test_market_data_response_strict_rejects_float_for_int() -> None:
 
     from app.schemas import MarketDataResponse
 
+    good = MarketDataResponse(
+        symbol="^GSPC",
+        requested_date="2024-09-18",
+        date_used="2024-09-18",
+        lookback_days=14,
+        close=5400.0,
+        volatility_5d=0.012,
+    )
+    assert good.lookback_days == 14
+
     with pytest.raises(ValidationError):
         MarketDataResponse(
             symbol="^GSPC",
