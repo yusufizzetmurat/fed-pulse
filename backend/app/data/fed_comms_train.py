@@ -116,6 +116,29 @@ def _standardize(x_tr: np.ndarray, x_te: np.ndarray) -> tuple[np.ndarray, np.nda
     return (x_tr - m) / s, (x_te - m) / s
 
 
+def _block_bootstrap_r2_ci(
+    pred: np.ndarray, true: np.ndarray, base: np.ndarray, *, block: int, seed: int, n_boot: int = 1000
+) -> tuple[float, float]:
+    """Relative OOS-R² CI via a moving-block bootstrap (block ≥ horizon).
+
+    Overlapping multi-day forward targets are autocorrelated, so an iid point
+    bootstrap is anti-conservative. Resampling contiguous blocks of length
+    `block` preserves that dependence and gives an honest interval.
+    """
+
+    n = len(true)
+    if n <= block:
+        return (float("nan"), float("nan"))
+    rng = np.random.default_rng(seed)
+    n_blocks = int(np.ceil(n / block))
+    stats = []
+    for _ in range(n_boot):
+        starts = rng.integers(0, n - block + 1, size=n_blocks)
+        idx = np.concatenate([np.arange(s, s + block) for s in starts])[:n]
+        stats.append(_oos_r2(pred[idx], true[idx], base[idx]))
+    return (float(np.percentile(stats, 5)), float(np.percentile(stats, 95)))
+
+
 def _train_fusion_fold(
     data: dict[str, np.ndarray],
     tr: np.ndarray,
@@ -278,6 +301,10 @@ def run(
         # text isolation: fused vs the SAME model with the gate forced off (market-only).
         # The difference is purely the text contribution; CI ≤ 0 ⇒ text adds nothing.
         row["text_vs_mkt_ci90"] = list(_bootstrap_r2_ci(fused[:, k], true[:, k], mkt[:, k], seed=seed))
+        # block bootstrap (block = horizon) — honest CI under overlapping-window autocorrelation
+        row["text_vs_mkt_block_ci90"] = list(
+            _block_bootstrap_r2_ci(fused[:, k], true[:, k], mkt[:, k], block=max(h, 1), seed=seed)
+        )
         if active.sum() > 5:
             row["fused_active"] = _oos_r2(fused[active, k], true[active, k], base[active, k])
             row["mkt_active"] = _oos_r2(mkt[active, k], true[active, k], base[active, k])
@@ -317,14 +344,14 @@ def main() -> int:
     (args.out_dir / "fusion_bakeoff.json").write_text(json.dumps(res, indent=2), encoding="utf-8")
     print(f"n_eval={res['n_eval']}  text_active_frac={res['text_active_frac']:.3f}")
     print(f"gate_by_type={ {k: round(v, 3) for k, v in res['gate_by_type'].items()} }")
-    hdr = f"{'horizon':<8}{'HAR':>8}{'mkt':>8}{'fused':>8}{'text-vs-mkt_CI90':>22}{'txt_act_CI90':>22}"
+    hdr = f"{'horizon':<8}{'HAR':>8}{'mkt':>8}{'fused':>8}{'txt-vs-mkt(iid)':>20}{'txt-vs-mkt(block)':>22}"
     print(hdr)
     for hk, r in res["by_horizon"].items():
         c = r["text_vs_mkt_ci90"]
-        ca = r.get("text_vs_mkt_active_ci90", [float("nan"), float("nan")])
+        cb = r["text_vs_mkt_block_ci90"]
         print(
             f"{hk:<8}{r['har']:>8.3f}{r['mkt_only']:>8.3f}{r['fused']:>8.3f}"
-            f"{f'[{c[0]:+.3f},{c[1]:+.3f}]':>22}{f'[{ca[0]:+.3f},{ca[1]:+.3f}]':>22}"
+            f"{f'[{c[0]:+.3f},{c[1]:+.3f}]':>20}{f'[{cb[0]:+.3f},{cb[1]:+.3f}]':>22}"
         )
     return 0
 
