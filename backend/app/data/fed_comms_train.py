@@ -1,0 +1,284 @@
+"""Train + evaluate the gated text↔market fusion forecaster, walk-forward.
+
+Pipeline: cache a mean-pooled FinBERT embedding per communication → assemble the
+daily fusion design (HAR/market features, the most-recent fresh communication's
+embedding + mask, forward-RV targets) → walk-forward train `GatedFusionForecaster`
+with the supervised + InfoNCE objective, residual-stacked on HAR so the floor is
+HAR itself.
+
+Reported per horizon: HAR R², market-only R² (gate forced off), fused R² and the
+fused−HAR lift with a bootstrap CI — overall and on text-active days — plus the
+mean gate by communication type (the interpretable "how much did text matter").
+A positive, CI-clearing lift on text-active days is the result that would
+overturn the text-is-null finding; anything else is a stronger, scaled null.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from app.config import DATA_DIR
+from app.data.dense_daily_dataset import walk_forward_splits
+from app.data.dense_forecast_train import _bootstrap_r2_ci, _fit_predict_ols, _oos_r2
+from app.data.fed_comms_dataset import DEFAULT_HORIZONS
+from app.data.intraday_rv_forecast import _market_block
+
+DEFAULT_FUSION_DIR = DATA_DIR / "processed" / "fed_comms_fusion"
+_FRESH_DAYS = 5  # a communication counts as "active" text within this many trading days
+_EMB_DIM = 768
+
+
+def build_corpus_embeddings(
+    corpus_path: Path | str, out_path: Path | str, *, force: bool = False
+) -> Path:
+    """Cache url → mean-pooled FinBERT embedding for every communication."""
+
+    import pandas as pd
+
+    out_path = Path(out_path)
+    if out_path.exists() and not force:
+        return out_path
+    from app.services.text_encoder import encode_chunks
+
+    corpus = pd.read_parquet(corpus_path)
+    rows: list[dict[str, Any]] = []
+    for _, doc in corpus.iterrows():
+        encs = encode_chunks(str(doc["text"]))
+        vecs = [np.asarray(e.embedding, dtype=np.float64) for e in encs if e.embedding]
+        emb = np.mean(vecs, axis=0) if vecs else np.zeros(_EMB_DIM)
+        rows.append({"url": doc["url"], **{f"emb_{i}": float(emb[i]) for i in range(len(emb))}})
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_parquet(out_path, index=False)
+    print(f"[fed_comms_train] wrote {len(rows)} doc embeddings to {out_path}")
+    return out_path
+
+
+def _assemble(
+    daily: Any, corpus: Any, emb_df: Any, market_cache_dir: Path | str, horizons: tuple[int, ...]
+) -> dict[str, Any]:
+    """Build per-day arrays: market features, text embedding+mask, targets, HAR lags."""
+
+    import pandas as pd
+
+    daily = daily.sort_values("date").reset_index(drop=True)
+    har = daily[["har_daily", "har_weekly", "har_monthly"]].to_numpy(dtype=np.float64)
+    market = _market_block(market_cache_dir, daily["date"], har[:, 0])
+    market_feat = np.column_stack([har, market])
+
+    emb_cols = [f"emb_{i}" for i in range(_EMB_DIM)]
+    url_to_emb = {r["url"]: r[emb_cols].to_numpy(dtype=np.float64) for _, r in emb_df.iterrows()}
+    corpus_urls = corpus.sort_values("date").reset_index(drop=True)["url"].tolist()
+
+    n = len(daily)
+    text_emb = np.zeros((n, _EMB_DIM))
+    text_mask = np.zeros(n)
+    doc_types: list[str | None] = [None] * n
+    for i, row in daily.iterrows():
+        di = int(row["doc_row"])
+        fresh = bool(row["has_text"]) and 0 <= int(row["doc_age_days"]) <= _FRESH_DAYS
+        if di >= 0 and fresh and corpus_urls[di] in url_to_emb:
+            text_emb[i] = url_to_emb[corpus_urls[di]]
+            text_mask[i] = 1.0
+            doc_types[i] = str(row["doc_type"])
+
+    targets = np.column_stack([daily[f"rv_fwd_{h}"].to_numpy(dtype=np.float64) for h in horizons])
+    valid = np.isfinite(targets).all(axis=1) & np.isfinite(market_feat).all(axis=1)
+    return {
+        "market_feat": market_feat,
+        "text_emb": text_emb,
+        "text_mask": text_mask,
+        "targets": targets,
+        "har": har,
+        "doc_types": doc_types,
+        "valid": valid,
+        "dates": daily["date"].astype(str).tolist(),
+    }
+
+
+def _standardize(x_tr: np.ndarray, x_te: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    m, s = x_tr.mean(0), x_tr.std(0)
+    s = np.where(s > 0, s, 1.0)
+    return (x_tr - m) / s, (x_te - m) / s
+
+
+def _train_fusion_fold(
+    data: dict[str, np.ndarray], tr: np.ndarray, te: np.ndarray, *, seed: int, epochs: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Train on a fold; return (fused_pred, market_only_pred, test_gate) in RV space."""
+
+    import torch
+
+    from app.data.gated_fusion import build_model, fusion_loss
+    from app.determinism import enable_deterministic_mode
+
+    enable_deterministic_mode(seed)
+    har, tgt = data["har"], data["targets"]
+    # HAR floor: per-target OLS; model learns the residual, predictions add HAR back
+    har_te_pred = np.column_stack(
+        [_fit_predict_ols(har[tr], tgt[tr, k], har[te]) for k in range(tgt.shape[1])]
+    )
+    har_tr_pred = np.column_stack(
+        [_fit_predict_ols(har[tr], tgt[tr, k], har[tr]) for k in range(tgt.shape[1])]
+    )
+    resid_tr = tgt[tr] - har_tr_pred
+    mf_tr, mf_te = _standardize(data["market_feat"][tr], data["market_feat"][te])
+    # text embeddings standardized on text-present train rows to avoid zero-row skew
+    present = data["text_mask"][tr] > 0
+    ref = data["text_emb"][tr][present] if present.any() else data["text_emb"][tr]
+    em, es = ref.mean(0), ref.std(0)
+    es = np.where(es > 0, es, 1.0)
+    te_emb_tr = ((data["text_emb"][tr] - em) / es) * data["text_mask"][tr][:, None]
+    te_emb_te = ((data["text_emb"][te] - em) / es) * data["text_mask"][te][:, None]
+
+    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = build_model(_EMB_DIM, mf_tr.shape[1], tgt.shape[1]).to(dev)
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+
+    def _batch(idx: np.ndarray) -> dict[str, Any]:
+        return {
+            "text_emb": torch.tensor(te_emb_tr[idx], dtype=torch.float32, device=dev),
+            "market_feat": torch.tensor(mf_tr[idx], dtype=torch.float32, device=dev),
+            "text_mask": torch.tensor(data["text_mask"][tr][idx], dtype=torch.float32, device=dev),
+            "targets": torch.tensor(resid_tr[idx], dtype=torch.float32, device=dev),
+        }
+
+    rng = np.random.default_rng(seed)
+    model.train()
+    for _ in range(epochs):
+        order = rng.permutation(len(tr))
+        for start in range(0, len(order), 256):
+            opt.zero_grad()
+            loss = fusion_loss(model, _batch(order[start : start + 256]))["loss"]
+            loss.backward()  # type: ignore[no-untyped-call]
+            opt.step()
+
+    model.eval()
+    with torch.no_grad():
+        tem = torch.tensor(te_emb_te, dtype=torch.float32, device=dev)
+        mfe = torch.tensor(mf_te, dtype=torch.float32, device=dev)
+        msk = torch.tensor(data["text_mask"][te], dtype=torch.float32, device=dev)
+        fused = model(tem, mfe, msk)
+        mkt_only = model(tem, mfe, torch.zeros_like(msk))  # gate forced off
+    fused_pred = har_te_pred + fused["pred"].cpu().numpy()
+    mkt_pred = har_te_pred + mkt_only["pred"].cpu().numpy()
+    return fused_pred, mkt_pred, fused["gate"].cpu().numpy()
+
+
+def run(
+    fusion_dir: Path | str = DEFAULT_FUSION_DIR,
+    *,
+    market_cache_dir: Path | str,
+    corpus_path: Path | str,
+    emb_path: Path | str,
+    seed: int = 11,
+    epochs: int = 60,
+    n_folds: int = 5,
+    horizons: tuple[int, ...] = DEFAULT_HORIZONS,
+) -> dict[str, Any]:
+    import pandas as pd
+
+    fusion_dir = Path(fusion_dir)
+    daily = pd.read_parquet(fusion_dir / "daily_fusion.parquet")
+    corpus = pd.read_parquet(corpus_path)
+    emb_df = pd.read_parquet(emb_path)
+    data = _assemble(daily, corpus, emb_df, market_cache_dir, horizons)
+
+    idx_all = np.where(data["valid"])[0]
+    embargo = max(horizons) + 1
+    folds = walk_forward_splits(len(idx_all), n_folds=n_folds, embargo=embargo)
+    pools: dict[str, list[Any]] = {
+        k: [] for k in ("har", "fused", "mkt", "true", "base", "gate", "mask", "type")
+    }
+    for tr_l, te_l in folds:
+        tr, te = idx_all[np.array(tr_l)], idx_all[np.array(te_l)]
+        fused, mkt, gate = _train_fusion_fold(data, tr, te, seed=seed, epochs=epochs)
+        har_pred = np.column_stack(
+            [
+                _fit_predict_ols(data["har"][tr], data["targets"][tr, k], data["har"][te])
+                for k in range(len(horizons))
+            ]
+        )
+        pools["har"].append(har_pred)
+        pools["fused"].append(fused)
+        pools["mkt"].append(mkt)
+        pools["true"].append(data["targets"][te])
+        pools["base"].append(np.tile(data["targets"][tr].mean(0), (len(te), 1)))
+        pools["gate"].append(gate)
+        pools["mask"].append(data["text_mask"][te])
+        pools["type"].extend([data["doc_types"][i] for i in te])
+
+    har = np.vstack(pools["har"])
+    fused = np.vstack(pools["fused"])
+    mkt = np.vstack(pools["mkt"])
+    true = np.vstack(pools["true"])
+    base = np.vstack(pools["base"])
+    gate = np.concatenate(pools["gate"])
+    mask = np.concatenate(pools["mask"])
+    types = np.array([t if t is not None else "none" for t in pools["type"]])
+
+    results: dict[str, Any] = {"n_eval": int(true.shape[0]), "by_horizon": {}}
+    active = mask > 0
+    for k, h in enumerate(horizons):
+        row: dict[str, Any] = {
+            "har": _oos_r2(har[:, k], true[:, k], base[:, k]),
+            "mkt_only": _oos_r2(mkt[:, k], true[:, k], base[:, k]),
+            "fused": _oos_r2(fused[:, k], true[:, k], base[:, k]),
+        }
+        lo, hi = _bootstrap_r2_ci(fused[:, k], true[:, k], har[:, k], seed=seed)
+        row["fused_vs_har_ci90"] = [lo, hi]
+        if active.sum() > 5:
+            row["fused_active"] = _oos_r2(fused[active, k], true[active, k], base[active, k])
+            row["har_active"] = _oos_r2(har[active, k], true[active, k], base[active, k])
+            la, ha = _bootstrap_r2_ci(fused[active, k], true[active, k], har[active, k], seed=seed)
+            row["fused_vs_har_active_ci90"] = [la, ha]
+        results["by_horizon"][f"h{h}"] = row
+
+    results["text_active_frac"] = float(active.mean())
+    results["gate_by_type"] = {
+        t: float(gate[(types == t) & active].mean())
+        for t in sorted(set(types[active]))
+        if ((types == t) & active).any()
+    }
+    return results
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Train+eval gated fusion forecaster.")
+    parser.add_argument("--fusion-dir", type=Path, default=DEFAULT_FUSION_DIR)
+    parser.add_argument("--corpus-path", type=Path, required=True)
+    parser.add_argument("--emb-path", type=Path, required=True)
+    parser.add_argument("--market-cache-dir", type=Path, required=True)
+    parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--epochs", type=int, default=60)
+    parser.add_argument("--seed", type=int, default=11)
+    args = parser.parse_args()
+    res = run(
+        args.fusion_dir,
+        market_cache_dir=args.market_cache_dir,
+        corpus_path=args.corpus_path,
+        emb_path=args.emb_path,
+        seed=args.seed,
+        epochs=args.epochs,
+    )
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    (args.out_dir / "fusion_bakeoff.json").write_text(json.dumps(res, indent=2), encoding="utf-8")
+    print(f"n_eval={res['n_eval']}  text_active_frac={res['text_active_frac']:.3f}")
+    print(f"gate_by_type={ {k: round(v, 3) for k, v in res['gate_by_type'].items()} }")
+    print(f"{'horizon':<8}{'HAR':>8}{'mkt':>8}{'fused':>8}{'f-HAR_CI90':>20}{'fused_active':>14}")
+    for hk, r in res["by_horizon"].items():
+        c = r["fused_vs_har_ci90"]
+        fa = f"{r.get('fused_active', float('nan')):.3f}"
+        print(
+            f"{hk:<8}{r['har']:>8.3f}{r['mkt_only']:>8.3f}{r['fused']:>8.3f}"
+            f"{f'[{c[0]:+.3f},{c[1]:+.3f}]':>20}{fa:>14}"
+        )
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
