@@ -125,6 +125,14 @@ RICH_VOTE_FEATURES_MISSING_DIM = 1
 # byte-identical pre-#478 per-bar feature size.
 RICH_VIX_FEATURES_DIM = 6
 RICH_VIX_FEATURES_MISSING_DIM = 1
+# #543 doc_length feature. ``log(1 + token_count)`` as a single scalar
+# broadcast onto every bar of every supervised event. Appended past
+# the VIX tail by ``FeatureVector.as_rich_list`` only when the loader
+# populates the slot, so the legacy default path keeps the byte-
+# identical pre-#543 per-bar feature size. Promoted out of the
+# confounder ablation cell that produced the largest single dual-head
+# lift (+0.052 macro-F1) observed in §6.38.
+RICH_DOC_LENGTH_DIM = 1
 RICH_EXTRA_FEATURE_SIZE = (
     RICH_CREDIBILITY_DIM
     + RICH_LINGUISTIC_DIM
@@ -351,14 +359,15 @@ def rich_feature_size_with_blocks(
     use_statement_delta: bool = False,
     use_vote_features: bool = False,
     use_vix_features: bool = False,
+    use_doc_length: bool = False,
 ) -> int:
     """Combined helper: the per-bar size with every opt-in tail block.
 
-    All six blocks are independent — any combination can be on. The
+    All seven blocks are independent — any combination can be on. The
     append order on ``as_rich_list`` is fixed: regime, SEP, press-conf,
-    statement-delta, vote-features, vix-features. A downstream caller
-    iterating slices knows where each block sits without ambiguity given
-    the six flags.
+    statement-delta, vote-features, vix-features, doc-length. A
+    downstream caller iterating slices knows where each block sits
+    without ambiguity given the seven flags.
     """
 
     size = RICH_FEATURE_SIZE
@@ -374,6 +383,8 @@ def rich_feature_size_with_blocks(
         size += RICH_VOTE_FEATURES_DIM + RICH_VOTE_FEATURES_MISSING_DIM
     if bool(use_vix_features):
         size += RICH_VIX_FEATURES_DIM + RICH_VIX_FEATURES_MISSING_DIM
+    if bool(use_doc_length):
+        size += RICH_DOC_LENGTH_DIM
     return size
 
 
@@ -747,6 +758,10 @@ class ModelConfig:
     use_vote_features: bool = False
     # #478 VIX term-structure + VRP at T-1.
     use_vix_features: bool = False
+    # #543 doc_length feature. ``log(1 + token_count)`` as a single
+    # scalar broadcast onto every bar of every supervised event.
+    # Default-off keeps the canonical run byte-identical pre-#543.
+    use_doc_length: bool = False
     # #480 symbol-conditioned regime head. ``0`` (default) keeps the
     # regime / dual-head wiring byte-identical to the symbol-agnostic
     # canonical: no embedding module, no widened head input, no new
@@ -867,6 +882,9 @@ class ModelConfig:
             ),
             use_vix_features=bool(
                 getattr(model, "use_vix_features", False)
+            ),
+            use_doc_length=bool(
+                getattr(model, "use_doc_length", False)
             ),
             symbol_embedding_dim=int(
                 getattr(model, "symbol_embedding_dim", 0) or 0
@@ -1117,6 +1135,14 @@ class FeatureVector:
     # keeps the regression / legacy paths byte-identical.
     vix_features: list[float] | None = None
     vix_features_missing: float = 1.0
+    # #543 doc_length feature. ``log(1 + token_count)`` as a single
+    # scalar broadcast onto every bar of every supervised event. The
+    # slot is appended past the VIX tail by ``as_rich_list`` only when
+    # the loader populates it (``--use-doc-length``). Default ``None``
+    # keeps the regression / legacy paths byte-identical. No missing
+    # flag because every supervised row carries a non-empty text body
+    # so ``token_count`` is always defined.
+    doc_length: float | None = None
     # #495 confounder-ablation block. Optional per-event control vector
     # (year one-hot, meeting-kind one-hot, log token count, or any
     # combination thereof) appended past the legacy tail blocks by
@@ -1464,6 +1490,11 @@ class FeatureVector:
                     RICH_VIX_FEATURES_DIM - len(vix_block)
                 )
             out = out + vix_block + [float(self.vix_features_missing)]
+        # #543 doc_length tail. ``log(1 + token_count)`` as a single
+        # scalar appended after the VIX tail and before the confounder
+        # block so every other tail flag's slice math stays unchanged.
+        if self.doc_length is not None:
+            out = out + [float(self.doc_length)]
         # #495 confounder-ablation tail. Last block by construction so
         # every other tail flag's slice math stays unchanged. Width is
         # caller-determined (year FE / meeting-kind FE / log-token / any

@@ -255,6 +255,29 @@ def _parse_args() -> argparse.Namespace:
             "+ missing=1.0."
         ),
     )
+    # #543 doc_length scalar block. Off by default so the canonical
+    # sweep stays byte-identical; on, attaches ``log(1 + token_count)``
+    # as a single scalar broadcast onto every bar of every supervised
+    # event. Promoted out of the §6.38 confounder ablation cell that
+    # produced the largest single dual-head lift (+0.052 macro-F1).
+    parser.add_argument(
+        "--use-doc-length",
+        dest="use_doc_length",
+        action="store_true",
+        help=(
+            "Attach the doc_length scalar (log(1 + token_count)) to "
+            "every supervised event. Reads ``token_count`` off "
+            "events.parquet (whitespace token count of the row's text). "
+            "Default off."
+        ),
+    )
+    parser.add_argument(
+        "--no-doc-length",
+        dest="use_doc_length",
+        action="store_false",
+        help="Disable the doc_length block (default).",
+    )
+    parser.set_defaults(use_doc_length=False)
     # mp_surprise rich-feature block toggle. Default True matches
     # ``load_walk_forward_split`` so canonical runs stay byte-identical.
     # ``--no-mp-surprise`` zeros the mp_surprise block (and its missing
@@ -447,6 +470,7 @@ def _parse_args() -> argparse.Namespace:
         use_press_conf=False,
         use_text_embeddings=True,
         use_vix_features=False,
+        use_doc_length=False,
     )
     return parser.parse_args()
 
@@ -602,6 +626,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
     use_vote_features: bool = False,
     use_press_conf: bool = False,
     use_vix_features: bool = False,
+    use_doc_length: bool = False,
     regime_loss: str = "ce",
     focal_gamma: float = 2.0,
     class_balanced_beta: float = 0.999,
@@ -652,6 +677,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
         use_statement_delta=use_statement_delta,
         use_vote_features=use_vote_features,
         use_vix_features=use_vix_features,
+        use_doc_length=use_doc_length,
         regime_loss_mode=regime_loss,
         focal_gamma=float(focal_gamma),
         class_balanced_beta=float(class_balanced_beta),
@@ -675,6 +701,7 @@ def _run_one_cell(  # noqa: PLR0913 -- canonical sweep needs every knob inline
             text_encoder=text_encoder,
             use_text_embeddings=use_text_embeddings,
             use_vix_features=use_vix_features,
+            use_doc_length=use_doc_length,
             vol_target_horizon=vol_target_horizon,
             sequence_length=active_sequence_length,
             use_mp_surprise=use_mp_surprise,
@@ -789,6 +816,7 @@ def main() -> int:
                     use_vote_features=bool(args.use_vote_features),
                     use_press_conf=bool(args.use_press_conf),
                     use_vix_features=bool(args.use_vix_features),
+                    use_doc_length=bool(args.use_doc_length),
                     regime_loss=str(args.regime_loss),
                     focal_gamma=float(args.focal_gamma),
                     class_balanced_beta=float(args.class_balanced_beta),
@@ -842,6 +870,7 @@ def main() -> int:
         "use_vote_features": bool(args.use_vote_features),
         "use_press_conf": bool(args.use_press_conf),
         "use_vix_features": bool(args.use_vix_features),
+        "use_doc_length": bool(args.use_doc_length),
         "regime_loss": str(args.regime_loss),
         "focal_gamma": float(args.focal_gamma),
         "class_balanced_beta": float(args.class_balanced_beta),
