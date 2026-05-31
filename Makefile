@@ -1076,3 +1076,21 @@ discretize-at-eval:
 		python -m app.eval.discretize_at_eval \
 			--sweep-artefact artifacts/experiments/dual_head_comparison_canonical.json \
 			--output artifacts/experiments/discretize_at_eval.json
+
+# Dense daily vol/volume backbone: model vs HAR/AR baselines, walk-forward.
+train-dense-forecast:
+	@test -n "$(CACHE_DIR)" || (echo "CACHE_DIR=<_market_cache dir> is required"; exit 1)
+	@test -n "$(OUT_DIR)" || (echo "OUT_DIR=<artifacts dir> is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.dense_forecast_train \
+			--cache-dir "$(CACHE_DIR)" --out-dir "$(OUT_DIR)" --seed $(SEED)
+
+# Dense Phase 2: FOMC text marginal test over the backbone (FOMC-day eval).
+train-dense-text:
+	@test -n "$(CACHE_DIR)" || (echo "CACHE_DIR=<_market_cache> required"; exit 1)
+	@test -n "$(EVENTS_PARQUET)" || (echo "EVENTS_PARQUET required"; exit 1)
+	@test -n "$(OUT_DIR)" || (echo "OUT_DIR required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.dense_fomc_text \
+			--cache-dir "$(CACHE_DIR)" --events-parquet "$(EVENTS_PARQUET)" \
+			--embeddings-parquet "$(OUT_DIR)/fomc_embeddings.parquet" --out-dir "$(OUT_DIR)"
