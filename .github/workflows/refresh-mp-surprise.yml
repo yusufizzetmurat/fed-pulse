@@ -9,6 +9,14 @@ name: refresh-mp-surprise
 # Repo policy is review-before-merge, so the workflow files a pull
 # request against dev via peter-evans/create-pull-request instead of
 # direct-pushing the regenerated parquet.
+#
+# Required repo secrets:
+#   FRED_API_KEY              — read access to the FRED API.
+#   MP_SURPRISE_REFRESH_PAT   — fine-grained PAT (or GitHub App token)
+#                               with `contents: write` + `pull-requests: write`
+#                               on this repo. Required so the auto-PR fires
+#                               downstream `pull_request` workflows (CI,
+#                               smoke); the default GITHUB_TOKEN does not.
 
 on:
   schedule:
@@ -55,10 +63,24 @@ jobs:
           python -m app.data.mp_surprise \
             --output data/external/fred/mp_surprises.parquet
 
+      # Stage the parquet explicitly. The path used to live under a
+      # broad `data/external/*` ignore rule; a sibling negation in
+      # .gitignore now lets it through, but `git add -f` here makes
+      # the contract self-evident and survives future .gitignore churn
+      # without silently turning the workflow back into a no-op.
+      - name: stage refreshed parquet
+        run: |
+          git add -f data/external/fred/mp_surprises.parquet
+
+      # PRs opened with the default GITHUB_TOKEN do not fire downstream
+      # `pull_request` workflows (CI, smoke). Use a PAT (or GitHub App
+      # token) stored as MP_SURPRISE_REFRESH_PAT so the PR triggers CI
+      # and a reviewer can rely on the usual required-status checks
+      # before merge.
       - name: create pull request
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.MP_SURPRISE_REFRESH_PAT }}
           branch: ci/refresh-mp-surprise
           base: dev
           add-paths: data/external/fred/mp_surprises.parquet
