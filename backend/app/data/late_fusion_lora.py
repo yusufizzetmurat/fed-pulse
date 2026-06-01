@@ -75,7 +75,7 @@ class LoraFusion(nn.Module):
         hidden = torch.as_tensor(out.last_hidden_state)
         mask = attention_mask.unsqueeze(-1).float()
         pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
-        return pooled  # type: ignore[no-any-return]
+        return pooled
 
     def forward(
         self, input_ids: torch.Tensor, attention_mask: torch.Tensor, struct: torch.Tensor
@@ -85,7 +85,7 @@ class LoraFusion(nn.Module):
             parts.append(self.text_proj(self._encode(input_ids, attention_mask)))
         parts.append(self.struct_branch(struct))
         hidden = self.trunk(torch.cat(parts, dim=-1))
-        return self.dir_head(hidden).squeeze(-1)
+        return torch.as_tensor(self.dir_head(hidden)).squeeze(-1)
 
 
 def _lora_encoder(base: nn.Module) -> nn.Module:
