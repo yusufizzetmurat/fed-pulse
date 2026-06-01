@@ -78,6 +78,7 @@ import {
   loadWorkspacePrefs,
 } from "@/lib/workspace-prefs";
 import { LegacyForecastCard } from "@/components/analyze/LegacyForecastCard";
+import { WorkspaceSection } from "@/components/analyze/WorkspaceSection";
 
 const HORIZON_VALUES = new Set<Horizon>(HORIZON_VALUE_LIST);
 
@@ -792,43 +793,70 @@ export default function WorkspacePage() {
             </div>
           ) : null}
 
-          {/* SPINE forecast zone — market-data-only cards. No descriptive
-              panels render between these three so the reader sees forecast
-              numbers grouped together without any text-derived commentary
-              implying it feeds the predictions. */}
+          {/* SPINE forecast / cross-check zone — HAR-tercile headline,
+              QLIKE-RV outlook, the late-fusion second-opinion cross-check,
+              and the HAR-volume forecast. Second opinion sits inside the
+              forecast zone deliberately: it is a regime-classifier
+              cross-check (text+market vs market-only), not a descriptive
+              stance summary. The accuracy diagnostics ride at the very
+              bottom of the workspace so the reader sees the headline
+              forecasts first and the backtest surfaces last. */}
           <SectionDivider label="Forecasts" />
-          <HarRegimeHeadline
-            baselines={harBaselines.data}
-            loading={harBaselines.loading}
-            error={harBaselines.error}
-            symbol={request.symbol}
-          />
-          {request.symbol === "^GSPC" ? (
-            <HarAccuracyPanel
-              data={harBacktest}
-              loading={harBacktestLoading}
-              error={harBacktestError}
+          <WorkspaceSection
+            title="HAR-tercile regime headline"
+            description="3-class forward-vol classifier · Low / Medium / High"
+            variant="forecast"
+            collapsible
+            storageKey="workspace-card:har-headline"
+          >
+            <HarRegimeHeadline
+              baselines={harBaselines.data}
+              loading={harBaselines.loading}
+              error={harBaselines.error}
               symbol={request.symbol}
             />
-          ) : null}
-          {request.symbol === "^GSPC" ? (
-            <RvAccuracyPanel
-              data={rvBacktest}
-              loading={rvBacktestLoading}
-              error={rvBacktestError}
-              symbol={request.symbol}
+          </WorkspaceSection>
+          <WorkspaceSection
+            title="Volatility outlook"
+            description="QLIKE-RV forward outlook"
+            variant="forecast"
+            collapsible
+            storageKey="workspace-card:vol-outlook"
+          >
+            <VolatilityOutlookCard
+              forecast={volForecast}
+              loading={volForecastLoading}
+              error={volForecastError}
             />
+          </WorkspaceSection>
+          {result?.regime_classification ? (
+            <WorkspaceSection
+              title="Second opinion · late-fusion regime"
+              description="Text+market vs market-only regime cross-check"
+              variant="forecast"
+              collapsible
+              storageKey="workspace-card:second-opinion"
+            >
+              <SecondOpinionRegime
+                regime={result.regime_classification}
+                sentiment={result.sentiment}
+                symbol={request.symbol}
+                documentDate={request.date}
+                history={regimeHistorySpark}
+                empiricalCoverage={coverage.data?.empirical ?? null}
+                empiricalCoverageSampleSize={coverage.data?.sample_size ?? null}
+                marketOnlyArgmaxProb={marketOnlyArgmaxProb}
+                harBaselines={harBaselines.data}
+              />
+            </WorkspaceSection>
           ) : null}
-          <VolatilityOutlookCard
-            forecast={volForecast}
-            loading={volForecastLoading}
-            error={volForecastError}
-          />
           <ExpectedVolumeCard
             forecast={expectedVolume}
             loading={expectedVolumeLoading}
             error={expectedVolumeError}
             symbol={request.symbol}
+            collapsible
+            storageKey="workspace-card:expected-volume"
           />
 
           {/* SPINE boundary — descriptive panels follow. These are
@@ -846,12 +874,21 @@ export default function WorkspacePage() {
           <MonetaryPolicySurpriseChip
             data={latestMpSurprise}
             loading={latestMpSurpriseLoading}
+            collapsible
+            storageKey="workspace-card:mp-surprise"
           />
           <FuturesConsensusPanel
             data={futuresConsensus}
             loading={futuresConsensusLoading}
+            collapsible
+            storageKey="workspace-card:futures-consensus"
           />
-          <SemanticDiffPanel data={semanticDiff} loading={semanticDiffLoading} />
+          <SemanticDiffPanel
+            data={semanticDiff}
+            loading={semanticDiffLoading}
+            collapsible
+            storageKey="workspace-card:semantic-diff"
+          />
 
           {result ? (
             <>
@@ -859,25 +896,13 @@ export default function WorkspacePage() {
               <TldrCard result={result} />
               <WorkspaceMetaStrip result={result} />
 
-              {result.regime_classification ? (
-                <SecondOpinionRegime
-                  regime={result.regime_classification}
-                  sentiment={result.sentiment}
-                  symbol={request.symbol}
-                  documentDate={request.date}
-                  history={regimeHistorySpark}
-                  empiricalCoverage={coverage.data?.empirical ?? null}
-                  empiricalCoverageSampleSize={coverage.data?.sample_size ?? null}
-                  marketOnlyArgmaxProb={marketOnlyArgmaxProb}
-                  harBaselines={harBaselines.data}
-                />
-              ) : result.prediction?.close != null ? (
+              {!result.regime_classification && result.prediction?.close != null ? (
                 <LegacyForecastCard
                   prediction={result.prediction}
                   market={result.market}
                   documentDate={request.date}
                 />
-              ) : (
+              ) : !result.regime_classification ? (
                 <EmptyState
                   title="Volatility Regime card unavailable."
                   description={
@@ -895,7 +920,7 @@ export default function WorkspacePage() {
                     </div>
                   }
                 />
-              )}
+              ) : null}
 
               {result.policy_action ? (
                 <PolicyActionCard action={result.policy_action} />
@@ -929,12 +954,6 @@ export default function WorkspacePage() {
 
               <HistoricalAnalogPanel analogs={analogsPanel} loading={analogsLoading} />
 
-              <TrajectoryPanel
-                apiBaseUrl={apiBaseUrl}
-                asOfDate={request.date}
-                historyLength={12}
-              />
-
               <SectionDivider label="Model internals" />
               <PipelineTrace result={result} inputText={request.text} />
 
@@ -951,6 +970,51 @@ export default function WorkspacePage() {
 
               <RegimeHistoryStrip entries={historyEntries} symbol={request.symbol} />
             </>
+          ) : null}
+
+          {/* Trajectory + diagnostic-accuracy zone — these always render
+              against history (independent of the most recent /analyze
+              submit) and sit at the bottom of the workspace so the reader
+              treats them as diagnostic surfaces, not headline forecasts. */}
+          <WorkspaceSection
+            title="Stance trajectory"
+            description="Embedding projection of recent FOMC stance history"
+            variant="descriptive"
+            collapsible
+            storageKey="workspace-card:trajectory"
+          >
+            <TrajectoryPanel
+              apiBaseUrl={apiBaseUrl}
+              asOfDate={request.date}
+              historyLength={12}
+            />
+          </WorkspaceSection>
+
+          <p
+            className="mt-4 text-xs uppercase tracking-wide text-muted-foreground"
+            data-testid="workspace-accuracy-caption"
+          >
+            Forecast accuracy (backtest)
+          </p>
+          {request.symbol === "^GSPC" ? (
+            <HarAccuracyPanel
+              data={harBacktest}
+              loading={harBacktestLoading}
+              error={harBacktestError}
+              symbol={request.symbol}
+              collapsible
+              storageKey="workspace-card:har-accuracy"
+            />
+          ) : null}
+          {request.symbol === "^GSPC" ? (
+            <RvAccuracyPanel
+              data={rvBacktest}
+              loading={rvBacktestLoading}
+              error={rvBacktestError}
+              symbol={request.symbol}
+              collapsible
+              storageKey="workspace-card:rv-accuracy"
+            />
           ) : null}
         </main>
       </div>

@@ -220,6 +220,8 @@ export interface HarAccuracyPanelProps {
   loading?: boolean;
   error?: string | null;
   symbol?: string;
+  collapsible?: boolean;
+  storageKey?: string;
 }
 
 export function HarAccuracyPanel({
@@ -227,6 +229,8 @@ export function HarAccuracyPanel({
   loading = false,
   error = null,
   symbol,
+  collapsible = false,
+  storageKey,
 }: HarAccuracyPanelProps) {
   if (loading) {
     return (
@@ -234,6 +238,8 @@ export function HarAccuracyPanel({
         title="HAR-tercile accuracy"
         description="Backtest of the last persisted predictions vs realized forward vol"
         variant="forecast"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <p
           className="text-xs text-muted-foreground"
@@ -251,6 +257,8 @@ export function HarAccuracyPanel({
         title="HAR-tercile accuracy"
         description="Backtest of the last persisted predictions vs realized forward vol"
         variant="forecast"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <p
           className="text-xs text-muted-foreground"
@@ -270,6 +278,8 @@ export function HarAccuracyPanel({
         title="HAR-tercile accuracy"
         description="Backtest of the last persisted predictions vs realized forward vol"
         variant="forecast"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <div className="space-y-2">
           <div className="flex items-center justify-end">
@@ -299,6 +309,8 @@ export function HarAccuracyPanel({
       title="HAR-tercile accuracy"
       description="Backtest of the last persisted predictions vs realized forward vol"
       variant="forecast"
+      collapsible={collapsible}
+      storageKey={storageKey}
     >
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">

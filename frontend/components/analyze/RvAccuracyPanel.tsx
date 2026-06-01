@@ -274,6 +274,8 @@ export interface RvAccuracyPanelProps {
   loading?: boolean;
   error?: string | null;
   symbol?: string;
+  collapsible?: boolean;
+  storageKey?: string;
 }
 
 export function RvAccuracyPanel({
@@ -281,6 +283,8 @@ export function RvAccuracyPanel({
   loading = false,
   error = null,
   symbol,
+  collapsible = false,
+  storageKey,
 }: RvAccuracyPanelProps) {
   if (loading) {
     return (
@@ -288,6 +292,8 @@ export function RvAccuracyPanel({
         title="QLIKE-RV band coverage"
         description="Backtest of the published 80% / 90% bands against realized RV"
         variant="forecast"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <p
           className="text-xs text-muted-foreground"
@@ -305,6 +311,8 @@ export function RvAccuracyPanel({
         title="QLIKE-RV band coverage"
         description="Backtest of the published 80% / 90% bands against realized RV"
         variant="forecast"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <p
           className="text-xs text-muted-foreground"
@@ -324,6 +332,8 @@ export function RvAccuracyPanel({
         title="QLIKE-RV band coverage"
         description="Backtest of the published 80% / 90% bands against realized RV"
         variant="forecast"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <div className="space-y-2">
           <div className="flex items-center justify-end">
@@ -353,6 +363,8 @@ export function RvAccuracyPanel({
       title="QLIKE-RV band coverage"
       description="Backtest of the published 80% / 90% bands against realized RV"
       variant="forecast"
+      collapsible={collapsible}
+      storageKey={storageKey}
     >
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">

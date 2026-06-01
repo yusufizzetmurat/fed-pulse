@@ -225,11 +225,15 @@ function StatusBanner({
 export interface SemanticDiffPanelProps {
   data: SemanticDiffResponse | null;
   loading?: boolean;
+  collapsible?: boolean;
+  storageKey?: string;
 }
 
 export function SemanticDiffPanel({
   data,
   loading = false,
+  collapsible = false,
+  storageKey,
 }: SemanticDiffPanelProps) {
   if (loading) {
     return (
@@ -237,6 +241,8 @@ export function SemanticDiffPanel({
         title="Semantic diff vs prior statement"
         description="Token redline + topic emphasis shifts (descriptive)"
         variant="descriptive"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <p
           className="text-xs text-muted-foreground"
@@ -254,6 +260,8 @@ export function SemanticDiffPanel({
         title="Semantic diff vs prior statement"
         description="Token redline + topic emphasis shifts (descriptive)"
         variant="descriptive"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <p
           className="text-xs text-muted-foreground"
@@ -275,6 +283,8 @@ export function SemanticDiffPanel({
         title="Semantic diff vs prior statement"
         description="Token redline + topic emphasis shifts (descriptive)"
         variant="descriptive"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <StatusBanner
           title="Input too short to diff"
@@ -290,6 +300,8 @@ export function SemanticDiffPanel({
         title="Semantic diff vs prior statement"
         description="Token redline + topic emphasis shifts (descriptive)"
         variant="descriptive"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <StatusBanner
           title="Non-Latin text — diff not run"
@@ -314,6 +326,8 @@ export function SemanticDiffPanel({
       title="Semantic diff vs prior statement"
       description={description}
       variant="descriptive"
+      collapsible={collapsible}
+      storageKey={storageKey}
     >
       {isColdStart ? (
         <ColdStartBanner summary={data.summary} />

@@ -51,6 +51,8 @@ function formatEventDate(iso: string): string {
 export interface MonetaryPolicySurpriseChipProps {
   data: MonetaryPolicySurpriseResponse | null;
   loading?: boolean;
+  collapsible?: boolean;
+  storageKey?: string;
 }
 
 // Methodology summary for the chip tooltip. Keep this self-contained —
@@ -81,6 +83,8 @@ const METHODOLOGY_TOOLTIP = (
 export function MonetaryPolicySurpriseChip({
   data,
   loading = false,
+  collapsible = false,
+  storageKey,
 }: MonetaryPolicySurpriseChipProps) {
   if (loading) {
     return (
@@ -88,6 +92,8 @@ export function MonetaryPolicySurpriseChip({
         title="Monetary policy surprise"
         description="Latest FOMC rate-path surprise (descriptive)"
         variant="descriptive"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <p className="text-xs text-muted-foreground" data-testid="mp-surprise-loading">
           Loading latest FOMC surprise…
@@ -102,6 +108,8 @@ export function MonetaryPolicySurpriseChip({
         title="Monetary policy surprise"
         description="Latest FOMC rate-path surprise (descriptive)"
         variant="descriptive"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <p
           className="text-xs text-muted-foreground"
@@ -126,6 +134,8 @@ export function MonetaryPolicySurpriseChip({
       title="Monetary policy surprise"
       description="Latest FOMC rate-path surprise (descriptive)"
       variant="descriptive"
+      collapsible={collapsible}
+      storageKey={storageKey}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-2">
