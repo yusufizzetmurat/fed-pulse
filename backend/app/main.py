@@ -1431,6 +1431,65 @@ def evaluation_classification_breakdown() -> ClassificationBreakdownResponse:
     )
 
 
+def _load_calendar_text_availability() -> dict[str, set[str]]:
+    """Read the on-disk text caches and return the set of release dates
+    present in each. Called once per ``/fomc/calendar`` request so the
+    badge flags reflect the live JSON without a second pass through the
+    files for every meeting row.
+
+    Missing files are treated as empty sets so the endpoint never fails
+    just because one cache hasn't been collected yet.
+    """
+
+    sources = {
+        "statement": "fomc_statements.json",
+        "minutes": "fomc_minutes.json",
+        "press_conference": "press_conferences.json",
+    }
+    out: dict[str, set[str]] = {key: set() for key in sources}
+    for key, filename in sources.items():
+        path = DATA_DIR / filename
+        if not path.exists():
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, list):
+            continue
+        dates: set[str] = set()
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            value = row.get("date")
+            if isinstance(value, str) and value:
+                dates.add(value)
+        out[key] = dates
+    return out
+
+
+def _meeting_with_availability(
+    meeting_dict: dict[str, object],
+    availability: dict[str, set[str]],
+) -> dict[str, object]:
+    """Annotate a serialized FomcMeeting with the three text-availability
+    flags. Uses the statement release date as the lookup key — all three
+    JSON caches index records by the day the text was published, which
+    for statements / minutes / press conferences is the final day of the
+    two-day meeting."""
+
+    release_date = meeting_dict.get("statement_release_date")
+    key = release_date if isinstance(release_date, str) else None
+    enriched = dict(meeting_dict)
+    enriched["statement_available"] = bool(key and key in availability["statement"])
+    enriched["minutes_available"] = bool(key and key in availability["minutes"])
+    enriched["press_conference_available"] = bool(
+        key and key in availability["press_conference"]
+    )
+    return enriched
+
+
 @app.get("/fomc/calendar", response_model=FomcCalendarResponse)
 def fomc_calendar(
     upcoming_limit: int = Query(default=12, ge=1, le=60),
@@ -1446,9 +1505,16 @@ def fomc_calendar(
     calendar = get_calendar(
         as_of=reference, upcoming_limit=upcoming_limit, past_limit=past_limit
     )
+    availability = _load_calendar_text_availability()
     return FomcCalendarResponse(
-        past=[meeting.to_dict() for meeting in calendar["past"]],  # type: ignore[arg-type]
-        upcoming=[meeting.to_dict() for meeting in calendar["upcoming"]],  # type: ignore[arg-type]
+        past=[
+            _meeting_with_availability(meeting.to_dict(), availability)
+            for meeting in calendar["past"]  # type: ignore[union-attr]
+        ],  # type: ignore[arg-type]
+        upcoming=[
+            _meeting_with_availability(meeting.to_dict(), availability)
+            for meeting in calendar["upcoming"]  # type: ignore[union-attr]
+        ],  # type: ignore[arg-type]
     )
 
 

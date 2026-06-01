@@ -846,6 +846,9 @@ class FomcMeetingResponse(BaseModel):
     statement_release_date: str | None = None
     minutes_release_date: str | None = None
     notes: str | None = None
+    statement_available: bool = False
+    minutes_available: bool = False
+    press_conference_available: bool = False
 
 
 class FomcCalendarResponse(BaseModel):

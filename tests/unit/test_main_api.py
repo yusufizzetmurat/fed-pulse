@@ -459,3 +459,122 @@ def test_symbols_endpoint_returns_only_trained_symbols():
     for entry in payload["symbols"]:
         assert set(entry.keys()) == {"symbol", "name", "category", "default_horizon"}
         assert entry["default_horizon"] == "10d"
+
+
+def test_fomc_calendar_exposes_text_availability_flags(monkeypatch, tmp_path):
+    """Each calendar row carries three booleans that mirror whether the
+    corresponding text record is present in the on-disk JSON caches.
+    Statements and minutes are populated for the September 2024 meeting,
+    the press conference is intentionally absent, and the November 2024
+    meeting has nothing on file at all — the badges in the UI need this
+    tri-source signal so the user can see at a glance what's collected."""
+
+    import json
+
+    sep_release = "2024-09-18"  # statement_release_date for 2024-09-17 meeting
+    nov_release = "2024-11-07"  # statement_release_date for 2024-11-06 meeting
+
+    (tmp_path / "fomc_statements.json").write_text(
+        json.dumps(
+            [
+                {
+                    "date": sep_release,
+                    "title": f"FOMC Statement {sep_release}",
+                    "document_type": "Statement",
+                    "text": "stub",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "fomc_minutes.json").write_text(
+        json.dumps(
+            [
+                {
+                    "date": sep_release,
+                    "title": f"FOMC Minutes {sep_release}",
+                    "document_type": "Minutes",
+                    "text": "stub",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "press_conferences.json").write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+
+    client = TestClient(main_mod.app)
+    response = client.get(
+        "/fomc/calendar",
+        params={"as_of": "2024-11-06", "past_limit": 3, "upcoming_limit": 3},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["past"] and body["upcoming"]
+
+    by_meeting: dict[str, dict[str, object]] = {}
+    for row in body["past"] + body["upcoming"]:
+        for key in (
+            "statement_available",
+            "minutes_available",
+            "press_conference_available",
+        ):
+            assert isinstance(row[key], bool), row
+        by_meeting[row["meeting_date"]] = row
+
+    sep = by_meeting["2024-09-17"]
+    assert sep["statement_release_date"] == sep_release
+    assert sep["statement_available"] is True
+    assert sep["minutes_available"] is True
+    assert sep["press_conference_available"] is False
+
+    nov = by_meeting["2024-11-06"]
+    assert nov["statement_release_date"] == nov_release
+    assert nov["statement_available"] is False
+    assert nov["minutes_available"] is False
+    assert nov["press_conference_available"] is False
+
+
+def test_fomc_calendar_availability_matches_on_disk_caches():
+    """Sanity-check that the production JSON caches under ``data/`` line
+    up with the calendar flags for a handful of recent meetings. Pinning
+    a few known-good releases here guards against silent drift between
+    the schedule and the scraped text."""
+
+    import json
+    from pathlib import Path
+
+    data_dir = Path(main_mod.DATA_DIR)
+    statement_path = data_dir / "fomc_statements.json"
+    minutes_path = data_dir / "fomc_minutes.json"
+    presser_path = data_dir / "press_conferences.json"
+    if not (statement_path.exists() and minutes_path.exists() and presser_path.exists()):
+        pytest.skip("on-disk text caches not present in this environment")
+
+    statement_dates = {
+        row["date"] for row in json.loads(statement_path.read_text(encoding="utf-8"))
+    }
+    minutes_dates = {
+        row["date"] for row in json.loads(minutes_path.read_text(encoding="utf-8"))
+    }
+    presser_dates = {
+        row["date"] for row in json.loads(presser_path.read_text(encoding="utf-8"))
+    }
+
+    client = TestClient(main_mod.app)
+    response = client.get(
+        "/fomc/calendar",
+        params={"as_of": "2026-01-01", "past_limit": 6, "upcoming_limit": 1},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    sampled = 0
+    for row in body["past"]:
+        release = row.get("statement_release_date")
+        if not isinstance(release, str):
+            continue
+        assert row["statement_available"] == (release in statement_dates), row
+        assert row["minutes_available"] == (release in minutes_dates), row
+        assert row["press_conference_available"] == (release in presser_dates), row
+        sampled += 1
+    assert sampled >= 3

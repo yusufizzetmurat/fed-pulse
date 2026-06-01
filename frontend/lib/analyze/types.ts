@@ -471,6 +471,9 @@ export interface FomcMeeting {
   statement_release_date?: string | null;
   minutes_release_date?: string | null;
   notes?: string | null;
+  statement_available?: boolean;
+  minutes_available?: boolean;
+  press_conference_available?: boolean;
 }
 
 export interface FomcCalendarResponse {
