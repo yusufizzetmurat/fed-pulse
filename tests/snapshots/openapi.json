@@ -3845,7 +3845,7 @@
         "type": "object"
       },
       "RvBacktestCoverage": {
-        "description": "Aggregate empirical band coverage across the backtest rows.\n\n``empirical_coverage_80`` / ``empirical_coverage_90`` are the fraction\nof resolved rows whose realized RV landed inside the corresponding\nconformal band. ``nominal_coverage_*`` are pinned at the calibration\ntargets (0.80 / 0.90) so the frontend can render a nominal-vs-empirical\ngap chip without re-deriving the constants.",
+        "description": "Aggregate empirical band coverage across the backtest rows.\n\n``empirical_coverage_80`` / ``empirical_coverage_90`` are the fraction\nof resolved rows whose realized RV landed inside the corresponding\nconformal band. ``pending_runs`` reports rows we could not score\n(event date in the HAR warmup window or outside the available RV\nhistory); keeping it separate from ``resolved_runs`` keeps the\ncoverage denominator honest. ``nominal_coverage_*`` are pinned at the\ncalibration targets (0.80 / 0.90) so the frontend can render a\nnominal-vs-empirical gap chip without re-deriving the constants.",
         "properties": {
           "empirical_coverage_80": {
             "anyOf": [
@@ -3878,6 +3878,11 @@
             "default": 0.9,
             "title": "Nominal Coverage 90",
             "type": "number"
+          },
+          "pending_runs": {
+            "default": 0,
+            "title": "Pending Runs",
+            "type": "integer"
           },
           "resolved_runs": {
             "title": "Resolved Runs",

@@ -149,6 +149,7 @@ def test_aggregate_coverage_basic() -> None:
     cov = rv_backtest._aggregate_coverage(rows)
     assert cov["total_runs"] == 4
     assert cov["resolved_runs"] == 3
+    assert cov["pending_runs"] == 1
     assert cov["empirical_coverage_80"] == pytest.approx(2 / 3)
     assert cov["empirical_coverage_90"] == pytest.approx(1.0)
     assert cov["nominal_coverage_80"] == pytest.approx(0.80)
@@ -163,6 +164,7 @@ def test_aggregate_coverage_all_pending() -> None:
     cov = rv_backtest._aggregate_coverage(rows)
     assert cov["total_runs"] == 2
     assert cov["resolved_runs"] == 0
+    assert cov["pending_runs"] == 2
     assert cov["empirical_coverage_80"] is None
     assert cov["empirical_coverage_90"] is None
 
@@ -293,6 +295,7 @@ def test_get_rv_backtest_emits_pending_row_when_date_missing(
     body = response.json()
     assert body["coverage"]["total_runs"] == 1
     assert body["coverage"]["resolved_runs"] == 0
+    assert body["coverage"]["pending_runs"] == 1
     assert body["coverage"]["empirical_coverage_80"] is None
     assert body["coverage"]["empirical_coverage_90"] is None
     row = body["rows"][0]
@@ -356,7 +359,49 @@ def test_endpoint_returns_empty_state_with_no_runs(client) -> None:
     assert body["rows"] == []
     assert body["coverage"]["total_runs"] == 0
     assert body["coverage"]["resolved_runs"] == 0
+    assert body["coverage"]["pending_runs"] == 0
     assert body["coverage"]["empirical_coverage_80"] is None
     assert body["coverage"]["empirical_coverage_90"] is None
     assert body["coverage"]["nominal_coverage_80"] == pytest.approx(0.80)
     assert body["coverage"]["nominal_coverage_90"] == pytest.approx(0.90)
+
+
+def test_load_rv_series_requests_wide_history_window(monkeypatch) -> None:
+    """The backtest must pull more RV history than the live forecast card.
+
+    Regression test for the failure mode where the shared 60-day window
+    capped older persisted FOMC event dates outside the dates index, so
+    every event further than ~3 months back surfaced as pending. The
+    backtest now requests a multi-quarter window so the trailing FOMC
+    meetings can actually be aligned to the daily RV series.
+    """
+
+    captured: dict[str, Any] = {}
+
+    def _fake_load_rv_history(symbol: str, days: int = 60) -> tuple[list[float], list[str]]:
+        captured["symbol"] = symbol
+        captured["days"] = days
+        return ([0.0] * 30, ["2024-01-01"] * 30)
+
+    import app.main as main_mod
+
+    monkeypatch.setattr(main_mod, "_load_rv_history", _fake_load_rv_history)
+
+    rv_backtest._load_rv_series("^GSPC")
+
+    # 60 days = the live-forecast cap. The backtest must pass a strictly
+    # larger ``days`` value so older event dates can land in the dates
+    # index. ~2 years of trading days (504) is the current target.
+    assert captured["symbol"] == "^GSPC"
+    assert captured["days"] > 60
+    assert captured["days"] >= 252
+
+
+def test_main_load_rv_history_honors_days_argument(monkeypatch) -> None:
+    """``_load_rv_history`` exposes a ``days`` knob the backtest passes."""
+
+    import inspect
+
+    sig = inspect.signature(main_mod._load_rv_history)
+    assert "days" in sig.parameters
+    assert sig.parameters["days"].default == main_mod._RV_HISTORY_DAYS

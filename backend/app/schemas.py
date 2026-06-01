@@ -1779,15 +1779,19 @@ class RvBacktestCoverage(BaseModel):
 
     ``empirical_coverage_80`` / ``empirical_coverage_90`` are the fraction
     of resolved rows whose realized RV landed inside the corresponding
-    conformal band. ``nominal_coverage_*`` are pinned at the calibration
-    targets (0.80 / 0.90) so the frontend can render a nominal-vs-empirical
-    gap chip without re-deriving the constants.
+    conformal band. ``pending_runs`` reports rows we could not score
+    (event date in the HAR warmup window or outside the available RV
+    history); keeping it separate from ``resolved_runs`` keeps the
+    coverage denominator honest. ``nominal_coverage_*`` are pinned at the
+    calibration targets (0.80 / 0.90) so the frontend can render a
+    nominal-vs-empirical gap chip without re-deriving the constants.
     """
 
     model_config = _FORBID_FROZEN_CONFIG
 
     total_runs: int
     resolved_runs: int
+    pending_runs: int = 0
     empirical_coverage_80: float | None = None
     empirical_coverage_90: float | None = None
     nominal_coverage_80: float = 0.80

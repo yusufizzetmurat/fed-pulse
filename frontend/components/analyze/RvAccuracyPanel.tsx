@@ -25,6 +25,13 @@ import type {
 // shout "miscalibrated". Outside that band the chip turns hawkish.
 const GAP_MATERIAL_THRESHOLD = 0.10;
 
+// Minimum resolved-row count before the gap chip is allowed to switch
+// off neutral. Below this, a single in-band hit or miss can flip the
+// empirical coverage by 30+ percentage points, which would surface as a
+// false "over-confident bands" signal. The chip stays neutral until we
+// have enough events to make the hit rate statistically meaningful.
+const GAP_MIN_SAMPLE = 5;
+
 function formatPct(value: number | null | undefined, digits: number = 1): string {
   if (value == null || !Number.isFinite(value)) return "—";
   return `${(value * 100).toFixed(digits)}%`;
@@ -59,6 +66,13 @@ interface KpiHeaderProps {
 function KpiHeader({ coverage }: KpiHeaderProps) {
   const cov80 = formatPct(coverage.empirical_coverage_80);
   const cov90 = formatPct(coverage.empirical_coverage_90);
+  // Denominator is the count of rows we actually attempted to score —
+  // exclude pending rows (event date inside HAR warmup or outside the
+  // available RV history). Falls back to total_runs when an older
+  // backend response omits ``pending_runs`` so the panel keeps
+  // rendering during a rolling deploy.
+  const pending = coverage.pending_runs ?? 0;
+  const attempted = Math.max(coverage.total_runs - pending, coverage.resolved_runs);
   return (
     <div
       className="flex flex-wrap items-baseline justify-between gap-3 rounded-md border border-border bg-card/50 p-3"
@@ -72,11 +86,19 @@ function KpiHeader({ coverage }: KpiHeaderProps) {
           className="numeric text-3xl font-semibold tabular-nums"
           data-testid="rv-accuracy-coverage-80"
         >
-          {coverage.resolved_runs} / {coverage.total_runs}
+          {coverage.resolved_runs} / {attempted}
           <span className="ml-2 text-base font-medium text-muted-foreground">
             ({cov80})
           </span>
         </p>
+        {pending > 0 ? (
+          <p
+            className="text-[11px] text-muted-foreground"
+            data-testid="rv-accuracy-pending"
+          >
+            {pending} pending (outside available RV history)
+          </p>
+        ) : null}
       </div>
       <div className="space-y-1 text-right">
         <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -86,7 +108,7 @@ function KpiHeader({ coverage }: KpiHeaderProps) {
           className="numeric text-sm font-medium tabular-nums"
           data-testid="rv-accuracy-coverage-90"
         >
-          {coverage.resolved_runs} / {coverage.total_runs} ({cov90})
+          {coverage.resolved_runs} / {attempted} ({cov90})
         </p>
       </div>
     </div>
@@ -101,18 +123,22 @@ interface GapChipsProps {
 // when the empirical hit-rate is materially BELOW the nominal target —
 // the bands are under-covering, the model is over-confident. Neutral
 // otherwise (including over-coverage, which is conservative but does
-// not break the calibration story).
+// not break the calibration story). When the resolved sample is too
+// small (< GAP_MIN_SAMPLE) both chips stay neutral with a "small sample"
+// label so a 1-of-2-miss event does not surface as miscalibration.
 function GapChips({ coverage }: GapChipsProps) {
   const cov80 = coverage.empirical_coverage_80;
   const cov90 = coverage.empirical_coverage_90;
   const gap80 = cov80 == null ? null : cov80 - coverage.nominal_coverage_80;
   const gap90 = cov90 == null ? null : cov90 - coverage.nominal_coverage_90;
+  const smallSample = coverage.resolved_runs < GAP_MIN_SAMPLE;
   const variantFor = (gap: number | null): "neutral" | "hawkish" => {
-    if (gap == null) return "neutral";
+    if (gap == null || smallSample) return "neutral";
     return gap < -GAP_MATERIAL_THRESHOLD ? "hawkish" : "neutral";
   };
   const labelFor = (gap: number | null): string => {
     if (gap == null) return "—";
+    if (smallSample) return "small sample";
     const pct = (gap * 100).toFixed(1);
     if (gap > 0) return `+${pct} pp vs nominal`;
     if (gap < 0) return `${pct} pp vs nominal`;

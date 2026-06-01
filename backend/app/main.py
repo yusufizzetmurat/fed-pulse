@@ -1786,8 +1786,30 @@ _RV_HISTORY_DAYS = 60
 _RV_MIN_DAYS = 22
 
 
-def _load_rv_history(symbol: str) -> tuple[list[float], list[str]]:
-    """Pull the last 60 daily realized-vol values for ``symbol``.
+def _yfinance_period_for(days: int) -> str:
+    """Pick the smallest yfinance period that comfortably covers ``days`` bars.
+
+    yfinance's ``period`` argument is calendar-day denominated, while the
+    RV series is trading-day denominated (~252/yr), so we pad generously
+    and let the caller trim. The shortest period that fits the live
+    realized-vol card stays at ``120d``; longer windows (used by the
+    backtest panel, which needs to resolve event dates persisted across
+    months) climb through the canonical ``1y`` / ``2y`` / ``5y`` slots.
+    """
+
+    if days <= 90:
+        return "120d"
+    if days <= 252:
+        return "1y"
+    if days <= 504:
+        return "2y"
+    return "5y"
+
+
+def _load_rv_history(
+    symbol: str, days: int = _RV_HISTORY_DAYS
+) -> tuple[list[float], list[str]]:
+    """Pull the trailing daily realized-vol values for ``symbol``.
 
     Prefers the Alpha Vantage 5-min intraday RV parquet (the same series
     the production model was trained on). The parquet is SPX-only, so
@@ -1796,6 +1818,12 @@ def _load_rv_history(symbol: str) -> tuple[list[float], list[str]]:
     missing for SPX we fall back to the same yfinance proxy so the card
     still renders on a fresh checkout. Returns RV (variance) units in
     chronological order plus their ISO date stamps.
+
+    ``days`` caps the trailing window. The live ``/forecast/realized-vol``
+    card uses the default 60 days (it only needs the recent prefix); the
+    ``/forecast/rv-backtest`` panel passes a larger value so persisted
+    FOMC event dates from prior months can still be aligned to the RV
+    series. The yfinance fallback period is widened accordingly.
     """
 
     import pandas as pd
@@ -1805,7 +1833,7 @@ def _load_rv_history(symbol: str) -> tuple[list[float], list[str]]:
     if symbol == "^GSPC" and DEFAULT_RV_PARQUET.exists():
         df = pd.read_parquet(DEFAULT_RV_PARQUET)
         if "rv" in df.columns and "date" in df.columns:
-            df = df.sort_values("date").tail(_RV_HISTORY_DAYS)
+            df = df.sort_values("date").tail(days)
             rv = df["rv"].astype(float).tolist()
             dates = df["date"].astype(str).tolist()
             if len(rv) >= _RV_MIN_DAYS:
@@ -1815,7 +1843,7 @@ def _load_rv_history(symbol: str) -> tuple[list[float], list[str]]:
     import yfinance as yf
 
     ticker = yf.Ticker(symbol)
-    frame = ticker.history(period="120d", auto_adjust=True)
+    frame = ticker.history(period=_yfinance_period_for(days), auto_adjust=True)
     if frame is None or frame.empty:
         raise RuntimeError(f"no market history available for {symbol}")
     close = frame["Close"].astype(float).dropna()
@@ -1829,9 +1857,9 @@ def _load_rv_history(symbol: str) -> tuple[list[float], list[str]]:
     rv_arr = (r * r).astype(float)
     dates = [d.strftime("%Y-%m-%d") for d in close.index[1:]]
     rv = rv_arr.tolist()
-    if len(rv) > _RV_HISTORY_DAYS:
-        rv = rv[-_RV_HISTORY_DAYS:]
-        dates = dates[-_RV_HISTORY_DAYS:]
+    if len(rv) > days:
+        rv = rv[-days:]
+        dates = dates[-days:]
     return rv, dates
 
 

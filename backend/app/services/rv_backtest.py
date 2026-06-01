@@ -51,21 +51,30 @@ from app.services.rv_forecaster import (
 
 _FORECAST_HORIZON = 1
 
+# Backtest history window — wide enough to align persisted FOMC event
+# dates from the trailing year (~8 meetings/yr × 2y = ~16 events, well
+# above the default ``limit=10``) against the daily RV series. The live
+# ``/forecast/realized-vol`` card stays on the narrower 60-day default;
+# only the backtest pulls this wider tail so older persisted runs land
+# inside the dates index rather than the pre-history miss branch.
+_BACKTEST_HISTORY_DAYS = 504
+
 
 def _load_rv_series(symbol: str) -> tuple[list[float], list[str]]:
     """Pull the daily RV series + ISO date stamps for ``symbol``.
 
     Defers to ``app.main._load_rv_history`` so the backtest reads from
     the same intraday-parquet-preferred / yfinance-fallback path the
-    ``/forecast/realized-vol`` endpoint uses. Returns the chronological
-    RV (variance) values plus their date stamps. The import is local
-    so the service module does not pull main's full transitive surface
-    at import time.
+    ``/forecast/realized-vol`` endpoint uses, but requests a much wider
+    trailing window — the backtest needs to align persisted FOMC event
+    dates from prior months, not just the live forecast prefix. The
+    import is local so the service module does not pull main's full
+    transitive surface at import time.
     """
 
     from app.main import _load_rv_history
 
-    rv, dates = _load_rv_history(symbol)
+    rv, dates = _load_rv_history(symbol, days=_BACKTEST_HISTORY_DAYS)
     return rv, dates
 
 
@@ -157,11 +166,18 @@ def _aggregate_coverage(rows: list[dict[str, Any]]) -> dict[str, Any]:
     realized RV resolved (``realized_rv`` not None). The nominal
     coverage levels are pinned at the calibration targets so the
     frontend can render the gap chip without re-deriving them.
+
+    ``pending_runs`` carries the rows that could not be resolved — the
+    event date either sat inside HAR's warmup window or fell outside the
+    available RV history. Keeping it separate from ``resolved_runs``
+    lets the panel show "X resolved / Y pending" without polluting the
+    coverage ratio with rows we never even attempted to score.
     """
 
     total = len(rows)
     resolved = [r for r in rows if r.get("realized_rv") is not None]
     n_res = len(resolved)
+    n_pending = total - n_res
     empirical_80: float | None = None
     empirical_90: float | None = None
     if n_res > 0:
@@ -170,6 +186,7 @@ def _aggregate_coverage(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "total_runs": total,
         "resolved_runs": n_res,
+        "pending_runs": n_pending,
         "empirical_coverage_80": empirical_80,
         "empirical_coverage_90": empirical_90,
         "nominal_coverage_80": 0.80,

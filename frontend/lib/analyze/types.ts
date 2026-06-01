@@ -787,6 +787,7 @@ export interface RvBacktestRow {
 export interface RvBacktestCoverage {
   total_runs: number;
   resolved_runs: number;
+  pending_runs: number;
   empirical_coverage_80: number | null;
   empirical_coverage_90: number | null;
   nominal_coverage_80: number;
