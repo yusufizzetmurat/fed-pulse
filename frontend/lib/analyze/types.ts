@@ -699,3 +699,30 @@ export interface BacktestResponse {
   horizon_days: number;
   symbol: string;
 }
+
+// HAR-tercile regime baseline served from
+// GET /forecast/regime/baselines?symbol=^GSPC. The wiki §20 eval
+// shows HAR-tercile beats both market-only and the text+market
+// fusion on the 3-class forward-RV classification task, so this
+// surface is the Workspace's primary regime headline; the existing
+// late-fusion card becomes a "second opinion" alongside it. The
+// numeric ``predicted_rv`` is the model's point estimate of forward
+// realized variance — annualized vol % is derived UI-side.
+export type HarTercileLabel = "low" | "medium" | "high";
+
+export interface HarTercileHorizon {
+  // Trading-day horizon. The product surfaces 1 / 5 / 22 as
+  // "1 day" / "1 week" / "1 month".
+  h: number;
+  top_pick: HarTercileLabel;
+  probabilities: Record<HarTercileLabel, number>;
+  predicted_rv: number;
+  macro_f1: number;
+  n: number;
+}
+
+export interface HarTercileBaselineResponse {
+  symbol: string;
+  horizons: HarTercileHorizon[];
+  source_wiki_section: string;
+}

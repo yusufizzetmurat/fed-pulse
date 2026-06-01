@@ -3,6 +3,7 @@ import * as React from "react";
 import {
   fetchEvaluationCoverage,
   fetchFomcCalendar,
+  fetchHarBaselines,
   fetchHistory,
   fetchSymbols,
   resolveApiBaseUrl,
@@ -11,6 +12,7 @@ import { SYMBOL_OPTIONS } from "@/lib/analyze/constants";
 import type {
   EvaluationCoverageResponse,
   FomcCalendarResponse,
+  HarTercileBaselineResponse,
   HistoryList,
   SymbolDescriptor,
   SymbolListResponse,
@@ -54,14 +56,22 @@ interface RecentHistoryState {
   error: string | null;
 }
 
+interface HarBaselinesState {
+  data: HarTercileBaselineResponse | null;
+  loading: boolean;
+  error: string | null;
+}
+
 interface SharedContextValue {
   apiBaseUrl: string;
   symbols: SymbolsState;
   calendar: CalendarState;
   coverageMap: Record<string, CoverageState>;
   recentHistoryMap: Record<string, RecentHistoryState>;
+  harBaselinesMap: Record<string, HarBaselinesState>;
   ensureCoverage: (symbol: string | undefined) => void;
   ensureRecentHistory: (symbol: string | undefined, limit: number) => void;
+  ensureHarBaselines: (symbol: string | undefined) => void;
 }
 
 const SharedContext = React.createContext<SharedContextValue | null>(null);
@@ -70,6 +80,11 @@ const DEFAULT_RECENT_HISTORY_LIMIT = 12;
 
 const LOADING_COVERAGE: CoverageState = { data: null, loading: true, error: null };
 const LOADING_RECENT_HISTORY: RecentHistoryState = {
+  data: null,
+  loading: true,
+  error: null,
+};
+const LOADING_HAR_BASELINES: HarBaselinesState = {
   data: null,
   loading: true,
   error: null,
@@ -91,6 +106,9 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
   const [coverageMap, setCoverageMap] = React.useState<Record<string, CoverageState>>({});
   const [recentHistoryMap, setRecentHistoryMap] = React.useState<
     Record<string, RecentHistoryState>
+  >({});
+  const [harBaselinesMap, setHarBaselinesMap] = React.useState<
+    Record<string, HarBaselinesState>
   >({});
 
   // Guard against StrictMode double-invoke + cross-consumer races by
@@ -176,6 +194,36 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
     [apiBaseUrl],
   );
 
+  const ensureHarBaselines = React.useCallback(
+    (symbol: string | undefined) => {
+      const symKey = symbol ?? "";
+      const key = `har_baselines:${apiBaseUrl}:${symKey}`;
+      if (inFlight.current.has(key)) return;
+      inFlight.current.add(key);
+      setHarBaselinesMap((prev) =>
+        prev[symKey] ? prev : { ...prev, [symKey]: LOADING_HAR_BASELINES },
+      );
+      fetchHarBaselines(apiBaseUrl, symbol ?? "")
+        .then((data) => {
+          setHarBaselinesMap((prev) => ({
+            ...prev,
+            [symKey]: { data, loading: false, error: null },
+          }));
+        })
+        .catch((err) => {
+          setHarBaselinesMap((prev) => ({
+            ...prev,
+            [symKey]: {
+              data: null,
+              loading: false,
+              error: (err as Error).message || "HAR baselines fetch failed",
+            },
+          }));
+        });
+    },
+    [apiBaseUrl],
+  );
+
   const ensureRecentHistory = React.useCallback(
     (symbol: string | undefined, limit: number) => {
       const symKey = symbol ?? "";
@@ -214,8 +262,10 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
       calendar,
       coverageMap,
       recentHistoryMap,
+      harBaselinesMap,
       ensureCoverage,
       ensureRecentHistory,
+      ensureHarBaselines,
     }),
     [
       apiBaseUrl,
@@ -223,8 +273,10 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
       calendar,
       coverageMap,
       recentHistoryMap,
+      harBaselinesMap,
       ensureCoverage,
       ensureRecentHistory,
+      ensureHarBaselines,
     ],
   );
 
@@ -290,6 +342,15 @@ export function useSharedCoverage(symbol: string | undefined): CoverageState {
     ctx.ensureCoverage(symbol);
   }, [ctx, symbol]);
   return ctx.coverageMap[symKey] ?? LOADING_COVERAGE;
+}
+
+export function useHarBaselines(symbol: string | undefined): HarBaselinesState {
+  const ctx = useSharedContext();
+  const symKey = symbol ?? "";
+  React.useEffect(() => {
+    ctx.ensureHarBaselines(symbol);
+  }, [ctx, symbol]);
+  return ctx.harBaselinesMap[symKey] ?? LOADING_HAR_BASELINES;
 }
 
 export function useSharedRecentHistory(
