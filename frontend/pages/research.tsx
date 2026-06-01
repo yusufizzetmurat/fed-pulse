@@ -135,7 +135,8 @@ function buildBakeoffBarData(section: EncoderBakeoffSection): BakeoffBarDatum[] 
       const offsetLow = low != null ? Math.max(0, row.macro_f1_mean - low) : 0;
       const offsetHigh = high != null ? Math.max(0, high - row.macro_f1_mean) : 0;
       return {
-        name: row.encoder_key,
+        name: friendlyEncoderName(row.encoder_key),
+        rawName: row.encoder_key,
         macroF1: row.macro_f1_mean,
         ciLow: low,
         ciHigh: high,
@@ -151,7 +152,7 @@ function bakeoffCallout(section: EncoderBakeoffSection): string | null {
   const runner = sorted[1];
   const gapPoints = (leader.macro_f1_mean - runner.macro_f1_mean) * 100;
   if (!Number.isFinite(gapPoints) || gapPoints <= 0) return null;
-  return `${leader.encoder_key} leads the overall F1 score by ${gapPoints.toFixed(1)} percentage points over ${runner.encoder_key}.`;
+  return `${friendlyEncoderName(leader.encoder_key)} leads the overall F1 score by ${gapPoints.toFixed(1)} percentage points over ${friendlyEncoderName(runner.encoder_key)}.`;
 }
 
 function crossBankCallout(
