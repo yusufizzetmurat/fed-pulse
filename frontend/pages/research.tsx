@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 
 import { DecisionsLink } from "@/components/research/DecisionsLink";
+import { HonestScopePane } from "@/components/research/HonestScopePane";
 import { Header } from "@/components/shell/header";
 import { StatusBar } from "@/components/shell/status-bar";
 import { Badge } from "@/components/ui/badge";
@@ -562,13 +563,17 @@ export default function ResearchPage() {
               <Skeleton className="h-48 w-full" />
             </div>
           ) : data ? (
-            <Tabs defaultValue="bakeoff" className="w-full">
+            <Tabs defaultValue="scope" className="w-full">
               <TabsList className="flex w-full flex-wrap justify-start">
+                <TabsTrigger value="scope">What it predicts</TabsTrigger>
                 <TabsTrigger value="bakeoff">Bake-off</TabsTrigger>
                 <TabsTrigger value="transfer">Transfer</TabsTrigger>
                 <TabsTrigger value="decisions">Decisions</TabsTrigger>
                 <TabsTrigger value="files">Downloads</TabsTrigger>
               </TabsList>
+              <TabsContent value="scope">
+                <HonestScopePane />
+              </TabsContent>
               <TabsContent value="bakeoff" className="space-y-3">
                 <EncoderBakeoffPane section={data.encoder_bakeoff} />
                 {data.encoder_bakeoff.source_files.length > 0 ? (
