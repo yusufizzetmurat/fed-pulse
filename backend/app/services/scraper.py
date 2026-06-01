@@ -6,11 +6,13 @@ import re
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Literal
 from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
+
+from app.services.text_hygiene import clean_fomc_text
 
 BASE_URL = "https://www.federalreserve.gov"
 CALENDAR_URL = f"{BASE_URL}/monetarypolicy/fomccalendars.htm"
@@ -296,11 +298,16 @@ def _scrape_documents_for_type(
     records: list[FomcDocument] = []
     scraped_at = datetime.now(timezone.utc).isoformat()
 
+    hygiene_kind: Literal["statement", "minutes", "press_conference"] = (
+        "minutes" if document_type.lower().startswith("minutes") else "statement"
+    )
+
     for document_url, fallback_title, source_page in document_links:
         soup = _fetch_soup(document_url)
         title_node = soup.select_one("h3.title") or soup.select_one("h1")
         title = _clean_text(title_node.get_text(" ", strip=True)) if title_node else fallback_title
         body = _extract_article_text(soup)
+        cleaned_body = clean_fomc_text(body, kind=hygiene_kind)
         date_value = _extract_date(soup) or _date_from_url(document_url)
         document = FomcDocument(
             date=date_value,
@@ -309,7 +316,7 @@ def _scrape_documents_for_type(
             url=document_url,
             source_page=source_page,
             document_type=document_type,
-            text=body,
+            text=cleaned_body,
             scraped_at_utc=scraped_at,
         )
         records.append(document)

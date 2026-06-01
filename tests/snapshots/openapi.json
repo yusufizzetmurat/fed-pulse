@@ -1270,6 +1270,11 @@
             "title": "Meeting Type",
             "type": "string"
           },
+          "minutes_available": {
+            "default": false,
+            "title": "Minutes Available",
+            "type": "boolean"
+          },
           "minutes_release_date": {
             "anyOf": [
               {
@@ -1291,6 +1296,16 @@
               }
             ],
             "title": "Notes"
+          },
+          "press_conference_available": {
+            "default": false,
+            "title": "Press Conference Available",
+            "type": "boolean"
+          },
+          "statement_available": {
+            "default": false,
+            "title": "Statement Available",
+            "type": "boolean"
           },
           "statement_release_date": {
             "anyOf": [
@@ -1569,6 +1584,136 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HarAccuracyMetrics": {
+        "description": "Aggregate accuracy KPIs across the HAR-tercile backtest rows.\n\n``total_runs`` is the number of rows in the window, regardless of\nwhether their forward window has resolved. ``resolved_runs`` counts\nrows whose realized tercile could be derived. ``accuracy_overall``\nis the hit rate across resolved rows only; ``per_tercile_hit_rate``\nkeys are the predicted-tercile labels and values are per-label hit\nrates (denominator = resolved rows whose prediction was that label).",
+        "properties": {
+          "accuracy_overall": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accuracy Overall"
+          },
+          "per_tercile_hit_rate": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Per Tercile Hit Rate",
+            "type": "object"
+          },
+          "resolved_runs": {
+            "title": "Resolved Runs",
+            "type": "integer"
+          },
+          "total_runs": {
+            "title": "Total Runs",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_runs",
+          "resolved_runs"
+        ],
+        "title": "HarAccuracyMetrics",
+        "type": "object"
+      },
+      "HarTercileBacktestResponse": {
+        "description": "Response wire shape for ``GET /forecast/har-tercile-backtest``.\n\nSurfaces the last N persisted ^GSPC analyze runs with their stored\nHAR-tercile prediction and the realized tercile derived from\nforward market history. Drives the HarAccuracyPanel card.",
+        "properties": {
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "horizon": {
+            "title": "Horizon",
+            "type": "integer"
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/HarAccuracyMetrics"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/HarTercileBacktestRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "horizon",
+          "rows",
+          "metrics",
+          "generated_at"
+        ],
+        "title": "HarTercileBacktestResponse",
+        "type": "object"
+      },
+      "HarTercileBacktestRow": {
+        "description": "One resolved (or pending) row in the HAR-tercile backtest table.\n\nA row carries the persisted predicted tercile (read off the analyze\npayload's ``regime_classification`` card) and, when the forward\nwindow has elapsed, the realized tercile bucketed off the same\ncutoffs that produced the prediction. ``correct`` is None for rows\nwhose forward window has not yet closed.",
+        "properties": {
+          "correct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correct"
+          },
+          "event_date": {
+            "title": "Event Date",
+            "type": "string"
+          },
+          "predicted_prob": {
+            "title": "Predicted Prob",
+            "type": "number"
+          },
+          "predicted_tercile": {
+            "title": "Predicted Tercile",
+            "type": "string"
+          },
+          "realized_rv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Rv"
+          },
+          "realized_tercile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Tercile"
+          }
+        },
+        "required": [
+          "event_date",
+          "predicted_tercile",
+          "predicted_prob"
+        ],
+        "title": "HarTercileBacktestRow",
         "type": "object"
       },
       "HarTercileBaselineResponse": {
@@ -3147,6 +3292,20 @@
       "RealizedVolForecastResponse": {
         "description": "Multi-horizon QLIKE-DLq forecast plus last-60d realized history.",
         "properties": {
+          "historical_bands": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/RealizedVolHistoricalBand"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Historical Bands"
+          },
           "history": {
             "items": {
               "type": "number"
@@ -3183,6 +3342,41 @@
           "model_revision"
         ],
         "title": "RealizedVolForecastResponse",
+        "type": "object"
+      },
+      "RealizedVolHistoricalBand": {
+        "description": "Single walk-forward h=1 conformal band aligned to a realized day.\n\nRenders behind the realized sparkline so the card shows the band\nactually covered each day's outcome.",
+        "properties": {
+          "band_hi_80": {
+            "title": "Band Hi 80",
+            "type": "number"
+          },
+          "band_lo_80": {
+            "title": "Band Lo 80",
+            "type": "number"
+          },
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "realized_rv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Rv"
+          }
+        },
+        "required": [
+          "date",
+          "band_lo_80",
+          "band_hi_80"
+        ],
+        "title": "RealizedVolHistoricalBand",
         "type": "object"
       },
       "RealizedVolHorizonForecast": {
@@ -5096,6 +5290,66 @@
           }
         },
         "summary": "Forecast Abnormal Volume"
+      }
+    },
+    "/forecast/har-tercile-backtest": {
+      "get": {
+        "description": "Backtest the last N HAR-tercile predictions for ``symbol``.\n\nWalks the persisted ``analysis_runs`` table, lines up each row's\npredicted tercile with the realized tercile from the forward\n10-trading-day window, and returns the rows + aggregate accuracy\nmetrics. Mirrors the ``^GSPC``-only constraint on the upstream\nHAR-tercile baseline endpoint (the cutoffs are SPX-trained).",
+        "operationId": "forecast_har_tercile_backtest_forecast_har_tercile_backtest_get",
+        "parameters": [
+          {
+            "description": "Market ticker; only ^GSPC is supported (HAR-tercile is SPX-trained).",
+            "in": "query",
+            "name": "symbol",
+            "required": false,
+            "schema": {
+              "default": "^GSPC",
+              "description": "Market ticker; only ^GSPC is supported (HAR-tercile is SPX-trained).",
+              "maxLength": 32,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._=^/-]+$",
+              "title": "Symbol",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Number of most-recent persisted runs to backtest (1..50).",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "description": "Number of most-recent persisted runs to backtest (1..50).",
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HarTercileBacktestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Forecast Har Tercile Backtest"
       }
     },
     "/forecast/realized-vol": {

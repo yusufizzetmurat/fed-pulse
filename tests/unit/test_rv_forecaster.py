@@ -148,3 +148,39 @@ def test_safe_float_handles_none_and_garbage() -> None:
     assert math.isnan(rv_forecaster._safe_float("abc"))
     assert rv_forecaster._safe_float(1) == 1.0
     assert rv_forecaster._safe_float("3.5") == 3.5
+
+
+def test_predict_rv_historical_bands_walks_forward(stub_predictor: Any) -> None:
+    rng = np.random.default_rng(1)
+    n = 60
+    rv = np.abs(rng.normal(scale=1e-4, size=n)) + 1e-5
+    dates = [f"2026-04-{i + 1:02d}" for i in range(n)]
+    rows = rv_forecaster.predict_rv_historical_bands(rv.tolist(), dates)
+    # 22 warmup days dropped → 60 - 22 rows ride.
+    assert len(rows) == n - rv_forecaster._HISTORICAL_BANDS_WARMUP
+    assert rows[0]["date"] == dates[rv_forecaster._HISTORICAL_BANDS_WARMUP]
+    for i, row in enumerate(rows):
+        # Band brackets the point (q80 > 0 in the stub) and the realized
+        # RV is the actual rv at index 22+i.
+        assert row["band_lo_80"] < row["band_hi_80"]
+        assert row["band_lo_80"] > 0
+        assert row["realized_rv"] == pytest.approx(
+            float(rv[rv_forecaster._HISTORICAL_BANDS_WARMUP + i])
+        )
+
+
+def test_predict_rv_historical_bands_returns_empty_when_history_too_short(
+    stub_predictor: Any,
+) -> None:
+    rv = [1e-4] * 10
+    dates = [f"2026-04-{i + 1:02d}" for i in range(10)]
+    assert rv_forecaster.predict_rv_historical_bands(rv, dates) == []
+
+
+def test_predict_rv_historical_bands_rejects_length_mismatch(
+    stub_predictor: Any,
+) -> None:
+    rv = [1e-4] * 30
+    dates = [f"2026-04-{i + 1:02d}" for i in range(29)]
+    with pytest.raises(ValueError):
+        rv_forecaster.predict_rv_historical_bands(rv, dates)

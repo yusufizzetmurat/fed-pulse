@@ -60,4 +60,110 @@ describe("CalendarPage", () => {
     expect(screen.getByText("2024-09-17")).toBeInTheDocument();
     expect(screen.getAllByText(/^scheduled$/i).length).toBeGreaterThanOrEqual(2);
   });
+
+  it("renders Statement / Minutes / Presser availability badges with both states", async () => {
+    fetchFomcCalendarMock.mockResolvedValue({
+      upcoming: [
+        {
+          meeting_date: "2024-11-06",
+          meeting_type: "scheduled",
+          statement_release_date: "2024-11-07",
+          minutes_release_date: "2024-11-27",
+          statement_available: false,
+          minutes_available: false,
+          press_conference_available: false,
+        },
+      ],
+      past: [
+        {
+          meeting_date: "2024-09-17",
+          meeting_type: "scheduled",
+          statement_release_date: "2024-09-18",
+          minutes_release_date: "2024-10-09",
+          statement_available: true,
+          minutes_available: true,
+          press_conference_available: false,
+        },
+      ],
+    });
+    const { default: CalendarPage } = await import("@/pages/calendar");
+    render(<CalendarPage />);
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("availability-statement").length).toBe(2),
+    );
+
+    // Past row (2024-09-17): statement + minutes on file, presser missing.
+    const statementBadges = screen.getAllByTestId("availability-statement");
+    const minutesBadges = screen.getAllByTestId("availability-minutes");
+    const presserBadges = screen.getAllByTestId("availability-presser");
+    expect(statementBadges).toHaveLength(2);
+    expect(minutesBadges).toHaveLength(2);
+    expect(presserBadges).toHaveLength(2);
+
+    // Identify which badge belongs to which row by walking up to the
+    // <li> that holds the meeting_date text.
+    function badgeForMeeting(
+      badges: HTMLElement[],
+      meetingDate: string,
+    ): HTMLElement {
+      const match = badges.find((badge) => {
+        const row = badge.closest("li");
+        return row?.textContent?.includes(meetingDate) ?? false;
+      });
+      if (!match) throw new Error(`no badge near ${meetingDate}`);
+      return match;
+    }
+
+    const pastStatement = badgeForMeeting(statementBadges, "2024-09-17");
+    const pastMinutes = badgeForMeeting(minutesBadges, "2024-09-17");
+    const pastPresser = badgeForMeeting(presserBadges, "2024-09-17");
+    expect(pastStatement).toHaveAttribute("data-available", "true");
+    expect(pastStatement).toHaveAttribute("title", "Statement on file");
+    expect(pastMinutes).toHaveAttribute("data-available", "true");
+    expect(pastMinutes).toHaveAttribute("title", "Minutes on file");
+    expect(pastPresser).toHaveAttribute("data-available", "false");
+    expect(pastPresser).toHaveAttribute("title", "Presser not collected");
+
+    // Upcoming row (2024-11-06): all three muted/not-collected.
+    const upStatement = badgeForMeeting(statementBadges, "2024-11-06");
+    const upMinutes = badgeForMeeting(minutesBadges, "2024-11-06");
+    const upPresser = badgeForMeeting(presserBadges, "2024-11-06");
+    expect(upStatement).toHaveAttribute("data-available", "false");
+    expect(upMinutes).toHaveAttribute("data-available", "false");
+    expect(upPresser).toHaveAttribute("data-available", "false");
+    expect(upStatement).toHaveAttribute("title", "Statement not collected");
+  });
+
+  it("treats undefined availability flags on a future meeting as not-collected", async () => {
+    // Real backend payloads for far-future meetings omit the
+    // availability flags entirely; the badge logic must read undefined
+    // as false rather than rendering an aria-broken or red "missing"
+    // state.
+    fetchFomcCalendarMock.mockResolvedValue({
+      upcoming: [
+        {
+          meeting_date: "2026-12-15",
+          meeting_type: "scheduled",
+          statement_release_date: "2026-12-15",
+          minutes_release_date: "2027-01-06",
+          // availability flags intentionally omitted
+        },
+      ],
+      past: [],
+    });
+    const { default: CalendarPage } = await import("@/pages/calendar");
+    render(<CalendarPage />);
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("availability-statement").length).toBe(1),
+    );
+    const statement = screen.getByTestId("availability-statement");
+    const minutes = screen.getByTestId("availability-minutes");
+    const presser = screen.getByTestId("availability-presser");
+    expect(statement).toHaveAttribute("data-available", "false");
+    expect(minutes).toHaveAttribute("data-available", "false");
+    expect(presser).toHaveAttribute("data-available", "false");
+    expect(statement).toHaveAttribute("title", "Statement not collected");
+  });
 });

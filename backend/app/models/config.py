@@ -475,6 +475,23 @@ SUPPORTED_SYMBOLS: tuple[str, ...] = (
 SYMBOL_ID_LOOKUP: dict[str, int] = {sym: idx for idx, sym in enumerate(SUPPORTED_SYMBOLS)}
 N_SUPPORTED_SYMBOLS: int = len(SUPPORTED_SYMBOLS)
 
+# Per-symbol display metadata for the frontend asset picker and the
+# ``/symbols`` endpoint fallback. Keyed off the ticker symbols listed in
+# ``SUPPORTED_SYMBOLS`` so the JSON file on disk, the in-process fallback
+# in ``app.main``, and the symbol-id lookup all derive from one source.
+# Row order matches ``SUPPORTED_SYMBOLS`` so the picker renders the five
+# entries in the same order training writes them in.
+SUPPORTED_SYMBOL_METADATA: tuple[dict[str, str], ...] = (
+    {"symbol": "^GSPC", "name": "S&P 500", "category": "Equity index", "default_horizon": "10d"},
+    {"symbol": "^NDX", "name": "Nasdaq 100", "category": "Equity index", "default_horizon": "10d"},
+    {"symbol": "^DJI", "name": "Dow Jones", "category": "Equity index", "default_horizon": "10d"},
+    {"symbol": "DX-Y.NYB", "name": "US Dollar Index", "category": "FX", "default_horizon": "10d"},
+    {"symbol": "EURUSD=X", "name": "EUR / USD", "category": "FX", "default_horizon": "10d"},
+)
+assert tuple(entry["symbol"] for entry in SUPPORTED_SYMBOL_METADATA) == SUPPORTED_SYMBOLS, (
+    "SUPPORTED_SYMBOL_METADATA must mirror SUPPORTED_SYMBOLS row order"
+)
+
 
 def _coerce_absolute_vol_thresholds(value: Any) -> tuple[float, float]:
     """Round-trip helper for :attr:`ModelConfig.absolute_vol_thresholds`.

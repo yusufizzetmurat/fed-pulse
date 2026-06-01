@@ -53,6 +53,12 @@ _EXPECTED_5XX_BY_PATH: dict[str, set[int]] = {
     # to obtain them rather than crashing.
     "/fomc/latest-mp-surprise": {503},
     "/fomc/futures-consensus": {503},
+    # Documented "Trajectory projection unavailable" 503 — the handler
+    # wraps the inner trajectory model in a catch-all that returns this
+    # structured body rather than 500ing the whole API. The trajectory
+    # bundle is a dev-environment artefact and downstream tensor shape
+    # asserts only hold for in-distribution histories.
+    "/analyze/trajectory": {503},
 }
 
 

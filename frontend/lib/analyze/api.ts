@@ -11,6 +11,7 @@ import type {
   ExpectedVolumeForecastResponse,
   FomcCalendarResponse,
   FuturesConsensusResponse,
+  HarTercileBacktestResponse,
   HarTercileBaselineResponse,
   HistoryDetail,
   HistoryEventStudyResponse,
@@ -400,6 +401,32 @@ export async function fetchHarBaselines(
     signal,
   });
   return response.data as HarTercileBaselineResponse;
+}
+
+
+// HAR-tercile backtest fetcher. The backend returns 503 only on a
+// downstream artifact-load failure; the panel's empty-state covers the
+// "no resolved runs yet" branch off ``rows.length === 0``, so a 503
+// folds into ``null`` to match the parity contract shared with the
+// other workspace-spine fetchers.
+export async function fetchHarTercileBacktest(
+  baseUrl: string,
+  symbol: string,
+  limit: number = 10,
+  signal?: AbortSignal,
+): Promise<HarTercileBacktestResponse | null> {
+  try {
+    const response = await axios.get(`${baseUrl}/forecast/har-tercile-backtest`, {
+      params: { symbol, limit },
+      signal,
+    });
+    return response.data as HarTercileBacktestResponse;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 503) {
+      return null;
+    }
+    throw err;
+  }
 }
 
 export async function postResearchBacktest(

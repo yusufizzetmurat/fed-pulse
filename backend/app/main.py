@@ -57,9 +57,13 @@ from app.schemas import (
     MonetaryPolicySurpriseResponse,
     NextFomcForecastResponse,
     RatesReactionCard,
+    HarAccuracyMetrics,
+    HarTercileBacktestResponse,
+    HarTercileBacktestRow,
     HarTercileBaselineResponse,
     HarTercileHorizon,
     RealizedVolForecastResponse,
+    RealizedVolHistoricalBand,
     RealizedVolHorizonForecast,
     ResearchArtifactsResponse,
     BacktestRequest,
@@ -115,6 +119,7 @@ from app.services.market_data import (
 from app.services.policy_action_extractor import extract_policy_action
 from app.services.text_encoder import analyze_text
 from app.services.forecaster_text_embedding import encode_text_pooled
+from app.services.text_hygiene import clean_fomc_text
 
 logger = logging.getLogger(__name__)
 
@@ -296,9 +301,13 @@ def health_check():
     }
 
 
-_SYMBOLS_FALLBACK: list[dict[str, str]] = [
-    {"symbol": "^GSPC", "name": "S&P 500", "category": "Equity index", "default_horizon": "10d"},
-]
+# Fallback used by ``/symbols`` when the on-disk JSON is missing on a
+# fresh checkout. Derived from :data:`app.models.config.SUPPORTED_SYMBOL_METADATA`
+# so the JSON file, the fallback, and the symbol-id lookup all stay in
+# lock-step on the five trained tickers.
+from app.models.config import SUPPORTED_SYMBOL_METADATA as _SUPPORTED_SYMBOL_METADATA
+
+_SYMBOLS_FALLBACK: list[dict[str, str]] = [dict(entry) for entry in _SUPPORTED_SYMBOL_METADATA]
 
 
 def _checkpoint_role(name: str) -> str:
@@ -522,6 +531,15 @@ def list_documents():
     return {"count": len(documents), "documents": documents}
 
 
+def _hygiene_kind_for(document_type: str) -> str:
+    lowered = document_type.lower()
+    if lowered.startswith("minutes"):
+        return "minutes"
+    if lowered.startswith("press"):
+        return "press_conference"
+    return "statement"
+
+
 @app.get("/documents/by-date")
 def get_document_by_date(date: str, kind: str = "auto"):
     """Look up an FOMC statement or minutes by event date so the calendar
@@ -568,11 +586,12 @@ def get_document_by_date(date: str, kind: str = "auto"):
             text = str(item.get("text") or item.get("content") or "")
             if not text:
                 continue
+            cleaned = clean_fomc_text(text, kind=_hygiene_kind_for(document_type))
             return {
                 "date": date,
                 "kind": document_type.lower(),
                 "title": str(item.get("title", "")),
-                "text": text,
+                "text": cleaned,
                 "source_file": filename,
             }
     raise HTTPException(
@@ -1413,6 +1432,65 @@ def evaluation_classification_breakdown() -> ClassificationBreakdownResponse:
     )
 
 
+def _load_calendar_text_availability() -> dict[str, set[str]]:
+    """Read the on-disk text caches and return the set of release dates
+    present in each. Called once per ``/fomc/calendar`` request so the
+    badge flags reflect the live JSON without a second pass through the
+    files for every meeting row.
+
+    Missing files are treated as empty sets so the endpoint never fails
+    just because one cache hasn't been collected yet.
+    """
+
+    sources = {
+        "statement": "fomc_statements.json",
+        "minutes": "fomc_minutes.json",
+        "press_conference": "press_conferences.json",
+    }
+    out: dict[str, set[str]] = {key: set() for key in sources}
+    for key, filename in sources.items():
+        path = DATA_DIR / filename
+        if not path.exists():
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, list):
+            continue
+        dates: set[str] = set()
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            value = row.get("date")
+            if isinstance(value, str) and value:
+                dates.add(value)
+        out[key] = dates
+    return out
+
+
+def _meeting_with_availability(
+    meeting_dict: dict[str, object],
+    availability: dict[str, set[str]],
+) -> dict[str, object]:
+    """Annotate a serialized FomcMeeting with the three text-availability
+    flags. Uses the statement release date as the lookup key — all three
+    JSON caches index records by the day the text was published, which
+    for statements / minutes / press conferences is the final day of the
+    two-day meeting."""
+
+    release_date = meeting_dict.get("statement_release_date")
+    key = release_date if isinstance(release_date, str) else None
+    enriched = dict(meeting_dict)
+    enriched["statement_available"] = bool(key and key in availability["statement"])
+    enriched["minutes_available"] = bool(key and key in availability["minutes"])
+    enriched["press_conference_available"] = bool(
+        key and key in availability["press_conference"]
+    )
+    return enriched
+
+
 @app.get("/fomc/calendar", response_model=FomcCalendarResponse)
 def fomc_calendar(
     upcoming_limit: int = Query(default=12, ge=1, le=60),
@@ -1428,9 +1506,16 @@ def fomc_calendar(
     calendar = get_calendar(
         as_of=reference, upcoming_limit=upcoming_limit, past_limit=past_limit
     )
+    availability = _load_calendar_text_availability()
     return FomcCalendarResponse(
-        past=[meeting.to_dict() for meeting in calendar["past"]],  # type: ignore[arg-type]
-        upcoming=[meeting.to_dict() for meeting in calendar["upcoming"]],  # type: ignore[arg-type]
+        past=[
+            _meeting_with_availability(meeting.to_dict(), availability)
+            for meeting in calendar["past"]  # type: ignore[union-attr]
+        ],  # type: ignore[arg-type]
+        upcoming=[
+            _meeting_with_availability(meeting.to_dict(), availability)
+            for meeting in calendar["upcoming"]  # type: ignore[union-attr]
+        ],  # type: ignore[arg-type]
     )
 
 
@@ -1702,17 +1787,19 @@ def _load_rv_history(symbol: str) -> tuple[list[float], list[str]]:
     """Pull the last 60 daily realized-vol values for ``symbol``.
 
     Prefers the Alpha Vantage 5-min intraday RV parquet (the same series
-    the production model was trained on). When the parquet is missing we
-    fall back to a yfinance daily close-to-close squared-log-return proxy
-    so the card still renders on a fresh checkout. Returns RV (variance)
-    units in chronological order plus their ISO date stamps.
+    the production model was trained on). The parquet is SPX-only, so
+    only ``^GSPC`` reads from it; every other symbol takes the yfinance
+    close-to-close squared-log-return fallback. When the parquet is
+    missing for SPX we fall back to the same yfinance proxy so the card
+    still renders on a fresh checkout. Returns RV (variance) units in
+    chronological order plus their ISO date stamps.
     """
 
     import pandas as pd
 
     from app.data.intraday_realized import DEFAULT_RV_PARQUET
 
-    if DEFAULT_RV_PARQUET.exists():
+    if symbol == "^GSPC" and DEFAULT_RV_PARQUET.exists():
         df = pd.read_parquet(DEFAULT_RV_PARQUET)
         if "rv" in df.columns and "date" in df.columns:
             df = df.sort_values("date").tail(_RV_HISTORY_DAYS)
@@ -1766,6 +1853,7 @@ async def forecast_realized_vol(
     from app.services.rv_forecaster import (
         RvForecasterUnavailable,
         predict_rv,
+        predict_rv_historical_bands,
     )
 
     try:
@@ -1783,6 +1871,17 @@ async def forecast_realized_vol(
         logger.warning("rv_forecast_failed", exc_info=True)
         raise HTTPException(status_code=503, detail={"error": "forecast_failed", "message": str(exc)}) from exc
 
+    # Walk-forward past 80% bands. Failure here must not break the
+    # primary forecast surface, so degrade to None.
+    try:
+        bands_rows = await run_in_threadpool(
+            predict_rv_historical_bands, rv_hist, hist_dates
+        )
+        historical_bands = [RealizedVolHistoricalBand(**row) for row in bands_rows] or None
+    except Exception:  # pragma: no cover -- defensive
+        logger.warning("rv_historical_bands_failed", exc_info=True)
+        historical_bands = None
+
     horizons = [RealizedVolHorizonForecast(**h) for h in out["horizons"]]
     return RealizedVolForecastResponse(
         symbol=symbol,
@@ -1790,6 +1889,7 @@ async def forecast_realized_vol(
         history=rv_hist,
         history_dates=hist_dates,
         model_revision=out["model_revision"],
+        historical_bands=historical_bands,
     )
 
 
@@ -1863,6 +1963,60 @@ async def forecast_regime_baselines(
         cutoffs_q67=out["cutoffs_q67"],
         model_revision=out["model_revision"],
         generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+
+
+@app.get(
+    "/forecast/har-tercile-backtest",
+    response_model=HarTercileBacktestResponse,
+)
+def forecast_har_tercile_backtest(
+    symbol: str = Query(
+        "^GSPC",
+        description="Market ticker; only ^GSPC is supported (HAR-tercile is SPX-trained).",
+        min_length=1,
+        max_length=32,
+        pattern=r"^[A-Za-z0-9._=^/-]+$",
+    ),
+    limit: int = Query(
+        10,
+        ge=1,
+        le=50,
+        description="Number of most-recent persisted runs to backtest (1..50).",
+    ),
+    session: Session = Depends(get_session),
+) -> HarTercileBacktestResponse:
+    """Backtest the last N HAR-tercile predictions for ``symbol``.
+
+    Walks the persisted ``analysis_runs`` table, lines up each row's
+    predicted tercile with the realized tercile from the forward
+    10-trading-day window, and returns the rows + aggregate accuracy
+    metrics. Mirrors the ``^GSPC``-only constraint on the upstream
+    HAR-tercile baseline endpoint (the cutoffs are SPX-trained).
+    """
+
+    if symbol != "^GSPC":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "symbol_unsupported",
+                "message": (
+                    "HAR-tercile backtest is SPX-trained; only ^GSPC is supported."
+                ),
+            },
+        )
+
+    from app.services.har_tercile_backtest import build_har_tercile_backtest
+
+    out = build_har_tercile_backtest(session, symbol=symbol, limit=limit)
+    rows = [HarTercileBacktestRow(**row) for row in out["rows"]]
+    metrics = HarAccuracyMetrics(**out["metrics"])
+    return HarTercileBacktestResponse(
+        symbol=out["symbol"],
+        horizon=out["horizon"],
+        rows=rows,
+        metrics=metrics,
+        generated_at=out["generated_at"],
     )
 
 

@@ -13,6 +13,7 @@ import { MonetaryPolicySurpriseChip } from "@/components/analyze/MonetaryPolicyS
 import { MultiAxisInterpretation } from "@/components/analyze/MultiAxisInterpretation";
 import { PipelineTrace } from "@/components/analyze/PipelineTrace";
 import { PolicyActionCard } from "@/components/analyze/PolicyActionCard";
+import { HarAccuracyPanel } from "@/components/analyze/HarAccuracyPanel";
 import { HarRegimeHeadline } from "@/components/analyze/HarRegimeHeadline";
 import {
   RegimeHistoryStrip,
@@ -35,6 +36,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   fetchExpectedVolumeForecast,
   fetchFuturesConsensus,
+  fetchHarTercileBacktest,
   fetchHistoryRealizedBatch,
   fetchLatestMpSurprise,
   fetchRealizedVolForecast,
@@ -58,6 +60,7 @@ import type {
   AnalyzeResult,
   ExpectedVolumeForecastResponse,
   FuturesConsensusResponse,
+  HarTercileBacktestResponse,
   HistoryEntry,
   Horizon,
   MarketReactionPanelResponse,
@@ -149,6 +152,10 @@ export default function WorkspacePage() {
   const coverage = useSharedCoverage(request.symbol);
   const recentHistory = useSharedRecentHistory(request.symbol, 12);
   const harBaselines = useHarBaselines(request.symbol);
+  const [harBacktest, setHarBacktest] =
+    React.useState<HarTercileBacktestResponse | null>(null);
+  const [harBacktestLoading, setHarBacktestLoading] = React.useState(false);
+  const [harBacktestError, setHarBacktestError] = React.useState<string | null>(null);
 
   // Apply saved workspace prefs (default symbol / horizon) after mount.
   // Doing this in an effect rather than the initial state preserves the
@@ -337,6 +344,49 @@ export default function WorkspacePage() {
         // loading unconditionally avoids a sticky spinner if the
         // controller aborts mid-fetch on real navigation.
         setExpectedVolumeLoading(false);
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl, request.symbol]);
+
+  // HAR-tercile backtest panel — the endpoint is ^GSPC-only (matches
+  // the regime/baselines constraint upstream). The fetcher folds a
+  // 503 (downstream artifact failure) into null; the panel renders
+  // the empty state when the symbol is supported but there are no
+  // resolved runs yet. For non-GSPC symbols we don't fire at all and
+  // surface a tailored "unavailable" placeholder.
+  React.useEffect(() => {
+    const controller = new AbortController();
+    if (request.symbol !== "^GSPC") {
+      setHarBacktest(null);
+      setHarBacktestLoading(false);
+      setHarBacktestError(null);
+      return;
+    }
+    setHarBacktestLoading(true);
+    setHarBacktestError(null);
+    (async () => {
+      try {
+        const data = await fetchHarTercileBacktest(
+          apiBaseUrl,
+          request.symbol,
+          10,
+          controller.signal,
+        );
+        if (!controller.signal.aborted) {
+          setHarBacktest(data);
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          setHarBacktest(null);
+          setHarBacktestError(
+            errorMessage(err, "HAR-tercile backtest unavailable."),
+          );
+        }
+      } finally {
+        setHarBacktestLoading(false);
       }
     })();
     return () => {
@@ -706,6 +756,14 @@ export default function WorkspacePage() {
             error={harBaselines.error}
             symbol={request.symbol}
           />
+          {request.symbol === "^GSPC" ? (
+            <HarAccuracyPanel
+              data={harBacktest}
+              loading={harBacktestLoading}
+              error={harBacktestError}
+              symbol={request.symbol}
+            />
+          ) : null}
           <VolatilityOutlookCard
             forecast={volForecast}
             loading={volForecastLoading}

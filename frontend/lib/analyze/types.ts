@@ -471,6 +471,9 @@ export interface FomcMeeting {
   statement_release_date?: string | null;
   minutes_release_date?: string | null;
   notes?: string | null;
+  statement_available?: boolean;
+  minutes_available?: boolean;
+  press_conference_available?: boolean;
 }
 
 export interface FomcCalendarResponse {
@@ -679,12 +682,20 @@ export interface RealizedVolHorizonForecast {
   coverage_empirical_90: number | null;
 }
 
+export interface RealizedVolHistoricalBand {
+  date: string;
+  band_lo_80: number;
+  band_hi_80: number;
+  realized_rv?: number | null;
+}
+
 export interface RealizedVolForecastResponse {
   symbol: string;
   horizons: RealizedVolHorizonForecast[];
   history: number[];
   history_dates: string[];
   model_revision: string;
+  historical_bands?: RealizedVolHistoricalBand[] | null;
 }
 
 export interface BacktestResponse {
@@ -724,6 +735,36 @@ export interface HarTercileBaselineResponse {
   symbol: string;
   horizons: HarTercileHorizon[];
   source_wiki_section: string;
+}
+
+// HAR-tercile backtest served from
+// GET /forecast/har-tercile-backtest?symbol=^GSPC. One row per
+// persisted analyze run carrying the predicted tercile + the
+// realized tercile resolved from the forward 10-trading-day market
+// history. ``correct`` is null for rows whose forward window has not
+// yet closed.
+export interface HarTercileBacktestRow {
+  event_date: string;
+  predicted_tercile: HarTercileLabel;
+  predicted_prob: number;
+  realized_tercile: HarTercileLabel | null;
+  realized_rv: number | null;
+  correct: boolean | null;
+}
+
+export interface HarAccuracyMetrics {
+  total_runs: number;
+  resolved_runs: number;
+  accuracy_overall: number | null;
+  per_tercile_hit_rate: Partial<Record<HarTercileLabel, number>>;
+}
+
+export interface HarTercileBacktestResponse {
+  symbol: string;
+  horizon: number;
+  rows: HarTercileBacktestRow[];
+  metrics: HarAccuracyMetrics;
+  generated_at: string;
 }
 
 // Workspace-spine bundle: shared response types matching the

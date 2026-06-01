@@ -99,6 +99,53 @@ interface MeetingRowProps {
 const ROW_CONTENT_CLASSES =
   "flex w-full min-h-[44px] flex-col gap-2 rounded-sm px-2 py-3 text-left hover:bg-accent/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3";
 
+const TEXT_AVAILABILITY_BADGES: Array<{
+  key: "statement_available" | "minutes_available" | "press_conference_available";
+  label: string;
+}> = [
+  { key: "statement_available", label: "Statement" },
+  { key: "minutes_available", label: "Minutes" },
+  { key: "press_conference_available", label: "Presser" },
+];
+
+function AvailabilityBadge({
+  label,
+  available,
+}: {
+  label: string;
+  available: boolean;
+}) {
+  const titleText = available
+    ? `${label} on file`
+    : `${label} not collected`;
+  // Plain inline chip rather than a nested Link/button — the parent row
+  // already owns the navigation. The title attribute carries the
+  // hover-tooltip in a way that survives the row's outer click target.
+  return (
+    <span
+      data-testid={`availability-${label.toLowerCase()}`}
+      data-available={available ? "true" : "false"}
+      title={titleText}
+      aria-label={titleText}
+      className={
+        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium leading-none transition-colors " +
+        (available
+          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+          : "border-dashed border-muted-foreground/40 text-muted-foreground/70")
+      }
+    >
+      <span
+        aria-hidden="true"
+        className={
+          "h-1.5 w-1.5 rounded-full " +
+          (available ? "bg-emerald-500" : "bg-muted-foreground/40")
+        }
+      />
+      {label}
+    </span>
+  );
+}
+
 function MeetingRowBody({
   meeting,
   predictedAction,
@@ -116,6 +163,15 @@ function MeetingRowBody({
             <span>Minutes {meeting.minutes_release_date}</span>
           ) : null}
           {contextLabel ? <span>· {contextLabel}</span> : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          {TEXT_AVAILABILITY_BADGES.map(({ key, label }) => (
+            <AvailabilityBadge
+              key={key}
+              label={label}
+              available={Boolean(meeting[key])}
+            />
+          ))}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
