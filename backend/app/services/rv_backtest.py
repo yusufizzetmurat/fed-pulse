@@ -327,13 +327,7 @@ def get_rv_backtest(
         # horizons missing, partial band coverage) to an all-None tuple, so
         # narrowing on any single component is sufficient — but explicitly
         # narrowing all five keeps mypy --strict happy without runtime cost.
-        if (
-            point is None
-            or lo80 is None
-            or hi80 is None
-            or lo90 is None
-            or hi90 is None
-        ):
+        if point is None or lo80 is None or hi80 is None or lo90 is None or hi90 is None:
             out_rows.append(_pending_row(event_date))
             continue
 
