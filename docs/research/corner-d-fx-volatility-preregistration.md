@@ -57,3 +57,26 @@ intraday-FX follow-up before any claim.
 ## Artifacts
 
 - `data/artifacts/corner_d_fx_volatility/result.json`. Committed before it exists.
+
+---
+
+## Result (run 2026-06-01, 300 epochs × 5 seeds × 5 folds, n=12,948 days) — **NULL**
+
+| horizon | QLIKE base | QLIKE +text | ΔQLIKE | Bonferroni CI | hit |
+|---|---:|---:|---:|---|---|
+| h1  | 1.5500 | 2.1019 | −0.5520 | [−0.640, −0.465] | no |
+| h5  | 0.3718 | 0.3878 | −0.0160 | [−0.024, −0.009] | no |
+| h22 | 0.1680 | 0.1754 | −0.0073 | [−0.016, +0.001] | no |
+
+**0 / 3 hits.** Adding FOMC text (stance + certainty) makes the dollar-vol forecast **worse** at
+every horizon — Bonferroni CIs sit at or below zero. **Verdict: NULL.**
+
+**Reading it honestly:** the `r²` daily proxy is noisy (note the high base QLIKE at h1), so the DL
+ensemble already strains on the target and the two extra text columns mostly inject noise — most
+visibly at h1. But the direction is unambiguous across all horizons: text does not help, it hurts.
+FX — the project's *original* and most Fed-sensitive target — behaves exactly like SPX. Caveat:
+intraday FX (cleaner RV) isn't on disk; a clean null at n≈12.9k days is informative, and a positive
+result would have been the one to chase with intraday data — but there is no positive result to chase.
+
+**Decision:** null → the original FX target is closed too. Text is confirmed null for forecasting
+on the very question the project was founded on.
