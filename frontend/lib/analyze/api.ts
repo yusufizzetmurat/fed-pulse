@@ -9,6 +9,7 @@ import type {
   ClassificationBreakdownResponse,
   EvaluationCoverageResponse,
   FomcCalendarResponse,
+  FuturesConsensusResponse,
   HarTercileBaselineResponse,
   HistoryDetail,
   HistoryEventStudyResponse,
@@ -308,6 +309,33 @@ export async function fetchLatestMpSurprise(
       signal,
     });
     return response.data as MonetaryPolicySurpriseResponse;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 503) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+
+// Workspace-spine FRED futures-consensus descriptive panel. The
+// endpoint pulls the short-end DGS Treasury proxy and the current
+// fed-funds target band off FRED; the backend returns 503 when FRED
+// is unreachable or the FOMC calendar has no upcoming meeting on or
+// after the as-of date. Callers translate the 503 into the panel's
+// "unavailable" placeholder rather than surfacing a generic error.
+export async function fetchFuturesConsensus(
+  baseUrl: string,
+  options?: { asOf?: string; signal?: AbortSignal },
+): Promise<FuturesConsensusResponse | null> {
+  const params: Record<string, string> = {};
+  if (options?.asOf) params.as_of = options.asOf;
+  try {
+    const response = await axios.get(`${baseUrl}/fomc/futures-consensus`, {
+      params,
+      signal: options?.signal,
+    });
+    return response.data as FuturesConsensusResponse;
   } catch (err) {
     if (axios.isAxiosError(err) && err.response?.status === 503) {
       return null;

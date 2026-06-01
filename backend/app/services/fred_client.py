@@ -209,3 +209,46 @@ def fetch_fred_series(
     _write_lock(lock_path, lock)
 
     return _parse_observations(payload, series_id)
+
+
+# Short-end Treasury constant-maturity tenors used as the fed-funds
+# futures consensus proxy in the workspace descriptive panel. The
+# ordering is significant — downstream callers (the futures-consensus
+# builder) iterate this tuple to render the three horizon columns
+# left-to-right in tenor order.
+DGS_SHORT_SERIES: tuple[str, ...] = ("DGS1MO", "DGS3MO", "DGS6MO")
+
+
+def fetch_dgs_short(
+    *,
+    start: str | None = None,
+    end: str | None = None,
+    api_key: str | None = None,
+    cache_dir: Path | None = None,
+    force_refresh: bool = False,
+    transport: httpx.BaseTransport | None = None,
+) -> dict[str, FredSeriesResponse]:
+    """Fetch the short-end DGS Treasury constant-maturity series.
+
+    Returns a mapping ``{series_id: FredSeriesResponse}`` keyed by the
+    three tenors that proxy the fed-funds futures path for the
+    descriptive workspace panel. Each series is fetched through
+    :func:`fetch_fred_series`, so the existing on-disk cache, retry,
+    and backoff machinery applies unchanged. Callers wire the three
+    responses into a level proxy that embeds a small term premium;
+    this is not an OIS-clean expectation and the panel labels it as
+    such.
+    """
+
+    return {
+        series_id: fetch_fred_series(
+            series_id,
+            start=start,
+            end=end,
+            api_key=api_key,
+            cache_dir=cache_dir,
+            force_refresh=force_refresh,
+            transport=transport,
+        )
+        for series_id in DGS_SHORT_SERIES
+    }

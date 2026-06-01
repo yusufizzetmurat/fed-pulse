@@ -44,6 +44,7 @@ from app.schemas import (
     DocumentParseUrlRequest,
     EvaluationCoverageResponse,
     FomcCalendarResponse,
+    FuturesConsensusResponse,
     HistoryDetail,
     HistoryEntry,
     HistoryEventStudyResponse,
@@ -1458,6 +1459,53 @@ async def fomc_latest_mp_surprise() -> MonetaryPolicySurpriseResponse:
         raise HTTPException(
             status_code=503,
             detail={"error": "mp_surprise_unavailable", "message": str(exc)},
+        ) from exc
+
+
+@app.get(
+    "/fomc/futures-consensus",
+    response_model=FuturesConsensusResponse,
+)
+async def fomc_futures_consensus(
+    as_of: str | None = Query(default=None, description="YYYY-MM-DD; defaults to today"),
+) -> FuturesConsensusResponse:
+    """Fed-funds path consensus via the DGS Treasury short-end proxy.
+
+    Builds the descriptive panel that anchors the workspace's
+    rate-path expectations column. The implied rate at the three short
+    DGS tenors is read off the latest non-null FRED observation; the
+    change vs. the current target band midpoint is bucketed into
+    hike / cut / pause probabilities via a normal CDF (25 bps
+    threshold, 12.5 bps sigma). The response carries a methodology
+    footnote so the panel never implies an OIS-clean expectation.
+
+    Returns 503 with a structured detail when the FRED client cannot
+    reach the upstream API or when the FOMC calendar has no upcoming
+    meeting on or after the requested as-of date — the front-end then
+    renders the "unavailable" placeholder rather than a generic error.
+    """
+
+    reference: date | None = None
+    if as_of:
+        try:
+            reference = date.fromisoformat(as_of)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="as_of must be YYYY-MM-DD",
+            ) from exc
+
+    from app.services.futures_consensus import (
+        FuturesConsensusUnavailable,
+        get_consensus,
+    )
+
+    try:
+        return await run_in_threadpool(get_consensus, reference)
+    except FuturesConsensusUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "futures_consensus_unavailable", "message": str(exc)},
         ) from exc
 
 
