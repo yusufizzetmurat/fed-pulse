@@ -20,7 +20,8 @@ def test_walk_forward_embargo_and_disjoint() -> None:
     for train_idx, test_idx in splits:
         # train strictly before test, with an embargo gap
         assert train_idx.max() < test_idx.min()
-        assert test_idx.min() - train_idx.max() - 1 >= 5 - 1  # embargo gap honored
+        # actual gap between last train and first test must be >= embargo
+        assert test_idx.min() - train_idx.max() - 1 >= 5
         # disjoint
         assert len(np.intersect1d(train_idx, test_idx)) == 0
 

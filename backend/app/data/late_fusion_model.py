@@ -106,7 +106,10 @@ def assert_text_gradient_flows(
     model.zero_grad()
     dir_logit, magnitude = model(text, struct)
     dir_target = (torch.rand_like(dir_logit) > 0.5).float()
-    mag_target = magnitude.detach().abs() + 0.1
+    # Random (non-detached) magnitude target so BOTH heads contribute gradients to
+    # the text branch — the assertion then tests the full wiring, not just the
+    # direction-head path.
+    mag_target = torch.rand_like(magnitude)
     loss = joint_loss(dir_logit, magnitude, dir_target, mag_target)
     loss.backward()  # type: ignore[no-untyped-call]
     grad = next(model.text_branch.parameters()).grad

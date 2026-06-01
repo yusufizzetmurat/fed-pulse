@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -209,6 +210,11 @@ def run_frame(spec: FrameSpec, cfg: Config, residualize: bool) -> OOS:
     data = load_frame(spec)
     n = len(data.y_dir)
     splits = walk_forward_splits(n, cfg.n_folds, cfg.embargo)
+    first_oos = int(splits[0][1].min()) if splits else -1
+    logger.info(
+        "%s: %d/%d folds usable (n=%d); OOS starts at row %d (rows 0-%d are train-only)",
+        spec.frame, len(splits), cfg.n_folds, n, first_oos, max(first_oos - 1, 0),
+    )
     acc: dict[str, list[np.ndarray]] = {
         "y_dir": [], "y_mag": [], "mag_baseline": [],
         "market_dir": [], "market_mag": [], "text_dir": [], "text_mag": [],
@@ -254,6 +260,25 @@ def _acc(y: np.ndarray, prob: np.ndarray) -> float:
     return float(((prob > 0.5).astype(np.float32) == y).mean())
 
 
+def _mcnemar(y: np.ndarray, prob_full: np.ndarray, prob_market: np.ndarray) -> tuple[int, int, float]:
+    """Paired McNemar test (continuity-corrected) for full vs market direction.
+
+    b = full correct & market wrong; c = full wrong & market correct. Returns
+    (b, c, two-sided p-value). Unlike the bootstrap this is a proper paired test
+    and does not depend on resampling assumptions.
+    """
+    yi = y.astype(int)
+    cf = (prob_full > 0.5).astype(int) == yi
+    cm = (prob_market > 0.5).astype(int) == yi
+    b = int((cf & ~cm).sum())
+    c = int((~cf & cm).sum())
+    if b + c == 0:
+        return b, c, 1.0
+    stat = (abs(b - c) - 1) ** 2 / (b + c)  # chi-square, 1 df
+    p = math.erfc(math.sqrt(stat / 2.0))
+    return b, c, float(p)
+
+
 def _block_boot_ci(
     fn: Callable[[np.ndarray], float], oos: OOS, cfg: Config
 ) -> tuple[float, float]:
@@ -288,13 +313,16 @@ def summarize(spec: FrameSpec, oos: OOS, cfg: Config, residualize: bool) -> dict
         lambda i: _r2(oos.y_mag[i], oos.full["mag"][i], base) - _r2(oos.y_mag[i], oos.market["mag"][i], base),
         oos, cfg,
     )
+    b, c, mcnemar_p = _mcnemar(oos.y_dir, oos.full["dir"], oos.market["dir"])
     return {
         "frame": spec.frame, "residualize": residualize, "n": int(len(oos.y_dir)),
         "majority": round(majority, 4),
         "dir_acc": {"market": round(acc_market, 4), "text": round(acc_text, 4), "full": round(acc_full, 4)},
         "dir_text_lift_ci90": [round(dir_gain[0], 4), round(dir_gain[1], 4)],
+        "dir_mcnemar": {"full_better": b, "market_better": c, "p": round(mcnemar_p, 4)},
         "mag_r2": {"market": round(r2_market, 4), "text": round(r2_text, 4), "full": round(r2_full, 4)},
         "mag_text_lift_ci90": [round(mag_gain[0], 4), round(mag_gain[1], 4)],
+        "note": "bootstrap CI is conditional on fitted models (may be narrow); mcnemar is the paired test",
     }
 
 
