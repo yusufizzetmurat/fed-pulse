@@ -1675,6 +1675,41 @@ async def forecast_realized_vol(
     )
 
 
+@app.get("/forecast/volume")
+async def forecast_volume_endpoint(
+    symbol: str = Query(
+        "^GSPC",
+        description="Market ticker; the volume head is SPX-trained (^GSPC).",
+        min_length=1,
+        max_length=32,
+        pattern=r"^[A-Za-z0-9._=^/-]+$",
+    ),
+) -> Any:
+    """Multi-horizon expected-volume forecast (HAR volume head; see wiki page 25).
+
+    Pulls the published volume-head artifact (HF fallback) and applies the HAR
+    log-volume coefficients to recent daily volume. Returns a structured 503 when
+    the artifact or history is unavailable.
+    """
+    from app.services.volume_head import VolumeForecasterUnavailable, forecast_volume
+
+    try:
+        return await run_in_threadpool(forecast_volume, symbol)
+    except VolumeForecasterUnavailable as exc:
+        raise HTTPException(
+            status_code=503, detail={"error": "volume_head_unavailable", "message": str(exc)}
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503, detail={"error": "history_invalid", "message": str(exc)}
+        ) from exc
+    except Exception as exc:  # pragma: no cover - defensive against yfinance/HF surprises
+        logger.warning("volume_forecast_failed", exc_info=True)
+        raise HTTPException(
+            status_code=503, detail={"error": "forecast_failed", "message": str(exc)}
+        ) from exc
+
+
 @app.get("/forecast/regime/baselines", response_model=HarTercileBaselineResponse)
 async def forecast_regime_baselines(
     symbol: str = Query(
