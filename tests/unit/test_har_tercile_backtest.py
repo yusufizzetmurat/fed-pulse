@@ -290,6 +290,68 @@ def test_backtest_uses_persisted_realized_rv_when_present(client, monkeypatch) -
     assert row["correct"] is True
 
 
+def test_backtest_with_persisted_variance_cutoffs_does_not_force_high(client, monkeypatch) -> None:
+    """Variance-space cutoffs + variance-space realized stat stay comparable.
+
+    Guards against the contract-drift failure in the original review:
+    if the realized statistic were a daily std (~1e-2 for 1% daily
+    moves) while the persisted cutoffs are daily variance (~1e-4), the
+    std would always exceed q67 and every row would land in ``high``.
+    Stub a realistic ^GSPC forward window with mixed up/down 0.5% moves
+    and confirm the backtest's variance-space realized stat bucks into
+    ``low`` against variance-space cutoffs that bracket it tightly.
+    """
+
+    # Persisted cutoffs in variance space (q33 / q67 of a daily RV
+    # series for a quiet regime; values pulled from the upstream
+    # quantile semantics in ``services.har_tercile._tercile_cutoffs``).
+    quiet_cutoffs = {"cutoffs_q33": 5e-5, "cutoffs_q67": 1.5e-4}
+
+    def _calm_window(event_date: str, symbol: str) -> float | None:
+        # 10 forward bars, all 0.5% daily log-return magnitude.
+        rets = [0.005, -0.005] * 5
+        return har_tercile_backtest._realized_variance_from_log_returns(rets)
+
+    monkeypatch.setattr(har_tercile_backtest, "_fetch_realized_rv_yf", _calm_window)
+
+    session_iter = db_module.get_session()
+    sess = next(session_iter)
+    try:
+        _persist_run(
+            sess,
+            regime_argmax="high",
+            document_date="2024-02-20",
+            payload_extra={
+                "har_baselines": {
+                    "horizons": [
+                        {
+                            "h": 22,
+                            "tercile": "high",
+                            "tercile_probs": {"low": 0.1, "medium": 0.2, "high": 0.7},
+                        }
+                    ],
+                    **quiet_cutoffs,
+                }
+            },
+        )
+    finally:
+        sess.close()
+
+    response = client.get("/forecast/har-tercile-backtest", params={"symbol": "^GSPC"})
+    assert response.status_code == 200
+    body = response.json()
+    row = body["rows"][0]
+    # Mean of 0.005**2 = 2.5e-5 — well below q33 (5e-5) so realized
+    # tercile must resolve to ``low``, not ``high``. A regression to
+    # the std-based realized stat would emit ~0.005 and force ``high``.
+    assert row["realized_rv"] == pytest.approx(2.5e-5)
+    assert row["realized_tercile"] == "low"
+    # Prediction was "high"; realized resolved to "low" → miss. The
+    # accuracy KPI is therefore exercised, not dominated by a phantom
+    # "all-high" bucketing.
+    assert row["correct"] is False
+
+
 def test_endpoint_rejects_non_gspc_symbol(client) -> None:
     response = client.get(
         "/forecast/har-tercile-backtest", params={"symbol": "^NDX"}
@@ -323,15 +385,42 @@ def test_endpoint_returns_empty_state_with_no_runs(client) -> None:
 
 
 def test_cutoffs_from_history_basic() -> None:
-    q33, q67 = har_tercile_backtest._cutoffs_from_history(
-        [0.001, 0.002, 0.003, 0.004, 0.005, 0.006]
-    )
-    assert q33 == pytest.approx(0.003)
-    assert q67 == pytest.approx(0.005)
+    # The cutoffs must match ``services.har_tercile._tercile_cutoffs``
+    # byte-for-byte — i.e. ``np.quantile(values, [1/3, 2/3])`` with
+    # linear interpolation — otherwise the backtest's per-tercile
+    # hit-rate stops being a faithful proxy of the live endpoint's
+    # bucketing.
+    import numpy as np
+
+    values = [0.001, 0.002, 0.003, 0.004, 0.005, 0.006]
+    expected_q33, expected_q67 = np.quantile(values, [1.0 / 3.0, 2.0 / 3.0])
+    q33, q67 = har_tercile_backtest._cutoffs_from_history(values)
+    assert q33 == pytest.approx(float(expected_q33))
+    assert q67 == pytest.approx(float(expected_q67))
 
 
 def test_cutoffs_from_history_rejects_short_window() -> None:
     assert har_tercile_backtest._cutoffs_from_history([0.001, 0.002]) == (None, None)
+
+
+def test_cutoffs_from_history_matches_upstream_predict_har_regime() -> None:
+    """Backtest's cutoff helper reproduces the upstream tercile cutoffs.
+
+    The upstream ``services.har_tercile._tercile_cutoffs`` is the gold
+    standard the backtest's accuracy KPI must reproduce. Driving both
+    with the same RV series should yield byte-identical q33 / q67.
+    """
+
+    import numpy as np
+
+    from app.services.har_tercile import _tercile_cutoffs
+
+    rng = np.random.default_rng(11)
+    series = (rng.standard_normal(60) * 0.01) ** 2 + 1e-6
+    upstream_q33, upstream_q67 = _tercile_cutoffs(series)
+    backtest_q33, backtest_q67 = har_tercile_backtest._cutoffs_from_history(series.tolist())
+    assert backtest_q33 == pytest.approx(upstream_q33)
+    assert backtest_q67 == pytest.approx(upstream_q67)
 
 
 def test_normalize_tercile_label_maps_all_known_inputs() -> None:
@@ -351,3 +440,35 @@ def test_realized_vol_from_log_returns_basic() -> None:
     assert rv is not None
     assert math.isfinite(rv)
     assert rv > 0.0
+
+
+def test_realized_variance_matches_mean_squared_log_returns() -> None:
+    """Realized stat is daily VARIANCE (mean of r**2), not std.
+
+    Upstream ``main._load_rv_history`` writes per-bar RV as
+    ``r * r``; the forward-window scalar must live in the same space
+    so the per-bar variance cutoffs from ``predict_har_regime`` are
+    apples-to-apples comparable. A regression here would silently
+    inflate the panel's realized-vol column by ~sqrt(252) and dump
+    every resolved row into the ``high`` bucket once cutoffs start
+    persisting upstream.
+    """
+
+    rets = [0.005, -0.004, 0.012, -0.003, 0.001, 0.0, -0.002, 0.004, 0.006, -0.007]
+    rv = har_tercile_backtest._realized_variance_from_log_returns(rets)
+    expected = sum(r * r for r in rets) / len(rets)
+    assert rv == pytest.approx(expected)
+    # Daily variance scale: for ~1% daily moves the variance is on the
+    # order of 1e-4. The pre-fix std-based helper would have returned a
+    # value on the order of 1e-2 (the std), so the assertion guards
+    # against accidental regression to the old convention.
+    assert rv < 1e-3
+
+
+def test_realized_variance_aliases_legacy_name() -> None:
+    """The legacy ``_realized_vol_from_log_returns`` symbol aliases the variance form."""
+
+    rets = [0.01, -0.005, 0.002, 0.0]
+    assert har_tercile_backtest._realized_vol_from_log_returns(rets) == pytest.approx(
+        har_tercile_backtest._realized_variance_from_log_returns(rets)
+    )

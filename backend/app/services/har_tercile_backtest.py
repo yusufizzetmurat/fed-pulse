@@ -6,11 +6,28 @@ realized tercile off the forward 10-trading-day market history. Powers
 the HarAccuracyPanel card: an aggregate hit-rate plus per-tercile
 break-down + a compact row table.
 
-Realized tercile is read from the persisted payload's
+All bucketing is done in daily **realized-variance** space so the
+comparison reproduces what ``services.har_tercile.predict_har_regime``
+sees at prediction time. That upstream operates on daily RV =
+``log_return ** 2`` (the convention ``main._load_rv_history`` writes for
+both the parquet path and the yfinance fallback), and the persisted
+``har_baselines.cutoffs_q33`` / ``cutoffs_q67`` are quantiles of that
+series via ``np.quantile`` with linear interpolation. The backtest
+mirrors both choices:
+
+* Realized RV over the forward 10-bar window is the mean of squared
+  log-returns (so the scalar lives in the same variance space as the
+  per-bar series that fed the prediction).
+* Fallback cutoffs are computed off a 60-day series of daily
+  ``log_return ** 2`` values, then quantiled with ``np.quantile``
+  ``[1/3, 2/3]`` — byte-for-byte the same op the upstream uses on its
+  own training fold.
+
+Realized RV is read from the persisted payload's
 ``forward_realized_vol_10d`` slot when present (forward-compat with the
-analyze response carrying that summary on future builds) and falls back
-to a fresh yfinance pull via ``fetch_event_study_window`` otherwise.
-Cutoffs default to the ones the prediction recorded
+analyze response carrying that variance summary on future builds) and
+falls back to a fresh yfinance pull via ``fetch_event_study_window``
+otherwise. Cutoffs default to the ones the prediction recorded
 (``cutoffs_q33`` / ``cutoffs_q67`` on the persisted ``har_baselines``
 block when set) and otherwise recompute on a 60-day RV window so a row
 that pre-dates the cutoff persistence still bucks honest.
@@ -22,6 +39,7 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -171,19 +189,42 @@ def _bucket_against_cutoffs(value: float, q33: float, q67: float) -> str:
     return "high"
 
 
-def _realized_vol_from_log_returns(log_returns: list[float]) -> float | None:
+def _realized_variance_from_log_returns(log_returns: list[float]) -> float | None:
+    """Forward-window realized **variance** in the upstream RV convention.
+
+    Upstream (``app.main._load_rv_history``) builds the rv_history that
+    feeds ``predict_har_regime`` as the per-bar squared log-return
+    series (``r * r``). The HAR-tercile cutoffs are quantiles of that
+    variance series. To stay in the same space, the forward-window
+    realized stat is the mean of squared log-returns over the post-event
+    bars — a one-period daily variance averaged across the 10-bar
+    forward window. Returns None when the series is too short to be
+    meaningful.
+    """
+
     if len(log_returns) < 2:
         return None
-    mean = sum(log_returns) / len(log_returns)
-    var = sum((value - mean) ** 2 for value in log_returns) / (len(log_returns) - 1)
-    return math.sqrt(max(var, 0.0))
+    sq = [float(r) * float(r) for r in log_returns]
+    if not sq:
+        return None
+    return sum(sq) / len(sq)
+
+
+# Backwards-compat shim. The pre-fix helper returned a std (daily vol),
+# which disagreed with the variance-space upstream cutoffs and inflated
+# the panel's annualised vol column by ~sqrt(252). Kept as a thin alias
+# around the corrected variance form so older callers (and tests
+# asserting the helper is finite/positive) keep working.
+_realized_vol_from_log_returns = _realized_variance_from_log_returns
 
 
 def _fetch_realized_rv_yf(event_date: str, symbol: str) -> float | None:
-    """Pull forward-10d realized vol off yfinance.
+    """Pull forward-10d realized **variance** off yfinance.
 
     Wrapped behind a try / except so a yfinance flake on one row never
     nukes the whole backtest — the offending row just lands unresolved.
+    The returned scalar is variance, matching the daily RV space the
+    upstream HAR-tercile cutoffs live in.
     """
 
     try:
@@ -202,14 +243,18 @@ def _fetch_realized_rv_yf(event_date: str, symbol: str) -> float | None:
     if not bars:
         return None
     log_returns = [float(bar.get("log_return", 0.0)) for bar in bars]
-    return _realized_vol_from_log_returns(log_returns)
+    return _realized_variance_from_log_returns(log_returns)
 
 
 def _fetch_rv_history_for_cutoffs(event_date: str, symbol: str) -> list[float]:
-    """Fetch the trailing 60-day daily realized vol window for cutoff fallback.
+    """Fetch the trailing 60-day daily realized **variance** for cutoff fallback.
 
-    Returns an empty list on any failure so the caller knows to leave
-    the row unresolved rather than raise.
+    Returns a list of per-bar variance values (squared log-returns) in
+    the same space upstream's ``main._load_rv_history`` writes, so the
+    quantiles derived here are directly comparable to the cutoffs the
+    HAR-tercile model itself would have used. Returns an empty list on
+    any failure so the caller knows to leave the row unresolved rather
+    than raise.
     """
 
     try:
@@ -225,28 +270,41 @@ def _fetch_rv_history_for_cutoffs(event_date: str, symbol: str) -> list[float]:
         )
     except Exception:
         return []
-    if close_series is None or len(close_series) < 6:
+    if close_series is None or len(close_series) < 3:
         return []
     try:
-        returns = close_series.pct_change().dropna()
-        # Daily realized vol proxy = 5-day rolling std of returns
-        rolling = returns.rolling(5).std().dropna()
-        if rolling.empty:
+        closes = np.asarray(close_series, dtype=np.float64)
+        closes = closes[np.isfinite(closes) & (closes > 0.0)]
+        if closes.size < 2:
             return []
-        tail = rolling.tail(_FALLBACK_CUTOFF_WINDOW).tolist()
-        return [float(v) for v in tail if v is not None and math.isfinite(float(v))]
+        log_returns = np.diff(np.log(closes))
+        rv = log_returns * log_returns
+        rv = rv[np.isfinite(rv)]
+        if rv.size == 0:
+            return []
+        tail = rv[-_FALLBACK_CUTOFF_WINDOW:]
+        return [float(v) for v in tail]
     except Exception:
         return []
 
 
 def _cutoffs_from_history(history: Iterable[float]) -> tuple[float | None, float | None]:
-    values = sorted(float(v) for v in history if math.isfinite(float(v)))
-    n = len(values)
-    if n < 3:
+    """Tercile cutoffs on the supplied RV series.
+
+    Uses ``np.quantile`` with the default linear-interpolation method on
+    the [1/3, 2/3] quantiles — byte-for-byte the same call
+    ``services.har_tercile._tercile_cutoffs`` makes at prediction time.
+    This is what keeps the backtest's per-tercile hit-rate a faithful
+    proxy of the live HAR-tercile endpoint's bucketing on the same
+    realized series.
+    """
+
+    values = [float(v) for v in history if math.isfinite(float(v))]
+    if len(values) < 3:
         return None, None
-    q33_idx = max(0, min(n - 1, int(n / 3.0)))
-    q67_idx = max(0, min(n - 1, int(2.0 * n / 3.0)))
-    return values[q33_idx], values[q67_idx]
+    arr = np.asarray(values, dtype=np.float64)
+    q33, q67 = np.quantile(arr, [1.0 / 3.0, 2.0 / 3.0])
+    return float(q33), float(q67)
 
 
 def _resolve_realized_tercile(

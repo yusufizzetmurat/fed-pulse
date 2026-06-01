@@ -27,6 +27,11 @@ function tercileBadgeVariant(
 }
 
 function annualizedVolPct(rv: number | null | undefined): string {
+  // ``realized_rv`` is daily realized VARIANCE — same convention the
+  // HarRegimeHeadline + VolatilityOutlookCard cards use upstream, so
+  // annualisation is sqrt(variance * 252) * 100. Mirrors
+  // HarRegimeHeadline.annualizedVolPct deliberately so the two
+  // forecast-spine cards report comparable numbers.
   if (rv == null || !Number.isFinite(rv) || rv <= 0) return "—";
   const ann = Math.sqrt(rv * 252) * 100;
   return `${ann.toFixed(1)}%`;
