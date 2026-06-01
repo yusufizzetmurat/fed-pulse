@@ -767,6 +767,40 @@ export interface HarTercileBacktestResponse {
   generated_at: string;
 }
 
+// QLIKE-RV backtest served from
+// GET /forecast/rv-backtest?symbol=^GSPC. One row per persisted analyze
+// run carrying the h=1 point forecast + 80% / 90% conformal bands and
+// the realized RV on the predicted bar. ``in_band_*`` is null for rows
+// whose realized RV has not yet resolved.
+export interface RvBacktestRow {
+  event_date: string;
+  point_forecast_rv: number | null;
+  band_lo_80: number | null;
+  band_hi_80: number | null;
+  band_lo_90: number | null;
+  band_hi_90: number | null;
+  realized_rv: number | null;
+  in_band_80: boolean | null;
+  in_band_90: boolean | null;
+}
+
+export interface RvBacktestCoverage {
+  total_runs: number;
+  resolved_runs: number;
+  empirical_coverage_80: number | null;
+  empirical_coverage_90: number | null;
+  nominal_coverage_80: number;
+  nominal_coverage_90: number;
+}
+
+export interface RvBacktestResponse {
+  symbol: string;
+  horizon: number;
+  rows: RvBacktestRow[];
+  coverage: RvBacktestCoverage;
+  generated_at: string;
+}
+
 // Workspace-spine bundle: shared response types matching the
 // backend Pydantic models in backend/app/schemas.py.
 //

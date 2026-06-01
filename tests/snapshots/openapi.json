@@ -3844,6 +3844,195 @@
         "title": "ResearchRegistryRow",
         "type": "object"
       },
+      "RvBacktestCoverage": {
+        "description": "Aggregate empirical band coverage across the backtest rows.\n\n``empirical_coverage_80`` / ``empirical_coverage_90`` are the fraction\nof resolved rows whose realized RV landed inside the corresponding\nconformal band. ``nominal_coverage_*`` are pinned at the calibration\ntargets (0.80 / 0.90) so the frontend can render a nominal-vs-empirical\ngap chip without re-deriving the constants.",
+        "properties": {
+          "empirical_coverage_80": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Empirical Coverage 80"
+          },
+          "empirical_coverage_90": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Empirical Coverage 90"
+          },
+          "nominal_coverage_80": {
+            "default": 0.8,
+            "title": "Nominal Coverage 80",
+            "type": "number"
+          },
+          "nominal_coverage_90": {
+            "default": 0.9,
+            "title": "Nominal Coverage 90",
+            "type": "number"
+          },
+          "resolved_runs": {
+            "title": "Resolved Runs",
+            "type": "integer"
+          },
+          "total_runs": {
+            "title": "Total Runs",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_runs",
+          "resolved_runs"
+        ],
+        "title": "RvBacktestCoverage",
+        "type": "object"
+      },
+      "RvBacktestResponse": {
+        "description": "Response wire shape for ``GET /forecast/rv-backtest``.\n\nWalks the last N persisted ^GSPC analyze runs and reports the\nQLIKE-RV h=1 point forecast + 80% / 90% bands against the realized\nRV on the same bar. Drives the RvAccuracyPanel card alongside the\nHAR-tercile accuracy surface.",
+        "properties": {
+          "coverage": {
+            "$ref": "#/components/schemas/RvBacktestCoverage"
+          },
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "horizon": {
+            "title": "Horizon",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/RvBacktestRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "horizon",
+          "rows",
+          "coverage",
+          "generated_at"
+        ],
+        "title": "RvBacktestResponse",
+        "type": "object"
+      },
+      "RvBacktestRow": {
+        "description": "One resolved (or pending) row in the QLIKE-RV backtest table.\n\nCarries the h=1 point forecast + 80% / 90% conformal bands for the\npersisted FOMC event date, the realized RV on the predicted bar, and\nper-band hit flags. The forecast columns are None on pending rows\nwhose event sits inside HAR's monthly-lag warmup window or beyond\nthe right edge of the available RV history; ``in_band_*`` are None\nwhenever the realized RV is unresolved.",
+        "properties": {
+          "band_hi_80": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Band Hi 80"
+          },
+          "band_hi_90": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Band Hi 90"
+          },
+          "band_lo_80": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Band Lo 80"
+          },
+          "band_lo_90": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Band Lo 90"
+          },
+          "event_date": {
+            "title": "Event Date",
+            "type": "string"
+          },
+          "in_band_80": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Band 80"
+          },
+          "in_band_90": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Band 90"
+          },
+          "point_forecast_rv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Point Forecast Rv"
+          },
+          "realized_rv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Rv"
+          }
+        },
+        "required": [
+          "event_date"
+        ],
+        "title": "RvBacktestRow",
+        "type": "object"
+      },
       "SemanticDiffRequest": {
         "additionalProperties": false,
         "description": "Inbound body for ``POST /fomc/semantic-diff``.\n\n``current_date`` selects the strict-prior FOMC statement off disk;\n``current_text`` is the pasted body the panel diffs against that\nprior. Both fields are required \u2014 the cold-start case is still a\nvalid call, the service just returns an empty span list when no\nstrict-prior is on file for the supplied date.",
@@ -5458,6 +5647,66 @@
           }
         },
         "summary": "Forecast Regime Baselines"
+      }
+    },
+    "/forecast/rv-backtest": {
+      "get": {
+        "description": "Empirical band coverage of the last N QLIKE-RV predictions.\n\nWalks the persisted ``analysis_runs`` table for ``symbol``, replays\nthe QLIKE-DLq h=1 ensemble on each event date's leading RV prefix,\nand counts how many resolved rows fell inside the published 80% /\n90% bands. Mirrors the ^GSPC-only constraint on the upstream RV\nforecast endpoint (the artifact is SPX-trained).",
+        "operationId": "forecast_rv_backtest_forecast_rv_backtest_get",
+        "parameters": [
+          {
+            "description": "Market ticker; only ^GSPC is supported (RV artifact is SPX-only).",
+            "in": "query",
+            "name": "symbol",
+            "required": false,
+            "schema": {
+              "default": "^GSPC",
+              "description": "Market ticker; only ^GSPC is supported (RV artifact is SPX-only).",
+              "maxLength": 32,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._=^/-]+$",
+              "title": "Symbol",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Number of most-recent persisted runs to backtest (1..50).",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "description": "Number of most-recent persisted runs to backtest (1..50).",
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RvBacktestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Forecast Rv Backtest"
       }
     },
     "/forecasts/next-fomc": {

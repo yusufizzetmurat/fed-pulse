@@ -1748,3 +1748,65 @@ class HarTercileBacktestResponse(BaseModel):
     rows: list[HarTercileBacktestRow]
     metrics: HarAccuracyMetrics
     generated_at: str
+
+
+class RvBacktestRow(BaseModel):
+    """One resolved (or pending) row in the QLIKE-RV backtest table.
+
+    Carries the h=1 point forecast + 80% / 90% conformal bands for the
+    persisted FOMC event date, the realized RV on the predicted bar, and
+    per-band hit flags. The forecast columns are None on pending rows
+    whose event sits inside HAR's monthly-lag warmup window or beyond
+    the right edge of the available RV history; ``in_band_*`` are None
+    whenever the realized RV is unresolved.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    event_date: str
+    point_forecast_rv: float | None = None
+    band_lo_80: float | None = None
+    band_hi_80: float | None = None
+    band_lo_90: float | None = None
+    band_hi_90: float | None = None
+    realized_rv: float | None = None
+    in_band_80: bool | None = None
+    in_band_90: bool | None = None
+
+
+class RvBacktestCoverage(BaseModel):
+    """Aggregate empirical band coverage across the backtest rows.
+
+    ``empirical_coverage_80`` / ``empirical_coverage_90`` are the fraction
+    of resolved rows whose realized RV landed inside the corresponding
+    conformal band. ``nominal_coverage_*`` are pinned at the calibration
+    targets (0.80 / 0.90) so the frontend can render a nominal-vs-empirical
+    gap chip without re-deriving the constants.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    total_runs: int
+    resolved_runs: int
+    empirical_coverage_80: float | None = None
+    empirical_coverage_90: float | None = None
+    nominal_coverage_80: float = 0.80
+    nominal_coverage_90: float = 0.90
+
+
+class RvBacktestResponse(BaseModel):
+    """Response wire shape for ``GET /forecast/rv-backtest``.
+
+    Walks the last N persisted ^GSPC analyze runs and reports the
+    QLIKE-RV h=1 point forecast + 80% / 90% bands against the realized
+    RV on the same bar. Drives the RvAccuracyPanel card alongside the
+    HAR-tercile accuracy surface.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbol: str
+    horizon: int
+    rows: list[RvBacktestRow]
+    coverage: RvBacktestCoverage
+    generated_at: str

@@ -65,6 +65,9 @@ from app.schemas import (
     RealizedVolForecastResponse,
     RealizedVolHistoricalBand,
     RealizedVolHorizonForecast,
+    RvBacktestCoverage,
+    RvBacktestResponse,
+    RvBacktestRow,
     ResearchArtifactsResponse,
     BacktestRequest,
     BacktestResponse,
@@ -2016,6 +2019,79 @@ def forecast_har_tercile_backtest(
         horizon=out["horizon"],
         rows=rows,
         metrics=metrics,
+        generated_at=out["generated_at"],
+    )
+
+
+@app.get(
+    "/forecast/rv-backtest",
+    response_model=RvBacktestResponse,
+)
+def forecast_rv_backtest(
+    symbol: str = Query(
+        "^GSPC",
+        description="Market ticker; only ^GSPC is supported (RV artifact is SPX-only).",
+        min_length=1,
+        max_length=32,
+        pattern=r"^[A-Za-z0-9._=^/-]+$",
+    ),
+    limit: int = Query(
+        10,
+        ge=1,
+        le=50,
+        description="Number of most-recent persisted runs to backtest (1..50).",
+    ),
+    session: Session = Depends(get_session),
+) -> RvBacktestResponse:
+    """Empirical band coverage of the last N QLIKE-RV predictions.
+
+    Walks the persisted ``analysis_runs`` table for ``symbol``, replays
+    the QLIKE-DLq h=1 ensemble on each event date's leading RV prefix,
+    and counts how many resolved rows fell inside the published 80% /
+    90% bands. Mirrors the ^GSPC-only constraint on the upstream RV
+    forecast endpoint (the artifact is SPX-trained).
+    """
+
+    if symbol != "^GSPC":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "symbol_unsupported",
+                "message": (
+                    "RV backtest is SPX-only; only ^GSPC is supported."
+                ),
+            },
+        )
+
+    from app.services.rv_backtest import get_rv_backtest
+    from app.services.rv_forecaster import RvForecasterUnavailable
+
+    try:
+        out = get_rv_backtest(session, symbol=symbol, limit=limit)
+    except RvForecasterUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "model_unavailable", "message": str(exc)},
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "history_unavailable", "message": str(exc)},
+        ) from exc
+    except Exception as exc:  # pragma: no cover -- defensive
+        logger.warning("rv_backtest_failed", exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "backtest_failed", "message": str(exc)},
+        ) from exc
+
+    rows = [RvBacktestRow(**row) for row in out["rows"]]
+    coverage = RvBacktestCoverage(**out["coverage"])
+    return RvBacktestResponse(
+        symbol=out["symbol"],
+        horizon=out["horizon"],
+        rows=rows,
+        coverage=coverage,
         generated_at=out["generated_at"],
     )
 

@@ -25,6 +25,7 @@ import type {
   RealizedVolForecastResponse,
   ResearchArtifactsResponse,
   ResearchRegistryResponse,
+  RvBacktestResponse,
   SemanticDiffResponse,
   SettingsCheckpointsResponse,
   SymbolListResponse,
@@ -421,6 +422,31 @@ export async function fetchHarTercileBacktest(
       signal,
     });
     return response.data as HarTercileBacktestResponse;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 503) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+// QLIKE-RV backtest fetcher. Mirrors ``fetchHarTercileBacktest``: 503
+// (model / history unavailable) folds into ``null`` so the panel
+// renders the tailored "unavailable" placeholder rather than the
+// generic error path. 400 (non-^GSPC symbol) propagates as an axios
+// error so the caller can surface a tailored toast.
+export async function fetchRvBacktest(
+  baseUrl: string,
+  symbol: string,
+  limit: number = 10,
+  signal?: AbortSignal,
+): Promise<RvBacktestResponse | null> {
+  try {
+    const response = await axios.get(`${baseUrl}/forecast/rv-backtest`, {
+      params: { symbol, limit },
+      signal,
+    });
+    return response.data as RvBacktestResponse;
   } catch (err) {
     if (axios.isAxiosError(err) && err.response?.status === 503) {
       return null;
