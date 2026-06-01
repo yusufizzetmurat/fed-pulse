@@ -905,7 +905,17 @@ def build_supervised_rows(
             )
         )
 
-    out_rows.sort(key=lambda r: r.target_event_date)
+    # One row per target meeting. Multiple source events can map to the same
+    # next scheduled meeting (e.g. the 2020 emergency inter-meeting cuts all
+    # precede 2020-04-29), which would emit duplicate target_event_date rows and
+    # trip the strict-ordering walk-forward guard. Keep the row built from the
+    # most recent pre-meeting information (latest feature_event_date).
+    by_target: dict[_dt.date, MeetingRow] = {}
+    for r in out_rows:
+        prev = by_target.get(r.target_event_date)
+        if prev is None or r.feature_event_date > prev.feature_event_date:
+            by_target[r.target_event_date] = r
+    out_rows = sorted(by_target.values(), key=lambda r: r.target_event_date)
     summary["rows_emitted"] = len(out_rows)
     return out_rows, summary
 
