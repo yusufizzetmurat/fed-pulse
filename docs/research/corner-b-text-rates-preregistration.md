@@ -80,3 +80,34 @@ and a risk/positioning signal, not a high-capacity trading edge.
 - `data/artifacts/corner_b_text_rates/result.json` (per-cell baseline/treatment MSE, ΔMSE,
   DM stat + p, Bonferroni threshold, directional accuracy, predict-0 floor, n).
 - Committed before that file exists.
+
+---
+
+## Result (run 2026-06-01, walk-forward by event, n=150 statements / 110 OOS) — **NULL**
+
+| cell | MSE base | MSE +stance | MSE predict-0 | ΔMSE | DM p | dir-acc base→+s | hit |
+|------|---------:|------------:|--------------:|-----:|-----:|----------------:|-----|
+| 2Y / 1-day | 48.29 | 48.80 | 50.65 | −0.51 | 0.68 | 0.45 → 0.45 | no |
+| 2Y / 5-day | 185.96 | 188.39 | 166.26 | −2.44 | 0.63 | 0.48 → 0.46 | no |
+| 1Y / 1-day | 27.99 | 28.59 | 23.62 | −0.61 | 0.19 | 0.41 → 0.44 | no |
+| 1Y / 5-day | 152.51 | 154.30 | 100.42 | −1.79 | 0.67 | 0.50 → 0.50 | no |
+
+**0 / 4 cells hit.** Adding stance makes the forecast **worse** in every cell (ΔMSE < 0); no DM
+test is significant and the sign is the wrong way. Directional accuracy hovers at ~50% (coin
+flip) with and without text. **Verdict: NULL.**
+
+**Well-powered, not a weak test:** the stance feature varies strongly (std 0.58, full
+dovish↔hawkish swing) and there are 110 OOS events. The null is informative. Note the OLS
+baseline itself loses to "predict zero" in 3 of 4 cells — short-end yield reactions are
+essentially unforecastable from pre-meeting features, and stance adds nothing.
+
+**Caveat (honest):** we tested the stance *level*, not the stance *surprise* (vs a market
+expectation we don't have). But the announcement-day reaction `r1` should respond to the
+surprise component, and it shows no signal in either sign — consistent with the
+efficient-information story: by the time the statement text is public, the reaction is already
+priced. Per the pre-registered rule, we do **not** iterate into a surprise-construction variant.
+
+**Decision (per pre-registration):** null → **text is fully closed for forecasting** across
+every economically-motivated channel (equity direction, magnitude, volume, volatility, rates).
+Text remains valuable as *description* (stance/certainty/time labels, semantic diff) — not as a
+market predictor. The one forecasting edge in the project stays the QLIKE-DLq RV ensemble.
