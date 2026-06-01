@@ -760,8 +760,10 @@ export interface HarTercileBaselineResponse {
 // yet closed.
 export interface HarTercileBacktestRow {
   event_date: string;
-  predicted_tercile: HarTercileLabel;
-  predicted_prob: number;
+  // Both are null on a pending row (insufficient leading history or
+  // predict_har_regime failure) — match the RV-backtest sibling shape.
+  predicted_tercile: HarTercileLabel | null;
+  predicted_prob: number | null;
   realized_tercile: HarTercileLabel | null;
   realized_rv: number | null;
   correct: boolean | null;

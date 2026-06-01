@@ -119,6 +119,8 @@ export interface ExpectedVolumeCardProps {
   loading?: boolean;
   error?: string | null;
   symbol?: string;
+  collapsible?: boolean;
+  storageKey?: string;
 }
 
 export function ExpectedVolumeCard({
@@ -126,6 +128,8 @@ export function ExpectedVolumeCard({
   loading = false,
   error = null,
   symbol,
+  collapsible = false,
+  storageKey,
 }: ExpectedVolumeCardProps) {
   if (loading) {
     return (
@@ -133,6 +137,8 @@ export function ExpectedVolumeCard({
         title="Expected Volume"
         description="HAR-volume forecast over market history"
         variant="forecast"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <p
           className="text-xs text-muted-foreground"
@@ -150,6 +156,8 @@ export function ExpectedVolumeCard({
         title="Expected Volume"
         description="HAR-volume forecast over market history"
         variant="forecast"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <p
           className="text-xs text-muted-foreground"
@@ -176,6 +184,8 @@ export function ExpectedVolumeCard({
       title="Expected Volume"
       description="HAR-volume forecast over market history"
       variant="forecast"
+      collapsible={collapsible}
+      storageKey={storageKey}
     >
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">

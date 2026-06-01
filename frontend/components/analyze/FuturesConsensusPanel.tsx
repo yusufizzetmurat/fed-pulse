@@ -100,11 +100,15 @@ function StackedProbabilityBar({
 export interface FuturesConsensusPanelProps {
   data: FuturesConsensusResponse | null;
   loading?: boolean;
+  collapsible?: boolean;
+  storageKey?: string;
 }
 
 export function FuturesConsensusPanel({
   data,
   loading = false,
+  collapsible = false,
+  storageKey,
 }: FuturesConsensusPanelProps) {
   if (loading) {
     return (
@@ -112,6 +116,8 @@ export function FuturesConsensusPanel({
         title="FRED futures consensus"
         description="Fed-funds path via Treasury proxy (descriptive)"
         variant="descriptive"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <p
           className="text-xs text-muted-foreground"
@@ -129,6 +135,8 @@ export function FuturesConsensusPanel({
         title="FRED futures consensus"
         description="Fed-funds path via Treasury proxy (descriptive)"
         variant="descriptive"
+        collapsible={collapsible}
+        storageKey={storageKey}
       >
         <p
           className="text-xs text-muted-foreground"
@@ -150,6 +158,8 @@ export function FuturesConsensusPanel({
       title="FRED futures consensus"
       description="Fed-funds path via Treasury proxy (descriptive)"
       variant="descriptive"
+      collapsible={collapsible}
+      storageKey={storageKey}
     >
       <div className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">

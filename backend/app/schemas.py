@@ -1726,8 +1726,8 @@ class SemanticDiffResponse(BaseModel):
 class HarTercileBacktestRow(BaseModel):
     """One resolved (or pending) row in the HAR-tercile backtest table.
 
-    A row carries the persisted predicted tercile (read off the analyze
-    payload's ``regime_classification`` card) and, when the forward
+    A row carries the HAR-tercile prediction computed on the rolling
+    RV history available at the FOMC event date plus, when the forward
     window has elapsed, the realized tercile bucketed off the same
     cutoffs that produced the prediction. ``correct`` is None for rows
     whose forward window has not yet closed.
@@ -1736,8 +1736,8 @@ class HarTercileBacktestRow(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     event_date: str
-    predicted_tercile: str
-    predicted_prob: float
+    predicted_tercile: str | None = None
+    predicted_prob: float | None = None
     realized_tercile: str | None = None
     realized_rv: float | None = None
     correct: bool | None = None
@@ -1765,9 +1765,9 @@ class HarAccuracyMetrics(BaseModel):
 class HarTercileBacktestResponse(BaseModel):
     """Response wire shape for ``GET /forecast/har-tercile-backtest``.
 
-    Surfaces the last N persisted ^GSPC analyze runs with their stored
-    HAR-tercile prediction and the realized tercile derived from
-    forward market history. Drives the HarAccuracyPanel card.
+    Surfaces the last N FOMC meetings with their on-demand HAR-tercile
+    prediction and the realized tercile derived from forward market
+    history. Drives the HarAccuracyPanel card.
     """
 
     model_config = _FORBID_FROZEN_CONFIG

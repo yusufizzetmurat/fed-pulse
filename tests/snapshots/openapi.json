@@ -1681,7 +1681,7 @@
         "type": "object"
       },
       "HarTercileBacktestResponse": {
-        "description": "Response wire shape for ``GET /forecast/har-tercile-backtest``.\n\nSurfaces the last N persisted ^GSPC analyze runs with their stored\nHAR-tercile prediction and the realized tercile derived from\nforward market history. Drives the HarAccuracyPanel card.",
+        "description": "Response wire shape for ``GET /forecast/har-tercile-backtest``.\n\nSurfaces the last N FOMC meetings with their on-demand HAR-tercile\nprediction and the realized tercile derived from forward market\nhistory. Drives the HarAccuracyPanel card.",
         "properties": {
           "generated_at": {
             "title": "Generated At",
@@ -1717,7 +1717,7 @@
         "type": "object"
       },
       "HarTercileBacktestRow": {
-        "description": "One resolved (or pending) row in the HAR-tercile backtest table.\n\nA row carries the persisted predicted tercile (read off the analyze\npayload's ``regime_classification`` card) and, when the forward\nwindow has elapsed, the realized tercile bucketed off the same\ncutoffs that produced the prediction. ``correct`` is None for rows\nwhose forward window has not yet closed.",
+        "description": "One resolved (or pending) row in the HAR-tercile backtest table.\n\nA row carries the HAR-tercile prediction computed on the rolling\nRV history available at the FOMC event date plus, when the forward\nwindow has elapsed, the realized tercile bucketed off the same\ncutoffs that produced the prediction. ``correct`` is None for rows\nwhose forward window has not yet closed.",
         "properties": {
           "correct": {
             "anyOf": [
@@ -1735,12 +1735,26 @@
             "type": "string"
           },
           "predicted_prob": {
-            "title": "Predicted Prob",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Prob"
           },
           "predicted_tercile": {
-            "title": "Predicted Tercile",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Tercile"
           },
           "realized_rv": {
             "anyOf": [
@@ -1766,9 +1780,7 @@
           }
         },
         "required": [
-          "event_date",
-          "predicted_tercile",
-          "predicted_prob"
+          "event_date"
         ],
         "title": "HarTercileBacktestRow",
         "type": "object"
@@ -5610,7 +5622,7 @@
     },
     "/forecast/har-tercile-backtest": {
       "get": {
-        "description": "Backtest the last N HAR-tercile predictions for ``symbol``.\n\nWalks the persisted ``analysis_runs`` table, lines up each row's\npredicted tercile with the realized tercile from the forward\n10-trading-day window, and returns the rows + aggregate accuracy\nmetrics. Mirrors the ``^GSPC``-only constraint on the upstream\nHAR-tercile baseline endpoint (the cutoffs are SPX-trained).",
+        "description": "Backtest the last N HAR-tercile predictions for ``symbol``.\n\nWalks the published FOMC meeting calendar (most-recent first),\nruns the HAR-tercile prediction on the rolling RV history strictly\nbefore each event, and lines it up against the realized tercile\nfrom the forward 10-trading-day window. Returns the rows +\naggregate accuracy metrics. Mirrors the ``^GSPC``-only constraint\non the upstream HAR-tercile baseline endpoint (the cutoffs are\nSPX-trained).",
         "operationId": "forecast_har_tercile_backtest_forecast_har_tercile_backtest_get",
         "parameters": [
           {

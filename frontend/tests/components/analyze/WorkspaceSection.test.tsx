@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import { WorkspaceSection } from "@/components/analyze/WorkspaceSection";
 
@@ -66,5 +66,85 @@ describe("WorkspaceSection", () => {
       </WorkspaceSection>,
     );
     expect(screen.queryByText(/HAR-based/)).not.toBeInTheDocument();
+  });
+
+  describe("collapsible mode", () => {
+    beforeEach(() => {
+      window.localStorage.clear();
+    });
+
+    it("toggles the body and updates aria-expanded when the chevron is clicked", () => {
+      render(
+        <WorkspaceSection
+          title="HAR headline"
+          variant="forecast"
+          collapsible
+          storageKey="workspace-card:test-har-headline"
+        >
+          <p>headline body</p>
+        </WorkspaceSection>,
+      );
+      const toggle = screen.getByTestId("workspace-section-toggle");
+      const body = screen.getByTestId("workspace-section-body");
+      // Default open: aria-expanded=true, body row at 1fr, persisted "1".
+      // ``hidden`` is intentionally not used — it would suppress the
+      // grid-template-rows transition; aria-expanded on the toggle is
+      // the canonical hook for assistive tech.
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      expect(body.className).toContain("grid-rows-[1fr]");
+      expect(screen.getByText("headline body")).toBeInTheDocument();
+
+      fireEvent.click(toggle);
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(body.className).toContain("grid-rows-[0fr]");
+      // Header itself stays visible so the user can re-open the card.
+      expect(screen.getByText("HAR headline")).toBeInTheDocument();
+      expect(
+        window.localStorage.getItem("workspace-card:test-har-headline"),
+      ).toBe("0");
+    });
+
+    it("rehydrates the persisted closed state on mount", () => {
+      window.localStorage.setItem("workspace-card:rehydrate-test", "0");
+      render(
+        <WorkspaceSection
+          title="Persisted card"
+          variant="descriptive"
+          collapsible
+          storageKey="workspace-card:rehydrate-test"
+        >
+          <p>persisted body</p>
+        </WorkspaceSection>,
+      );
+      const toggle = screen.getByTestId("workspace-section-toggle");
+      // The persisted "0" should re-open as closed after the rehydrate
+      // effect commits; the header / chevron stay in the DOM regardless.
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      const body = screen.getByTestId("workspace-section-body");
+      expect(body.className).toContain("grid-rows-[0fr]");
+    });
+
+    it("wires aria-controls to the body element id when collapsible", () => {
+      render(
+        <WorkspaceSection
+          title="Wired controls"
+          variant="forecast"
+          collapsible
+          storageKey="workspace-card:aria-wired"
+        >
+          <p>body</p>
+        </WorkspaceSection>,
+      );
+      const toggle = screen.getByTestId("workspace-section-toggle");
+      const body = screen.getByTestId("workspace-section-body");
+      const bodyId = body.getAttribute("id");
+      expect(bodyId).toBeTruthy();
+      expect(toggle).toHaveAttribute("aria-controls", bodyId!);
+      // aria-label flips with state so screen readers don't read a stale
+      // "Collapse X" target once the section is already collapsed.
+      expect(toggle).toHaveAttribute("aria-label", "Collapse Wired controls");
+      fireEvent.click(toggle);
+      expect(toggle).toHaveAttribute("aria-label", "Expand Wired controls");
+    });
   });
 });

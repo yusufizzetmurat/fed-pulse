@@ -2087,11 +2087,13 @@ def forecast_har_tercile_backtest(
 ) -> HarTercileBacktestResponse:
     """Backtest the last N HAR-tercile predictions for ``symbol``.
 
-    Walks the persisted ``analysis_runs`` table, lines up each row's
-    predicted tercile with the realized tercile from the forward
-    10-trading-day window, and returns the rows + aggregate accuracy
-    metrics. Mirrors the ``^GSPC``-only constraint on the upstream
-    HAR-tercile baseline endpoint (the cutoffs are SPX-trained).
+    Walks the published FOMC meeting calendar (most-recent first),
+    runs the HAR-tercile prediction on the rolling RV history strictly
+    before each event, and lines it up against the realized tercile
+    from the forward 10-trading-day window. Returns the rows +
+    aggregate accuracy metrics. Mirrors the ``^GSPC``-only constraint
+    on the upstream HAR-tercile baseline endpoint (the cutoffs are
+    SPX-trained).
     """
 
     if symbol != "^GSPC":

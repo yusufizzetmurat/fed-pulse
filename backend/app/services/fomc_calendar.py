@@ -108,3 +108,28 @@ def get_calendar(
 
 def list_all_meetings() -> tuple[FomcMeeting, ...]:
     return _SCHEDULE
+
+
+def list_past_meetings(
+    *,
+    as_of: date | None = None,
+    limit: int = 10,
+) -> list[FomcMeeting]:
+    """Return the most recent ``limit`` FOMC meetings whose date < ``as_of``.
+
+    Ordered most-recent first so callers walking the historical series
+    naturally see the freshest meeting at index 0. ``limit`` is clamped
+    to non-negative; a zero limit returns an empty list.
+    """
+
+    if limit <= 0:
+        return []
+    reference = as_of or date.today()
+    # Strict ``<`` excludes any meeting whose first day is today: on the
+    # day a two-day FOMC meeting starts, statement release is still 24h
+    # away, so dropping it from the backtest universe is correct. Same
+    # for the statement-release day itself — meeting_date is already
+    # yesterday by then and the row reappears via the ``<`` boundary.
+    past = [m for m in _SCHEDULE if m.meeting_date < reference]
+    past.sort(key=lambda m: m.meeting_date, reverse=True)
+    return past[:limit]
