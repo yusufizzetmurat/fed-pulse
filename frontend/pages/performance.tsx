@@ -334,11 +334,7 @@ export default function PerformancePage() {
             <KpiTile
               label="Top-pick accuracy"
               value={<span className="numeric">{formatPercent(aggregate.argmaxAccuracy)}</span>}
-              caption={
-                aggregate.argmaxAccuracy != null && aggregate.argmaxAccuracy >= 1 / REGIME_CLASSES.length
-                  ? "above random-guess baseline"
-                  : "below random-guess baseline"
-              }
+              caption={`chance baseline ${formatPercent(1 / REGIME_CLASSES.length)}`}
               tone={
                 aggregate.argmaxAccuracy != null && aggregate.argmaxAccuracy >= 1 / REGIME_CLASSES.length
                   ? "up"
