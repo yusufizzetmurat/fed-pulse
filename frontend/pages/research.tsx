@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 
 import { DecisionsLink } from "@/components/research/DecisionsLink";
+import { HonestScopePane } from "@/components/research/HonestScopePane";
 import { Header } from "@/components/shell/header";
 import { StatusBar } from "@/components/shell/status-bar";
 import { Badge } from "@/components/ui/badge";
@@ -134,7 +135,8 @@ function buildBakeoffBarData(section: EncoderBakeoffSection): BakeoffBarDatum[] 
       const offsetLow = low != null ? Math.max(0, row.macro_f1_mean - low) : 0;
       const offsetHigh = high != null ? Math.max(0, high - row.macro_f1_mean) : 0;
       return {
-        name: row.encoder_key,
+        name: friendlyEncoderName(row.encoder_key),
+        rawName: row.encoder_key,
         macroF1: row.macro_f1_mean,
         ciLow: low,
         ciHigh: high,
@@ -150,7 +152,7 @@ function bakeoffCallout(section: EncoderBakeoffSection): string | null {
   const runner = sorted[1];
   const gapPoints = (leader.macro_f1_mean - runner.macro_f1_mean) * 100;
   if (!Number.isFinite(gapPoints) || gapPoints <= 0) return null;
-  return `${leader.encoder_key} leads the overall F1 score by ${gapPoints.toFixed(1)} percentage points over ${runner.encoder_key}.`;
+  return `${friendlyEncoderName(leader.encoder_key)} leads the overall F1 score by ${gapPoints.toFixed(1)} percentage points over ${friendlyEncoderName(runner.encoder_key)}.`;
 }
 
 function crossBankCallout(
@@ -562,13 +564,17 @@ export default function ResearchPage() {
               <Skeleton className="h-48 w-full" />
             </div>
           ) : data ? (
-            <Tabs defaultValue="bakeoff" className="w-full">
+            <Tabs defaultValue="scope" className="w-full">
               <TabsList className="flex w-full flex-wrap justify-start">
+                <TabsTrigger value="scope">What it predicts</TabsTrigger>
                 <TabsTrigger value="bakeoff">Bake-off</TabsTrigger>
                 <TabsTrigger value="transfer">Transfer</TabsTrigger>
                 <TabsTrigger value="decisions">Decisions</TabsTrigger>
                 <TabsTrigger value="files">Downloads</TabsTrigger>
               </TabsList>
+              <TabsContent value="scope">
+                <HonestScopePane />
+              </TabsContent>
               <TabsContent value="bakeoff" className="space-y-3">
                 <EncoderBakeoffPane section={data.encoder_bakeoff} />
                 {data.encoder_bakeoff.source_files.length > 0 ? (

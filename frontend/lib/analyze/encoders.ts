@@ -21,6 +21,7 @@ const FRIENDLY_NAMES: Record<string, string> = {
   fomc_roberta: "FOMC-RoBERTa",
   roberta_base: "RoBERTa base",
   bert_base: "BERT base",
+  bert_base_fed_adjacent: "BERT base (Fed-adjacent)",
 };
 
 function prettifyAlias(alias: string): string {
