@@ -401,28 +401,20 @@ export default function WorkspacePage() {
     };
   }, [apiBaseUrl, request.date]);
 
-  // Debounced text mirror for the semantic-diff fetch. The analyze
-  // textarea writes request.text on every keystroke; without this gate
-  // a paste of a 4k-char statement would issue one POST per character
-  // (each one running difflib + topic scoring on the backend). 400ms
-  // is short enough to feel responsive when the user pauses typing
-  // and long enough to coalesce paste-into-place edits.
-  const [debouncedText, setDebouncedText] = React.useState(request.text);
+  // Semantic-diff panel is gated on /analyze submit completion. The
+  // diff describes "the just-analyzed statement vs the prior" — there
+  // is no use case for diffing mid-typing, and POST /fomc/semantic-diff
+  // runs difflib + topic emphasis server-side so per-keystroke fan-out
+  // would hammer the backend on every paste. Each submit bumps a seq
+  // and snapshots the submitted (text, date) into refs; the effect
+  // depends on the seq alone, so re-typing in the textarea after a
+  // submit cannot retrigger the POST until the next submit.
+  const [semanticDiffSeq, setSemanticDiffSeq] = React.useState(0);
+  const semanticDiffInputRef = React.useRef<{ text: string; date: string } | null>(null);
   React.useEffect(() => {
-    const handle = window.setTimeout(() => {
-      setDebouncedText(request.text);
-    }, 400);
-    return () => {
-      window.clearTimeout(handle);
-    };
-  }, [request.text]);
-
-  // Semantic-diff panel runs on each (debounced text, date) pair so
-  // the workspace shows the diff for the text the user has settled on,
-  // not the text mid-keystroke. A network failure folds back to the
-  // unavailable placeholder; cold-start is handled inside the panel.
-  React.useEffect(() => {
-    if (!debouncedText || !debouncedText.trim()) {
+    if (semanticDiffSeq === 0) return;
+    const submitted = semanticDiffInputRef.current;
+    if (!submitted || !submitted.text.trim()) {
       setSemanticDiff(null);
       setSemanticDiffLoading(false);
       return;
@@ -433,7 +425,7 @@ export default function WorkspacePage() {
       try {
         const data = await fetchSemanticDiff(
           apiBaseUrl,
-          { current_date: request.date, current_text: debouncedText },
+          { current_date: submitted.date, current_text: submitted.text },
           controller.signal,
         );
         if (!controller.signal.aborted) {
@@ -452,7 +444,7 @@ export default function WorkspacePage() {
     return () => {
       controller.abort();
     };
-  }, [apiBaseUrl, request.date, debouncedText]);
+  }, [apiBaseUrl, semanticDiffSeq]);
 
   // #317 finding #14: monotonic seq for /analyze/market fetches. A
   // second submit before the first market fetch resolves bumps the
@@ -472,6 +464,11 @@ export default function WorkspacePage() {
     const marketTicket = marketPanelSeqRef.current;
     const analogsTicket = analogsPanelSeqRef.current;
     setAnalogsLoading(true);
+    // Snapshot the submitted (text, date) for the semantic-diff effect
+    // and bump the seq so it fires exactly once per submit, independent
+    // of any post-submit typing in the textarea.
+    semanticDiffInputRef.current = { text: request.text, date: request.date };
+    setSemanticDiffSeq((prev) => prev + 1);
     try {
       // #317 finding #13: dispatch /analyze + /analyze/market in
       // parallel rather than sequentially -- the market panel does

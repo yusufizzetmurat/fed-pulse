@@ -289,18 +289,27 @@ export async function fetchRealizedVolForecast(
 
 // Workspace-spine expected-volume forecast. Backend returns 503 when
 // the HAR-volume artifact cannot be loaded or the volume history is
-// insufficient; callers translate that into a card-level "unavailable"
-// state rather than surfacing a generic error.
+// insufficient; the fetcher folds that into ``null`` so the card's
+// data==null branch renders the tailored "unavailable" placeholder
+// rather than the generic error path. Matches the parity contract
+// shared with ``fetchLatestMpSurprise`` and ``fetchFuturesConsensus``.
 export async function fetchExpectedVolumeForecast(
   baseUrl: string,
   symbol: string = "^GSPC",
   signal?: AbortSignal,
-): Promise<ExpectedVolumeForecastResponse> {
-  const response = await axios.get(`${baseUrl}/forecast/abnormal-volume`, {
-    params: { symbol },
-    signal,
-  });
-  return response.data as ExpectedVolumeForecastResponse;
+): Promise<ExpectedVolumeForecastResponse | null> {
+  try {
+    const response = await axios.get(`${baseUrl}/forecast/abnormal-volume`, {
+      params: { symbol },
+      signal,
+    });
+    return response.data as ExpectedVolumeForecastResponse;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 503) {
+      return null;
+    }
+    throw err;
+  }
 }
 
 
