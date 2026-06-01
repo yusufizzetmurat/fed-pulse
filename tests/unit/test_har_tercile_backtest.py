@@ -518,3 +518,194 @@ def test_realized_variance_aliases_legacy_name() -> None:
     assert har_tercile_backtest._realized_vol_from_log_returns(rets) == pytest.approx(
         har_tercile_backtest._realized_variance_from_log_returns(rets)
     )
+
+
+# ---------------------------------------------------------------------------
+# TTL in-process cache on yfinance fetchers.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def reset_backtest_caches():
+    """Force a clean cache around each cache-flavored test."""
+
+    har_tercile_backtest.reset_caches()
+    yield
+    har_tercile_backtest.reset_caches()
+
+
+def test_realized_rv_cache_hit_skips_underlying_fetch(monkeypatch, reset_backtest_caches) -> None:
+    """A second call for the same key reads from cache, not the network."""
+
+    calls = {"n": 0}
+
+    def _stub(event_date: str, symbol: str) -> float | None:
+        calls["n"] += 1
+        return 0.00042
+
+    monkeypatch.setattr(
+        har_tercile_backtest, "_fetch_realized_rv_yf_uncached", _stub
+    )
+
+    first = har_tercile_backtest._fetch_realized_rv_yf("2024-01-31", "^GSPC")
+    second = har_tercile_backtest._fetch_realized_rv_yf("2024-01-31", "^GSPC")
+
+    assert first == pytest.approx(0.00042)
+    assert second == pytest.approx(0.00042)
+    assert calls["n"] == 1  # second call served from cache
+
+
+def test_realized_rv_cache_distinct_keys_do_not_collide(monkeypatch, reset_backtest_caches) -> None:
+    """Different ``(event_date, symbol)`` keys each hit the fetcher exactly once."""
+
+    calls: list[tuple[str, str]] = []
+
+    def _stub(event_date: str, symbol: str) -> float | None:
+        calls.append((event_date, symbol))
+        return 0.001
+
+    monkeypatch.setattr(
+        har_tercile_backtest, "_fetch_realized_rv_yf_uncached", _stub
+    )
+
+    har_tercile_backtest._fetch_realized_rv_yf("2024-01-31", "^GSPC")
+    har_tercile_backtest._fetch_realized_rv_yf("2024-02-20", "^GSPC")
+    har_tercile_backtest._fetch_realized_rv_yf("2024-01-31", "^GSPC")  # cached
+    har_tercile_backtest._fetch_realized_rv_yf("2024-01-31", "^NDX")
+
+    assert calls == [
+        ("2024-01-31", "^GSPC"),
+        ("2024-02-20", "^GSPC"),
+        ("2024-01-31", "^NDX"),
+    ]
+
+
+def test_realized_rv_cache_ttl_expiry_refetches(monkeypatch, reset_backtest_caches) -> None:
+    """Once the cached entry crosses the TTL it is refreshed via the fetcher."""
+
+    calls = {"n": 0}
+
+    def _stub(event_date: str, symbol: str) -> float | None:
+        calls["n"] += 1
+        return 0.00099
+
+    monkeypatch.setattr(
+        har_tercile_backtest, "_fetch_realized_rv_yf_uncached", _stub
+    )
+
+    har_tercile_backtest._fetch_realized_rv_yf("2024-01-31", "^GSPC")
+    assert calls["n"] == 1
+
+    # Forge a stale entry by rewriting the cache slot with a timestamp
+    # well past the TTL horizon. A fresh call must re-invoke the fetcher.
+    stale_ts = (
+        har_tercile_backtest._realized_rv_cache[("2024-01-31", "^GSPC")][0]
+        - har_tercile_backtest._BACKTEST_CACHE_TTL_SECONDS
+        - 1.0
+    )
+    har_tercile_backtest._realized_rv_cache[("2024-01-31", "^GSPC")] = (
+        stale_ts,
+        0.00099,
+    )
+
+    har_tercile_backtest._fetch_realized_rv_yf("2024-01-31", "^GSPC")
+    assert calls["n"] == 2
+
+
+def test_realized_rv_cache_caches_none_payload(monkeypatch, reset_backtest_caches) -> None:
+    """A None result is still cached so unresolved rows don't retry every render."""
+
+    calls = {"n": 0}
+
+    def _stub(event_date: str, symbol: str) -> float | None:
+        calls["n"] += 1
+        return None
+
+    monkeypatch.setattr(
+        har_tercile_backtest, "_fetch_realized_rv_yf_uncached", _stub
+    )
+
+    assert har_tercile_backtest._fetch_realized_rv_yf("2024-06-15", "^GSPC") is None
+    assert har_tercile_backtest._fetch_realized_rv_yf("2024-06-15", "^GSPC") is None
+    assert calls["n"] == 1
+
+
+def test_rv_history_cache_hit_skips_underlying_fetch(monkeypatch, reset_backtest_caches) -> None:
+    """The trailing-60d history fetcher gets the same TTL treatment."""
+
+    calls = {"n": 0}
+    canned = [0.001, 0.002, 0.004, 0.008]
+
+    def _stub(event_date: str, symbol: str) -> list[float]:
+        calls["n"] += 1
+        return list(canned)
+
+    monkeypatch.setattr(
+        har_tercile_backtest, "_fetch_rv_history_for_cutoffs_uncached", _stub
+    )
+
+    first = har_tercile_backtest._fetch_rv_history_for_cutoffs("2024-01-31", "^GSPC")
+    second = har_tercile_backtest._fetch_rv_history_for_cutoffs("2024-01-31", "^GSPC")
+
+    assert first == canned
+    assert second == canned
+    assert calls["n"] == 1
+    # The cache returns a copy so callers cannot mutate the cached list.
+    second.append(99.0)
+    third = har_tercile_backtest._fetch_rv_history_for_cutoffs("2024-01-31", "^GSPC")
+    assert third == canned
+
+
+def test_rv_history_cache_ttl_expiry_refetches(monkeypatch, reset_backtest_caches) -> None:
+    """Stale history entries trigger a refetch."""
+
+    calls = {"n": 0}
+
+    def _stub(event_date: str, symbol: str) -> list[float]:
+        calls["n"] += 1
+        return [0.001, 0.002, 0.003]
+
+    monkeypatch.setattr(
+        har_tercile_backtest, "_fetch_rv_history_for_cutoffs_uncached", _stub
+    )
+
+    har_tercile_backtest._fetch_rv_history_for_cutoffs("2024-02-20", "^GSPC")
+    assert calls["n"] == 1
+
+    stale_ts = (
+        har_tercile_backtest._rv_history_cache[("2024-02-20", "^GSPC")][0]
+        - har_tercile_backtest._BACKTEST_CACHE_TTL_SECONDS
+        - 1.0
+    )
+    har_tercile_backtest._rv_history_cache[("2024-02-20", "^GSPC")] = (
+        stale_ts,
+        [0.001, 0.002, 0.003],
+    )
+
+    har_tercile_backtest._fetch_rv_history_for_cutoffs("2024-02-20", "^GSPC")
+    assert calls["n"] == 2
+
+
+def test_reset_caches_clears_state(monkeypatch) -> None:
+    """``reset_caches()`` wipes both cache dicts so tests stay isolated."""
+
+    monkeypatch.setattr(
+        har_tercile_backtest,
+        "_fetch_realized_rv_yf_uncached",
+        lambda event_date, symbol: 0.0007,
+    )
+    monkeypatch.setattr(
+        har_tercile_backtest,
+        "_fetch_rv_history_for_cutoffs_uncached",
+        lambda event_date, symbol: [0.001, 0.002, 0.003],
+    )
+
+    har_tercile_backtest._fetch_realized_rv_yf("2024-03-20", "^GSPC")
+    har_tercile_backtest._fetch_rv_history_for_cutoffs("2024-03-20", "^GSPC")
+    assert har_tercile_backtest._realized_rv_cache
+    assert har_tercile_backtest._rv_history_cache
+
+    har_tercile_backtest.reset_caches()
+
+    assert har_tercile_backtest._realized_rv_cache == {}
+    assert har_tercile_backtest._rv_history_cache == {}

@@ -36,6 +36,7 @@ that pre-dates the cutoff persistence still bucks honest.
 from __future__ import annotations
 
 import math
+import time
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
@@ -44,6 +45,25 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import AnalysisRun
+
+
+# In-process TTL cache for the yfinance round trips that resolve
+# realized RV and trailing cutoff history. The backtest panel renders
+# the same ``(event_date, symbol)`` pairs across consecutive
+# dashboard hits, so a short staleness window amortises the network
+# hop without leaking yesterday's realisation into today's chart.
+# Six hours is a safe upper bound: FOMC forward 10-bar windows
+# resolve within a couple of trading days, well past the TTL.
+_BACKTEST_CACHE_TTL_SECONDS = 6 * 60 * 60
+_realized_rv_cache: dict[tuple[str, str], tuple[float, float | None]] = {}
+_rv_history_cache: dict[tuple[str, str], tuple[float, list[float]]] = {}
+
+
+def reset_caches() -> None:
+    """Clear the TTL caches. Exposed for tests."""
+
+    _realized_rv_cache.clear()
+    _rv_history_cache.clear()
 
 
 # Mirror the HAR-tercile label space (low / medium / high). The
@@ -233,7 +253,7 @@ def _realized_variance_from_log_returns(log_returns: list[float]) -> float | Non
 _realized_vol_from_log_returns = _realized_variance_from_log_returns
 
 
-def _fetch_realized_rv_yf(event_date: str, symbol: str) -> float | None:
+def _fetch_realized_rv_yf_uncached(event_date: str, symbol: str) -> float | None:
     """Pull forward-10d realized **variance** off yfinance.
 
     Wrapped behind a try / except so a yfinance flake on one row never
@@ -261,7 +281,26 @@ def _fetch_realized_rv_yf(event_date: str, symbol: str) -> float | None:
     return _realized_variance_from_log_returns(log_returns)
 
 
-def _fetch_rv_history_for_cutoffs(event_date: str, symbol: str) -> list[float]:
+def _fetch_realized_rv_yf(event_date: str, symbol: str) -> float | None:
+    """TTL-cached wrapper around :func:`_fetch_realized_rv_yf_uncached`.
+
+    The backtest panel renders the same ``(event_date, symbol)`` pairs
+    repeatedly as the dashboard mounts; caching the variance scalar for
+    six hours absorbs those repeats without losing freshness once the
+    forward window resolves on a later day.
+    """
+
+    key = (event_date, symbol)
+    now = time.monotonic()
+    cached = _realized_rv_cache.get(key)
+    if cached is not None and now - cached[0] < _BACKTEST_CACHE_TTL_SECONDS:
+        return cached[1]
+    value = _fetch_realized_rv_yf_uncached(event_date, symbol)
+    _realized_rv_cache[key] = (now, value)
+    return value
+
+
+def _fetch_rv_history_for_cutoffs_uncached(event_date: str, symbol: str) -> list[float]:
     """Fetch the trailing 60-day daily realized **variance** for cutoff fallback.
 
     Returns a list of per-bar variance values (squared log-returns) in
@@ -301,6 +340,25 @@ def _fetch_rv_history_for_cutoffs(event_date: str, symbol: str) -> list[float]:
         return [float(v) for v in tail]
     except Exception:
         return []
+
+
+def _fetch_rv_history_for_cutoffs(event_date: str, symbol: str) -> list[float]:
+    """TTL-cached wrapper around :func:`_fetch_rv_history_for_cutoffs_uncached`.
+
+    Mirrors the realized-RV cache: the trailing 60-bar variance series
+    is keyed off ``(event_date, symbol)`` so a single dashboard render
+    pays the yfinance hop once per event regardless of how many panel
+    reloads land within the six-hour window.
+    """
+
+    key = (event_date, symbol)
+    now = time.monotonic()
+    cached = _rv_history_cache.get(key)
+    if cached is not None and now - cached[0] < _BACKTEST_CACHE_TTL_SECONDS:
+        return list(cached[1])
+    value = _fetch_rv_history_for_cutoffs_uncached(event_date, symbol)
+    _rv_history_cache[key] = (now, list(value))
+    return value
 
 
 def _cutoffs_from_history(history: Iterable[float]) -> tuple[float | None, float | None]:
