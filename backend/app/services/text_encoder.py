@@ -32,6 +32,18 @@ MODEL_ID = _OVERRIDE or (
     DEFAULT_LOCAL_CHECKPOINT if Path(DEFAULT_LOCAL_CHECKPOINT).exists() else PRIMARY_HF_MODEL_ID
 )
 
+# When truthy, refuse to silently use the generic fallback classifier — raise
+# instead. Embedding/training pipelines set this so cached vectors can never be
+# built from the wrong encoder (the silent-fallback contamination bug: the
+# primary HF repo can 404, and the run would otherwise proceed on distilbert
+# sentiment vectors with no error).
+STRICT_PRIMARY = (
+    os.environ.get("FED_PULSE_REQUIRE_PRIMARY_SENTIMENT") or ""
+).strip().lower() in {"1", "true", "yes"}
+
+# The model id the singleton actually loaded; differs from MODEL_ID on fallback.
+_loaded_model_id: str | None = None
+
 DEFAULT_MAX_TOKENS = 480
 DEFAULT_STRIDE = 400
 DEFAULT_CLASSIFIER_MAX_LENGTH = 512
@@ -109,12 +121,21 @@ def get_classifier() -> Any:
                 )
         if _classifier is None and last_error is not None:
             raise last_error
+        global _loaded_model_id
+        _loaded_model_id = loaded_model_id
         if loaded_model_id != MODEL_ID:
             # We picked a fallback. The fallback's label space (e.g.
             # POSITIVE / NEGATIVE for distilbert-sst-2) is NOT
             # hawkish/dovish/neutral; the frontend's toStance() refuses to
             # silently relabel POSITIVE -> hawkish, so the dashboard will
             # surface "Sentiment unavailable" until the primary model loads.
+            if STRICT_PRIMARY:
+                raise RuntimeError(
+                    f"sentiment classifier fell back to {loaded_model_id!r} instead of "
+                    f"the primary {MODEL_ID!r}; refusing because "
+                    "FED_PULSE_REQUIRE_PRIMARY_SENTIMENT is set (the primary model is "
+                    "unavailable — see preceding classifier_load_failed warnings)"
+                )
             _logger.error(
                 "sentiment.classifier_using_fallback",
                 extra={
@@ -128,6 +149,27 @@ def get_classifier() -> Any:
                 },
             )
     return _classifier
+
+
+def get_loaded_model_id() -> str | None:
+    """The model id the singleton actually loaded (differs from MODEL_ID on fallback)."""
+    return _loaded_model_id
+
+
+def assert_primary_model_loaded() -> None:
+    """Raise unless the active classifier is the primary model, not the fallback.
+
+    Build/training pipelines call this before producing cached embeddings so a
+    silent fallback (e.g. the primary HF repo 404ing -> distilbert) can never
+    contaminate the artifacts undetected.
+    """
+    get_classifier()
+    if _loaded_model_id != MODEL_ID:
+        raise RuntimeError(
+            f"primary sentiment model {MODEL_ID!r} is not loaded "
+            f"(active model: {_loaded_model_id!r}); refusing to build embeddings with "
+            "a fallback encoder. Set FED_PULSE_SENTIMENT_MODEL to a valid model."
+        )
 
 
 def classifier_load_count() -> int:

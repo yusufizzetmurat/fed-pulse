@@ -54,8 +54,10 @@ def build_fomc_embeddings(
     out_path = Path(out_path)
     if out_path.exists() and not force:
         return out_path
-    from app.services.text_encoder import encode_chunks
+    from app.services.text_encoder import assert_primary_model_loaded, encode_chunks
 
+    # Fail loudly rather than silently caching embeddings from a fallback model.
+    assert_primary_model_loaded()
     texts = statement_dates_and_text(events_parquet)
     rows = []
     for date_iso in sorted(texts):
