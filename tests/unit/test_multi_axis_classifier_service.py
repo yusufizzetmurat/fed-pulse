@@ -164,3 +164,38 @@ def test_reset_classifier_clears_sticky_load_failure(
     assert isinstance(svc._state, svc._LoadFailure)
     svc.reset_classifier()
     assert svc._state is svc._UNSET
+
+
+def test_resolve_checkpoint_prefers_env_override(monkeypatch):
+    monkeypatch.setenv("FED_PULSE_TEXT_MULTI_AXIS_CHECKPOINT", "/tmp/override.pt")
+    assert svc._resolve_checkpoint_path() == Path("/tmp/override.pt")
+
+
+def test_resolve_checkpoint_pulls_from_hf_when_no_local(monkeypatch, tmp_path):
+    import huggingface_hub
+
+    monkeypatch.delenv("FED_PULSE_TEXT_MULTI_AXIS_CHECKPOINT", raising=False)
+    monkeypatch.setattr(svc, "DEFAULT_CHECKPOINT_PATH", tmp_path / "absent.pt")
+    monkeypatch.setattr(svc, "_hf_checkpoint_cache", None)
+    monkeypatch.setattr(svc, "_hf_checkpoint_failed", False)
+    fake = tmp_path / "hf.pt"
+    fake.write_text("x")
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda *a, **k: str(fake))
+    assert svc._resolve_checkpoint_path() == fake
+
+
+def test_resolve_checkpoint_falls_back_when_hf_unavailable(monkeypatch, tmp_path):
+    import huggingface_hub
+
+    monkeypatch.delenv("FED_PULSE_TEXT_MULTI_AXIS_CHECKPOINT", raising=False)
+    absent = tmp_path / "absent.pt"
+    monkeypatch.setattr(svc, "DEFAULT_CHECKPOINT_PATH", absent)
+    monkeypatch.setattr(svc, "_hf_checkpoint_cache", None)
+    monkeypatch.setattr(svc, "_hf_checkpoint_failed", False)
+
+    def _boom(*a, **k):
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", _boom)
+    assert svc._resolve_checkpoint_path() == absent
+    assert svc._hf_checkpoint_failed is True

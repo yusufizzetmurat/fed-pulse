@@ -36,6 +36,18 @@ from app.models.text_multi_axis_classifier import TextMultiAxisClassifier
 DEFAULT_CHECKPOINT_PATH = MODEL_CHECKPOINT_DIR / "text_multi_axis_best.pt"
 DEFAULT_MAX_LENGTH = 256
 
+# When no local checkpoint is present, pull the published multi-axis checkpoint
+# from the Hub so our own stance model serves in every environment (CI, fresh
+# deploys) instead of falling back to the third-party FOMC-RoBERTa path. The repo
+# is public + ungated. Override the repo via env for forks/mirrors.
+_HF_CHECKPOINT_REPO = (
+    os.environ.get("FED_PULSE_MULTI_AXIS_HF_REPO")
+    or "yusufizzetmurat/fed-pulse-multi-axis-text-classifier"
+).strip()
+_HF_CHECKPOINT_FILE = "text_multi_axis_best.pt"
+_hf_checkpoint_cache: Path | None = None
+_hf_checkpoint_failed = False
+
 # #393: structured surface for the inference-contract validation. The
 # /health endpoint reads this so an operator can grep "checkpoint
 # incompatible with serving signature" without parsing logs. Mirrors
@@ -104,11 +116,47 @@ class _ClassifierState:
     factor_coverage_threshold: float
 
 
+def _hf_checkpoint_path() -> Path | None:
+    """Download the published multi-axis checkpoint from the Hub (cached), or None.
+
+    Memoized: downloads at most once per process, and on failure (offline / repo
+    missing) records the failure and returns None so the caller falls back to the
+    local path (which won't exist -> graceful degradation to the text_encoder
+    path), without retrying or flooding logs.
+    """
+    global _hf_checkpoint_cache, _hf_checkpoint_failed
+    if _hf_checkpoint_cache is not None:
+        return _hf_checkpoint_cache
+    if _hf_checkpoint_failed or not _HF_CHECKPOINT_REPO:
+        return None
+    try:
+        from huggingface_hub import hf_hub_download
+
+        path = hf_hub_download(
+            _HF_CHECKPOINT_REPO,
+            _HF_CHECKPOINT_FILE,
+            token=os.environ.get("HF_TOKEN") or None,
+        )
+        _hf_checkpoint_cache = Path(path)
+        _logger.info("multi_axis: pulled checkpoint from Hub repo %s", _HF_CHECKPOINT_REPO)
+        return _hf_checkpoint_cache
+    except Exception as exc:  # noqa: BLE001 - any failure -> graceful fallback
+        _hf_checkpoint_failed = True
+        _logger.warning(
+            "multi_axis: could not pull checkpoint from Hub %s: %s", _HF_CHECKPOINT_REPO, exc
+        )
+        return None
+
+
 def _resolve_checkpoint_path() -> Path:
     override = (os.environ.get("FED_PULSE_TEXT_MULTI_AXIS_CHECKPOINT") or "").strip()
     if override:
         return Path(override)
-    return DEFAULT_CHECKPOINT_PATH
+    if DEFAULT_CHECKPOINT_PATH.exists():
+        return DEFAULT_CHECKPOINT_PATH
+    # No local checkpoint: serve our own model everywhere by pulling it from the Hub.
+    hf_path = _hf_checkpoint_path()
+    return hf_path if hf_path is not None else DEFAULT_CHECKPOINT_PATH
 
 
 def checkpoint_exists() -> bool:
