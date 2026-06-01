@@ -257,3 +257,167 @@ def test_clean_collapses_whitespace_no_double_spaces():
     assert "  " not in cleaned
     assert cleaned == cleaned.strip()
     assert not re.search(r"\n{3,}", cleaned)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for over-cut / over-strip bugs caught in review
+# ---------------------------------------------------------------------------
+
+
+def test_implementation_note_inline_reference_is_preserved():
+    """Minutes legitimately reference prior Implementation Notes mid-body.
+
+    The on-disk 2026-01-28 minutes carry
+    "...operations in the Implementation Note issued following the December
+    2025 meeting. All participants indicated support for ..." 42k characters
+    before the real footer. A DOTALL ``.*$`` cut anchored on the bare phrase
+    truncates ~80% of the document. The trailer form always carries an
+    explicit date (Month <day>, <year>); the inline reference does not.
+    """
+
+    raw = (
+        "The Desk continues to conduct standing repurchase agreement "
+        "operations in the Implementation Note issued following the "
+        "December 2025 meeting. All participants indicated support for, "
+        "and agreed to abide by, the FOMC Policy on Investment and "
+        "Trading for Committee Participants."
+    )
+    cleaned = _strip_implementation_note(raw)
+    assert "Implementation Note issued following" in cleaned
+    assert "All participants indicated support" in cleaned
+    assert "Trading for Committee Participants" in cleaned
+
+
+def test_implementation_note_trailer_with_date_is_still_stripped():
+    """The dated trailer form is the only thing we want to cut."""
+
+    raw = (
+        "Voting against this action was Loretta J. Mester. "
+        "Implementation Note issued March 15, 2020 Federal Reserve actions "
+        "to support the flow of credit to households and businesses."
+    )
+    cleaned = _strip_implementation_note(raw)
+    assert "Implementation Note" not in cleaned
+    assert "Federal Reserve actions" not in cleaned
+    assert "Voting against this action" in cleaned
+
+
+def test_share_as_ordinary_noun_is_preserved():
+    """'share' is a common noun in FOMC prose. Only chrome-adjacent
+    occurrences (Share + Print [+ PDF], or "For release at ... Share")
+    should be stripped — never bare 'share'.
+    """
+
+    raw = (
+        "The average share of workers employed part time for economic "
+        "reasons declined in the quarter. Market share among the largest "
+        "banks remained stable. The Structure and Share Data report was "
+        "discussed. Share sensitive information only on official, secure "
+        "websites."
+    )
+    cleaned = _strip_nav_chrome(raw)
+    assert "average share of workers" in cleaned
+    assert "Market share among the largest" in cleaned
+    assert "Structure and Share Data" in cleaned
+    assert "Share sensitive information" in cleaned
+
+
+def test_share_print_pdf_chrome_is_still_stripped():
+    raw = "policy text. Share Print PDF after the headline."
+    cleaned = _strip_nav_chrome(raw)
+    assert "Share Print PDF" not in cleaned
+    assert "policy text." in cleaned
+    assert "after the headline." in cleaned
+
+
+def test_voting_roster_does_not_swallow_post_roster_sentence():
+    """Without a recognized trailing anchor, the roster cut must NOT match.
+
+    A single-newline-separated continuation sentence after the roster is
+    real FOMC text (the HTML normalises to plain text with no blank
+    lines). The previous '.*?$' fallback amputated the tail; the new
+    behaviour is to leave the entire string alone if no anchor is found,
+    which is a safer failure mode than silently deleting policy prose.
+    """
+
+    raw = (
+        "Voting for the monetary policy action were Jerome H. Powell, "
+        "Chair; John C. Williams, Vice Chair; and Loretta J. Mester. "
+        "The Committee judges that the current stance of monetary policy "
+        "is appropriate to return inflation to 2 percent over time."
+    )
+    cleaned = _strip_voting_roster(raw)
+    # The post-roster sentence MUST be preserved. We accept that the
+    # roster names may still be present in this anchor-less variant —
+    # the alternative (greedy '.*$' eating policy text) is worse.
+    assert "The Committee judges that the current stance" in cleaned
+    assert "return inflation to 2 percent" in cleaned
+
+
+def test_voting_roster_minutes_form_is_stripped():
+    """Minutes write the voting block as 'Voting for this action: ...
+    Voting against this action: <None|name>'. The statement-only regex
+    never matched this form. The minutes-form regex below covers it.
+    """
+
+    raw = (
+        "The Committee decided to maintain the target range. "
+        "Voting for this action: Jerome H. Powell, John C. Williams, "
+        "Michelle W. Bowman, Lael Brainard, Richard H. Clarida, Patrick "
+        "Harker, Robert S. Kaplan, Neel Kashkari, Loretta J. Mester, and "
+        "Randal K. Quarles. Voting against this action: None. Consistent "
+        "with the Committee's decision, the Board of Governors voted "
+        "unanimously to raise the interest rate."
+    )
+    cleaned = _strip_voting_roster(raw)
+    # Member roster is gone.
+    assert "Jerome H. Powell" not in cleaned
+    assert "Randal K. Quarles" not in cleaned
+    # The "None" dissent line is dropped too — no signal to keep.
+    assert "Voting against this action: None" not in cleaned
+    # The lead-in policy sentence and the post-roster continuation both
+    # survive intact.
+    assert "Committee decided to maintain the target range" in cleaned
+    assert "Board of Governors voted unanimously to raise" in cleaned
+
+
+def test_voting_roster_minutes_form_preserves_dissent():
+    raw = (
+        "Voting for this action: Jerome H. Powell, John C. Williams, and "
+        "Randal K. Quarles. Voting against this action: Loretta J. Mester "
+        "President Mester was fully supportive of all of the actions taken "
+        "to promote the smooth functioning of markets and the flow of "
+        "credit to households and businesses but preferred to reduce the "
+        "target range for the federal funds rate to 1/2 to 3/4 percent."
+    )
+    cleaned = _strip_voting_roster(raw)
+    assert "Jerome H. Powell" not in cleaned
+    assert "Randal K. Quarles" not in cleaned
+    # Dissent half is kept verbatim.
+    assert "Voting against this action: Loretta J. Mester" in cleaned
+    assert "preferred to reduce the target range" in cleaned
+
+
+def test_stay_connected_as_verb_phrase_is_preserved():
+    """'stay connected' is ordinary prose when not adjacent to the
+    social-media footer chrome.
+    """
+
+    raw = (
+        "Regional Reserve Bank presidents continue to stay connected with "
+        "community banks and small business owners across their districts."
+    )
+    cleaned = _strip_nav_chrome(raw)
+    assert "stay connected with" in cleaned
+    assert "community banks" in cleaned
+
+
+def test_stay_connected_footer_banner_is_still_stripped():
+    raw = (
+        "Board of Governors of the Federal Reserve System Stay Connected "
+        "Federal Reserve Facebook Page Federal Reserve YouTube Page"
+    )
+    cleaned = _strip_nav_chrome(raw)
+    assert "Stay Connected" not in cleaned
+    assert "Facebook Page" not in cleaned
+    assert "YouTube Page" not in cleaned
