@@ -80,6 +80,10 @@ def _train_regime_fold(
     supcon_weight: float = 0.1,
     warmup: int = 8,
     patience: int = 12,
+    gate_l1_weight: float = 0.0,
+    gate_init_bias: float = 0.0,
+    residual_logits: bool = False,
+    market_aux_weight: float = 0.0,
 ) -> dict[str, np.ndarray]:
     """Train a regime classifier for horizon index k; return test predictions + labels."""
 
@@ -113,7 +117,10 @@ def _train_regime_fold(
     emb_te = ((data["text_emb"][te] - em) / es) * data["text_mask"][te][:, None]
 
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = build_model(emb.shape[1], mf.shape[1], _N_CLASSES).to(dev)
+    model = build_model(
+        emb.shape[1], mf.shape[1], _N_CLASSES,
+        gate_init_bias=gate_init_bias, residual_logits=residual_logits,
+    ).to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 
     def tt(a: np.ndarray, long: bool = False) -> "torch.Tensor":
@@ -136,7 +143,10 @@ def _train_regime_fold(
                 "text_mask": mask_t[b],
                 "labels": y_t[b],
             }
-            loss = fusion_clf_loss(model, batch, supcon_weight=lam)["loss"]
+            loss = fusion_clf_loss(
+                model, batch, supcon_weight=lam, gate_l1_weight=gate_l1_weight,
+                market_aux_weight=market_aux_weight,
+            )["loss"]
             loss.backward()  # type: ignore[no-untyped-call]
             opt.step()
         model.eval()
@@ -179,6 +189,11 @@ def run(
     n_folds: int = 5,
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
     measure: str = "rv",
+    supcon_weight: float = 0.1,
+    gate_l1_weight: float = 0.0,
+    gate_init_bias: float = 0.0,
+    residual_logits: bool = False,
+    market_aux_weight: float = 0.0,
 ) -> dict[str, Any]:
     import pandas as pd
 
@@ -196,7 +211,12 @@ def run(
         }
         for tr_l, te_l in folds:
             tr, te = idx_all[np.array(tr_l)], idx_all[np.array(te_l)]
-            out = _train_regime_fold(data, tr, te, k, seed=seed, epochs=epochs)
+            out = _train_regime_fold(
+                data, tr, te, k, seed=seed, epochs=epochs,
+                supcon_weight=supcon_weight, gate_l1_weight=gate_l1_weight,
+                gate_init_bias=gate_init_bias, residual_logits=residual_logits,
+                market_aux_weight=market_aux_weight,
+            )
             for kk in pools:
                 pools[kk].append(out[kk])
         cat = {kk: np.concatenate(v) for kk, v in pools.items()}
@@ -215,6 +235,7 @@ def run(
         if active.sum() > 5:
             row["fused_f1_active"] = _macro_f1(cat["true"][active], cat["fused"][active])
             row["mkt_f1_active"] = _macro_f1(cat["true"][active], cat["mkt"][active])
+            row["gate_mean_active"] = float(cat["gate"][active].mean())
         results["by_horizon"][f"h{h}"] = row
     return results
 
