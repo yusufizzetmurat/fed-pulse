@@ -2,7 +2,7 @@ import * as React from "react";
 import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
-import { Calendar as CalendarIcon, Clock } from "lucide-react";
+import { Calendar as CalendarIcon, ChevronRight, Clock } from "lucide-react";
 import { toast } from "sonner";
 
 import { Header } from "@/components/shell/header";
@@ -96,8 +96,15 @@ interface MeetingRowProps {
   contextLabel?: string | null;
 }
 
-const ROW_CONTENT_CLASSES =
-  "flex w-full min-h-[44px] flex-col gap-2 rounded-sm px-2 py-3 text-left hover:bg-accent/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3";
+// Row layout. The row itself is a passive container — navigation lives
+// on an explicit "Analyze" affordance (link or button) that sits as a
+// sibling of the availability badges so each badge can be a real anchor
+// without being nested inside another anchor's content model.
+const ROW_LAYOUT_CLASSES =
+  "flex w-full min-h-[44px] flex-col gap-2 rounded-sm px-2 py-3 text-left transition-colors hover:bg-accent/40 focus-within:bg-accent/40 sm:min-h-0 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3";
+
+const ROW_ACTION_CLASSES =
+  "inline-flex items-center gap-1 rounded-sm px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 const TEXT_AVAILABILITY_BADGES: Array<{
   key: "statement_available" | "minutes_available" | "press_conference_available";
@@ -142,9 +149,10 @@ function AvailabilityBadge({
     />
   );
   if (available && href) {
-    // The viewer link is a sibling click target inside the row Link.
-    // Stop the row navigation so a click on the badge resolves to the
-    // text viewer rather than the workspace prefill route.
+    // Badges are real anchors. The row's analyze affordance is a
+    // sibling element (see MeetingRow), so this <Link> is never nested
+    // inside another anchor — middle-click / open-in-new-tab / context
+    // menu / focus order all behave like normal links.
     return (
       <Link
         href={href}
@@ -153,7 +161,6 @@ function AvailabilityBadge({
         title={titleText}
         aria-label={titleText}
         className={className}
-        onClick={(event) => event.stopPropagation()}
       >
         {dot}
         {label}
@@ -174,11 +181,22 @@ function AvailabilityBadge({
   );
 }
 
-function MeetingRowBody({
+interface MeetingRowDetailsProps {
+  meeting: FomcMeeting;
+  predictedAction?: string | null;
+  contextLabel?: string | null;
+}
+
+// Renders the row's visible content: meeting metadata, availability
+// badges (which are real anchors when on file), and forecast /
+// meeting-type badges. The body intentionally contains no link or
+// button wrapping the whole row — the navigation affordance is a
+// sibling so the badge anchors are never nested inside another anchor.
+function MeetingRowDetails({
   meeting,
   predictedAction,
   contextLabel,
-}: Pick<MeetingRowProps, "meeting" | "predictedAction" | "contextLabel">) {
+}: MeetingRowDetailsProps) {
   return (
     <>
       <div className="space-y-0.5">
@@ -216,7 +234,12 @@ function MeetingRowBody({
         <Badge variant="outline" className="capitalize">
           {meeting.meeting_type}
         </Badge>
-        <span className="text-xs text-muted-foreground">Analyze →</span>
+        {/* The visible analyze cue. The actual click target is the
+            sibling Link/button rendered by MeetingRow — keeping the
+            badge anchors as un-nested siblings. */}
+        <span aria-hidden="true" className="text-xs text-muted-foreground">
+          Analyze →
+        </span>
       </div>
     </>
   );
@@ -224,29 +247,36 @@ function MeetingRowBody({
 
 function MeetingRow({ meeting, onAnalyze, href, predictedAction, contextLabel }: MeetingRowProps) {
   const targetDate = meeting.statement_release_date ?? meeting.meeting_date;
+  const analyzeLabel = `Analyze FOMC meeting on ${meeting.meeting_date}`;
   return (
-    <li className="border-b border-border last:border-0">
-      {href ? (
-        <Link href={href} className={ROW_CONTENT_CLASSES}>
-          <MeetingRowBody
-            meeting={meeting}
-            predictedAction={predictedAction}
-            contextLabel={contextLabel}
-          />
-        </Link>
-      ) : (
-        <button
-          type="button"
-          onClick={() => onAnalyze?.(targetDate)}
-          className={ROW_CONTENT_CLASSES}
-        >
-          <MeetingRowBody
-            meeting={meeting}
-            predictedAction={predictedAction}
-            contextLabel={contextLabel}
-          />
-        </button>
-      )}
+    <li className="relative border-b border-border last:border-0">
+      <div className={ROW_LAYOUT_CLASSES}>
+        <MeetingRowDetails
+          meeting={meeting}
+          predictedAction={predictedAction}
+          contextLabel={contextLabel}
+        />
+        {href ? (
+          <Link
+            href={href}
+            aria-label={analyzeLabel}
+            data-testid="meeting-row-action"
+            className={ROW_ACTION_CLASSES}
+          >
+            <ChevronRight aria-hidden="true" className="h-4 w-4" />
+          </Link>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onAnalyze?.(targetDate)}
+            aria-label={analyzeLabel}
+            data-testid="meeting-row-action"
+            className={ROW_ACTION_CLASSES}
+          >
+            <ChevronRight aria-hidden="true" className="h-4 w-4" />
+          </button>
+        )}
+      </div>
     </li>
   );
 }
