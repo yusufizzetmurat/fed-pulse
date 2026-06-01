@@ -61,6 +61,20 @@ function friendlyEncoderName(raw: string): string {
   return friendlyEncoderAlias(candidate || last);
 }
 
+// Bake-off table CHECKPOINT column previously rendered the full
+// `/data/artifacts/continued_pretraining/<alias>_<timestamp>_<seed>/checkpoint`
+// path. Trim that to the run-tag (`<alias>_<timestamp>_<seed>`) so the column
+// still uniquely identifies the run without leaking the internal artefact
+// directory. The full path stays accessible via the title attribute.
+function summarizeCheckpoint(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const parts = raw.split("/").filter(Boolean);
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    if (RUN_TAIL_RE.test(parts[i])) return parts[i];
+  }
+  return parts.length > 0 ? parts[parts.length - 1] : raw;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -263,8 +277,13 @@ function EncoderBakeoffPane({ section }: { section: EncoderBakeoffSection }) {
           <tbody>
             {section.rows.map((row) => (
               <tr key={row.encoder_key} className="border-b border-border last:border-0">
-                <td className="px-4 py-2 font-medium">{row.encoder_key}</td>
-                <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{row.checkpoint || "—"}</td>
+                <td className="px-4 py-2 font-medium">{friendlyEncoderName(row.encoder_key)}</td>
+                <td
+                  className="px-4 py-2 font-mono text-xs text-muted-foreground"
+                  title={row.checkpoint ?? undefined}
+                >
+                  {summarizeCheckpoint(row.checkpoint) || "—"}
+                </td>
                 <td className="px-4 py-2 text-right font-mono text-muted-foreground">{row.seeds.length}</td>
                 <td className="px-4 py-2 text-right font-mono">{formatNumberOrDash(row.macro_f1_mean)}</td>
                 <td className="px-4 py-2 text-right font-mono text-muted-foreground">
