@@ -37,11 +37,22 @@ logger = logging.getLogger(__name__)
 # pre-2011, 12:30/2:15pm in 2011-12, 2:00pm from 2013). The search window bounds
 # where the announcement can be (leaving 30 min of pre-window and 60 min of
 # reaction inside a 12:00-16:00 raw window).
-_SEARCH_START = time(12, 30)
-_SEARCH_END = time(15, 0)
+# Known FOMC statement release times by era — more accurate than inferring a time
+# we already know from noisy intraday volume. From 2013 the statement is released
+# at 2:00pm ET; before that it was 2:15pm, except the 2011-2012 press-conference
+# meetings that released at ~12:30pm. The volume spike is used only to catch those
+# early pre-2013 releases (a strong spike well before 2:00pm).
+_ANNOUNCE_MODERN = time(14, 0)
+_ANNOUNCE_LEGACY = time(14, 15)
+_MODERN_FROM = "2013-01-01"
+# Narrow window around the 12:30 press-conference release, so the override fires
+# only for genuine early releases — not random pre-noon volume blips.
+_EARLY_SPIKE_AFTER = time(12, 25)
+_EARLY_SPIKE_BEFORE = time(12, 45)
 _PRE_MINUTES = 30
 _IMMEDIATE_MINUTES = 30
 _DELAYED_MINUTES = 60  # delayed window ends 60 min after the announcement
+_SPIKE_MULTIPLE = 4.0  # volume > 4x the day median marks an announcement spike
 
 
 def _open_at_dt(day_bars: pd.DataFrame, target: pd.Timestamp) -> float | None:
@@ -87,14 +98,24 @@ def build_event_windows(bars: pd.DataFrame) -> pd.DataFrame:
         if list(bar_dates) != [event_date_str]:
             raise ValueError(f"{event_date_str}: bars span foreign dates {list(bar_dates)}")
 
-        # Locate the announcement: the max-volume minute within the search window.
-        cand = day[(day["_t"] >= _SEARCH_START) & (day["_t"] <= _SEARCH_END)]
-        if cand.empty:
+        # Anchor at the known release time for the era; for pre-2013, override to a
+        # strong early spike (the 12:30 press-conference meetings).
+        median_vol = float(day["volume"].median()) or 1.0
+        ann_time = _ANNOUNCE_MODERN if event_date_str >= _MODERN_FROM else _ANNOUNCE_LEGACY
+        if event_date_str < _MODERN_FROM:
+            early = day[
+                (day["_t"] >= _EARLY_SPIKE_AFTER)
+                & (day["_t"] < _EARLY_SPIKE_BEFORE)
+                & (day["volume"] > _SPIKE_MULTIPLE * median_vol)
+            ]
+            if not early.empty:
+                ann_time = day.loc[early.index[0], "timestamp_et"].time()
+        ann_match = day[day["_t"] == ann_time]
+        if ann_match.empty:
             rows.append({"event_date": event_date_str, "has_anchors": 0, "n_bars": int(len(day))})
             continue
-        ann_dt = day.loc[cand["volume"].idxmax(), "timestamp_et"]
-        median_vol = float(day["volume"].median()) or 1.0
-        ann_vol_ratio = float(day.loc[cand["volume"].idxmax(), "volume"]) / median_vol
+        ann_dt = ann_match["timestamp_et"].iloc[0]
+        ann_vol_ratio = float(ann_match["volume"].iloc[0]) / median_vol
 
         pre_start = ann_dt - pd.Timedelta(minutes=_PRE_MINUTES)
         px_pre = _open_at_dt(day, pre_start)
