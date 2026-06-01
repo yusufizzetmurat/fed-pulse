@@ -175,11 +175,25 @@ def fetch_fred_series(
     if end:
         params["observation_end"] = end
 
+    # FRED throttles the free tier at ~120 requests/min and returns 429 when
+    # exceeded. SEP / DGS / DFEDTAR pulls in this repo fan out across many
+    # series, so a tight scrape comfortably trips the limit. Retry on 429 with
+    # exponential backoff so a single throttle does not blow up the pipeline.
+    import time as _time
     client = httpx.Client(timeout=DEFAULT_TIMEOUT_SECONDS, transport=transport)
     try:
-        resp = client.get(FRED_BASE_URL, params=params)
-        resp.raise_for_status()
-        payload = resp.json()
+        max_attempts = 5
+        attempt = 0
+        while True:
+            attempt += 1
+            resp = client.get(FRED_BASE_URL, params=params)
+            if resp.status_code == 429 and attempt < max_attempts:
+                # Exponential backoff: 2s, 4s, 8s, 16s.
+                _time.sleep(2 ** attempt)
+                continue
+            resp.raise_for_status()
+            payload = resp.json()
+            break
     finally:
         client.close()
 

@@ -411,9 +411,9 @@ def _hydrate_next_year_responses(
                 cache_dir=cache_dir,
                 force_refresh=force_refresh,
             )
-        except (RuntimeError, OSError) as exc:
-            # A single missing year (e.g. the FRED API returns a 404
-            # for a vintage that has not been published yet) must not
+        except Exception as exc:  # noqa: BLE001 - any failure on a single
+            # vintage (404 for a vintage not yet published, 400 for a
+            # series id FRED has renamed, network timeout, etc.) must not
             # block the build; the next-year slot for that release
             # collapses to ``None`` and the composer's missing flag
             # carries the signal.
@@ -626,9 +626,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not rows:
                 rows = load_fixture_csv()
                 source_used = "fixture_csv"
-        except (RuntimeError, OSError) as exc:
-            # FRED unavailable (missing API key, network error). Degrade
-            # to the bundled fixture and stamp the source on every row.
+        except Exception as exc:  # noqa: BLE001 - any failure on the FRED
+            # path (missing API key, network error, HTTP status error, JSON
+            # parse error) must degrade gracefully to the bundled fixture
+            # rather than crash the build. The fixture stamp on every row
+            # signals the fallback was used.
             print(f"[sep-projections] FRED path failed ({exc}); using fixture")
             rows = load_fixture_csv()
             source_used = "fixture_csv"
