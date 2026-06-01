@@ -55,7 +55,7 @@ export function SecondOpinionRegime({
     return harBaselines.horizons.find((h) => h.h === 1) ?? null;
   }, [harBaselines]);
 
-  const harRegimeEquivalent = harLabelToRegime(harOneDay?.top_pick);
+  const harRegimeEquivalent = harLabelToRegime(harOneDay?.tercile);
   const disagreesWithHar =
     harRegimeEquivalent !== null && harRegimeEquivalent !== regime.argmax_class;
 
