@@ -9,6 +9,7 @@ import type {
   ClassificationBreakdownResponse,
   EvaluationCoverageResponse,
   FomcCalendarResponse,
+  HarTercileBaselineResponse,
   HistoryDetail,
   HistoryEventStudyResponse,
   HistoryList,
@@ -291,6 +292,18 @@ export async function fetchResearchRegistry(
   if (options?.includeRejected) params.include_rejected = true;
   const response = await axios.get(`${baseUrl}/research/registry`, { params });
   return response.data as ResearchRegistryResponse;
+}
+
+export async function fetchHarBaselines(
+  baseUrl: string,
+  symbol: string,
+  signal?: AbortSignal,
+): Promise<HarTercileBaselineResponse> {
+  const response = await axios.get(`${baseUrl}/forecast/regime/baselines`, {
+    params: { symbol },
+    signal,
+  });
+  return response.data as HarTercileBaselineResponse;
 }
 
 export async function postResearchBacktest(

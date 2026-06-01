@@ -10,11 +10,12 @@ import { MarketReactionPanel } from "@/components/analyze/MarketReactionPanel";
 import { MultiAxisInterpretation } from "@/components/analyze/MultiAxisInterpretation";
 import { PipelineTrace } from "@/components/analyze/PipelineTrace";
 import { PolicyActionCard } from "@/components/analyze/PolicyActionCard";
-import { RegimeHeadline } from "@/components/analyze/RegimeHeadline";
+import { HarRegimeHeadline } from "@/components/analyze/HarRegimeHeadline";
 import {
   RegimeHistoryStrip,
   type RegimeHistoryEntry,
 } from "@/components/analyze/RegimeHistoryStrip";
+import { SecondOpinionRegime } from "@/components/analyze/SecondOpinionRegime";
 import { HistoricalContextBadge } from "@/components/analyze/HistoricalContextBadge";
 import { SentenceStrikeXaiPanel } from "@/components/analyze/SentenceStrikeXaiPanel";
 import { StatementDeltaCard } from "@/components/analyze/StatementDeltaCard";
@@ -39,6 +40,7 @@ import { DEFAULT_TEXT } from "@/lib/analyze/constants";
 import { errorMessage } from "@/lib/analyze/errors";
 import { toStance } from "@/lib/analyze/format";
 import {
+  useHarBaselines,
   useSharedContext,
   useSharedCoverage,
   useSharedRecentHistory,
@@ -123,6 +125,7 @@ export default function WorkspacePage() {
   const [volForecastError, setVolForecastError] = React.useState<string | null>(null);
   const coverage = useSharedCoverage(request.symbol);
   const recentHistory = useSharedRecentHistory(request.symbol, 12);
+  const harBaselines = useHarBaselines(request.symbol);
 
   // Apply saved workspace prefs (default symbol / horizon) after mount.
   // Doing this in an effect rather than the initial state preserves the
@@ -529,6 +532,14 @@ export default function WorkspacePage() {
             </div>
           ) : null}
 
+          <SectionDivider label="Model prediction" />
+          <HarRegimeHeadline
+            baselines={harBaselines.data}
+            loading={harBaselines.loading}
+            error={harBaselines.error}
+            symbol={request.symbol}
+          />
+
           {result ? (
             <>
               <SectionDivider label="Statement analysis" />
@@ -536,9 +547,8 @@ export default function WorkspacePage() {
               <StatementDeltaCard result={result} />
               <WorkspaceMetaStrip result={result} />
 
-              <SectionDivider label="Model prediction" />
               {result.regime_classification ? (
-                <RegimeHeadline
+                <SecondOpinionRegime
                   regime={result.regime_classification}
                   sentiment={result.sentiment}
                   symbol={request.symbol}
@@ -547,6 +557,7 @@ export default function WorkspacePage() {
                   empiricalCoverage={coverage.data?.empirical ?? null}
                   empiricalCoverageSampleSize={coverage.data?.sample_size ?? null}
                   marketOnlyArgmaxProb={marketOnlyArgmaxProb}
+                  harBaselines={harBaselines.data}
                 />
               ) : result.prediction?.close != null ? (
                 <LegacyForecastCard
