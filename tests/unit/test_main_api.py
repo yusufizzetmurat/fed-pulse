@@ -205,6 +205,64 @@ def test_documents_by_date_preserves_dissent_signal(monkeypatch, tmp_path):
     assert "Randal K. Quarles" not in cleaned_text
 
 
+def test_load_rv_history_skips_spx_parquet_for_non_gspc_symbols(monkeypatch, tmp_path):
+    """The SPX intraday RV parquet must only feed ^GSPC.
+
+    Earlier the parquet branch fired whenever the file existed,
+    regardless of the requested symbol, so a ^DJI / AAPL request would
+    silently surface SPX rv tagged to the wrong ticker. The gate now
+    routes everything other than ^GSPC through the yfinance fallback.
+    """
+
+    import pandas as pd
+    from app.data import intraday_realized as intraday_mod
+
+    parquet_path = tmp_path / "spx_5min_daily_rv.parquet"
+    dates = pd.date_range("2026-02-01", periods=30, freq="B").strftime("%Y-%m-%d")
+    pd.DataFrame({"date": dates, "rv": [1e-4 + i * 1e-6 for i in range(30)]}).to_parquet(
+        parquet_path
+    )
+    monkeypatch.setattr(intraday_mod, "DEFAULT_RV_PARQUET", parquet_path)
+
+    yf_calls: list[str] = []
+
+    class _StubFrame:
+        empty = False
+
+        def __init__(self) -> None:
+            import numpy as np
+
+            self.index = pd.date_range("2026-02-01", periods=80, freq="B")
+            close = pd.Series(100.0 + np.arange(80) * 0.5, index=self.index)
+            self._df = pd.DataFrame({"Close": close})
+
+        def __getitem__(self, key):
+            return self._df[key]
+
+    class _StubTicker:
+        def __init__(self, symbol: str) -> None:
+            yf_calls.append(symbol)
+
+        def history(self, **_: object) -> _StubFrame:
+            return _StubFrame()
+
+    import yfinance as yf
+
+    monkeypatch.setattr(yf, "Ticker", _StubTicker)
+
+    # ^GSPC reads the parquet (no yfinance call).
+    spx_rv, spx_dates = main_mod._load_rv_history("^GSPC")
+    assert yf_calls == []
+    assert spx_dates[-1] == dates[-1]
+    assert spx_rv[-1] == pytest.approx(1e-4 + 29e-6)
+
+    # ^DJI bypasses the parquet and falls back to yfinance.
+    dji_rv, dji_dates = main_mod._load_rv_history("^DJI")
+    assert yf_calls == ["^DJI"]
+    assert dji_rv != spx_rv
+    assert dji_dates != spx_dates
+
+
 def test_forecast_realized_vol_surfaces_historical_bands(monkeypatch):
     """The /forecast/realized-vol endpoint surfaces walk-forward h=1
     bands so the VolatilityOutlookCard can render a "we covered" overlay
@@ -284,28 +342,17 @@ def test_forecast_realized_vol_surfaces_historical_bands(monkeypatch):
     assert bands[0]["realized_rv"] == pytest.approx(rv[22])
 
 
-def test_analyze_persists_historical_bands_into_payload(monkeypatch):
-    """The /analyze pipeline stashes the walk-forward bands into
-    ``analysis_runs.payload`` so a re-render of the historical sparkline
-    overlay incurs no read-time recompute."""
+def test_analyze_does_not_carry_historical_bands(monkeypatch):
+    """The /analyze response does not carry the walk-forward RV bands.
 
-    bands_fixture = [
-        {
-            "date": "2026-03-23",
-            "band_lo_80": 5e-5,
-            "band_hi_80": 2e-4,
-            "realized_rv": 1.2e-4,
-        },
-        {
-            "date": "2026-03-24",
-            "band_lo_80": 5.1e-5,
-            "band_hi_80": 2.1e-4,
-            "realized_rv": 1.3e-4,
-        },
-    ]
-    monkeypatch.setattr(
-        main_mod, "_safe_rv_historical_bands", lambda symbol: list(bands_fixture)
-    )
+    Bands are owned by /forecast/realized-vol, the only consumer the
+    frontend reads. Producing them on every /analyze call would pay the
+    cost (parquet read + 38 ensemble forwards, plus a possible yfinance
+    round-trip) for a field that AnalyzeResponse does not declare and no
+    UI surface reads. Pinning this here so a future change that wires
+    bands back into /analyze must also wire them onto the schema in the
+    same commit.
+    """
 
     captured: dict = {}
 
@@ -384,9 +431,11 @@ def test_analyze_persists_historical_bands_into_payload(monkeypatch):
         },
     )
     assert response.status_code == 200, response.text
+    body = response.json()
+    assert "historical_bands" not in body
     assert "payload" in captured, "history hook was not invoked"
     persisted = captured["payload"]
-    assert persisted.get("historical_bands") == bands_fixture
+    assert "historical_bands" not in persisted
 
 
 def test_symbols_endpoint_returns_only_trained_symbols():

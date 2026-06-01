@@ -674,7 +674,6 @@ def _build_analyze_response(
         "regime_classification_status": regime_status,
         "rates_reaction": _safe_rates_reaction(history_vectors),
         "policy_action": _build_policy_action_card(payload),
-        "historical_bands": _safe_rv_historical_bands(payload.symbol),
     }
     if getattr(payload, "include_xai", False):
         attributions = attribute_text(payload.text)
@@ -808,38 +807,6 @@ def _build_policy_action_card(
         "change_magnitude_bp": action.change_magnitude_bp,
         "balance_sheet_state": action.balance_sheet_state,
     }
-
-
-def _safe_rv_historical_bands(symbol: str) -> list[dict[str, Any]] | None:
-    """Walk-forward h=1 conformal band rows for the realized sparkline.
-
-    Pulls the same last-60d RV window the volatility-outlook card renders
-    and runs ``predict_rv_historical_bands`` over it. The result rides in
-    the /analyze response under ``historical_bands`` so the persisted
-    ``analysis_runs.payload`` carries the bands without any read-time
-    re-compute. Every failure path degrades to ``None`` — a missing
-    artifact, a fresh checkout without intraday parquet, or a yfinance
-    rate-limit must not break /analyze.
-    """
-
-    from app.services.rv_forecaster import (
-        RvForecasterUnavailable,
-        predict_rv_historical_bands,
-    )
-
-    try:
-        rv_hist, hist_dates = _load_rv_history(symbol)
-    except Exception:  # pragma: no cover -- defensive: never break /analyze
-        logger.warning("rv_historical_bands_history_failed", exc_info=True)
-        return None
-    try:
-        rows = predict_rv_historical_bands(rv_hist, hist_dates)
-    except RvForecasterUnavailable:
-        return None
-    except Exception:  # pragma: no cover -- defensive
-        logger.warning("rv_historical_bands_predict_failed", exc_info=True)
-        return None
-    return rows or None
 
 
 def _safe_regime_classification(history_vectors: list[Any]) -> dict[str, Any] | None:
@@ -1753,17 +1720,19 @@ def _load_rv_history(symbol: str) -> tuple[list[float], list[str]]:
     """Pull the last 60 daily realized-vol values for ``symbol``.
 
     Prefers the Alpha Vantage 5-min intraday RV parquet (the same series
-    the production model was trained on). When the parquet is missing we
-    fall back to a yfinance daily close-to-close squared-log-return proxy
-    so the card still renders on a fresh checkout. Returns RV (variance)
-    units in chronological order plus their ISO date stamps.
+    the production model was trained on). The parquet is SPX-only, so
+    only ``^GSPC`` reads from it; every other symbol takes the yfinance
+    close-to-close squared-log-return fallback. When the parquet is
+    missing for SPX we fall back to the same yfinance proxy so the card
+    still renders on a fresh checkout. Returns RV (variance) units in
+    chronological order plus their ISO date stamps.
     """
 
     import pandas as pd
 
     from app.data.intraday_realized import DEFAULT_RV_PARQUET
 
-    if DEFAULT_RV_PARQUET.exists():
+    if symbol == "^GSPC" and DEFAULT_RV_PARQUET.exists():
         df = pd.read_parquet(DEFAULT_RV_PARQUET)
         if "rv" in df.columns and "date" in df.columns:
             df = df.sort_values("date").tail(_RV_HISTORY_DAYS)
