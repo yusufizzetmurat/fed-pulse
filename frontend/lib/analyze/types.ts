@@ -766,7 +766,7 @@ export interface MonetaryPolicySurpriseResponse {
   direction: MonetaryPolicySurpriseDirection;
   magnitude_bps: number;
   is_intermeeting: boolean;
-  ff_target_prior_bps: number | null;
+  ff_target_prior_bps?: number | null;
 }
 
 export interface FuturesConsensusHorizon {
@@ -797,7 +797,7 @@ export type SemanticDiffSpanKind =
 export interface SemanticDiffSpan {
   kind: SemanticDiffSpanKind;
   text: string;
-  paired_text: string | null;
+  paired_text?: string | null;
 }
 
 export interface SemanticDiffTopic {
