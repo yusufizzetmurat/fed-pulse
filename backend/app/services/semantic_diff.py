@@ -130,6 +130,84 @@ _TOPIC_ORDER: tuple[str, ...] = tuple(TOPIC_PHRASES.keys())
 UNCHANGED_RUN_KEEP_TOKENS: int = 60
 
 
+# Minimum whitespace-split token count for the diff to run. Anything
+# shorter is treated as ``no_input`` — the redline and topic-emphasis
+# views require enough surface area to be meaningful, and the FOMC
+# statement boilerplate runs hundreds of tokens, so 5 is a generous
+# floor that only rejects truly degenerate inputs.
+MIN_INPUT_TOKENS: int = 5
+
+
+# Latin-1 ratio gate for the non-English short-circuit. Statements
+# are English-only on the FOMC surface, so a body whose characters
+# are majority outside the basic Latin-1 range almost certainly
+# isn't a statement and can't be diffed against the English-only
+# topic phrase list. 0.5 is a deliberately loose threshold so
+# pasted text with light unicode punctuation (curly quotes, em-dashes)
+# still parses; the gate only trips on majority non-Latin scripts.
+LATIN_RATIO_THRESHOLD: float = 0.5
+
+
+def _is_majority_non_latin(text: str) -> bool:
+    """Return True when ``text`` is majority outside basic Latin-1.
+
+    A lightweight non-English detector that avoids the langdetect
+    dependency. Counts characters with ``ord(ch) < 256`` (basic
+    Latin-1) against the total character count after stripping
+    whitespace. When the Latin-1 share falls below
+    :data:`LATIN_RATIO_THRESHOLD` the caller short-circuits with
+    ``status="non_english"``.
+    """
+
+    stripped = "".join(text.split())
+    if not stripped:
+        return False
+    latin = sum(1 for ch in stripped if ord(ch) < 256)
+    return (latin / len(stripped)) < LATIN_RATIO_THRESHOLD
+
+
+def _classify_input(text: str) -> str | None:
+    """Bucket ``text`` for the silent-null edge cases.
+
+    Returns one of ``"no_input"`` / ``"non_english"`` when the diff
+    should short-circuit, or ``None`` when the body is healthy enough
+    to run through the full pipeline. Order matters: non-Latin is
+    checked before the token-count gate so a long block of CJK still
+    reports as ``non_english`` rather than ``no_input``.
+    """
+
+    if not text or not text.strip():
+        return "no_input"
+    if _is_majority_non_latin(text):
+        return "non_english"
+    tokens = text.split()
+    if len(tokens) < MIN_INPUT_TOKENS:
+        return "no_input"
+    return None
+
+
+def _degraded_response(
+    current_date: str,
+    status: str,
+    summary: str,
+) -> SemanticDiffResponse:
+    """Build the empty-payload response used by every edge-case path.
+
+    Keeps the wire shape stable: empty ``token_spans`` + empty
+    ``topic_deltas`` so any client that ignores ``status`` still
+    falls through to the existing cold-start renderer.
+    """
+
+    return SemanticDiffResponse(
+        current_date=current_date,
+        prior_date="",
+        token_spans=[],
+        topic_deltas=[],
+        summary=summary,
+        status=status,  # type: ignore[arg-type]
+    )
+
+
 @dataclass(frozen=True)
 class PriorStatement:
     """In-memory tuple for a single statement row.
@@ -229,10 +307,16 @@ def compute_token_spans(
     diff opcodes line up across the two surfaces.
 
     Returns an empty list when either side is empty (cold-start —
-    callers translate that into the explanatory banner).
+    callers translate that into the explanatory banner) or when the
+    current body trips the silent-null edge-case guard (empty,
+    whitespace-only, < ``MIN_INPUT_TOKENS`` tokens, or majority
+    non-Latin). The function never raises on these inputs so the
+    orchestrator always receives a parseable shape.
     """
 
     if not prior_text or not current_text:
+        return []
+    if _classify_input(current_text) is not None:
         return []
     prior_tokens = _whitespace_normalise(prior_text)
     current_tokens = _whitespace_normalise(current_text)
@@ -340,10 +424,15 @@ def compute_topic_deltas(
     delta, and a small sample-phrase list (the phrases that landed
     in the current document for that topic, in canonical order).
 
-    Returns an empty list when both sides are blank.
+    Returns an empty list when both sides are blank or when the
+    current body trips the silent-null edge-case guard (the topic
+    scorer is English-keyword based and would produce uninformative
+    all-zero rows on non-Latin or near-empty input).
     """
 
     if not current_text:
+        return []
+    if _classify_input(current_text) is not None:
         return []
     current_hits = _topic_hits(current_text)
     current_shares = _emphasis_shares(current_hits)
@@ -374,11 +463,33 @@ def build_response(
 ) -> SemanticDiffResponse:
     """Compose the wire response for ``POST /fomc/semantic-diff``.
 
-    Cold-start (no strict-prior on disk) returns an empty
-    ``token_spans`` list, an empty ``topic_deltas`` list, and an
-    explanatory summary. Callers and the frontend panel both rely on
-    the empty-list shape to drive the cold-start banner.
+    Silent-null contract: every edge case returns a parseable
+    response with a ``status`` field rather than raising. The
+    orchestrator can always parse the wire shape; clients that
+    ignore ``status`` see the existing empty-list cold-start view.
+
+    Status values:
+
+    - ``no_input`` — current body is empty, whitespace-only, or
+      under :data:`MIN_INPUT_TOKENS` whitespace-split tokens.
+    - ``non_english`` — current body is majority outside basic
+      Latin-1 (see :func:`_is_majority_non_latin`).
+    - ``no_prior`` — no strict-prior FOMC statement on disk for
+      ``current_date`` (the original cold-start case).
+    - ``ok`` — full diff produced; spans + topic deltas populated.
     """
+
+    text_status = _classify_input(current_text)
+    if text_status == "no_input":
+        token_count = len((current_text or "").split())
+        summary = (
+            f"Input too short to diff (n={token_count} "
+            f"{'token' if token_count == 1 else 'tokens'})."
+        )
+        return _degraded_response(current_date, "no_input", summary)
+    if text_status == "non_english":
+        summary = "Non-Latin text — diff not run."
+        return _degraded_response(current_date, "non_english", summary)
 
     prior = load_prior_statement(current_date, path=path)
     if prior is None:
@@ -388,6 +499,7 @@ def build_response(
             token_spans=[],
             topic_deltas=[],
             summary="Earliest statement in dataset; no prior to compare.",
+            status="no_prior",
         )
     spans = compute_token_spans(prior.text, current_text)
     topics = compute_topic_deltas(prior.text, current_text)
@@ -409,11 +521,14 @@ def build_response(
         token_spans=spans,
         topic_deltas=topics,
         summary=summary,
+        status="ok",
     )
 
 
 __all__ = [
     "DEFAULT_STATEMENTS_PATH",
+    "LATIN_RATIO_THRESHOLD",
+    "MIN_INPUT_TOKENS",
     "PriorStatement",
     "TOPIC_PHRASES",
     "UNCHANGED_RUN_KEEP_TOKENS",

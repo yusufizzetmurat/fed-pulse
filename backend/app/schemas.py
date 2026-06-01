@@ -1662,7 +1662,11 @@ class SemanticDiffRequest(BaseModel):
     model_config = _STRICT_REQUEST_CONFIG
 
     current_date: str = Field(..., description="Document date in ISO format: YYYY-MM-DD")
-    current_text: str = Field(..., min_length=1, description="FOMC statement text to diff")
+    # No ``min_length`` guard: empty / whitespace-only / non-Latin bodies
+    # must still reach :func:`app.services.semantic_diff.build_response`,
+    # which returns a parseable degraded response with a ``status`` field
+    # instead of raising. See SemanticDiffResponse.status.
+    current_text: str = Field(..., description="FOMC statement text to diff")
 
 
 class SemanticDiffResponse(BaseModel):
@@ -1671,6 +1675,13 @@ class SemanticDiffResponse(BaseModel):
     Descriptive panel — the spans and topic deltas are post-hoc
     explanations of the realized text change and never feed the
     forecast surface.
+
+    ``status`` carries a parseable signal for the panel to surface
+    an informational banner when the service could not produce a
+    meaningful diff (empty / near-empty / non-Latin input, or no
+    strict-prior on file). The field is optional and defaults to
+    ``None`` for backward compatibility — older clients that ignore
+    it still see the same empty-list cold-start shape they used to.
     """
 
     model_config = _FORBID_FROZEN_CONFIG
@@ -1680,6 +1691,7 @@ class SemanticDiffResponse(BaseModel):
     token_spans: list[SemanticDiffSpan]
     topic_deltas: list[SemanticDiffTopic]
     summary: str
+    status: Literal["ok", "no_input", "no_prior", "non_english"] | None = None
 
 
 class HarTercileBacktestRow(BaseModel):

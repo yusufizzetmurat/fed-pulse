@@ -848,10 +848,23 @@ export interface SemanticDiffTopic {
   sample_phrases: string[];
 }
 
+// Edge-case status flag emitted by the backend semantic-diff
+// service. ``ok`` is the populated-diff path; the remaining values
+// signal an empty payload with a parseable informational banner
+// (input too short, non-Latin text, no strict-prior on file).
+// Optional for backward compatibility — older callers default to
+// the cold-start banner when status is undefined.
+export type SemanticDiffStatus =
+  | "ok"
+  | "no_input"
+  | "no_prior"
+  | "non_english";
+
 export interface SemanticDiffResponse {
   current_date: string;
   prior_date: string;
   token_spans: SemanticDiffSpan[];
   topic_deltas: SemanticDiffTopic[];
   summary: string;
+  status?: SemanticDiffStatus | null;
 }

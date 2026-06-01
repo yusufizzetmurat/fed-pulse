@@ -54,6 +54,39 @@ DEFAULT_MAX_TOKENS = 480
 DEFAULT_STRIDE = 400
 DEFAULT_CLASSIFIER_MAX_LENGTH = 512
 
+# Stance edge-case gates. The stance classifier was trained on English
+# FOMC text and reports stale class probabilities on degenerate input;
+# the gates below let :func:`analyze_text` short-circuit with a
+# ``status`` flag instead of feeding the model rubbish. Thresholds
+# match :mod:`app.services.semantic_diff` so the wire surface stays
+# consistent across descriptive panels.
+STANCE_MIN_INPUT_TOKENS: int = 5
+STANCE_LATIN_RATIO_THRESHOLD: float = 0.5
+
+
+def _classify_stance_input(text: str) -> str | None:
+    """Bucket ``text`` for the silent-null stance edge cases.
+
+    Returns ``"no_input"`` / ``"non_english"`` when the stance head
+    should short-circuit, or ``None`` when the input is healthy
+    enough to run through the classifier. Order matches
+    :func:`app.services.semantic_diff._classify_input` so a long
+    block of CJK reports as ``non_english`` rather than
+    ``no_input``.
+    """
+
+    if not text or not text.strip():
+        return "no_input"
+    stripped = "".join(text.split())
+    if stripped:
+        latin = sum(1 for ch in stripped if ord(ch) < 256)
+        if (latin / len(stripped)) < STANCE_LATIN_RATIO_THRESHOLD:
+            return "non_english"
+    tokens = text.split()
+    if len(tokens) < STANCE_MIN_INPUT_TOKENS:
+        return "no_input"
+    return None
+
 _classifier = None
 _classifier_lock = threading.Lock()
 _classifier_load_count = 0
@@ -327,12 +360,23 @@ def analyze_text(text: str) -> dict[str, Any]:
     classifier remains the fallback. Returned shape stays
     ``{label, score, raw[]}`` so the /analyze + prepare_training_data
     + attention_ablation surfaces stay drop-in.
+
+    Edge-case contract: empty / whitespace-only / majority-non-Latin
+    inputs never reach the classifier. The function returns the
+    standard ``{label: "UNKNOWN", score: 0.0, raw: []}`` block with
+    an extra ``status`` key so callers can surface a parseable
+    informational banner instead of a misleading stance label. The
+    classifier path otherwise returns ``status="ok"``.
     """
 
     text_value = text or ""
+    edge_status = _classify_stance_input(text_value)
+    if edge_status is not None:
+        return {"label": "UNKNOWN", "score": 0.0, "raw": [], "status": edge_status}
     response = _stance_from_multi_axis(text_value)
     if response is None:
         response = aggregate_label(encode_chunks(text_value))
+    response.setdefault("status", "ok")
 
     manifest_path = resolve_ood_manifest_path()
     if manifest_path is None:

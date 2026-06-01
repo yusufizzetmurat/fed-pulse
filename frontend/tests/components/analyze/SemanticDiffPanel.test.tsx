@@ -160,4 +160,88 @@ describe("SemanticDiffPanel", () => {
     render(<SemanticDiffPanel data={fixture()} />);
     expect(screen.getByText(/Mar 18, 2026/)).toBeInTheDocument();
   });
+
+  it("renders the no-input banner when status is no_input", () => {
+    render(
+      <SemanticDiffPanel
+        data={fixture({
+          prior_date: "",
+          token_spans: [],
+          topic_deltas: [],
+          summary: "Input too short to diff (n=2 tokens).",
+          status: "no_input",
+        })}
+      />,
+    );
+    const banner = screen.getByTestId("semantic-diff-no-input");
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent(/Input too short to diff/i);
+    expect(banner).toHaveTextContent(/n=2 tokens/);
+    expect(
+      screen.queryByTestId("semantic-diff-wording-section"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("semantic-diff-cold-start"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the non-english banner when status is non_english", () => {
+    render(
+      <SemanticDiffPanel
+        data={fixture({
+          prior_date: "",
+          token_spans: [],
+          topic_deltas: [],
+          summary: "Non-Latin text — diff not run.",
+          status: "non_english",
+        })}
+      />,
+    );
+    const banner = screen.getByTestId("semantic-diff-non-english");
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent(/Non-Latin text/i);
+    expect(
+      screen.queryByTestId("semantic-diff-wording-section"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("semantic-diff-cold-start"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the cold-start banner when status is no_prior", () => {
+    render(
+      <SemanticDiffPanel
+        data={fixture({
+          prior_date: "",
+          token_spans: [],
+          topic_deltas: [],
+          summary: "Earliest statement in dataset; no prior to compare.",
+          status: "no_prior",
+        })}
+      />,
+    );
+    expect(screen.getByTestId("semantic-diff-cold-start")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("semantic-diff-no-input"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("semantic-diff-non-english"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the populated diff when status is ok", () => {
+    render(<SemanticDiffPanel data={fixture({ status: "ok" })} />);
+    expect(
+      screen.getByTestId("semantic-diff-wording-section"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("semantic-diff-emphasis-section"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("semantic-diff-no-input"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("semantic-diff-non-english"),
+    ).not.toBeInTheDocument();
+  });
 });

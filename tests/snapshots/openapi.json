@@ -3855,7 +3855,6 @@
           },
           "current_text": {
             "description": "FOMC statement text to diff",
-            "minLength": 1,
             "title": "Current Text",
             "type": "string"
           }
@@ -3868,7 +3867,7 @@
         "type": "object"
       },
       "SemanticDiffResponse": {
-        "description": "Semantic diff between the current statement and its prior.\n\nDescriptive panel \u2014 the spans and topic deltas are post-hoc\nexplanations of the realized text change and never feed the\nforecast surface.",
+        "description": "Semantic diff between the current statement and its prior.\n\nDescriptive panel \u2014 the spans and topic deltas are post-hoc\nexplanations of the realized text change and never feed the\nforecast surface.\n\n``status`` carries a parseable signal for the panel to surface\nan informational banner when the service could not produce a\nmeaningful diff (empty / near-empty / non-Latin input, or no\nstrict-prior on file). The field is optional and defaults to\n``None`` for backward compatibility \u2014 older clients that ignore\nit still see the same empty-list cold-start shape they used to.",
         "properties": {
           "current_date": {
             "title": "Current Date",
@@ -3877,6 +3876,23 @@
           "prior_date": {
             "title": "Prior Date",
             "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ok",
+                  "no_input",
+                  "no_prior",
+                  "non_english"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
           },
           "summary": {
             "title": "Summary",
