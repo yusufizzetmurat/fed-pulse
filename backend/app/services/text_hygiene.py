@@ -48,9 +48,17 @@ _LEADING_BOM_RE = re.compile(
 )
 
 # The first body marker after the chrome banner — anchor the cut here.
-# We accept the four phrasings the corpus actually uses, plus a
-# fallback to a calendar-month-day-year date string at the top of the
-# article. Whichever appears FIRST wins.
+# Only phrase-anchors are admitted. An earlier draft accepted a fallback
+# calendar-date alternation ("January 25-26, 2011", "March 15, 2011",
+# ...), but pre-2012 minutes carry the page title "FRB: FOMC Minutes,
+# <date>" AT THE VERY TOP — ahead of the chrome — so the date alternation
+# matched the title-line date and left all the nav chrome ("skip to main
+# navigation ... Site Map ... A-Z Index ... Advanced Search ...") in the
+# cleaned body for 33/148 minutes docs (the 2007-2011 cohort). Every
+# banner-prefixed document in the corpus already carries one of the
+# phrase anchors below downstream of the chrome (verified across all
+# 148 minutes + 64 statements), so the date fallback is unnecessary
+# in addition to being unsafe.
 _BODY_ANCHOR_RE = re.compile(
     r"(?:"
     r"For release at\b"
@@ -59,8 +67,6 @@ _BODY_ANCHOR_RE = re.compile(
     r"|The Federal Open Market Committee\b"
     r"|A (?:joint )?meeting of the Federal Open Market Committee\b"
     r"|Minutes of the Federal Open Market Committee\b"
-    r"|(?:January|February|March|April|May|June|July|August|September|"
-    r"October|November|December)\s+\d{1,2}(?:[-–]\d{1,2})?,\s*\d{4}\b"
     r")",
     flags=re.IGNORECASE,
 )
@@ -271,10 +277,9 @@ def _strip_top_banner(text: str) -> str:
     Connected" social-media row, the "Subscribe to RSS / Email" menu,
     and the global site map BEFORE the article body starts. We cut
     from the start of the document up to the first real body marker
-    — one of the four "For release at" / "Information received" /
-    "The Federal Open Market Committee" / "Minutes of the Federal Open
-    Market Committee" phrasings, or as a fallback the first calendar
-    date at the top.
+    — one of the "For release at" / "Information received" / "The
+    Federal Open Market Committee" / "Minutes of the Federal Open
+    Market Committee" phrasings.
 
     The cut only runs when the leading window carries at least one
     chrome signal ("Skip to main content" / .gov boilerplate). A

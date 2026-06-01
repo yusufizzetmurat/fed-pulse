@@ -20,6 +20,30 @@ from app.services.text_hygiene import (
 )
 
 
+# A verbatim head sampled from the 2007-2011 minutes layout (e.g. doc 72
+# in /data/fomc_minutes.json, 2011-01-26). The page-title line "FRB: FOMC
+# Minutes, <calendar date>" appears AHEAD of the chrome banner, so any
+# anchor that accepts a bare calendar date matches inside the title and
+# leaves the entire nav chrome ("skip to main navigation ... Site Map ...
+# A-Z Index ... Advanced Search ...") in the cleaned body. The legitimate
+# body anchor is "Minutes of the Federal Open Market Committee" further
+# downstream of the chrome.
+REAL_OLD_BANNER_HEAD = (
+    "FRB: FOMC Minutes, January 25-26, 2011 skip to main navigation skip "
+    "to secondary navigation skip to content What's New · What's Next "
+    "· Site Map · A-Z Index · Careers · RSS · All "
+    "Videos · Current FAQs Search Advanced Search About the Fed News "
+    "& Events Monetary Policy Banking Information & Regulation Payment "
+    "Systems Economic Research & Data Consumer Information Community "
+    "Development Reporting Forms Publications skip to content Menu Home > "
+    "Monetary Policy > Federal Open Market Committee Print Minutes of the "
+    "Federal Open Market Committee January 25-26, 2011 FOMC Minutes "
+    "Summary of Economic Projections A meeting of the Federal Open Market "
+    "Committee was held in the offices of the Board of Governors in "
+    "Washington, D.C., on Tuesday, January 25, 2011, at 1:00 p.m."
+)
+
+
 # A verbatim head sampled from /data/fomc_minutes.json (doc 0, dated
 # 2020-01-29). The BOM at the start is the literal mojibake form the
 # scraper persisted ('ï»¿' = 0xEF 0xBB 0xBF interpreted as Latin-1).
@@ -526,6 +550,29 @@ def test_strip_top_banner_strips_real_bom_codepoint():
 
 def test_strip_top_banner_handles_empty_string():
     assert _strip_top_banner("") == ""
+
+
+def test_strip_top_banner_drops_nav_chrome_on_2007_2011_layout():
+    """The 2007-2011 minutes page-title line leads with "FRB: FOMC
+    Minutes, <date>" BEFORE the chrome banner. An anchor that admitted
+    a bare calendar date would match inside the title and leave the
+    "skip to main navigation ... Site Map ... A-Z Index ... Advanced
+    Search ..." chrome in the cleaned body. The cut must skip past the
+    chrome and start at "Minutes of the Federal Open Market Committee".
+    """
+
+    cleaned = _strip_top_banner(REAL_OLD_BANNER_HEAD)
+
+    # Nav chrome unique to this older layout is gone.
+    assert "skip to main navigation" not in cleaned.lower()
+    assert "Site Map" not in cleaned
+    assert "A-Z Index" not in cleaned
+    assert "Advanced Search" not in cleaned
+    # The cut starts at the real body anchor.
+    assert cleaned.startswith("Minutes of the Federal Open Market Committee")
+    # The first body sentence survives intact.
+    assert "A meeting of the Federal Open Market Committee" in cleaned
+    assert "Washington, D.C., on Tuesday, January 25, 2011" in cleaned
 
 
 # ---------------------------------------------------------------------------
