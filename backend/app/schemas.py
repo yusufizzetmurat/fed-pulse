@@ -1637,6 +1637,22 @@ class SemanticDiffTopic(BaseModel):
     sample_phrases: list[str] = Field(default_factory=list)
 
 
+class SemanticDiffRequest(BaseModel):
+    """Inbound body for ``POST /fomc/semantic-diff``.
+
+    ``current_date`` selects the strict-prior FOMC statement off disk;
+    ``current_text`` is the pasted body the panel diffs against that
+    prior. Both fields are required — the cold-start case is still a
+    valid call, the service just returns an empty span list when no
+    strict-prior is on file for the supplied date.
+    """
+
+    model_config = _STRICT_REQUEST_CONFIG
+
+    current_date: str = Field(..., description="Document date in ISO format: YYYY-MM-DD")
+    current_text: str = Field(..., min_length=1, description="FOMC statement text to diff")
+
+
 class SemanticDiffResponse(BaseModel):
     """Semantic diff between the current statement and its prior.
 

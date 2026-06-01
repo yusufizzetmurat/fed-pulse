@@ -62,6 +62,8 @@ from app.schemas import (
     BacktestRequest,
     BacktestResponse,
     ResearchRegistryResponse,
+    SemanticDiffRequest,
+    SemanticDiffResponse,
     SettingsCheckpoint,
     SettingsCheckpointsResponse,
     SymbolDescriptor,
@@ -1457,6 +1459,39 @@ async def fomc_latest_mp_surprise() -> MonetaryPolicySurpriseResponse:
             status_code=503,
             detail={"error": "mp_surprise_unavailable", "message": str(exc)},
         ) from exc
+
+
+@app.post(
+    "/fomc/semantic-diff",
+    response_model=SemanticDiffResponse,
+)
+async def fomc_semantic_diff(payload: SemanticDiffRequest) -> SemanticDiffResponse:
+    """Semantic diff between the pasted statement and its strict-prior.
+
+    Loads the most recent FOMC statement strictly before
+    ``payload.current_date`` off ``/data/fomc_statements.json`` and
+    returns the composite response — token-level redline spans plus
+    six-topic emphasis deltas. The descriptive surface never feeds a
+    forecast head; the cold-start (no strict-prior) case returns
+    empty spans + topic list with an explanatory summary so the panel
+    can render the banner-only mode.
+    """
+
+    try:
+        current_date = date.fromisoformat(payload.current_date[:10]).isoformat()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="current_date must be ISO-8601 YYYY-MM-DD",
+        ) from exc
+
+    from app.services.semantic_diff import build_response
+
+    return await run_in_threadpool(
+        build_response,
+        current_date,
+        payload.current_text,
+    )
 
 
 @app.post("/documents/parse", response_model=DocumentParseResponse)

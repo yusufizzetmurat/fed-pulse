@@ -22,6 +22,7 @@ import type {
   RealizedVolForecastResponse,
   ResearchArtifactsResponse,
   ResearchRegistryResponse,
+  SemanticDiffResponse,
   SettingsCheckpointsResponse,
   SymbolListResponse,
   TrainJobState,
@@ -313,6 +314,24 @@ export async function fetchLatestMpSurprise(
     }
     throw err;
   }
+}
+
+
+// Workspace-spine semantic-diff descriptive panel. The backend POST
+// accepts the pasted statement body + its ISO date; the strict-prior
+// statement is loaded server-side off the on-disk statements JSON.
+// Cold-start (no strict-prior available) returns empty span and
+// topic lists with an explanatory summary — the panel renders the
+// banner-only mode in that case.
+export async function fetchSemanticDiff(
+  baseUrl: string,
+  body: { current_date: string; current_text: string },
+  signal?: AbortSignal,
+): Promise<SemanticDiffResponse> {
+  const response = await axios.post(`${baseUrl}/fomc/semantic-diff`, body, {
+    signal,
+  });
+  return response.data as SemanticDiffResponse;
 }
 
 
