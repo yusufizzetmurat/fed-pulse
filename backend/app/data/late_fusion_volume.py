@@ -62,8 +62,10 @@ def _calendar_features(dates: pd.Series) -> tuple[np.ndarray, list[str]]:
     month = d.dt.month.to_numpy()
     cols = [(dow == k).astype(float) for k in range(4)]  # Mon..Thu (Fri baseline)
     names = [f"dow_{k}" for k in range(4)]
-    cols.append((dom >= 25).astype(float)); names.append("month_end")
-    cols.append(((dom >= 25) & np.isin(month, [3, 6, 9, 12])).astype(float)); names.append("quarter_end")
+    cols.append((dom >= 25).astype(float))
+    names.append("month_end")
+    cols.append(((dom >= 25) & np.isin(month, [3, 6, 9, 12])).astype(float))
+    names.append("quarter_end")
     return np.column_stack(cols), names
 
 
