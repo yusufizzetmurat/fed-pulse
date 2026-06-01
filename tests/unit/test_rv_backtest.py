@@ -1,15 +1,15 @@
 """QLIKE-RV backtest service + endpoint contract.
 
-Exercises the service-layer logic against an in-memory SQLite
-``analysis_runs`` table with a stubbed RV predictor + RV history so
-the tests run hermetically. The endpoint contract mirrors the
-HAR-tercile backtest: 400 on a non-^GSPC symbol, 422 on out-of-range
-limit, 200 with an aggregate coverage payload on the happy path.
+Exercises the on-demand backtest: stubs the FOMC calendar feed plus
+the RV-history and realized-RV yfinance fetchers, then checks that
+the h=1 point + 80% / 90% bands published at each meeting bracket
+the realized variance on the bar one day forward. The endpoint half
+exercises symbol + limit validation.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime
 from typing import Any
 
 import pytest
@@ -21,8 +21,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import app.db as db_module  # noqa: E402
 import app.main as main_mod  # noqa: E402
-from app.services import rv_backtest  # noqa: E402
-from app.services import rv_forecaster  # noqa: E402
+from app.services import fomc_calendar, rv_backtest  # noqa: E402
 
 
 @pytest.fixture()
@@ -33,110 +32,363 @@ def client(tmp_path):
     return TestClient(main_mod.app)
 
 
-def _persist_run(
-    session,
-    *,
-    symbol: str = "^GSPC",
-    document_date: str = "2024-01-31",
-    created_at: datetime | None = None,
-) -> db_module.AnalysisRun:
-    """Insert a synthetic ``analysis_runs`` row for the RV backtest."""
+def _meeting(d: str) -> fomc_calendar.FomcMeeting:
+    """Build a minimal FomcMeeting stand-in for the calendar stub."""
 
-    import uuid
-
-    row = db_module.AnalysisRun(
-        id=str(uuid.uuid4()),
-        created_at=created_at or datetime.now(timezone.utc),
-        symbol=symbol,
-        document_date=document_date,
-        horizon="3d",
-        forecast_mode="fast",
-        stance="hawkish",
-        sentiment_score=0.7,
-        predicted_close=5000.0,
-        current_close=4990.0,
-        predicted_volatility=0.012,
-        payload={},
-        text_excerpt=None,
+    md = date.fromisoformat(d)
+    return fomc_calendar.FomcMeeting(
+        meeting_date=md,
+        meeting_type="scheduled",
+        statement_release_date=md,
+        minutes_release_date=md,
     )
-    session.add(row)
-    session.commit()
-    session.refresh(row)
-    return row
 
 
-def _make_stub_predictor() -> Any:
-    """Return a minimal _RvPredictor stand-in with h1 conformal quantiles set."""
+def _stub_calendar(monkeypatch, dates: list[str]) -> None:
+    """Stub ``list_past_meetings`` to return the supplied meeting dates."""
 
-    class _StubLinear:
-        def __call__(self, x: Any) -> Any:
-            import numpy as np
+    meetings = [_meeting(d) for d in dates]
 
-            class _T:
-                def __init__(self, arr: np.ndarray) -> None:
-                    self._arr = arr
+    def _fake_list_past_meetings(*, as_of=None, limit: int = 10):
+        return list(meetings[:limit])
 
-                def cpu(self) -> "_T":
-                    return self
-
-                def numpy(self) -> np.ndarray:
-                    return self._arr
-
-            return _T(np.array([[0.0]], dtype=np.float32))
-
-        def eval(self) -> "_StubLinear":
-            return self
-
-    n_feat = 11
-    spec = {
-        "model": "intraday_rv_production",
-        "feature_order": [
-            "har_daily", "har_weekly", "har_monthly",
-            "rs_pos", "rs_neg", "bv", "rq", "rskew", "rkurt", "parkinson", "log_rvol",
-        ],
-        "date_last": "2026-05-29",
-        "by_horizon": {
-            "h1": {
-                "har_coef": [-0.5, 0.6, 0.2, 0.1],
-                "feat_mean": [0.0] * n_feat,
-                "feat_std": [1.0] * n_feat,
-                "resid_mean": 0.0,
-                "resid_std": 0.5,
-                "conformal_quantiles": {"0.20": 0.6, "0.10": 0.9},
-                "seed_state_dicts": [],
-                "n_oos_resid": 100,
-            }
-        },
-    }
-    inst = rv_forecaster._RvPredictor.__new__(rv_forecaster._RvPredictor)
-    inst.model_dir = rv_forecaster.MODEL_DIR  # type: ignore[attr-defined]
-    inst.spec = spec  # type: ignore[attr-defined]
-    inst.eval = None  # type: ignore[attr-defined]
-    inst.seed_models = {"h1": [_StubLinear() for _ in range(3)]}  # type: ignore[attr-defined]
-    inst.revision = "stub@rv-backtest"  # type: ignore[attr-defined]
-    return inst
-
-
-@pytest.fixture()
-def stub_predictor(monkeypatch: pytest.MonkeyPatch):
-    """Pin the cached _RvPredictor so the service runs without HF Hub."""
-
-    rv_forecaster._RvPredictor.reset()
-    inst = _make_stub_predictor()
     monkeypatch.setattr(
-        rv_forecaster._RvPredictor, "get", classmethod(lambda cls: inst)
+        fomc_calendar, "list_past_meetings", _fake_list_past_meetings
     )
-    yield inst
-    rv_forecaster._RvPredictor.reset()
 
 
-def _canned_rv_series(n: int = 60, start: str = "2024-01-01") -> tuple[list[float], list[str]]:
-    """Build a deterministic RV series + ISO dates of length ``n``."""
+def _stub_predict_rv(monkeypatch, mapping: dict[str, dict[str, float]]) -> None:
+    """Stub ``predict_rv`` keyed off the first RV-history value.
 
-    base = datetime.fromisoformat(start).date()
-    rv = [1e-4 * (1.0 + (i % 5) * 0.1) for i in range(n)]
-    dates = [(base + timedelta(days=i)).isoformat() for i in range(n)]
-    return rv, dates
+    Each entry maps a ``rv_history[0]`` discriminator to a prediction
+    dict containing ``point`` and the four band edges. The test
+    composes synthetic RV histories whose first value selects the
+    desired prediction, so the same stub serves multiple meeting
+    dates without sequencing the calls.
+    """
+
+    from app.services import rv_forecaster as _rv
+
+    def _fake_predict(rv_history):
+        key = f"{float(rv_history[0]):.6f}"
+        spec = mapping[key]
+        return {
+            "horizons": [
+                {
+                    "h": 1,
+                    "point": float(spec["point"]),
+                    "band_lo_80": float(spec["lo80"]),
+                    "band_hi_80": float(spec["hi80"]),
+                    "band_lo_90": float(spec["lo90"]),
+                    "band_hi_90": float(spec["hi90"]),
+                    "qlike_model": None,
+                    "qlike_har": None,
+                    "coverage_empirical_90": float("nan"),
+                },
+                {
+                    "h": 5,
+                    "point": float(spec["point"]) * 1.05,
+                    "band_lo_80": float(spec["lo80"]) * 1.05,
+                    "band_hi_80": float(spec["hi80"]) * 1.05,
+                    "band_lo_90": float(spec["lo90"]) * 1.05,
+                    "band_hi_90": float(spec["hi90"]) * 1.05,
+                    "qlike_model": None,
+                    "qlike_har": None,
+                    "coverage_empirical_90": float("nan"),
+                },
+            ],
+            "model_revision": "stub-rev",
+        }
+
+    monkeypatch.setattr(_rv, "predict_rv", _fake_predict)
+
+
+def _history(discriminator: float, length: int = 60) -> list[float]:
+    """Compose a synthetic RV history of ``length`` bars.
+
+    The first value carries the discriminator the ``predict_rv`` stub
+    keys off; the remaining bars are uniform filler so the predict
+    call sees a series at least as long as ``_MIN_RV_HISTORY``.
+    """
+
+    return [float(discriminator)] + [1e-4] * (length - 1)
+
+
+def test_build_backtest_predicts_and_resolves_each_meeting(client, monkeypatch) -> None:
+    """End-to-end: three calendar meetings -> three predicted/realized rows.
+
+    Stubs the calendar feed, the RV-history fetcher (composing per-date
+    histories whose first value selects the predicted bands), and the
+    realized-RV fetcher. Verifies the rows come back in calendar order
+    and that each in_band flag is computed against the bands the model
+    would have emitted at that decision point.
+    """
+
+    _stub_calendar(monkeypatch, ["2024-05-01", "2024-03-20", "2024-01-31"])
+
+    histories = {
+        "2024-05-01": _history(0.000300),
+        "2024-03-20": _history(0.000200),
+        "2024-01-31": _history(0.000100),
+    }
+
+    def _hist(event_date: str, symbol: str) -> list[float]:
+        return list(histories[event_date])
+
+    monkeypatch.setattr(rv_backtest, "_fetch_rv_history", _hist)
+
+    _stub_predict_rv(
+        monkeypatch,
+        {
+            "0.000300": {
+                "point": 2.5e-4,
+                "lo80": 1.0e-4, "hi80": 4.0e-4,
+                "lo90": 0.5e-4, "hi90": 5.0e-4,
+            },
+            "0.000200": {
+                "point": 1.5e-4,
+                "lo80": 0.8e-4, "hi80": 2.5e-4,
+                "lo90": 0.5e-4, "hi90": 3.5e-4,
+            },
+            "0.000100": {
+                "point": 1.0e-4,
+                "lo80": 0.5e-4, "hi80": 1.8e-4,
+                "lo90": 0.3e-4, "hi90": 2.5e-4,
+            },
+        },
+    )
+
+    realized_by_date = {
+        "2024-05-01": 2.0e-4,   # inside 80 band
+        "2024-03-20": 1.0e-4,   # inside 80 band
+        "2024-01-31": 1.2e-4,   # inside 80 band
+    }
+    monkeypatch.setattr(
+        rv_backtest,
+        "_fetch_realized_rv_yf",
+        lambda event_date, symbol: realized_by_date[event_date],
+    )
+
+    response = client.get(
+        "/forecast/rv-backtest", params={"symbol": "^GSPC", "limit": 10}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["symbol"] == "^GSPC"
+    assert body["horizon"] == 1
+
+    # Calendar order preserved.
+    event_dates = [row["event_date"] for row in body["rows"]]
+    assert event_dates == ["2024-05-01", "2024-03-20", "2024-01-31"]
+
+    for row in body["rows"]:
+        assert row["realized_rv"] is not None
+        assert row["band_lo_80"] <= row["point_forecast_rv"] <= row["band_hi_80"]
+        assert row["band_lo_90"] <= row["band_lo_80"]
+        assert row["band_hi_90"] >= row["band_hi_80"]
+        assert row["in_band_80"] is True
+        assert row["in_band_90"] is True
+
+    coverage = body["coverage"]
+    assert coverage["total_runs"] == 3
+    assert coverage["resolved_runs"] == 3
+    assert coverage["pending_runs"] == 0
+    assert coverage["empirical_coverage_80"] == pytest.approx(1.0)
+    assert coverage["empirical_coverage_90"] == pytest.approx(1.0)
+    assert coverage["nominal_coverage_80"] == pytest.approx(0.80)
+    assert coverage["nominal_coverage_90"] == pytest.approx(0.90)
+
+
+def test_build_backtest_pending_row_when_realized_missing(client, monkeypatch) -> None:
+    """A meeting whose forward bar has not resolved surfaces as pending."""
+
+    _stub_calendar(monkeypatch, ["2024-06-12"])
+
+    monkeypatch.setattr(
+        rv_backtest,
+        "_fetch_rv_history",
+        lambda event_date, symbol: _history(0.000200),
+    )
+    _stub_predict_rv(
+        monkeypatch,
+        {
+            "0.000200": {
+                "point": 1.5e-4,
+                "lo80": 0.8e-4, "hi80": 2.5e-4,
+                "lo90": 0.5e-4, "hi90": 3.5e-4,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        rv_backtest,
+        "_fetch_realized_rv_yf",
+        lambda event_date, symbol: None,
+    )
+
+    response = client.get("/forecast/rv-backtest", params={"symbol": "^GSPC"})
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["rows"]) == 1
+    row = body["rows"][0]
+    assert row["event_date"] == "2024-06-12"
+    assert row["point_forecast_rv"] == pytest.approx(1.5e-4)
+    assert row["realized_rv"] is None
+    assert row["in_band_80"] is None
+    assert row["in_band_90"] is None
+    cov = body["coverage"]
+    assert cov["total_runs"] == 1
+    assert cov["resolved_runs"] == 0
+    assert cov["pending_runs"] == 1
+    assert cov["empirical_coverage_80"] is None
+    assert cov["empirical_coverage_90"] is None
+
+
+def test_build_backtest_pending_row_when_history_too_short(client, monkeypatch) -> None:
+    """A meeting with <60 days of trailing RV surfaces as a pending row."""
+
+    _stub_calendar(monkeypatch, ["2024-01-31"])
+    monkeypatch.setattr(
+        rv_backtest,
+        "_fetch_rv_history",
+        lambda event_date, symbol: [1e-4] * 30,  # < _MIN_RV_HISTORY
+    )
+
+    # predict_rv must not be reached when the history gate fails.
+    from app.services import rv_forecaster as _rv
+
+    def _explode(*args, **kwargs):  # pragma: no cover - guard
+        raise AssertionError("predict_rv called despite short history")
+
+    monkeypatch.setattr(_rv, "predict_rv", _explode)
+    monkeypatch.setattr(
+        rv_backtest,
+        "_fetch_realized_rv_yf",
+        lambda event_date, symbol: 1.0e-4,
+    )
+
+    response = client.get("/forecast/rv-backtest", params={"symbol": "^GSPC"})
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["rows"]) == 1
+    row = body["rows"][0]
+    assert row["event_date"] == "2024-01-31"
+    assert row["point_forecast_rv"] is None
+    assert row["band_lo_80"] is None
+    assert row["band_hi_80"] is None
+    assert row["band_lo_90"] is None
+    assert row["band_hi_90"] is None
+    assert row["realized_rv"] is None
+    assert row["in_band_80"] is None
+    assert row["in_band_90"] is None
+    cov = body["coverage"]
+    assert cov["total_runs"] == 1
+    assert cov["resolved_runs"] == 0
+    assert cov["pending_runs"] == 1
+
+
+def test_build_backtest_aggregate_matches_hand_computed_coverage(
+    client, monkeypatch
+) -> None:
+    """Mixed hits + misses + pending row: aggregate coverage = hand calc."""
+
+    _stub_calendar(
+        monkeypatch,
+        ["2024-09-18", "2024-07-31", "2024-05-01", "2024-03-20"],
+    )
+
+    histories = {
+        "2024-09-18": _history(0.000300),
+        "2024-07-31": _history(0.000300),
+        "2024-05-01": _history(0.000200),
+        "2024-03-20": _history(0.000100),
+    }
+    monkeypatch.setattr(
+        rv_backtest,
+        "_fetch_rv_history",
+        lambda event_date, symbol: list(histories[event_date]),
+    )
+    _stub_predict_rv(
+        monkeypatch,
+        {
+            "0.000300": {
+                "point": 2.5e-4,
+                "lo80": 1.0e-4, "hi80": 4.0e-4,
+                "lo90": 0.5e-4, "hi90": 5.0e-4,
+            },
+            "0.000200": {
+                "point": 1.5e-4,
+                "lo80": 0.8e-4, "hi80": 2.5e-4,
+                "lo90": 0.5e-4, "hi90": 3.5e-4,
+            },
+            "0.000100": {
+                "point": 1.0e-4,
+                "lo80": 0.5e-4, "hi80": 1.8e-4,
+                "lo90": 0.3e-4, "hi90": 2.5e-4,
+            },
+        },
+    )
+    realized = {
+        "2024-09-18": 2.0e-4,    # inside 80 band [1e-4, 4e-4] -> hit80, hit90
+        "2024-07-31": 6.0e-4,    # outside 90 band [0.5e-4, 5e-4] -> miss80, miss90
+        "2024-05-01": 3.0e-4,    # outside 80 band, inside 90 -> miss80, hit90
+        "2024-03-20": None,      # pending
+    }
+    monkeypatch.setattr(
+        rv_backtest,
+        "_fetch_realized_rv_yf",
+        lambda event_date, symbol: realized[event_date],
+    )
+
+    response = client.get(
+        "/forecast/rv-backtest", params={"symbol": "^GSPC", "limit": 10}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    cov = body["coverage"]
+    # 4 rows total, 3 resolved, 1 in 80 band, 2 in 90 band.
+    assert cov["total_runs"] == 4
+    assert cov["resolved_runs"] == 3
+    assert cov["pending_runs"] == 1
+    assert cov["empirical_coverage_80"] == pytest.approx(1.0 / 3.0)
+    assert cov["empirical_coverage_90"] == pytest.approx(2.0 / 3.0)
+
+
+def test_build_backtest_dedupes_meeting_dates(client, monkeypatch) -> None:
+    """Duplicate meeting dates in the calendar collapse to one row."""
+
+    _stub_calendar(
+        monkeypatch,
+        ["2024-05-01", "2024-05-01", "2024-03-20"],
+    )
+
+    monkeypatch.setattr(
+        rv_backtest,
+        "_fetch_rv_history",
+        lambda event_date, symbol: _history(0.000200),
+    )
+    _stub_predict_rv(
+        monkeypatch,
+        {
+            "0.000200": {
+                "point": 1.5e-4,
+                "lo80": 0.8e-4, "hi80": 2.5e-4,
+                "lo90": 0.5e-4, "hi90": 3.5e-4,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        rv_backtest,
+        "_fetch_realized_rv_yf",
+        lambda event_date, symbol: 1.2e-4,
+    )
+
+    response = client.get(
+        "/forecast/rv-backtest", params={"symbol": "^GSPC", "limit": 10}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    event_dates = [row["event_date"] for row in body["rows"]]
+    assert event_dates == ["2024-05-01", "2024-03-20"]
 
 
 def test_aggregate_coverage_basic() -> None:
@@ -169,171 +421,6 @@ def test_aggregate_coverage_all_pending() -> None:
     assert cov["empirical_coverage_90"] is None
 
 
-def test_resolve_row_pending_inside_warmup(stub_predictor) -> None:
-    import numpy as np
-
-    rv_list, dates = _canned_rv_series(n=60)
-    rv = np.asarray(rv_list, dtype=np.float64)
-    # Event date sits inside the 22-day warmup window — pending row.
-    target = dates[10]
-    row = rv_backtest._resolve_row(
-        event_date=target,
-        rv=rv,
-        dates=dates,
-        predictor=stub_predictor,
-    )
-    assert row is not None
-    assert row["realized_rv"] is None
-    assert row["in_band_80"] is None
-    assert row["in_band_90"] is None
-
-
-def test_resolve_row_resolves_with_bands_outside_warmup(stub_predictor) -> None:
-    import numpy as np
-
-    rv_list, dates = _canned_rv_series(n=60)
-    rv = np.asarray(rv_list, dtype=np.float64)
-    # Index 30 is comfortably past the 22-day warmup horizon.
-    target = dates[30]
-    row = rv_backtest._resolve_row(
-        event_date=target,
-        rv=rv,
-        dates=dates,
-        predictor=stub_predictor,
-    )
-    assert row is not None
-    assert row["realized_rv"] == pytest.approx(rv_list[30])
-    # Bands bracket the point.
-    assert row["band_lo_80"] <= row["point_forecast_rv"] <= row["band_hi_80"]
-    assert row["band_lo_90"] <= row["band_lo_80"]
-    assert row["band_hi_90"] >= row["band_hi_80"]
-    assert isinstance(row["in_band_80"], bool)
-    assert isinstance(row["in_band_90"], bool)
-
-
-def test_resolve_row_returns_none_when_date_missing(stub_predictor) -> None:
-    import numpy as np
-
-    rv_list, dates = _canned_rv_series(n=60)
-    rv = np.asarray(rv_list, dtype=np.float64)
-    out = rv_backtest._resolve_row(
-        event_date="2099-12-31",
-        rv=rv,
-        dates=dates,
-        predictor=stub_predictor,
-    )
-    assert out is None
-
-
-def test_get_rv_backtest_orders_by_recency_and_filters_symbol(
-    client, monkeypatch, stub_predictor
-) -> None:
-    """Three ^GSPC rows resolve in created_at desc order; ^NDX row drops out."""
-
-    rv_list, dates = _canned_rv_series(n=60)
-    monkeypatch.setattr(
-        rv_backtest, "_load_rv_series", lambda symbol: (list(rv_list), list(dates))
-    )
-
-    session_iter = db_module.get_session()
-    sess = next(session_iter)
-    try:
-        base = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        _persist_run(sess, document_date=dates[30], created_at=base)
-        _persist_run(
-            sess, document_date=dates[40], created_at=base + timedelta(days=5)
-        )
-        _persist_run(
-            sess, document_date=dates[50], created_at=base + timedelta(days=10)
-        )
-        _persist_run(
-            sess,
-            symbol="^NDX",
-            document_date=dates[35],
-            created_at=base + timedelta(days=20),
-        )
-    finally:
-        sess.close()
-
-    response = client.get(
-        "/forecast/rv-backtest", params={"symbol": "^GSPC", "limit": 10}
-    )
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["symbol"] == "^GSPC"
-    assert body["horizon"] == 1
-    assert body["coverage"]["total_runs"] == 3
-    assert body["coverage"]["resolved_runs"] == 3
-    event_dates = [row["event_date"] for row in body["rows"]]
-    # Newest first.
-    assert event_dates == [dates[50], dates[40], dates[30]]
-    for row in body["rows"]:
-        assert row["realized_rv"] is not None
-        assert row["band_lo_80"] <= row["band_hi_80"]
-        assert row["band_lo_90"] <= row["band_hi_90"]
-
-
-def test_get_rv_backtest_emits_pending_row_when_date_missing(
-    client, monkeypatch, stub_predictor
-) -> None:
-    """A persisted run whose event date sits outside the RV history is pending."""
-
-    rv_list, dates = _canned_rv_series(n=60)
-    monkeypatch.setattr(
-        rv_backtest, "_load_rv_series", lambda symbol: (list(rv_list), list(dates))
-    )
-
-    session_iter = db_module.get_session()
-    sess = next(session_iter)
-    try:
-        _persist_run(sess, document_date="2099-12-31")
-    finally:
-        sess.close()
-
-    response = client.get("/forecast/rv-backtest", params={"symbol": "^GSPC"})
-    assert response.status_code == 200
-    body = response.json()
-    assert body["coverage"]["total_runs"] == 1
-    assert body["coverage"]["resolved_runs"] == 0
-    assert body["coverage"]["pending_runs"] == 1
-    assert body["coverage"]["empirical_coverage_80"] is None
-    assert body["coverage"]["empirical_coverage_90"] is None
-    row = body["rows"][0]
-    assert row["realized_rv"] is None
-    assert row["point_forecast_rv"] is None
-    assert row["in_band_80"] is None
-    assert row["in_band_90"] is None
-
-
-def test_get_rv_backtest_aggregates_band_hits(
-    client, monkeypatch, stub_predictor
-) -> None:
-    """Empirical coverage tracks ``in_band_*`` across resolved rows."""
-
-    rv_list, dates = _canned_rv_series(n=60)
-    monkeypatch.setattr(
-        rv_backtest, "_load_rv_series", lambda symbol: (list(rv_list), list(dates))
-    )
-
-    session_iter = db_module.get_session()
-    sess = next(session_iter)
-    try:
-        # Two rows comfortably past the warmup horizon.
-        _persist_run(sess, document_date=dates[30])
-        _persist_run(sess, document_date=dates[45])
-    finally:
-        sess.close()
-
-    response = client.get("/forecast/rv-backtest", params={"symbol": "^GSPC"})
-    assert response.status_code == 200
-    body = response.json()
-    assert body["coverage"]["total_runs"] == 2
-    assert body["coverage"]["resolved_runs"] == 2
-    # The exact coverage values depend on the stub; just assert finite + in [0, 1].
-    assert 0.0 <= body["coverage"]["empirical_coverage_80"] <= 1.0
-    assert 0.0 <= body["coverage"]["empirical_coverage_90"] <= 1.0
-
-
 def test_endpoint_rejects_non_gspc_symbol(client) -> None:
     response = client.get("/forecast/rv-backtest", params={"symbol": "^NDX"})
     assert response.status_code == 400
@@ -352,56 +439,134 @@ def test_endpoint_rejects_out_of_range_limit(client) -> None:
     assert under.status_code == 422
 
 
-def test_endpoint_returns_empty_state_with_no_runs(client) -> None:
+def test_endpoint_returns_empty_state_with_no_meetings(client, monkeypatch) -> None:
+    """No past meetings -> empty rows + zero-state coverage, 200 OK."""
+
+    monkeypatch.setattr(
+        fomc_calendar, "list_past_meetings", lambda *, as_of=None, limit=10: []
+    )
     response = client.get("/forecast/rv-backtest", params={"symbol": "^GSPC"})
     assert response.status_code == 200
     body = response.json()
     assert body["rows"] == []
-    assert body["coverage"]["total_runs"] == 0
-    assert body["coverage"]["resolved_runs"] == 0
-    assert body["coverage"]["pending_runs"] == 0
-    assert body["coverage"]["empirical_coverage_80"] is None
-    assert body["coverage"]["empirical_coverage_90"] is None
-    assert body["coverage"]["nominal_coverage_80"] == pytest.approx(0.80)
-    assert body["coverage"]["nominal_coverage_90"] == pytest.approx(0.90)
+    cov = body["coverage"]
+    assert cov["total_runs"] == 0
+    assert cov["resolved_runs"] == 0
+    assert cov["pending_runs"] == 0
+    assert cov["empirical_coverage_80"] is None
+    assert cov["empirical_coverage_90"] is None
+    assert cov["nominal_coverage_80"] == pytest.approx(0.80)
+    assert cov["nominal_coverage_90"] == pytest.approx(0.90)
 
 
-def test_load_rv_series_requests_wide_history_window(monkeypatch) -> None:
-    """The backtest must pull more RV history than the live forecast card.
-
-    Regression test for the failure mode where the shared 60-day window
-    capped older persisted FOMC event dates outside the dates index, so
-    every event further than ~3 months back surfaced as pending. The
-    backtest now requests a multi-quarter window so the trailing FOMC
-    meetings can actually be aligned to the daily RV series.
-    """
-
-    captured: dict[str, Any] = {}
-
-    def _fake_load_rv_history(symbol: str, days: int = 60) -> tuple[list[float], list[str]]:
-        captured["symbol"] = symbol
-        captured["days"] = days
-        return ([0.0] * 30, ["2024-01-01"] * 30)
-
-    import app.main as main_mod
-
-    monkeypatch.setattr(main_mod, "_load_rv_history", _fake_load_rv_history)
-
-    rv_backtest._load_rv_series("^GSPC")
-
-    # 60 days = the live-forecast cap. The backtest must pass a strictly
-    # larger ``days`` value so older event dates can land in the dates
-    # index. ~2 years of trading days (504) is the current target.
-    assert captured["symbol"] == "^GSPC"
-    assert captured["days"] > 60
-    assert captured["days"] >= 252
+# ---------------------------------------------------------------------------
+# TTL in-process cache on yfinance fetchers.
+# ---------------------------------------------------------------------------
 
 
-def test_main_load_rv_history_honors_days_argument(monkeypatch) -> None:
-    """``_load_rv_history`` exposes a ``days`` knob the backtest passes."""
+@pytest.fixture()
+def reset_backtest_caches():
+    """Force a clean cache around each cache-flavored test."""
 
-    import inspect
+    rv_backtest.reset_caches()
+    yield
+    rv_backtest.reset_caches()
 
-    sig = inspect.signature(main_mod._load_rv_history)
-    assert "days" in sig.parameters
-    assert sig.parameters["days"].default == main_mod._RV_HISTORY_DAYS
+
+def test_realized_rv_cache_hit_skips_underlying_fetch(monkeypatch, reset_backtest_caches) -> None:
+    calls = {"n": 0}
+
+    def _stub(event_date: str, symbol: str) -> float | None:
+        calls["n"] += 1
+        return 0.00042
+
+    monkeypatch.setattr(rv_backtest, "_fetch_realized_rv_yf_uncached", _stub)
+
+    first = rv_backtest._fetch_realized_rv_yf("2024-01-31", "^GSPC")
+    second = rv_backtest._fetch_realized_rv_yf("2024-01-31", "^GSPC")
+
+    assert first == pytest.approx(0.00042)
+    assert second == pytest.approx(0.00042)
+    assert calls["n"] == 1
+
+
+def test_realized_rv_cache_ttl_expiry_refetches(monkeypatch, reset_backtest_caches) -> None:
+    calls = {"n": 0}
+
+    def _stub(event_date: str, symbol: str) -> float | None:
+        calls["n"] += 1
+        return 0.00099
+
+    monkeypatch.setattr(rv_backtest, "_fetch_realized_rv_yf_uncached", _stub)
+
+    rv_backtest._fetch_realized_rv_yf("2024-01-31", "^GSPC")
+    assert calls["n"] == 1
+
+    stale_ts = (
+        rv_backtest._realized_rv_cache[("2024-01-31", "^GSPC")][0]
+        - rv_backtest._BACKTEST_CACHE_TTL_SECONDS
+        - 1.0
+    )
+    rv_backtest._realized_rv_cache[("2024-01-31", "^GSPC")] = (stale_ts, 0.00099)
+
+    rv_backtest._fetch_realized_rv_yf("2024-01-31", "^GSPC")
+    assert calls["n"] == 2
+
+
+def test_rv_history_cache_hit_skips_underlying_fetch(monkeypatch, reset_backtest_caches) -> None:
+    calls = {"n": 0}
+    canned = [0.001, 0.002, 0.004, 0.008]
+
+    def _stub(event_date: str, symbol: str) -> list[float]:
+        calls["n"] += 1
+        return list(canned)
+
+    monkeypatch.setattr(rv_backtest, "_fetch_rv_history_uncached", _stub)
+
+    first = rv_backtest._fetch_rv_history("2024-01-31", "^GSPC")
+    second = rv_backtest._fetch_rv_history("2024-01-31", "^GSPC")
+
+    assert first == canned
+    assert second == canned
+    assert calls["n"] == 1
+    # The cache returns a copy so callers cannot mutate the cached list.
+    second.append(99.0)
+    third = rv_backtest._fetch_rv_history("2024-01-31", "^GSPC")
+    assert third == canned
+
+
+def test_reset_caches_clears_state(monkeypatch) -> None:
+    monkeypatch.setattr(
+        rv_backtest,
+        "_fetch_realized_rv_yf_uncached",
+        lambda event_date, symbol: 0.0007,
+    )
+    monkeypatch.setattr(
+        rv_backtest,
+        "_fetch_rv_history_uncached",
+        lambda event_date, symbol: [0.001, 0.002, 0.003],
+    )
+
+    rv_backtest._fetch_realized_rv_yf("2024-03-20", "^GSPC")
+    rv_backtest._fetch_rv_history("2024-03-20", "^GSPC")
+    assert rv_backtest._realized_rv_cache
+    assert rv_backtest._rv_history_cache
+
+    rv_backtest.reset_caches()
+
+    assert rv_backtest._realized_rv_cache == {}
+    assert rv_backtest._rv_history_cache == {}
+
+
+def test_list_past_meetings_orders_recent_first_and_respects_limit() -> None:
+    """`fomc_calendar.list_past_meetings` returns at most ``limit`` meetings."""
+
+    meetings = fomc_calendar.list_past_meetings(
+        as_of=datetime(2025, 1, 1).date(), limit=3
+    )
+    assert len(meetings) == 3
+    assert meetings[0].meeting_date == date(2024, 12, 17)
+    assert all(
+        meetings[i].meeting_date > meetings[i + 1].meeting_date
+        for i in range(len(meetings) - 1)
+    )
