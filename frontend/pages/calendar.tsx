@@ -1,5 +1,6 @@
 import * as React from "react";
 import Head from "next/head";
+import Link from "next/link";
 import { useRouter } from "next/router";
 import { Calendar as CalendarIcon, Clock } from "lucide-react";
 import { toast } from "sonner";
@@ -89,44 +90,74 @@ function CountdownCard({ targetDate }: { targetDate: string }) {
 
 interface MeetingRowProps {
   meeting: FomcMeeting;
-  onAnalyze: (date: string) => void;
+  onAnalyze?: (date: string) => void;
+  href?: { pathname: string; query: Record<string, string> };
   predictedAction?: string | null;
   contextLabel?: string | null;
 }
 
-function MeetingRow({ meeting, onAnalyze, predictedAction, contextLabel }: MeetingRowProps) {
+const ROW_CONTENT_CLASSES =
+  "flex w-full min-h-[44px] flex-col gap-2 rounded-sm px-2 py-3 text-left hover:bg-accent/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3";
+
+function MeetingRowBody({
+  meeting,
+  predictedAction,
+  contextLabel,
+}: Pick<MeetingRowProps, "meeting" | "predictedAction" | "contextLabel">) {
+  return (
+    <>
+      <div className="space-y-0.5">
+        <p className="font-mono text-sm">{meeting.meeting_date}</p>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          {meeting.statement_release_date ? (
+            <span>Statement {meeting.statement_release_date}</span>
+          ) : null}
+          {meeting.minutes_release_date ? (
+            <span>Minutes {meeting.minutes_release_date}</span>
+          ) : null}
+          {contextLabel ? <span>· {contextLabel}</span> : null}
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {predictedAction ? (
+          <Badge variant="outline" className="text-[10px]">
+            forecast · {predictedAction}
+          </Badge>
+        ) : null}
+        <Badge variant="outline" className="capitalize">
+          {meeting.meeting_type}
+        </Badge>
+        <span className="text-xs text-muted-foreground">Analyze →</span>
+      </div>
+    </>
+  );
+}
+
+function MeetingRow({ meeting, onAnalyze, href, predictedAction, contextLabel }: MeetingRowProps) {
   const targetDate = meeting.statement_release_date ?? meeting.meeting_date;
   return (
     <li className="border-b border-border last:border-0">
-      <button
-        type="button"
-        onClick={() => onAnalyze(targetDate)}
-        className="flex w-full min-h-[44px] flex-col gap-2 rounded-sm px-2 py-3 text-left hover:bg-accent/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3"
-      >
-        <div className="space-y-0.5">
-          <p className="font-mono text-sm">{meeting.meeting_date}</p>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            {meeting.statement_release_date ? (
-              <span>Statement {meeting.statement_release_date}</span>
-            ) : null}
-            {meeting.minutes_release_date ? (
-              <span>Minutes {meeting.minutes_release_date}</span>
-            ) : null}
-            {contextLabel ? <span>· {contextLabel}</span> : null}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {predictedAction ? (
-            <Badge variant="outline" className="text-[10px]">
-              forecast · {predictedAction}
-            </Badge>
-          ) : null}
-          <Badge variant="outline" className="capitalize">
-            {meeting.meeting_type}
-          </Badge>
-          <span className="text-xs text-muted-foreground">Analyze →</span>
-        </div>
-      </button>
+      {href ? (
+        <Link href={href} className={ROW_CONTENT_CLASSES}>
+          <MeetingRowBody
+            meeting={meeting}
+            predictedAction={predictedAction}
+            contextLabel={contextLabel}
+          />
+        </Link>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onAnalyze?.(targetDate)}
+          className={ROW_CONTENT_CLASSES}
+        >
+          <MeetingRowBody
+            meeting={meeting}
+            predictedAction={predictedAction}
+            contextLabel={contextLabel}
+          />
+        </button>
+      )}
     </li>
   );
 }
@@ -313,14 +344,25 @@ export default function CalendarPage() {
                     <p className="text-muted-foreground">No past meetings in window.</p>
                   ) : (
                     <ul>
-                      {data.past.map((meeting) => (
-                        <MeetingRow
-                          key={`past-${meeting.meeting_date}`}
-                          meeting={meeting}
-                          onAnalyze={goAnalyze}
-                          contextLabel={historicalContext.labels[meeting.meeting_date] ?? null}
-                        />
-                      ))}
+                      {data.past.map((meeting) => {
+                        const target =
+                          meeting.statement_release_date ?? meeting.meeting_date;
+                        return (
+                          <MeetingRow
+                            key={`past-${meeting.meeting_date}`}
+                            meeting={meeting}
+                            href={{
+                              pathname: "/",
+                              query: {
+                                date: target,
+                                symbol: "^GSPC",
+                                kind: "statement",
+                              },
+                            }}
+                            contextLabel={historicalContext.labels[meeting.meeting_date] ?? null}
+                          />
+                        );
+                      })}
                     </ul>
                   )}
                 </CardContent>

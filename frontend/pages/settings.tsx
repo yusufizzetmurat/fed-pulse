@@ -70,6 +70,36 @@ function roleLabel(role: string): string {
   }
 }
 
+type ServiceKey = "forecaster" | "sentiment" | "other";
+
+const SERVICE_LABEL: Record<ServiceKey, string> = {
+  forecaster: "Forecaster",
+  sentiment: "Sentiment breakdown",
+  other: "Other",
+};
+
+const SERVICE_DESCRIPTION: Record<ServiceKey, string> = {
+  forecaster:
+    "Close + volatility model, its LoRA adapter, and the conformal calibration sidecar.",
+  sentiment: "Per-axis FOMC sentiment classifiers (hawk/dove, growth, inflation, policy, risk).",
+  other: "Other model files on disk.",
+};
+
+function serviceForRole(role: string): ServiceKey {
+  switch (role) {
+    case "forecaster":
+    case "lora_adapter":
+    case "calibration":
+      return "forecaster";
+    case "multi_axis":
+      return "sentiment";
+    default:
+      return "other";
+  }
+}
+
+const SERVICE_ORDER: ServiceKey[] = ["forecaster", "sentiment", "other"];
+
 function CheckpointRow({ checkpoint }: { checkpoint: SettingsCheckpoint }) {
   // #342: render the inference-contract surface. Legacy checkpoints
   // (no sidecar) carry ``inference_contract_status === "sidecar_absent"``
@@ -194,7 +224,6 @@ function CheckpointRow({ checkpoint }: { checkpoint: SettingsCheckpoint }) {
 function ModelsSection() {
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
   const [data, setData] = React.useState<SettingsCheckpoint[]>([]);
-  const [modelsDir, setModelsDir] = React.useState<string>("");
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -205,7 +234,6 @@ function ModelsSection() {
       .then((response) => {
         if (controller.signal.aborted) return;
         setData(response.checkpoints);
-        setModelsDir(response.models_dir);
         setError(null);
       })
       .catch((err) => {
@@ -219,14 +247,18 @@ function ModelsSection() {
   }, [apiBaseUrl]);
 
   const grouped = React.useMemo(() => {
-    const buckets = new Map<string, SettingsCheckpoint[]>();
+    const buckets = new Map<ServiceKey, SettingsCheckpoint[]>();
     for (const cp of data) {
-      const role = cp.role || "other";
-      const list = buckets.get(role) ?? [];
+      const service = serviceForRole(cp.role || "");
+      const list = buckets.get(service) ?? [];
       list.push(cp);
-      buckets.set(role, list);
+      buckets.set(service, list);
     }
-    return [...buckets.entries()];
+    return SERVICE_ORDER.flatMap((service) => {
+      const list = buckets.get(service);
+      if (!list || list.length === 0) return [];
+      return [{ service, list }];
+    });
   }, [data]);
 
   return (
@@ -234,15 +266,9 @@ function ModelsSection() {
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Models</CardTitle>
         <CardDescription>
-          {modelsDir ? (
-            <>
-              Read-only inventory of <code className="rounded bg-muted px-1 font-mono text-xs">{modelsDir}</code>.
-              The active flag points at the file each service is currently loaded from. To switch models,
-              drop a new file into the directory and restart the backend; live swap is intentionally disabled.
-            </>
-          ) : (
-            "Read-only inventory of the backend models directory."
-          )}
+          Read-only view of the model files the backend has loaded. The active flag points at the file
+          each service is currently serving from. To switch models, drop a new file into the backend
+          models directory and restart the backend; live swap is intentionally disabled.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -262,22 +288,42 @@ function ModelsSection() {
           <EmptyState
             variant="inline"
             title="No model files on disk."
-            description="Train a model and drop the checkpoint into the path above to make it available here."
+            description="Train a model and drop the checkpoint into the backend models directory to make it available here."
           />
         ) : (
-          <div className="space-y-4">
-            {grouped.map(([role, list]) => (
-              <section key={role} className="space-y-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {roleLabel(role)}
-                </h3>
-                <ul className="space-y-2">
-                  {list.map((cp) => (
-                    <CheckpointRow key={cp.filename} checkpoint={cp} />
-                  ))}
-                </ul>
-              </section>
-            ))}
+          <div className="space-y-5">
+            {grouped.map(({ service, list }) => {
+              const hasActive = list.some((cp) => cp.is_active);
+              return (
+                <section
+                  key={service}
+                  className="space-y-2"
+                  data-testid={`service-group-${service}`}
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`inline-block h-2.5 w-2.5 rounded-full ${
+                        hasActive ? "bg-up" : "bg-muted-foreground/40"
+                      }`}
+                      aria-hidden="true"
+                      data-testid={`service-dot-${service}-${hasActive ? "active" : "idle"}`}
+                    />
+                    <h3 className="text-sm font-semibold">{SERVICE_LABEL[service]}</h3>
+                    <span className="text-xs text-muted-foreground">
+                      {hasActive ? "loaded" : "no active file"}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {SERVICE_DESCRIPTION[service]}
+                  </p>
+                  <ul className="space-y-2">
+                    {list.map((cp) => (
+                      <CheckpointRow key={cp.relative_path || cp.filename} checkpoint={cp} />
+                    ))}
+                  </ul>
+                </section>
+              );
+            })}
           </div>
         )}
       </CardContent>

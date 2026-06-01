@@ -24,6 +24,13 @@ interface RegimeHeadlineProps {
   // asserted. Null/undefined hides the chip.
   empiricalCoverage?: number | null;
   empiricalCoverageSampleSize?: number | null;
+  // Optional text-channel attribution. ``marketOnlyArgmaxProb`` is the
+  // top-pick probability under a market-only baseline (no text input or
+  // text masked out); when provided the headline renders a "text
+  // contribution ±X.Xpp" chip. When the live argmax probability sits
+  // below uniform + 2pp the surface instead shows "text channel: weak"
+  // to telegraph that the text barely moved the prediction.
+  marketOnlyArgmaxProb?: number | null;
 }
 
 function regimeBarClass(label: Regime): string {
@@ -60,6 +67,7 @@ export function RegimeHeadline({
   documentDate,
   empiricalCoverage,
   empiricalCoverageSampleSize,
+  marketOnlyArgmaxProb,
 }: RegimeHeadlineProps) {
   const distribution = regime.distribution ?? {};
   const coveragePct = Math.round(regime.coverage * 100);
@@ -78,6 +86,26 @@ export function RegimeHeadline({
   const argmaxProb = distribution[regime.argmax_class] ?? 0;
   const oodFlag = sentiment?.is_in_distribution === false;
   const trendValues = history ? regimeFromIndex(history) : [];
+
+  // Text-channel contribution badge. Prefer the explicit delta vs a
+  // market-only baseline when the caller threads one in; otherwise fall
+  // back to a "weak" tag whenever argmax sits within 2pp of uniform.
+  const classCount = Math.max(1, Object.keys(distribution).length);
+  const uniformProb = 1 / classCount;
+  let textContribLabel: string | null = null;
+  let textContribTitle: string | null = null;
+  if (typeof marketOnlyArgmaxProb === "number" && Number.isFinite(marketOnlyArgmaxProb)) {
+    const deltaPp = (argmaxProb - marketOnlyArgmaxProb) * 100;
+    const rounded = Math.round(deltaPp * 10) / 10;
+    const sign = rounded > 0 ? "+" : rounded < 0 ? "−" : "±";
+    textContribLabel = `text contribution ${sign}${Math.abs(rounded).toFixed(1)}pp`;
+    textContribTitle = `Top-pick probability under text vs market-only: ${(
+      argmaxProb * 100
+    ).toFixed(1)}% vs ${(marketOnlyArgmaxProb * 100).toFixed(1)}%.`;
+  } else if (argmaxProb - uniformProb < 0.02) {
+    textContribLabel = "text channel: weak";
+    textContribTitle = "Top-pick probability is within 2pp of uniform — the text barely moved the prediction.";
+  }
 
   // #338 reframe: when the dual-head regression branch is mounted on
   // the active checkpoint we lead with the log(RV) band; per-class
@@ -160,6 +188,15 @@ export function RegimeHeadline({
             >
               {regime.argmax_class} regime
             </Badge>
+            {textContribLabel ? (
+              <Badge
+                variant="outline"
+                className="text-[10px] uppercase tracking-wide"
+                title={textContribTitle ?? undefined}
+              >
+                {textContribLabel}
+              </Badge>
+            ) : null}
             {regime.bucket_source ? (
               <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
                 regime source · {regime.bucket_source}
@@ -174,6 +211,15 @@ export function RegimeHeadline({
             <span className="numeric text-sm text-muted-foreground sm:text-base">
               top pick · {(argmaxProb * 100).toFixed(1)}%
             </span>
+            {textContribLabel ? (
+              <Badge
+                variant="outline"
+                className="text-[10px] uppercase tracking-wide"
+                title={textContribTitle ?? undefined}
+              >
+                {textContribLabel}
+              </Badge>
+            ) : null}
             <div className="flex flex-wrap items-center gap-1.5">
               {regime.predicted_set.map((label) => (
                 <Badge

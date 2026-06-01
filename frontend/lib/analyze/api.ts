@@ -9,13 +9,16 @@ import type {
   ClassificationBreakdownResponse,
   EvaluationCoverageResponse,
   FomcCalendarResponse,
+  HarTercileBaselineResponse,
   HistoryDetail,
+  HistoryEventStudyResponse,
   HistoryList,
   HistoryQuery,
   HistoryRealizedBatchResponse,
   HistoryRealizedResponse,
   MarketReactionPanelResponse,
   NextFomcForecastResponse,
+  RealizedVolForecastResponse,
   ResearchArtifactsResponse,
   ResearchRegistryResponse,
   SettingsCheckpointsResponse,
@@ -120,6 +123,15 @@ export async function fetchHistoryRealized(
 ): Promise<HistoryRealizedResponse> {
   const response = await axios.get(`${baseUrl}/history/${runId}/realized`, { signal });
   return response.data as HistoryRealizedResponse;
+}
+
+export async function fetchHistoryEventStudy(
+  baseUrl: string,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<HistoryEventStudyResponse> {
+  const response = await axios.get(`${baseUrl}/history/${runId}/event-study`, { signal });
+  return response.data as HistoryEventStudyResponse;
 }
 
 // Batched companion to ``fetchHistoryRealized``. The /history list page
@@ -259,6 +271,18 @@ export async function fetchNextFomcForecast(
   return response.data as NextFomcForecastResponse;
 }
 
+export async function fetchRealizedVolForecast(
+  baseUrl: string,
+  symbol: string = "^GSPC",
+  signal?: AbortSignal,
+): Promise<RealizedVolForecastResponse> {
+  const response = await axios.get(`${baseUrl}/forecast/realized-vol`, {
+    params: { symbol },
+    signal,
+  });
+  return response.data as RealizedVolForecastResponse;
+}
+
 export async function fetchResearchRegistry(
   baseUrl: string,
   options?: { surface?: "dual" | "cls"; includeRejected?: boolean }
@@ -268,6 +292,18 @@ export async function fetchResearchRegistry(
   if (options?.includeRejected) params.include_rejected = true;
   const response = await axios.get(`${baseUrl}/research/registry`, { params });
   return response.data as ResearchRegistryResponse;
+}
+
+export async function fetchHarBaselines(
+  baseUrl: string,
+  symbol: string,
+  signal?: AbortSignal,
+): Promise<HarTercileBaselineResponse> {
+  const response = await axios.get(`${baseUrl}/forecast/regime/baselines`, {
+    params: { symbol },
+    signal,
+  });
+  return response.data as HarTercileBaselineResponse;
 }
 
 export async function postResearchBacktest(

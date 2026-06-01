@@ -25,10 +25,12 @@ vi.mock("next/dynamic", () => ({
 }));
 
 const fetchHistoryRunMock = vi.fn();
+const fetchHistoryEventStudyMock = vi.fn();
 
 vi.mock("@/lib/analyze/api", () => ({
   resolveApiBaseUrl: () => "http://localhost:8000",
   fetchHistoryRun: (...args: unknown[]) => fetchHistoryRunMock(...args),
+  fetchHistoryEventStudy: (...args: unknown[]) => fetchHistoryEventStudyMock(...args),
 }));
 
 const DETAIL = {
@@ -70,6 +72,17 @@ describe("HistoryDetailPage", () => {
   beforeEach(() => {
     mockQuery = { id: "run-9" };
     fetchHistoryRunMock.mockReset();
+    fetchHistoryEventStudyMock.mockReset();
+    fetchHistoryEventStudyMock.mockResolvedValue({
+      event_date: "2024-09-18",
+      symbol: "^GSPC",
+      forward_dates: [],
+      forward_close: [],
+      forward_log_returns: [],
+      realized_vol_10d: null,
+      predicted_regime: null,
+      realized_regime: null,
+    });
   });
 
   it("renders the run header and submitted-text card on success", async () => {

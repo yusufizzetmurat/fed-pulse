@@ -28,6 +28,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fetchResearchArtifacts, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { friendlyEncoderName as friendlyEncoderAlias } from "@/lib/analyze/encoders";
 import { errorMessage } from "@/lib/analyze/errors";
 import type {
   ArtifactFile,
@@ -36,6 +37,43 @@ import type {
   ResearchArtifactsResponse,
   TransferMatrixCell,
 } from "@/lib/analyze/types";
+
+// Strip an artefact path down to a short label before mapping through the
+// shared encoder-alias lookup. Keeps internal artefact paths out of the UI.
+// Checkpoint paths land here as `<root>/<alias>_<timestamp>_<seed>/checkpoint`;
+// pull the run directory and strip the timestamp+seed tail so the lookup sees
+// the bare alias.
+const RUN_TAIL_RE = /_\d{8}T\d{6}Z_s\d+$/;
+
+function friendlyEncoderName(raw: string): string {
+  if (!raw) return raw;
+  const parts = raw.split("/").filter(Boolean);
+  if (parts.length === 0) return raw;
+  const last = parts[parts.length - 1];
+  let candidate = last;
+  if (parts.length >= 2 && RUN_TAIL_RE.test(parts[parts.length - 2])) {
+    candidate = parts[parts.length - 2].replace(RUN_TAIL_RE, "");
+  } else if (RUN_TAIL_RE.test(last)) {
+    candidate = last.replace(RUN_TAIL_RE, "");
+  } else {
+    candidate = last.replace(/\.(json|csv|parquet|pt|bin|md)$/i, "");
+  }
+  return friendlyEncoderAlias(candidate || last);
+}
+
+// Bake-off table CHECKPOINT column previously rendered the full
+// `/data/artifacts/continued_pretraining/<alias>_<timestamp>_<seed>/checkpoint`
+// path. Trim that to the run-tag (`<alias>_<timestamp>_<seed>`) so the column
+// still uniquely identifies the run without leaking the internal artefact
+// directory. The full path stays accessible via the title attribute.
+function summarizeCheckpoint(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const parts = raw.split("/").filter(Boolean);
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    if (RUN_TAIL_RE.test(parts[i])) return parts[i];
+  }
+  return parts.length > 0 ? parts[parts.length - 1] : raw;
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -239,8 +277,13 @@ function EncoderBakeoffPane({ section }: { section: EncoderBakeoffSection }) {
           <tbody>
             {section.rows.map((row) => (
               <tr key={row.encoder_key} className="border-b border-border last:border-0">
-                <td className="px-4 py-2 font-medium">{row.encoder_key}</td>
-                <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{row.checkpoint || "—"}</td>
+                <td className="px-4 py-2 font-medium">{friendlyEncoderName(row.encoder_key)}</td>
+                <td
+                  className="px-4 py-2 font-mono text-xs text-muted-foreground"
+                  title={row.checkpoint ?? undefined}
+                >
+                  {summarizeCheckpoint(row.checkpoint) || "—"}
+                </td>
                 <td className="px-4 py-2 text-right font-mono text-muted-foreground">{row.seeds.length}</td>
                 <td className="px-4 py-2 text-right font-mono">{formatNumberOrDash(row.macro_f1_mean)}</td>
                 <td className="px-4 py-2 text-right font-mono text-muted-foreground">
@@ -531,8 +574,13 @@ export default function ResearchPage() {
                 {data.encoder_bakeoff.source_files.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">
                     {data.encoder_bakeoff.source_files.map((f) => (
-                      <Badge key={f} variant="outline" className="font-mono text-[10px]">
-                        {f}
+                      <Badge
+                        key={f}
+                        variant="outline"
+                        className="font-mono text-[10px]"
+                        title={f}
+                      >
+                        {friendlyEncoderName(f)}
                       </Badge>
                     ))}
                   </div>
@@ -543,8 +591,13 @@ export default function ResearchPage() {
                 {data.cross_bank_transfer.source_files.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">
                     {data.cross_bank_transfer.source_files.map((f) => (
-                      <Badge key={f} variant="outline" className="font-mono text-[10px]">
-                        {f}
+                      <Badge
+                        key={f}
+                        variant="outline"
+                        className="font-mono text-[10px]"
+                        title={f}
+                      >
+                        {friendlyEncoderName(f)}
                       </Badge>
                     ))}
                   </div>

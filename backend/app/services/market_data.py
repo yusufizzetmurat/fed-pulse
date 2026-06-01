@@ -343,6 +343,61 @@ def fetch_realized_forward(
     return realized
 
 
+def fetch_event_study_window(
+    event_date: str,
+    symbol: str = "^GSPC",
+    steps: int = 10,
+    window_days: int = 30,
+) -> list[dict[str, float | str]]:
+    """Return the first ``steps`` trading bars strictly after ``event_date``.
+
+    Each bar carries ``date``, ``close`` and ``log_return`` (vs the prior
+    close on the same series). Window is anchored at ``event_date`` and
+    extended forward by ``window_days`` calendar days so weekends and
+    holidays still surface ten trading bars.
+    """
+
+    if steps < 1:
+        raise ValueError("steps must be >= 1")
+    if window_days < steps:
+        raise ValueError("window_days must be >= steps")
+
+    requested_date = _parse_iso_date(event_date)
+    start = requested_date
+    end = requested_date + timedelta(days=window_days + 1)
+
+    close_series = _download_close_series_in_window(symbol=symbol, start=start, end=end)
+    forward = close_series.loc[close_series.index.date > requested_date]
+    if forward.empty:
+        return []
+
+    bars: list[dict[str, float | str]] = []
+    prev_close: float | None = None
+    # Anchor the first log-return against the last close on or before the
+    # event date when present, otherwise leave it 0.0 (no prior reference).
+    pre = close_series.loc[close_series.index.date <= requested_date]
+    if not pre.empty:
+        prev_close = float(pre.iloc[-1])
+
+    import math
+
+    for idx, value in forward.head(steps).items():
+        close_value = float(value)
+        if prev_close is not None and prev_close > 0:
+            log_return = math.log(close_value / prev_close)
+        else:
+            log_return = 0.0
+        bars.append(
+            {
+                "date": idx.date().isoformat(),
+                "close": close_value,
+                "log_return": log_return,
+            }
+        )
+        prev_close = close_value
+    return bars
+
+
 def fetch_forward_trading_dates(
     target_date: str,
     symbol: str = "^GSPC",

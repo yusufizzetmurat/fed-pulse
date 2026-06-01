@@ -136,6 +136,81 @@ describe("SettingsPage — inference contract badges", () => {
     expect(legacy.className).not.toMatch(/hawkish/);
   });
 
+  it("groups checkpoints by service with an active-state dot per group", async () => {
+    fetchSettingsCheckpointsMock.mockResolvedValue({
+      models_dir: "/tmp/models",
+      checkpoints: [
+        {
+          filename: "forecaster_best.pt",
+          relative_path: "forecaster_best.pt",
+          role: "forecaster",
+          size_bytes: 1024,
+          modified_at: "2026-05-15T10:00:00Z",
+          is_active: true,
+          inference_contract_status: "present",
+          required_kwargs: [],
+          supplied_at_inference: {},
+        },
+        {
+          filename: "forecaster_lora.pt",
+          relative_path: "forecaster_lora.pt",
+          role: "lora_adapter",
+          size_bytes: 512,
+          modified_at: "2026-05-15T10:00:00Z",
+          is_active: true,
+        },
+        {
+          filename: "forecaster_calibration.json",
+          relative_path: "forecaster_calibration.json",
+          role: "calibration",
+          size_bytes: 128,
+          modified_at: "2026-05-15T10:00:00Z",
+          is_active: true,
+        },
+        {
+          filename: "text_multi_axis_hawk.pt",
+          relative_path: "text_multi_axis_hawk.pt",
+          role: "multi_axis",
+          size_bytes: 2048,
+          modified_at: "2026-05-15T10:00:00Z",
+          is_active: false,
+        },
+        {
+          filename: "text_multi_axis_growth.pt",
+          relative_path: "text_multi_axis_growth.pt",
+          role: "multi_axis",
+          size_bytes: 2048,
+          modified_at: "2026-05-15T10:00:00Z",
+          is_active: false,
+        },
+      ],
+    });
+
+    const { default: SettingsPage } = await import("@/pages/settings");
+    render(<SettingsPage />);
+    await waitFor(() =>
+      expect(screen.getByText("forecaster_best.pt")).toBeInTheDocument(),
+    );
+
+    const forecasterGroup = screen.getByTestId("service-group-forecaster");
+    expect(forecasterGroup).toBeInTheDocument();
+    expect(forecasterGroup.textContent).toContain("forecaster_best.pt");
+    expect(forecasterGroup.textContent).toContain("forecaster_lora.pt");
+    expect(forecasterGroup.textContent).toContain("forecaster_calibration.json");
+    expect(
+      screen.getByTestId("service-dot-forecaster-active"),
+    ).toBeInTheDocument();
+
+    const sentimentGroup = screen.getByTestId("service-group-sentiment");
+    expect(sentimentGroup).toBeInTheDocument();
+    expect(sentimentGroup.textContent).toContain("text_multi_axis_hawk.pt");
+    expect(sentimentGroup.textContent).toContain("text_multi_axis_growth.pt");
+    // No multi_axis file is active -> idle dot.
+    expect(
+      screen.getByTestId("service-dot-sentiment-idle"),
+    ).toBeInTheDocument();
+  });
+
   it("does not render any kwarg badge when no kwargs are required", async () => {
     fetchSettingsCheckpointsMock.mockResolvedValue({
       models_dir: "/tmp/models",

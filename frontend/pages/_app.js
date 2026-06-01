@@ -8,6 +8,7 @@ import { Toaster } from "sonner";
 
 import { KeyboardShortcuts } from "@/components/shell/keyboard-shortcuts";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { SymbolCalendarProvider } from "@/lib/analyze/shared-context";
 
 // axe-core/react runs only in the browser, only in development. The dynamic
 // import keeps it out of the production bundle entirely.
@@ -27,8 +28,10 @@ export default function App({ Component, pageProps }) {
         <meta name="theme-color" content="#0b1220" />
       </Head>
       <TooltipProvider delayDuration={120}>
-        <KeyboardShortcuts />
-        <Component {...pageProps} />
+        <SymbolCalendarProvider>
+          <KeyboardShortcuts />
+          <Component {...pageProps} />
+        </SymbolCalendarProvider>
       </TooltipProvider>
       <Toaster richColors position="top-right" />
     </ThemeProvider>

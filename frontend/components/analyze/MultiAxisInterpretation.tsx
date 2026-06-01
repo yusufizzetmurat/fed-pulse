@@ -128,14 +128,31 @@ export function MultiAxisInterpretation({
           Sentiment breakdown
         </Badge>
         {!multiAxis.factor ? (
-          <Badge variant="outline" className="text-[10px]" title="The factor card is hidden when the training data does not contain enough labelled examples to support a confident prediction.">
-            factor · hidden (low confidence)
+          <Badge
+            variant="outline"
+            className="text-[10px]"
+            title="The forward-guidance vs near-term shock split needs more labelled examples than the current training pool has, so this axis is hidden until coverage improves."
+          >
+            Forward-guidance factor — hidden (too few labels)
           </Badge>
         ) : null}
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         {multiAxis.stance ? <StanceTile stance={multiAxis.stance} history={stanceHistory} /> : null}
-        {multiAxis.factor ? <FactorTile factor={multiAxis.factor} history={factorHistory} /> : null}
+        {multiAxis.factor ? (
+          <FactorTile factor={multiAxis.factor} history={factorHistory} />
+        ) : (
+          <div className="rounded-md border border-dashed border-border bg-muted/10 p-3 text-xs text-muted-foreground">
+            <p className="mb-1 text-[10px] uppercase tracking-wide text-foreground">
+              Forward-guidance factor · hidden
+            </p>
+            <p>
+              The forward-guidance vs near-term shock split needs more labelled examples than
+              the current training pool carries, so this axis stays hidden until coverage
+              improves.
+            </p>
+          </div>
+        )}
         {multiAxis.certainty ? (
           <CertaintyTile certainty={multiAxis.certainty} history={certaintyHistory} />
         ) : null}

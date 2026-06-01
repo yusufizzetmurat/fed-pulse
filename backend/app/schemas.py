@@ -699,6 +699,24 @@ class HistoryRealizedBatchResponse(BaseModel):
     missing: list[str]
 
 
+class HistoryEventStudyResponse(BaseModel):
+    """Forward 10-trading-day price path anchored on the event date.
+
+    Backs the event-study chart on /history/[id]: the realised close path
+    plus the bucketed realised regime label so the headline can read
+    "predicted X, realized Y".
+    """
+
+    event_date: str
+    symbol: str
+    forward_dates: list[str]
+    forward_close: list[float]
+    forward_log_returns: list[float]
+    realized_vol_10d: float | None = None
+    predicted_regime: str | None = None
+    realized_regime: str | None = None
+
+
 class EvaluationCoverageResponse(BaseModel):
     """Empirical conformal coverage aggregated across recent history runs.
 
@@ -1363,3 +1381,118 @@ class BacktestResponse(BaseModel):
     alpha_cum_pct: float | None = None
     horizon_days: int
     symbol: str
+
+
+class RealizedVolHorizonForecast(BaseModel):
+    """Banded RV forecast for one horizon (1, 5, or 22 trading days).
+
+    ``point`` and the four ``band_*`` numbers are RV (variance) units, not
+    log-RV. ``qlike_model`` / ``qlike_har`` are the pooled walk-forward
+    QLIKE losses (lower is better); the card surfaces the gain as a
+    beat-HAR badge. ``coverage_empirical_90`` is the prospective empirical
+    coverage of the 90% conformal band, for the calibration chip.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    h: int
+    point: float
+    band_lo_80: float
+    band_hi_80: float
+    band_lo_90: float
+    band_hi_90: float
+    qlike_model: float | None = None
+    qlike_har: float | None = None
+    coverage_empirical_90: float | None = None
+
+
+class RealizedVolForecastResponse(BaseModel):
+    """Multi-horizon QLIKE-DLq forecast plus last-60d realized history."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbol: str
+    horizons: list[RealizedVolHorizonForecast]
+    history: list[float] = Field(default_factory=list)
+    history_dates: list[str] = Field(default_factory=list)
+    model_revision: str
+
+
+class HarTercileHorizon(BaseModel):
+    """HAR-tercile baseline classification for one forecast horizon.
+
+    ``predicted_rv`` is HAR's OLS point in realized-variance units.
+    ``tercile`` is the argmax bucket against the q33 / q67 cutoffs the
+    response also returns; ``tercile_probs`` is the Gaussian-CDF mass
+    triple in log-RV space (sums to 1.0). ``macro_f1`` is wired through
+    from wiki section 20 — the published HAR-tercile pooled macro-F1 on
+    the canonical 5-fold expanding walk-forward (0.687 / 0.685 / 0.654
+    at h=1 / 5 / 22). The serving path does not recompute this number;
+    it surfaces the offline-measured one so the frontend can render an
+    honest chip alongside the live point forecast.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    h: int
+    predicted_rv: float
+    tercile: Literal["low", "medium", "high"]
+    tercile_probs: dict[str, float] = Field(
+        default_factory=dict,
+        description="Per-class probability over (low, medium, high). Sums to 1.0.",
+    )
+    macro_f1: float = Field(
+        ...,
+        description=(
+            "Pooled macro-F1 for the HAR-tercile baseline at this horizon, "
+            "read off wiki section 20 (Gated_Fusion_InfoNCE_Comprehensive_Null, "
+            "Result 2). Not recomputed on the serving path."
+        ),
+    )
+    macro_f1_source: str = Field(
+        ...,
+        description="Citation for the macro_f1 number (wiki section + result block).",
+    )
+    qlike_model: float | None = Field(
+        default=None,
+        description=(
+            "Pooled walk-forward QLIKE loss for the QLIKE-DLq ensemble at "
+            "this horizon (lower is better). None when the eval sidecar is "
+            "missing."
+        ),
+    )
+    qlike_har: float | None = Field(
+        default=None,
+        description="Pooled walk-forward QLIKE loss for HAR-OLS at this horizon.",
+    )
+
+
+class HarTercileBaselineResponse(BaseModel):
+    """Multi-horizon HAR-tercile regime baseline for the headline regime card.
+
+    Per wiki section 20, HAR-tercile is the strongest forward-vol-regime
+    classifier on the canonical fold protocol (beats market-only and the
+    text+market fused arm at h=1 and h=22; null at h=5). The frontend
+    renders this response as the headline regime card and demotes the
+    text+market fused card to a "second opinion" with explicit
+    weaker-baseline disclosure.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbol: str
+    horizons: list[HarTercileHorizon]
+    cutoffs_q33: float = Field(
+        ...,
+        description=(
+            "Lower tercile cutoff on realized variance used to bucket the "
+            "HAR point forecast. Derived from the supplied RV history when "
+            "the artifact does not pin a per-horizon train-slice cutoff."
+        ),
+    )
+    cutoffs_q67: float = Field(
+        ...,
+        description="Upper tercile cutoff on realized variance.",
+    )
+    model_revision: str
+    generated_at: str

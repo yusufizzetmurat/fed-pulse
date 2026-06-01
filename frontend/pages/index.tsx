@@ -10,15 +10,17 @@ import { MarketReactionPanel } from "@/components/analyze/MarketReactionPanel";
 import { MultiAxisInterpretation } from "@/components/analyze/MultiAxisInterpretation";
 import { PipelineTrace } from "@/components/analyze/PipelineTrace";
 import { PolicyActionCard } from "@/components/analyze/PolicyActionCard";
-import { RegimeHeadline } from "@/components/analyze/RegimeHeadline";
+import { HarRegimeHeadline } from "@/components/analyze/HarRegimeHeadline";
 import {
   RegimeHistoryStrip,
   type RegimeHistoryEntry,
 } from "@/components/analyze/RegimeHistoryStrip";
+import { SecondOpinionRegime } from "@/components/analyze/SecondOpinionRegime";
 import { HistoricalContextBadge } from "@/components/analyze/HistoricalContextBadge";
 import { SentenceStrikeXaiPanel } from "@/components/analyze/SentenceStrikeXaiPanel";
 import { StatementDeltaCard } from "@/components/analyze/StatementDeltaCard";
 import { TldrCard } from "@/components/analyze/TldrCard";
+import { VolatilityOutlookCard } from "@/components/analyze/VolatilityOutlookCard";
 import { WorkspaceMetaStrip } from "@/components/analyze/WorkspaceMetaStrip";
 import { TrajectoryPanel } from "@/components/analyze/TrajectoryPanel";
 import { WatchlistChips } from "@/components/analyze/WatchlistChips";
@@ -28,17 +30,21 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  fetchHistory,
-  fetchHistoryRun,
+  fetchHistoryRealizedBatch,
+  fetchRealizedVolForecast,
   postAnalyze,
   postAnalyzeAnalogs,
   postAnalyzeMarket,
-  resolveApiBaseUrl,
 } from "@/lib/analyze/api";
 import { DEFAULT_TEXT } from "@/lib/analyze/constants";
 import { errorMessage } from "@/lib/analyze/errors";
 import { toStance } from "@/lib/analyze/format";
-import { useEvaluationCoverage } from "@/lib/analyze/useEvaluationCoverage";
+import {
+  useHarBaselines,
+  useSharedContext,
+  useSharedCoverage,
+  useSharedRecentHistory,
+} from "@/lib/analyze/shared-context";
 import type {
   AnalogsResponse,
   AnalyzeRequest,
@@ -46,6 +52,7 @@ import type {
   HistoryEntry,
   Horizon,
   MarketReactionPanelResponse,
+  RealizedVolForecastResponse,
 } from "@/lib/analyze/types";
 import {
   DEFAULT_HORIZON,
@@ -79,9 +86,11 @@ function SectionDivider({ label }: { label: string }) {
   );
 }
 
-function takeArgmaxRegime(entry: HistoryEntry, detailPayload: AnalyzeResult | null): string | null {
-  const regime = detailPayload?.regime_classification;
-  if (regime?.argmax_class) return regime.argmax_class;
+function takeArgmaxRegime(entry: HistoryEntry): string | null {
+  // ``argmax_regime`` is denormalised onto every persisted history row,
+  // so the list endpoint already carries enough signal to render the
+  // strip without fanning out a /history/{id} fetch per item.
+  if (entry.argmax_regime) return entry.argmax_regime;
   // Older history rows may not carry the regime field; surface stance as the
   // last-resort tag so the strip is not blank on legacy data. Normalise
   // through toStance() first so uppercase / LABEL_n rows resolve too.
@@ -109,9 +118,14 @@ export default function WorkspacePage() {
   const [struck, setStruck] = React.useState<Set<number>>(() => new Set());
   const [counterfactualLoading, setCounterfactualLoading] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
-  const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
+  const { apiBaseUrl } = useSharedContext();
   const [historyEntries, setHistoryEntries] = React.useState<RegimeHistoryEntry[]>([]);
-  const coverage = useEvaluationCoverage(apiBaseUrl, { symbol: request.symbol });
+  const [volForecast, setVolForecast] = React.useState<RealizedVolForecastResponse | null>(null);
+  const [volForecastLoading, setVolForecastLoading] = React.useState(false);
+  const [volForecastError, setVolForecastError] = React.useState<string | null>(null);
+  const coverage = useSharedCoverage(request.symbol);
+  const recentHistory = useSharedRecentHistory(request.symbol, 12);
+  const harBaselines = useHarBaselines(request.symbol);
 
   // Apply saved workspace prefs (default symbol / horizon) after mount.
   // Doing this in an effect rather than the initial state preserves the
@@ -185,46 +199,84 @@ export default function WorkspacePage() {
     };
   }, [router.isReady, router.query.date, router.query.symbol, router.query.horizon, router.query.kind, apiBaseUrl]);
 
-  // Small slice of past runs for the realized-vs-predicted strip. Detail
-  // is fetched lazily for each surfaced row so the strip can read the
-  // regime argmax off the persisted payload. An AbortController scoped to
-  // the effect cancels every in-flight request on symbol change or unmount,
-  // so rapid asset switches don't leave a dozen XHRs racing each other.
+  // Small slice of past runs for the realized-vs-predicted strip. The
+  // list endpoint already carries ``argmax_regime`` per row so the
+  // strip renders without a per-row /history/{id} detail fetch.
+  // Realised regimes load via the batched /history-realized endpoint
+  // (one round trip, not 12). The list itself is hoisted into
+  // SharedContext so the workspace and any other consumer share a
+  // single fetch.
   React.useEffect(() => {
+    const items = recentHistory.data?.items ?? null;
+    if (!items) {
+      if (historyEntries.length > 0) setHistoryEntries([]);
+      return;
+    }
+    const slice = items.slice(0, 12);
+    const base: RegimeHistoryEntry[] = slice.map((entry) => ({
+      runId: entry.id,
+      documentDate: entry.document_date,
+      argmax: takeArgmaxRegime(entry),
+      realized: null,
+    }));
+    // Newest first → reverse so the strip reads left-to-right chronologically.
+    setHistoryEntries(base.slice().reverse());
+
+    if (slice.length === 0) return;
     const controller = new AbortController();
-    const { signal } = controller;
     (async () => {
       try {
-        const list = await fetchHistory(
+        const batch = await fetchHistoryRealizedBatch(
           apiBaseUrl,
-          { symbol: request.symbol, limit: 12 },
-          signal,
+          slice.map((entry) => entry.id),
+          controller.signal,
         );
-        if (signal.aborted) return;
-        const items = list.items.slice(0, 12);
-        const entries: RegimeHistoryEntry[] = await Promise.all(
-          items.map(async (entry) => {
-            let payload: AnalyzeResult | null = null;
-            try {
-              const detail = await fetchHistoryRun(apiBaseUrl, entry.id, signal);
-              payload = (detail.payload || null) as AnalyzeResult | null;
-            } catch {
-              // Detail fetch is best-effort; the strip still renders the stance fallback.
-            }
-            return {
-              runId: entry.id,
-              documentDate: entry.document_date,
-              argmax: takeArgmaxRegime(entry, payload),
-              realized: null,
-            };
-          }),
+        if (controller.signal.aborted) return;
+        setHistoryEntries(
+          base
+            .map((entry) => {
+              const realized = batch.items[entry.runId]?.realized_regime ?? null;
+              return { ...entry, realized };
+            })
+            .reverse(),
         );
-        if (!signal.aborted) {
-          // Newest first → reverse so the strip reads left-to-right chronologically.
-          setHistoryEntries(entries.reverse());
-        }
       } catch {
-        // History pull is best-effort; aborted requests land here too.
+        // History pull is best-effort; the strip still renders without realised.
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiBaseUrl, recentHistory.data]);
+
+  // The volatility outlook card is market-only and refreshes per symbol;
+  // it does not wait for /analyze. A 503 from the backend (model artifact
+  // missing on a fresh checkout) is surfaced as an inline error message
+  // rather than blanking the card.
+  React.useEffect(() => {
+    const controller = new AbortController();
+    setVolForecastLoading(true);
+    setVolForecastError(null);
+    (async () => {
+      try {
+        const data = await fetchRealizedVolForecast(
+          apiBaseUrl,
+          request.symbol,
+          controller.signal,
+        );
+        if (!controller.signal.aborted) {
+          setVolForecast(data);
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          setVolForecast(null);
+          setVolForecastError(errorMessage(err, "Forecast unavailable."));
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setVolForecastLoading(false);
+        }
       }
     })();
     return () => {
@@ -389,6 +441,22 @@ export default function WorkspacePage() {
     [historyEntries],
   );
 
+  // Approximate market-only top-pick probability via the most recent
+  // history row for the same symbol that ran with no pasted text. The
+  // RegimeHeadline uses this to render a "text contribution ±X.Xpp"
+  // chip so the user can see at-a-glance how much the text channel
+  // shifted the prediction relative to a market-only baseline.
+  const marketOnlyArgmaxProb = React.useMemo<number | null>(() => {
+    const items = recentHistory.data?.items ?? [];
+    for (const entry of items) {
+      const excerpt = (entry.text_excerpt ?? "").trim();
+      if (excerpt.length > 0) continue;
+      if (entry.argmax_probability == null) continue;
+      return entry.argmax_probability;
+    }
+    return null;
+  }, [recentHistory.data]);
+
   return (
     <>
       <Head>
@@ -429,11 +497,28 @@ export default function WorkspacePage() {
             onChange={setRequest}
             onSubmit={handleSubmit}
             loading={loading}
+            onSampleLoad={(next) => {
+              // Wipe stale analysis state before swapping in the sample's
+              // request so the cards below the form do not keep rendering
+              // the previous run's regime / market / analogs / multi-axis
+              // output attributed to the new sample's date and symbol.
+              setResult(null);
+              setBaselineResult(null);
+              setMarketPanel(null);
+              setAnalogsPanel(null);
+              setRequest(next);
+            }}
           />
 
           <WatchlistChips
             currentSymbol={request.symbol}
             onSelect={(symbol) => setRequest((prev) => ({ ...prev, symbol }))}
+          />
+
+          <VolatilityOutlookCard
+            forecast={volForecast}
+            loading={volForecastLoading}
+            error={volForecastError}
           />
 
           {loading && !result ? (
@@ -447,6 +532,14 @@ export default function WorkspacePage() {
             </div>
           ) : null}
 
+          <SectionDivider label="Model prediction" />
+          <HarRegimeHeadline
+            baselines={harBaselines.data}
+            loading={harBaselines.loading}
+            error={harBaselines.error}
+            symbol={request.symbol}
+          />
+
           {result ? (
             <>
               <SectionDivider label="Statement analysis" />
@@ -454,9 +547,8 @@ export default function WorkspacePage() {
               <StatementDeltaCard result={result} />
               <WorkspaceMetaStrip result={result} />
 
-              <SectionDivider label="Model prediction" />
               {result.regime_classification ? (
-                <RegimeHeadline
+                <SecondOpinionRegime
                   regime={result.regime_classification}
                   sentiment={result.sentiment}
                   symbol={request.symbol}
@@ -464,6 +556,8 @@ export default function WorkspacePage() {
                   history={regimeHistorySpark}
                   empiricalCoverage={coverage.data?.empirical ?? null}
                   empiricalCoverageSampleSize={coverage.data?.sample_size ?? null}
+                  marketOnlyArgmaxProb={marketOnlyArgmaxProb}
+                  harBaselines={harBaselines.data}
                 />
               ) : result.prediction?.close != null ? (
                 <LegacyForecastCard

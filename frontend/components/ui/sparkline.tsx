@@ -62,7 +62,7 @@ export function Sparkline({
     return (
       <div
         className={cn("flex items-center text-[10px] text-muted-foreground", className)}
-        style={{ height }}
+        style={{ height, minHeight: height }}
       >
         no data
       </div>
@@ -72,7 +72,13 @@ export function Sparkline({
   const gradientId = React.useId();
 
   return (
-    <div className={cn("w-full", className)} style={{ height }}>
+    // ``minHeight`` keeps the ResponsiveContainer from rendering at 0px
+    // on first paint, which is what triggers the Recharts width=-1 /
+    // height=-1 warnings when the parent has not yet been measured.
+    <div
+      className={cn("w-full", className)}
+      style={{ height, minHeight: height }}
+    >
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
           <defs>

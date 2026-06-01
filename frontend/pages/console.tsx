@@ -18,6 +18,7 @@ import {
   resolveApiBaseUrl,
 } from "@/lib/analyze/api";
 import { errorMessage } from "@/lib/analyze/errors";
+import { SAMPLE_STATEMENTS } from "@/lib/analyze/sample-statements";
 import type {
   AnalogsResponse,
   AnalyzeResult,
@@ -27,8 +28,8 @@ import type {
 } from "@/lib/analyze/types";
 import { cn } from "@/lib/utils";
 
-const SAMPLE_TEXT =
-  "Recent indicators suggest that economic activity has been expanding at a solid pace. Job gains have remained strong, and the unemployment rate has stayed low. Inflation has eased over the past year but remains somewhat elevated. The Committee remains highly attentive to inflation risks.";
+const SAMPLE_TEXT = SAMPLE_STATEMENTS[0].text;
+const MAX_TEXT_CHARS = 12000;
 
 type Surface = "dual" | "cls";
 
@@ -46,7 +47,7 @@ function formatPct(value: number | null | undefined): string {
 
 function deltaTone(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return "text-muted-foreground";
-  return value >= 0 ? "text-emerald-500" : "text-destructive";
+  return value >= 0 ? "text-emerald-700" : "text-red-700";
 }
 
 export default function ConsolePage(): JSX.Element {
@@ -117,7 +118,7 @@ export default function ConsolePage(): JSX.Element {
         <title>FOMC Signal Terminal · fed-pulse</title>
       </Head>
       <Header />
-      <main className="container py-6 space-y-4">
+      <main id="main-content" className="container py-6 space-y-4">
         <div className="flex items-center gap-3">
           <TerminalIcon className="h-5 w-5" />
           <h1 className="text-2xl font-semibold">FOMC Signal Terminal</h1>
@@ -140,11 +141,37 @@ export default function ConsolePage(): JSX.Element {
           <CardContent className="space-y-3">
             <textarea
               value={text}
-              onChange={(event) => setText(event.target.value)}
+              onChange={(event) => setText(event.target.value.slice(0, MAX_TEXT_CHARS))}
+              maxLength={MAX_TEXT_CHARS}
               className="w-full h-32 rounded border border-border bg-background p-3 text-sm font-mono"
               placeholder="Paste FOMC statement text…"
+              aria-label="FOMC statement text"
             />
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <label htmlFor="console-sample">Load sample</label>
+              <span>
+                {text.length.toLocaleString()} / {MAX_TEXT_CHARS.toLocaleString()} chars
+              </span>
+            </div>
             <div className="flex flex-wrap items-center gap-3">
+              <select
+                id="console-sample"
+                value=""
+                onChange={(event) => {
+                  const sample = SAMPLE_STATEMENTS.find((entry) => entry.id === event.target.value);
+                  if (!sample) return;
+                  setText(sample.text.slice(0, MAX_TEXT_CHARS));
+                  setAnalysisDate(sample.date);
+                }}
+                className="rounded border border-border bg-background px-2 py-1 text-sm"
+              >
+                <option value="">Load sample statement…</option>
+                {SAMPLE_STATEMENTS.map((sample) => (
+                  <option key={sample.id} value={sample.id}>
+                    {sample.label}
+                  </option>
+                ))}
+              </select>
               <label className="text-xs text-muted-foreground" htmlFor="console-date">
                 Analysis date
               </label>
@@ -159,7 +186,7 @@ export default function ConsolePage(): JSX.Element {
                 {running ? "Running…" : "Run analysis"}
               </Button>
               {error && (
-                <span className="text-xs text-destructive" role="alert">
+                <span className="text-xs text-red-700" role="alert">
                   {error}
                 </span>
               )}
@@ -209,9 +236,10 @@ function ActiveCheckpointBar({
         <CardTitle className="flex items-center justify-between gap-3">
           <span>Active checkpoint</span>
           <div className="flex items-center gap-3 text-xs font-normal text-muted-foreground">
-            <label className="flex items-center gap-1">
+            <label htmlFor="surface-picker" className="flex items-center gap-1">
               surface
               <select
+                id="surface-picker"
                 value={surface}
                 onChange={(event) => onSurfaceChange(event.target.value as Surface)}
                 className="rounded border border-border bg-background px-2 py-1"
@@ -443,7 +471,7 @@ function BacktestPanel({ baseUrl }: { baseUrl: string }): JSX.Element {
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
         {error && (
-          <span className="text-xs text-destructive" role="alert">
+          <span className="text-xs text-red-700" role="alert">
             {error}
           </span>
         )}
