@@ -326,3 +326,98 @@ def test_probability_math_directly_matches_normal_cdf() -> None:
 def test_zero_sigma_is_rejected() -> None:
     with pytest.raises(ValueError):
         futures_consensus._hike_cut_pause_probabilities(0.0, sigma_bps=0.0)
+
+
+def test_endpoint_returns_payload_when_consensus_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``GET /fomc/futures-consensus`` mirrors the service response."""
+
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    import app.main as main_mod
+    from app.schemas import FuturesConsensusHorizon, FuturesConsensusResponse
+    from app.services import futures_consensus as service_mod
+
+    canned = FuturesConsensusResponse(
+        meeting_date="2026-04-28",
+        generated_at="2026-04-01T00:00:00Z",
+        current_target_lo_bps=525.0,
+        current_target_hi_bps=550.0,
+        horizons=[
+            FuturesConsensusHorizon(
+                horizon_label="1m",
+                implied_rate_bps=533.0,
+                change_vs_current_bps=-4.5,
+                probability_hike=0.1,
+                probability_cut=0.2,
+                probability_pause=0.7,
+            ),
+        ],
+        methodology="Treasury constant-maturity proxy (not OIS-clean).",
+        data_source="FRED",
+    )
+    monkeypatch.setattr(
+        service_mod,
+        "get_consensus",
+        lambda *_a, **_kw: canned,
+    )
+
+    client = TestClient(main_mod.app)
+    response = client.get("/fomc/futures-consensus")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["meeting_date"] == "2026-04-28"
+    assert body["data_source"] == "FRED"
+    assert body["current_target_lo_bps"] == pytest.approx(525.0)
+    assert body["current_target_hi_bps"] == pytest.approx(550.0)
+    assert len(body["horizons"]) == 1
+    assert body["horizons"][0]["horizon_label"] == "1m"
+    assert body["horizons"][0]["implied_rate_bps"] == pytest.approx(533.0)
+
+
+def test_endpoint_returns_503_when_consensus_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 503 detail keeps the structured ``{error, message}`` shape.
+
+    The frontend's ``fetchFuturesConsensus()`` relies on this exact
+    contract to translate upstream-degraded responses to ``null``
+    without surfacing a generic error toast.
+    """
+
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    import app.main as main_mod
+    from app.services import futures_consensus as service_mod
+
+    def _raise(*_a: object, **_kw: object) -> None:
+        raise service_mod.FuturesConsensusUnavailable("FRED upstream 503 in test")
+
+    monkeypatch.setattr(service_mod, "get_consensus", _raise)
+
+    client = TestClient(main_mod.app)
+    response = client.get("/fomc/futures-consensus")
+
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["error"] == "futures_consensus_unavailable"
+    assert "FRED upstream 503 in test" in detail["message"]
+
+
+def test_endpoint_rejects_invalid_as_of_with_422() -> None:
+    """A malformed ``as_of`` returns 422 before the service runs."""
+
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    import app.main as main_mod
+
+    client = TestClient(main_mod.app)
+    response = client.get("/fomc/futures-consensus", params={"as_of": "not-a-date"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "as_of must be YYYY-MM-DD"
