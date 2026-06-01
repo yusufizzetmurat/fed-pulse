@@ -108,3 +108,23 @@ def get_calendar(
 
 def list_all_meetings() -> tuple[FomcMeeting, ...]:
     return _SCHEDULE
+
+
+def list_past_meetings(
+    *,
+    as_of: date | None = None,
+    limit: int = 10,
+) -> list[FomcMeeting]:
+    """Return the most recent ``limit`` FOMC meetings whose date < ``as_of``.
+
+    Ordered most-recent first so callers walking the historical series
+    naturally see the freshest meeting at index 0. ``limit`` is clamped
+    to non-negative; a zero limit returns an empty list.
+    """
+
+    if limit <= 0:
+        return []
+    reference = as_of or date.today()
+    past = [m for m in _SCHEDULE if m.meeting_date < reference]
+    past.sort(key=lambda m: m.meeting_date, reverse=True)
+    return past[:limit]
