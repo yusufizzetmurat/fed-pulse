@@ -419,10 +419,12 @@ def build_har_tercile_backtest(
             # the panel's denominator stays honest.
             continue
         pred_q33, pred_q67 = _extract_persisted_cutoffs(payload)
+        event_date_str = str(row.document_date)
+        symbol_str = str(row.symbol)
         realized_label, realized_rv = _resolve_realized_tercile(
             payload=payload,
-            event_date=row.document_date,
-            symbol=row.symbol,
+            event_date=event_date_str,
+            symbol=symbol_str,
             pred_q33=pred_q33,
             pred_q67=pred_q67,
         )
@@ -431,7 +433,7 @@ def build_har_tercile_backtest(
             correct = realized_label == predicted_label
         out_rows.append(
             {
-                "event_date": row.document_date,
+                "event_date": event_date_str,
                 "predicted_tercile": predicted_label,
                 "predicted_prob": float(predicted_prob) if predicted_prob is not None else 0.0,
                 "realized_tercile": realized_label,

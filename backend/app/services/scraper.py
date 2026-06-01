@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Literal
 from urllib.parse import urljoin
 
 import requests
@@ -298,7 +298,9 @@ def _scrape_documents_for_type(
     records: list[FomcDocument] = []
     scraped_at = datetime.now(timezone.utc).isoformat()
 
-    hygiene_kind = "minutes" if document_type.lower().startswith("minutes") else "statement"
+    hygiene_kind: Literal["statement", "minutes", "press_conference"] = (
+        "minutes" if document_type.lower().startswith("minutes") else "statement"
+    )
 
     for document_url, fallback_title, source_page in document_links:
         soup = _fetch_soup(document_url)

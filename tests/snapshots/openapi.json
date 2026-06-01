@@ -1270,6 +1270,11 @@
             "title": "Meeting Type",
             "type": "string"
           },
+          "minutes_available": {
+            "default": false,
+            "title": "Minutes Available",
+            "type": "boolean"
+          },
           "minutes_release_date": {
             "anyOf": [
               {
@@ -1291,6 +1296,16 @@
               }
             ],
             "title": "Notes"
+          },
+          "press_conference_available": {
+            "default": false,
+            "title": "Press Conference Available",
+            "type": "boolean"
+          },
+          "statement_available": {
+            "default": false,
+            "title": "Statement Available",
+            "type": "boolean"
           },
           "statement_release_date": {
             "anyOf": [
