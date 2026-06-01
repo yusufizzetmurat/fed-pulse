@@ -143,3 +143,31 @@ def test_aggregate_label_averages_scores_across_chunks():
 def test_aggregate_label_handles_empty_input():
     result = aggregate_label([])
     assert result == {"label": "UNKNOWN", "score": 0.0, "raw": []}
+
+
+def test_assert_primary_model_loaded_raises_on_fallback(monkeypatch):
+    # The silent-fallback guard: if the active model is the fallback (e.g. the
+    # primary HF repo 404'd -> distilbert), embedding builds must fail loudly.
+    import app.services.text_encoder as te
+
+    monkeypatch.setattr(te, "get_classifier", lambda: None)
+    monkeypatch.setattr(te, "MODEL_ID", "primary/stance-model")
+    monkeypatch.setattr(te, "_loaded_model_id", te.FALLBACK_MODEL_ID)
+    with pytest.raises(RuntimeError, match="refusing to build embeddings"):
+        te.assert_primary_model_loaded()
+
+
+def test_assert_primary_model_loaded_passes_when_primary(monkeypatch):
+    import app.services.text_encoder as te
+
+    monkeypatch.setattr(te, "get_classifier", lambda: None)
+    monkeypatch.setattr(te, "MODEL_ID", "primary/stance-model")
+    monkeypatch.setattr(te, "_loaded_model_id", "primary/stance-model")
+    te.assert_primary_model_loaded()  # must not raise
+
+
+def test_get_loaded_model_id_accessor(monkeypatch):
+    import app.services.text_encoder as te
+
+    monkeypatch.setattr(te, "_loaded_model_id", "some/model")
+    assert te.get_loaded_model_id() == "some/model"

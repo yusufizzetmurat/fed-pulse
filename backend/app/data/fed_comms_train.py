@@ -47,8 +47,10 @@ def build_corpus_embeddings(
     out_path = Path(out_path)
     if out_path.exists() and not force:
         return out_path
-    from app.services.text_encoder import encode_chunks
+    from app.services.text_encoder import assert_primary_model_loaded, encode_chunks
 
+    # Fail loudly rather than silently caching embeddings from a fallback model.
+    assert_primary_model_loaded()
     corpus = pd.read_parquet(corpus_path)
     embs: list[tuple[str, np.ndarray | None]] = []
     for _, doc in corpus.iterrows():
