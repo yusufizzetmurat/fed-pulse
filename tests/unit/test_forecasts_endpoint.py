@@ -25,6 +25,9 @@ def client() -> TestClient:
 
 def test_next_fomc_endpoint_empty_state(client, monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    # Disable the HF cold-start hydration so this exercises the genuine
+    # no-artifact empty state rather than pulling the published fallback.
+    monkeypatch.setattr(decision_forecast, "_NEXT_FOMC_HF_REPO", "")
     response = client.get("/forecasts/next-fomc")
     assert response.status_code == 200
     body = response.json()
