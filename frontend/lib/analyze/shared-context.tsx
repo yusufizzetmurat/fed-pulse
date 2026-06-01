@@ -240,7 +240,43 @@ export function useSharedContext(): SharedContextValue {
 }
 
 export function useSharedSymbols(): SymbolsState {
-  return useSharedContext().symbols;
+  const ctx = React.useContext(SharedContext);
+  // Provider presence is fixed per mount, so the hooks below run in a
+  // stable order. Production paths always have the provider and the
+  // fetch effect is a no-op; tests render standalone and use this
+  // fallback to avoid wrapping every test in SymbolCalendarProvider.
+  const apiBaseUrl = React.useMemo(
+    () => (ctx ? ctx.apiBaseUrl : resolveApiBaseUrl()),
+    [ctx],
+  );
+  const [fallback, setFallback] = React.useState<SymbolsState>({
+    symbols: STATIC_SYMBOL_FALLBACK,
+    loading: true,
+    error: null,
+  });
+  React.useEffect(() => {
+    if (ctx) return;
+    const controller = new AbortController();
+    fetchSymbols(apiBaseUrl, controller.signal)
+      .then((response: SymbolListResponse) => {
+        if (controller.signal.aborted) return;
+        const list =
+          response.symbols.length > 0 ? response.symbols : STATIC_SYMBOL_FALLBACK;
+        setFallback({ symbols: list, loading: false, error: null });
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setFallback({
+          symbols: STATIC_SYMBOL_FALLBACK,
+          loading: false,
+          error: (err as Error).message || "Failed to load symbols.",
+        });
+      });
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl, ctx]);
+  return ctx ? ctx.symbols : fallback;
 }
 
 export function useSharedCalendar(): CalendarState {
