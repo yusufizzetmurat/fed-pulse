@@ -133,7 +133,7 @@ export function MultiAxisInterpretation({
             className="text-[10px]"
             title="The forward-guidance vs near-term shock split needs more labelled examples than the current training pool has, so this axis is hidden until coverage improves."
           >
-            Forward-guidance factor (hidden · too few labels)
+            Forward-guidance factor — hidden (too few labels)
           </Badge>
         ) : null}
       </div>

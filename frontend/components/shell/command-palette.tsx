@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { fetchFomcCalendar, fetchHistory, resolveApiBaseUrl } from "@/lib/analyze/api";
-import { useSymbols } from "@/lib/analyze/useSymbols";
+import { useSharedSymbols } from "@/lib/analyze/shared-context";
 import { cn } from "@/lib/utils";
 import type { HistoryEntry } from "@/lib/analyze/types";
 
@@ -71,7 +71,7 @@ function toggleTheme() {
 export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const router = useRouter();
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
-  const { symbols } = useSymbols();
+  const { symbols } = useSharedSymbols();
   const [query, setQuery] = React.useState("");
   const [activeIndex, setActiveIndex] = React.useState(0);
   const [meetings, setMeetings] = React.useState<Array<{ date: string; daysUntil: number | null }>>([]);

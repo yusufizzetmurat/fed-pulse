@@ -494,6 +494,17 @@ export default function WorkspacePage() {
             onChange={setRequest}
             onSubmit={handleSubmit}
             loading={loading}
+            onSampleLoad={(next) => {
+              // Wipe stale analysis state before swapping in the sample's
+              // request so the cards below the form do not keep rendering
+              // the previous run's regime / market / analogs / multi-axis
+              // output attributed to the new sample's date and symbol.
+              setResult(null);
+              setBaselineResult(null);
+              setMarketPanel(null);
+              setAnalogsPanel(null);
+              setRequest(next);
+            }}
           />
 
           <WatchlistChips

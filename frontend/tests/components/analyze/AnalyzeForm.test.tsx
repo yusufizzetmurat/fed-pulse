@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { render as rtlRender, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { AnalyzeForm } from "@/components/analyze/AnalyzeForm";
+import { AnalyzeForm, applySampleStatement } from "@/components/analyze/AnalyzeForm";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { SAMPLE_STATEMENTS } from "@/lib/analyze/sample-statements";
 import type { AnalyzeRequest } from "@/lib/analyze/types";
 
 // AnalyzeForm uses Tooltip primitives for the picker-scope info icons
@@ -103,5 +104,43 @@ describe("AnalyzeForm", () => {
     );
     const matches = await screen.findAllByText(/autoregressive prediction block/i);
     expect(matches.length).toBeGreaterThan(0);
+  });
+
+  it("sample loader prefills text, date, and symbol on selection (#B10)", () => {
+    const initial: AnalyzeRequest = {
+      ...baseRequest(),
+      text: "",
+      date: "2020-01-01",
+      symbol: "AAPL",
+    };
+    const sample = SAMPLE_STATEMENTS[0];
+    const next = applySampleStatement(initial, sample.id);
+    expect(next.text).toBe(sample.text);
+    expect(next.date).toBe(sample.date);
+    expect(next.symbol).toBe(sample.symbol);
+    // Untouched fields carry over from the prior request.
+    expect(next.horizon).toBe(initial.horizon);
+  });
+
+  it("sample loader leaves the request alone for an unknown id (#B10)", () => {
+    const initial = baseRequest();
+    expect(applySampleStatement(initial, "nope")).toEqual(initial);
+  });
+
+  it("every sample carries an event date and a symbol (#B10)", () => {
+    for (const sample of SAMPLE_STATEMENTS) {
+      expect(sample.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(sample.symbol).toBeTruthy();
+      expect(sample.text.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("sample loader trigger is present in the form (#B10)", () => {
+    render(
+      <AnalyzeForm value={baseRequest()} onChange={vi.fn()} onSubmit={vi.fn()} loading={false} />
+    );
+    expect(
+      screen.getByLabelText("Load a sample FOMC statement"),
+    ).toBeInTheDocument();
   });
 });

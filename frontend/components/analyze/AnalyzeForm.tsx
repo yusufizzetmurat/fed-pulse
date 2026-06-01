@@ -27,9 +27,30 @@ interface AnalyzeFormProps {
   onChange: (next: AnalyzeRequest) => void;
   onSubmit: () => void;
   loading: boolean;
+  // Fires when the user picks an entry from the sample-loader dropdown.
+  // The parent uses this hook to clear stale analysis cards before the
+  // new sample's request takes effect; falls back to onChange when the
+  // host page does not need that behaviour.
+  onSampleLoad?: (next: AnalyzeRequest) => void;
 }
 
-export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormProps) {
+// Exported so the picker behavior is unit-testable independent of the
+// Radix Select primitive (which is awkward to drive in jsdom).
+export function applySampleStatement(
+  base: AnalyzeRequest,
+  sampleId: string,
+): AnalyzeRequest {
+  const sample = SAMPLE_STATEMENTS.find((entry) => entry.id === sampleId);
+  if (!sample) return base;
+  return {
+    ...base,
+    text: sample.text,
+    date: sample.date,
+    symbol: sample.symbol ?? "^GSPC",
+  };
+}
+
+export function AnalyzeForm({ value, onChange, onSubmit, loading, onSampleLoad }: AnalyzeFormProps) {
   const submitLabel = loading ? "Running analysis…" : "Analyze";
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -145,9 +166,8 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
             <Select
               value=""
               onValueChange={(id) => {
-                const sample = SAMPLE_STATEMENTS.find((entry) => entry.id === id);
-                if (!sample) return;
-                onChange({ ...value, text: sample.text, date: sample.date });
+                const next = applySampleStatement(value, id);
+                (onSampleLoad ?? onChange)(next);
               }}
             >
               <SelectTrigger
