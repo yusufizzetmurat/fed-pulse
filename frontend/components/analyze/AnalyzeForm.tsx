@@ -29,6 +29,22 @@ interface AnalyzeFormProps {
   loading: boolean;
 }
 
+// Exported so the picker behavior is unit-testable independent of the
+// Radix Select primitive (which is awkward to drive in jsdom).
+export function applySampleStatement(
+  base: AnalyzeRequest,
+  sampleId: string,
+): AnalyzeRequest {
+  const sample = SAMPLE_STATEMENTS.find((entry) => entry.id === sampleId);
+  if (!sample) return base;
+  return {
+    ...base,
+    text: sample.text,
+    date: sample.date,
+    symbol: sample.symbol ?? "^GSPC",
+  };
+}
+
 export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormProps) {
   const submitLabel = loading ? "Running analysis…" : "Analyze";
 
@@ -144,11 +160,7 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
             </Button>
             <Select
               value=""
-              onValueChange={(id) => {
-                const sample = SAMPLE_STATEMENTS.find((entry) => entry.id === id);
-                if (!sample) return;
-                onChange({ ...value, text: sample.text, date: sample.date });
-              }}
+              onValueChange={(id) => onChange(applySampleStatement(value, id))}
             >
               <SelectTrigger
                 className="h-9 min-h-[44px] w-full sm:min-h-9 sm:w-[16rem]"
