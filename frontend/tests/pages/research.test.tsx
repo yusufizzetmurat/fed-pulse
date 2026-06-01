@@ -1,5 +1,16 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+
+async function openBakeoffTab() {
+  // The default tab is "What it predicts"; the bake-off table renders
+  // under the "Bake-off" tab via radix Tabs (only the active tab's
+  // content is mounted), so click in before asserting on bake-off DOM.
+  // userEvent dispatches pointer events the way radix-ui expects.
+  const user = userEvent.setup();
+  const trigger = await screen.findByRole("tab", { name: /bake-off/i });
+  await user.click(trigger);
+}
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
@@ -109,6 +120,7 @@ describe("ResearchPage", () => {
     fetchResearchArtifactsMock.mockResolvedValue(EMPTY_RESPONSE);
     const { default: ResearchPage } = await import("@/pages/research");
     render(<ResearchPage />);
+    await openBakeoffTab();
     await waitFor(() =>
       expect(screen.getByText(/No bake-off artefacts/i)).toBeInTheDocument()
     );
@@ -118,6 +130,7 @@ describe("ResearchPage", () => {
     fetchResearchArtifactsMock.mockResolvedValue(POPULATED_RESPONSE);
     const { default: ResearchPage } = await import("@/pages/research");
     render(<ResearchPage />);
+    await openBakeoffTab();
     // Two cells per encoder (encoder column + checkpoint column).
     await waitFor(() =>
       expect(screen.getAllByText(/bert-base-uncased/i).length).toBeGreaterThanOrEqual(2)
@@ -141,6 +154,7 @@ describe("ResearchPage", () => {
     fetchResearchArtifactsMock.mockResolvedValue(response);
     const { default: ResearchPage } = await import("@/pages/research");
     render(<ResearchPage />);
+    await openBakeoffTab();
     const badge = await screen.findByTitle(rawPath);
     expect(badge.textContent).toBe("FinBERT (Fed-adjacent)");
     expect(badge.textContent).not.toContain("/");
