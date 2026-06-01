@@ -122,13 +122,15 @@ def _normalized_title(title: str, document_type: str, document_url: str, date_va
 
 
 def _calendar_pages() -> list[str]:
-    # The current fomccalendars.htm carries the past ~5 years inline and no
-    # longer links to the historical archives, so link-discovery alone yields
-    # a 5-year window. Enumerate the historical archive years explicitly so
-    # statements + minutes back to 1994 (the first year Fed releases FOMC
-    # statements publicly) are reachable. The dynamic-discovery loop stays
-    # as a belt-and-suspenders fallback in case the Fed re-introduces the
-    # links one day.
+    # The current fomccalendars.htm only links to one ceremonial January
+    # "longer-run goals reaffirmation" press release per recent year, so it
+    # under-collects modern statements at ~1/year. The
+    # /monetarypolicy/fomchistorical{year}.htm pages for 1994-2020 carry
+    # direct press-release links for ~2011-2020 and prep-doc links for
+    # earlier years. For 2021-current the Fed publishes statements at
+    # /newsevents/pressreleases/monetary{YYYYMMDD}a.htm but never indexes
+    # them on a discoverable archive page; the modern range is covered by
+    # the direct-probe loop in ``_modern_statement_urls()`` instead.
     pages: set[str] = {CALENDAR_URL}
     for year in range(1994, 2021):
         pages.add(f"{BASE_URL}/monetarypolicy/fomchistorical{year}.htm")
@@ -144,15 +146,102 @@ def _calendar_pages() -> list[str]:
     return sorted(pages, reverse=True)
 
 
+# Known FOMC meeting dates 2021-2022, the gap between the historical-archive
+# era and the dates carried by ``app.services.fomc_calendar``. Every entry is
+# a regularly-scheduled FOMC meeting; statements are released on the listed
+# date at 14:00 ET. Sourced from the Fed's published meeting calendar.
+_FOMC_MEETING_DATES_GAP: tuple[str, ...] = (
+    # 2021
+    "20210127", "20210317", "20210428", "20210616", "20210728", "20210922",
+    "20211103", "20211215",
+    # 2022
+    "20220126", "20220316", "20220504", "20220615", "20220727", "20220921",
+    "20221102", "20221214",
+)
+
+
+def _modern_statement_urls() -> list[tuple[str, str]]:
+    """Probe FOMC meeting dates directly for the modern statement-URL shape.
+
+    The Fed's year-press archive does not surface statement URLs (only
+    minutes / longer-run-goals / org announcements), so the catch-all
+    page-walk in ``_calendar_pages`` cannot find them. Reach the modern
+    range by enumerating known meeting dates and probing
+    ``/newsevents/pressreleases/monetary{YYYYMMDD}a.htm`` for each.
+
+    Returns the discoverable (url, label) pairs; 404s are skipped silently
+    so the loop is forward-compatible with future meetings.
+    """
+
+    candidates: list[str] = list(_FOMC_MEETING_DATES_GAP)
+    try:
+        from app.services.fomc_calendar import _PAST_MEETINGS, _UPCOMING_MEETINGS
+
+        for meeting in (*_PAST_MEETINGS, *_UPCOMING_MEETINGS):
+            # The statement releases on the meeting_date for one-day meetings
+            # and on the second day for two-day meetings; meeting_date in the
+            # calendar dataclass is the *meeting* date, which the URL slug
+            # tracks. The 'a' suffix is the policy statement.
+            candidates.append(meeting.meeting_date.strftime("%Y%m%d"))
+    except Exception:  # pragma: no cover - calendar import is best-effort.
+        pass
+
+    seen: set[str] = set()
+    discoverable: list[tuple[str, str]] = []
+    for date_slug in candidates:
+        if date_slug in seen:
+            continue
+        seen.add(date_slug)
+        url = f"{BASE_URL}/newsevents/pressreleases/monetary{date_slug}a.htm"
+        try:
+            resp = requests.head(url, timeout=10, allow_redirects=True)
+            if resp.status_code != 200:
+                continue
+        except Exception:  # pragma: no cover - network hiccup; skip.
+            continue
+        discoverable.append((url, "Statement"))
+    return discoverable
+
+
 def _statement_links_from_page(page_url: str) -> list[tuple[str, str]]:
     soup = _fetch_soup(page_url)
     links: list[tuple[str, str]] = []
+    # The historical archive pages anchor statement links with text containing
+    # "statement"; the year-press archive pages anchor them by date alone and
+    # the "statement" filter would drop them. Recognise the modern URL pattern
+    # ``monetary{YYYYMMDD}{suffix}.htm`` so both shapes land.
+    statement_url_re = re.compile(
+        r"/pressreleases/monetary(\d{8})([a-z])?\.htm$", flags=re.IGNORECASE
+    )
     for anchor in soup.select("a[href]"):
         href = _href_str(anchor)
         text = _clean_text(anchor.get_text(" ", strip=True))
         if "pressreleases/monetary" not in href:
             continue
-        if "statement" not in text.lower():
+        url_match = statement_url_re.search(href)
+        text_lower = text.lower()
+        # Accept when the anchor text says "statement" (historical archives)
+        # OR the URL ends with the canonical monetary{date}.htm shape AND the
+        # anchor text does NOT explicitly identify a non-statement release
+        # (minutes, longer-run-goals reaffirmation, meeting-schedule
+        # announcements, discount-rate minutes). The negative filter keeps
+        # the year-press archive's minutes / org announcements out without
+        # losing the actual policy statements.
+        if "statement" in text_lower:
+            links.append((urljoin(BASE_URL, href), text))
+            continue
+        if url_match is None:
+            continue
+        if any(
+            kw in text_lower
+            for kw in (
+                "minutes",
+                "tentative meeting schedule",
+                "longer-run goals",
+                "longer run goals",
+                "discount rate",
+            )
+        ):
             continue
         links.append((urljoin(BASE_URL, href), text))
     return links
@@ -239,10 +328,24 @@ def _scrape_documents_for_type(
     return records
 
 
+def _statement_links_with_direct_probe(page_url: str) -> list[tuple[str, str]]:
+    """Statement link discovery: page-walk first, then direct-probe."""
+
+    links = _statement_links_from_page(page_url)
+    # Bolt the modern-window direct-probe onto the FIRST page traversal so it
+    # runs exactly once per scrape. Subsequent pages return their own
+    # link-discovery results without re-probing. The _unique_links dedup
+    # downstream collapses URL collisions between page-walked and probed
+    # entries.
+    if page_url == CALENDAR_URL:
+        links.extend(_modern_statement_urls())
+    return links
+
+
 def scrape_fomc_statements(output_dir: str | Path = "/data") -> list[FomcDocument]:
     return _scrape_documents_for_type(
         document_type="Statement",
-        link_getter=_statement_links_from_page,
+        link_getter=_statement_links_with_direct_probe,
         output_prefix="fomc_statements",
         output_dir=output_dir,
     )
