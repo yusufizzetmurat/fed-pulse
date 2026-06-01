@@ -49,7 +49,9 @@ def load_labeled(path: Path) -> pd.DataFrame:
     return d[["text", "y", "mapped_label", "source"]].reset_index(drop=True)
 
 
-def _val_carve(df: pd.DataFrame, seed: int = 11, val: float = 0.15) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _val_carve(
+    df: pd.DataFrame, seed: int = 11, val: float = 0.15
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     rng = np.random.default_rng(seed)
     tr, va = [], []
     for _, grp in df.groupby("y"):
@@ -62,21 +64,29 @@ def _val_carve(df: pd.DataFrame, seed: int = 11, val: float = 0.15) -> tuple[pd.
 
 
 @torch.no_grad()
-def _predict(model: Any, tok: Any, texts: list[str], device: torch.device, bs: int = 32) -> np.ndarray:
+def _predict(
+    model: Any, tok: Any, texts: list[str], device: torch.device, bs: int = 32
+) -> np.ndarray:
     model.eval()
     preds = []
     for i in range(0, len(texts), bs):
-        enc = tok(texts[i : i + bs], return_tensors="pt", truncation=True, max_length=256, padding=True)
+        enc = tok(
+            texts[i : i + bs], return_tensors="pt", truncation=True, max_length=256, padding=True
+        )
         enc = {k: v.to(device) for k, v in enc.items()}
         preds.append(model(**enc).logits.argmax(-1).cpu().numpy())
     return np.concatenate(preds)
 
 
-def train(df_tr: pd.DataFrame, df_va: pd.DataFrame, device: torch.device, epochs: int, lr: float) -> tuple[Any, Any]:
+def train(
+    df_tr: pd.DataFrame, df_va: pd.DataFrame, device: torch.device, epochs: int, lr: float
+) -> tuple[Any, Any]:
     tok = AutoTokenizer.from_pretrained(BASE_ENCODER)  # type: ignore[no-untyped-call]
     model = AutoModelForSequenceClassification.from_pretrained(
-        BASE_ENCODER, num_labels=len(LABELS),
-        id2label=dict(enumerate(LABELS)), label2id=_L2I,
+        BASE_ENCODER,
+        num_labels=len(LABELS),
+        id2label=dict(enumerate(LABELS)),
+        label2id=_L2I,
     ).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     # class weights (inverse frequency) — the stance classes are imbalanced.
@@ -92,13 +102,21 @@ def train(df_tr: pd.DataFrame, df_va: pd.DataFrame, device: torch.device, epochs
         order = torch.randperm(n)
         for s in range(0, n, bs):
             idx = order[s : s + bs].tolist()
-            enc = tok([texts[i] for i in idx], return_tensors="pt", truncation=True, max_length=256, padding=True)
+            enc = tok(
+                [texts[i] for i in idx],
+                return_tensors="pt",
+                truncation=True,
+                max_length=256,
+                padding=True,
+            )
             enc = {k: v.to(device) for k, v in enc.items()}
             opt.zero_grad()
             logits = model(**enc).logits
             loss_fn(logits, ys[idx].to(device)).backward()
             opt.step()
-        f1 = f1_score(df_va["y"], _predict(model, tok, df_va["text"].tolist(), device), average="macro")
+        f1 = f1_score(
+            df_va["y"], _predict(model, tok, df_va["text"].tolist(), device), average="macro"
+        )
         logger.info("epoch %d: val macro-F1 %.4f", ep + 1, f1)
         if f1 > best_f1:
             best_f1, bad = f1, 0
@@ -122,10 +140,16 @@ def _scores(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    parser = argparse.ArgumentParser(description="Fine-tune own FOMC stance classifier (clean eval).")
+    parser = argparse.ArgumentParser(
+        description="Fine-tune own FOMC stance classifier (clean eval)."
+    )
     parser.add_argument(
-        "--labels", type=Path,
-        default=DATA_DIR / "processed" / "tp_v3_full_rebuild_2026_05_30" / "registry_normalized.parquet",
+        "--labels",
+        type=Path,
+        default=DATA_DIR
+        / "processed"
+        / "tp_v3_full_rebuild_2026_05_30"
+        / "registry_normalized.parquet",
     )
     parser.add_argument("--out-dir", type=Path, default=DATA_DIR / "processed" / "stance_finetune")
     parser.add_argument("--epochs", type=int, default=10)
@@ -143,7 +167,9 @@ def main() -> None:
     model, tok = train(tr, va, device, args.epochs, args.lr)
     ours = _predict(model, tok, test_df["text"].tolist(), device)
 
-    tok_b = AutoTokenizer.from_pretrained("gtfintechlab/FOMC-RoBERTa", token=os.environ.get("HF_TOKEN"))  # type: ignore[no-untyped-call]
+    tok_b = AutoTokenizer.from_pretrained(
+        "gtfintechlab/FOMC-RoBERTa", token=os.environ.get("HF_TOKEN")
+    )  # type: ignore[no-untyped-call]
     mdl_b = AutoModelForSequenceClassification.from_pretrained(
         "gtfintechlab/FOMC-RoBERTa", token=os.environ.get("HF_TOKEN")
     ).to(device)
@@ -164,7 +190,9 @@ def main() -> None:
     model.save_pretrained(args.out_dir)
     tok.save_pretrained(args.out_dir)
     (args.out_dir / "stance_eval.json").write_text(json.dumps(report, indent=2, default=str))
-    print(json.dumps({k: report[k] for k in ("design", "n_test", "ours", "fomc_roberta")}, indent=2))
+    print(
+        json.dumps({k: report[k] for k in ("design", "n_test", "ours", "fomc_roberta")}, indent=2)
+    )
 
 
 if __name__ == "__main__":

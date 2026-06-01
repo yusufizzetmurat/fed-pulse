@@ -41,9 +41,7 @@ class InfoNCELoss(nn.Module):
     def __init__(self, temperature: float = 0.07) -> None:
         super().__init__()
         if temperature <= 0.0:
-            raise ValueError(
-                f"InfoNCELoss temperature must be > 0; got {temperature}"
-            )
+            raise ValueError(f"InfoNCELoss temperature must be > 0; got {temperature}")
         self.temperature = float(temperature)
 
     def forward(self, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
@@ -61,9 +59,7 @@ class InfoNCELoss(nn.Module):
                 f"InfoNCELoss inputs must have matching shape; got {a.shape} vs {b.shape}"
             )
         if a.dim() != 2:
-            raise ValueError(
-                f"InfoNCELoss inputs must be 2-D (B, D); got {a.dim()}-D"
-            )
+            raise ValueError(f"InfoNCELoss inputs must be 2-D (B, D); got {a.dim()}-D")
         batch_size = a.size(0)
         if batch_size < 2:
             # No negatives in a single-row batch; emit zero with the

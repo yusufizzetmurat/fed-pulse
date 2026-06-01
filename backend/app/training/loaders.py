@@ -202,7 +202,9 @@ def build_feature_vectors(
     if document_date:
         parsed_doc_date = datetime.date.fromisoformat(document_date)
 
-    sorted_records = sorted(records, key=lambda item: str(item.get("date", item.get("timestamp", ""))))
+    sorted_records = sorted(
+        records, key=lambda item: str(item.get("date", item.get("timestamp", "")))
+    )
     for record in sorted_records:
         date_value = str(record.get("date", record.get("timestamp", "")))
         if not date_value:
@@ -218,8 +220,14 @@ def build_feature_vectors(
             record,
             ("volatility_5d", "market_volatility", "volatility"),
         )
-        row_sentiment = float(record.get("sentiment_score", sentiment_score if sentiment_score is not None else 0.0))
-        row_embedding = record.get("text_embedding") if isinstance(record.get("text_embedding"), list) else text_embedding
+        row_sentiment = float(
+            record.get("sentiment_score", sentiment_score if sentiment_score is not None else 0.0)
+        )
+        row_embedding = (
+            record.get("text_embedding")
+            if isinstance(record.get("text_embedding"), list)
+            else text_embedding
+        )
         vectors.append(
             FeatureVector.from_market_state(
                 date=date_value,
@@ -273,7 +281,9 @@ def _is_record_mapping_list(value: Any) -> bool:
 
 def _extract_record_groups(payload: Any) -> list[list[dict[str, Any]]]:
     if _is_record_mapping_list(payload):
-        if payload and any(any(key in item for key in ("records", "rows", "data", "items")) for item in payload):
+        if payload and any(
+            any(key in item for key in ("records", "rows", "data", "items")) for item in payload
+        ):
             nested_groups: list[list[dict[str, Any]]] = []
             for item in payload:
                 if not isinstance(item, dict):
@@ -345,7 +355,11 @@ def inspect_training_data_sources(
 
             record_count = sum(len(group) for group in groups)
             vectors_for_path = [build_feature_vectors(group) for group in groups]
-            usable = [vector_group for vector_group in vectors_for_path if len(vector_group) >= sequence_length + 1]
+            usable = [
+                vector_group
+                for vector_group in vectors_for_path
+                if len(vector_group) >= sequence_length + 1
+            ]
             sequences.extend(usable)
             summaries.append(
                 TrainingDataSourceSummary(
@@ -381,7 +395,9 @@ def inspect_training_data_sources(
     return sequences, summaries
 
 
-def load_training_sequences_from_data(data_dir: str | Path | None = None) -> list[list[FeatureVector]]:
+def load_training_sequences_from_data(
+    data_dir: str | Path | None = None,
+) -> list[list[FeatureVector]]:
     sequences, _ = inspect_training_data_sources(data_dir)
     return sequences
 
@@ -632,9 +648,7 @@ def _resolve_training_package_dir(training_package_id: str) -> Path:
     else:
         package_dir = DATA_DIR / "processed" / training_package_id
     if not package_dir.exists():
-        raise FileNotFoundError(
-            f"Training package directory not found: {package_dir}"
-        )
+        raise FileNotFoundError(f"Training package directory not found: {package_dir}")
     from app.data.manifest_sha import verify_manifest_sha
 
     verify_manifest_sha(package_dir)
@@ -736,21 +750,11 @@ def _read_sep_projections_lookup(
             continue
         lookup[meeting_str] = {
             "meeting_date": meeting_str,
-            "ffr_median_current_year": _coerce_finite_float(
-                record.get("ffr_median_current_year")
-            ),
-            "ffr_median_next_year": _coerce_finite_float(
-                record.get("ffr_median_next_year")
-            ),
-            "ffr_median_longer_run": _coerce_finite_float(
-                record.get("ffr_median_longer_run")
-            ),
-            "ffr_range_upper_current": _coerce_finite_float(
-                record.get("ffr_range_upper_current")
-            ),
-            "ffr_range_lower_current": _coerce_finite_float(
-                record.get("ffr_range_lower_current")
-            ),
+            "ffr_median_current_year": _coerce_finite_float(record.get("ffr_median_current_year")),
+            "ffr_median_next_year": _coerce_finite_float(record.get("ffr_median_next_year")),
+            "ffr_median_longer_run": _coerce_finite_float(record.get("ffr_median_longer_run")),
+            "ffr_range_upper_current": _coerce_finite_float(record.get("ffr_range_upper_current")),
+            "ffr_range_lower_current": _coerce_finite_float(record.get("ffr_range_lower_current")),
         }
     return lookup
 
@@ -1155,9 +1159,7 @@ def _compute_prior4_pooled_embedding(
     if not embedding_lookup:
         return None
     if lambda_inv_days <= 0:
-        raise ValueError(
-            f"lambda_inv_days must be positive; got {lambda_inv_days}"
-        )
+        raise ValueError(f"lambda_inv_days must be positive; got {lambda_inv_days}")
 
     # Filter to statements strictly before the current event date that
     # actually have a pooled embedding in the lookup, then keep the
@@ -1225,15 +1227,9 @@ def _attach_rich_features(
     # Credibility 4-vector is sourced directly off the event row.
     if use_credibility:
         cred_drift = _coerce_finite_float(event_row.get("credibility_drift_score"))
-        cred_realized = _coerce_finite_float(
-            event_row.get("credibility_realized_vs_stated_gap")
-        )
-        cred_market = _coerce_finite_float(
-            event_row.get("credibility_market_implied_gap")
-        )
-        cred_months = _coerce_finite_float(
-            event_row.get("credibility_months_since_reversal")
-        )
+        cred_realized = _coerce_finite_float(event_row.get("credibility_realized_vs_stated_gap"))
+        cred_market = _coerce_finite_float(event_row.get("credibility_market_implied_gap"))
+        cred_months = _coerce_finite_float(event_row.get("credibility_months_since_reversal"))
     else:
         cred_drift = cred_realized = cred_market = cred_months = 0.0
     cred_drift = 0.0 if cred_drift is None else cred_drift
@@ -1287,16 +1283,14 @@ def _attach_rich_features(
         time_raw = event_row.get("axis_time_label")
         time_label_forward = (
             1.0
-            if isinstance(time_raw, str)
-            and time_raw.strip().lower() == "forward looking"
+            if isinstance(time_raw, str) and time_raw.strip().lower() == "forward looking"
             else 0.0
         )
 
         certain_raw = event_row.get("axis_certain_label")
         certain_label_certain = (
             1.0
-            if isinstance(certain_raw, str)
-            and certain_raw.strip().lower() == "certain"
+            if isinstance(certain_raw, str) and certain_raw.strip().lower() == "certain"
             else 0.0
         )
     else:
@@ -1527,9 +1521,7 @@ def _compute_vote_features_for_event(
     votes_for = _coerce_finite_float(raw_votes_for)
     if votes_for is None:
         return None
-    votes_against = _coerce_finite_float(
-        row.get("votes_against") if hasattr(row, "get") else None
-    )
+    votes_against = _coerce_finite_float(row.get("votes_against") if hasattr(row, "get") else None)
     if votes_against is None:
         votes_against = 0.0
     is_unanimous_raw = row.get("is_unanimous") if hasattr(row, "get") else None
@@ -1540,9 +1532,7 @@ def _compute_vote_features_for_event(
             is_unanimous = 1.0 if bool(is_unanimous_raw) else 0.0
         except (TypeError, ValueError):
             is_unanimous = 1.0 if votes_against == 0.0 else 0.0
-    direction_raw = (
-        row.get("dissent_direction") if hasattr(row, "get") else None
-    )
+    direction_raw = row.get("dissent_direction") if hasattr(row, "get") else None
     direction_sign = 0.0
     if direction_raw is not None:
         key = str(direction_raw).strip().lower()
@@ -1637,9 +1627,7 @@ def _read_events_frame(package_dir: Path) -> "Any":
 
     events_path = package_dir / "events.parquet"
     if not events_path.exists():
-        raise FileNotFoundError(
-            f"events.parquet missing from training package: {package_dir}"
-        )
+        raise FileNotFoundError(f"events.parquet missing from training package: {package_dir}")
     return pd.read_parquet(events_path)
 
 
@@ -1663,7 +1651,9 @@ def _load_llm_feature_lookup(
     candidates = (
         Path(f"/data/raw/llm_features/{MODEL_ID}_{CATALOG_VERSION}/{training_package_id}.parquet"),
         Path(f"data/raw/llm_features/{MODEL_ID}_{CATALOG_VERSION}/{training_package_id}.parquet"),
-        Path(f"backend/data/raw/llm_features/{MODEL_ID}_{CATALOG_VERSION}/{training_package_id}.parquet"),
+        Path(
+            f"backend/data/raw/llm_features/{MODEL_ID}_{CATALOG_VERSION}/{training_package_id}.parquet"
+        ),
     )
     cache_path = next((p for p in candidates if p.exists()), None)
     if cache_path is None:
@@ -1674,9 +1664,7 @@ def _load_llm_feature_lookup(
     frame = pd.read_parquet(cache_path)
     # Pre-build the contiguous one-hot slot offsets so the per-row
     # encoding is a single dict lookup + index write.
-    feature_levels: list[tuple[str, tuple[str, ...]]] = [
-        (f.name, f.levels) for f in CATALOG
-    ]
+    feature_levels: list[tuple[str, tuple[str, ...]]] = [(f.name, f.levels) for f in CATALOG]
     total_dim = sum(len(levels) for _, levels in feature_levels)
 
     out: dict[str, list[float]] = {}
@@ -1879,9 +1867,7 @@ def _load_package_sequences_with_metadata(
     required_columns = {"event_date", "text_hash", "prior_bars_json"}
     missing = required_columns - set(frame.columns)
     if missing:
-        raise ValueError(
-            f"events.parquet at {package_dir} missing columns: {sorted(missing)}"
-        )
+        raise ValueError(f"events.parquet at {package_dir} missing columns: {sorted(missing)}")
 
     linguistic_lookup: dict[str, list[float]] = {}
     # The mp_surprise lookup feeds two consumers: rich-feature input
@@ -1891,9 +1877,7 @@ def _load_package_sequences_with_metadata(
     # Loading it unconditionally costs one cheap parquet read and
     # prevents the silent all-None projection that would otherwise
     # fire under ``--no-rich-features --rates-target-mode=fomc_attributable``.
-    mp_surprise_lookup: dict[str, dict[str, float]] = _read_mp_surprise_lookup(
-        package_dir
-    )
+    mp_surprise_lookup: dict[str, dict[str, float]] = _read_mp_surprise_lookup(package_dir)
     # #215 SEP dot-plot lookup. Loaded only when the opt-in flag fires so
     # the legacy / opt-out path stays byte-identical to pre-#215 (a
     # parquet on disk doesn't change behaviour unless --use-sep is set).
@@ -1921,14 +1905,8 @@ def _load_package_sequences_with_metadata(
     text_adapter_dim_int = int(text_adapter_dim)
     if use_text_path:
         if text_adapter_dim_int <= 0:
-            raise ValueError(
-                f"text_adapter_dim must be a positive integer; got {text_adapter_dim}"
-            )
-        cache_dir = (
-            Path(text_embedding_cache_dir)
-            if text_embedding_cache_dir is not None
-            else None
-        )
+            raise ValueError(f"text_adapter_dim must be a positive integer; got {text_adapter_dim}")
+        cache_dir = Path(text_embedding_cache_dir) if text_embedding_cache_dir is not None else None
         registry_parquet = package_dir / "registry_normalized.parquet"
         registry_jsonl = package_dir / "registry_normalized.jsonl"
         registry_for_lookup: Path | None
@@ -1938,8 +1916,14 @@ def _load_package_sequences_with_metadata(
             import pandas as pd
 
             reg_frame = pd.read_parquet(registry_parquet)
-            reg_subset = reg_frame[[c for c in ("record_id", "text_hash") if c in reg_frame.columns]]
-            if not reg_subset.empty and "record_id" in reg_subset.columns and "text_hash" in reg_subset.columns:
+            reg_subset = reg_frame[
+                [c for c in ("record_id", "text_hash") if c in reg_frame.columns]
+            ]
+            if (
+                not reg_subset.empty
+                and "record_id" in reg_subset.columns
+                and "text_hash" in reg_subset.columns
+            ):
                 tmp_path = package_dir / "_registry_record_to_text_hash.jsonl"
                 with tmp_path.open("w", encoding="utf-8") as handle:
                     for record in reg_subset.to_dict("records"):
@@ -2051,9 +2035,8 @@ def _load_package_sequences_with_metadata(
         abnormal_return = _coerce_finite_float(row.get("abnormal_return"))
         volatility_shift = _coerce_finite_float(row.get("volatility_shift"))
         realized_date_raw = row.get("realized_date")
-        if (
-            realized_date_raw is None
-            or (isinstance(realized_date_raw, float) and realized_date_raw != realized_date_raw)
+        if realized_date_raw is None or (
+            isinstance(realized_date_raw, float) and realized_date_raw != realized_date_raw
         ):
             realized_date = None
         else:
@@ -2113,9 +2096,7 @@ def _load_package_sequences_with_metadata(
         # reads them off the target row of each supervised sequence.
         rates_2y_value = _coerce_finite_float(row.get("yield_2y_change_5d"))
         rates_5y_value = _coerce_finite_float(row.get("yield_5y_change_5d"))
-        rates_terminal_value = _coerce_finite_float(
-            row.get("terminal_rate_change_5d")
-        )
+        rates_terminal_value = _coerce_finite_float(row.get("terminal_rate_change_5d"))
         # #305 FOMC-attributable rates targets. Compute the 1-D
         # projection of each observed bps move onto the strict-prior
         # surprise direction ``sign(mp_surprise_level)``. The level is
@@ -2127,9 +2108,7 @@ def _load_package_sequences_with_metadata(
         from app.training.rates_targets import fomc_attributable_projection
 
         mp_level_lookup = mp_surprise_lookup.get(event_date_str[:10], {})
-        mp_level_for_projection = _coerce_finite_float(
-            mp_level_lookup.get("mp_surprise_level")
-        )
+        mp_level_for_projection = _coerce_finite_float(mp_level_lookup.get("mp_surprise_level"))
         rates_2y_attributable = fomc_attributable_projection(
             rates_2y_value, mp_level_for_projection
         )
@@ -2254,9 +2233,7 @@ def _load_package_sequences_with_metadata(
             vector.target_terminal_rate_change_5d = rates_terminal_value
             vector.target_yield_2y_change_5d_fomc_attributable = rates_2y_attributable
             vector.target_yield_5y_change_5d_fomc_attributable = rates_5y_attributable
-            vector.target_terminal_rate_change_5d_fomc_attributable = (
-                rates_terminal_attributable
-            )
+            vector.target_terminal_rate_change_5d_fomc_attributable = rates_terminal_attributable
             if llm_vector is not None:
                 vector.llm_features = list(llm_vector)
                 vector.llm_features_missing = 0.0
@@ -2582,12 +2559,8 @@ def load_walk_forward_split(
                 "cannot apply a non-zero embargo without an anchored "
                 "train-boundary date"
             )
-        train_end_dt = (
-            datetime.date.fromisoformat(train_end_str) if embargo_active else None
-        )
-        val_end_dt = (
-            datetime.date.fromisoformat(val_end) if embargo_active else None
-        )
+        train_end_dt = datetime.date.fromisoformat(train_end_str) if embargo_active else None
+        val_end_dt = datetime.date.fromisoformat(val_end) if embargo_active else None
         embargo = datetime.timedelta(days=int(embargo_days))
         for sequence, _text_hash, event_date_str in items:
             # Expanding-window contract: any event chronologically
@@ -2781,9 +2754,7 @@ def load_training_sequences_from_package(
 
     package_dir = _resolve_training_package_dir(training_package_id)
     if not (package_dir / "events.parquet").exists():
-        raise FileNotFoundError(
-            f"events.parquet missing from training package: {package_dir}"
-        )
+        raise FileNotFoundError(f"events.parquet missing from training package: {package_dir}")
     frame = _read_events_frame(package_dir)
     if frame.empty:
         return []
@@ -2791,9 +2762,7 @@ def load_training_sequences_from_package(
     required_columns = {"event_date", "text_hash", "prior_bars_json"}
     missing = required_columns - set(frame.columns)
     if missing:
-        raise ValueError(
-            f"events.parquet at {package_dir} missing columns: {sorted(missing)}"
-        )
+        raise ValueError(f"events.parquet at {package_dir} missing columns: {sorted(missing)}")
 
     excluded_text_hashes = _read_excluded_text_hashes(package_dir)
 
@@ -2811,9 +2780,7 @@ def load_training_sequences_from_package(
     # (gated) and the fomc-attributable rates-target projection (always
     # computed). Load unconditionally so `--no-rich-features` does not
     # silently null every projection.
-    mp_surprise_lookup: dict[str, dict[str, float]] = _read_mp_surprise_lookup(
-        package_dir
-    )
+    mp_surprise_lookup: dict[str, dict[str, float]] = _read_mp_surprise_lookup(package_dir)
     # #215 SEP lookup (legacy loader path mirror -- see the matched site
     # in ``_load_package_sequences_with_metadata``).
     sep_lookup: dict[str, dict[str, Any]] = (
@@ -2843,14 +2810,8 @@ def load_training_sequences_from_package(
     text_adapter_dim_int = int(text_adapter_dim)
     if use_text_path:
         if text_adapter_dim_int <= 0:
-            raise ValueError(
-                f"text_adapter_dim must be a positive integer; got {text_adapter_dim}"
-            )
-        cache_dir = (
-            Path(text_embedding_cache_dir)
-            if text_embedding_cache_dir is not None
-            else None
-        )
+            raise ValueError(f"text_adapter_dim must be a positive integer; got {text_adapter_dim}")
+        cache_dir = Path(text_embedding_cache_dir) if text_embedding_cache_dir is not None else None
         # The embedding cache builder keys rows on ``record_id``;
         # events.parquet joins on ``text_hash``. The registry parquet
         # under the training package carries both columns, so the
@@ -2874,8 +2835,14 @@ def load_training_sequences_from_package(
             import pandas as pd
 
             reg_frame = pd.read_parquet(registry_parquet)
-            reg_subset = reg_frame[[c for c in ("record_id", "text_hash") if c in reg_frame.columns]]
-            if not reg_subset.empty and "record_id" in reg_subset.columns and "text_hash" in reg_subset.columns:
+            reg_subset = reg_frame[
+                [c for c in ("record_id", "text_hash") if c in reg_frame.columns]
+            ]
+            if (
+                not reg_subset.empty
+                and "record_id" in reg_subset.columns
+                and "text_hash" in reg_subset.columns
+            ):
                 tmp_path = package_dir / "_registry_record_to_text_hash.jsonl"
                 with tmp_path.open("w", encoding="utf-8") as handle:
                     for record in reg_subset.to_dict("records"):
@@ -2991,9 +2958,8 @@ def load_training_sequences_from_package(
         abnormal_return = _coerce_finite_float(row.get("abnormal_return"))
         volatility_shift = _coerce_finite_float(row.get("volatility_shift"))
         realized_date_raw = row.get("realized_date")
-        if (
-            realized_date_raw is None
-            or (isinstance(realized_date_raw, float) and realized_date_raw != realized_date_raw)
+        if realized_date_raw is None or (
+            isinstance(realized_date_raw, float) and realized_date_raw != realized_date_raw
         ):
             realized_date = None
         else:
@@ -3038,17 +3004,13 @@ def load_training_sequences_from_package(
         # reads them off the target row of each supervised sequence.
         rates_2y_value = _coerce_finite_float(row.get("yield_2y_change_5d"))
         rates_5y_value = _coerce_finite_float(row.get("yield_5y_change_5d"))
-        rates_terminal_value = _coerce_finite_float(
-            row.get("terminal_rate_change_5d")
-        )
+        rates_terminal_value = _coerce_finite_float(row.get("terminal_rate_change_5d"))
         # #305 FOMC-attributable projections (see ADR 0027 + the matched
         # block above on the walk-forward loader path).
         from app.training.rates_targets import fomc_attributable_projection
 
         mp_level_lookup = mp_surprise_lookup.get(event_date_str[:10], {})
-        mp_level_for_projection = _coerce_finite_float(
-            mp_level_lookup.get("mp_surprise_level")
-        )
+        mp_level_for_projection = _coerce_finite_float(mp_level_lookup.get("mp_surprise_level"))
         rates_2y_attributable = fomc_attributable_projection(
             rates_2y_value, mp_level_for_projection
         )
@@ -3156,9 +3118,7 @@ def load_training_sequences_from_package(
             vector.target_terminal_rate_change_5d = rates_terminal_value
             vector.target_yield_2y_change_5d_fomc_attributable = rates_2y_attributable
             vector.target_yield_5y_change_5d_fomc_attributable = rates_5y_attributable
-            vector.target_terminal_rate_change_5d_fomc_attributable = (
-                rates_terminal_attributable
-            )
+            vector.target_terminal_rate_change_5d_fomc_attributable = rates_terminal_attributable
             if llm_vector is not None:
                 vector.llm_features = list(llm_vector)
                 vector.llm_features_missing = 0.0
@@ -3476,9 +3436,7 @@ def vol_regime_class_for(value: float | None, quantiles: Sequence[float]) -> int
     return len(quantiles)
 
 
-def vol_regime_absolute_class_for(
-    value: float | None, thresholds: tuple[float, float]
-) -> int:
+def vol_regime_absolute_class_for(value: float | None, thresholds: tuple[float, float]) -> int:
     """Map a forward-vol value to a 3-class regime index using absolute cutoffs.
 
     Alternative to :func:`vol_regime_class_for` (#472): replaces the
@@ -3726,9 +3684,7 @@ def _build_multi_task_target_tensors(
             stance_masks.append(stance_present)
 
             certainty_idx = int(getattr(target_row, "target_certainty_idx", -1) or 0)
-            certainty_present = bool(
-                getattr(target_row, "target_certainty_present", False)
-            )
+            certainty_present = bool(getattr(target_row, "target_certainty_present", False))
             certainty_targets.append(max(certainty_idx, 0))
             certainty_masks.append(certainty_present)
 
@@ -3873,12 +3829,8 @@ def build_per_bar_text_tensor(
             # tile-replicate matches the broadcast-static path the
             # baseline arm consumes.
             anchor = sequence_group[idx - 1]
-            anchor_pooled = list(
-                getattr(anchor, "text_embedding_pooled", []) or []
-            )
-            anchor_missing = float(
-                getattr(anchor, "text_embedding_missing", 1.0)
-            )
+            anchor_pooled = list(getattr(anchor, "text_embedding_pooled", []) or [])
+            anchor_missing = float(getattr(anchor, "text_embedding_missing", 1.0))
             if not anchor_pooled or len(anchor_pooled) != in_dim:
                 anchor_pooled = [0.0] * in_dim
                 anchor_missing = 1.0
@@ -3888,22 +3840,14 @@ def build_per_bar_text_tensor(
                 bar_missing: float | None = None
                 if window_per_bar and bar_idx < len(window_per_bar):
                     candidate = window_per_bar[bar_idx]
-                    if (
-                        isinstance(candidate, list)
-                        and len(candidate) == in_dim
-                    ):
+                    if isinstance(candidate, list) and len(candidate) == in_dim:
                         bar_pooled = [float(v) for v in candidate]
                         bar_missing = 0.0
                 if bar_pooled is None:
                     bar_pooled_attr = getattr(bar, "text_embedding_pooled", None)
-                    if (
-                        isinstance(bar_pooled_attr, list)
-                        and len(bar_pooled_attr) == in_dim
-                    ):
+                    if isinstance(bar_pooled_attr, list) and len(bar_pooled_attr) == in_dim:
                         bar_pooled = [float(v) for v in bar_pooled_attr]
-                        bar_missing = float(
-                            getattr(bar, "text_embedding_missing", 1.0)
-                        )
+                        bar_missing = float(getattr(bar, "text_embedding_missing", 1.0))
                 if bar_pooled is None:
                     bar_pooled = list(anchor_pooled)
                     bar_missing = anchor_missing

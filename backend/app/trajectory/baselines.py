@@ -129,9 +129,7 @@ def previous_stance(history: Sequence[Any]) -> int | None:
     return None
 
 
-def rolling_majority(
-    history: Sequence[Any], *, n: int = DEFAULT_ROLLING_WINDOW
-) -> int | None:
+def rolling_majority(history: Sequence[Any], *, n: int = DEFAULT_ROLLING_WINDOW) -> int | None:
     """Predict the modal label over the last ``n`` real meetings in ``history``.
 
     Ties are broken by recency — the most recent stance wins, so this
@@ -275,9 +273,7 @@ def _build_lstm_training_pairs(
     return pairs
 
 
-def _pad_right(
-    arrays: Sequence[np.ndarray], *, n_classes: int
-) -> tuple[np.ndarray, np.ndarray]:
+def _pad_right(arrays: Sequence[np.ndarray], *, n_classes: int) -> tuple[np.ndarray, np.ndarray]:
     """Right-pad variable-length one-hot histories into a dense ``(B, T, C)`` tensor.
 
     Returns ``(padded, lengths)``. The small-LSTM forward pass reads the
@@ -375,9 +371,7 @@ def predict_small_lstm(model: Any, history: Sequence[Any]) -> int | None:
 # ---------------------------------------------------------------------------
 
 
-def directional_accuracy(
-    truths: Sequence[int], predictions: Sequence[int]
-) -> float:
+def directional_accuracy(truths: Sequence[int], predictions: Sequence[int]) -> float:
     if len(truths) == 0:
         return float("nan")
     matches = sum(1 for t, p in zip(truths, predictions) if int(t) == int(p))
@@ -395,9 +389,7 @@ def confusion_matrix(
     JSON payloads.
     """
 
-    rows: list[list[int]] = [
-        [0 for _ in range(N_STANCE_CLASSES)] for _ in range(N_STANCE_CLASSES)
-    ]
+    rows: list[list[int]] = [[0 for _ in range(N_STANCE_CLASSES)] for _ in range(N_STANCE_CLASSES)]
     for t, p in zip(truths, predictions):
         if 0 <= int(t) < N_STANCE_CLASSES and 0 <= int(p) < N_STANCE_CLASSES:
             rows[int(t)][int(p)] += 1
@@ -523,9 +515,7 @@ def compare_against_transformer(
     has stable keys regardless of which baseline lands on top.
     """
 
-    finite_baselines = [
-        b for b in baselines if not _is_nan(b.directional_accuracy)
-    ]
+    finite_baselines = [b for b in baselines if not _is_nan(b.directional_accuracy)]
     if not finite_baselines:
         return {
             "baseline_used": None,

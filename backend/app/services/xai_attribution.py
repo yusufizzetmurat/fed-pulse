@@ -188,8 +188,7 @@ def integrated_gradients(
         baseline = _zero_baseline(x)
     if baseline.shape != x.shape:
         raise ValueError(
-            f"baseline shape {tuple(baseline.shape)} must match input shape "
-            f"{tuple(x.shape)}"
+            f"baseline shape {tuple(baseline.shape)} must match input shape " f"{tuple(x.shape)}"
         )
 
     n_steps = max(2, int(n_steps))
@@ -260,16 +259,12 @@ def aggregate_feature_families(
         start = sl.start or 0
         stop = sl.stop or feature_size
         if start >= feature_size:
-            families.append(
-                FeatureFamilyAttribution(family=name, magnitude=0.0, signed=0.0)
-            )
+            families.append(FeatureFamilyAttribution(family=name, magnitude=0.0, signed=0.0))
             continue
         clipped = slice(start, min(stop, feature_size))
         mag = float(per_feature_magnitude[clipped].sum().item())
         signed = float(per_feature_signed[clipped].sum().item())
-        families.append(
-            FeatureFamilyAttribution(family=name, magnitude=mag, signed=signed)
-        )
+        families.append(FeatureFamilyAttribution(family=name, magnitude=mag, signed=signed))
     return families
 
 

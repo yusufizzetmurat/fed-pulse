@@ -154,12 +154,8 @@ def _load_encoder(ref: EncoderRef):
 
     revision = ref.revision or None
     trust = bool(getattr(ref, "trust_remote_code", False))
-    tokenizer = AutoTokenizer.from_pretrained(
-        ref.repo, revision=revision, trust_remote_code=trust
-    )
-    model = AutoModel.from_pretrained(
-        ref.repo, revision=revision, trust_remote_code=trust
-    )
+    tokenizer = AutoTokenizer.from_pretrained(ref.repo, revision=revision, trust_remote_code=trust)
+    model = AutoModel.from_pretrained(ref.repo, revision=revision, trust_remote_code=trust)
     device = _resolve_cache_device()
     model = model.to(device)
     model.eval()
@@ -303,7 +299,9 @@ def build_cache(
     model.eval()
 
     pending_inputs: list[str] = []
-    pending_meta: list[tuple[str, str, str, int, str]] = []  # (record_id, doc_id, event_date, chunk_index, preview)
+    pending_meta: list[
+        tuple[str, str, str, int, str]
+    ] = []  # (record_id, doc_id, event_date, chunk_index, preview)
     rows: list[dict[str, Any]] = []
     docs_processed = 0
     started_at = time.time()
@@ -318,7 +316,9 @@ def build_cache(
             max_length=max_length,
             sentence_embedding=sentence_embedding,
         )
-        for (record_id, doc_id, event_date, chunk_index, preview), embedding in zip(pending_meta, embeddings):
+        for (record_id, doc_id, event_date, chunk_index, preview), embedding in zip(
+            pending_meta, embeddings
+        ):
             rows.append(
                 {
                     "record_id": record_id,
@@ -470,11 +470,7 @@ def ensure_local(
 
     paths.directory.mkdir(parents=True, exist_ok=True)
     filename = paths.parquet.name
-    resolved_token = (
-        token
-        or os.environ.get("HF_TOKEN")
-        or os.environ.get("HUGGINGFACE_HUB_TOKEN")
-    )
+    resolved_token = token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
     kwargs: dict[str, Any] = {
         "repo_id": hf_dataset,
         "filename": filename,
@@ -510,7 +506,9 @@ def ensure_local(
 def _parse_args() -> "object":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Build per-encoder embedding cache for a training package.")
+    parser = argparse.ArgumentParser(
+        description="Build per-encoder embedding cache for a training package."
+    )
     parser.add_argument("--encoder", required=True, help="Encoder alias from models/registry.yaml.")
     parser.add_argument("--training-package-id", required=True)
     parser.add_argument("--data-dir", default=os.environ.get("FED_PULSE_DATA_DIR") or str(DATA_DIR))

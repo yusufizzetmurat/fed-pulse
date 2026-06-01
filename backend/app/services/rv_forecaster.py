@@ -85,17 +85,13 @@ def _download_artifact(target_dir: Path) -> dict[str, Any]:
             f"HF repo {HF_REPO_ID!r} not found; set HF_TOKEN or grant access."
         ) from exc
     except (EntryNotFoundError, HfHubHTTPError) as exc:
-        raise RvForecasterUnavailable(
-            f"HF fetch failed for {HF_REPO_ID!r}: {exc}"
-        ) from exc
+        raise RvForecasterUnavailable(f"HF fetch failed for {HF_REPO_ID!r}: {exc}") from exc
     except OSError as exc:
         # Catches the network-level failures (ConnectionError, timeouts,
         # disk full) that hf_hub_download can raise outside the HF-specific
         # exception hierarchy; surface them as the same "unavailable" 503
         # the endpoint contract promises instead of bubbling up as 500.
-        raise RvForecasterUnavailable(
-            f"HF download failed for {HF_REPO_ID!r}: {exc}"
-        ) from exc
+        raise RvForecasterUnavailable(f"HF download failed for {HF_REPO_ID!r}: {exc}") from exc
     return cast(dict[str, Any], spec)
 
 
@@ -125,9 +121,7 @@ def _load_eval(model_dir: Path) -> dict[str, Any] | None:
         return None
 
 
-def _load_seed_models(
-    spec: dict[str, Any], model_dir: Path
-) -> dict[str, list["torch.nn.Module"]]:
+def _load_seed_models(spec: dict[str, Any], model_dir: Path) -> dict[str, list["torch.nn.Module"]]:
     """Materialize the per-horizon list of QLIKE-DLq heads from saved state."""
 
     import torch
@@ -199,7 +193,9 @@ def _ensemble_log_rv(
     # prediction (intercept + d/w/m coef).
     last = har[-1]
     har_coef = np.asarray(row["har_coef"], dtype=np.float64)
-    har_pred = float(har_coef[0] + har_coef[1] * last[0] + har_coef[2] * last[1] + har_coef[3] * last[2])
+    har_pred = float(
+        har_coef[0] + har_coef[1] * last[0] + har_coef[2] * last[1] + har_coef[3] * last[2]
+    )
 
     feat_mean = np.asarray(row["feat_mean"], dtype=np.float64)
     feat_std = np.asarray(row["feat_std"], dtype=np.float64)
@@ -237,9 +233,7 @@ def predict_rv(rv_history: list[float] | np.ndarray) -> dict[str, Any]:
 
     rv = np.asarray(rv_history, dtype=np.float64)
     if rv.ndim != 1 or len(rv) < 22:
-        raise ValueError(
-            "rv_history must be a 1-D series of at least 22 daily RV values"
-        )
+        raise ValueError("rv_history must be a 1-D series of at least 22 daily RV values")
     if np.any(rv <= 0) or not np.all(np.isfinite(rv)):
         raise ValueError("rv_history values must be positive finite numbers")
 

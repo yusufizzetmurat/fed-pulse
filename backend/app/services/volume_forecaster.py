@@ -101,17 +101,13 @@ def _download_artifact(target_dir: Path) -> dict[str, Any]:
             f"HF repo {HF_REPO_ID!r} not found; set HF_TOKEN or grant access."
         ) from exc
     except (EntryNotFoundError, HfHubHTTPError) as exc:
-        raise VolumeForecasterUnavailable(
-            f"HF fetch failed for {HF_REPO_ID!r}: {exc}"
-        ) from exc
+        raise VolumeForecasterUnavailable(f"HF fetch failed for {HF_REPO_ID!r}: {exc}") from exc
     except OSError as exc:
         # Network-level surface (connection reset, timeout, disk full)
         # that ``hf_hub_download`` raises outside the HF exception
         # hierarchy. Surface as the same 503-mapped failure rather than
         # bubbling up as a 500.
-        raise VolumeForecasterUnavailable(
-            f"HF download failed for {HF_REPO_ID!r}: {exc}"
-        ) from exc
+        raise VolumeForecasterUnavailable(f"HF download failed for {HF_REPO_ID!r}: {exc}") from exc
     return cast(dict[str, Any], spec)
 
 
@@ -158,9 +154,7 @@ class _VolumePredictor:
     def __init__(self) -> None:
         self.model_dir = MODEL_DIR
         self.spec = _load_spec(self.model_dir)
-        self.revision = (
-            f"{self.spec.get('model', 'volume_har')}@{self.spec.get('date_last', '')}"
-        )
+        self.revision = f"{self.spec.get('model', 'volume_har')}@{self.spec.get('date_last', '')}"
 
 
 def _har_lag_row(log_vol: np.ndarray) -> tuple[float, float, float]:
@@ -172,9 +166,7 @@ def _har_lag_row(log_vol: np.ndarray) -> tuple[float, float, float]:
     return float(last), mean5, mean22
 
 
-def _calendar_features_row(
-    forecast_date: datetime, dummy_names: list[str]
-) -> list[float]:
+def _calendar_features_row(forecast_date: datetime, dummy_names: list[str]) -> list[float]:
     """Build the calendar-feature row matching the artifact ``dummy_names``.
 
     Mirrors :func:`app.data.late_fusion_volume._calendar_features`:
@@ -229,9 +221,7 @@ def _point_log_residual(
         raise VolumeForecasterUnavailable(
             "HAR coefficient vector must carry 4 entries (intercept, d, w, m)"
         )
-    log_pred = float(
-        har_coef[0] + har_coef[1] * lag1 + har_coef[2] * mean5 + har_coef[3] * mean22
-    )
+    log_pred = float(har_coef[0] + har_coef[1] * lag1 + har_coef[2] * mean5 + har_coef[3] * mean22)
     calendar_adjusted = False
     dummy_names = row.get("calendar_dummy_names")
     dummy_coef = row.get("calendar_dummy_coef")
@@ -242,9 +232,7 @@ def _point_log_residual(
         and dummy_names
     ):
         cal_row = _calendar_features_row(forecast_date, dummy_names)
-        adjustment = float(
-            np.dot(np.asarray(dummy_coef, dtype=np.float64), cal_row)
-        )
+        adjustment = float(np.dot(np.asarray(dummy_coef, dtype=np.float64), cal_row))
         log_pred += adjustment
         # Only flip the chip when the calendar block actually moves the
         # forecast. An artifact that declares only unrecognized names —

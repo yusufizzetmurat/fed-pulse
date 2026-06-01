@@ -64,7 +64,9 @@ def _load_state() -> _PooledEncoderState | None:
         try:
             ref = encoder_ref(DEFAULT_ENCODER_ALIAS)
         except Exception as exc:  # registry miss
-            LOGGER.warning("forecaster_text_embedding: encoder_ref(%s) failed: %s", DEFAULT_ENCODER_ALIAS, exc)
+            LOGGER.warning(
+                "forecaster_text_embedding: encoder_ref(%s) failed: %s", DEFAULT_ENCODER_ALIAS, exc
+            )
             return None
         if ref is None or not ref.repo:
             LOGGER.warning("forecaster_text_embedding: alias %s unpinned", DEFAULT_ENCODER_ALIAS)
@@ -80,7 +82,9 @@ def _load_state() -> _PooledEncoderState | None:
         except Exception as exc:
             LOGGER.warning(
                 "forecaster_text_embedding: failed to load encoder %s @ %s: %s",
-                ref.repo, ref.revision, exc,
+                ref.repo,
+                ref.revision,
+                exc,
             )
             return None
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -93,7 +97,10 @@ def _load_state() -> _PooledEncoderState | None:
         )
         LOGGER.info(
             "forecaster_text_embedding: loaded %s @ %s on %s (hidden_size=%s)",
-            ref.repo, ref.revision, device, getattr(model.config, "hidden_size", "?"),
+            ref.repo,
+            ref.revision,
+            device,
+            getattr(model.config, "hidden_size", "?"),
         )
         return _state
 

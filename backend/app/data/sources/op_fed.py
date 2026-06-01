@@ -34,9 +34,7 @@ from app.data.sources.registry import register
 # ``OP_FED_DEFAULT_RELATIVE`` in ``app.data.ingest_sources`` so the
 # downstream ``--include-op-fed`` ingest path picks the pull up without
 # extra wiring.
-OP_FED_UPSTREAM_URL = (
-    "https://raw.githubusercontent.com/kakeith/op-fed/main/data/opfed_v1.csv"
-)
+OP_FED_UPSTREAM_URL = "https://raw.githubusercontent.com/kakeith/op-fed/main/data/opfed_v1.csv"
 
 # Stance mapping kept local so the adapter is loadable without importing
 # ingest_sources (avoids a hard import cycle if ingest_sources is later split).
@@ -132,7 +130,9 @@ class OpFedScraper:
             return None
         if not isinstance(row, dict):
             return None
-        parsed = _parse_op_fed_row({str(k): str(v) if v is not None else "" for k, v in row.items()})
+        parsed = _parse_op_fed_row(
+            {str(k): str(v) if v is not None else "" for k, v in row.items()}
+        )
         if parsed is None:
             return None
         parsed["source_url"] = source_url
@@ -195,18 +195,14 @@ def pull_op_fed_csv(
         try:
             response = urllib.request.urlopen(url, timeout=timeout)
         except urllib.error.HTTPError as exc:
-            raise RuntimeError(
-                f"Op-Fed upstream returned HTTP {exc.code} from {url}"
-            ) from exc
+            raise RuntimeError(f"Op-Fed upstream returned HTTP {exc.code} from {url}") from exc
         with response:
             body = response.read()
         tmp_path.write_bytes(body)
         with tmp_path.open("r", encoding="utf-8", newline="") as handle:
             row_count = sum(1 for _ in csv.DictReader(handle))
         if row_count == 0:
-            raise RuntimeError(
-                f"Op-Fed download from {url} produced zero rows"
-            )
+            raise RuntimeError(f"Op-Fed download from {url} produced zero rows")
         tmp_path.replace(target_path)
         return row_count
     except Exception:

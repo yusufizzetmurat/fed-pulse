@@ -236,9 +236,7 @@ def trailing_yield_change_bps(
     if endpoint is None:
         return None
 
-    earlier_anchor = trading_day_offset(
-        trading_calendar, anchor, offset=-horizon
-    )
+    earlier_anchor = trading_day_offset(trading_calendar, anchor, offset=-horizon)
     if earlier_anchor is None:
         return None
     # ``yield_strictly_before`` reads pub_date < target; ``earlier_anchor + 1``

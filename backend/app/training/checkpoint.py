@@ -15,6 +15,7 @@ from app.models.config import (
     ModelConfig,
     RichFeatureScalerParams,
 )
+
 # Post-#336 the checkpoint helpers accept both research and serving
 # forecasters (they only touch ``nn.Module`` APIs and the shared
 # attribute surface from :class:`ForecasterBase`). Annotating against
@@ -86,9 +87,7 @@ def _metrics_from_payload(payload: dict[str, Any] | None) -> EvaluationMetrics |
         # #317 finding #7: forward the per-head rates_metrics block so a
         # checkpoint with rates heads round-trips through the loader.
         rates_metrics_raw = metrics.get("rates_metrics")
-        rates_metrics = (
-            rates_metrics_raw if isinstance(rates_metrics_raw, dict) else None
-        )
+        rates_metrics = rates_metrics_raw if isinstance(rates_metrics_raw, dict) else None
 
         try:
             return EvaluationMetrics(
@@ -130,7 +129,9 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             num_layers=int(raw.get("num_layers", ModelConfig().num_layers)),
             dropout=float(raw.get("dropout", ModelConfig().dropout)),
             head_hidden_size=int(raw.get("head_hidden_size", ModelConfig().head_hidden_size)),
-            initial_decay_rate=float(raw.get("initial_decay_rate", ModelConfig().initial_decay_rate)),
+            initial_decay_rate=float(
+                raw.get("initial_decay_rate", ModelConfig().initial_decay_rate)
+            ),
             text_channel=str(raw.get("text_channel", "scalar")),
             embedding_adapter_dim=int(raw.get("embedding_adapter_dim", 128)),
             credibility_features=bool(raw.get("credibility_features", False)),
@@ -140,27 +141,16 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             # rehydrate byte-identical.
             output_mode=str(raw.get("output_mode", "regression")),
             n_classes=int(raw.get("n_classes", 3)),
-            vol_regime_quantiles=tuple(
-                float(v) for v in (raw.get("vol_regime_quantiles") or ())
-            ),
-            vol_regime_target=str(
-                raw.get("vol_regime_target", "forward_realized_vol_10d")
-            ),
+            vol_regime_quantiles=tuple(float(v) for v in (raw.get("vol_regime_quantiles") or ())),
+            vol_regime_target=str(raw.get("vol_regime_target", "forward_realized_vol_10d")),
             # #317 finding #4 mirror: forward post-#292 rates fields
             # so a checkpoint with rates heads rehydrates the same
             # rates config the run trained against. Pre-#292
             # checkpoints leave these absent and the defaults give back
             # the empty-tuple no-op.
-            rates_heads=tuple(
-                str(v).lower()
-                for v in (raw.get("rates_heads") or ())
-            ),
-            rates_head_mode=str(
-                raw.get("rates_head_mode", "regression") or "regression"
-            ),
-            rates_aux_classification=bool(
-                raw.get("rates_aux_classification", False)
-            ),
+            rates_heads=tuple(str(v).lower() for v in (raw.get("rates_heads") or ())),
+            rates_head_mode=str(raw.get("rates_head_mode", "regression") or "regression"),
+            rates_aux_classification=bool(raw.get("rates_aux_classification", False)),
             rates_alpha=float(raw.get("rates_alpha", 0.5)),
             # #435: forward the new vol-target-mode so a checkpoint trained
             # under --vol-target-mode=garch_residual rehydrates with the
@@ -187,15 +177,9 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             # silently rebuild a multi_task_loss=False config from a
             # --multi-task-loss=on checkpoint.
             multi_task_loss=bool(raw.get("multi_task_loss", False)),
-            multi_task_lambda_stance=float(
-                raw.get("multi_task_lambda_stance", 1.0)
-            ),
-            multi_task_lambda_certainty=float(
-                raw.get("multi_task_lambda_certainty", 0.3)
-            ),
-            multi_task_lambda_time=float(
-                raw.get("multi_task_lambda_time", 0.3)
-            ),
+            multi_task_lambda_stance=float(raw.get("multi_task_lambda_stance", 1.0)),
+            multi_task_lambda_certainty=float(raw.get("multi_task_lambda_certainty", 0.3)),
+            multi_task_lambda_time=float(raw.get("multi_task_lambda_time", 0.3)),
             # #214: round-trip press-conf opt-in.
             use_press_conf=bool(raw.get("use_press_conf", False)),
             # #443/#444: forward the two new opt-in flags so a checkpoint
@@ -223,12 +207,14 @@ def _checkpoint_metadata(
     adaptation_summary: TrainingRunSummary | None = None,
 ) -> dict[str, Any]:
     model_config = (
-        ModelConfig.from_model(model)
-        if model is not None
-        else _coerce_payload_config(payload)
+        ModelConfig.from_model(model) if model is not None else _coerce_payload_config(payload)
     )
     payload_metrics = _metrics_from_payload(payload)
-    metrics = adaptation_summary.metrics if adaptation_summary and adaptation_summary.metrics else payload_metrics
+    metrics = (
+        adaptation_summary.metrics
+        if adaptation_summary and adaptation_summary.metrics
+        else payload_metrics
+    )
     decay_rate: float | None = None
     if model is not None and hasattr(model, "time_decay"):
         decay_rate = float(model.time_decay.decay_rate.detach().cpu().item())
@@ -256,12 +242,20 @@ def _checkpoint_metadata(
             if isinstance(payload, dict)
             else int(SEQUENCE_LENGTH)
         ),
-        "best_loss": payload_metrics.loss if payload_metrics else payload.get("best_loss") if isinstance(payload, dict) else None,
+        "best_loss": payload_metrics.loss
+        if payload_metrics
+        else payload.get("best_loss")
+        if isinstance(payload, dict)
+        else None,
         "combined_rmse": payload_metrics.combined_rmse if payload_metrics else None,
-        "adaptation_epochs_completed": adaptation_summary.epochs_completed if adaptation_summary else None,
+        "adaptation_epochs_completed": adaptation_summary.epochs_completed
+        if adaptation_summary
+        else None,
         "adaptation_best_epoch": adaptation_summary.best_epoch if adaptation_summary else None,
         "adaptation_loss": metrics.loss if adaptation_summary and metrics else None,
-        "adaptation_combined_rmse": metrics.combined_rmse if adaptation_summary and metrics else None,
+        "adaptation_combined_rmse": metrics.combined_rmse
+        if adaptation_summary and metrics
+        else None,
         "decay_rate": decay_rate,
         "chunk_attention": None,
     }
@@ -364,11 +358,11 @@ def _checkpoint_payload(
         "training_summary": summary.to_dict(),
         "input_size": FEATURE_SIZE,
         "sequence_length": SEQUENCE_LENGTH,
-        "close_scale": float(close_scale) if close_scale is not None else float(DEFAULT_CLOSE_SCALE),
+        "close_scale": float(close_scale)
+        if close_scale is not None
+        else float(DEFAULT_CLOSE_SCALE),
         "rich_feature_scaler": (
-            rich_feature_scaler.to_dict()
-            if rich_feature_scaler is not None
-            else None
+            rich_feature_scaler.to_dict() if rich_feature_scaler is not None else None
         ),
         "rng_state": _capture_rng_state(),
     }

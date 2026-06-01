@@ -43,9 +43,11 @@ MODEL_ID = _OVERRIDE or (
 # built from the wrong encoder (the silent-fallback contamination bug: the
 # primary HF repo can 404, and the run would otherwise proceed on distilbert
 # sentiment vectors with no error).
-STRICT_PRIMARY = (
-    os.environ.get("FED_PULSE_REQUIRE_PRIMARY_SENTIMENT") or ""
-).strip().lower() in {"1", "true", "yes"}
+STRICT_PRIMARY = (os.environ.get("FED_PULSE_REQUIRE_PRIMARY_SENTIMENT") or "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 # The model id the singleton actually loaded; differs from MODEL_ID on fallback.
 _loaded_model_id: str | None = None
@@ -86,6 +88,7 @@ def _classify_stance_input(text: str) -> str | None:
     if len(tokens) < STANCE_MIN_INPUT_TOKENS:
         return "no_input"
     return None
+
 
 _classifier = None
 _classifier_lock = threading.Lock()
@@ -391,9 +394,7 @@ def analyze_text(text: str) -> dict[str, Any]:
 
     classifier = get_classifier()
     chunks = split_into_chunks(text_value, classifier=classifier)
-    ood = score_text_ood(
-        text_value, classifier=classifier, manifest=manifest, chunks=chunks
-    )
+    ood = score_text_ood(text_value, classifier=classifier, manifest=manifest, chunks=chunks)
     response["ood_energy"] = ood.get("ood_energy")
     response["ood_threshold"] = ood.get("ood_threshold")
     response["is_in_distribution"] = ood.get("is_in_distribution")
@@ -432,10 +433,7 @@ def _stance_from_multi_axis(text: str) -> dict[str, Any] | None:
     if not stance:
         return None
     distribution = stance.get("distribution") or {}
-    raw = [
-        {"label": str(name), "score": float(score)}
-        for name, score in distribution.items()
-    ]
+    raw = [{"label": str(name), "score": float(score)} for name, score in distribution.items()]
     return {
         "label": str(stance.get("label", "")),
         "score": float(stance.get("confidence", 0.0) or 0.0),
@@ -461,16 +459,12 @@ def aggregate_label(encodings: list[ChunkEncoding]) -> dict[str, Any]:
         return {"label": "UNKNOWN", "score": 0.0, "raw": []}
 
     averaged: list[dict[str, float | str]] = [
-        {"label": label, "score": score / score_count}
-        for label, score in aggregate.items()
+        {"label": label, "score": score / score_count} for label, score in aggregate.items()
     ]
     best = max(averaged, key=lambda item: float(item["score"]))
 
     return {
         "label": str(best["label"]),
         "score": float(best["score"]),
-        "raw": [
-            {"label": str(item["label"]), "score": float(item["score"])}
-            for item in averaged
-        ],
+        "raw": [{"label": str(item["label"]), "score": float(item["score"])} for item in averaged],
     }

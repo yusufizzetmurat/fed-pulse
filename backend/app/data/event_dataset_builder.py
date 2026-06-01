@@ -258,6 +258,7 @@ SPEECH_AS_OF_TIME = "T14:00:00Z"
 # replace this if the announcement-window target ever lands.
 MACRO_AS_OF_TIME = "T13:00:00Z"
 
+
 def per_asset_target_slug(symbol: str) -> str:
     """Normalise a yfinance symbol to the suffix used for per-asset vol target columns.
 
@@ -437,6 +438,7 @@ def _encode_axis_factor(value: Any) -> float | None:
         return f if f != 0.0 else 0.0
     return None
 
+
 # When multiple registry sources cover the same (event_date, event_kind),
 # pick the row with the highest preference rank. This avoids near-duplicate
 # event rows while keeping the choice deterministic. Higher-quality / more
@@ -484,8 +486,8 @@ class _EventDoc:
     # gtfintechlab cross-bank corpora carry these labels today; every other
     # source leaves them ``None`` and downstream consumers encode them as
     # 0.0 in the rich-feature slot.
-    time_label: str | None = None       # "forward looking" / "not forward looking"
-    certain_label: str | None = None    # "certain" / "uncertain"
+    time_label: str | None = None  # "forward looking" / "not forward looking"
+    certain_label: str | None = None  # "certain" / "uncertain"
     # Merged ``multi_axis_extras`` payload from every record in the bucket.
     # Carries the GSS / Swanson bp-scale factor decompositions
     # (``gss_target_factor`` / ``gss_path_factor`` /
@@ -706,10 +708,7 @@ def _derive_stance_by_date(
         if score is None or not row.event_date:
             continue
         by_date[row.event_date].append(float(score))
-    return tuple(
-        (date, sum(scores) / len(scores))
-        for date, scores in sorted(by_date.items())
-    )
+    return tuple((date, sum(scores) / len(scores)) for date, scores in sorted(by_date.items()))
 
 
 def _choose_preferred(docs: list[_EventDoc]) -> list[_EventDoc]:
@@ -848,7 +847,12 @@ def _frame_to_series(frame: pd.DataFrame) -> _CloseSeries:
         zip(
             [_date(d) for d in frame["date"].tolist()],
             [float(c) for c in frame["close"].tolist()],
-            [float(v) for v in (frame["volume"].tolist() if "volume" in frame.columns else [0.0] * len(frame))],
+            [
+                float(v)
+                for v in (
+                    frame["volume"].tolist() if "volume" in frame.columns else [0.0] * len(frame)
+                )
+            ],
         ),
         key=lambda t: t[0],
     )
@@ -961,7 +965,7 @@ def _vix_term_structure_features(
         out["vix_3m_over_1m_slope"] = float(vix3m) / float(vix1m)
     vix = out["vix_t_minus_1"]
     if vix is not None:
-        implied_daily = float(vix) / 100.0 / (252.0 ** 0.5)
+        implied_daily = float(vix) / 100.0 / (252.0**0.5)
         realized = _rolling_realized_vol_t_minus_1(asset_series, as_of, window=30)
         if realized is not None:
             out["vrp_t_minus_1"] = implied_daily - realized
@@ -988,7 +992,7 @@ def _rolling_realized_vol_t_minus_1(
     n = len(rets)
     mean = sum(rets) / n
     variance = sum((v - mean) ** 2 for v in rets) / (n - 1)
-    return float(variance ** 0.5)
+    return float(variance**0.5)
 
 
 def _build_cross_asset_lookup(
@@ -1082,9 +1086,7 @@ def _build_prior_window(
         # roll gaps) should not block the bar.
         bar_date = series.dates[i]
         cross_asset_row = (
-            cross_asset_lookup.get(bar_date, {})
-            if cross_asset_lookup is not None
-            else {}
+            cross_asset_lookup.get(bar_date, {}) if cross_asset_lookup is not None else {}
         )
         vix_close_val = float(cross_asset_row.get("vix_close", 0.0))
         tnx_close_val = float(cross_asset_row.get("tnx_close", 0.0))
@@ -1108,9 +1110,7 @@ def _build_prior_window(
             else 0.0
         )
         yield_curve_slope_val = (
-            tnx_close_val - irx_close_val
-            if tnx_close_val > 0.0 and irx_close_val > 0.0
-            else 0.0
+            tnx_close_val - irx_close_val if tnx_close_val > 0.0 and irx_close_val > 0.0 else 0.0
         )
         bars.append(
             _PriorBar(
@@ -1132,9 +1132,9 @@ def _build_prior_window(
             )
         )
     # Enforce no look-ahead: last prior bar must be < as_of
-    assert bars[-1].date < as_of, (
-        f"prior-window contract violated: last bar {bars[-1].date} not < as_of {as_of}"
-    )
+    assert (
+        bars[-1].date < as_of
+    ), f"prior-window contract violated: last bar {bars[-1].date} not < as_of {as_of}"
     return bars
 
 
@@ -1623,7 +1623,7 @@ def _build_event_rows(
         direction_t1d = 0
     else:
         ret, _ = t1d
-        direction_t1d = (1 if ret > 0 else (-1 if ret < 0 else 0))
+        direction_t1d = 1 if ret > 0 else (-1 if ret < 0 else 0)
 
     if asset == benchmark:
         alpha, beta = 0.0, 1.0
@@ -1664,8 +1664,7 @@ def _build_event_rows(
     # independently when the post-event window runs off the end of the
     # asset's price series.
     forward_vol_multi_horizon: dict[int, float | None] = {
-        h: _forward_realized_vol(asset_series, as_of_date, window=h)
-        for h in (1, 3, 5, 20, 30)
+        h: _forward_realized_vol(asset_series, as_of_date, window=h) for h in (1, 3, 5, 20, 30)
     }
     # #236 GARCH(1,1)-residual decomposition of the same target. Fits
     # GARCH(1,1) on log returns dated strictly before ``as_of_date`` and
@@ -1817,9 +1816,7 @@ def _build_event_rows(
                 "token_count": token_count,
                 "axis_stance": doc.multi_axis.get("stance"),
                 "axis_time": _encode_axis_time(doc.multi_axis.get("time")),
-                "axis_certainty": _encode_axis_certainty(
-                    doc.multi_axis.get("certainty")
-                ),
+                "axis_certainty": _encode_axis_certainty(doc.multi_axis.get("certainty")),
                 "axis_factor": _encode_axis_factor(doc.multi_axis.get("factor")),
                 "axis_time_label": doc.time_label,
                 "axis_certain_label": doc.certain_label,
@@ -1876,14 +1873,10 @@ def _build_event_rows(
                 # converge or the strict-prior window is short, and the
                 # residual additionally requires a non-null raw target.
                 "forward_realized_vol_10d_garch_baseline": (
-                    float(garch_result.baseline)
-                    if garch_result.baseline is not None
-                    else None
+                    float(garch_result.baseline) if garch_result.baseline is not None else None
                 ),
                 "forward_realized_vol_10d_garch_residual": (
-                    float(garch_result.residual)
-                    if garch_result.residual is not None
-                    else None
+                    float(garch_result.residual) if garch_result.residual is not None else None
                 ),
                 "concurrent_macro_release": bool(concurrent_macro),
                 "intra_meeting_stance_shift": float(
@@ -1897,12 +1890,8 @@ def _build_event_rows(
                 ),
                 "realized_date": realized_date.isoformat() if realized_date else None,
                 # --- Rates-complex forward targets (#291), raw bps ---
-                "yield_2y_change_5d": _maybe_float(
-                    rates_forward_targets.get("yield_2y_change_5d")
-                ),
-                "yield_5y_change_5d": _maybe_float(
-                    rates_forward_targets.get("yield_5y_change_5d")
-                ),
+                "yield_2y_change_5d": _maybe_float(rates_forward_targets.get("yield_2y_change_5d")),
+                "yield_5y_change_5d": _maybe_float(rates_forward_targets.get("yield_5y_change_5d")),
                 "terminal_rate_change_5d": _maybe_float(
                     rates_forward_targets.get("terminal_rate_change_5d")
                 ),
@@ -1941,28 +1930,16 @@ def _build_event_rows(
                 "statement_delta_substituted_pairs": statement_delta_substituted,
                 "statement_delta_embedding": statement_delta_embedding,
                 # --- #444 vote tally + dissent structural columns ---
-                "votes_for": (
-                    int(vote_tally.votes_for) if vote_tally is not None else None
-                ),
+                "votes_for": (int(vote_tally.votes_for) if vote_tally is not None else None),
                 "votes_against": (
-                    int(vote_tally.votes_against)
-                    if vote_tally is not None
-                    else None
+                    int(vote_tally.votes_against) if vote_tally is not None else None
                 ),
                 "dissent_count": (
-                    int(vote_tally.dissent_count)
-                    if vote_tally is not None
-                    else None
+                    int(vote_tally.dissent_count) if vote_tally is not None else None
                 ),
-                "is_unanimous": (
-                    bool(vote_tally.is_unanimous)
-                    if vote_tally is not None
-                    else None
-                ),
+                "is_unanimous": (bool(vote_tally.is_unanimous) if vote_tally is not None else None),
                 "dissent_direction": (
-                    vote_tally.dissent_direction
-                    if vote_tally is not None
-                    else None
+                    vote_tally.dissent_direction if vote_tally is not None else None
                 ),
                 # --- #481 per-asset 10d forward realised-vol targets ---
                 # One nullable float per workspace asset-picker symbol.
@@ -1988,17 +1965,13 @@ def _maybe_float(value: float | None) -> float | None:
     return float(value)
 
 
-def _pre_meeting_field(
-    features: PreMeetingFeatures | None, field_name: str
-) -> float | None:
+def _pre_meeting_field(features: PreMeetingFeatures | None, field_name: str) -> float | None:
     if features is None:
         return None
     value = getattr(features, field_name)
     if value is None:
         return None
     return float(value)
-
-
 
 
 _CREDIBILITY_EMPTY_INPUTS_WARNED = False
@@ -2281,9 +2254,7 @@ def build_event_rows(
         # outbound network. Reuse the injected series for ^GSPC /
         # benchmark and leave every other symbol absent (column ->
         # None). The smoke / CLI path leaves both None and fetches.
-        injected_canonical_series = (
-            asset_series_was_injected and bench_series_was_injected
-        )
+        injected_canonical_series = asset_series_was_injected and bench_series_was_injected
         target_cache_dir: Path | None = per_asset_target_cache_dir
         if target_cache_dir is None:
             target_cache_dir = DEFAULT_DATA_DIR / "external" / "yfinance"
@@ -2347,11 +2318,7 @@ def build_event_rows(
     # selector asserts ``prior.event_date < this.event_date`` so a
     # same-date prior never enters the diff window.
     statement_text_index: list[tuple[str, str]] = sorted(
-        (
-            (str(d.event_date), d.text)
-            for d in docs
-            if d.event_kind == "statement" and d.text
-        ),
+        ((str(d.event_date), d.text) for d in docs if d.event_kind == "statement" and d.text),
         key=lambda pair: pair[0],
     )
 
@@ -2389,7 +2356,9 @@ def build_event_rows(
         summary.events_emitted += 1
         for r in rows:
             summary.per_source_rows[r["source"]] = summary.per_source_rows.get(r["source"], 0) + 1
-            summary.per_kind_rows[r["event_kind"]] = summary.per_kind_rows.get(r["event_kind"], 0) + 1
+            summary.per_kind_rows[r["event_kind"]] = (
+                summary.per_kind_rows.get(r["event_kind"], 0) + 1
+            )
             if r["concurrent_macro_release"]:
                 summary.concurrent_macro_release_rows += 1
         out_rows.extend(rows)
@@ -2401,7 +2370,14 @@ def build_event_rows(
     df = pd.DataFrame(out_rows)
     # Deterministic ordering. The full view sorts on source + source_record_id
     # so the parquet bytes don't shift when sources interleave.
-    sort_cols = ["event_date", "event_kind", "source", "source_record_id", "asset_symbol", "horizon"]
+    sort_cols = [
+        "event_date",
+        "event_kind",
+        "source",
+        "source_record_id",
+        "asset_symbol",
+        "horizon",
+    ]
     df = df.sort_values(sort_cols, kind="mergesort").reset_index(drop=True)
     df = df[list(COLUMN_ORDER)]
     return df
@@ -2473,9 +2449,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--embedding-path",
-        default=str(
-            DEFAULT_DATA_DIR / "raw" / "embeddings" / "finbert_4556d1301521.parquet"
-        ),
+        default=str(DEFAULT_DATA_DIR / "raw" / "embeddings" / "finbert_4556d1301521.parquet"),
         help=(
             "Per-encoder embedding parquet for the credibility drift axis. "
             "Defaults to the cached FinBERT parquet so the builder is "
@@ -2523,10 +2497,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--rates-horizon",
         type=int,
         default=5,
-        help=(
-            "Trading-day horizon for the strict-forward yield-change "
-            "targets (default: 5)."
-        ),
+        help=("Trading-day horizon for the strict-forward yield-change " "targets (default: 5)."),
     )
     parser.add_argument(
         "--per-asset-target-cache-dir",
@@ -2604,12 +2575,8 @@ def _build_delta_encoder_callable(repo_or_alias: str):
     revision = ref.revision if ref is not None else None
     trust = bool(getattr(ref, "trust_remote_code", False)) if ref is not None else False
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        repo, revision=revision, trust_remote_code=trust
-    )
-    model = AutoModel.from_pretrained(
-        repo, revision=revision, trust_remote_code=trust
-    )
+    tokenizer = AutoTokenizer.from_pretrained(repo, revision=revision, trust_remote_code=trust)
+    model = AutoModel.from_pretrained(repo, revision=revision, trust_remote_code=trust)
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
@@ -2679,24 +2646,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     horizons = tuple(int(h) for h in args.horizons.split(",") if h.strip())
     market_cache_dir = (
-        Path(args.market_cache_dir)
-        if args.market_cache_dir
-        else (package_dir / "_market_cache")
+        Path(args.market_cache_dir) if args.market_cache_dir else (package_dir / "_market_cache")
     )
 
     macro_csv = Path(args.macro_release_csv) if args.macro_release_csv else None
     macro_calendar = _resolve_macro_calendar(macro_csv)
 
     per_asset_target_cache_dir = (
-        Path(args.per_asset_target_cache_dir)
-        if args.per_asset_target_cache_dir
-        else None
+        Path(args.per_asset_target_cache_dir) if args.per_asset_target_cache_dir else None
     )
 
     delta_encoder = (
-        _build_delta_encoder_callable(args.delta_encoder)
-        if args.delta_encoder
-        else None
+        _build_delta_encoder_callable(args.delta_encoder) if args.delta_encoder else None
     )
 
     # Collapsed view
@@ -2726,7 +2687,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(f"[event-rows] collapsed view: {summary.rows_written} rows -> {output_path}")
     print(f"[event-rows] unique events: {summary.events_emitted}")
-    print(f"[event-rows] dropped (no prior window or no targets): {summary.dropped_no_prior_window}")
+    print(
+        f"[event-rows] dropped (no prior window or no targets): {summary.dropped_no_prior_window}"
+    )
     print(
         f"[event-rows] concurrent_macro_release rows: {summary.concurrent_macro_release_rows} "
         f"({_pct(summary.concurrent_macro_release_rows, summary.rows_written)})"
@@ -2759,16 +2722,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             rates_horizon=int(args.rates_horizon),
             delta_encoder=delta_encoder,
             per_asset_target_cache_dir=per_asset_target_cache_dir,
-        per_asset_target_force_refresh=bool(args.per_asset_target_force_refresh),
+            per_asset_target_force_refresh=bool(args.per_asset_target_force_refresh),
             prior_window_days=int(args.prior_window),
         )
         full_output_path = Path(full_output_arg)
         if not full_output_path.is_absolute():
             full_output_path = package_dir / full_output_path
         write_events_parquet(df_full, full_output_path)
-        print(
-            f"[event-rows] full view: {full_summary.rows_written} rows -> {full_output_path}"
-        )
+        print(f"[event-rows] full view: {full_summary.rows_written} rows -> {full_output_path}")
         print(
             f"[event-rows] full unique (date x kind x source) docs: "
             f"{full_summary.events_emitted}"

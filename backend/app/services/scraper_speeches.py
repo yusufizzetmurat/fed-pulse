@@ -36,12 +36,8 @@ DATE_FROM_URL_PATTERN = re.compile(r"/speech/[a-z]+(\d{8})[a-z]\.htm$")
 # the downstream record iterator picks them up unchanged.
 CHAIR_OUTPUT_FILENAME = "chair_speeches.json"
 GOVERNOR_OUTPUT_FILENAME = "governor_speeches.json"
-ARCHIVE_LISTING_URL_TEMPLATE = (
-    ARCHIVE_BASE_URL + "/newsevents/speech/{year}-speeches.htm"
-)
-ARCHIVE_LISTING_URL = ARCHIVE_LISTING_URL_TEMPLATE.format(
-    year=datetime.now(timezone.utc).year
-)
+ARCHIVE_LISTING_URL_TEMPLATE = ARCHIVE_BASE_URL + "/newsevents/speech/{year}-speeches.htm"
+ARCHIVE_LISTING_URL = ARCHIVE_LISTING_URL_TEMPLATE.format(year=datetime.now(timezone.utc).year)
 # Default historical window when ``--years`` is not specified on the
 # CLI. The Fed's annual speech archives go back to 1996; the canonical
 # FOMC corpus this project trains on starts in 2006 so we use that as
@@ -342,10 +338,7 @@ def write_governor_speeches_json(parsed: Iterable[ParsedSpeech], output_path: Pa
 # federalreserve.gov 403s the stdlib default ``Python-urllib/x.y`` UA,
 # so every request needs a real-browser-ish header. Identifying the
 # project in the UA keeps the traffic auditable on the upstream's side.
-_USER_AGENT = (
-    "fed-pulse-data-ingester/1.0 "
-    "(+https://github.com/yusufizzetmurat/fed-pulse)"
-)
+_USER_AGENT = "fed-pulse-data-ingester/1.0 " "(+https://github.com/yusufizzetmurat/fed-pulse)"
 
 
 def _http_get_text(url: str, *, timeout: float) -> str:
@@ -426,11 +419,7 @@ def pull_speeches_archive(  # noqa: PLR0913
     # as a cache hit would freeze the divergence across all future
     # invocations. Forcing a re-pull whenever the pair is incomplete is
     # the safe recovery path.
-    if (
-        chair_target_path.exists()
-        and governor_target_path.exists()
-        and not force
-    ):
+    if chair_target_path.exists() and governor_target_path.exists() and not force:
         try:
             chair_cached = json.loads(chair_target_path.read_text(encoding="utf-8"))
             gov_cached = json.loads(governor_target_path.read_text(encoding="utf-8"))
@@ -443,10 +432,7 @@ def pull_speeches_archive(  # noqa: PLR0913
             and (len(chair_cached) + len(gov_cached)) > 0
         ):
             return len(chair_cached) + len(gov_cached)
-    elif (
-        chair_target_path.exists() != governor_target_path.exists()
-        and not force
-    ):
+    elif chair_target_path.exists() != governor_target_path.exists() and not force:
         # Partial-write recovery: warn so the operator can see the
         # divergence in the run log, then fall through to the re-pull.
         present = "chair" if chair_target_path.exists() else "governor"
@@ -460,9 +446,7 @@ def pull_speeches_archive(  # noqa: PLR0913
         listing_urls = [archive_url]
     else:
         year_list = years if years is not None else _default_years()
-        listing_urls = [
-            ARCHIVE_LISTING_URL_TEMPLATE.format(year=y) for y in year_list
-        ]
+        listing_urls = [ARCHIVE_LISTING_URL_TEMPLATE.format(year=y) for y in year_list]
 
     entries: list[SpeechListingEntry] = []
     seen_urls: set[str] = set()
@@ -518,8 +502,7 @@ def pull_speeches_archive(  # noqa: PLR0913
         gov_written = write_governor_speeches_json(parsed, gov_tmp)
         if (chair_written + gov_written) == 0:
             raise RuntimeError(
-                f"Speeches pull produced zero rows (listings tried: "
-                f"{len(listing_urls)})"
+                f"Speeches pull produced zero rows (listings tried: " f"{len(listing_urls)})"
             )
         chair_tmp.replace(chair_target_path)
         gov_tmp.replace(governor_target_path)
@@ -597,7 +580,4 @@ if __name__ == "__main__":
         limit=ns.limit,
         delay_seconds=ns.delay_seconds,
     )
-    print(
-        f"Speeches cache at {chair_target} + {governor_target} "
-        f"(rows: {rows})"
-    )
+    print(f"Speeches cache at {chair_target} + {governor_target} " f"(rows: {rows})")

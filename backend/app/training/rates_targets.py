@@ -154,9 +154,7 @@ def _gather_rates_values_for_group(
         return []
     leading_target = group[SEQUENCE_LENGTH]
     leading_vol = getattr(leading_target, "forward_realized_vol_10d", None)
-    if leading_vol is None or (
-        isinstance(leading_vol, float) and leading_vol != leading_vol
-    ):
+    if leading_vol is None or (isinstance(leading_vol, float) and leading_vol != leading_vol):
         return []
     field = _rates_field_for(head_name, target_mode=target_mode)
     out: list[float] = []
@@ -199,8 +197,7 @@ def _rates_field_for(
     name = str(head_name).lower()
     if name not in RATES_HEAD_TARGET_COLUMNS:
         raise ValueError(
-            f"unknown rates head name {head_name!r}; "
-            f"expected one of {RATES_HEAD_NAMES}"
+            f"unknown rates head name {head_name!r}; " f"expected one of {RATES_HEAD_NAMES}"
         )
     mode = str(target_mode).lower()
     if mode not in RATES_TARGET_MODES:
@@ -284,8 +281,7 @@ def build_partition_rates_targets(
     for name in head_list:
         if name not in RATES_HEAD_NAMES:
             raise ValueError(
-                f"unknown rates head name {name!r}; "
-                f"expected one of {RATES_HEAD_NAMES}"
+                f"unknown rates head name {name!r}; " f"expected one of {RATES_HEAD_NAMES}"
             )
     mode = str(target_mode).lower()
     if mode not in RATES_TARGET_MODES:

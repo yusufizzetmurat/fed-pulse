@@ -23,8 +23,8 @@ PROMPT_TEMPLATE = (
     "You classify U.S. Federal Open Market Committee passages by "
     "monetary-policy tone.\n"
     "Tone is exactly one of: hawkish, dovish, neutral.\n"
-    "Return only a JSON object with two fields: \"label\" (one of the "
-    "three tones) and \"confidence\" (a float in [0, 1]). No prose, no "
+    'Return only a JSON object with two fields: "label" (one of the '
+    'three tones) and "confidence" (a float in [0, 1]). No prose, no '
     "code fences, no explanation.\n\n"
     "Passage:\n<<<\n{passage}\n>>>"
 )

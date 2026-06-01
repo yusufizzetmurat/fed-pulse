@@ -180,6 +180,7 @@ def fetch_fred_series(
     # series, so a tight scrape comfortably trips the limit. Retry on 429 with
     # exponential backoff so a single throttle does not blow up the pipeline.
     import time as _time
+
     client = httpx.Client(timeout=DEFAULT_TIMEOUT_SECONDS, transport=transport)
     try:
         max_attempts = 5
@@ -189,7 +190,7 @@ def fetch_fred_series(
             resp = client.get(FRED_BASE_URL, params=params)
             if resp.status_code == 429 and attempt < max_attempts:
                 # Exponential backoff: 2s, 4s, 8s, 16s.
-                _time.sleep(2 ** attempt)
+                _time.sleep(2**attempt)
                 continue
             resp.raise_for_status()
             payload = resp.json()

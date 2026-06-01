@@ -181,9 +181,7 @@ def join_statement_text(events: pd.DataFrame, corpus: pd.DataFrame) -> pd.DataFr
     statements = statements.drop_duplicates("_date", keep="first")
 
     text_by_date = statements.set_index("_date")[["text", "title"]]
-    merged = events.merge(
-        text_by_date, left_on="event_date", right_index=True, how="left"
-    )
+    merged = events.merge(text_by_date, left_on="event_date", right_index=True, how="left")
     missing = merged["text"].isna().sum()
     if missing:
         missing_dates = merged.loc[merged["text"].isna(), "event_date"].tolist()

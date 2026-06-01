@@ -319,9 +319,7 @@ def _fetch_rv_history_for_cutoffs_uncached(event_date: str, symbol: str) -> list
         anchor = _dt.fromisoformat(event_date).date()
         start = anchor - timedelta(days=_FALLBACK_CUTOFF_WINDOW * 2)
         end = anchor
-        close_series = _download_close_series_in_window(
-            symbol=symbol, start=start, end=end
-        )
+        close_series = _download_close_series_in_window(symbol=symbol, start=start, end=end)
     except Exception:
         return []
     if close_series is None or len(close_series) < 3:

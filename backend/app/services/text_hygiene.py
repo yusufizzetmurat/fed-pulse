@@ -26,9 +26,7 @@ DocumentKind = Literal["statement", "minutes", "press_conference"]
 # on every Fed page we ingest, so all three kinds default to ``True``; if a
 # regression shows up on one kind we can drop that kind from the set
 # without disturbing the other transforms.
-_TOP_BANNER_KINDS: frozenset[str] = frozenset(
-    {"statement", "minutes", "press_conference"}
-)
+_TOP_BANNER_KINDS: frozenset[str] = frozenset({"statement", "minutes", "press_conference"})
 
 
 # 0. Top-of-page banner — UTF-8 BOM plus the Fed's site-wide navigation
@@ -143,7 +141,9 @@ _NAV_FRAGMENT_RES = (
     # The release-time clause is short and bounded by "Share"; allow periods
     # inside the time stamp ("p.m.") but cap the span so a legitimate
     # sentence ending in "Share" elsewhere in the body cannot be eaten.
-    re.compile(r"\bFor (?:release|immediate release)[^\n]{0,120}?\bShare\b\.?", flags=re.IGNORECASE),
+    re.compile(
+        r"\bFor (?:release|immediate release)[^\n]{0,120}?\bShare\b\.?", flags=re.IGNORECASE
+    ),
     # The Fed nav-chrome row reads "Share Print PDF" (or "Share Print"). Anchor
     # to that adjacency — never strip a bare "Share", which is a common noun
     # in policy text ("market share", "Structure and Share Data", "share of
@@ -237,8 +237,7 @@ _VOTING_FOR_RE = re.compile(
 # "Voting against this action" anchor. As above, do not fall back to
 # end-of-text.
 _VOTING_FOR_ACTION_RE = re.compile(
-    r"\s*Voting for this action[:]\s.*?"
-    r"(?=\s*Voting against this action\b)",
+    r"\s*Voting for this action[:]\s.*?" r"(?=\s*Voting against this action\b)",
     flags=re.IGNORECASE | re.DOTALL,
 )
 
@@ -307,7 +306,7 @@ def _strip_top_banner(text: str) -> str:
     anchor = _BODY_ANCHOR_RE.search(cleaned)
     if anchor is None:
         return cleaned
-    return cleaned[anchor.start():]
+    return cleaned[anchor.start() :]
 
 
 def _strip_return_to_text(text: str) -> str:

@@ -31,12 +31,8 @@ from app.training.loaders import fit_vol_regime_quantiles, vol_regime_class_for
 _PROCESSED_ROOT = _DEFAULT_DATA_DIR / "processed"
 _N_CLASSES = 3
 CLASS_NAMES: tuple[str, str, str] = ("calm", "normal", "high")
-_DEFAULT_SWEEP = (
-    BACKEND_ROOT / "artifacts" / "experiments" / "dual_head_comparison_canonical.json"
-)
-_DEFAULT_OUTPUT = (
-    BACKEND_ROOT / "artifacts" / "experiments" / "per_fold_baselines.json"
-)
+_DEFAULT_SWEEP = BACKEND_ROOT / "artifacts" / "experiments" / "dual_head_comparison_canonical.json"
+_DEFAULT_OUTPUT = BACKEND_ROOT / "artifacts" / "experiments" / "per_fold_baselines.json"
 
 
 def _pkg_dir(training_package_id: str, processed_root: Path) -> Path:
@@ -64,9 +60,7 @@ def load_events(package_dir: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _rows_in_range(
-    rows: list[dict[str, Any]], start: str, end: str
-) -> list[dict[str, Any]]:
+def _rows_in_range(rows: list[dict[str, Any]], start: str, end: str) -> list[dict[str, Any]]:
     return [r for r in rows if start <= str(r.get("event_date", "")) <= end]
 
 
@@ -86,9 +80,7 @@ def label_rows(
     return out
 
 
-def majority_baseline_f1(
-    train_labels: list[int], test_labels: list[int]
-) -> float:
+def majority_baseline_f1(train_labels: list[int], test_labels: list[int]) -> float:
     """Macro-F1 under constant majority-class prediction."""
     if not train_labels or not test_labels:
         return 0.0
@@ -200,21 +192,23 @@ def compute_per_fold_baselines(
             c = Counter(labels)
             return {CLASS_NAMES[i]: c.get(i, 0) for i in range(_N_CLASSES)}
 
-        folds_out.append({
-            "fold_id": fold_id,
-            "class_distribution": {
-                "train": _dist(train_labels),
-                "val": _dist(val_labels),
-                "test": _dist(test_labels),
-            },
-            "quantile_edges": list(quantiles),
-            "majority_baseline_f1": majority_baseline_f1(train_labels, test_labels),
-            "stratified_random_f1": stratified_random_f1(
-                train_labels, test_labels, n_seeds=n_stratified_seeds
-            ),
-            "encoder_f1": _encoder_f1_from_sweep(sweep, fold_id, head_mode),
-            "head_mode": head_mode,
-        })
+        folds_out.append(
+            {
+                "fold_id": fold_id,
+                "class_distribution": {
+                    "train": _dist(train_labels),
+                    "val": _dist(val_labels),
+                    "test": _dist(test_labels),
+                },
+                "quantile_edges": list(quantiles),
+                "majority_baseline_f1": majority_baseline_f1(train_labels, test_labels),
+                "stratified_random_f1": stratified_random_f1(
+                    train_labels, test_labels, n_seeds=n_stratified_seeds
+                ),
+                "encoder_f1": _encoder_f1_from_sweep(sweep, fold_id, head_mode),
+                "head_mode": head_mode,
+            }
+        )
 
     return {
         "training_package_id": training_package_id,
@@ -244,9 +238,7 @@ def print_summary(result: dict[str, Any]) -> None:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description="Per-fold class-distribution + dual baselines table."
-    )
+    p = argparse.ArgumentParser(description="Per-fold class-distribution + dual baselines table.")
     p.add_argument("--training-package-id", default="canonical")
     p.add_argument("--processed-root", default=str(_PROCESSED_ROOT))
     p.add_argument("--sweep-artefact", default=str(_DEFAULT_SWEEP))

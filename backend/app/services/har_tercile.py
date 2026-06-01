@@ -158,9 +158,7 @@ def predict_har_regime(
 
     rv = np.asarray(rv_history, dtype=np.float64)
     if rv.ndim != 1 or len(rv) < 22:
-        raise ValueError(
-            "rv_history must be a 1-D series of at least 22 daily RV values"
-        )
+        raise ValueError("rv_history must be a 1-D series of at least 22 daily RV values")
     if np.any(rv <= 0) or not np.all(np.isfinite(rv)):
         raise ValueError("rv_history values must be positive finite numbers")
 

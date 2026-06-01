@@ -116,7 +116,7 @@ def _find_section(text: str, header_patterns: tuple[str, ...]) -> tuple[int, int
     if header_match is None:
         return None
     start = header_match.start()
-    rest = lowered[header_match.end():]
+    rest = lowered[header_match.end() :]
     # End at the next "voting" header (for/against partition) or a
     # paragraph break that runs into the next prose block.
     next_voting = re.search(r"\n\s*voting", rest)
@@ -168,9 +168,11 @@ def _count_named_members(section: str) -> int:
         # meeting to maintain the target range..." -- everything from
         # "who" / "because" / "preferred" onward is explanatory, not a
         # second name.
-        token = re.split(
-            r"\s*\b(?:who|because|preferred)\b\s*", token, maxsplit=1
-        )[0].strip().rstrip(",")
+        token = (
+            re.split(r"\s*\b(?:who|because|preferred)\b\s*", token, maxsplit=1)[0]
+            .strip()
+            .rstrip(",")
+        )
         if not token:
             continue
         # Strip the role suffix after the name: "Jerome H. Powell, Chair"
@@ -222,7 +224,7 @@ def _infer_direction(text: str, header_patterns: tuple[str, ...]) -> str | None:
         return None
     # Read up to ~600 chars after the against header -- typical dissent
     # explanation paragraph plus a small buffer.
-    tail = lowered[header_match.end(): header_match.end() + 600]
+    tail = lowered[header_match.end() : header_match.end() + 600]
     hawkish = any(re.search(p, tail) for p in _HAWKISH_CUES)
     dovish = any(re.search(p, tail) for p in _DOVISH_CUES)
     if hawkish and not dovish:
@@ -249,7 +251,7 @@ def parse_vote_tally(text: str | None) -> VoteTally | None:
     if for_span is None:
         return None
     against_span = _find_section(text, _AGAINST_HEADERS)
-    for_section = text[for_span[0]: for_span[1]]
+    for_section = text[for_span[0] : for_span[1]]
     votes_for = _count_named_members(for_section)
     if votes_for == 0:
         # The header matched but the name list did not parse; treat as
@@ -258,7 +260,7 @@ def parse_vote_tally(text: str | None) -> VoteTally | None:
         return None
     if against_span is None:
         return VoteTally(votes_for=votes_for, votes_against=0, dissent_direction=None)
-    against_section = text[against_span[0]: against_span[1]]
+    against_section = text[against_span[0] : against_span[1]]
     votes_against = _count_named_members(against_section)
     if votes_against == 0:
         return VoteTally(votes_for=votes_for, votes_against=0, dissent_direction=None)

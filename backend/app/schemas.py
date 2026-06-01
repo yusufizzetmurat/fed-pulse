@@ -385,7 +385,8 @@ class VolRegimeReactionCard(BaseModel):
     log_rv_lower: float | None = None
     log_rv_upper: float | None = None
     regime_label: str = Field(
-        ..., description="Argmax regime label: calm | normal | high.",
+        ...,
+        description="Argmax regime label: calm | normal | high.",
     )
     regime_probabilities: dict[str, float] = Field(
         default_factory=dict,
@@ -1026,7 +1027,9 @@ class AnalogsRequest(BaseModel):
 
     model_config = _STRICT_REQUEST_CONFIG
 
-    text: str = Field(..., min_length=1, description="Statement text to match against past FOMC statements.")
+    text: str = Field(
+        ..., min_length=1, description="Statement text to match against past FOMC statements."
+    )
     k: int = Field(default=5, ge=1, le=20, description="Number of analogs to return (1-20).")
     as_of_date: date | None = Field(
         default=None,
@@ -1056,9 +1059,7 @@ class AnalogsRequest(BaseModel):
             try:
                 return date.fromisoformat(value)
             except ValueError as exc:
-                raise ValueError(
-                    f"as_of_date must be ISO YYYY-MM-DD, got {value!r}"
-                ) from exc
+                raise ValueError(f"as_of_date must be ISO YYYY-MM-DD, got {value!r}") from exc
         return value
 
 
@@ -1080,7 +1081,9 @@ class AnalogCard(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     event_date: str = Field(..., description="ISO date of the historical FOMC statement.")
-    similarity: float = Field(..., description="Cosine similarity in [-1, 1] vs. the query embedding.")
+    similarity: float = Field(
+        ..., description="Cosine similarity in [-1, 1] vs. the query embedding."
+    )
     axis_stance: str | None = Field(
         default=None,
         description="Stored stance label for the analog statement (hawkish / dovish / neutral). None when absent.",
@@ -1117,8 +1120,12 @@ class AnalogsResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     analogs: list[AnalogCard] = Field(default_factory=list)
-    index_size: int = Field(..., description="Total number of past statements in the loaded retrieval index.")
-    encoder_alias: str = Field(..., description="Registry alias of the encoder used to embed the query.")
+    index_size: int = Field(
+        ..., description="Total number of past statements in the loaded retrieval index."
+    )
+    encoder_alias: str = Field(
+        ..., description="Registry alias of the encoder used to embed the query."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1157,9 +1164,7 @@ class TrajectoryRequest(BaseModel):
             try:
                 return date.fromisoformat(value)
             except ValueError as exc:
-                raise ValueError(
-                    f"as_of_date must be ISO YYYY-MM-DD, got {value!r}"
-                ) from exc
+                raise ValueError(f"as_of_date must be ISO YYYY-MM-DD, got {value!r}") from exc
         return value
 
 
@@ -1348,13 +1353,16 @@ class ResearchRegistryResponse(BaseModel):
 
 # #299 PR-B — stance-directional backtest engine
 
+
 class BacktestPositionEntry(BaseModel):
     """One {date, position} signal in the backtest request."""
 
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
     date: str = Field(..., description="ISO date YYYY-MM-DD of the signal.")
-    position: int = Field(..., description="Position in {-1, 0, 1}. Hawkish=-1, neutral=0, dovish=+1.")
+    position: int = Field(
+        ..., description="Position in {-1, 0, 1}. Hawkish=-1, neutral=0, dovish=+1."
+    )
 
 
 class BacktestRequest(BaseModel):

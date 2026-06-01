@@ -70,9 +70,7 @@ def build_sequences(
     """
 
     n = market_feat.shape[0]
-    origins = np.array(
-        [t for t in range(n) if t >= seq_len - 1 and bool(valid[t])], dtype=np.int64
-    )
+    origins = np.array([t for t in range(n) if t >= seq_len - 1 and bool(valid[t])], dtype=np.int64)
     seqs = np.stack([market_feat[t - seq_len + 1 : t + 1] for t in origins], axis=0)
     return {
         "origin": origins,
@@ -105,9 +103,7 @@ def _build_model(d_market: int, d_text: int, n_horizons: int) -> Any:
         def __init__(self) -> None:
             super().__init__()
             self.d_hidden = 128
-            self.lstm = nn.LSTM(
-                d_market, self.d_hidden, num_layers=1, batch_first=True
-            )
+            self.lstm = nn.LSTM(d_market, self.d_hidden, num_layers=1, batch_first=True)
             self.text_proj = nn.Sequential(
                 nn.Linear(d_text, self.d_hidden), nn.GELU(), nn.LayerNorm(self.d_hidden)
             )
@@ -180,7 +176,9 @@ def _train_seqlstm_fold(
     thr = [np.quantile(tgt_tr[:, k], [1 / 3, 2 / 3]) for k in range(n_h)]
     y_tr = np.column_stack([_labels(tgt_tr[:, k], thr[k]) for k in range(n_h)])
     y_te = np.column_stack([_labels(tgt_te[:, k], thr[k]) for k in range(n_h)])
-    maj = np.array([int(np.bincount(y_tr[:, k], minlength=_N_CLASSES).argmax()) for k in range(n_h)])
+    maj = np.array(
+        [int(np.bincount(y_tr[:, k], minlength=_N_CLASSES).argmax()) for k in range(n_h)]
+    )
 
     seq_tr_raw, seq_te_raw = seqs["seq"][tr], seqs["seq"][te]
     seq_tr, seq_te = _standardize_seq(seq_tr_raw, seq_te_raw, seq_tr_raw[core])
@@ -275,17 +273,22 @@ def run(
     corpus = pd.read_parquet(corpus_path)
     emb_df = pd.read_parquet(emb_path)
     data = _assemble(daily, corpus, emb_df, market_cache_dir, horizons, measure=measure)
-    seqs = build_sequences(
-        data["market_feat"], data["text_emb"], data["text_mask"], data["valid"]
-    )
+    seqs = build_sequences(data["market_feat"], data["text_emb"], data["text_mask"], data["valid"])
 
     n_seq = len(seqs["origin"])
     folds = walk_forward_splits(n_seq, n_folds=n_folds, embargo=max(horizons) + 1)
     pools: dict[str, list[np.ndarray]] = {
         k: []
         for k in (
-            "fused_reg", "mkt_reg", "har_reg", "true_reg",
-            "fused_clf", "mkt_clf", "true_clf", "maj_clf", "mask",
+            "fused_reg",
+            "mkt_reg",
+            "har_reg",
+            "true_reg",
+            "fused_clf",
+            "mkt_clf",
+            "true_clf",
+            "maj_clf",
+            "mask",
         )
     }
     for tr_l, te_l in folds:
@@ -371,9 +374,7 @@ def main() -> int:
         measure=args.target,
     )
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    (args.out_dir / "seqlstm_bakeoff.json").write_text(
-        json.dumps(res, indent=2), encoding="utf-8"
-    )
+    (args.out_dir / "seqlstm_bakeoff.json").write_text(json.dumps(res, indent=2), encoding="utf-8")
     print(
         f"target={res['measure']}  n_eval={res['n_eval']}  L={res['seq_len']}  "
         f"text_active_frac={res['text_active_frac']:.3f}"

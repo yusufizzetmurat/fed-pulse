@@ -77,7 +77,9 @@ def _is_encoder_runnable(encoder_key: str, checkpoint: str) -> tuple[bool, str]:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Phase 3 fine-tune full batch (3 encoders × 5 seeds).")
+    parser = argparse.ArgumentParser(
+        description="Phase 3 fine-tune full batch (3 encoders × 5 seeds)."
+    )
     parser.add_argument("--training-package-id", required=True)
     parser.add_argument("--fold-id", default="wf_fold_2")
     parser.add_argument("--epochs", type=int, default=3)
@@ -131,9 +133,7 @@ def _build_run_args(args: argparse.Namespace, *, checkpoint: str, seed: int) -> 
         max_length=args.max_length,
         owner=args.owner,
         artifact_root=args.artifact_root,
-        cross_bank_supervision=str(
-            getattr(args, "cross_bank_supervision", "off") or "off"
-        ),
+        cross_bank_supervision=str(getattr(args, "cross_bank_supervision", "off") or "off"),
     )
 
 

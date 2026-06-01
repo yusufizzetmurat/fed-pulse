@@ -151,15 +151,11 @@ def _aggregate_checkpoint_runs(
     if len(results) >= 2:
         return {
             "support": results[0].support,
-            "macro_f1": _ci_summary(
-                macro, n_resamples=n_resamples, coverage=coverage, seed=seed
-            ),
+            "macro_f1": _ci_summary(macro, n_resamples=n_resamples, coverage=coverage, seed=seed),
             "weighted_f1": _ci_summary(
                 weighted, n_resamples=n_resamples, coverage=coverage, seed=seed
             ),
-            "accuracy": _ci_summary(
-                acc, n_resamples=n_resamples, coverage=coverage, seed=seed
-            ),
+            "accuracy": _ci_summary(acc, n_resamples=n_resamples, coverage=coverage, seed=seed),
         }
     return {
         "support": results[0].support,
@@ -253,10 +249,20 @@ def _csv_value(value: Any) -> str:
 
 def render_csv(matrix: dict[str, Any]) -> str:
     fieldnames = [
-        "model", "bank", "support", "n_checkpoints", "ci_kind",
-        "macro_f1_point", "macro_f1_lo", "macro_f1_hi",
-        "weighted_f1_point", "weighted_f1_lo", "weighted_f1_hi",
-        "accuracy_point", "accuracy_lo", "accuracy_hi",
+        "model",
+        "bank",
+        "support",
+        "n_checkpoints",
+        "ci_kind",
+        "macro_f1_point",
+        "macro_f1_lo",
+        "macro_f1_hi",
+        "weighted_f1_point",
+        "weighted_f1_lo",
+        "weighted_f1_hi",
+        "accuracy_point",
+        "accuracy_lo",
+        "accuracy_hi",
     ]
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=fieldnames)
@@ -363,8 +369,15 @@ def main() -> int:
         rng_seed=args.rng_seed,
     )
 
-    output_dir = Path(args.output_dir) if args.output_dir else (
-        DATA_DIR / "artifacts" / "cross_bank" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    output_dir = (
+        Path(args.output_dir)
+        if args.output_dir
+        else (
+            DATA_DIR
+            / "artifacts"
+            / "cross_bank"
+            / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        )
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     scrubbed = _scrub_nan(matrix)
@@ -372,7 +385,9 @@ def main() -> int:
         json.dumps(scrubbed, indent=2, allow_nan=False), encoding="utf-8"
     )
     (output_dir / "transfer_matrix.csv").write_text(render_csv(matrix), encoding="utf-8")
-    (output_dir / "transfer_matrix.md").write_text(render_markdown(matrix, coverage=args.coverage), encoding="utf-8")
+    (output_dir / "transfer_matrix.md").write_text(
+        render_markdown(matrix, coverage=args.coverage), encoding="utf-8"
+    )
     print(f"[transfer_matrix] wrote artefacts to {output_dir}")
     return 0
 

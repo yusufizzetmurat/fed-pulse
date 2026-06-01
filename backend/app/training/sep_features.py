@@ -84,14 +84,9 @@ class SepProjections:
         inferred-zero spread.
         """
 
-        if (
-            self.ffr_range_upper_current is None
-            or self.ffr_range_lower_current is None
-        ):
+        if self.ffr_range_upper_current is None or self.ffr_range_lower_current is None:
             return None
-        return float(self.ffr_range_upper_current) - float(
-            self.ffr_range_lower_current
-        )
+        return float(self.ffr_range_upper_current) - float(self.ffr_range_lower_current)
 
 
 @dataclass(frozen=True)
@@ -158,12 +153,8 @@ def _projection_from_record(record: Mapping[str, Any]) -> SepProjections | None:
         ffr_median_current_year=_coerce_float(record.get("ffr_median_current_year")),
         ffr_median_next_year=_coerce_float(record.get("ffr_median_next_year")),
         ffr_median_longer_run=_coerce_float(record.get("ffr_median_longer_run")),
-        ffr_range_upper_current=_coerce_float(
-            record.get("ffr_range_upper_current")
-        ),
-        ffr_range_lower_current=_coerce_float(
-            record.get("ffr_range_lower_current")
-        ),
+        ffr_range_upper_current=_coerce_float(record.get("ffr_range_upper_current")),
+        ffr_range_lower_current=_coerce_float(record.get("ffr_range_lower_current")),
     )
 
 

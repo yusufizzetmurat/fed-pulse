@@ -7,6 +7,7 @@ inference path that depends on it (``forecast_quantitative_series``,
 ``_build_confidence_bands``) and re-exports every public name that callers
 across the codebase import from here.
 """
+
 from __future__ import annotations
 
 import copy
@@ -186,14 +187,10 @@ def _extract_missing_kwarg_from_typeerror(exc: TypeError) -> str | None:
     import re
 
     message = str(exc)
-    match = re.search(
-        r"keyword[- ]?(?:only )?argument[s]?:?\s*['\"]([^'\"]+)['\"]", message
-    )
+    match = re.search(r"keyword[- ]?(?:only )?argument[s]?:?\s*['\"]([^'\"]+)['\"]", message)
     if match:
         return match.group(1)
-    match = re.search(
-        r"unexpected keyword argument\s*['\"]([^'\"]+)['\"]", message
-    )
+    match = re.search(r"unexpected keyword argument\s*['\"]([^'\"]+)['\"]", message)
     if match:
         return match.group(1)
     return None
@@ -328,20 +325,14 @@ def _get_model() -> ForecasterServingModel:
                     "checkpoint inference contract incompatible with serving "
                     f"signature: {_status}"
                 )
-            raw_config = (
-                payload.get("model_config") if isinstance(payload, dict) else None
-            )
+            raw_config = payload.get("model_config") if isinstance(payload, dict) else None
             resolved = _coerce_model_config(raw_config)
             model = build_serving_forecaster(resolved).to(device)
             if payload is not None:
-                _load_state_dict_loose(
-                    model, payload["model_state_dict"], str(BEST_MODEL_PATH)
-                )
+                _load_state_dict_loose(model, payload["model_state_dict"], str(BEST_MODEL_PATH))
             model.eval()  # set inference mode
             _model = model
-            _model_artifact_metadata = _checkpoint_metadata(
-                payload, BEST_MODEL_PATH, model=model
-            )
+            _model_artifact_metadata = _checkpoint_metadata(payload, BEST_MODEL_PATH, model=model)
     return _model
 
 
@@ -367,9 +358,7 @@ def _set_singleton_after_train(
 
     with _model_lock:
         payload = _read_checkpoint_payload(checkpoint_target, device_obj)
-        raw_config = (
-            payload.get("model_config") if isinstance(payload, dict) else None
-        )
+        raw_config = payload.get("model_config") if isinstance(payload, dict) else None
         # Multi-modal (gated-InfoNCE) research-side checkpoints are
         # research-only by construction: the serving class does not
         # mount the InfoNCE alignment head. Fall back to a deep-copy of
@@ -385,9 +374,7 @@ def _set_singleton_after_train(
         else:
             resolved = _coerce_model_config(raw_config)
             serving = build_serving_forecaster(resolved).to(device_obj)
-            _load_state_dict_loose(
-                serving, work_model.state_dict(), str(checkpoint_target)
-            )
+            _load_state_dict_loose(serving, work_model.state_dict(), str(checkpoint_target))
             _model = serving
         assert _model is not None
         _model.eval()
@@ -576,9 +563,7 @@ def _resolve_inference_text_embedding(
             torch.ones((1, 1), dtype=torch.float32, device=device),
         )
     text_embedding = torch.tensor([pooled], dtype=torch.float32, device=device)
-    text_embedding_missing = torch.tensor(
-        [[missing_flag]], dtype=torch.float32, device=device
-    )
+    text_embedding_missing = torch.tensor([[missing_flag]], dtype=torch.float32, device=device)
     return text_embedding, text_embedding_missing
 
 
@@ -630,7 +615,9 @@ def _log_serving_forward_kwargs(model: ForecasterServingModel) -> None:
     )
 
 
-def _predict_next_point(model: ForecasterServingModel, sequence: list[FeatureVector]) -> tuple[float, float]:
+def _predict_next_point(
+    model: ForecasterServingModel, sequence: list[FeatureVector]
+) -> tuple[float, float]:
     # Classification-mode checkpoints emit ``(B, n_classes)`` logits
     # from ``forward()`` (the stance branch under the MultiTaskHead);
     # reading ``out[0]`` and ``out[1]`` as ``(close, vol)`` would
@@ -749,9 +736,7 @@ def build_panel_attributions(
     # surface (missing bundle, no eligible history, kernel error)
     # degrades into an ``unavailable`` PanelAttribution rather than
     # bubbling out.
-    trajectory_panel = _build_trajectory_panel(
-        as_of_date=as_of_date, steps=steps
-    )
+    trajectory_panel = _build_trajectory_panel(as_of_date=as_of_date, steps=steps)
     panels.append(trajectory_panel.to_dict())
 
     return panels
@@ -836,9 +821,7 @@ def _build_trajectory_panel(
     if inputs_tensor is None or mask_tensor is None:
         return _unavailable("trajectory_history_empty")
 
-    return attribute_trajectory_panel(
-        state.model, inputs_tensor, mask=mask_tensor, n_steps=steps
-    )
+    return attribute_trajectory_panel(state.model, inputs_tensor, mask=mask_tensor, n_steps=steps)
 
 
 @torch.no_grad()
@@ -880,8 +863,7 @@ def build_market_reaction_panel(
 
     model = _get_model()
     active_rates = tuple(
-        str(name).lower()
-        for name in getattr(model, "rates_heads_active", ()) or ()
+        str(name).lower() for name in getattr(model, "rates_heads_active", ()) or ()
     )
     output_mode = str(getattr(model, "output_mode", "regression"))
     # #317 finding #11: rates cards render under either output_mode as
@@ -919,9 +901,13 @@ def build_market_reaction_panel(
             kwargs["text_embedding"] = inferred_text
             kwargs["text_embedding_missing"] = inferred_missing
     if (
-        getattr(model, "use_chunk_attention", False)
-        or getattr(model, "use_llm_embeddings", False)
-    ) and chunks is not None and elapsed_days is not None:
+        (
+            getattr(model, "use_chunk_attention", False)
+            or getattr(model, "use_llm_embeddings", False)
+        )
+        and chunks is not None
+        and elapsed_days is not None
+    ):
         kwargs["chunks"] = chunks.to(device)
         kwargs["elapsed_days"] = elapsed_days.to(device)
     forward_multi = getattr(model, "forward_multi_task", None)
@@ -990,11 +976,7 @@ def build_market_reaction_panel(
     rates_softmax_quantiles = (
         getattr(manifest, "rates_softmax_quantiles", None) if manifest else None
     ) or {}
-    coverage = (
-        float(getattr(manifest, "nominal_coverage", 0.0))
-        if manifest is not None
-        else None
-    )
+    coverage = float(getattr(manifest, "nominal_coverage", 0.0)) if manifest is not None else None
 
     # Rates cards.
     from app.evaluation.conformal import predict_conformal_set
@@ -1011,7 +993,9 @@ def build_market_reaction_panel(
             continue
         pred_std_tensor = out_dict[pred_key]
         pred_std = float(pred_std_tensor.squeeze().item())
-        scaler_payload = rates_scalers_payload.get(name) if isinstance(rates_scalers_payload, dict) else None
+        scaler_payload = (
+            rates_scalers_payload.get(name) if isinstance(rates_scalers_payload, dict) else None
+        )
         if isinstance(scaler_payload, dict):
             scaler = RatesHeadScaler(
                 mean=float(scaler_payload.get("mean", 0.0)),
@@ -1046,15 +1030,13 @@ def build_market_reaction_panel(
             # #317 finding #3: calibrated APS prediction set per head.
             cls_threshold = (
                 float(rates_softmax_quantiles[name])
-                if isinstance(rates_softmax_quantiles, dict)
-                and name in rates_softmax_quantiles
+                if isinstance(rates_softmax_quantiles, dict) and name in rates_softmax_quantiles
                 else None
             )
             if cls_threshold is not None:
                 set_indices = predict_conformal_set(cls_probs_list, cls_threshold)
                 predicted_set = [
-                    labels[i] if i < len(labels) else f"class_{i}"
-                    for i in set_indices
+                    labels[i] if i < len(labels) else f"class_{i}" for i in set_indices
                 ]
         rates_cards.append(
             {
@@ -1179,8 +1161,7 @@ def build_regime_classification_card(
     # the log_rv scalar off one pass; mirrors the
     # ``build_market_reaction_panel`` pattern.
     use_regression_path = (
-        head_mode in {"regression", "dual"}
-        and getattr(model, "regression_head", None) is not None
+        head_mode in {"regression", "dual"} and getattr(model, "regression_head", None) is not None
     )
 
     out_dict: dict[str, torch.Tensor] | None = None
@@ -1243,10 +1224,7 @@ def build_regime_classification_card(
             set_label: str
             set_size: int
             coverage_val: float
-            if (
-                manifest is not None
-                and getattr(manifest, "softmax_quantile", None) is not None
-            ):
+            if manifest is not None and getattr(manifest, "softmax_quantile", None) is not None:
                 logits = model(x, **kwargs)
                 if logits.dim() == 2:
                     probs_tensor = _apply_calibration_to_softmax(
@@ -1275,9 +1253,11 @@ def build_regime_classification_card(
                 predicted_set = [bucket]
                 set_label = "{" + bucket + "}"
                 set_size = 1
-                coverage_val = float(
-                    getattr(manifest, "nominal_coverage", 0.0)
-                ) if manifest is not None else 0.0
+                coverage_val = (
+                    float(getattr(manifest, "nominal_coverage", 0.0))
+                    if manifest is not None
+                    else 0.0
+                )
             return {
                 "predicted_set": predicted_set,
                 "set_label": set_label,
@@ -1310,9 +1290,7 @@ def build_regime_classification_card(
         # Defensive: a 5-class quantile run would emit 5 probs but our
         # label tuple is 3-wide. Pad with f"class_{i}" so the response
         # still serialises rather than indexing past the tuple.
-        labels = tuple(
-            labels[i] if i < len(labels) else f"class_{i}" for i in range(n_classes)
-        )
+        labels = tuple(labels[i] if i < len(labels) else f"class_{i}" for i in range(n_classes))
     threshold = float(manifest.softmax_quantile)
     set_indices = predict_conformal_set(probs, threshold)
     set_labels = [labels[i] for i in set_indices]
@@ -1525,7 +1503,9 @@ def _build_confidence_bands(
     vol_changes = [curr - prev for prev, curr in zip(history_vol, history_vol[1:])]
 
     close_sigma = max(_sample_std(close_returns), 0.0025)
-    latest_vol = max(history_vol[-1] if history_vol else 0.0, forecast_vol[0] if forecast_vol else 0.0)
+    latest_vol = max(
+        history_vol[-1] if history_vol else 0.0, forecast_vol[0] if forecast_vol else 0.0
+    )
     vol_sigma = max(_sample_std(vol_changes), latest_vol * 0.08, 0.00015)
 
     forecast_close_lower: list[float] = []
@@ -1583,7 +1563,9 @@ def get_model_artifact_metadata(
             {
                 "adaptation_epochs_completed": adaptation_summary.epochs_completed,
                 "adaptation_best_epoch": adaptation_summary.best_epoch,
-                "adaptation_loss": adaptation_summary.metrics.loss if adaptation_summary.metrics else None,
+                "adaptation_loss": adaptation_summary.metrics.loss
+                if adaptation_summary.metrics
+                else None,
                 "adaptation_combined_rmse": (
                     adaptation_summary.metrics.combined_rmse if adaptation_summary.metrics else None
                 ),
@@ -1624,7 +1606,9 @@ def forecast_quantitative_series(
     forecast_dates: list[str] | None = None,
 ) -> dict[str, object]:
     if not vectors:
-        vectors = [FeatureVector(date="", sentiment_score=0.0, market_close=0.0, market_volatility=0.0)]
+        vectors = [
+            FeatureVector(date="", sentiment_score=0.0, market_close=0.0, market_volatility=0.0)
+        ]
 
     # ``forecast_mode`` is kept as a parameter (default ``"fast"``) for
     # back-compat with persisted history rows; the runtime path is
@@ -1730,10 +1714,7 @@ def forecast_quantitative_series(
                 float(conformal_manifest.nominal_coverage)
                 if (
                     conformal_manifest is not None
-                    and float(
-                        getattr(conformal_manifest, "residual_quantile_close", 0.0)
-                    )
-                    > 0.0
+                    and float(getattr(conformal_manifest, "residual_quantile_close", 0.0)) > 0.0
                 )
                 else FORECAST_CONFIDENCE_LEVEL
             ),
@@ -1742,10 +1723,7 @@ def forecast_quantitative_series(
                 "conformal"
                 if (
                     conformal_manifest is not None
-                    and float(
-                        getattr(conformal_manifest, "residual_quantile_close", 0.0)
-                    )
-                    > 0.0
+                    and float(getattr(conformal_manifest, "residual_quantile_close", 0.0)) > 0.0
                 )
                 else "gaussian_z"
             ),
@@ -1753,10 +1731,7 @@ def forecast_quantitative_series(
                 float(conformal_manifest.nominal_coverage)
                 if (
                     conformal_manifest is not None
-                    and float(
-                        getattr(conformal_manifest, "residual_quantile_close", 0.0)
-                    )
-                    > 0.0
+                    and float(getattr(conformal_manifest, "residual_quantile_close", 0.0)) > 0.0
                 )
                 else None
             ),

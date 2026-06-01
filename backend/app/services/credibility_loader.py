@@ -211,9 +211,7 @@ def load_credibility_for_run(
 
     if fred_response is None and fred_cache_dir is not None:
         try:
-            fred_response = fetch_fred_series(
-                fred_series_id, cache_dir=Path(fred_cache_dir)
-            )
+            fred_response = fetch_fred_series(fred_series_id, cache_dir=Path(fred_cache_dir))
         except (FileNotFoundError, RuntimeError):
             fred_response = None
 

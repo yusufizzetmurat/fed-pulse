@@ -208,8 +208,14 @@ def run(
 
             # Ensemble trains on the FULL train fold (no calibration carve-out).
             per_seed_te, ens_te = _ensemble_predict(
-                har_fit_tr, full[tr], resid_tr, full[te], har_pred_te,
-                seeds=seeds, epochs=epochs, device=device,
+                har_fit_tr,
+                full[tr],
+                resid_tr,
+                full[te],
+                har_pred_te,
+                seeds=seeds,
+                epochs=epochs,
+                device=device,
             )
 
             # Band fold k from the prior folds' OOS residuals (skip fold 1: none yet).
@@ -288,8 +294,14 @@ def _walk_forward_oos_resid(
         resid_tr = (ytr - har_fit_tr).reshape(-1, 1)
         har_pred_te = _fit_predict_ols(har[tr], ytr, har[te])
         _per_seed, ens_te = _ensemble_predict(
-            har_fit_tr, full[tr], resid_tr, full[te], har_pred_te,
-            seeds=seeds, epochs=epochs, device=device,
+            har_fit_tr,
+            full[tr],
+            resid_tr,
+            full[te],
+            har_pred_te,
+            seeds=seeds,
+            epochs=epochs,
+            device=device,
         )
         resid.extend(np.abs(yte - ens_te).tolist())
     return np.asarray(resid)
@@ -501,9 +513,7 @@ def main() -> int:
 
     res = run(args.rv_path, seeds=seeds, epochs=args.epochs)
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    (args.out_dir / "production_eval.json").write_text(
-        json.dumps(res, indent=2), encoding="utf-8"
-    )
+    (args.out_dir / "production_eval.json").write_text(json.dumps(res, indent=2), encoding="utf-8")
     _print_table(res)
     spec = fit_production(args.rv_path, args.out_dir, seeds=seeds, epochs=args.epochs)
     print(

@@ -193,9 +193,7 @@ def _trial_target_mode(trial: dict[str, Any]) -> str:
     return "real"
 
 
-def _bucket_key(
-    architecture: str, target_mode: str, fold_id: str | None
-) -> str:
+def _bucket_key(architecture: str, target_mode: str, fold_id: str | None) -> str:
     """Compose the dict key the aggregator groups by.
 
     Shuffled-target trials sit in a separate bucket so the
@@ -261,7 +259,9 @@ def _collect_per_architecture(reports: list[dict[str, Any]]) -> dict[str, dict[s
                 bucket["test_combined_rmse"].append(test_combined)
             # Once any credibility-on trial lands for an architecture the
             # bucket flips on so the headline label stays honest.
-            bucket["credibility_features"] = bucket["credibility_features"] or _trial_credibility(trial)
+            bucket["credibility_features"] = bucket["credibility_features"] or _trial_credibility(
+                trial
+            )
     # Emit an all-folds aggregate row per (architecture, target_mode)
     # when any per-fold bucket is present. The all-folds row collects
     # every per-fold trial so the bootstrap CI is computed across
@@ -619,9 +619,11 @@ def main() -> int:
         seed=args.seed,
     )
 
-    output_dir = args.output_dir or (
-        args.artifact_dir.parent if args.artifact_dir.is_file() else args.artifact_dir
-    ) / "forecaster_sweep_summary"
+    output_dir = (
+        args.output_dir
+        or (args.artifact_dir.parent if args.artifact_dir.is_file() else args.artifact_dir)
+        / "forecaster_sweep_summary"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     json_path = output_dir / f"forecaster_sweep_summary_{timestamp}.json"

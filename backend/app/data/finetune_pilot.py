@@ -74,9 +74,7 @@ def _hf_token() -> str | None:
     return os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN") or None
 
 
-def _load_registry_rows(
-    package_dir: Path, *, include_zero_weight: bool = False
-) -> list[EvalRow]:
+def _load_registry_rows(package_dir: Path, *, include_zero_weight: bool = False) -> list[EvalRow]:
     """Load mapped-label rows from a training package.
 
     ``include_zero_weight=False`` (the default) drops any row with
@@ -130,7 +128,9 @@ def _load_fold(package_dir: Path, fold_id: str) -> dict[str, Any]:
     raise SystemExit(f"Fold {fold_id} not found in {path}")
 
 
-def _split_by_fold(rows: list[EvalRow], fold: dict[str, Any]) -> tuple[list[EvalRow], list[EvalRow]]:
+def _split_by_fold(
+    rows: list[EvalRow], fold: dict[str, Any]
+) -> tuple[list[EvalRow], list[EvalRow]]:
     train_end = str(fold["train_end"])
     test_start = str(fold["test_start"])
     test_end = str(fold["test_end"])
@@ -179,7 +179,12 @@ def _compute_classification_metrics(y_true: list[str], y_pred: list[str]) -> dic
         precision = tp / (tp + fp) if (tp + fp) else 0.0
         recall = tp / (tp + fn) if (tp + fn) else 0.0
         f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
-        per_class[label] = {"precision": precision, "recall": recall, "f1": f1, "support": support[label]}
+        per_class[label] = {
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "support": support[label],
+        }
         macro_values.append(f1)
         weighted_f1_sum += f1 * support[label]
 
@@ -226,10 +231,7 @@ def write_predictions_jsonl(
     with output_path.open("w", encoding="utf-8") as handle:
         for rid, gold, pred in zip(record_ids, gold_labels, predicted_labels):
             handle.write(
-                json.dumps(
-                    {"record_id": rid, "mapped_label": gold, "predicted_label": pred}
-                )
-                + "\n"
+                json.dumps({"record_id": rid, "mapped_label": gold, "predicted_label": pred}) + "\n"
             )
 
 
@@ -352,7 +354,9 @@ def run_one(args: argparse.Namespace, *, artifact_dir: Path | None = None) -> di
     )
     trainer = Trainer(model=model, args=training_args, train_dataset=train_ds)
 
-    print(f"[pilot] fine-tuning {args.checkpoint} for {args.epochs} epochs on {len(train_rows)} rows")
+    print(
+        f"[pilot] fine-tuning {args.checkpoint} for {args.epochs} epochs on {len(train_rows)} rows"
+    )
     train_output = trainer.train()
     train_runtime = float(train_output.metrics.get("train_runtime", 0.0))
     train_loss = float(train_output.metrics.get("train_loss", 0.0))

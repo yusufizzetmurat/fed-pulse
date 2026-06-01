@@ -226,9 +226,7 @@ def fetch_projection_page(date: str, session: requests.Session | None = None) ->
     last_error_status: int | None = None
     for template in PROJTABL_URL_TEMPLATES:
         url = template.format(date=date)
-        response = getter.get(
-            url, timeout=_REQUEST_TIMEOUT, headers={"User-Agent": _USER_AGENT}
-        )
+        response = getter.get(url, timeout=_REQUEST_TIMEOUT, headers={"User-Agent": _USER_AGENT})
         if response.status_code == 200:
             response.encoding = "utf-8-sig"
             return response.text
@@ -241,9 +239,7 @@ def fetch_projection_page(date: str, session: requests.Session | None = None) ->
     if last_error_status is not None:
         # All variants failed and at least one was a non-404 error: do not silently
         # treat this meeting as "no SEP" — surface it.
-        raise RuntimeError(
-            f"SEP fetch failed for {date}: last HTTP status {last_error_status}"
-        )
+        raise RuntimeError(f"SEP fetch failed for {date}: last HTTP status {last_error_status}")
     return None
 
 
@@ -273,14 +269,10 @@ def ingest_sep(meeting_dates: list[str], out_path: Path, pause: float = 0.5) -> 
         raise RuntimeError("no SEP meetings ingested; check URL pattern / dates")
 
     combined = pd.concat(frames, ignore_index=True)
-    combined = combined.sort_values(["meeting_date", "variable", "horizon"]).reset_index(
-        drop=True
-    )
+    combined = combined.sort_values(["meeting_date", "variable", "horizon"]).reset_index(drop=True)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     combined.to_parquet(out_path, index=False)
-    logger.info(
-        "wrote %d rows across %d SEP meetings -> %s", len(combined), found, out_path
-    )
+    logger.info("wrote %d rows across %d SEP meetings -> %s", len(combined), found, out_path)
     return combined
 
 

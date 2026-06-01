@@ -111,8 +111,7 @@ def build_lora_encoder(
     ref = encoder_ref(encoder_alias)
     if ref is None:
         raise ValueError(
-            f"encoder alias {encoder_alias!r} is not registered in "
-            "models/registry.yaml"
+            f"encoder alias {encoder_alias!r} is not registered in " "models/registry.yaml"
         )
     if not ref.revision:
         raise ValueError(

@@ -166,9 +166,7 @@ def group_candidates_into_buckets(
     output: list[tuple[BucketKey, list[tuple[int, dict[str, Any]]]]] = []
     for key in ordered_keys:
         cells = grouped[key]
-        cap = resolve_max_bucket_size(
-            key.architecture, override=max_bucket_size
-        )
+        cap = resolve_max_bucket_size(key.architecture, override=max_bucket_size)
         if cap <= 0 or len(cells) <= cap:
             output.append((key, cells))
             continue
@@ -206,9 +204,7 @@ class BatchedDropout(nn.Module):
     def __init__(self, p: torch.Tensor):
         super().__init__()
         if p.ndim != 1:
-            raise ValueError(
-                f"BatchedDropout p must be 1-D (per-cell); got shape {tuple(p.shape)}"
-            )
+            raise ValueError(f"BatchedDropout p must be 1-D (per-cell); got shape {tuple(p.shape)}")
         if torch.any(p < 0) or torch.any(p > 1):
             raise ValueError("BatchedDropout p values must lie in [0, 1]")
         # Register as a non-trainable buffer so the module follows its
@@ -237,9 +233,7 @@ class BatchedDropout(nn.Module):
         keep_view = keep_prob.view(broadcast_shape)
         # Uniform draw in [0, 1); keep where u < keep_prob.
         if generator is not None:
-            u = torch.rand(
-                x.shape, dtype=x.dtype, device=x.device, generator=generator
-            )
+            u = torch.rand(x.shape, dtype=x.dtype, device=x.device, generator=generator)
         else:
             u = torch.rand(x.shape, dtype=x.dtype, device=x.device)
         mask = (u < keep_view).to(x.dtype)
@@ -298,22 +292,16 @@ class StackedDLinear(nn.Module):
             * 2.0
             * scale
         )
-        self.trend_bias = nn.Parameter(
-            torch.zeros(bucket_size, hidden_size)
-        )
+        self.trend_bias = nn.Parameter(torch.zeros(bucket_size, hidden_size))
         self.residual_weight = nn.Parameter(
             (torch.rand(bucket_size, hidden_size, input_features * sequence_length) - 0.5)
             * 2.0
             * scale
         )
-        self.residual_bias = nn.Parameter(
-            torch.zeros(bucket_size, hidden_size)
-        )
+        self.residual_bias = nn.Parameter(torch.zeros(bucket_size, hidden_size))
         head_scale = 1.0 / hidden_size**0.5
         self.head_weight = nn.Parameter(
-            (torch.rand(bucket_size, head_hidden_size, hidden_size) - 0.5)
-            * 2.0
-            * head_scale
+            (torch.rand(bucket_size, head_hidden_size, hidden_size) - 0.5) * 2.0 * head_scale
         )
         self.head_bias = nn.Parameter(torch.zeros(bucket_size, head_hidden_size))
         out_scale = 1.0 / head_hidden_size**0.5
@@ -374,8 +362,12 @@ class StackedDLinear(nn.Module):
         residual_flat = residual.reshape(n, b, t * f)
         # Per-cell matmul: (N, b, t*f) @ (N, t*f, hidden).T -> (N, b, hidden).
         # einsum lets the leading N axis stay outside the matmul.
-        trend_h = torch.einsum("nbk,nhk->nbh", trend_flat, self.trend_weight) + self.trend_bias.unsqueeze(1)
-        residual_h = torch.einsum("nbk,nhk->nbh", residual_flat, self.residual_weight) + self.residual_bias.unsqueeze(1)
+        trend_h = torch.einsum(
+            "nbk,nhk->nbh", trend_flat, self.trend_weight
+        ) + self.trend_bias.unsqueeze(1)
+        residual_h = torch.einsum(
+            "nbk,nhk->nbh", residual_flat, self.residual_weight
+        ) + self.residual_bias.unsqueeze(1)
         h = trend_h + residual_h
         h = nn.functional.gelu(h)
         h = self.dropout(h, generator=generator)
@@ -417,13 +409,9 @@ class BatchedAdamW:
         eps: float = 1e-8,
     ):
         if lr.ndim != 1 or weight_decay.ndim != 1:
-            raise ValueError(
-                "BatchedAdamW lr and weight_decay must be 1-D (per-cell)"
-            )
+            raise ValueError("BatchedAdamW lr and weight_decay must be 1-D (per-cell)")
         if lr.shape[0] != weight_decay.shape[0]:
-            raise ValueError(
-                "BatchedAdamW lr and weight_decay must have the same length"
-            )
+            raise ValueError("BatchedAdamW lr and weight_decay must have the same length")
         self._bucket_size = int(lr.shape[0])
         for name, tensor in params.items():
             if tensor.shape[0] != self._bucket_size:
@@ -483,20 +471,14 @@ class BatchedAdamW:
             # Per-cell lr / weight_decay broadcast over the param's
             # tail dims. The leading dim is the bucket axis.
             bc_shape = (self._bucket_size,) + (1,) * (param.ndim - 1)
-            lr_view = self.lr.view(bc_shape).to(
-                dtype=param.dtype, device=param.device
-            )
-            wd_view = self.weight_decay.view(bc_shape).to(
-                dtype=param.dtype, device=param.device
-            )
+            lr_view = self.lr.view(bc_shape).to(dtype=param.dtype, device=param.device)
+            wd_view = self.weight_decay.view(bc_shape).to(dtype=param.dtype, device=param.device)
             update = lr_view * m_hat / (torch.sqrt(v_hat) + self.eps)
             # Decoupled weight decay: param <- param - lr * wd * param.
             wd_term = lr_view * wd_view * param
             delta = update + wd_term
             if active_mask is not None:
-                mask_view = active_mask.to(
-                    dtype=param.dtype, device=param.device
-                ).view(bc_shape)
+                mask_view = active_mask.to(dtype=param.dtype, device=param.device).view(bc_shape)
                 delta = delta * mask_view
             param.sub_(delta)
 
@@ -511,9 +493,7 @@ def resolve_batching_mode(architecture: str, *, mode: str) -> str:
     """
 
     if mode not in BATCHING_MODES:
-        raise ValueError(
-            f"unknown batching mode {mode!r}; expected one of {BATCHING_MODES}"
-        )
+        raise ValueError(f"unknown batching mode {mode!r}; expected one of {BATCHING_MODES}")
     if mode == "auto":
         return DEFAULT_BATCHING_MODE_BY_ARCH.get(architecture, "streams")
     return mode
@@ -571,9 +551,7 @@ def format_bucket_log_line(
 def run_bucket_streams(
     bucket_cells: Sequence[tuple[int, dict[str, Any]]],
     *,
-    train_one_cell: Callable[
-        [int, dict[str, Any], "torch.cuda.Stream | None"], dict[str, Any]
-    ],
+    train_one_cell: Callable[[int, dict[str, Any], "torch.cuda.Stream | None"], dict[str, Any]],
     device: torch.device,
 ) -> list[dict[str, Any]]:
     """Run one bucket's cells concurrently via CUDA streams + threads.

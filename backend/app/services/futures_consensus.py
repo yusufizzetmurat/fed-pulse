@@ -255,8 +255,7 @@ def get_consensus(
     meeting_date = _next_meeting_date(reference)
 
     horizons = [
-        _build_horizon(sid, dgs[sid], target_midpoint_bps=midpoint_bps)
-        for sid in DGS_SHORT_SERIES
+        _build_horizon(sid, dgs[sid], target_midpoint_bps=midpoint_bps) for sid in DGS_SHORT_SERIES
     ]
 
     generated_at = datetime.now(timezone.utc).isoformat()

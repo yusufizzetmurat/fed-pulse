@@ -240,7 +240,9 @@ def _build_lookback_tensors_llm(
     ``(max_chunks, embedding_dim)`` is identical to the chunk path so the
     ``ChunkAttentionPooler`` receives the same interface regardless of source.
     """
-    store_path = str(llm_store_path) if llm_store_path is not None else str(DEFAULT_LLM_EMBEDDINGS_PARQUET)
+    store_path = (
+        str(llm_store_path) if llm_store_path is not None else str(DEFAULT_LLM_EMBEDDINGS_PARQUET)
+    )
     store = _load_llm_store(store_path)
 
     anchor = _parse_iso(anchor_date)
@@ -307,5 +309,7 @@ def _build_lookback_tensors_llm(
     )
 
 
-def resolve_store_path(data_dir: str | Path, training_package_id: str, *, name: str = "chunk_embeddings.parquet") -> Path:
+def resolve_store_path(
+    data_dir: str | Path, training_package_id: str, *, name: str = "chunk_embeddings.parquet"
+) -> Path:
     return Path(data_dir) / "processed" / training_package_id / name

@@ -17,6 +17,7 @@ mass per bucket. The conformal manifest is never consulted here -- it
 lives one layer up, so this module stays pure-function and trivially
 unit-testable.
 """
+
 from __future__ import annotations
 
 import math

@@ -52,8 +52,13 @@ class LoraConfigArgs:
 
 class LoraFusion(nn.Module):
     def __init__(
-        self, encoder: nn.Module | None, struct_dim: int,
-        text_latent: int = 16, struct_latent: int = 16, trunk_dim: int = 32, dropout: float = 0.3,
+        self,
+        encoder: nn.Module | None,
+        struct_dim: int,
+        text_latent: int = 16,
+        struct_latent: int = 16,
+        trunk_dim: int = 32,
+        dropout: float = 0.3,
     ) -> None:
         super().__init__()
         self.use_text = encoder is not None
@@ -91,16 +96,28 @@ class LoraFusion(nn.Module):
 
 def _lora_encoder(base: nn.Module) -> nn.Module:
     cfg = LoraConfig(
-        r=8, lora_alpha=16, target_modules=["query", "value"],
-        lora_dropout=0.1, bias="none", task_type="FEATURE_EXTRACTION",
+        r=8,
+        lora_alpha=16,
+        target_modules=["query", "value"],
+        lora_dropout=0.1,
+        bias="none",
+        task_type="FEATURE_EXTRACTION",
     )
     return get_peft_model(base, cfg)  # type: ignore[arg-type]
 
 
 def _train_predict_dir(
-    ids_tr: torch.Tensor, mask_tr: torch.Tensor, struct_tr: torch.Tensor, y_tr: torch.Tensor,
-    ids_te: torch.Tensor, mask_te: torch.Tensor, struct_te: torch.Tensor,
-    base_encoder: nn.Module | None, device: torch.device, cfg: LoraConfigArgs, seed: int,
+    ids_tr: torch.Tensor,
+    mask_tr: torch.Tensor,
+    struct_tr: torch.Tensor,
+    y_tr: torch.Tensor,
+    ids_te: torch.Tensor,
+    mask_te: torch.Tensor,
+    struct_te: torch.Tensor,
+    base_encoder: nn.Module | None,
+    device: torch.device,
+    cfg: LoraConfigArgs,
+    seed: int,
 ) -> np.ndarray:
     torch.manual_seed(seed)
     # Deep-copy the base encoder per fit so each fold/seed gets INDEPENDENT LoRA
@@ -119,7 +136,9 @@ def _train_predict_dir(
         for start in range(0, n, cfg.batch_size):
             idx = perm[start : start + cfg.batch_size]
             opt.zero_grad()
-            logit = model(ids_tr[idx].to(device), mask_tr[idx].to(device), struct_tr[idx].to(device))
+            logit = model(
+                ids_tr[idx].to(device), mask_tr[idx].to(device), struct_tr[idx].to(device)
+            )
             loss = bce(logit, y_tr[idx].to(device))
             loss.backward()
             opt.step()
@@ -165,14 +184,36 @@ def run(frame: str, cfg: LoraConfigArgs) -> dict[str, object]:
         yt = torch.from_numpy(y_all[train_idx])
         full_seeds, market_seeds = [], []
         for seed in cfg.seeds:
-            full_seeds.append(_train_predict_dir(
-                ids_all[train_idx], mask_all[train_idx], st_tr, yt,
-                ids_all[test_idx], mask_all[test_idx], st_te, enc.model, enc.device, cfg, seed,
-            ))
-            market_seeds.append(_train_predict_dir(
-                ids_all[train_idx], mask_all[train_idx], st_tr, yt,
-                ids_all[test_idx], mask_all[test_idx], st_te, None, enc.device, cfg, seed,
-            ))
+            full_seeds.append(
+                _train_predict_dir(
+                    ids_all[train_idx],
+                    mask_all[train_idx],
+                    st_tr,
+                    yt,
+                    ids_all[test_idx],
+                    mask_all[test_idx],
+                    st_te,
+                    enc.model,
+                    enc.device,
+                    cfg,
+                    seed,
+                )
+            )
+            market_seeds.append(
+                _train_predict_dir(
+                    ids_all[train_idx],
+                    mask_all[train_idx],
+                    st_tr,
+                    yt,
+                    ids_all[test_idx],
+                    mask_all[test_idx],
+                    st_te,
+                    None,
+                    enc.device,
+                    cfg,
+                    seed,
+                )
+            )
         oos_full.append(np.mean(full_seeds, axis=0))
         oos_market.append(np.mean(market_seeds, axis=0))
         oos_y.append(y_all[test_idx])
@@ -183,7 +224,8 @@ def run(frame: str, cfg: LoraConfigArgs) -> dict[str, object]:
     market = np.concatenate(oos_market)
     b, c, p = _mcnemar(y, full, market)
     return {
-        "frame": frame, "n_oos": int(len(y)),
+        "frame": frame,
+        "n_oos": int(len(y)),
         "acc_market": round(_acc(y, market), 4),
         "acc_full_lora": round(_acc(y, full), 4),
         "majority": round(max(float(y.mean()), 1 - float(y.mean())), 4),

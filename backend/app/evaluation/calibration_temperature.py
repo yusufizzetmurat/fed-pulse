@@ -210,8 +210,7 @@ def apply_platt_per_class(
         raise ValueError(f"logits must be 2-D; got shape {tuple(logits.shape)}")
     if logits.shape[-1] != len(params):
         raise ValueError(
-            f"params length {len(params)} does not match logits classes "
-            f"{logits.shape[-1]}"
+            f"params length {len(params)} does not match logits classes " f"{logits.shape[-1]}"
         )
 
     softmax_scores = F.softmax(logits, dim=-1)
@@ -256,9 +255,7 @@ def brier_score(
     for row, target in zip(probs, targets):
         row_list = list(row)
         if len(row_list) != width:
-            raise ValueError(
-                f"row width {len(row_list)} does not match expected {width}"
-            )
+            raise ValueError(f"row width {len(row_list)} does not match expected {width}")
         target_idx = int(target)
         row_sum = 0.0
         for i, p in enumerate(row_list):
@@ -292,9 +289,7 @@ def negative_log_likelihood(
         row_list = list(row)
         target_idx = int(target)
         if target_idx < 0 or target_idx >= len(row_list):
-            raise ValueError(
-                f"target index {target_idx} out of bounds for {len(row_list)} classes"
-            )
+            raise ValueError(f"target index {target_idx} out of bounds for {len(row_list)} classes")
         p = max(float(row_list[target_idx]), eps)
         total += -_math.log(p)
     return total / len(probs)
@@ -377,13 +372,9 @@ def reliability_curve(
         # Closed-open bins except the last bin which is closed-closed
         # so confidence = 1.0 lands somewhere.
         if hi == 1.0:
-            in_bin = [
-                (c, k) for c, k in zip(confidences, correct) if lo <= c <= hi
-            ]
+            in_bin = [(c, k) for c, k in zip(confidences, correct) if lo <= c <= hi]
         else:
-            in_bin = [
-                (c, k) for c, k in zip(confidences, correct) if lo <= c < hi
-            ]
+            in_bin = [(c, k) for c, k in zip(confidences, correct) if lo <= c < hi]
         count = len(in_bin)
         if count == 0:
             bins.append(

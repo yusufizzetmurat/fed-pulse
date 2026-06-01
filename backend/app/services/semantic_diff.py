@@ -289,7 +289,7 @@ def _truncate_unchanged(tokens: list[str]) -> str:
     if len(tokens) <= UNCHANGED_RUN_KEEP_TOKENS:
         return " ".join(tokens)
     head = " ".join(tokens[: UNCHANGED_RUN_KEEP_TOKENS // 2])
-    tail = " ".join(tokens[-(UNCHANGED_RUN_KEEP_TOKENS // 2):])
+    tail = " ".join(tokens[-(UNCHANGED_RUN_KEEP_TOKENS // 2) :])
     return f"{head} … {tail}"
 
 
@@ -322,9 +322,7 @@ def compute_token_spans(
     current_tokens = _whitespace_normalise(current_text)
     if not prior_tokens or not current_tokens:
         return []
-    matcher = difflib.SequenceMatcher(
-        a=prior_tokens, b=current_tokens, autojunk=False
-    )
+    matcher = difflib.SequenceMatcher(a=prior_tokens, b=current_tokens, autojunk=False)
     spans: list[SemanticDiffSpan] = []
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
@@ -369,7 +367,7 @@ def _topic_hits(text: str) -> dict[str, int]:
     """
 
     normalised = " ".join(_whitespace_normalise(text))
-    hits: dict[str, int] = {topic: 0 for topic in _TOPIC_ORDER}
+    hits: dict[str, int] = dict.fromkeys(_TOPIC_ORDER, 0)
     if not normalised:
         return hits
     for topic, phrases in TOPIC_PHRASES.items():
@@ -390,7 +388,7 @@ def _emphasis_shares(hits: dict[str, int]) -> dict[str, float]:
 
     total = float(sum(hits.values()))
     if total <= 0.0:
-        return {topic: 0.0 for topic in _TOPIC_ORDER}
+        return dict.fromkeys(_TOPIC_ORDER, 0.0)
     return {topic: hits[topic] / total for topic in _TOPIC_ORDER}
 
 
@@ -511,10 +509,7 @@ def build_response(
             f"{top.topic.lower()} vs the {prior.event_date} statement."
         )
     else:
-        summary = (
-            f"No material topic-emphasis shift vs the {prior.event_date} "
-            "statement."
-        )
+        summary = f"No material topic-emphasis shift vs the {prior.event_date} " "statement."
     return SemanticDiffResponse(
         current_date=current_date,
         prior_date=prior.event_date,

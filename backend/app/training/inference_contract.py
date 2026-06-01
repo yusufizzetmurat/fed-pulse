@@ -92,13 +92,9 @@ class InferenceContract:
             model_class=str(payload.get("model_class", "")),
             required_kwargs=tuple(str(k) for k in payload.get("required_kwargs") or ()),
             optional_kwargs=tuple(str(k) for k in payload.get("optional_kwargs") or ()),
-            inference_features=tuple(
-                str(k) for k in payload.get("inference_features") or ()
-            ),
+            inference_features=tuple(str(k) for k in payload.get("inference_features") or ()),
             encoder_alias=(
-                str(payload["encoder_alias"])
-                if payload.get("encoder_alias") is not None
-                else None
+                str(payload["encoder_alias"]) if payload.get("encoder_alias") is not None else None
             ),
             notes=dict(payload.get("notes") or {}),
         )
@@ -139,9 +135,10 @@ def derive_contract(
     if bool(getattr(model, "credibility_features", False)):
         required.append("credibility")
 
-    if bool(getattr(model, "_text_path_active", False)) or int(
-        getattr(model, "text_embedding_dim", 0) or 0
-    ) > 0:
+    if (
+        bool(getattr(model, "_text_path_active", False))
+        or int(getattr(model, "text_embedding_dim", 0) or 0) > 0
+    ):
         required.append("text_embedding")
         required.append("text_embedding_missing")
 
@@ -271,9 +268,7 @@ def read_sidecar(checkpoint_path: Path) -> InferenceContract | None:
     try:
         return InferenceContract.from_dict(payload)
     except Exception:  # noqa: BLE001 -- malformed sidecar, log + degrade
-        logger.warning(
-            "inference_contract_sidecar_unparseable path=%s", sidecar, exc_info=True
-        )
+        logger.warning("inference_contract_sidecar_unparseable path=%s", sidecar, exc_info=True)
         return None
 
 

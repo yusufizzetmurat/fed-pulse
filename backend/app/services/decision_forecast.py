@@ -190,7 +190,9 @@ def load_next_fomc_artifacts(
         return base_response
 
     predictions_raw: list[dict[str, Any]] = list(results.get("predictions") or [])
-    summary = {k: int(v) for k, v in (results.get("summary") or {}).items() if isinstance(v, int | float)}
+    summary = {
+        k: int(v) for k, v in (results.get("summary") or {}).items() if isinstance(v, int | float)
+    }
 
     # Decode each prediction; tolerate missing fields.
     decoded: list[_PredictedDecision] = []
@@ -203,7 +205,9 @@ def load_next_fomc_artifacts(
                     target_event_date=str(entry["target_event_date"]),
                     target_as_of_ts=str(entry["target_as_of_ts"]),
                     target_class=(
-                        str(entry["target_class"]) if entry.get("target_class") is not None else None
+                        str(entry["target_class"])
+                        if entry.get("target_class") is not None
+                        else None
                     ),
                     n_train_rows=int(entry.get("n_train_rows", 0)),
                     probabilities={
@@ -250,9 +254,7 @@ def load_next_fomc_artifacts(
             metrics_payload = {}
         model_names = list(metrics_payload.get("model_names") or [])
         metrics_full = _coerce_metrics(metrics_payload.get("full_window") or {})
-        metrics_ex_pandemic = _coerce_metrics(
-            metrics_payload.get("ex_pandemic_window") or {}
-        )
+        metrics_ex_pandemic = _coerce_metrics(metrics_payload.get("ex_pandemic_window") or {})
 
     feature_attribution: list[dict[str, Any]] = []
     if attribution_path.exists():
@@ -261,9 +263,7 @@ def load_next_fomc_artifacts(
                 attribution_path.read_text(encoding="utf-8")
             )
         except OSError as exc:
-            LOGGER.warning(
-                "decision_forecast: failed to read %s: %s", attribution_path, exc
-            )
+            LOGGER.warning("decision_forecast: failed to read %s: %s", attribution_path, exc)
 
     return {
         "available": True,
@@ -304,7 +304,6 @@ def _coerce_confusion_matrix(value: Any) -> dict[str, dict[str, int]]:
         if not isinstance(row, dict):
             continue
         out[str(truth_class)] = {
-            str(pred_class): _maybe_int(count) or 0
-            for pred_class, count in row.items()
+            str(pred_class): _maybe_int(count) or 0 for pred_class, count in row.items()
         }
     return out

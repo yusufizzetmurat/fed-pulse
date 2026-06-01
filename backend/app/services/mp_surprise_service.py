@@ -100,9 +100,7 @@ def _read_latest(path: Path) -> _LatestRow:
 
     level = latest["mp_surprise_level"]
     if level is None or (isinstance(level, float) and level != level):  # NaN check
-        raise MpSurpriseUnavailable(
-            "latest mp_surprises row has a null mp_surprise_level"
-        )
+        raise MpSurpriseUnavailable("latest mp_surprises row has a null mp_surprise_level")
 
     # Defensive guard for partially-populated rows: the latest event
     # row can carry a usable mp_surprise_level but a malformed
@@ -115,23 +113,16 @@ def _read_latest(path: Path) -> _LatestRow:
     if event_date_raw is None or (
         isinstance(event_date_raw, float) and event_date_raw != event_date_raw
     ):
-        raise MpSurpriseUnavailable(
-            "latest mp_surprises row has a null event_date"
-        )
+        raise MpSurpriseUnavailable("latest mp_surprises row has a null event_date")
     event_date_str = str(event_date_raw).strip()
     if not event_date_str:
-        raise MpSurpriseUnavailable(
-            "latest mp_surprises row has an empty event_date"
-        )
+        raise MpSurpriseUnavailable("latest mp_surprises row has an empty event_date")
 
     is_intermeeting_raw = latest["is_intermeeting"]
     if is_intermeeting_raw is None or (
-        isinstance(is_intermeeting_raw, float)
-        and is_intermeeting_raw != is_intermeeting_raw
+        isinstance(is_intermeeting_raw, float) and is_intermeeting_raw != is_intermeeting_raw
     ):
-        raise MpSurpriseUnavailable(
-            "latest mp_surprises row has a null is_intermeeting flag"
-        )
+        raise MpSurpriseUnavailable("latest mp_surprises row has a null is_intermeeting flag")
 
     prior_pct = latest.get("ff_target_prior") if "ff_target_prior" in df.columns else None
     prior_bps: float | None

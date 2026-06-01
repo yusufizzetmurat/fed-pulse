@@ -89,7 +89,9 @@ def _parse_args() -> argparse.Namespace:
             "Mode 'smoke' runs one model/seed gate; mode 'full' runs all official seeds/candidates."
         )
     )
-    parser.add_argument("--training-package-id", required=True, help="Training package id under data/processed.")
+    parser.add_argument(
+        "--training-package-id", required=True, help="Training package id under data/processed."
+    )
     parser.add_argument("--mode", choices=("smoke", "full"), default="smoke")
     parser.add_argument(
         "--model",
@@ -234,7 +236,12 @@ def _compute_classification_metrics(y_true: list[str], y_pred: list[str]) -> dic
         precision = tp / (tp + fp) if (tp + fp) else 0.0
         recall = tp / (tp + fn) if (tp + fn) else 0.0
         f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
-        per_class[label] = {"precision": precision, "recall": recall, "f1": f1, "support": support[label]}
+        per_class[label] = {
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "support": support[label],
+        }
         macro_f1_values.append(f1)
         weighted_f1_sum += f1 * support[label]
 

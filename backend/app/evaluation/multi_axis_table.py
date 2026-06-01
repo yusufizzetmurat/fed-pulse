@@ -84,7 +84,7 @@ def _row_from_samples(
     std: float | None = None
     if n > 1:
         variance = sum((s - mean) ** 2 for s in samples) / (n - 1)
-        std = variance ** 0.5
+        std = variance**0.5
     ci_lo: float | None = None
     ci_hi: float | None = None
     if n > 1:
@@ -209,9 +209,7 @@ def render_markdown(rows: Sequence[MultiAxisRow], *, coverage: float = 0.95) -> 
     for axis in sorted(by_axis.keys()):
         out.append(f"### Axis: `{axis}`")
         out.append("")
-        out.append(
-            f"| Encoder | Metric | n | mean | std | {band}% CI lo | {band}% CI hi |"
-        )
+        out.append(f"| Encoder | Metric | n | mean | std | {band}% CI lo | {band}% CI hi |")
         out.append("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
         for row in by_axis[axis]:
             std = "—" if row.std is None else f"{row.std:.4f}"
@@ -229,9 +227,7 @@ def write_csv(rows: Sequence[MultiAxisRow], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(
-            ["axis", "encoder", "metric", "n", "mean", "std", "ci_lo", "ci_hi"]
-        )
+        writer.writerow(["axis", "encoder", "metric", "n", "mean", "std", "ci_lo", "ci_hi"])
         for row in rows:
             writer.writerow(
                 [
@@ -249,19 +245,12 @@ def write_csv(rows: Sequence[MultiAxisRow], path: Path) -> None:
 
 def write_json(rows: Sequence[MultiAxisRow], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "rows": [
-            {k: v for k, v in asdict(row).items() if k != "samples"}
-            for row in rows
-        ]
-    }
+    payload = {"rows": [{k: v for k, v in asdict(row).items() if k != "samples"} for row in rows]}
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Build the per-axis × per-encoder bake-off table."
-    )
+    parser = argparse.ArgumentParser(description="Build the per-axis × per-encoder bake-off table.")
     parser.add_argument("--aggregate", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--block-size", type=int, default=1)

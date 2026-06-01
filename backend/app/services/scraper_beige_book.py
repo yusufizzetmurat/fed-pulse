@@ -36,9 +36,7 @@ from bs4 import BeautifulSoup
 
 
 ARCHIVE_BASE_URL = "https://www.federalreserve.gov"
-ARCHIVE_LISTING_URL = (
-    ARCHIVE_BASE_URL + "/monetarypolicy/publications/beige-book-default.htm"
-)
+ARCHIVE_LISTING_URL = ARCHIVE_BASE_URL + "/monetarypolicy/publications/beige-book-default.htm"
 OUTPUT_FILENAME = "beige_book.json"
 
 # Matches any beigebook URL that looks like an issue page:
@@ -48,9 +46,7 @@ OUTPUT_FILENAME = "beige_book.json"
 # Deliberately excludes:
 #   beige-book-faqs.htm, beige-book-archive.htm  (informational pages)
 #   beigebook202401-boston.htm  (district sub-pages — derived, not listed)
-BEIGE_BOOK_ISSUE_PATTERN = re.compile(
-    r"^/monetarypolicy/beigebook(\d{6}|\d{8})(-summary)?\.htm$"
-)
+BEIGE_BOOK_ISSUE_PATTERN = re.compile(r"^/monetarypolicy/beigebook(\d{6}|\d{8})(-summary)?\.htm$")
 
 # For extracting date from any beigebook URL variant
 DATE_FROM_URL_PATTERN = re.compile(r"/beigebook(\d{6,8})(?:-[a-z-]+)?\.htm")
@@ -59,7 +55,7 @@ DATE_FROM_URL_PATTERN = re.compile(r"/beigebook(\d{6,8})(?:-[a-z-]+)?\.htm")
 @dataclass(frozen=True)
 class BeigeBookListingEntry:
     date: str  # ISO yyyy-mm-dd
-    url: str   # URL of the national summary page for this issue
+    url: str  # URL of the national summary page for this issue
 
 
 @dataclass(frozen=True)
@@ -168,12 +164,8 @@ def parse_beige_book_page(html: str, *, source_url: str) -> ParsedBeigeBook:
         title_tag = soup.find("title")
         if title_tag:
             title = _clean_text(title_tag.get_text(" ", strip=True))
-            title = re.sub(
-                r"\s*-\s*Federal Reserve Board\s*$", "", title, flags=re.IGNORECASE
-            )
-            title = re.sub(
-                r"^The Fed\s*-\s*", "", title, flags=re.IGNORECASE
-            )
+            title = re.sub(r"\s*-\s*Federal Reserve Board\s*$", "", title, flags=re.IGNORECASE)
+            title = re.sub(r"^The Fed\s*-\s*", "", title, flags=re.IGNORECASE)
     if not title:
         h_tag = soup.select_one("h1, h2, h3")
         if h_tag:
@@ -208,7 +200,8 @@ def parse_beige_book_page(html: str, *, source_url: str) -> ParsedBeigeBook:
         body_chunks = [
             _clean_text(n.get_text(" ", strip=True))
             for n in all_p
-            if _clean_text(n.get_text(" ", strip=True)) and len(_clean_text(n.get_text(" ", strip=True))) > 20
+            if _clean_text(n.get_text(" ", strip=True))
+            and len(_clean_text(n.get_text(" ", strip=True))) > 20
         ]
 
     body = "\n".join(body_chunks)
@@ -253,10 +246,7 @@ def write_beige_book_json(parsed: Iterable[ParsedBeigeBook], output_path: Path) 
 # federalreserve.gov 403s the stdlib default ``Python-urllib/x.y`` UA, so
 # every request needs a real-browser-ish header. Identifying the project
 # in the UA keeps the traffic auditable on the upstream's side.
-_USER_AGENT = (
-    "fed-pulse-data-ingester/1.0 "
-    "(+https://github.com/yusufizzetmurat/fed-pulse)"
-)
+_USER_AGENT = "fed-pulse-data-ingester/1.0 " "(+https://github.com/yusufizzetmurat/fed-pulse)"
 
 
 def _http_get_text(url: str, *, timeout: float) -> str:
@@ -340,9 +330,7 @@ def pull_beige_book_archive(  # noqa: PLR0913
     try:
         written = write_beige_book_json(parsed, tmp_path)
         if written == 0:
-            raise RuntimeError(
-                f"Beige Book pull from {archive_url} produced zero rows"
-            )
+            raise RuntimeError(f"Beige Book pull from {archive_url} produced zero rows")
         tmp_path.replace(target_path)
         return written
     except Exception:

@@ -47,7 +47,9 @@ from app.retrieval.index import (
 
 _logger = logging.getLogger(__name__)
 
-DEFAULT_RETRIEVAL_DIR = DATA_DIR / "artifacts" / "retrieval" / "finbert_fed_adjacent_xbank_dapt_retrieval"
+DEFAULT_RETRIEVAL_DIR = (
+    DATA_DIR / "artifacts" / "retrieval" / "finbert_fed_adjacent_xbank_dapt_retrieval"
+)
 DEFAULT_CHECKPOINT_SUBDIR = "checkpoint"
 DEFAULT_MAX_LENGTH = 256
 
@@ -125,8 +127,7 @@ def bundle_available() -> bool:
     # The bundle must carry the index triple; the checkpoint dir is a
     # secondary concern caught at load time.
     return all(
-        (bundle / name).exists()
-        for name in ("index.parquet", "embeddings.npy", "manifest.json")
+        (bundle / name).exists() for name in ("index.parquet", "embeddings.npy", "manifest.json")
     )
 
 
@@ -146,7 +147,9 @@ def _load_state() -> _AnalogsState | _LoadFailure:
         loaded_index = load_index(bundle_dir)
     except FileNotFoundError:
         return _LoadFailure(reason=f"bundle_missing path={bundle_dir}")
-    except Exception as exc:  # pragma: no cover — guarded so a malformed parquet does not 500 the worker
+    except (
+        Exception
+    ) as exc:  # pragma: no cover — guarded so a malformed parquet does not 500 the worker
         return _LoadFailure(
             reason=f"index_load_failed path={bundle_dir} error={type(exc).__name__}: {exc}"
         )
@@ -258,9 +261,7 @@ def build_state_from_index(
             return np.asarray(self._fn(texts), dtype=np.float32)
 
     bound_index = (
-        dataclasses.replace(index, encoder_alias=encoder_alias)
-        if encoder_alias
-        else index
+        dataclasses.replace(index, encoder_alias=encoder_alias) if encoder_alias else index
     )
     return _AnalogsState(
         tokenizer=None,

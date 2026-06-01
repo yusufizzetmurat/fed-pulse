@@ -12,20 +12,22 @@ class Provenance(str, Enum):
     SCRAPED = "scraped"
 
 
-_VALID_SOURCE_TYPES = frozenset({
-    "fomc_statement",
-    "fomc_minutes",
-    "fomc_meeting_transcript",
-    "fomc_press_conference",
-    "chair_speech",
-    "governor_speech",
-    "congressional_testimony",
-    "beige_book",
-    "regional_research",
-    "ny_fed_liberty_street",
-    "gss_factor_decomposition",
-    "swanson_three_factor",
-})
+_VALID_SOURCE_TYPES = frozenset(
+    {
+        "fomc_statement",
+        "fomc_minutes",
+        "fomc_meeting_transcript",
+        "fomc_press_conference",
+        "chair_speech",
+        "governor_speech",
+        "congressional_testimony",
+        "beige_book",
+        "regional_research",
+        "ny_fed_liberty_street",
+        "gss_factor_decomposition",
+        "swanson_three_factor",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -47,11 +49,8 @@ class SourceMetadata:
 class BaseSourceScraper(Protocol):
     metadata: SourceMetadata
 
-    def fetch_listing(self, html: str) -> Iterable[Any]:
-        ...
+    def fetch_listing(self, html: str) -> Iterable[Any]: ...
 
-    def parse_entry(self, raw_html: str, *, source_url: str) -> Any:
-        ...
+    def parse_entry(self, raw_html: str, *, source_url: str) -> Any: ...
 
-    def write(self, parsed: Iterable[Any], output_path: Path) -> int:
-        ...
+    def write(self, parsed: Iterable[Any], output_path: Path) -> int: ...
