@@ -1,6 +1,3 @@
-time="2026-06-01T18:10:15+03:00" level=warning msg="Found orphan containers ([swe599-redis]) for this project. If you removed or renamed this service in your compose file, you can run this command with the --remove-orphans flag to clean it up."
- Container fed-pulse-backend-run-b16eec00a82e Creating 
- Container fed-pulse-backend-run-b16eec00a82e Created 
 {
   "components": {
     "schemas": {
