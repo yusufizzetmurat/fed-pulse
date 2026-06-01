@@ -1406,6 +1406,21 @@ class RealizedVolHorizonForecast(BaseModel):
     coverage_empirical_90: float | None = None
 
 
+class RealizedVolHistoricalBand(BaseModel):
+    """Single walk-forward h=1 conformal band aligned to a realized day.
+
+    Renders behind the realized sparkline so the card shows the band
+    actually covered each day's outcome.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    date: str
+    band_lo_80: float
+    band_hi_80: float
+    realized_rv: float | None = None
+
+
 class RealizedVolForecastResponse(BaseModel):
     """Multi-horizon QLIKE-DLq forecast plus last-60d realized history."""
 
@@ -1416,6 +1431,7 @@ class RealizedVolForecastResponse(BaseModel):
     history: list[float] = Field(default_factory=list)
     history_dates: list[str] = Field(default_factory=list)
     model_revision: str
+    historical_bands: list[RealizedVolHistoricalBand] | None = None
 
 
 class HarTercileHorizon(BaseModel):

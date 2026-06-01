@@ -86,4 +86,34 @@ describe("VolatilityOutlookCard", () => {
     render(<VolatilityOutlookCard forecast={null} loading />);
     expect(screen.getByText(/Loading forecast/i)).toBeInTheDocument();
   });
+
+  it("renders the historical 80% bands overlay when historical_bands is present", () => {
+    const data = fixture();
+    data.historical_bands = data.history_dates.slice(8).map((date, i) => ({
+      date,
+      band_lo_80: 7e-5 + i * 1e-6,
+      band_hi_80: 2.5e-4 + i * 1e-6,
+      realized_rv: 1e-4 + i * 1e-6,
+    }));
+    render(<VolatilityOutlookCard forecast={data} />);
+    // Legend chip surfaces only when bands are present.
+    expect(screen.getByText(/Past 80% bands/i)).toBeInTheDocument();
+    expect(screen.getByTestId("rv-bands-legend")).toBeInTheDocument();
+  });
+
+  it("falls back to the bare sparkline when historical_bands is absent", () => {
+    const data = fixture();
+    data.historical_bands = null;
+    render(<VolatilityOutlookCard forecast={data} />);
+    expect(screen.queryByText(/Past 80% bands/i)).toBeNull();
+    expect(screen.queryByTestId("rv-bands-legend")).toBeNull();
+  });
+
+  it("falls back cleanly when historical_bands is an empty list", () => {
+    const data = fixture();
+    data.historical_bands = [];
+    render(<VolatilityOutlookCard forecast={data} />);
+    expect(screen.queryByText(/Past 80% bands/i)).toBeNull();
+    expect(screen.queryByTestId("rv-bands-legend")).toBeNull();
+  });
 });

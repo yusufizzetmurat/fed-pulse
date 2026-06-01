@@ -63,6 +63,7 @@ from app.schemas import (
     HarTercileBaselineResponse,
     HarTercileHorizon,
     RealizedVolForecastResponse,
+    RealizedVolHistoricalBand,
     RealizedVolHorizonForecast,
     ResearchArtifactsResponse,
     BacktestRequest,
@@ -673,6 +674,7 @@ def _build_analyze_response(
         "regime_classification_status": regime_status,
         "rates_reaction": _safe_rates_reaction(history_vectors),
         "policy_action": _build_policy_action_card(payload),
+        "historical_bands": _safe_rv_historical_bands(payload.symbol),
     }
     if getattr(payload, "include_xai", False):
         attributions = attribute_text(payload.text)
@@ -806,6 +808,38 @@ def _build_policy_action_card(
         "change_magnitude_bp": action.change_magnitude_bp,
         "balance_sheet_state": action.balance_sheet_state,
     }
+
+
+def _safe_rv_historical_bands(symbol: str) -> list[dict[str, Any]] | None:
+    """Walk-forward h=1 conformal band rows for the realized sparkline.
+
+    Pulls the same last-60d RV window the volatility-outlook card renders
+    and runs ``predict_rv_historical_bands`` over it. The result rides in
+    the /analyze response under ``historical_bands`` so the persisted
+    ``analysis_runs.payload`` carries the bands without any read-time
+    re-compute. Every failure path degrades to ``None`` — a missing
+    artifact, a fresh checkout without intraday parquet, or a yfinance
+    rate-limit must not break /analyze.
+    """
+
+    from app.services.rv_forecaster import (
+        RvForecasterUnavailable,
+        predict_rv_historical_bands,
+    )
+
+    try:
+        rv_hist, hist_dates = _load_rv_history(symbol)
+    except Exception:  # pragma: no cover -- defensive: never break /analyze
+        logger.warning("rv_historical_bands_history_failed", exc_info=True)
+        return None
+    try:
+        rows = predict_rv_historical_bands(rv_hist, hist_dates)
+    except RvForecasterUnavailable:
+        return None
+    except Exception:  # pragma: no cover -- defensive
+        logger.warning("rv_historical_bands_predict_failed", exc_info=True)
+        return None
+    return rows or None
 
 
 def _safe_regime_classification(history_vectors: list[Any]) -> dict[str, Any] | None:
@@ -1783,6 +1817,7 @@ async def forecast_realized_vol(
     from app.services.rv_forecaster import (
         RvForecasterUnavailable,
         predict_rv,
+        predict_rv_historical_bands,
     )
 
     try:
@@ -1800,6 +1835,17 @@ async def forecast_realized_vol(
         logger.warning("rv_forecast_failed", exc_info=True)
         raise HTTPException(status_code=503, detail={"error": "forecast_failed", "message": str(exc)}) from exc
 
+    # Walk-forward past 80% bands. Failure here must not break the
+    # primary forecast surface, so degrade to None.
+    try:
+        bands_rows = await run_in_threadpool(
+            predict_rv_historical_bands, rv_hist, hist_dates
+        )
+        historical_bands = [RealizedVolHistoricalBand(**row) for row in bands_rows] or None
+    except Exception:  # pragma: no cover -- defensive
+        logger.warning("rv_historical_bands_failed", exc_info=True)
+        historical_bands = None
+
     horizons = [RealizedVolHorizonForecast(**h) for h in out["horizons"]]
     return RealizedVolForecastResponse(
         symbol=symbol,
@@ -1807,6 +1853,7 @@ async def forecast_realized_vol(
         history=rv_hist,
         history_dates=hist_dates,
         model_revision=out["model_revision"],
+        historical_bands=historical_bands,
     )
 
 

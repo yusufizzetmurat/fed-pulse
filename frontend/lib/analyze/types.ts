@@ -679,12 +679,20 @@ export interface RealizedVolHorizonForecast {
   coverage_empirical_90: number | null;
 }
 
+export interface RealizedVolHistoricalBand {
+  date: string;
+  band_lo_80: number;
+  band_hi_80: number;
+  realized_rv?: number | null;
+}
+
 export interface RealizedVolForecastResponse {
   symbol: string;
   horizons: RealizedVolHorizonForecast[];
   history: number[];
   history_dates: string[];
   model_revision: string;
+  historical_bands?: RealizedVolHistoricalBand[] | null;
 }
 
 export interface BacktestResponse {

@@ -3271,6 +3271,20 @@
       "RealizedVolForecastResponse": {
         "description": "Multi-horizon QLIKE-DLq forecast plus last-60d realized history.",
         "properties": {
+          "historical_bands": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/RealizedVolHistoricalBand"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Historical Bands"
+          },
           "history": {
             "items": {
               "type": "number"
@@ -3307,6 +3321,41 @@
           "model_revision"
         ],
         "title": "RealizedVolForecastResponse",
+        "type": "object"
+      },
+      "RealizedVolHistoricalBand": {
+        "description": "Single walk-forward h=1 conformal band aligned to a realized day.\n\nRenders behind the realized sparkline so the card shows the band\nactually covered each day's outcome.",
+        "properties": {
+          "band_hi_80": {
+            "title": "Band Hi 80",
+            "type": "number"
+          },
+          "band_lo_80": {
+            "title": "Band Lo 80",
+            "type": "number"
+          },
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "realized_rv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Rv"
+          }
+        },
+        "required": [
+          "date",
+          "band_lo_80",
+          "band_hi_80"
+        ],
+        "title": "RealizedVolHistoricalBand",
         "type": "object"
       },
       "RealizedVolHorizonForecast": {

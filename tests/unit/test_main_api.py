@@ -205,6 +205,190 @@ def test_documents_by_date_preserves_dissent_signal(monkeypatch, tmp_path):
     assert "Randal K. Quarles" not in cleaned_text
 
 
+def test_forecast_realized_vol_surfaces_historical_bands(monkeypatch):
+    """The /forecast/realized-vol endpoint surfaces walk-forward h=1
+    bands so the VolatilityOutlookCard can render a "we covered" overlay
+    behind the realized sparkline."""
+
+    from app.services import rv_forecaster
+
+    dates = [f"2026-03-{i + 1:02d}" for i in range(30)]
+    rv = [1e-4 + i * 1e-6 for i in range(30)]
+    monkeypatch.setattr(main_mod, "_load_rv_history", lambda symbol: (rv, dates))
+    monkeypatch.setattr(
+        rv_forecaster,
+        "predict_rv",
+        lambda hist: {
+            "horizons": [
+                {
+                    "h": 1,
+                    "point": 1.5e-4,
+                    "band_lo_80": 7e-5,
+                    "band_hi_80": 2.5e-4,
+                    "band_lo_90": 6e-5,
+                    "band_hi_90": 3e-4,
+                    "qlike_model": 0.2,
+                    "qlike_har": 0.25,
+                    "coverage_empirical_90": 0.9,
+                },
+                {
+                    "h": 5,
+                    "point": 1.6e-4,
+                    "band_lo_80": 8e-5,
+                    "band_hi_80": 2.6e-4,
+                    "band_lo_90": 7e-5,
+                    "band_hi_90": 3.1e-4,
+                    "qlike_model": 0.21,
+                    "qlike_har": 0.26,
+                    "coverage_empirical_90": 0.91,
+                },
+                {
+                    "h": 22,
+                    "point": 1.8e-4,
+                    "band_lo_80": 9e-5,
+                    "band_hi_80": 2.8e-4,
+                    "band_lo_90": 8e-5,
+                    "band_hi_90": 3.3e-4,
+                    "qlike_model": 0.32,
+                    "qlike_har": 0.36,
+                    "coverage_empirical_90": 0.92,
+                },
+            ],
+            "model_revision": "stub@2026-05-29",
+        },
+    )
+    monkeypatch.setattr(
+        rv_forecaster,
+        "predict_rv_historical_bands",
+        lambda hist, dts: [
+            {
+                "date": dts[i],
+                "band_lo_80": 5e-5,
+                "band_hi_80": 2e-4,
+                "realized_rv": float(hist[i]),
+            }
+            for i in range(22, len(hist))
+        ],
+    )
+
+    client = TestClient(main_mod.app)
+    response = client.get("/forecast/realized-vol", params={"symbol": "^GSPC"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    bands = body["historical_bands"]
+    assert isinstance(bands, list)
+    assert len(bands) == len(rv) - 22
+    assert bands[0]["date"] == dates[22]
+    assert bands[0]["band_lo_80"] == pytest.approx(5e-5)
+    assert bands[0]["band_hi_80"] == pytest.approx(2e-4)
+    assert bands[0]["realized_rv"] == pytest.approx(rv[22])
+
+
+def test_analyze_persists_historical_bands_into_payload(monkeypatch):
+    """The /analyze pipeline stashes the walk-forward bands into
+    ``analysis_runs.payload`` so a re-render of the historical sparkline
+    overlay incurs no read-time recompute."""
+
+    bands_fixture = [
+        {
+            "date": "2026-03-23",
+            "band_lo_80": 5e-5,
+            "band_hi_80": 2e-4,
+            "realized_rv": 1.2e-4,
+        },
+        {
+            "date": "2026-03-24",
+            "band_lo_80": 5.1e-5,
+            "band_hi_80": 2.1e-4,
+            "realized_rv": 1.3e-4,
+        },
+    ]
+    monkeypatch.setattr(
+        main_mod, "_safe_rv_historical_bands", lambda symbol: list(bands_fixture)
+    )
+
+    captured: dict = {}
+
+    def fake_record(request_payload, response_payload):
+        captured["payload"] = response_payload
+
+    monkeypatch.setattr(main_mod, "_record_history", fake_record)
+    monkeypatch.setattr(
+        main_mod,
+        "analyze_text",
+        lambda _: {"label": "neutral", "score": 0.0, "raw": []},
+    )
+    monkeypatch.setattr(
+        main_mod,
+        "fetch_market_snapshot",
+        lambda **_: {
+            "symbol": "^GSPC",
+            "requested_date": "2026-03-23",
+            "date_used": "2026-03-23",
+            "lookback_days": 7,
+            "close": 5600.0,
+            "volatility_5d": 0.01,
+        },
+    )
+    monkeypatch.setattr(
+        main_mod,
+        "fetch_market_history",
+        lambda **_: [
+            {"date": "2026-03-22", "close": 5580.0, "volatility_5d": 0.011},
+            {"date": "2026-03-23", "close": 5600.0, "volatility_5d": 0.010},
+        ],
+    )
+    monkeypatch.setattr(
+        main_mod,
+        "forecast_quantitative_series",
+        lambda **_: {
+            "prediction": {"close": 5605.0, "volatility": 0.011, "horizon": "3d"},
+            "model": {
+                "checkpoint_path": "backend/models/forecaster_best.pt",
+                "checkpoint_exists": True,
+                "checkpoint_loaded": True,
+                "runtime_mode": "fast",
+                "hidden_size": 64,
+                "num_layers": 2,
+                "dropout": 0.15,
+                "head_hidden_size": 32,
+                "close_scale": 10000.0,
+                "sequence_length": 5,
+            },
+            "series": {
+                "timestamps": ["2026-03-22", "2026-03-23"],
+                "history_close": [5580.0, 5600.0],
+                "history_volatility": [0.011, 0.01],
+                "forecast_timestamps": ["2026-03-23+1"],
+                "forecast_close": [5605.0],
+                "forecast_close_lower": [5589.0],
+                "forecast_close_upper": [5621.0],
+                "forecast_volatility": [0.0115],
+                "forecast_volatility_lower": [0.0110],
+                "forecast_volatility_upper": [0.0120],
+                "forecast_confidence_level": 0.8,
+                "volatility_scale": {"suggested_ymin": 0.0, "suggested_ymax": 0.02},
+            },
+        },
+    )
+    monkeypatch.setattr(main_mod, "parse_horizon_steps", lambda _: 3)
+
+    client = TestClient(main_mod.app)
+    response = client.post(
+        "/analyze",
+        json={
+            "text": "sample",
+            "date": "2026-03-23",
+            "symbol": "^GSPC",
+            "horizon": "3d",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert "payload" in captured, "history hook was not invoked"
+    persisted = captured["payload"]
+    assert persisted.get("historical_bands") == bands_fixture
+
+
 def test_symbols_endpoint_returns_only_trained_symbols():
     """GET /symbols exposes exactly the five tickers the HAR / RV /
     Expected-Volume models are trained against. Anything else would

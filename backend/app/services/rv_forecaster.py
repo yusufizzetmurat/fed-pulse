@@ -280,6 +280,59 @@ def predict_rv(rv_history: list[float] | np.ndarray) -> dict[str, Any]:
     }
 
 
+_HISTORICAL_BANDS_WARMUP = 22
+
+
+def predict_rv_historical_bands(
+    rv_history: list[float] | np.ndarray,
+    dates: list[str],
+) -> list[dict[str, Any]]:
+    """Walk-forward h=1 conformal bands over the recent RV window.
+
+    For each date in ``dates`` we run the h=1 ensemble against the
+    leading slice ``rv_history[:i]`` to obtain the predicted log-RV, then
+    expand the q80 conformal quantile around it. The realized observation
+    at the same date is the actual ``rv_history[i]``. The first
+    ``_HISTORICAL_BANDS_WARMUP`` rows are skipped — HAR's monthly lag
+    needs ~22 days of warmup before the prediction is well-defined.
+
+    Returns a chronologically ordered list of
+    ``{date, band_lo_80, band_hi_80, realized_rv}`` rows. The realized
+    sparkline can render the bands as a muted "we covered" overlay.
+    """
+
+    rv = np.asarray(rv_history, dtype=np.float64)
+    if rv.ndim != 1:
+        raise ValueError("rv_history must be a 1-D series")
+    if len(rv) != len(dates):
+        raise ValueError("rv_history and dates must be the same length")
+    if len(rv) <= _HISTORICAL_BANDS_WARMUP:
+        return []
+    if np.any(rv <= 0) or not np.all(np.isfinite(rv)):
+        raise ValueError("rv_history values must be positive finite numbers")
+
+    pred = _RvPredictor.get()
+    row = pred.spec["by_horizon"]["h1"]
+    seeds = pred.seed_models["h1"]
+    quants = row["conformal_quantiles"]
+    q80 = float(quants.get("0.20", 0.0))
+
+    out: list[dict[str, Any]] = []
+    for i in range(_HISTORICAL_BANDS_WARMUP, len(rv)):
+        # Predict day i using only rv_history[:i] (no leakage).
+        log_rv_prefix = np.log(rv[:i] + _RVEPS)
+        log_point = _ensemble_log_rv(log_rv_prefix, row, seeds)
+        out.append(
+            {
+                "date": str(dates[i]),
+                "band_lo_80": float(np.exp(log_point - q80)),
+                "band_hi_80": float(np.exp(log_point + q80)),
+                "realized_rv": float(rv[i]),
+            }
+        )
+    return out
+
+
 def _safe_float(v: Any) -> float:
     """Coerce ``v`` to a finite float; return NaN on non-numeric input."""
 
