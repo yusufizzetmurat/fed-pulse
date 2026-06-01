@@ -209,6 +209,13 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
             ...prev,
             [symKey]: { data, loading: false, error: null },
           }));
+          // Only clear the in-flight guard on success so a symbol that
+          // has already returned can still skip the duplicate fetch on
+          // re-render. On error the guard stays set for the session
+          // lifetime to prevent an effect that re-runs on every state
+          // change from thrashing the endpoint; the user can recover
+          // by changing the symbol or reloading the page.
+          inFlight.current.delete(key);
         })
         .catch((err) => {
           setHarBaselinesMap((prev) => ({
@@ -219,12 +226,6 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
               error: (err as Error).message || "HAR baselines fetch failed",
             },
           }));
-        })
-        .finally(() => {
-          // Clear the in-flight guard so a subsequent ensureHarBaselines
-          // call (e.g. on remount after a transient 503) retries instead
-          // of being silently deduplicated for the session lifetime.
-          inFlight.current.delete(key);
         });
     },
     [apiBaseUrl],
@@ -353,9 +354,13 @@ export function useSharedCoverage(symbol: string | undefined): CoverageState {
 export function useHarBaselines(symbol: string | undefined): HarBaselinesState {
   const ctx = useSharedContext();
   const symKey = symbol ?? "";
+  const { ensureHarBaselines } = ctx;
   React.useEffect(() => {
-    ctx.ensureHarBaselines(symbol);
-  }, [ctx, symbol]);
+    ensureHarBaselines(symbol);
+    // ensureHarBaselines is a stable useCallback in the provider; pulling
+    // it out of `ctx` lets the effect re-run only when the symbol
+    // actually changes, instead of every time the provider re-renders.
+  }, [ensureHarBaselines, symbol]);
   return ctx.harBaselinesMap[symKey] ?? LOADING_HAR_BASELINES;
 }
 
