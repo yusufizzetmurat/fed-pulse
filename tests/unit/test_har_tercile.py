@@ -94,7 +94,7 @@ def test_predict_har_regime_returns_three_horizons(stub_predictor: Any) -> None:
 
 
 def test_predict_har_regime_macro_f1_wired_through(stub_predictor: Any) -> None:
-    """The wiki-§20 macro-F1 triple must flow through the response unchanged."""
+    """The macro-F1 triple from the pooled walk-forward eval must flow through."""
 
     rng = np.random.default_rng(1)
     rv = np.abs(rng.normal(scale=1e-4, size=40)) + 1e-6
@@ -103,8 +103,10 @@ def test_predict_har_regime_macro_f1_wired_through(stub_predictor: Any) -> None:
     assert by_h[1]["macro_f1"] == pytest.approx(0.687)
     assert by_h[5]["macro_f1"] == pytest.approx(0.685)
     assert by_h[22]["macro_f1"] == pytest.approx(0.654)
-    # Citation must point at the wiki section 20 result block.
-    assert "section 20" in by_h[1]["macro_f1_source"].lower()
+    # Source attribution must describe the methodology in plain language
+    # without any wiki citation; frontend renders it as the chip tooltip.
+    src = by_h[1]["macro_f1_source"].lower()
+    assert "walk-forward" in src and "wiki" not in src
 
 
 def test_predict_har_regime_bucket_matches_manual_digitize(stub_predictor: Any) -> None:

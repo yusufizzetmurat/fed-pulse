@@ -101,19 +101,19 @@ export function SecondOpinionRegime({
           <Badge
             variant="outline"
             className="numeric text-[10px]"
-            title="Late-fusion macro-F1 from wiki §20 (1-day forward-RV regime task)."
+            title="Late-fusion macro-F1 on the 1-day forward-RV regime task, pooled walk-forward eval, n=1999."
           >
-            macro-F1 0.592 (wiki §20, 1-day)
+            macro-F1 0.592 (1-day)
           </Badge>
         </div>
       </div>
       <div className="flex items-start gap-2 rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         <p>
-          Weaker than the HAR baseline above. Per the wiki §20 eval, the text+market
-          fusion underperforms HAR-tercile by ~0.10 macro-F1 at 1-day; the text channel
-          itself robustly hurts the model (95% CI [-0.022, -0.009] at 1-day). Surfaced
-          for transparency.
+          Weaker than the HAR baseline above. The text+market fusion underperforms
+          HAR-tercile by ~0.10 macro-F1 at 1-day under the pooled walk-forward eval
+          (n=1999); the text channel itself robustly hurts the model — block-bootstrap
+          95% CI [-0.022, -0.009] at 1-day across four encoders. Surfaced for transparency.
         </p>
       </div>
       <RegimeHeadline

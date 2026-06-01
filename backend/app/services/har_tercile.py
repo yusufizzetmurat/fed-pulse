@@ -38,8 +38,8 @@ _TERCILE_LABELS: tuple[str, str, str] = ("low", "medium", "high")
 # through unchanged.
 _HAR_TERCILE_MACRO_F1: dict[int, float] = {1: 0.687, 5: 0.685, 22: 0.654}
 _HAR_TERCILE_F1_SOURCE = (
-    "wiki section 20 (Gated_Fusion_InfoNCE_Comprehensive_Null), "
-    "Result 2, canonical 5-fold expanding walk-forward"
+    "Pooled 5-fold expanding walk-forward eval (n=1999); HAR's "
+    "continuous forecast bucketed into terciles."
 )
 _HORIZONS: tuple[int, ...] = (1, 5, 22)
 
