@@ -29,11 +29,11 @@ function harFixture(
     horizons: [
       {
         h: 1,
-        top_pick: topPick,
-        probabilities: { low: 0.2, medium: 0.4, high: 0.4 },
+        tercile: topPick,
+        tercile_probs: { low: 0.2, medium: 0.4, high: 0.4 },
         predicted_rv: 1e-4,
         macro_f1: 0.687,
-        n: 412,
+        macro_f1_source: "wiki §20",
       },
     ],
     source_wiki_section: "20_Gated_Fusion_InfoNCE_Comprehensive_Null",

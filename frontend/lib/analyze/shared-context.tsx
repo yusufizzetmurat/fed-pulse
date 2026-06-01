@@ -219,6 +219,12 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
               error: (err as Error).message || "HAR baselines fetch failed",
             },
           }));
+        })
+        .finally(() => {
+          // Clear the in-flight guard so a subsequent ensureHarBaselines
+          // call (e.g. on remount after a transient 503) retries instead
+          // of being silently deduplicated for the session lifetime.
+          inFlight.current.delete(key);
         });
     },
     [apiBaseUrl],

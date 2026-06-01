@@ -532,6 +532,14 @@ export default function WorkspacePage() {
             </div>
           ) : null}
 
+          <SectionDivider label="Model prediction" />
+          <HarRegimeHeadline
+            baselines={harBaselines.data}
+            loading={harBaselines.loading}
+            error={harBaselines.error}
+            symbol={request.symbol}
+          />
+
           {result ? (
             <>
               <SectionDivider label="Statement analysis" />
@@ -539,13 +547,6 @@ export default function WorkspacePage() {
               <StatementDeltaCard result={result} />
               <WorkspaceMetaStrip result={result} />
 
-              <SectionDivider label="Model prediction" />
-              <HarRegimeHeadline
-                baselines={harBaselines.data}
-                loading={harBaselines.loading}
-                error={harBaselines.error}
-                symbol={request.symbol}
-              />
               {result.regime_classification ? (
                 <SecondOpinionRegime
                   regime={result.regime_classification}

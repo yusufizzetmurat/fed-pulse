@@ -714,11 +714,11 @@ export interface HarTercileHorizon {
   // Trading-day horizon. The product surfaces 1 / 5 / 22 as
   // "1 day" / "1 week" / "1 month".
   h: number;
-  top_pick: HarTercileLabel;
-  probabilities: Record<HarTercileLabel, number>;
+  tercile: HarTercileLabel;
+  tercile_probs: Record<HarTercileLabel, number>;
   predicted_rv: number;
   macro_f1: number;
-  n: number;
+  macro_f1_source: string;
 }
 
 export interface HarTercileBaselineResponse {

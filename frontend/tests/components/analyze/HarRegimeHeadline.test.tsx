@@ -10,27 +10,27 @@ function fixture(): HarTercileBaselineResponse {
     horizons: [
       {
         h: 1,
-        top_pick: "medium",
-        probabilities: { low: 0.18, medium: 0.55, high: 0.27 },
+        tercile: "medium",
+        tercile_probs: { low: 0.18, medium: 0.55, high: 0.27 },
         predicted_rv: 1e-4,
         macro_f1: 0.687,
-        n: 412,
+        macro_f1_source: "wiki §20",
       },
       {
         h: 5,
-        top_pick: "medium",
-        probabilities: { low: 0.2, medium: 0.52, high: 0.28 },
+        tercile: "medium",
+        tercile_probs: { low: 0.2, medium: 0.52, high: 0.28 },
         predicted_rv: 1.2e-4,
         macro_f1: 0.685,
-        n: 408,
+        macro_f1_source: "wiki §20",
       },
       {
         h: 22,
-        top_pick: "high",
-        probabilities: { low: 0.15, medium: 0.3, high: 0.55 },
+        tercile: "high",
+        tercile_probs: { low: 0.15, medium: 0.3, high: 0.55 },
         predicted_rv: 1.5e-4,
         macro_f1: 0.654,
-        n: 391,
+        macro_f1_source: "wiki §20",
       },
     ],
     source_wiki_section: "20_Gated_Fusion_InfoNCE_Comprehensive_Null",
@@ -47,9 +47,9 @@ describe("HarRegimeHeadline", () => {
 
   it("shows the macro-F1 chip with horizon-specific values", () => {
     render(<HarRegimeHeadline baselines={fixture()} symbol="^GSPC" />);
-    expect(screen.getByText(/macro-F1 0\.687 \(wiki §20, n=412\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/macro-F1 0\.685 \(wiki §20, n=408\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/macro-F1 0\.654 \(wiki §20, n=391\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/macro-F1 0\.687/i)).toBeInTheDocument();
+    expect(screen.getByText(/macro-F1 0\.685/i)).toBeInTheDocument();
+    expect(screen.getByText(/macro-F1 0\.654/i)).toBeInTheDocument();
   });
 
   it("renders the HEADLINE primacy badge", () => {

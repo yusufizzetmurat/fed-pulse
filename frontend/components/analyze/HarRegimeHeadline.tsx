@@ -51,7 +51,7 @@ interface HorizonColumnProps {
 
 function HorizonColumn({ horizon }: HorizonColumnProps) {
   const label = HORIZON_LABELS[horizon.h] ?? `${horizon.h}d`;
-  const top = horizon.top_pick;
+  const top = horizon.tercile;
   return (
     <div className="space-y-3 rounded-md border border-border bg-card/50 p-3">
       <div className="flex items-center justify-between gap-2">
@@ -59,9 +59,9 @@ function HorizonColumn({ horizon }: HorizonColumnProps) {
         <Badge
           variant="outline"
           className="numeric text-[10px]"
-          title={`Walk-forward macro-F1 from wiki §20 (n=${horizon.n}).`}
+          title={horizon.macro_f1_source}
         >
-          macro-F1 {horizon.macro_f1.toFixed(3)} (wiki §20, n={horizon.n})
+          macro-F1 {horizon.macro_f1.toFixed(3)}
         </Badge>
       </div>
       <div className="flex flex-wrap items-baseline gap-2">
@@ -74,7 +74,7 @@ function HorizonColumn({ horizon }: HorizonColumnProps) {
       </div>
       <div className="space-y-1.5">
         {TERCILE_ORDER.map((key) => {
-          const value = horizon.probabilities[key] ?? 0;
+          const value = horizon.tercile_probs[key] ?? 0;
           const isTop = key === top;
           return (
             <div key={key} className="space-y-1">
