@@ -32,25 +32,25 @@ from app.config import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
-_ANNOUNCE = time(14, 0)
-_IMMEDIATE_END = time(14, 30)
-_DELAYED_END = time(15, 0)
-_PRE_START = time(13, 30)
+# The FOMC announcement is located per-meeting from the intraday volume spike
+# rather than a fixed clock time, because the release time varied by era (2:15pm
+# pre-2011, 12:30/2:15pm in 2011-12, 2:00pm from 2013). The search window bounds
+# where the announcement can be (leaving 30 min of pre-window and 60 min of
+# reaction inside a 12:00-16:00 raw window).
+_SEARCH_START = time(12, 30)
+_SEARCH_END = time(15, 0)
+_PRE_MINUTES = 30
+_IMMEDIATE_MINUTES = 30
+_DELAYED_MINUTES = 60  # delayed window ends 60 min after the announcement
 
 
-def _open_at(day_bars: pd.DataFrame, clock: time) -> float | None:
-    """Instantaneous mark price at ``clock`` — the OPEN of the bar stamped ``clock``.
+def _open_at_dt(day_bars: pd.DataFrame, target: pd.Timestamp) -> float | None:
+    """OPEN of the bar stamped exactly ``target`` (the price at that instant).
 
-    AlphaVantage labels 1-minute bars by interval START (verified empirically: on
-    2024-09-18 the announcement jump lands entirely inside the bar stamped 14:00,
-    on 15x volume, while the 13:59 bar is quiescent). So the OPEN of the 14:00 bar
-    is the price at 14:00:00 — the announcement instant, before any reaction — and
-    the CLOSE of the 14:00 bar already contains the first reaction minute. Using
-    opens as marks keeps pre-announcement features strictly pre-reaction and lets
-    the reaction window capture the full announcement-minute move. Returns None if
-    the bar is absent.
+    Bars are interval-start labelled, so a bar's OPEN is the price at its start
+    minute — pre-reaction at the announcement instant. None if the bar is absent.
     """
-    match = day_bars[day_bars["_t"] == clock]
+    match = day_bars[day_bars["timestamp_et"] == target]
     if match.empty:
         return None
     return float(match["open"].iloc[0])
@@ -65,14 +65,15 @@ def _log_change(numer: float | None, denom: float | None) -> float | None:
 def build_event_windows(bars: pd.DataFrame) -> pd.DataFrame:
     """Reduce raw 1-minute bars to one reaction row per FOMC event date.
 
-    Output columns: event_date, pre_close, pre_ret, pre_rv, pre_volume, n_pre_bars,
-    px_1400, px_1430, px_1500, ret_immediate/dir_immediate/mag_immediate,
-    ret_delayed/dir_delayed/mag_delayed, n_bars, has_anchors.
-
-    Mark prices are bar OPENS (instantaneous prices at the mark instant); see
-    ``_open_at``. The reaction is measured from the 14:00 announcement instant, so
-    the announcement-minute move is included in ret_immediate, not leaked into the
-    pre-window.
+    The announcement instant is detected as the max-volume minute within the
+    search window (the FOMC release dominates intraday volume — ~15x median),
+    making the windows robust to the era-varying release time. Reaction is then
+    measured at announcement-relative offsets using bar OPENS, so the
+    announcement-minute move is captured in ret_immediate and never leaks into the
+    pre-window. Output: event_date, announce_time, announce_vol_ratio, pre_close,
+    pre_ret, pre_rv, pre_volume, n_pre_bars, px_ann/px_imm/px_del,
+    ret_immediate/dir_immediate/mag_immediate, ret_delayed/dir_delayed/mag_delayed,
+    n_bars, has_anchors.
     """
     frame = bars.copy()
     frame["timestamp_et"] = pd.to_datetime(frame["timestamp_et"])
@@ -81,41 +82,44 @@ def build_event_windows(bars: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for event_date, day in frame.groupby("event_date"):
         day = day.sort_values("timestamp_et")
-
-        # Alignment invariant #1: every bar for this event must fall on the event's
-        # own calendar date. Cross-day contamination is a real misalignment risk
-        # (e.g. a join pulling adjacent-day bars) and would corrupt the windows.
-        # str(...)[:10] normalises event_date whether it is a str, date, or Timestamp.
         event_date_str = str(event_date)[:10]
         bar_dates = day["timestamp_et"].dt.strftime("%Y-%m-%d").unique()
         if list(bar_dates) != [event_date_str]:
-            raise ValueError(
-                f"{event_date_str}: bars span foreign dates {list(bar_dates)}"
-            )
+            raise ValueError(f"{event_date_str}: bars span foreign dates {list(bar_dates)}")
 
-        # Pre-window: bars strictly before the announcement minute. Realized vol
-        # from pre-window closes is pure pre-announcement.
-        pre = day[(day["_t"] >= _PRE_START) & (day["_t"] < _ANNOUNCE)]
-        px_1330 = _open_at(day, _PRE_START)
-        px_1400 = _open_at(day, _ANNOUNCE)  # announcement instant (pre-reaction)
-        px_1430 = _open_at(day, _IMMEDIATE_END)
-        px_1500 = _open_at(day, _DELAYED_END)
+        # Locate the announcement: the max-volume minute within the search window.
+        cand = day[(day["_t"] >= _SEARCH_START) & (day["_t"] <= _SEARCH_END)]
+        if cand.empty:
+            rows.append({"event_date": event_date_str, "has_anchors": 0, "n_bars": int(len(day))})
+            continue
+        ann_dt = day.loc[cand["volume"].idxmax(), "timestamp_et"]
+        median_vol = float(day["volume"].median()) or 1.0
+        ann_vol_ratio = float(day.loc[cand["volume"].idxmax(), "volume"]) / median_vol
 
+        pre_start = ann_dt - pd.Timedelta(minutes=_PRE_MINUTES)
+        px_pre = _open_at_dt(day, pre_start)
+        px_ann = _open_at_dt(day, ann_dt)  # announcement instant (pre-reaction)
+        px_imm = _open_at_dt(day, ann_dt + pd.Timedelta(minutes=_IMMEDIATE_MINUTES))
+        px_del = _open_at_dt(day, ann_dt + pd.Timedelta(minutes=_DELAYED_MINUTES))
+
+        pre = day[(day["timestamp_et"] >= pre_start) & (day["timestamp_et"] < ann_dt)]
         pre_logrets = np.diff(np.log(pre["close"].to_numpy())) if len(pre) > 1 else np.array([])
-        ret_immediate = _log_change(px_1430, px_1400)  # full reaction incl. 14:00 min
-        ret_delayed = _log_change(px_1500, px_1430)
+        ret_immediate = _log_change(px_imm, px_ann)
+        ret_delayed = _log_change(px_del, px_imm)
 
         rows.append(
             {
                 "event_date": event_date_str,
-                "pre_close": px_1400,
-                "pre_ret": _log_change(px_1400, px_1330),
+                "announce_time": pd.Timestamp(ann_dt).strftime("%H:%M"),
+                "announce_vol_ratio": round(ann_vol_ratio, 1),
+                "pre_close": px_ann,
+                "pre_ret": _log_change(px_ann, px_pre),
                 "pre_rv": float(np.std(pre_logrets)) if pre_logrets.size else None,
                 "pre_volume": float(pre["volume"].sum()),
                 "n_pre_bars": int(len(pre)),
-                "px_1400": px_1400,
-                "px_1430": px_1430,
-                "px_1500": px_1500,
+                "px_ann": px_ann,
+                "px_imm": px_imm,
+                "px_del": px_del,
                 "ret_immediate": ret_immediate,
                 "dir_immediate": None if ret_immediate is None else int(ret_immediate > 0),
                 "mag_immediate": None if ret_immediate is None else abs(ret_immediate),
@@ -123,9 +127,7 @@ def build_event_windows(bars: pd.DataFrame) -> pd.DataFrame:
                 "dir_delayed": None if ret_delayed is None else int(ret_delayed > 0),
                 "mag_delayed": None if ret_delayed is None else abs(ret_delayed),
                 "n_bars": int(len(day)),
-                "has_anchors": int(
-                    None not in (px_1330, px_1400, px_1430, px_1500)
-                ),
+                "has_anchors": int(None not in (px_pre, px_ann, px_imm, px_del)),
             }
         )
 
@@ -219,6 +221,8 @@ def alignment_audit(events: pd.DataFrame) -> pd.DataFrame:
     """Human-readable audit: date, statement title, window returns, SEP flag."""
     cols = [
         "event_date",
+        "announce_time",
+        "announce_vol_ratio",
         "title",
         "n_pre_bars",
         "n_bars",

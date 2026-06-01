@@ -13,7 +13,11 @@ from app.data.late_fusion_events import (
 )
 
 
-def _bars_for_day(date: str, prices_by_minute: dict[str, float]) -> pd.DataFrame:
+def _bars_for_day(
+    date: str, prices_by_minute: dict[str, float], spike_at: str = "14:00"
+) -> pd.DataFrame:
+    # The announcement is detected from the volume spike; mark spike_at as the
+    # high-volume minute so detection lands there.
     rows = [
         {
             "event_date": date,
@@ -22,7 +26,7 @@ def _bars_for_day(date: str, prices_by_minute: dict[str, float]) -> pd.DataFrame
             "high": price,
             "low": price,
             "close": price,
-            "volume": 1000.0,
+            "volume": 100.0 if hhmm == spike_at else 1.0,
             "symbol": "SPY",
         }
         for hhmm, price in prices_by_minute.items()
@@ -31,8 +35,8 @@ def _bars_for_day(date: str, prices_by_minute: dict[str, float]) -> pd.DataFrame
 
 
 def _full_day(date: str, p1330: float, p1400: float, p1430: float, p1500: float) -> pd.DataFrame:
-    """A minimal but alignment-valid day: anchor bars at 13:30/14:00/14:30/15:00
-    plus one extra pre-window bar so pre_rv is defined."""
+    """A minimal alignment-valid day with a volume spike at 14:00 (the
+    announcement), anchors at 14:00/14:30/15:00 and a 13:30 pre-window start."""
     minutes = {
         "13:30": p1330,
         "13:45": (p1330 + p1400) / 2,
@@ -40,7 +44,7 @@ def _full_day(date: str, p1330: float, p1400: float, p1430: float, p1500: float)
         "14:30": p1430,
         "15:00": p1500,
     }
-    return _bars_for_day(date, minutes)
+    return _bars_for_day(date, minutes, spike_at="14:00")
 
 
 def test_window_returns_and_direction() -> None:
@@ -48,9 +52,10 @@ def test_window_returns_and_direction() -> None:
     out = build_event_windows(bars)
     assert len(out) == 1
     row = out.iloc[0]
-    assert row["px_1400"] == 100.0
-    assert row["px_1430"] == 101.0
-    assert row["px_1500"] == 100.5
+    assert row["announce_time"] == "14:00"  # detected from the volume spike
+    assert row["px_ann"] == 100.0
+    assert row["px_imm"] == 101.0
+    assert row["px_del"] == 100.5
     # immediate reaction up -> dir 1, magnitude = |log(101/100)|
     assert row["dir_immediate"] == 1
     assert row["mag_immediate"] == pytest.approx(abs(np.log(101 / 100)))
@@ -89,7 +94,7 @@ def test_mark_uses_bar_open_so_announcement_minute_is_in_the_reaction() -> None:
     )
     row = build_event_windows(bars).iloc[0]
     # 14:00 mark = OPEN of the 14:00 bar = 100 (pre-reaction), NOT the 103 close
-    assert row["px_1400"] == 100.0
+    assert row["px_ann"] == 100.0
     # immediate reaction 100 -> 104 captures the full jump (would be ~0 if it used
     # the contaminated 103 close as the start)
     assert row["ret_immediate"] == pytest.approx(np.log(104 / 100))
@@ -108,13 +113,16 @@ def test_cross_day_contamination_raises() -> None:
 
 
 def test_missing_anchor_flagged_not_dropped() -> None:
-    # A day missing the 14:30 anchor: row still produced, has_anchors=0, returns None.
+    # Announcement at 14:00 (volume spike) but the +30min (14:30) anchor is absent:
+    # row still produced, has_anchors=0, returns None.
     bars = _bars_for_day(
-        "2024-03-20", {"13:30": 100.0, "13:45": 100.0, "14:00": 100.0, "15:00": 100.5}
+        "2024-03-20",
+        {"13:30": 100.0, "13:45": 100.0, "14:00": 100.0, "15:00": 100.5},
+        spike_at="14:00",
     )
     out = build_event_windows(bars).iloc[0]
     assert out["has_anchors"] == 0
-    assert out["px_1430"] is None
+    assert out["px_imm"] is None
     assert out["ret_immediate"] is None
 
 
