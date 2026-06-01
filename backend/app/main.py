@@ -40,6 +40,7 @@ from app.schemas import (
     ClassificationBreakdownClass,
     ClassificationBreakdownResponse,
     ClassificationBreakdownSource,
+    DocumentDetailResponse,
     DocumentParseResponse,
     DocumentParseUrlRequest,
     EvaluationCoverageResponse,
@@ -600,6 +601,86 @@ def get_document_by_date(date: str, kind: str = "auto"):
     raise HTTPException(
         status_code=404,
         detail=f"No FOMC document found for date {date!r} (kind={kind}).",
+    )
+
+
+# Path-based document viewer for the calendar's badge click-through.
+# Statement / minutes / press_conference each live in their own JSON
+# cache under DATA_DIR; the source mapping below pins the canonical
+# kind tokens used in the URL path against the on-disk filename and
+# the human-readable document_type fallback embedded on each row.
+_DOCUMENT_DETAIL_SOURCES: dict[str, tuple[str, str]] = {
+    "statement": ("fomc_statements.json", "Statement"),
+    "minutes": ("fomc_minutes.json", "Minutes"),
+    "press_conference": ("press_conferences.json", "Press Conference"),
+}
+
+
+@app.get(
+    "/documents/{type}/{date}",
+    response_model=DocumentDetailResponse,
+)
+def get_document_detail(type: str, date: str) -> DocumentDetailResponse:
+    """Return the cleaned text body for a single FOMC document so the
+    calendar's badge click-through can render the statement / minutes /
+    press-conference text inline. ``type`` is one of the keys in
+    :data:`_DOCUMENT_DETAIL_SOURCES`; ``date`` is the ISO event date
+    the source row indexes against. 404 when the row is not on disk
+    (e.g., a far-future meeting with no statement collected yet).
+    """
+
+    if type not in _DOCUMENT_DETAIL_SOURCES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"type must be one of {sorted(_DOCUMENT_DETAIL_SOURCES)}; got {type!r}"
+            ),
+        )
+
+    filename, default_type = _DOCUMENT_DETAIL_SOURCES[type]
+    path = DATA_DIR / filename
+    if not path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"No {type} document on file for {date!r}.",
+        )
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to read {filename}: {exc}"
+        ) from exc
+
+    if not isinstance(payload, list):
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected payload shape in {filename}: expected a JSON list.",
+        )
+
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("date", "")) != date:
+            continue
+        text = str(item.get("text") or item.get("content") or "")
+        if not text:
+            continue
+        cleaned = clean_fomc_text(text, kind=type)
+        source_url = item.get("url")
+        scraped_at = item.get("scraped_at_utc") or item.get("scraped_at")
+        return DocumentDetailResponse(
+            type=type,
+            date=date,
+            title=str(item.get("title", "")),
+            cleaned_text=cleaned,
+            source_url=str(source_url) if isinstance(source_url, str) else None,
+            scraped_at=str(scraped_at) if isinstance(scraped_at, str) else None,
+        )
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"No {type} document on file for {date!r}.",
     )
 
 

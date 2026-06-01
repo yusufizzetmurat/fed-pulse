@@ -135,6 +135,84 @@ describe("CalendarPage", () => {
     expect(upStatement).toHaveAttribute("title", "Statement not collected");
   });
 
+  it("renders available badges as click-through links and unavailable as plain spans", async () => {
+    fetchFomcCalendarMock.mockResolvedValue({
+      upcoming: [
+        {
+          meeting_date: "2024-11-06",
+          meeting_type: "scheduled",
+          statement_release_date: "2024-11-07",
+          minutes_release_date: "2024-11-27",
+          statement_available: false,
+          minutes_available: false,
+          press_conference_available: false,
+        },
+      ],
+      past: [
+        {
+          meeting_date: "2024-09-17",
+          meeting_type: "scheduled",
+          statement_release_date: "2024-09-18",
+          minutes_release_date: "2024-10-09",
+          statement_available: true,
+          minutes_available: true,
+          press_conference_available: false,
+        },
+      ],
+    });
+    const { default: CalendarPage } = await import("@/pages/calendar");
+    render(<CalendarPage />);
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("availability-statement").length).toBe(2),
+    );
+
+    function badgeForMeeting(
+      badges: HTMLElement[],
+      meetingDate: string,
+    ): HTMLElement {
+      const match = badges.find((badge) => {
+        const row = badge.closest("li");
+        return row?.textContent?.includes(meetingDate) ?? false;
+      });
+      if (!match) throw new Error(`no badge near ${meetingDate}`);
+      return match;
+    }
+
+    const statementBadges = screen.getAllByTestId("availability-statement");
+    const minutesBadges = screen.getAllByTestId("availability-minutes");
+    const presserBadges = screen.getAllByTestId("availability-presser");
+
+    // Past row has on-file statement + minutes — both should be anchor
+    // tags pointing at the path-based viewer keyed off meeting_date.
+    const pastStatement = badgeForMeeting(statementBadges, "2024-09-17");
+    expect(pastStatement.tagName).toBe("A");
+    expect(pastStatement).toHaveAttribute(
+      "href",
+      "/documents/statement/2024-09-17",
+    );
+
+    const pastMinutes = badgeForMeeting(minutesBadges, "2024-09-17");
+    expect(pastMinutes.tagName).toBe("A");
+    expect(pastMinutes).toHaveAttribute(
+      "href",
+      "/documents/minutes/2024-09-17",
+    );
+
+    // Past row presser is not on file — must stay a span.
+    const pastPresser = badgeForMeeting(presserBadges, "2024-09-17");
+    expect(pastPresser.tagName).toBe("SPAN");
+    expect(pastPresser).not.toHaveAttribute("href");
+
+    // Upcoming row has nothing on file — all three stay spans.
+    const upStatement = badgeForMeeting(statementBadges, "2024-11-06");
+    const upMinutes = badgeForMeeting(minutesBadges, "2024-11-06");
+    const upPresser = badgeForMeeting(presserBadges, "2024-11-06");
+    expect(upStatement.tagName).toBe("SPAN");
+    expect(upMinutes.tagName).toBe("SPAN");
+    expect(upPresser.tagName).toBe("SPAN");
+  });
+
   it("treats undefined availability flags on a future meeting as not-collected", async () => {
     // Real backend payloads for far-future meetings omit the
     // availability flags entirely; the badge logic must read undefined

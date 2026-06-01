@@ -7,6 +7,7 @@ import type {
   BacktestPositionEntry,
   BacktestResponse,
   ClassificationBreakdownResponse,
+  DocumentDetailResponse,
   EvaluationCoverageResponse,
   ExpectedVolumeForecastResponse,
   FomcCalendarResponse,
@@ -245,6 +246,31 @@ export async function fetchFomcCalendar(
 ): Promise<FomcCalendarResponse> {
   const response = await axios.get(`${baseUrl}/fomc/calendar`, { params, signal });
   return response.data as FomcCalendarResponse;
+}
+
+// Path-based document viewer fetcher. The backend 404s when the row
+// isn't on disk; the page renders a tailored not-found state off the
+// nullable return rather than threading an axios error through the
+// generic toast path. Anything other than 404 propagates so the page
+// can surface a 500 banner.
+export async function fetchDocumentDetail(
+  baseUrl: string,
+  type: string,
+  date: string,
+  signal?: AbortSignal,
+): Promise<DocumentDetailResponse | null> {
+  try {
+    const response = await axios.get(
+      `${baseUrl}/documents/${encodeURIComponent(type)}/${encodeURIComponent(date)}`,
+      { signal },
+    );
+    return response.data as DocumentDetailResponse;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 404) {
+      return null;
+    }
+    throw err;
+  }
 }
 
 export async function fetchResearchArtifacts(

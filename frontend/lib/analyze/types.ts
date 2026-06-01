@@ -481,6 +481,21 @@ export interface FomcCalendarResponse {
   upcoming: FomcMeeting[];
 }
 
+// Path-based FOMC document viewer payload. Backend serves the cleaned
+// text body (hygiene already applied), the source permalink and the
+// scrape timestamp; 404s when the row is not on disk fold into a
+// nullable fetch return on the client.
+export type DocumentDetailKind = "statement" | "minutes" | "press_conference";
+
+export interface DocumentDetailResponse {
+  type: DocumentDetailKind | string;
+  date: string;
+  title: string;
+  cleaned_text: string;
+  source_url?: string | null;
+  scraped_at?: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Research dashboard (Phase 8 multi-page expansion)
 // ---------------------------------------------------------------------------

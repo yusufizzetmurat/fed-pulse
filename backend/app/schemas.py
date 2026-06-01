@@ -860,6 +860,27 @@ class DocumentParseResponse(BaseModel):
     source_metadata: dict[str, str]
 
 
+class DocumentDetailResponse(BaseModel):
+    """Single FOMC document body served to the path-based
+    ``/documents/{type}/{date}`` viewer. The text payload is the
+    hygiene-cleaned body — boilerplate (Implementation Note, voting
+    roster, navigation chrome) is stripped before it lands here so the
+    frontend can render it as prose without further pre-processing."""
+
+    type: str = Field(..., description="One of statement / minutes / press_conference.")
+    date: str = Field(..., description="Event ISO date the document indexes against.")
+    title: str = Field(..., description="Source title; empty when the JSON row omits it.")
+    cleaned_text: str = Field(..., description="Body after text_hygiene.clean_fomc_text().")
+    source_url: str | None = Field(
+        default=None,
+        description="Federal Reserve permalink when the row carries one.",
+    )
+    scraped_at: str | None = Field(
+        default=None,
+        description="ISO-8601 UTC timestamp the source row was scraped at.",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Research / training / decisions endpoints (Phase 8 multi-page expansion)
 # ---------------------------------------------------------------------------

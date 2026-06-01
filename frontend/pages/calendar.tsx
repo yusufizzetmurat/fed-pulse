@@ -102,45 +102,73 @@ const ROW_CONTENT_CLASSES =
 const TEXT_AVAILABILITY_BADGES: Array<{
   key: "statement_available" | "minutes_available" | "press_conference_available";
   label: string;
+  // Path segment for the viewer route. Mirrors the backend's
+  // _DOCUMENT_DETAIL_SOURCES keys.
+  kind: "statement" | "minutes" | "press_conference";
 }> = [
-  { key: "statement_available", label: "Statement" },
-  { key: "minutes_available", label: "Minutes" },
-  { key: "press_conference_available", label: "Presser" },
+  { key: "statement_available", label: "Statement", kind: "statement" },
+  { key: "minutes_available", label: "Minutes", kind: "minutes" },
+  { key: "press_conference_available", label: "Presser", kind: "press_conference" },
 ];
 
 function AvailabilityBadge({
   label,
   available,
+  href,
 }: {
   label: string;
   available: boolean;
+  // Path-based viewer link the badge navigates to when the document
+  // is on file. Undefined / null on rows that have no collected text;
+  // the badge then renders as a plain span so the calendar row's own
+  // click target keeps owning navigation.
+  href?: string | null;
 }) {
   const titleText = available
     ? `${label} on file`
     : `${label} not collected`;
-  // Plain inline chip rather than a nested Link/button — the parent row
-  // already owns the navigation. The title attribute carries the
-  // hover-tooltip in a way that survives the row's outer click target.
+  const className =
+    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium leading-none transition-colors " +
+    (available
+      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20"
+      : "border-dashed border-muted-foreground/40 text-muted-foreground/70");
+  const dot = (
+    <span
+      aria-hidden="true"
+      className={
+        "h-1.5 w-1.5 rounded-full " +
+        (available ? "bg-emerald-500" : "bg-muted-foreground/40")
+      }
+    />
+  );
+  if (available && href) {
+    // The viewer link is a sibling click target inside the row Link.
+    // Stop the row navigation so a click on the badge resolves to the
+    // text viewer rather than the workspace prefill route.
+    return (
+      <Link
+        href={href}
+        data-testid={`availability-${label.toLowerCase()}`}
+        data-available="true"
+        title={titleText}
+        aria-label={titleText}
+        className={className}
+        onClick={(event) => event.stopPropagation()}
+      >
+        {dot}
+        {label}
+      </Link>
+    );
+  }
   return (
     <span
       data-testid={`availability-${label.toLowerCase()}`}
       data-available={available ? "true" : "false"}
       title={titleText}
       aria-label={titleText}
-      className={
-        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium leading-none transition-colors " +
-        (available
-          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-          : "border-dashed border-muted-foreground/40 text-muted-foreground/70")
-      }
+      className={className}
     >
-      <span
-        aria-hidden="true"
-        className={
-          "h-1.5 w-1.5 rounded-full " +
-          (available ? "bg-emerald-500" : "bg-muted-foreground/40")
-        }
-      />
+      {dot}
       {label}
     </span>
   );
@@ -165,11 +193,16 @@ function MeetingRowBody({
           {contextLabel ? <span>· {contextLabel}</span> : null}
         </div>
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
-          {TEXT_AVAILABILITY_BADGES.map(({ key, label }) => (
+          {TEXT_AVAILABILITY_BADGES.map(({ key, label, kind }) => (
             <AvailabilityBadge
               key={key}
               label={label}
               available={Boolean(meeting[key])}
+              href={
+                meeting[key]
+                  ? `/documents/${kind}/${meeting.meeting_date}`
+                  : null
+              }
             />
           ))}
         </div>

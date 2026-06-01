@@ -935,6 +935,63 @@
         "title": "CrossBankTransferSection",
         "type": "object"
       },
+      "DocumentDetailResponse": {
+        "description": "Single FOMC document body served to the path-based\n``/documents/{type}/{date}`` viewer. The text payload is the\nhygiene-cleaned body \u2014 boilerplate (Implementation Note, voting\nroster, navigation chrome) is stripped before it lands here so the\nfrontend can render it as prose without further pre-processing.",
+        "properties": {
+          "cleaned_text": {
+            "description": "Body after text_hygiene.clean_fomc_text().",
+            "title": "Cleaned Text",
+            "type": "string"
+          },
+          "date": {
+            "description": "Event ISO date the document indexes against.",
+            "title": "Date",
+            "type": "string"
+          },
+          "scraped_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ISO-8601 UTC timestamp the source row was scraped at.",
+            "title": "Scraped At"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Federal Reserve permalink when the row carries one.",
+            "title": "Source Url"
+          },
+          "title": {
+            "description": "Source title; empty when the JSON row omits it.",
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "description": "One of statement / minutes / press_conference.",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "date",
+          "title",
+          "cleaned_text"
+        ],
+        "title": "DocumentDetailResponse",
+        "type": "object"
+      },
       "DocumentParseResponse": {
         "properties": {
           "char_count": {
@@ -5197,6 +5254,55 @@
           }
         },
         "summary": "Parse Document"
+      }
+    },
+    "/documents/{type}/{date}": {
+      "get": {
+        "description": "Return the cleaned text body for a single FOMC document so the\ncalendar's badge click-through can render the statement / minutes /\npress-conference text inline. ``type`` is one of the keys in\n:data:`_DOCUMENT_DETAIL_SOURCES`; ``date`` is the ISO event date\nthe source row indexes against. 404 when the row is not on disk\n(e.g., a far-future meeting with no statement collected yet).",
+        "operationId": "get_document_detail_documents__type___date__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "date",
+            "required": true,
+            "schema": {
+              "title": "Date",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Document Detail"
       }
     },
     "/evaluation/classification-breakdown": {
