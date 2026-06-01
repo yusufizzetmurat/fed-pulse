@@ -19,7 +19,13 @@ from app.models.registry import revision_for
 # sentiment model. Override via the FED_PULSE_SENTIMENT_MODEL env var on any
 # deployment where the local checkpoint is not present.
 DEFAULT_LOCAL_CHECKPOINT = "/data/artifacts/phase3/pilot_finetune_20260505T142652Z/hf_checkpoints"
-PRIMARY_HF_MODEL_ID = "gtfintechlab/fomc-roberta-any-exp"
+PRIMARY_HF_MODEL_ID = "gtfintechlab/FOMC-RoBERTa"
+# gtfintechlab/FOMC-RoBERTa (Trillion Dollar Words) ships generic LABEL_0/1/2 in
+# its config. Empirically verified mapping (probs ~1.0 on hawkish/dovish/neutral
+# probe sentences): LABEL_0 = dovish, LABEL_1 = hawkish, LABEL_2 = neutral. The
+# repo is gated; a token with gate access is required (else the strict guard /
+# loud-fallback path engages instead of silently using distilbert).
+_FOMC_ROBERTA_ID2LABEL = {0: "dovish", 1: "hawkish", 2: "neutral"}
 # Last-resort fallback ONLY. Returns POSITIVE / NEGATIVE labels, NOT
 # hawkish/dovish/neutral, so the frontend should refuse to map the output
 # (see frontend/lib/analyze/format.ts::toStance).
@@ -74,7 +80,15 @@ def _build_pipeline(model_id: str, device: int) -> Any:
     revision = revision_for(model_id)
     if revision is not None:
         kwargs["revision"] = revision
-    return pipeline("text-classification", **kwargs)
+    clf = pipeline("text-classification", **kwargs)
+    # FOMC-RoBERTa exposes only generic LABEL_0/1/2; remap to stance names so the
+    # pipeline emits hawkish/dovish/neutral (the labels the rest of the stack and
+    # the frontend's toStance() expect). The local fine-tune checkpoint already
+    # carries proper labels, so this only touches the FOMC-RoBERTa fallback.
+    if model_id == PRIMARY_HF_MODEL_ID:
+        clf.model.config.id2label = dict(_FOMC_ROBERTA_ID2LABEL)
+        clf.model.config.label2id = {v: k for k, v in _FOMC_ROBERTA_ID2LABEL.items()}
+    return clf
 
 
 def get_classifier() -> Any:

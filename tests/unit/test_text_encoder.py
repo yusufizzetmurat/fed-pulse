@@ -171,3 +171,38 @@ def test_get_loaded_model_id_accessor(monkeypatch):
 
     monkeypatch.setattr(te, "_loaded_model_id", "some/model")
     assert te.get_loaded_model_id() == "some/model"
+
+
+class _StanceCfg:
+    pass
+
+
+class _StanceModel:
+    def __init__(self):
+        self.config = _StanceCfg()
+
+
+class _StanceClf:
+    def __init__(self):
+        self.model = _StanceModel()
+
+
+def test_fomc_roberta_generic_labels_remapped_to_stance(monkeypatch):
+    # FOMC-RoBERTa ships LABEL_0/1/2; _build_pipeline must remap to stance names.
+    import app.services.text_encoder as te
+
+    monkeypatch.setattr(te, "pipeline", lambda *a, **k: _StanceClf())
+    monkeypatch.setattr(te, "revision_for", lambda _m: None)
+    clf = te._build_pipeline(te.PRIMARY_HF_MODEL_ID, -1)
+    assert clf.model.config.id2label == {0: "dovish", 1: "hawkish", 2: "neutral"}
+    assert clf.model.config.label2id["hawkish"] == 1
+
+
+def test_other_model_labels_not_remapped(monkeypatch):
+    # A non-FOMC-RoBERTa model id must NOT get the stance remap.
+    import app.services.text_encoder as te
+
+    monkeypatch.setattr(te, "pipeline", lambda *a, **k: _StanceClf())
+    monkeypatch.setattr(te, "revision_for", lambda _m: None)
+    clf = te._build_pipeline("some/other-classifier", -1)
+    assert not hasattr(clf.model.config, "id2label")
