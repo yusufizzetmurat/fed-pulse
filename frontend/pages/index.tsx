@@ -307,21 +307,13 @@ export default function WorkspacePage() {
     };
   }, [apiBaseUrl, request.symbol]);
 
-  // Guard against StrictMode double-invoke for the descriptive +
-  // expected-volume fetchers below. Each key encodes the fetcher
-  // identity plus its varying arguments so a symbol or as-of change
-  // re-issues but a re-render does not. The cleanup clears the key
-  // so a real argument change re-fires after the previous controller
-  // is aborted.
-  const sideFetchInFlight = React.useRef<Set<string>>(new Set());
-
   // Expected Volume forecast card is HAR-volume over market history,
   // market-data only. 503 (artifact missing) renders the unavailable
-  // placeholder rather than a generic error toast.
+  // placeholder rather than a generic error toast. The AbortController
+  // cleanup is the only concurrency guard we need: a re-render or
+  // StrictMode remount tears down the prior fetch before the next one
+  // commits state, matching the volForecast effect convention above.
   React.useEffect(() => {
-    const key = `expected-volume:${apiBaseUrl}:${request.symbol}`;
-    if (sideFetchInFlight.current.has(key)) return;
-    sideFetchInFlight.current.add(key);
     const controller = new AbortController();
     setExpectedVolumeLoading(true);
     setExpectedVolumeError(null);
@@ -348,7 +340,6 @@ export default function WorkspacePage() {
     })();
     return () => {
       controller.abort();
-      sideFetchInFlight.current.delete(key);
     };
   }, [apiBaseUrl, request.symbol]);
 
@@ -356,9 +347,6 @@ export default function WorkspacePage() {
   // 503 is normalised to null inside the fetcher; here we just render
   // the unavailable placeholder.
   React.useEffect(() => {
-    const key = `mp-surprise:${apiBaseUrl}`;
-    if (sideFetchInFlight.current.has(key)) return;
-    sideFetchInFlight.current.add(key);
     const controller = new AbortController();
     setLatestMpSurpriseLoading(true);
     (async () => {
@@ -379,7 +367,6 @@ export default function WorkspacePage() {
     })();
     return () => {
       controller.abort();
-      sideFetchInFlight.current.delete(key);
     };
   }, [apiBaseUrl]);
 
@@ -388,9 +375,6 @@ export default function WorkspacePage() {
   // the workspace as-of date. 503 already collapses to null in the
   // fetcher.
   React.useEffect(() => {
-    const key = `futures-consensus:${apiBaseUrl}:${request.date}`;
-    if (sideFetchInFlight.current.has(key)) return;
-    sideFetchInFlight.current.add(key);
     const controller = new AbortController();
     setFuturesConsensusLoading(true);
     (async () => {
@@ -414,30 +398,42 @@ export default function WorkspacePage() {
     })();
     return () => {
       controller.abort();
-      sideFetchInFlight.current.delete(key);
     };
   }, [apiBaseUrl, request.date]);
 
-  // Semantic-diff panel runs on every (text, date) pair so the
-  // workspace consistently shows the diff for what is currently
-  // typed. A network failure folds back to the unavailable
-  // placeholder; cold-start is handled inside the panel itself.
+  // Debounced text mirror for the semantic-diff fetch. The analyze
+  // textarea writes request.text on every keystroke; without this gate
+  // a paste of a 4k-char statement would issue one POST per character
+  // (each one running difflib + topic scoring on the backend). 400ms
+  // is short enough to feel responsive when the user pauses typing
+  // and long enough to coalesce paste-into-place edits.
+  const [debouncedText, setDebouncedText] = React.useState(request.text);
   React.useEffect(() => {
-    if (!request.text || !request.text.trim()) {
+    const handle = window.setTimeout(() => {
+      setDebouncedText(request.text);
+    }, 400);
+    return () => {
+      window.clearTimeout(handle);
+    };
+  }, [request.text]);
+
+  // Semantic-diff panel runs on each (debounced text, date) pair so
+  // the workspace shows the diff for the text the user has settled on,
+  // not the text mid-keystroke. A network failure folds back to the
+  // unavailable placeholder; cold-start is handled inside the panel.
+  React.useEffect(() => {
+    if (!debouncedText || !debouncedText.trim()) {
       setSemanticDiff(null);
       setSemanticDiffLoading(false);
       return;
     }
-    const key = `semantic-diff:${apiBaseUrl}:${request.date}:${request.text.length}`;
-    if (sideFetchInFlight.current.has(key)) return;
-    sideFetchInFlight.current.add(key);
     const controller = new AbortController();
     setSemanticDiffLoading(true);
     (async () => {
       try {
         const data = await fetchSemanticDiff(
           apiBaseUrl,
-          { current_date: request.date, current_text: request.text },
+          { current_date: request.date, current_text: debouncedText },
           controller.signal,
         );
         if (!controller.signal.aborted) {
@@ -455,9 +451,8 @@ export default function WorkspacePage() {
     })();
     return () => {
       controller.abort();
-      sideFetchInFlight.current.delete(key);
     };
-  }, [apiBaseUrl, request.date, request.text]);
+  }, [apiBaseUrl, request.date, debouncedText]);
 
   // #317 finding #14: monotonic seq for /analyze/market fetches. A
   // second submit before the first market fetch resolves bumps the
