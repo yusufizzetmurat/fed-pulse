@@ -52,3 +52,29 @@ noise would be the more striking outcome.
 ## Artifacts
 
 - `data/artifacts/corner_e_calibration_replication_fx/result.json`. Committed before it exists.
+
+---
+
+## Result (run 2026-06-01, 300 epochs × 5 seeds × 5 folds, n=10,685 OOS) — **DOES NOT REPLICATE**
+
+| metric | SPX (Corner C h1, discovery) | DXY (Corner E, confirmation) |
+|---|---|---|
+| ΔMSE (base − +u) | **+0.000365** (text helps) | **−0.0079** (text hurts) |
+| DM p | 0.003 | 0.099, **sign reversed** |
+| band coverage low-u / high-u | 0.861 / 0.855 (high-u under-covered ✓) | 0.896 / 0.900 (high-u **over**-covered ✗) |
+| pre-registered confirmation | — | **No** |
+
+**Verdict: C-h1 does not replicate.** On the independent DXY asset the effect **reverses sign on
+both metrics** — `u` makes the error-magnitude prediction worse, and the constant band
+over-covers (not under-covers) on high-`u` days. This is stronger evidence against a real effect
+than simple non-significance: a real-but-underpowered signal would show a positive-but-noisy point
+estimate; a sign reversal says the SPX h1 result was sample-specific — consistent with the
+h1-only, h5-backwards, h22-null fragility already noted in Corner C.
+
+**Caveat acknowledged:** DXY's `r²` proxy is noisier (lower power). But the failure mode here is a
+reversal, not just a wide confidence interval, so the noise caveat does not rescue C-h1.
+
+**Conclusion:** the project's single formally-passing pre-registered text result (Corner C h1) is
+a multiplicity/noise artifact, surfaced and killed by out-of-sample replication. **Text is now
+fully and definitively closed for forecasting** — level and calibration, equities, FX, and rates.
+The discipline did its job: we caught our own false positive instead of reporting it.
