@@ -52,7 +52,7 @@ import math
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from app.schemas import FuturesConsensusHorizon, FuturesConsensusResponse
 from app.services.fomc_calendar import get_calendar
@@ -220,8 +220,8 @@ def get_consensus(
     as_of_date: date | None = None,
     *,
     cache_dir: Path | None = None,
-    fetch_dgs=fetch_dgs_short,
-    fetch_target=fetch_fred_series,
+    fetch_dgs: Callable[..., dict[str, "FredSeriesResponse"]] = fetch_dgs_short,
+    fetch_target: Callable[..., "FredSeriesResponse"] = fetch_fred_series,
 ) -> FuturesConsensusResponse:
     """Build the workspace futures-consensus response.
 
