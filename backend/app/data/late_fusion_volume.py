@@ -52,6 +52,21 @@ def _har_matrix(log_vol: np.ndarray) -> np.ndarray:
     return feats
 
 
+def _calendar_features(dates: pd.Series) -> tuple[np.ndarray, list[str]]:
+    """Volume-seasonality features HAR's 3 lags miss: day-of-week and month/
+    quarter-end (rebalancing / triple-witching volume spikes). Computable from the
+    date alone, so leak-free."""
+    d = pd.to_datetime(dates)
+    dow = d.dt.dayofweek.to_numpy()
+    dom = d.dt.day.to_numpy()
+    month = d.dt.month.to_numpy()
+    cols = [(dow == k).astype(float) for k in range(4)]  # Mon..Thu (Fri baseline)
+    names = [f"dow_{k}" for k in range(4)]
+    cols.append((dom >= 25).astype(float)); names.append("month_end")
+    cols.append(((dom >= 25) & np.isin(month, [3, 6, 9, 12])).astype(float)); names.append("quarter_end")
+    return np.column_stack(cols), names
+
+
 def _forward_target(log_vol: np.ndarray, h: int) -> np.ndarray:
     """Mean log-volume over t+1 .. t+h (forward, strictly future)."""
     n = len(log_vol)
@@ -69,13 +84,14 @@ def _ols(x_tr: np.ndarray, y_tr: np.ndarray, x_te: np.ndarray) -> np.ndarray:
 
 
 def _mlp_fit_predict(
-    x_tr: np.ndarray, y_tr: np.ndarray, x_te: np.ndarray, seed: int, epochs: int = 200
+    x_tr: np.ndarray, y_tr: np.ndarray, x_te: np.ndarray, seed: int, epochs: int = 400
 ) -> np.ndarray:
     torch.manual_seed(seed)
     model = nn.Sequential(
-        nn.Linear(x_tr.shape[1], 32), nn.GELU(), nn.Dropout(0.2), nn.Linear(32, 1)
+        nn.Linear(x_tr.shape[1], 64), nn.GELU(), nn.Dropout(0.1),
+        nn.Linear(64, 32), nn.GELU(), nn.Linear(32, 1),
     )
-    opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
     xt, yt = torch.from_numpy(x_tr).float(), torch.from_numpy(y_tr).float().unsqueeze(1)
     model.train()
     for _ in range(epochs):
@@ -114,36 +130,48 @@ def run(
     data = load_log_volume(volume_path)
     log_vol = data["log_vol"].to_numpy()
     har = _har_matrix(log_vol)
+    cal, _ = _calendar_features(data["date"])
 
     results: dict[str, object] = {"model": "volume-head", "n_days": int(len(log_vol)), "by_horizon": {}}
     by_h: dict[str, dict[str, object]] = {}
     for h in _HORIZONS:
         target = _forward_target(log_vol, h)
         valid = ~(np.isnan(har).any(axis=1) | np.isnan(target))
-        X, y = har[valid], target[valid]
+        # HAR-3 baseline vs a rich feature set (HAR + calendar seasonality). The
+        # rich-LINEAR model isolates the value of the features; DL-rich then tests
+        # whether nonlinearity adds anything beyond that.
+        x_har, x_rich, y = har[valid], np.hstack([har[valid], cal[valid]]), target[valid]
         splits = walk_forward_splits(len(y), n_folds, embargo=h)
-        oy, oh, od = [], [], []
+        oy, o_har, o_rich, o_dl = [], [], [], []
         for tr, te in splits:
-            xtr, xte = _standardize(X[tr], X[te])
-            # HAR (OLS) is scale-robust; the MLP needs a standardized target
-            # (log-volume ~22) or it cannot fit, so train on z-scored y and invert.
+            xh_tr, xh_te = _standardize(x_har[tr], x_har[te])
+            xr_tr, xr_te = _standardize(x_rich[tr], x_rich[te])
             ym, ys = float(y[tr].mean()), float(y[tr].std()) or 1.0
-            oh.append(_ols(xtr, y[tr], xte))
+            o_har.append(_ols(xh_tr, y[tr], xh_te))
+            o_rich.append(_ols(xr_tr, y[tr], xr_te))
             dl_std = np.mean(
-                [_mlp_fit_predict(xtr, (y[tr] - ym) / ys, xte, s) for s in seeds], axis=0
+                [_mlp_fit_predict(xr_tr, (y[tr] - ym) / ys, xr_te, s) for s in seeds], axis=0
             )
-            od.append(dl_std * ys + ym)
+            o_dl.append(dl_std * ys + ym)
             oy.append(y[te])
-        yy, ph, pd_ = np.concatenate(oy), np.concatenate(oh), np.concatenate(od)
+        yy = np.concatenate(oy)
+        ph, pr, pdl = np.concatenate(o_har), np.concatenate(o_rich), np.concatenate(o_dl)
         base = float(yy.mean())
-        gain = _block_boot_gain(yy, pd_, ph, base, block=h)
+        dl_gain = _block_boot_gain(yy, pdl, ph, base, block=h)
+        rich_gain = _block_boot_gain(yy, pr, ph, base, block=h)
         by_h[f"h{h}"] = {
             "r2_har": round(_r2(yy, ph, base), 4),
-            "r2_dl": round(_r2(yy, pd_, base), 4),
-            "dl_minus_har_ci90": [round(gain[0], 4), round(gain[1], 4)],
+            "r2_rich_linear": round(_r2(yy, pr, base), 4),
+            "r2_dl": round(_r2(yy, pdl, base), 4),
+            "dl_minus_har_ci90": [round(dl_gain[0], 4), round(dl_gain[1], 4)],
+            "richlin_minus_har_ci90": [round(rich_gain[0], 4), round(rich_gain[1], 4)],
             "n_oos": int(len(yy)),
         }
-        logger.info("h%d: HAR R2 %.4f | DL R2 %.4f | gain CI %s", h, by_h[f"h{h}"]["r2_har"], by_h[f"h{h}"]["r2_dl"], by_h[f"h{h}"]["dl_minus_har_ci90"])
+        logger.info(
+            "h%d: HAR %.4f | rich-lin %.4f | DL %.4f | DL-HAR %s | richlin-HAR %s",
+            h, by_h[f"h{h}"]["r2_har"], by_h[f"h{h}"]["r2_rich_linear"], by_h[f"h{h}"]["r2_dl"],
+            by_h[f"h{h}"]["dl_minus_har_ci90"], by_h[f"h{h}"]["richlin_minus_har_ci90"],
+        )
     results["by_horizon"] = by_h
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(results, indent=2))
