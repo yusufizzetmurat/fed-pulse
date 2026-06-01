@@ -1735,12 +1735,26 @@
             "type": "string"
           },
           "predicted_prob": {
-            "title": "Predicted Prob",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Prob"
           },
           "predicted_tercile": {
-            "title": "Predicted Tercile",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Tercile"
           },
           "realized_rv": {
             "anyOf": [
@@ -1766,9 +1780,7 @@
           }
         },
         "required": [
-          "event_date",
-          "predicted_tercile",
-          "predicted_prob"
+          "event_date"
         ],
         "title": "HarTercileBacktestRow",
         "type": "object"

@@ -75,7 +75,7 @@ def _stub_predict_har_regime(monkeypatch, mapping: dict[str, dict[str, Any]]) ->
         return {
             "horizons": [
                 {
-                    "h": 22,
+                    "h": 1,
                     "predicted_rv": spec["q33"] / 2.0 if spec["tercile"] == "low" else (
                         (spec["q33"] + spec["q67"]) / 2.0 if spec["tercile"] == "medium" else spec["q67"] * 2.0
                     ),
@@ -159,7 +159,7 @@ def test_build_backtest_predicts_and_resolves_each_meeting(client, monkeypatch) 
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["symbol"] == "^GSPC"
-    assert body["horizon"] == 10
+    assert body["horizon"] == 1
 
     # Calendar order preserved: stub returns the three dates in the
     # supplied order (most-recent-first), and the backtest must not
@@ -314,10 +314,15 @@ def test_build_backtest_dedupes_meeting_dates(client, monkeypatch) -> None:
     assert event_dates == ["2024-05-01", "2024-03-20"]
 
 
-def test_build_backtest_skips_meetings_with_short_rv_history(
+def test_build_backtest_emits_pending_for_meetings_with_short_rv_history(
     client, monkeypatch
 ) -> None:
-    """Meetings with too little leading RV history are dropped, not pending."""
+    """Meetings with too little leading RV history surface as pending rows.
+
+    Earlier revisions silently dropped these from the response; the new
+    behaviour mirrors the RV-backtest sibling so the operator sees how
+    many events were attempted vs how many we could actually score.
+    """
 
     _stub_calendar(monkeypatch, ["2024-01-31"])
     monkeypatch.setattr(
@@ -344,8 +349,15 @@ def test_build_backtest_skips_meetings_with_short_rv_history(
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["rows"] == []
-    assert body["metrics"]["total_runs"] == 0
+    assert len(body["rows"]) == 1
+    pending = body["rows"][0]
+    assert pending["event_date"] == "2024-01-31"
+    assert pending["predicted_tercile"] is None
+    assert pending["realized_tercile"] is None
+    assert pending["correct"] is None
+    assert body["metrics"]["total_runs"] == 1
+    assert body["metrics"]["resolved_runs"] == 0
+    assert body["metrics"]["accuracy_overall"] is None
 
 
 def test_bucket_against_cutoffs_layout() -> None:

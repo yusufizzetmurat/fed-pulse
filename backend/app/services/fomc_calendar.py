@@ -125,6 +125,11 @@ def list_past_meetings(
     if limit <= 0:
         return []
     reference = as_of or date.today()
+    # Strict ``<`` excludes any meeting whose first day is today: on the
+    # day a two-day FOMC meeting starts, statement release is still 24h
+    # away, so dropping it from the backtest universe is correct. Same
+    # for the statement-release day itself — meeting_date is already
+    # yesterday by then and the row reappears via the ``<`` boundary.
     past = [m for m in _SCHEDULE if m.meeting_date < reference]
     past.sort(key=lambda m: m.meeting_date, reverse=True)
     return past[:limit]

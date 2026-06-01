@@ -169,10 +169,15 @@ export function WorkspaceSection({
         </div>
       </header>
       {collapsible ? (
+        // ``hidden`` cannot be set here: it applies display:none, which
+        // pulls the element out of layout before the grid-template-rows
+        // transition can animate the height. ``aria-expanded`` on the
+        // toggle button + ``aria-controls`` on this body are the
+        // canonical accessibility hooks; assistive tech reads the
+        // expanded state from the button, not from a hidden attribute.
         <div
           id={bodyId}
           data-testid="workspace-section-body"
-          hidden={!open}
           className={cn(
             "grid overflow-hidden transition-[grid-template-rows] duration-200 ease-out",
             open ? "grid-rows-[1fr]" : "grid-rows-[0fr]",

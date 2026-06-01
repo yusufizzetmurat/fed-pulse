@@ -63,13 +63,18 @@ _TERCILE_LABELS: tuple[str, str, str] = ("low", "medium", "high")
 # trainer's 60-trading-day cutoff window.
 _RV_HISTORY_WINDOW = 60
 _MIN_RV_HISTORY = 22
-_FORWARD_STEPS = 10
-_FORWARD_WINDOW_DAYS = 30
-
-# Picks the closest horizon to the 10-bar forward window so the panel
-# compares apples-to-apples. ``predict_har_regime`` emits per-horizon
-# rows at h=1/5/22; h=22 is the closest match to the forward window.
-_PREDICTION_HORIZON = 22
+# Use h=1 throughout so the prediction horizon matches the realized
+# window exactly: predict_har_regime emits a row predicting the next
+# trading day's variance, and we resolve the realized side as that
+# same single forward bar's squared log-return. Earlier revisions
+# averaged 10 forward bars against an h=22 point forecast — the
+# distribution of single-bar variance and the distribution of 10-bar
+# mean variance are not the same, so the cutoffs (quantiles of
+# single-bar variance from predict_har_regime) and the comparand
+# (mean of 10 bars) were in different spaces.
+_FORWARD_STEPS = 1
+_FORWARD_WINDOW_DAYS = 7
+_PREDICTION_HORIZON = 1
 
 
 def _coerce_float(value: Any) -> float | None:
@@ -90,6 +95,25 @@ def _bucket_against_cutoffs(value: float, q33: float, q67: float) -> str:
     if value < q67:
         return "medium"
     return "high"
+
+
+def _pending_row(event_date: str) -> dict[str, Any]:
+    """Surface a meeting that we attempted but couldn't fully resolve.
+
+    Emitted when the leading RV window was too short, predict_har_regime
+    produced no usable row, or the realized forward bar has not closed
+    yet. Counted in ``total_runs`` (so the operator sees N attempted
+    vs N resolved) but excluded from accuracy / hit-rate denominators.
+    """
+
+    return {
+        "event_date": event_date,
+        "predicted_tercile": None,
+        "predicted_prob": None,
+        "realized_tercile": None,
+        "realized_rv": None,
+        "correct": None,
+    }
 
 
 def _realized_variance_from_log_returns(log_returns: list[float]) -> float | None:
@@ -187,6 +211,8 @@ def _fetch_rv_history_for_cutoffs_uncached(event_date: str, symbol: str) -> list
     if close_series is None or len(close_series) < 3:
         return []
     try:
+        from app.data.intraday_rv_forecast import _EPS as _RVEPS
+
         closes = np.asarray(close_series, dtype=np.float64)
         closes = closes[np.isfinite(closes) & (closes > 0.0)]
         if closes.size < 2:
@@ -196,6 +222,10 @@ def _fetch_rv_history_for_cutoffs_uncached(event_date: str, symbol: str) -> list
         rv = rv[np.isfinite(rv) & (rv > 0.0)]
         if rv.size == 0:
             return []
+        # Floor at the same epsilon predict_har_regime uses internally
+        # so a downstream rv > 0 guard cannot trip on a value that
+        # rounds to zero during the float() cast below.
+        rv = np.maximum(rv, _RVEPS)
         tail = rv[-_RV_HISTORY_WINDOW:]
         return [float(v) for v in tail]
     except Exception:
@@ -333,8 +363,22 @@ def build_har_tercile_backtest(
     """
 
     from app.services.fomc_calendar import list_past_meetings
+    from app.services.rv_forecaster import RvForecasterUnavailable
 
     meetings = list_past_meetings(limit=limit)
+
+    # Probe the HAR predictor once at the loop top so a missing artifact
+    # surfaces as a clean 503 at the endpoint layer rather than every
+    # row collapsing silently into "pending" (which would be visually
+    # indistinguishable from a legitimate "all-events-too-recent" state).
+    # `_predict_for_meeting` itself swallows broad exceptions per row;
+    # the explicit probe here re-raises the well-known sentinel.
+    try:
+        from app.services.rv_forecaster import _RvPredictor
+
+        _RvPredictor.get()
+    except RvForecasterUnavailable:
+        raise
 
     out_rows: list[dict[str, Any]] = []
     seen_dates: set[str] = set()
@@ -346,12 +390,16 @@ def build_har_tercile_backtest(
 
         rv_history = _fetch_rv_history_for_cutoffs(event_date, symbol)
         if len(rv_history) < _MIN_RV_HISTORY:
-            # Not enough leading data to run HAR; skip the row entirely
-            # so the panel denominator stays honest.
+            # Not enough leading data to run HAR. Surface as a pending
+            # row (matches the RV-backtest sibling's pattern) so the
+            # operator can see how many events we attempted vs how many
+            # had usable history.
+            out_rows.append(_pending_row(event_date))
             continue
 
         predicted_label, predicted_prob, q33, q67 = _predict_for_meeting(rv_history)
         if predicted_label is None or q33 is None or q67 is None:
+            out_rows.append(_pending_row(event_date))
             continue
 
         realized_rv = _fetch_realized_rv_yf(event_date, symbol)

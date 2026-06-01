@@ -86,14 +86,17 @@ describe("WorkspaceSection", () => {
       );
       const toggle = screen.getByTestId("workspace-section-toggle");
       const body = screen.getByTestId("workspace-section-body");
-      // Default open: aria-expanded=true, body visible, persisted "1".
+      // Default open: aria-expanded=true, body row at 1fr, persisted "1".
+      // ``hidden`` is intentionally not used — it would suppress the
+      // grid-template-rows transition; aria-expanded on the toggle is
+      // the canonical hook for assistive tech.
       expect(toggle).toHaveAttribute("aria-expanded", "true");
-      expect(body).not.toHaveAttribute("hidden");
+      expect(body.className).toContain("grid-rows-[1fr]");
       expect(screen.getByText("headline body")).toBeInTheDocument();
 
       fireEvent.click(toggle);
       expect(toggle).toHaveAttribute("aria-expanded", "false");
-      expect(body).toHaveAttribute("hidden");
+      expect(body.className).toContain("grid-rows-[0fr]");
       // Header itself stays visible so the user can re-open the card.
       expect(screen.getByText("HAR headline")).toBeInTheDocument();
       expect(
@@ -118,7 +121,7 @@ describe("WorkspaceSection", () => {
       // effect commits; the header / chevron stay in the DOM regardless.
       expect(toggle).toHaveAttribute("aria-expanded", "false");
       const body = screen.getByTestId("workspace-section-body");
-      expect(body).toHaveAttribute("hidden");
+      expect(body.className).toContain("grid-rows-[0fr]");
     });
 
     it("wires aria-controls to the body element id when collapsible", () => {

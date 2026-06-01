@@ -1736,8 +1736,8 @@ class HarTercileBacktestRow(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     event_date: str
-    predicted_tercile: str
-    predicted_prob: float
+    predicted_tercile: str | None = None
+    predicted_prob: float | None = None
     realized_tercile: str | None = None
     realized_rv: float | None = None
     correct: bool | None = None

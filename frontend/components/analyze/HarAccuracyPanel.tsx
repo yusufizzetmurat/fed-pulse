@@ -19,11 +19,12 @@ import type {
 const TERCILE_ORDER: readonly HarTercileLabel[] = ["low", "medium", "high"];
 
 function tercileBadgeVariant(
-  label: HarTercileLabel,
-): "hawkish" | "dovish" | "neutral" {
+  label: HarTercileLabel | null,
+): "hawkish" | "dovish" | "neutral" | "outline" {
   if (label === "low") return "dovish";
   if (label === "high") return "hawkish";
-  return "neutral";
+  if (label === "medium") return "neutral";
+  return "outline";
 }
 
 function annualizedVolPct(rv: number | null | undefined): string {
@@ -159,16 +160,22 @@ function BacktestTable({ rows }: BacktestTableProps) {
                   {row.event_date}
                 </td>
                 <td className="px-3 py-2">
-                  <Badge
-                    variant={tercileBadgeVariant(row.predicted_tercile)}
-                    className="capitalize"
-                    data-testid={`har-accuracy-row-pred-${row.event_date}`}
-                  >
-                    {row.predicted_tercile}
-                  </Badge>
-                  <span className="ml-1.5 numeric text-[11px] text-muted-foreground tabular-nums">
-                    {formatProbPct(row.predicted_prob)}
-                  </span>
+                  {row.predicted_tercile ? (
+                    <>
+                      <Badge
+                        variant={tercileBadgeVariant(row.predicted_tercile)}
+                        className="capitalize"
+                        data-testid={`har-accuracy-row-pred-${row.event_date}`}
+                      >
+                        {row.predicted_tercile}
+                      </Badge>
+                      <span className="ml-1.5 numeric text-[11px] text-muted-foreground tabular-nums">
+                        {formatProbPct(row.predicted_prob)}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">pending</span>
+                  )}
                 </td>
                 <td className="px-3 py-2">
                   {row.realized_tercile ? (

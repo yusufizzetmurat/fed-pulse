@@ -302,6 +302,18 @@ def get_rv_backtest(
     """
 
     from app.services.fomc_calendar import list_past_meetings
+    from app.services.rv_forecaster import RvForecasterUnavailable, _RvPredictor
+
+    # Probe the predictor once up front so a missing artifact surfaces
+    # as a 503 at the endpoint layer rather than every row collapsing
+    # into "pending" (which would be visually indistinguishable from a
+    # legitimate "all-events-too-recent" state). The per-row exception
+    # handler inside ``_predict_for_meeting`` still absorbs transient
+    # yfinance flakes without leaking them.
+    try:
+        _RvPredictor.get()
+    except RvForecasterUnavailable:
+        raise
 
     meetings = list_past_meetings(limit=limit)
 
