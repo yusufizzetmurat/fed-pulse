@@ -248,9 +248,10 @@ def _gtfintechlab_row_to_axis_row(
 
     The gtfintechlab schema is uniform across all six bank datasets:
     ``{sentences, stance_label, time_label, certain_label, year}``.
-    The trainer currently maps stance and certainty into the
-    classifier's heads; ``time_label`` is not yet plumbed (#235
-    follow-up). Rows whose stance is ``irrelevant`` (or any non-
+    The trainer maps stance, certainty, and ``time_label`` (forward
+    looking / not forward looking) into the classifier's three heads;
+    the time axis replaced the retired factor axis. Rows whose stance
+    is ``irrelevant`` (or any non-
     canonical value) are kept but their stance mask stays False so
     the loss does not train on them — they still contribute
     certainty supervision when that axis is populated.

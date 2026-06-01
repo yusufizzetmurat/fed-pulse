@@ -601,7 +601,7 @@ class ModelConfig:
     # #273 follow-up to the multi-task head (#272). When True, the
     # training loop swaps the single-axis CrossEntropy for
     # :class:`app.training.loss.MultiTaskLoss`, which folds per-axis
-    # CE / SmoothL1 terms onto stance / factor / certainty with per-axis
+    # CE terms onto stance / certainty / time with per-axis
     # class weights and a per-row availability mask. Default False keeps
     # the byte-identity regression contract on every existing
     # classification run (stance-only training). The topic axis was

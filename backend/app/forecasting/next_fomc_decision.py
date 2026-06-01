@@ -18,7 +18,7 @@ Feature families
 
 * ``ois``        -- 5-tenor pre-event OIS-implied curve + level/path/info
                     factors from :file:`mp_surprises.parquet`.
-* ``text``       -- multi-axis stance / time / certainty / factor
+* ``text``       -- multi-axis stance / certainty / time
                     from :file:`events.parquet`. Multi-source duplicates
                     collapse to one row per meeting; the statement is the
                     preferred document kind when available.

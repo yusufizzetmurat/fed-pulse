@@ -735,8 +735,8 @@ def _parse_args() -> argparse.Namespace:
         dest="multi_task_loss",
         action="store_true",
         help=(
-            "Train classification with MultiTaskLoss over stance / factor / "
-            "certainty instead of single-axis CrossEntropy. "
+            "Train classification with MultiTaskLoss over stance / certainty / "
+            "time instead of single-axis CrossEntropy. "
             "Per-axis class weights fit on the train slice; per-row mask "
             "drops axes whose label is absent on a given row."
         ),
