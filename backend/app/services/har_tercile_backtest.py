@@ -90,59 +90,74 @@ def _normalize_tercile_label(label: Any) -> str | None:
     return _REGIME_TO_TERCILE.get(key) or (key if key in _TERCILE_LABELS else None)
 
 
+def _tercile_from_har_block(har_block: Any) -> tuple[str | None, float | None]:
+    """Read predicted tercile + prob from a persisted ``har_baselines`` block.
+
+    Prefers the 22-day horizon (closest to the 10-day forward resolution)
+    and falls back to whichever row carries a valid label.
+    """
+
+    if not isinstance(har_block, dict):
+        return None, None
+    horizons = har_block.get("horizons")
+    if not isinstance(horizons, list):
+        return None, None
+    ordered = sorted(
+        (h for h in horizons if isinstance(h, dict)),
+        key=lambda h: abs(int(h.get("h", 0) or 0) - 22),
+    )
+    for row in ordered:
+        label = _normalize_tercile_label(row.get("tercile"))
+        if label is None:
+            continue
+        probs = row.get("tercile_probs") or {}
+        prob = _coerce_float(probs.get(label)) if isinstance(probs, dict) else None
+        return label, prob
+    return None, None
+
+
+def _tercile_from_regime_block(regime: Any) -> tuple[str | None, float | None]:
+    """Read predicted tercile + prob from a ``regime_classification`` block.
+
+    Maps the regime vocabulary (calm / normal / high) to terciles via
+    :func:`_normalize_tercile_label` and looks the probability up under
+    the original regime key first, falling back to the normalized label.
+    """
+
+    if not isinstance(regime, dict):
+        return None, None
+    argmax = _normalize_tercile_label(regime.get("argmax_class"))
+    if argmax is None:
+        return None, None
+    distribution = regime.get("distribution") or {}
+    if not isinstance(distribution, dict):
+        return argmax, None
+    raw_argmax = regime.get("argmax_class")
+    prob: float | None = None
+    if isinstance(raw_argmax, str):
+        prob = _coerce_float(distribution.get(raw_argmax))
+    if prob is None:
+        prob = _coerce_float(distribution.get(argmax))
+    return argmax, prob
+
+
 def _extract_predicted_tercile(payload: Any) -> tuple[str | None, float | None]:
     """Pull the predicted tercile + its probability off a persisted payload.
 
     Order of precedence:
       1. ``har_baselines`` block (forward-compat: future builds may
          persist the HAR-tercile card directly into the analyze payload).
-      2. ``regime_classification`` (active late-fusion regime card),
-         mapping calm → low / normal → medium / high → high.
+      2. ``regime_classification`` (active late-fusion regime card).
     Returns ``(label, prob)`` with prob in [0, 1] when available; either
     half may be None on a degraded payload.
     """
 
     if not isinstance(payload, dict):
         return None, None
-
-    har_block = payload.get("har_baselines")
-    if isinstance(har_block, dict):
-        horizons = har_block.get("horizons")
-        if isinstance(horizons, list):
-            # Prefer the 22-day horizon (matches the 10-day forward
-            # resolution closest); fall back to whatever the first row
-            # carries when the structure is sparse.
-            ordered = sorted(
-                (h for h in horizons if isinstance(h, dict)),
-                key=lambda h: abs(int(h.get("h", 0) or 0) - 22),
-            )
-            for row in ordered:
-                label = _normalize_tercile_label(row.get("tercile"))
-                if label is None:
-                    continue
-                probs = row.get("tercile_probs") or {}
-                prob = _coerce_float(probs.get(label)) if isinstance(probs, dict) else None
-                return label, prob
-
-    regime = payload.get("regime_classification")
-    if isinstance(regime, dict):
-        argmax = _normalize_tercile_label(regime.get("argmax_class"))
-        if argmax is not None:
-            distribution = regime.get("distribution") or {}
-            prob: float | None = None
-            if isinstance(distribution, dict):
-                # The classifier exposes calm / normal / high keys; look
-                # the prob up under the ORIGINAL key, not the normalized
-                # tercile label, since the distribution is keyed on the
-                # regime vocabulary.
-                raw_argmax = regime.get("argmax_class")
-                if isinstance(raw_argmax, str):
-                    prob = _coerce_float(distribution.get(raw_argmax))
-                if prob is None:
-                    prob = _coerce_float(distribution.get(argmax))
-            return argmax, prob
-
-    return None, None
+    label, prob = _tercile_from_har_block(payload.get("har_baselines"))
+    if label is not None:
+        return label, prob
+    return _tercile_from_regime_block(payload.get("regime_classification"))
 
 
 def _extract_persisted_cutoffs(payload: Any) -> tuple[float | None, float | None]:
