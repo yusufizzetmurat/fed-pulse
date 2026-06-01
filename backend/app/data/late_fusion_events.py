@@ -190,7 +190,17 @@ def join_sep_features(events: pd.DataFrame, sep_long: pd.DataFrame) -> pd.DataFr
     range_width = sep["range_high"] - sep["range_low"]
     sep["point"] = sep["median"].where(sep["median"].notna(), ct_mid)
     sep["disp"] = ct_width.where(ct_width.notna(), range_width)
-    sep["key"] = sep["variable"] + "_" + sep["horizon"]
+    # Use RELATIVE horizons (h0 = meeting year, h1, h2, ... , LR) so the columns
+    # are dense across meetings. Absolute-year horizons would make each column
+    # non-null for only the ~4 meetings of that year — useless as features.
+    meeting_year = sep["meeting_date"].astype(str).str[:4].astype(int)
+    horizon_year = pd.to_numeric(sep["horizon"], errors="coerce")
+    rel = ("h" + (horizon_year - meeting_year).astype("Int64").astype(str)).where(
+        sep["horizon"] != "LR", "LR"
+    )
+    sep = sep.assign(rel=rel)
+    sep = sep[sep["rel"].notna()]
+    sep["key"] = sep["variable"] + "_" + sep["rel"].astype(str)
 
     point = sep.pivot_table(index="meeting_date", columns="key", values="point", aggfunc="first")
     disp = sep.pivot_table(index="meeting_date", columns="key", values="disp", aggfunc="first")

@@ -175,9 +175,10 @@ def test_join_sep_features_availability_flag() -> None:
     assert merged.loc[merged["event_date"] == "2024-03-20", "sep_available"].iloc[0] == 1
     assert merged.loc[merged["event_date"] == "2024-05-01", "sep_available"].iloc[0] == 0
     row = merged.loc[merged["event_date"] == "2024-03-20"].iloc[0]
-    assert row["sep_point_ffr_2024"] == 4.6
+    # relative horizon: meeting year 2024, projection year 2024 -> h0
+    assert row["sep_point_ffr_h0"] == 4.6
     # dispersion = central-tendency width
-    assert row["sep_disp_ffr_2024"] == pytest.approx(0.5)
+    assert row["sep_disp_ffr_h0"] == pytest.approx(0.5)
 
 
 def test_join_sep_legacy_uses_central_tendency_midpoint() -> None:
@@ -188,4 +189,5 @@ def test_join_sep_legacy_uses_central_tendency_midpoint() -> None:
     )
     merged = join_sep_features(events, sep)
     assert merged["sep_available"].iloc[0] == 1
-    assert merged["sep_point_gdp_2014"].iloc[0] == pytest.approx(2.9)
+    # meeting year 2014, projection year 2014 -> relative horizon h0
+    assert merged["sep_point_gdp_h0"].iloc[0] == pytest.approx(2.9)
