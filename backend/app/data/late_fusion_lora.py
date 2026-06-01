@@ -15,6 +15,7 @@ is noted as a simplification. Requires a GPU in practice.
 from __future__ import annotations
 
 import argparse
+import copy
 import logging
 from dataclasses import dataclass
 
@@ -102,7 +103,10 @@ def _train_predict_dir(
     base_encoder: nn.Module | None, device: torch.device, cfg: LoraConfigArgs, seed: int,
 ) -> np.ndarray:
     torch.manual_seed(seed)
-    encoder = _lora_encoder(base_encoder) if base_encoder is not None else None
+    # Deep-copy the base encoder per fit so each fold/seed gets INDEPENDENT LoRA
+    # adapters on a fresh base. Wrapping the shared base repeatedly would stack
+    # adapters and leak fine-tuning across folds (and corrupts CUDA state).
+    encoder = _lora_encoder(copy.deepcopy(base_encoder)) if base_encoder is not None else None
     model = LoraFusion(encoder, struct_dim=struct_tr.shape[1]).to(device)
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=cfg.lr, weight_decay=cfg.weight_decay)
@@ -127,6 +131,10 @@ def _train_predict_dir(
             sl = slice(start, start + cfg.batch_size)
             logit = model(ids_te[sl].to(device), mask_te[sl].to(device), struct_te[sl].to(device))
             probs.append(torch.sigmoid(logit).cpu().numpy())
+    # Free GPU memory between fits so it does not accumulate across folds/seeds.
+    del model, encoder
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
     return np.concatenate(probs)
 
 
