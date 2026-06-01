@@ -136,3 +136,26 @@ def test_analyze_rejects_unknown_field():
         },
     )
     assert response.status_code == 422
+
+
+def test_symbols_endpoint_returns_only_trained_symbols():
+    """GET /symbols exposes exactly the five tickers the HAR / RV /
+    Expected-Volume models are trained against. Anything else would
+    render an "unavailable" card silently in the picker, so the asset
+    universe is pinned to the trained set here, in the on-disk JSON,
+    and in the in-process fallback through
+    ``app.models.config.SUPPORTED_SYMBOL_METADATA``."""
+
+    from app.models.config import SUPPORTED_SYMBOLS
+
+    client = TestClient(main_mod.app)
+    response = client.get("/symbols")
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload.get("symbols"), list)
+    returned = [entry["symbol"] for entry in payload["symbols"]]
+    assert returned == list(SUPPORTED_SYMBOLS)
+    assert returned == ["^GSPC", "^NDX", "^DJI", "DX-Y.NYB", "EURUSD=X"]
+    for entry in payload["symbols"]:
+        assert set(entry.keys()) == {"symbol", "name", "category", "default_horizon"}
+        assert entry["default_horizon"] == "10d"
