@@ -25,10 +25,16 @@ from app.data.alphavantage_spx import (
 
 
 def _synth_payload(date_iso: str, bars: list[dict[str, str]]) -> dict[str, Any]:
-    series = {bar["t"]: {
-        "1. open": bar["o"], "2. high": bar["h"], "3. low": bar["l"],
-        "4. close": bar["c"], "5. volume": bar["v"],
-    } for bar in bars}
+    series = {
+        bar["t"]: {
+            "1. open": bar["o"],
+            "2. high": bar["h"],
+            "3. low": bar["l"],
+            "4. close": bar["c"],
+            "5. volume": bar["v"],
+        }
+        for bar in bars
+    }
     return {
         "Meta Data": {"1. Information": "test", "2. Symbol": "SPY"},
         "Time Series (1min)": series,
@@ -55,9 +61,7 @@ def test_parse_intraday_payload_sorts_oldest_first() -> None:
 
 def test_parse_intraday_rejects_rate_limit_note() -> None:
     with pytest.raises(RuntimeError, match="rate limit"):
-        _parse_intraday_payload(
-            {"Note": "Thank you for using Alpha Vantage! The free tier..."}
-        )
+        _parse_intraday_payload({"Note": "Thank you for using Alpha Vantage! The free tier..."})
 
 
 def test_parse_intraday_rejects_error_message() -> None:
@@ -194,3 +198,71 @@ def test_load_window_returns_round_trips_through_parquet(tmp_path) -> None:
     ).to_parquet(parquet_path, index=False)
     returns = load_window_returns(tmp_path)
     assert returns == {"2024-01-31": pytest.approx((472.5 - 470.0) / 470.0)}
+
+
+def test_filter_raw_window_keeps_1330_to_1500() -> None:
+    import datetime as _dt
+
+    bars = [
+        IntradayBar("2024-01-31 09:30:00", 1, 1, 1, 460.0, 1),
+        IntradayBar("2024-01-31 13:30:00", 1, 1, 1, 470.0, 1),
+        IntradayBar("2024-01-31 14:30:00", 1, 1, 1, 472.0, 1),
+        IntradayBar("2024-01-31 15:00:00", 1, 1, 1, 473.0, 1),
+        IntradayBar("2024-01-31 15:30:00", 1, 1, 1, 474.0, 1),
+    ]
+    kept = alphavantage_spx._filter_raw_window(
+        bars,
+        _dt.date(2024, 1, 31),
+        window_start=_dt.time(13, 30),
+        window_end=_dt.time(15, 0),
+    )
+    assert [b.close for b in kept] == [470.0, 472.0, 473.0]
+
+
+def test_backfill_raw_bars_writes_polygon_schema(tmp_path, monkeypatch) -> None:
+    bars_jan = [
+        IntradayBar("2024-01-31 13:30:00", 470.0, 470.0, 470.0, 470.0, 11.0),
+        IntradayBar("2024-01-31 14:30:00", 472.5, 472.5, 472.5, 472.5, 22.0),
+        IntradayBar("2024-01-31 16:30:00", 480.0, 480.0, 480.0, 480.0, 33.0),  # out of window
+    ]
+    seen_entitlement: list[str | None] = []
+
+    def fake_fetch(*, api_key, symbol, interval, month, entitlement, client):
+        seen_entitlement.append(entitlement)
+        return {"2024-01": bars_jan}[month]
+
+    monkeypatch.setattr(alphavantage_spx, "fetch_intraday_minute_bars", fake_fetch)
+
+    out = alphavantage_spx.backfill_fomc_days_raw_bars(
+        fomc_dates=[datetime.date(2024, 1, 31)],
+        cache_dir=tmp_path,
+        api_key="test-key",
+        sleep_fn=lambda _s: None,
+    )
+    assert out == tmp_path / "spx_intraday_fomc_days.parquet"
+    assert seen_entitlement == ["delayed"]
+    frame = pd.read_parquet(out)
+    # 16:30 dropped; schema matches polygon_spx (load_intraday_bars reads it).
+    assert len(frame) == 2
+    assert list(frame.columns) == [
+        "event_date",
+        "timestamp_et",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "symbol",
+        "fetched_at_utc",
+    ]
+    assert sorted(frame["close"]) == [470.0, 472.5]
+
+    # The provider-agnostic loader reads it back.
+    from app.data.polygon_spx import load_intraday_bars
+
+    grouped = load_intraday_bars(tmp_path)
+    assert set(grouped) == {"2024-01-31"}
+    assert len(grouped["2024-01-31"]) == 2
+
+    lock = json.loads((tmp_path / "SOURCES.lock").read_text(encoding="utf-8"))
+    assert lock["spx_intraday_fomc_days.parquet"]["source"] == "alphavantage"

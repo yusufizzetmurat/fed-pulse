@@ -47,6 +47,10 @@ for module in (
     "app.data.dense_daily_dataset",
     "app.data.dense_forecast_train",
     "app.data.dense_fomc_text",
+    "app.data.polygon_spx",
+    "app.data.intraday_event_builder",
+    "app.data.intraday_direction_train",
+    "app.data.intraday_magnitude_train",
     "app.training.manifest",
     "app.models.registry",
 ):
