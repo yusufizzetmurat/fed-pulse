@@ -46,14 +46,23 @@ export function StatusBar({
   const checkpointLoaded = result?.model?.checkpoint_loaded;
   const runtimeMode = result?.model?.runtime_mode;
 
-  // Tri-state: loading (running) > result present (checkpoint loaded /
-  // no checkpoint based on diagnostics) > no result yet (awaiting).
-  // Before this branch the third case rendered as "no checkpoint",
-  // which read like an error on initial page load.
+  // Browse mode: pages that don't drive an /analyze submit (Calendar,
+  // Settings, Performance, Compare, Research) leave `result` and
+  // `loading` undefined. Suppress the analyze-state chip on those pages
+  // so the status bar does not read "awaiting analysis" forever; it's
+  // misleading copy outside the Workspace flow.
+  const isAnalyzeHost = result !== undefined || loading !== undefined;
+
+  // Tri-state on Workspace: loading (running) > result present
+  // (checkpoint loaded / no checkpoint based on diagnostics) > no result
+  // yet (awaiting).
   const hasResult = Boolean(result);
-  let stateLabel: string;
+  let stateLabel: string | null;
   let stateTone: string;
-  if (loading) {
+  if (!isAnalyzeHost) {
+    stateLabel = null;
+    stateTone = "text-muted-foreground";
+  } else if (loading) {
     stateLabel = "running";
     stateTone = "animate-pulse text-hawkish";
   } else if (!hasResult) {
@@ -76,13 +85,15 @@ export function StatusBar({
         className,
       )}
     >
-      <div className="flex items-center gap-1.5">
-        <CircleDot
-          className={cn("h-2 w-2 fill-current", stateTone)}
-          aria-hidden="true"
-        />
-        <span>{stateLabel}</span>
-      </div>
+      {stateLabel !== null ? (
+        <div className="flex items-center gap-1.5">
+          <CircleDot
+            className={cn("h-2 w-2 fill-current", stateTone)}
+            aria-hidden="true"
+          />
+          <span>{stateLabel}</span>
+        </div>
+      ) : null}
       {symbol ? (
         <div className="flex items-center gap-1.5">
           <span>symbol</span>

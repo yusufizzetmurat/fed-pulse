@@ -138,6 +138,13 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
       });
     return () => {
       controller.abort();
+      // Release the guard on unmount so React StrictMode's intentional
+      // double-mount (or a future apiBaseUrl change) re-fires the fetch
+      // and lands a fresh result. Without this the first mount's
+      // controller is aborted before its .then() can call setSymbols and
+      // the second mount short-circuits at the guard, leaving symbols
+      // stuck in its initial loading state for the rest of the session.
+      inFlight.current.delete(key);
     };
   }, [apiBaseUrl]);
 
@@ -161,6 +168,11 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
       });
     return () => {
       controller.abort();
+      // Same StrictMode-double-mount fix as the symbols effect above:
+      // release the guard so the second mount actually fires the fetch
+      // and lands a fresh result on calendar state. Without this the
+      // upcoming-FOMC chip stays blank on every non-Workspace page.
+      inFlight.current.delete(key);
     };
   }, [apiBaseUrl]);
 
