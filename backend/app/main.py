@@ -43,6 +43,8 @@ from app.schemas import (
     DocumentParseResponse,
     DocumentParseUrlRequest,
     EvaluationCoverageResponse,
+    ExpectedVolumeForecastResponse,
+    ExpectedVolumeHorizonForecast,
     FomcCalendarResponse,
     FuturesConsensusResponse,
     HistoryDetail,
@@ -1860,6 +1862,101 @@ async def forecast_regime_baselines(
         cutoffs_q67=out["cutoffs_q67"],
         model_revision=out["model_revision"],
         generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+
+
+_VOLUME_HISTORY_DAYS = 120
+_VOLUME_MIN_DAYS = 22
+
+
+def _load_volume_history(symbol: str) -> list[float]:
+    """Pull the last 120 daily share volumes for ``symbol``.
+
+    Reads daily bars off yfinance (the same source the volume head was
+    trained against). Drops non-positive rows so the log transform
+    inside the predictor cannot blow up. Returns chronological volumes
+    in raw share units; the service module handles the log + HAR.
+    """
+
+    import yfinance as yf
+
+    ticker = yf.Ticker(symbol)
+    frame = ticker.history(period="180d", auto_adjust=True)
+    if frame is None or frame.empty:
+        raise RuntimeError(f"no market history available for {symbol}")
+    vol = frame["Volume"].astype(float).dropna()
+    if hasattr(vol, "columns"):
+        vol = vol.iloc[:, 0].dropna()
+    vol = vol[vol > 0]
+    if len(vol) < _VOLUME_MIN_DAYS:
+        raise RuntimeError(f"insufficient volume history for {symbol}")
+    series = vol.tolist()
+    if len(series) > _VOLUME_HISTORY_DAYS:
+        series = series[-_VOLUME_HISTORY_DAYS:]
+    return series
+
+
+@app.get(
+    "/forecast/abnormal-volume",
+    response_model=ExpectedVolumeForecastResponse,
+)
+async def forecast_abnormal_volume(
+    symbol: str = Query(
+        "^GSPC",
+        description="Market ticker; defaults to S&P 500.",
+        min_length=1,
+        max_length=32,
+        pattern=r"^[A-Za-z0-9._=^/-]+$",
+    ),
+) -> ExpectedVolumeForecastResponse:
+    """Multi-horizon HAR-volume forecast for the Expected Volume card.
+
+    Pulls the last 120 daily volumes for ``symbol`` and runs the cached
+    HAR Corsi head (lag1 + 5-day mean + 22-day mean) with optional
+    weekday / month-end / quarter-end seasonality dummies and conformal
+    80% / 90% bands. Market-data only — text features never feed this
+    forecast surface. Returns a structured 503 on artifact-load failure
+    or insufficient market history.
+    """
+
+    from app.services.volume_forecaster import (
+        VolumeForecasterUnavailable,
+        predict_abnormal_volume,
+    )
+
+    try:
+        vol_hist = await run_in_threadpool(_load_volume_history, symbol)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "history_unavailable", "message": str(exc)},
+        ) from exc
+
+    try:
+        out = await run_in_threadpool(predict_abnormal_volume, vol_hist, symbol)
+    except VolumeForecasterUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "model_unavailable", "message": str(exc)},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "history_invalid", "message": str(exc)},
+        ) from exc
+    except Exception as exc:  # pragma: no cover -- defensive against HF surprises
+        logger.warning("volume_forecast_failed", exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "forecast_failed", "message": str(exc)},
+        ) from exc
+
+    horizons = [ExpectedVolumeHorizonForecast(**h) for h in out["horizons"]]
+    return ExpectedVolumeForecastResponse(
+        symbol=out["symbol"],
+        horizons=horizons,
+        model_revision=out["model_revision"],
+        generated_at=out["generated_at"],
     )
 
 

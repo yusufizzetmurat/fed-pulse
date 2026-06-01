@@ -8,6 +8,7 @@ import type {
   BacktestResponse,
   ClassificationBreakdownResponse,
   EvaluationCoverageResponse,
+  ExpectedVolumeForecastResponse,
   FomcCalendarResponse,
   FuturesConsensusResponse,
   HarTercileBaselineResponse,
@@ -285,6 +286,23 @@ export async function fetchRealizedVolForecast(
   });
   return response.data as RealizedVolForecastResponse;
 }
+
+// Workspace-spine expected-volume forecast. Backend returns 503 when
+// the HAR-volume artifact cannot be loaded or the volume history is
+// insufficient; callers translate that into a card-level "unavailable"
+// state rather than surfacing a generic error.
+export async function fetchExpectedVolumeForecast(
+  baseUrl: string,
+  symbol: string = "^GSPC",
+  signal?: AbortSignal,
+): Promise<ExpectedVolumeForecastResponse> {
+  const response = await axios.get(`${baseUrl}/forecast/abnormal-volume`, {
+    params: { symbol },
+    signal,
+  });
+  return response.data as ExpectedVolumeForecastResponse;
+}
+
 
 export async function fetchResearchRegistry(
   baseUrl: string,

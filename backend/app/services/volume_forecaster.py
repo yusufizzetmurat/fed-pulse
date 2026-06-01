@@ -1,0 +1,336 @@
+"""Serving layer for the HAR-based expected-volume forecaster.
+
+Mirrors :mod:`app.services.rv_forecaster` but speaks log-volume instead of
+log-realized-variance. The artifact is the JSON produced by
+:func:`app.data.late_fusion_volume.run`: per-horizon HAR coefficients on
+Corsi log-volume lags (daily / weekly / monthly), an optional weekly +
+month-end / quarter-end seasonality block, conformal residual quantiles at
+the 80% / 90% bands, and the offline pooled walk-forward R^2 that the
+calibration chip surfaces.
+
+The card is intentionally market-data only: it consumes a recent daily
+log-volume history and emits the per-horizon expected log-residual against
+the HAR baseline along with a back-transformed percent-vs-baseline read.
+Text features never enter this surface.
+
+The artifact lives in ``yusufizzetmurat/fomc-volume-har`` on HF Hub;
+:func:`predict_abnormal_volume` lazily downloads it on first call and
+caches the parsed spec for the process lifetime.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, cast
+
+import numpy as np
+
+from app.config import BACKEND_ROOT
+
+
+# No exact match for an existing volume artifact in code (rv_forecaster
+# uses ``yusufizzetmurat/fomc-rv-qlike-forecaster``); the volume head
+# is its own artifact. The fallback ID below is the canonical name; if
+# the repo is missing or private without an HF_TOKEN, the endpoint
+# returns a structured 503 via ``VolumeForecasterUnavailable``.
+HF_REPO_ID = "yusufizzetmurat/fomc-volume-har"
+MODEL_DIR = BACKEND_ROOT / "models" / "volume_har"
+ARTIFACT_FILENAME = "volume_har_artifact.json"
+HORIZONS: tuple[int, ...] = (1, 5, 22)
+# Conformal residual widths are stored under the same q-tail keys the
+# RV forecaster uses (q[1-cov] = q[alpha]).
+_ALPHA_80 = "0.20"
+_ALPHA_90 = "0.10"
+# Minimum log-volume history required to populate the HAR Corsi lags
+# (lag1 + 5-day mean + 22-day mean). Mirrors ``_MAX_LAG`` in
+# :mod:`app.data.late_fusion_volume`.
+_MIN_LOG_VOL_HISTORY = 22
+
+
+class VolumeForecasterUnavailable(RuntimeError):
+    """Raised when the artifact is missing and HF Hub fetch failed."""
+
+
+def _hf_token() -> str | None:
+    return os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+
+
+def _download_artifact(target_dir: Path) -> dict[str, Any]:
+    """Download the HAR-volume spec JSON into ``target_dir``."""
+
+    from huggingface_hub import hf_hub_download
+    from huggingface_hub.errors import (
+        EntryNotFoundError,
+        HfHubHTTPError,
+        RepositoryNotFoundError,
+    )
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    token = _hf_token()
+    kwargs: dict[str, Any] = {
+        "repo_id": HF_REPO_ID,
+        "filename": ARTIFACT_FILENAME,
+        "local_dir": str(target_dir),
+    }
+    if token:
+        kwargs["token"] = token
+
+    try:
+        spec_path = Path(hf_hub_download(**kwargs))
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    except RepositoryNotFoundError as exc:
+        raise VolumeForecasterUnavailable(
+            f"HF repo {HF_REPO_ID!r} not found; set HF_TOKEN or grant access."
+        ) from exc
+    except (EntryNotFoundError, HfHubHTTPError) as exc:
+        raise VolumeForecasterUnavailable(
+            f"HF fetch failed for {HF_REPO_ID!r}: {exc}"
+        ) from exc
+    except OSError as exc:
+        # Network-level surface (connection reset, timeout, disk full)
+        # that ``hf_hub_download`` raises outside the HF exception
+        # hierarchy. Surface as the same 503-mapped failure rather than
+        # bubbling up as a 500.
+        raise VolumeForecasterUnavailable(
+            f"HF download failed for {HF_REPO_ID!r}: {exc}"
+        ) from exc
+    return cast(dict[str, Any], spec)
+
+
+def _load_spec(model_dir: Path) -> dict[str, Any]:
+    """Return the cached spec; fetch from HF Hub on a miss."""
+
+    spec_path = model_dir / ARTIFACT_FILENAME
+    if not spec_path.exists():
+        return _download_artifact(model_dir)
+    try:
+        return cast(dict[str, Any], json.loads(spec_path.read_text(encoding="utf-8")))
+    except (json.JSONDecodeError, OSError):
+        # Corrupt local cache; force a clean re-download.
+        return _download_artifact(model_dir)
+
+
+class _VolumePredictor:
+    """Cached per-process serving bundle for the HAR-volume head.
+
+    Holds the parsed spec under a class-level lock so concurrent
+    callers do not race on the HF download. The instance carries only
+    the JSON spec — there are no torch weights on the volume head, so
+    the predictor is cheap to construct once.
+    """
+
+    _instance: "_VolumePredictor | None" = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def get(cls) -> "_VolumePredictor":
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = cls()
+        return cls._instance
+
+    @classmethod
+    def reset(cls) -> None:
+        """Drop the cached instance; used by tests."""
+
+        with cls._lock:
+            cls._instance = None
+
+    def __init__(self) -> None:
+        self.model_dir = MODEL_DIR
+        self.spec = _load_spec(self.model_dir)
+        self.revision = (
+            f"{self.spec.get('model', 'volume_har')}@{self.spec.get('date_last', '')}"
+        )
+
+
+def _har_lag_row(log_vol: np.ndarray) -> tuple[float, float, float]:
+    """Return the last HAR Corsi triple ``(lag1, mean5, mean22)``."""
+
+    last = log_vol[-1]
+    mean5 = float(log_vol[-5:].mean())
+    mean22 = float(log_vol[-22:].mean())
+    return float(last), mean5, mean22
+
+
+def _calendar_features_row(
+    forecast_date: datetime, dummy_names: list[str]
+) -> list[float]:
+    """Build the calendar-feature row matching the artifact ``dummy_names``.
+
+    Mirrors :func:`app.data.late_fusion_volume._calendar_features`:
+    Mon..Thu indicator (Fri baseline), month-end (day >= 25), quarter-end
+    (month-end in Mar/Jun/Sep/Dec). Any name the artifact does not
+    declare degrades to 0.0 so an artifact with a different seasonality
+    block still serializes cleanly.
+    """
+
+    dow = forecast_date.weekday()
+    dom = forecast_date.day
+    month = forecast_date.month
+    is_month_end = dom >= 25
+    is_quarter_end = is_month_end and month in (3, 6, 9, 12)
+    row: list[float] = []
+    for name in dummy_names:
+        if name.startswith("dow_"):
+            try:
+                k = int(name.split("_", 1)[1])
+            except ValueError:
+                row.append(0.0)
+                continue
+            row.append(1.0 if dow == k else 0.0)
+        elif name == "month_end":
+            row.append(1.0 if is_month_end else 0.0)
+        elif name == "quarter_end":
+            row.append(1.0 if is_quarter_end else 0.0)
+        else:
+            row.append(0.0)
+    return row
+
+
+def _point_log_residual(
+    log_vol: np.ndarray,
+    row: dict[str, Any],
+    forecast_date: datetime,
+) -> tuple[float, bool]:
+    """Compute the per-horizon HAR-volume point in log-residual space.
+
+    ``log_residual`` here is ``log_pred - baseline`` where ``baseline``
+    is the rolling 22-day mean of the supplied history. The chart reads
+    the same residual as ``point_pct_vs_baseline = (exp(residual)-1)*100``.
+    Returns the residual plus a ``calendar_adjusted`` flag indicating
+    whether the artifact carried a seasonality block applied here.
+    """
+
+    lag1, mean5, mean22 = _har_lag_row(log_vol)
+    har_coef = np.asarray(row["har_coef"], dtype=np.float64)
+    # Convention: [intercept, daily, weekly, monthly] — matches
+    # rv_forecaster's HAR triple.
+    if har_coef.size < 4:
+        raise VolumeForecasterUnavailable(
+            "HAR coefficient vector must carry 4 entries (intercept, d, w, m)"
+        )
+    log_pred = float(
+        har_coef[0] + har_coef[1] * lag1 + har_coef[2] * mean5 + har_coef[3] * mean22
+    )
+    calendar_adjusted = False
+    dummy_names = row.get("calendar_dummy_names")
+    dummy_coef = row.get("calendar_dummy_coef")
+    if (
+        isinstance(dummy_names, list)
+        and isinstance(dummy_coef, list)
+        and len(dummy_names) == len(dummy_coef)
+        and dummy_names
+    ):
+        cal_row = _calendar_features_row(forecast_date, dummy_names)
+        log_pred += float(np.dot(np.asarray(dummy_coef, dtype=np.float64), cal_row))
+        calendar_adjusted = True
+    baseline = mean22
+    return log_pred - baseline, calendar_adjusted
+
+
+def _safe_float(v: Any) -> float | None:
+    """Coerce ``v`` to a finite float; return None on non-numeric input."""
+
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(f):
+        return None
+    return f
+
+
+def _parse_forecast_date(forecast_date: str | datetime | None) -> datetime:
+    if isinstance(forecast_date, datetime):
+        return forecast_date
+    if isinstance(forecast_date, str) and forecast_date:
+        try:
+            return datetime.fromisoformat(forecast_date)
+        except ValueError:
+            return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc)
+
+
+def predict_abnormal_volume(
+    volume_history: list[float] | np.ndarray,
+    symbol: str = "^GSPC",
+    forecast_date: str | datetime | None = None,
+) -> dict[str, Any]:
+    """Multi-horizon banded expected-volume forecast off recent daily volumes.
+
+    ``volume_history`` is a chronologically ordered series of strictly
+    positive daily share volumes (NOT log). The function transforms to
+    log-volume, applies the per-horizon HAR Corsi triple from the
+    artifact, layers in the seasonality dummies when present, and
+    returns per-horizon point log-residual + 80% / 90% conformal bands.
+
+    ``point_pct_vs_baseline = (exp(point_log_residual) - 1) * 100`` is
+    the headline percent-vs-baseline number the card renders. Bands
+    follow the same back-transform.
+
+    Raises:
+        ValueError: history is too short / non-positive.
+        VolumeForecasterUnavailable: artifact cannot be loaded.
+    """
+
+    vol = np.asarray(volume_history, dtype=np.float64)
+    if vol.ndim != 1 or len(vol) < _MIN_LOG_VOL_HISTORY:
+        raise ValueError(
+            "volume_history must be a 1-D series of at least "
+            f"{_MIN_LOG_VOL_HISTORY} daily volume values"
+        )
+    if np.any(vol <= 0) or not np.all(np.isfinite(vol)):
+        raise ValueError("volume_history values must be positive finite numbers")
+
+    log_vol = np.log(vol)
+    pred = _VolumePredictor.get()
+    fdate = _parse_forecast_date(forecast_date)
+
+    horizons_out: list[dict[str, Any]] = []
+    for h in HORIZONS:
+        hk = f"h{h}"
+        row = pred.spec.get("by_horizon", {}).get(hk)
+        if not isinstance(row, dict):
+            raise VolumeForecasterUnavailable(
+                f"HAR-volume artifact missing per-horizon block {hk!r}"
+            )
+        log_residual, calendar_adjusted = _point_log_residual(log_vol, row, fdate)
+        quants = row.get("conformal_quantiles") or {}
+        q80 = float(quants.get(_ALPHA_80, 0.0) or 0.0)
+        q90 = float(quants.get(_ALPHA_90, 0.0) or 0.0)
+        # Back-transform residual + bands into multiplicative percent
+        # space. ``exp(r) - 1`` puts ``+0.10`` log-residual at +10.5%.
+        point_pct = (math.exp(log_residual) - 1.0) * 100.0
+        band_lo_80 = (math.exp(log_residual - q80) - 1.0) * 100.0
+        band_hi_80 = (math.exp(log_residual + q80) - 1.0) * 100.0
+        band_lo_90 = (math.exp(log_residual - q90) - 1.0) * 100.0
+        band_hi_90 = (math.exp(log_residual + q90) - 1.0) * 100.0
+        r2 = _safe_float(row.get("r2_har"))
+        horizons_out.append(
+            {
+                "h": h,
+                "point_log_residual": float(log_residual),
+                "point_pct_vs_baseline": float(point_pct),
+                "band_lo_80": float(band_lo_80),
+                "band_hi_80": float(band_hi_80),
+                "band_lo_90": float(band_lo_90),
+                "band_hi_90": float(band_hi_90),
+                "r2_har": float(r2) if r2 is not None else float("nan"),
+                "calendar_adjusted": bool(calendar_adjusted),
+            }
+        )
+    return {
+        "symbol": symbol,
+        "horizons": horizons_out,
+        "model_revision": pred.revision,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
