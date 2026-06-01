@@ -127,4 +127,25 @@ describe("ResearchPage", () => {
     expect(screen.getByText("0.530")).toBeInTheDocument();
     expect(screen.getByText("0.604")).toBeInTheDocument();
   });
+
+  it("renders source-file badges with a friendly encoder label, not the raw path", async () => {
+    const rawPath =
+      "data/artifacts/continued_pretraining/finbert_fed_adjacent_20260515T104824Z_s11/checkpoint";
+    const response = {
+      ...POPULATED_RESPONSE,
+      encoder_bakeoff: {
+        ...POPULATED_RESPONSE.encoder_bakeoff,
+        source_files: [rawPath],
+      },
+    };
+    fetchResearchArtifactsMock.mockResolvedValue(response);
+    const { default: ResearchPage } = await import("@/pages/research");
+    render(<ResearchPage />);
+    const badge = await screen.findByTitle(rawPath);
+    expect(badge.textContent).toBe("FinBERT (Fed-adjacent)");
+    expect(badge.textContent).not.toContain("/");
+    expect(badge.textContent).not.toContain("checkpoint");
+    // The raw path must not surface anywhere in the rendered DOM text.
+    expect(screen.queryByText(rawPath)).toBeNull();
+  });
 });

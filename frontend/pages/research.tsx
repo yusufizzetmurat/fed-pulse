@@ -38,14 +38,27 @@ import type {
   TransferMatrixCell,
 } from "@/lib/analyze/types";
 
-// Strip an artefact path down to its file stem before mapping through the
-// shared encoder-alias lookup. Keeps internal directories like
-// data/artifacts/continued_pretraining/<run>/... out of the UI.
+// Strip an artefact path down to a short label before mapping through the
+// shared encoder-alias lookup. Keeps internal artefact paths out of the UI.
+// Checkpoint paths land here as `<root>/<alias>_<timestamp>_<seed>/checkpoint`;
+// pull the run directory and strip the timestamp+seed tail so the lookup sees
+// the bare alias.
+const RUN_TAIL_RE = /_\d{8}T\d{6}Z_s\d+$/;
+
 function friendlyEncoderName(raw: string): string {
   if (!raw) return raw;
-  const last = raw.split("/").filter(Boolean).pop() ?? raw;
-  const stem = last.replace(/\.(json|csv|parquet|pt|bin|md)$/i, "");
-  return friendlyEncoderAlias(stem || raw);
+  const parts = raw.split("/").filter(Boolean);
+  if (parts.length === 0) return raw;
+  const last = parts[parts.length - 1];
+  let candidate = last;
+  if (parts.length >= 2 && RUN_TAIL_RE.test(parts[parts.length - 2])) {
+    candidate = parts[parts.length - 2].replace(RUN_TAIL_RE, "");
+  } else if (RUN_TAIL_RE.test(last)) {
+    candidate = last.replace(RUN_TAIL_RE, "");
+  } else {
+    candidate = last.replace(/\.(json|csv|parquet|pt|bin|md)$/i, "");
+  }
+  return friendlyEncoderAlias(candidate || last);
 }
 
 function formatBytes(bytes: number): string {
@@ -542,7 +555,12 @@ export default function ResearchPage() {
                 {data.encoder_bakeoff.source_files.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">
                     {data.encoder_bakeoff.source_files.map((f) => (
-                      <Badge key={f} variant="outline" className="font-mono text-[10px]">
+                      <Badge
+                        key={f}
+                        variant="outline"
+                        className="font-mono text-[10px]"
+                        title={f}
+                      >
                         {friendlyEncoderName(f)}
                       </Badge>
                     ))}
@@ -554,7 +572,12 @@ export default function ResearchPage() {
                 {data.cross_bank_transfer.source_files.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">
                     {data.cross_bank_transfer.source_files.map((f) => (
-                      <Badge key={f} variant="outline" className="font-mono text-[10px]">
+                      <Badge
+                        key={f}
+                        variant="outline"
+                        className="font-mono text-[10px]"
+                        title={f}
+                      >
                         {friendlyEncoderName(f)}
                       </Badge>
                     ))}
