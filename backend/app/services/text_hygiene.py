@@ -150,7 +150,11 @@ _IMPLEMENTATION_NOTE_RE = re.compile(
 # single-newline-separated continuation sentence follows the roster), the
 # regex must NOT match, otherwise we silently amputate post-roster prose.
 _VOTING_FOR_RE = re.compile(
-    r"\s*Voting for the (?:FOMC )?monetary policy action were[:]?\s.*?"
+    # ``Voting (by notation) for the ...`` is a real corpus variant
+    # used when the action is taken via written vote rather than at the
+    # FOMC meeting itself; admit the optional parenthetical so those
+    # rosters get cleaned alongside the standard form.
+    r"\s*Voting(?:\s+\([^)]+\))? for the (?:FOMC )?monetary policy action were[:]?\s.*?"
     r"(?="
     r"\s*Voting against\b"
     r"|\s*Implementation Note issued\s+"

@@ -134,4 +134,36 @@ describe("CalendarPage", () => {
     expect(upPresser).toHaveAttribute("data-available", "false");
     expect(upStatement).toHaveAttribute("title", "Statement not collected");
   });
+
+  it("treats undefined availability flags on a future meeting as not-collected", async () => {
+    // Real backend payloads for far-future meetings omit the
+    // availability flags entirely; the badge logic must read undefined
+    // as false rather than rendering an aria-broken or red "missing"
+    // state.
+    fetchFomcCalendarMock.mockResolvedValue({
+      upcoming: [
+        {
+          meeting_date: "2026-12-15",
+          meeting_type: "scheduled",
+          statement_release_date: "2026-12-15",
+          minutes_release_date: "2027-01-06",
+          // availability flags intentionally omitted
+        },
+      ],
+      past: [],
+    });
+    const { default: CalendarPage } = await import("@/pages/calendar");
+    render(<CalendarPage />);
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("availability-statement").length).toBe(1),
+    );
+    const statement = screen.getByTestId("availability-statement");
+    const minutes = screen.getByTestId("availability-minutes");
+    const presser = screen.getByTestId("availability-presser");
+    expect(statement).toHaveAttribute("data-available", "false");
+    expect(minutes).toHaveAttribute("data-available", "false");
+    expect(presser).toHaveAttribute("data-available", "false");
+    expect(statement).toHaveAttribute("title", "Statement not collected");
+  });
 });

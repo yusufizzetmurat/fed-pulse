@@ -117,6 +117,24 @@ def test_strip_voting_roster_handles_fomc_variant_and_alternate_member():
     assert "voted as an alternate member" not in cleaned
 
 
+def test_strip_voting_roster_handles_by_notation_variant():
+    """Inter-meeting written votes carry a 'Voting (by notation) for ...'
+    header — the same roster must be scrubbed."""
+
+    raw = (
+        "Voting (by notation) for the monetary policy action were Jerome H. "
+        "Powell, Chairman; John C. Williams, Vice Chairman; and Lael "
+        "Brainard. "
+        "Implementation Note issued March 15, 2020."
+    )
+    cleaned = _strip_voting_roster(raw)
+    assert "Jerome H. Powell" not in cleaned
+    assert "Lael Brainard" not in cleaned
+    # The trailing Implementation Note line must remain intact for the
+    # downstream _strip_implementation_note pass to find it.
+    assert "Implementation Note issued March 15, 2020." in cleaned
+
+
 def test_collapse_whitespace_normalises_nbsp_and_runs():
     raw = "policy\xa0statement     with    runs\n\n\n\nand blank lines"
     cleaned = _collapse_whitespace(raw)

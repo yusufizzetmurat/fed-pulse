@@ -756,12 +756,14 @@ export default function WorkspacePage() {
             error={harBaselines.error}
             symbol={request.symbol}
           />
-          <HarAccuracyPanel
-            data={harBacktest}
-            loading={harBacktestLoading}
-            error={harBacktestError}
-            symbol={request.symbol}
-          />
+          {request.symbol === "^GSPC" ? (
+            <HarAccuracyPanel
+              data={harBacktest}
+              loading={harBacktestLoading}
+              error={harBacktestError}
+              symbol={request.symbol}
+            />
+          ) : null}
           <VolatilityOutlookCard
             forecast={volForecast}
             loading={volForecastLoading}

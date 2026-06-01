@@ -254,6 +254,52 @@ def test_backtest_skips_rows_without_regime_card(client, monkeypatch) -> None:
     assert body["metrics"]["total_runs"] == 1
 
 
+def test_backtest_emits_pending_row_when_yfinance_returns_none(
+    client, monkeypatch
+) -> None:
+    """A predicted row with no resolvable realized RV must surface as pending.
+
+    yfinance returning None (typical for future / unresolved meetings)
+    flows through _resolve_realized_tercile and into the response as
+    realized_tercile=None, realized_rv=None, correct=None — so the panel
+    can render it as "pending" rather than dropping the row.
+    """
+
+    monkeypatch.setattr(
+        har_tercile_backtest,
+        "_fetch_realized_rv_yf",
+        lambda event_date, symbol: None,
+    )
+    monkeypatch.setattr(
+        har_tercile_backtest,
+        "_fetch_rv_history_for_cutoffs",
+        lambda event_date, symbol: [0.005, 0.008, 0.012, 0.020],
+    )
+
+    session_iter = db_module.get_session()
+    sess = next(session_iter)
+    try:
+        _persist_run(sess, regime_argmax="normal", document_date="2024-02-20")
+    finally:
+        sess.close()
+
+    response = client.get("/forecast/har-tercile-backtest", params={"symbol": "^GSPC"})
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["rows"]) == 1
+    row = body["rows"][0]
+    assert row["predicted_tercile"] in {"low", "medium", "high"}
+    assert row["realized_tercile"] is None
+    assert row["realized_rv"] is None
+    assert row["correct"] is None
+    # Aggregate metrics treat pending rows as un-denominated:
+    # total_runs counts every backtest-able prediction, resolved_runs only
+    # the ones with a realized outcome.
+    assert body["metrics"]["total_runs"] == 1
+    assert body["metrics"]["resolved_runs"] == 0
+    assert body["metrics"]["accuracy_overall"] is None
+
+
 def test_backtest_uses_persisted_realized_rv_when_present(client, monkeypatch) -> None:
     """When the payload pins ``forward_realized_vol_10d``, no yfinance hop fires."""
 
