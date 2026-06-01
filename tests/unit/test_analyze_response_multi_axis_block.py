@@ -2,10 +2,11 @@
 
 Two paths the builder routes between:
 
-- ``TextMultiAxisClassifier`` checkpoint present → all four cards
+- ``TextMultiAxisClassifier`` checkpoint present → all three cards
   populated from the classifier service.
 - No checkpoint → stance card sourced from the existing sentiment
-  classifier output; factor / certainty stay None (topic retired in ADR 0044).
+  classifier output; certainty / time stay None (factor retired —
+  text cannot predict the GSS target; topic retired in ADR 0044).
 
 The frontend renders None cards as absent (no placeholder), so the
 contract is "stance always present; the others fill when the
@@ -41,8 +42,9 @@ def test_multi_axis_block_falls_back_to_sentiment_when_classifier_absent(
     distribution = block["stance"]["distribution"]
     assert set(distribution.keys()) == {"hawkish", "dovish", "neutral"}
     assert abs(distribution["hawkish"] - 0.82) < 1e-6
-    assert block["factor"] is None
     assert block["certainty"] is None
+    assert block["time"] is None
+    assert "factor" not in block
     assert "topic" not in block
 
 
@@ -59,11 +61,15 @@ def test_multi_axis_block_uses_classifier_when_checkpoint_loaded(monkeypatch) ->
             "confidence": 0.71,
             "distribution": {"hawkish": 0.12, "dovish": 0.71, "neutral": 0.17},
         },
-        "factor": {"value": -0.42, "confidence": 0.42},
         "certainty": {
             "label": "uncertain",
             "confidence": 0.65,
             "distribution": {"certain": 0.18, "uncertain": 0.65, "neutral": 0.17},
+        },
+        "time": {
+            "label": "forward looking",
+            "confidence": 0.73,
+            "distribution": {"forward looking": 0.73, "not forward looking": 0.27},
         },
     }
     monkeypatch.setattr(svc, "score_text", lambda _text: classifier_block)

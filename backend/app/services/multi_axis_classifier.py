@@ -30,6 +30,7 @@ from app.config import MODEL_CHECKPOINT_DIR
 from app.models.config import (
     MULTI_TASK_CERTAINTY_LABELS,
     MULTI_TASK_STANCE_LABELS,
+    MULTI_TASK_TIME_LABELS,
 )
 from app.models.text_multi_axis_classifier import TextMultiAxisClassifier
 
@@ -59,20 +60,6 @@ _contract_status: dict[str, Any] = {
     "extra_kwargs": [],
     "message": "",
 }
-# Below this factor-axis label coverage on the training pool, the
-# factor branch's tanh-bounded regression head has trained almost
-# exclusively on the masked-out path and emits effectively random
-# values at inference. The /analyze response then omits the factor
-# card (the MultiAxisBlock.factor field is None) so the frontend
-# renders honest absence instead of noise dressed as a prediction.
-# Issue #328 picks 0.01 (1 %) as the gate: a coverage tag of 0.0
-# (the canonical training package today) trips it, while a real
-# gss_factor backfill of even a few hundred rows across ~3 k FOMC
-# rows would clear it. The threshold is conservative on purpose —
-# we would rather under-emit a real-but-marginal prediction than
-# render a low-coverage one that the user reads as load-bearing.
-DEFAULT_FACTOR_COVERAGE_GATE = 0.01
-
 _logger = logging.getLogger(__name__)
 
 
@@ -108,12 +95,6 @@ class _ClassifierState:
     device: torch.device
     max_length: int
     encoder_alias: str
-    # Fraction of the training pool that carried a populated
-    # axis_factor label. None when the persisted checkpoint pre-dates
-    # the #328 coverage stamp (treated as "unknown" → factor stays
-    # gated off to match the new default behaviour).
-    factor_coverage: float | None
-    factor_coverage_threshold: float
 
 
 def _hf_checkpoint_path() -> Path | None:
@@ -343,68 +324,13 @@ def _load_state() -> "_ClassifierState | _LoadFailure":
     max_length = int(
         (payload.get("training_args") or {}).get("max_length") or DEFAULT_MAX_LENGTH
     )
-    factor_coverage = _coerce_factor_coverage(payload)
-    threshold = _resolve_factor_coverage_threshold()
     return _ClassifierState(
         model=model,
         tokenizer=tokenizer,
         device=device,
         max_length=max_length,
         encoder_alias=encoder_alias,
-        factor_coverage=factor_coverage,
-        factor_coverage_threshold=threshold,
     )
-
-
-def _coerce_factor_coverage(payload: dict[str, Any]) -> float | None:
-    """Read the persisted factor-axis label coverage off the payload.
-
-    The trainer stamps the fraction of train rows that carried a
-    populated ``axis_factor`` label under ``training_args.factor_coverage``.
-    Pre-#328 checkpoints predate the stamp; ``None`` flags the unknown
-    case so the inference path treats them like a 0 %-coverage run
-    (factor card stays absent rather than rendering effectively-random
-    predictions). The ``metadata`` fallback path mirrors the same key
-    so a future caller can write it on the metadata side without
-    breaking the loader.
-    """
-
-    for bucket_key in ("training_args", "metadata"):
-        bucket = payload.get(bucket_key)
-        if not isinstance(bucket, dict):
-            continue
-        raw = bucket.get("factor_coverage")
-        if raw is None:
-            continue
-        try:
-            value = float(raw)
-        except (TypeError, ValueError):
-            continue
-        if value != value:  # NaN
-            continue
-        return max(0.0, min(1.0, value))
-    return None
-
-
-def _resolve_factor_coverage_threshold() -> float:
-    """Env-override hook for the factor-axis coverage gate.
-
-    Defaults to ``DEFAULT_FACTOR_COVERAGE_GATE`` (0.01). The env knob
-    is intentional — a future training run that backfills factor labels
-    from the gss_factor source can lower the gate without a code change
-    if the team decides 0.01 is too strict.
-    """
-
-    raw = (os.environ.get("FED_PULSE_TEXT_MULTI_AXIS_FACTOR_GATE") or "").strip()
-    if not raw:
-        return DEFAULT_FACTOR_COVERAGE_GATE
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return DEFAULT_FACTOR_COVERAGE_GATE
-    if value != value or value < 0.0:
-        return DEFAULT_FACTOR_COVERAGE_GATE
-    return value
 
 
 def get_loaded_encoder_alias() -> str | None:
@@ -476,18 +402,11 @@ def score_text(text: str) -> dict[str, Any] | None:
 
     Returns ``None`` when no checkpoint is loaded. The output shape
     matches the ``MultiAxisBlock`` Pydantic schema in
-    ``app.schemas`` — keys for stance / factor / certainty each
-    carrying ``label``, ``confidence``, and (where applicable) a
-    per-class distribution. The topic axis was retired in ADR 0044
-    (no upstream source ships topic labels).
-
-    The factor card is gated on the persisted factor-axis label
-    coverage (#328): when the active checkpoint's training pool
-    carried < ``DEFAULT_FACTOR_COVERAGE_GATE`` (1 %) populated
-    ``axis_factor`` rows, the regression head trained almost
-    exclusively on the masked-out path and its outputs are noise. The
-    response then carries ``factor=None`` so the frontend renders an
-    absent card instead of rendering noise dressed as a prediction.
+    ``app.schemas`` — keys for stance / certainty / time each
+    carrying ``label``, ``confidence``, and a per-class distribution.
+    The factor axis was retired (market-derived GSS regression target
+    text cannot predict; 0% pool coverage). The topic axis was retired
+    in ADR 0044 (no upstream source ships topic labels).
     """
 
     state = get_classifier()
@@ -523,7 +442,13 @@ def score_text(text: str) -> dict[str, Any] | None:
         for i in range(len(MULTI_TASK_CERTAINTY_LABELS))
     }
 
-    factor_card = _build_factor_card(state, logits)
+    time_probs = torch.softmax(logits["time"], dim=-1)[0]
+    time_idx = int(time_probs.argmax().item())
+    time_label = MULTI_TASK_TIME_LABELS[time_idx]
+    time_dist = {
+        MULTI_TASK_TIME_LABELS[i]: float(time_probs[i].item())
+        for i in range(len(MULTI_TASK_TIME_LABELS))
+    }
 
     return {
         "stance": {
@@ -531,42 +456,14 @@ def score_text(text: str) -> dict[str, Any] | None:
             "confidence": float(stance_probs[stance_idx].item()),
             "distribution": stance_dist,
         },
-        "factor": factor_card,
         "certainty": {
             "label": certainty_label,
             "confidence": float(certainty_probs[certainty_idx].item()),
             "distribution": certainty_dist,
         },
-    }
-
-
-def _build_factor_card(
-    state: _ClassifierState, logits: dict[str, torch.Tensor]
-) -> dict[str, float] | None:
-    """Return the factor card or ``None`` per the coverage gate (#328).
-
-    Coverage below the gate (or ``None`` on a pre-#328 checkpoint that
-    did not stamp the field) drops the card entirely so the
-    ``MultiAxisBlock.factor`` field surfaces as ``None``. Above the
-    gate, the head's tanh output is clipped to [-1, 1] and surfaced
-    as the card value with the legacy abs-as-confidence proxy.
-    """
-
-    coverage = state.factor_coverage
-    threshold = state.factor_coverage_threshold
-    if coverage is None or coverage < threshold:
-        _logger.debug(
-            "multi_axis_factor_card_absent coverage=%s threshold=%s",
-            coverage,
-            threshold,
-        )
-        return None
-    factor_value = float(logits["factor"][0].item())
-    return {
-        "value": max(-1.0, min(1.0, factor_value)),
-        # Factor regression confidence is not a probability; we emit
-        # the absolute value as a proxy ("how far from neutral") and
-        # the frontend renders it as the bar magnitude. Calibration
-        # is a follow-up.
-        "confidence": min(1.0, abs(factor_value)),
+        "time": {
+            "label": time_label,
+            "confidence": float(time_probs[time_idx].item()),
+            "distribution": time_dist,
+        },
     }

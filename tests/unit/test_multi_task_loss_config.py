@@ -27,8 +27,8 @@ def test_default_modelconfig_keeps_multi_task_loss_off() -> None:
     cfg = ModelConfig()
     assert cfg.multi_task_loss is False
     assert cfg.multi_task_lambda_stance == 1.0
-    assert cfg.multi_task_lambda_factor == 0.3
     assert cfg.multi_task_lambda_certainty == 0.3
+    assert cfg.multi_task_lambda_time == 0.3
 
 
 def test_factory_stashes_multi_task_flags_on_built_model() -> None:
@@ -42,14 +42,14 @@ def test_factory_stashes_multi_task_flags_on_built_model() -> None:
         n_classes=3,
         multi_task_loss=True,
         multi_task_lambda_stance=0.5,
-        multi_task_lambda_factor=0.2,
         multi_task_lambda_certainty=0.4,
+        multi_task_lambda_time=0.2,
     )
     model = build_forecaster(cfg)
     assert bool(getattr(model, "multi_task_loss")) is True
     assert float(getattr(model, "multi_task_lambda_stance")) == 0.5
-    assert float(getattr(model, "multi_task_lambda_factor")) == 0.2
     assert float(getattr(model, "multi_task_lambda_certainty")) == 0.4
+    assert float(getattr(model, "multi_task_lambda_time")) == 0.2
 
 
 def test_modelconfig_from_model_round_trips_multi_task_fields() -> None:
@@ -198,18 +198,18 @@ def test_multi_task_loss_ordinal_ce_changes_stance_loss_value() -> None:
         "stance": torch.tensor(
             [[5.0, 0.0, 0.0], [5.0, 0.0, 0.0]], requires_grad=True
         ),
-        "factor": torch.zeros(2, requires_grad=True),
         "certainty": torch.zeros(2, 3, requires_grad=True),
+        "time": torch.zeros(2, 2, requires_grad=True),
     }
     targets = {
         "stance": torch.tensor([0, 2]),
-        "factor": torch.zeros(2),
         "certainty": torch.tensor([0, 0]),
+        "time": torch.tensor([0, 0]),
     }
     masks = {
         "stance_mask": torch.tensor([True, True]),
-        "factor_mask": torch.tensor([False, False]),
         "certainty_mask": torch.tensor([False, False]),
+        "time_mask": torch.tensor([False, False]),
     }
 
     ce_total, ce_breakdown = MultiTaskLoss(regime_loss_mode="ce")(

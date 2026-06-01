@@ -27,10 +27,10 @@ def _rand(shape: tuple[int, ...], dtype: torch.dtype = torch.float32) -> torch.T
 
 def _make_aux(n_rows: int) -> dict[str, torch.Tensor]:
     return {
-        "factor": torch.zeros(n_rows, dtype=torch.float32),
-        "factor_mask": torch.zeros(n_rows, dtype=torch.bool),
         "certainty": torch.zeros(n_rows, dtype=torch.long),
         "certainty_mask": torch.zeros(n_rows, dtype=torch.bool),
+        "time": torch.zeros(n_rows, dtype=torch.long),
+        "time_mask": torch.zeros(n_rows, dtype=torch.bool),
     }
 
 
@@ -76,8 +76,9 @@ def test_make_partition_dataset_text_arity() -> None:
 def test_make_partition_dataset_multi_task_arity() -> None:
     """multi-task active, no text -> arity 6 with aux tensors packed.
 
-    Post-ADR-0044 the aux block is 4 tensors (factor / factor_mask /
-    certainty / certainty_mask); the topic pair was retired.
+    The aux block is 4 tensors (certainty / certainty_mask / time /
+    time_mask); the factor pair was retired (text cannot predict the
+    GSS target) and the topic pair was retired in ADR 0044.
     """
 
     n = 8
@@ -125,7 +126,7 @@ def test_make_partition_dataset_rejects_missing_aux_key() -> None:
     n = 4
     x = _rand((n, 5, 6))
     y = torch.zeros(n, dtype=torch.long)
-    bad_aux = {k: torch.zeros(n) for k in ("factor", "factor_mask")}  # incomplete
+    bad_aux = {k: torch.zeros(n) for k in ("time", "time_mask")}  # incomplete
     with pytest.raises(ValueError, match="missing required key"):
         _make_partition_dataset(x, y, None, None, bad_aux)
 
@@ -208,8 +209,8 @@ def _dummy_feature_vector(
     day: int = 1,
     stance: int = -1,
     stance_present: bool = False,
-    factor: float = 0.0,
-    factor_present: bool = False,
+    time: int = -1,
+    time_present: bool = False,
     certainty: int = -1,
     certainty_present: bool = False,
 ):
@@ -226,8 +227,8 @@ def _dummy_feature_vector(
         forward_realized_vol_10d=vol,
         target_stance_idx=stance,
         target_stance_present=stance_present,
-        target_factor=factor,
-        target_factor_present=factor_present,
+        target_time_idx=time,
+        target_time_present=time_present,
         target_certainty_idx=certainty,
         target_certainty_present=certainty_present,
     )
@@ -259,8 +260,8 @@ def test_multi_task_loss_actually_runs_one_training_step() -> None:
                 vol=0.01 + 0.001 * i,
                 stance=i % 3,
                 stance_present=True,
-                factor=((i % 5) - 2) / 5.0,
-                factor_present=True,
+                time=i % 2,
+                time_present=True,
                 certainty=i % 3,
                 certainty_present=True,
             )
@@ -318,8 +319,8 @@ def test_multi_task_loss_regression_head_mode_keeps_axis_grads() -> None:
                 vol=0.01 + 0.001 * i,
                 stance=i % 3,
                 stance_present=True,
-                factor=((i % 5) - 2) / 5.0,
-                factor_present=True,
+                time=i % 2,
+                time_present=True,
                 certainty=i % 3,
                 certainty_present=True,
             )
@@ -345,7 +346,7 @@ def test_multi_task_loss_regression_head_mode_keeps_axis_grads() -> None:
         use_amp=False,
     )
     assert result.summary.epochs_completed == 1
-    # The factor / certainty axis heads sit behind dedicated branches on
+    # The certainty / time axis heads sit behind dedicated branches on
     # the MultiTaskHead; their weights would stay at their init values
     # if the per-axis loss was being discarded. Iterate the model's
     # parameters and assert at least one axis-head parameter has non-zero
@@ -356,10 +357,10 @@ def test_multi_task_loss_regression_head_mode_keeps_axis_grads() -> None:
     assert head_module is not None
     branches_seen: dict[str, bool] = {}
     for name, param in head_module.named_parameters():
-        for axis in ("factor", "certainty"):
+        for axis in ("certainty", "time"):
             if axis in name and param.requires_grad:
                 branches_seen.setdefault(axis, bool(torch.any(param != 0.0).item()))
     # Both non-stance axis branches must be reachable on the head.
-    assert set(branches_seen.keys()) == {"factor", "certainty"}, (
+    assert set(branches_seen.keys()) == {"certainty", "time"}, (
         f"expected axis branches missing from head module: {branches_seen}"
     )

@@ -886,9 +886,10 @@ def _build_multi_axis_block(
     1. **Trained multi-axis classifier present.** Run the
        ``TextMultiAxisClassifier`` checkpoint via
        ``app.services.multi_axis_classifier.score_text``; populate the
-       three cards (stance / factor / certainty) from the per-axis
-       predictions. (The topic axis was retired in ADR 0044 — no
-       upstream corpus shipped topic labels.)
+       three cards (stance / certainty / time) from the per-axis
+       predictions. (The factor axis was retired — text cannot
+       predict the GSS market-derived target; the topic axis was
+       retired in ADR 0044 — no upstream corpus shipped topic labels.)
 
     2. **No checkpoint.** Fall back to populating the stance card from
        the existing sentiment classifier output and leave the other
@@ -929,8 +930,8 @@ def _build_multi_axis_block(
             "confidence": confidence,
             "distribution": distribution,
         },
-        "factor": None,
         "certainty": None,
+        "time": None,
     }
 
 

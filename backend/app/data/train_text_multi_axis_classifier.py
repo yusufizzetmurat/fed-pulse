@@ -43,6 +43,8 @@ from app.models.config import (
     MULTI_TASK_CERTAINTY_LABELS,
     MULTI_TASK_STANCE_CLASSES,
     MULTI_TASK_STANCE_LABELS,
+    MULTI_TASK_TIME_CLASSES,
+    MULTI_TASK_TIME_LABELS,
 )
 from app.models.text_multi_axis_classifier import TextMultiAxisClassifier
 from app.training.loss import MultiTaskLoss
@@ -129,11 +131,18 @@ def _stance_target(row: dict[str, Any]) -> tuple[int, bool]:
     return 0, False
 
 
-def _factor_target(row: dict[str, Any]) -> tuple[float, bool]:
-    value = _coerce_float(row.get("axis_factor"))
-    if value is None:
-        return 0.0, False
-    return max(min(value, 1.0), -1.0), True
+def _time_target(row: dict[str, Any]) -> tuple[int, bool]:
+    """Extract axes.time label as a 2-class index.
+
+    The gtfintechlab corpus carries ``time_label`` under the ``axes.time``
+    key in the registry (values: ``"forward looking"`` / ``"not forward
+    looking"``). The events.parquet surface exposes it as
+    ``axis_time_label``. Either path maps to MULTI_TASK_TIME_LABELS indices.
+    """
+    raw = row.get("axis_time_label")
+    if isinstance(raw, str) and raw.strip().lower() in MULTI_TASK_TIME_LABELS:
+        return MULTI_TASK_TIME_LABELS.index(raw.strip().lower()), True
+    return 0, False
 
 
 def _certainty_target(row: dict[str, Any]) -> tuple[int, bool]:
@@ -153,26 +162,24 @@ def _certainty_target(row: dict[str, Any]) -> tuple[int, bool]:
 def _row_targets(row: dict[str, Any]) -> tuple[dict[str, float | int], dict[str, bool]]:
     """Map one events.parquet row to per-axis targets + masks.
 
-    Mirrors the extraction in
-    ``app.training.loaders._attach_rich_features`` so the classifier
-    consumes the same canonical label mappings the forecaster does.
-    The topic axis was retired in ADR 0044 — no upstream source ships
-    topic labels.
+    Active axes: stance / certainty / time.
+    Factor axis retired (market-derived GSS target; text cannot predict it
+    and training pool had 0% coverage). Topic axis was retired in ADR 0044.
     """
 
     stance_idx, stance_present = _stance_target(row)
-    factor_value, factor_present = _factor_target(row)
     certainty_idx, certainty_present = _certainty_target(row)
+    time_idx, time_present = _time_target(row)
     return (
         {
             "stance": stance_idx,
-            "factor": factor_value,
             "certainty": certainty_idx,
+            "time": time_idx,
         },
         {
             "stance": stance_present,
-            "factor": factor_present,
             "certainty": certainty_present,
+            "time": time_present,
         },
     )
 
@@ -261,13 +268,13 @@ def _gtfintechlab_row_to_axis_row(
 
     targets: dict[str, float | int] = {
         "stance": 0,
-        "factor": 0.0,
         "certainty": 0,
+        "time": 0,
     }
     masks: dict[str, bool] = {
         "stance": False,
-        "factor": False,
         "certainty": False,
+        "time": False,
     }
 
     stance_raw = str(item.get("stance_label") or "").strip().lower()
@@ -280,12 +287,11 @@ def _gtfintechlab_row_to_axis_row(
         targets["certainty"] = MULTI_TASK_CERTAINTY_LABELS.index(certain_raw)
         masks["certainty"] = True
 
-    # The factor axis is exclusive to the gss_factor source. The
-    # classifier learns that branch only from rows that DO carry the
-    # label (mask=True); on this dataset it stays at False so the
-    # masked loss contributes nothing for it. The branch still emits
-    # predictions at inference, which the frontend renders as
-    # low-confidence. The topic axis was retired (ADR 0044).
+    time_raw = str(item.get("time_label") or "").strip().lower()
+    if time_raw in MULTI_TASK_TIME_LABELS:
+        targets["time"] = MULTI_TASK_TIME_LABELS.index(time_raw)
+        masks["time"] = True
+
     stance_sample_weight = 1.0
     if provenance == "peer_reviewed_cross_bank":
         if cross_bank_mode == "stance_masked":
@@ -539,9 +545,11 @@ def _build_axis_class_weights(rows: list[_AxisRow]) -> dict[str, torch.Tensor]:
 
     stance_indices = [int(r.targets["stance"]) for r in rows if r.masks["stance"]]
     certainty_indices = [int(r.targets["certainty"]) for r in rows if r.masks["certainty"]]
+    time_indices = [int(r.targets["time"]) for r in rows if r.masks["time"]]
     return {
         "stance": _fit_class_weights(stance_indices, MULTI_TASK_STANCE_CLASSES),
         "certainty": _fit_class_weights(certainty_indices, MULTI_TASK_CERTAINTY_CLASSES),
+        "time": _fit_class_weights(time_indices, MULTI_TASK_TIME_CLASSES),
     }
 
 
@@ -567,11 +575,11 @@ class _MultiAxisDataset(Dataset):
             "input_ids": encoded["input_ids"].squeeze(0),
             "attention_mask": encoded["attention_mask"].squeeze(0),
             "target_stance": int(row.targets["stance"]),
-            "target_factor": float(row.targets["factor"]),
             "target_certainty": int(row.targets["certainty"]),
+            "target_time": int(row.targets["time"]),
             "mask_stance": bool(row.masks["stance"]),
-            "mask_factor": bool(row.masks["factor"]),
             "mask_certainty": bool(row.masks["certainty"]),
+            "mask_time": bool(row.masks["time"]),
             # Source bank label rides on every batch row so the eval
             # pass can compute per-bank macro-F1 without re-loading
             # the original rows. Collated as a list of strings.
@@ -596,20 +604,20 @@ def _collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
     out["target_stance"] = torch.tensor(
         [item["target_stance"] for item in batch], dtype=torch.long
     )
-    out["target_factor"] = torch.tensor(
-        [item["target_factor"] for item in batch], dtype=torch.float32
-    )
     out["target_certainty"] = torch.tensor(
         [item["target_certainty"] for item in batch], dtype=torch.long
+    )
+    out["target_time"] = torch.tensor(
+        [item["target_time"] for item in batch], dtype=torch.long
     )
     out["mask_stance"] = torch.tensor(
         [item["mask_stance"] for item in batch], dtype=torch.bool
     )
-    out["mask_factor"] = torch.tensor(
-        [item["mask_factor"] for item in batch], dtype=torch.bool
-    )
     out["mask_certainty"] = torch.tensor(
         [item["mask_certainty"] for item in batch], dtype=torch.bool
+    )
+    out["mask_time"] = torch.tensor(
+        [item["mask_time"] for item in batch], dtype=torch.bool
     )
     # ``source`` and ``provenance`` are per-row strings (the per-bank
     # eval and the first-epoch sanity log read them); the rest of the
@@ -646,7 +654,7 @@ def _log_per_axis_provenance_breakdown(rows: list[_AxisRow]) -> None:
     not encode that as a permanent assumption.
     """
 
-    axis_names: tuple[str, ...] = ("stance", "factor", "certainty")
+    axis_names: tuple[str, ...] = ("stance", "certainty", "time")
     for axis_name in axis_names:
         from_other = 0
         from_cross_bank = 0
@@ -676,7 +684,7 @@ def _train_one_epoch(
 ) -> dict[str, float]:
     model.train()
     sum_total = 0.0
-    sum_axis = {"stance": 0.0, "factor": 0.0, "certainty": 0.0}
+    sum_axis = {"stance": 0.0, "certainty": 0.0, "time": 0.0}
     n_batches = 0
     for batch in loader:
         optimizer.zero_grad(set_to_none=True)
@@ -685,13 +693,13 @@ def _train_one_epoch(
         logits = model(input_ids=input_ids, attention_mask=attn)
         targets = {
             "stance": batch["target_stance"].to(device),
-            "factor": batch["target_factor"].to(device),
             "certainty": batch["target_certainty"].to(device),
+            "time": batch["target_time"].to(device),
         }
         masks = {
             "stance_mask": batch["mask_stance"].to(device),
-            "factor_mask": batch["mask_factor"].to(device),
             "certainty_mask": batch["mask_certainty"].to(device),
+            "time_mask": batch["mask_time"].to(device),
         }
         stance_weight = batch.get("stance_sample_weight")
         if stance_weight is not None:
@@ -730,7 +738,7 @@ def _compute_weighted_total_loss(
 
     ``MultiTaskLoss.forward`` takes an optional ``stance_sample_weight``
     kwarg that turns the stance branch into a weighted-mean CE; the
-    factor / certainty branches are unchanged. Passing the vector
+    certainty / time branches are unchanged. Passing the vector
     straight through keeps every gradient path on the loss
     side, so the helper here is a thin call-site adapter: when the
     batch carries no weights, or every weight is exactly 1.0 (the
@@ -794,19 +802,17 @@ def _evaluate_per_bank(
 
     Returns ``{source: {axis: {macro_f1, n}}}`` where ``source`` is the
     originating corpus tag (e.g. ``"gtfintechlab/federal_reserve_system"``,
-    ``"events_parquet"``) and ``axis`` ∈ ``{stance, certainty}``.
-    Factor is regression-typed and is omitted here; the parent
-    ``_evaluate`` already reports its SmoothL1 loss.
+    ``"events_parquet"``) and ``axis`` ∈ ``{stance, certainty, time}``.
 
     Rows whose axis mask is False on a given (source, axis) are
     dropped before computing F1 — keeps the macro-F1 honest on the
-    sparse axes (factor / certainty) where most rows from most banks
+    sparse axes (certainty / time) where most rows from most banks
     have nothing to score.
     """
 
     model.eval()
     per_source_axis: dict[str, dict[str, list[tuple[int, int]]]] = {}
-    classification_axes: tuple[str, ...] = ("stance", "certainty")
+    classification_axes: tuple[str, ...] = ("stance", "certainty", "time")
     for batch in loader:
         input_ids = batch["input_ids"].to(device)
         attn = batch["attention_mask"].to(device)
@@ -827,6 +833,7 @@ def _evaluate_per_bank(
     axis_n_classes = {
         "stance": MULTI_TASK_STANCE_CLASSES,
         "certainty": MULTI_TASK_CERTAINTY_CLASSES,
+        "time": MULTI_TASK_TIME_CLASSES,
     }
     out: dict[str, dict[str, dict[str, float | int]]] = {}
     for source, axis_bucket in per_source_axis.items():
@@ -866,9 +873,9 @@ def _evaluate(
 
     model.eval()
     sum_total = 0.0
-    sum_axis = {"stance": 0.0, "factor": 0.0, "certainty": 0.0}
-    correct_axis = {"stance": 0, "certainty": 0}
-    seen_axis = {"stance": 0, "certainty": 0}
+    sum_axis = {"stance": 0.0, "certainty": 0.0, "time": 0.0}
+    correct_axis = {"stance": 0, "certainty": 0, "time": 0}
+    seen_axis = {"stance": 0, "certainty": 0, "time": 0}
     n_batches = 0
     for batch in loader:
         input_ids = batch["input_ids"].to(device)
@@ -876,13 +883,13 @@ def _evaluate(
         logits = model(input_ids=input_ids, attention_mask=attn)
         targets = {
             "stance": batch["target_stance"].to(device),
-            "factor": batch["target_factor"].to(device),
             "certainty": batch["target_certainty"].to(device),
+            "time": batch["target_time"].to(device),
         }
         masks = {
             "stance_mask": batch["mask_stance"].to(device),
-            "factor_mask": batch["mask_factor"].to(device),
             "certainty_mask": batch["mask_certainty"].to(device),
+            "time_mask": batch["mask_time"].to(device),
         }
         stance_weight = batch.get("stance_sample_weight")
         if stance_weight is not None:
@@ -898,7 +905,7 @@ def _evaluate(
         for axis_name in sum_axis:
             sum_axis[axis_name] += float(breakdown[axis_name].item())
         n_batches += 1
-        for axis_name in ("stance", "certainty"):
+        for axis_name in ("stance", "certainty", "time"):
             mask = masks[f"{axis_name}_mask"]
             if mask.any():
                 pred = logits[axis_name][mask].argmax(dim=-1)
@@ -939,25 +946,6 @@ def _save_hf_encoder_directory(
     tokenizer.save_pretrained(str(checkpoint_dir))
 
 
-def _factor_coverage_fraction(rows: list[_AxisRow]) -> float:
-    """Fraction of supervised rows that carried a populated factor label.
-
-    Issue #328: the inference service uses this stamp to gate the
-    factor card on the /analyze response. A canonical training pool
-    today carries 0 % factor coverage (the gss_factor source rows are
-    not joined into the events.parquet aggregation), so the regression
-    head emits effectively-random values; gating the response on the
-    persisted coverage is how the surface stops rendering noise as a
-    prediction. An empty row list returns 0.0 so a misconfigured run
-    that produces no rows still trips the gate.
-    """
-
-    if not rows:
-        return 0.0
-    populated = sum(1 for r in rows if bool(r.masks.get("factor", False)))
-    return populated / len(rows)
-
-
 def _save_checkpoint(  # noqa: PLR0913 — kw-only checkpoint envelope; collapsing the metadata kwargs into a single dataclass would obscure the persisted fields
     model: TextMultiAxisClassifier,
     *,
@@ -965,7 +953,6 @@ def _save_checkpoint(  # noqa: PLR0913 — kw-only checkpoint envelope; collapsi
     metrics: dict[str, float],
     args: argparse.Namespace,
     class_weights: dict[str, torch.Tensor],
-    factor_coverage: float,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -1013,15 +1000,6 @@ def _save_checkpoint(  # noqa: PLR0913 — kw-only checkpoint envelope; collapsi
                 if bool(getattr(args, "gtfintechlab_fed_only", False))
                 else str(getattr(args, "cross_bank_supervision", "off"))
             ),
-            # Issue #328: persist the fraction of train rows that
-            # carried a populated ``axis_factor`` label so the
-            # inference service can gate the factor card on it.
-            # Coverage < threshold (default 0.01) drops the card
-            # from the /analyze response — the factor branch has
-            # trained almost exclusively on the masked-out path on
-            # those checkpoints and its outputs are noise. ADR 0018
-            # captures the decision.
-            "factor_coverage": float(factor_coverage),
         },
         "saved_at_utc": datetime.now(timezone.utc).isoformat(),
     }
@@ -1049,9 +1027,7 @@ def _save_checkpoint(  # noqa: PLR0913 — kw-only checkpoint envelope; collapsi
             path,
             exc_info=True,
         )
-    _logger.info(
-        "checkpoint_written path=%s factor_coverage=%.4f", path, factor_coverage
-    )
+    _logger.info("checkpoint_written path=%s", path)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1112,16 +1088,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     class_weights = _build_axis_class_weights(train_rows)
-    # Compute factor coverage on the train slice (the supervision the
-    # head actually trained on, not the whole corpus). Persisted onto
-    # the checkpoint payload so the inference service can gate the
-    # factor card on it (#328 / ADR 0018).
-    factor_coverage = _factor_coverage_fraction(train_rows)
+    # Log time-axis coverage so the operator can verify the supervised pool.
+    time_supervised = sum(1 for r in train_rows if bool(r.masks.get("time", False)))
     _logger.info(
-        "factor_axis_coverage train_rows=%d populated=%d coverage=%.4f",
+        "time_axis_coverage train_rows=%d populated=%d coverage=%.4f",
         len(train_rows),
-        sum(1 for r in train_rows if bool(r.masks.get("factor", False))),
-        factor_coverage,
+        time_supervised,
+        time_supervised / len(train_rows) if train_rows else 0.0,
     )
 
     from transformers import AutoTokenizer
@@ -1151,9 +1124,10 @@ def main(argv: list[str] | None = None) -> int:
     loss_fn = MultiTaskLoss(
         stance_weight=class_weights["stance"].to(device),
         certainty_weight=class_weights["certainty"].to(device),
+        time_weight=class_weights["time"].to(device),
         lambda_stance=args.lambda_stance,
-        lambda_factor=args.lambda_factor,
         lambda_certainty=args.lambda_certainty,
+        lambda_time=args.lambda_time,
     ).to(device)
 
     train_ds = _MultiAxisDataset(train_rows, tokenizer, max_length=args.max_length)
@@ -1217,7 +1191,6 @@ def main(argv: list[str] | None = None) -> int:
                 metrics=best_metrics,
                 args=args,
                 class_weights=class_weights,
-                factor_coverage=factor_coverage,
             )
             _save_hf_encoder_directory(model, tokenizer, hf_checkpoint_dir)
             print(f"[multi_axis] hf checkpoint saved to {hf_checkpoint_dir}")
@@ -1336,7 +1309,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--head-hidden-size", type=int, default=128)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--lambda-stance", type=float, default=1.0)
-    parser.add_argument("--lambda-factor", type=float, default=0.3)
+    parser.add_argument("--lambda-time", type=float, default=0.3)
     parser.add_argument("--lambda-certainty", type=float, default=0.3)
     # Bundle A.1: cross-bank auxiliary supervision flag on the
     # text-encoder fine-tune. ``off`` (default) keeps the strict
@@ -1345,7 +1318,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # ``stance_masked`` admits cross-bank rows but forces their
     # stance mask to False so the head only fits the FOMC stance
     # distribution while the encoder still trains on the
-    # cross-bank text + auxiliary (certainty / factor / time)
+    # cross-bank text + auxiliary (certainty / time)
     # supervision. ``weighted`` admits them with the natural
     # stance label and downscales their stance contribution by
     # ``--cross-bank-stance-weight`` so the head can be A/B-tested

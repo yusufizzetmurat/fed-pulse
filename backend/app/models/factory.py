@@ -150,8 +150,8 @@ def build_forecaster(
             "lora_curriculum_freeze_epoch",
             "multi_task_loss",
             "multi_task_lambda_stance",
-            "multi_task_lambda_factor",
             "multi_task_lambda_certainty",
+            "multi_task_lambda_time",
             "regime_loss_mode",
             "class_weight_power",
             # #502 focal + class_balanced loss-side hyperparameters.
@@ -216,8 +216,8 @@ def build_forecaster(
         flat.lora_curriculum_freeze_epoch = resolved.lora_curriculum_freeze_epoch  # type: ignore[assignment]
         flat.multi_task_loss = bool(resolved.multi_task_loss)  # type: ignore[assignment]
         flat.multi_task_lambda_stance = float(resolved.multi_task_lambda_stance)  # type: ignore[assignment]
-        flat.multi_task_lambda_factor = float(resolved.multi_task_lambda_factor)  # type: ignore[assignment]
         flat.multi_task_lambda_certainty = float(resolved.multi_task_lambda_certainty)  # type: ignore[assignment]
+        flat.multi_task_lambda_time = float(resolved.multi_task_lambda_time)  # type: ignore[assignment]
         flat.regime_loss_mode = str(resolved.regime_loss_mode or "ce")  # type: ignore[assignment]
         flat.class_weight_power = float(resolved.class_weight_power)  # type: ignore[assignment]
         flat.focal_gamma = float(resolved.focal_gamma)  # type: ignore[assignment]
@@ -288,8 +288,8 @@ def build_forecaster(
     # loaded for resume / inference.
     multi_task_loss_flag = bool(kwargs.pop("multi_task_loss", False))
     multi_task_lambda_stance = float(kwargs.pop("multi_task_lambda_stance", 1.0))
-    multi_task_lambda_factor = float(kwargs.pop("multi_task_lambda_factor", 0.3))
     multi_task_lambda_certainty = float(kwargs.pop("multi_task_lambda_certainty", 0.3))
+    multi_task_lambda_time = float(kwargs.pop("multi_task_lambda_time", 0.3))
     # #470 regime-loss mode is loss-side: the trainer reads it off the
     # stashed module attribute when constructing the CE / MultiTaskLoss
     # instance. Pop here so the ForecasterModel ctor does not see the
@@ -537,8 +537,8 @@ def build_forecaster(
     model.lora_curriculum_freeze_epoch = lora_curriculum_freeze_epoch_val
     model.multi_task_loss = multi_task_loss_flag  # type: ignore[assignment]
     model.multi_task_lambda_stance = multi_task_lambda_stance  # type: ignore[assignment]
-    model.multi_task_lambda_factor = multi_task_lambda_factor  # type: ignore[assignment]
     model.multi_task_lambda_certainty = multi_task_lambda_certainty  # type: ignore[assignment]
+    model.multi_task_lambda_time = multi_task_lambda_time  # type: ignore[assignment]
     model.regime_loss_mode = regime_loss_mode_value  # type: ignore[assignment]
     model.class_weight_power = class_weight_power  # type: ignore[assignment]
     model.focal_gamma = focal_gamma_value  # type: ignore[assignment]

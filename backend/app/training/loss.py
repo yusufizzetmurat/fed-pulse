@@ -1,19 +1,20 @@
 """Multi-task loss for the three-branch classification head (#78).
 
-The three axes (stance, factor, certainty) have very different
-label-coverage rates on the supervised corpus: stance ~100%, factor
-and certainty <5% (gtfintechlab cross-bank rows + the gss_factor
-source only). The loss handles this with per-axis masks — a row only
-contributes loss on axes where its label was populated, so the
-optimiser never learns from a synthetic placeholder that would
-otherwise lock the head in on a meaningless mean. The topic axis was
-retired in ADR 0044 (no upstream source ships topic labels).
+The three axes (stance, certainty, time) have very different
+label-coverage rates on the supervised corpus: stance ~100%, certainty
+and time from the gtfintechlab cross-bank rows. The loss handles this
+with per-axis masks — a row only contributes loss on axes where its
+label was populated, so the optimiser never learns from a synthetic
+placeholder that would otherwise lock the head in on a meaningless
+mean. The factor axis was retired (market-derived GSS regression target
+text cannot predict; 0% pool coverage). The topic axis was retired in
+ADR 0044 (no upstream source ships topic labels).
 
 The total loss is a lambda-weighted sum:
 
     L = lambda_stance * stance_loss
-      + lambda_factor * factor_loss
       + lambda_certainty * certainty_loss
+      + lambda_time * time_loss
 
 Each per-axis term is the mean of the row-wise loss over rows where
 that axis's mask is True (0 when the mask is empty for that batch,
@@ -23,11 +24,9 @@ sparser axes contribute auxiliary gradients without overpowering
 stance.
 
 Class weights are passed per axis. Stance reuses the per-fold
-``fit_class_weights`` output; certainty class weights are fitted on
-the train slice independently using the same helper. The factor
-branch is a regression (SmoothL1, ``beta=0.02`` to mirror the
-existing vol-regression loss) so it does not consume a class-weight
-tensor.
+``fit_class_weights`` output; certainty and time class weights are
+fitted on the train slice independently using the same helper. All
+three axes are classification (CrossEntropy) heads.
 
 Regime-axis loss variant (#470). The 3-class vol-regime stance head
 defaults to standard cross-entropy. When ``regime_loss_mode='ordinal_ce'``
@@ -215,10 +214,10 @@ class MultiTaskLoss(nn.Module):
         *,
         stance_weight: torch.Tensor | None = None,
         certainty_weight: torch.Tensor | None = None,
+        time_weight: torch.Tensor | None = None,
         lambda_stance: float = 1.0,
-        lambda_factor: float = 0.3,
         lambda_certainty: float = 0.3,
-        factor_smooth_l1_beta: float = 0.02,
+        lambda_time: float = 0.3,
         regime_loss_mode: str = "ce",
         focal_gamma: float = 2.0,
     ) -> None:
@@ -231,10 +230,13 @@ class MultiTaskLoss(nn.Module):
             "_certainty_weight",
             certainty_weight if certainty_weight is not None else torch.empty(0),
         )
+        self.register_buffer(
+            "_time_weight",
+            time_weight if time_weight is not None else torch.empty(0),
+        )
         self.lambda_stance = float(lambda_stance)
-        self.lambda_factor = float(lambda_factor)
         self.lambda_certainty = float(lambda_certainty)
-        self.factor_smooth_l1_beta = float(factor_smooth_l1_beta)
+        self.lambda_time = float(lambda_time)
         if regime_loss_mode not in self._SUPPORTED_REGIME_LOSS_MODES:
             raise ValueError(
                 "regime_loss_mode must be one of "
@@ -249,6 +251,10 @@ class MultiTaskLoss(nn.Module):
 
     def _certainty_weight_or_none(self) -> torch.Tensor | None:
         buf = self.get_buffer("_certainty_weight")
+        return buf if buf.numel() > 0 else None
+
+    def _time_weight_or_none(self) -> torch.Tensor | None:
+        buf = self.get_buffer("_time_weight")
         return buf if buf.numel() > 0 else None
 
     def forward(
@@ -290,29 +296,30 @@ class MultiTaskLoss(nn.Module):
             loss_mode=self.regime_loss_mode,
             focal_gamma=self.focal_gamma,
         )
-        factor_loss = self._masked_regression_loss(
-            logits["factor"],
-            targets["factor"],
-            masks["factor_mask"],
-        )
         certainty_loss = self._masked_classification_loss(
             logits["certainty"],
             targets["certainty"],
             masks["certainty_mask"],
             weight=self._certainty_weight_or_none(),
         )
+        time_loss = self._masked_classification_loss(
+            logits["time"],
+            targets["time"],
+            masks["time_mask"],
+            weight=self._time_weight_or_none(),
+        )
 
         total = (
             self.lambda_stance * stance_loss
-            + self.lambda_factor * factor_loss
             + self.lambda_certainty * certainty_loss
+            + self.lambda_time * time_loss
         )
         if not total.requires_grad and stance_loss.requires_grad:
             total = total + zero
         return total, {
             "stance": stance_loss.detach(),
-            "factor": factor_loss.detach(),
             "certainty": certainty_loss.detach(),
+            "time": time_loss.detach(),
         }
 
     @staticmethod
@@ -395,17 +402,3 @@ class MultiTaskLoss(nn.Module):
         if float(weight_total.detach().item()) <= 0.0:
             return logits.sum() * 0.0
         return (per_row * active_sample_weight).sum() / weight_total
-
-    def _masked_regression_loss(
-        self,
-        pred: torch.Tensor,
-        target: torch.Tensor,
-        mask: torch.Tensor,
-    ) -> torch.Tensor:
-        if mask.numel() == 0 or not mask.any():
-            return pred.sum() * 0.0
-        active_pred = pred[mask]
-        active_target = target[mask]
-        return F.smooth_l1_loss(
-            active_pred, active_target, beta=self.factor_smooth_l1_beta
-        )

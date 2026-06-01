@@ -3,13 +3,13 @@
 Wraps a pre-trained transformer encoder (default: finbert_fed_adjacent,
 the project's continued-pretrained FinBERT on BIS speeches) with the
 multi-task head shipped in #272. Emits per-axis predictions on stance,
-factor, and certainty from a single input text.
+certainty, and time from a single input text.
 
 The classifier is trained on the supervised rows in events.parquet
 that carry axis labels (primarily the gtfintechlab cross-bank rows
-for stance / certainty plus the gss_factor rows for factor), not on
-the volatility-regime target the time-series forecaster uses. This is
-a parallel model to the forecaster, not a replacement.
+for stance / certainty / time), not on the volatility-regime target
+the time-series forecaster uses. This is a parallel model to the
+forecaster, not a replacement.
 
 The encoder pools the [CLS] token from the last hidden state into a
 single vector per text; the MultiTaskHead emits three branches from
@@ -33,6 +33,7 @@ from app.models.multi_task_head import MultiTaskHead
 from app.models.config import (
     MULTI_TASK_CERTAINTY_CLASSES,
     MULTI_TASK_STANCE_CLASSES,
+    MULTI_TASK_TIME_CLASSES,
 )
 
 
@@ -44,7 +45,7 @@ class TextMultiAxisClassifier(nn.Module):
     training + inference run loads the same weights deterministically.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 — per-axis class-count + provenance kwargs surface by design
         self,
         encoder: nn.Module,
         *,
@@ -53,6 +54,7 @@ class TextMultiAxisClassifier(nn.Module):
         dropout: float = 0.1,
         stance_classes: int = MULTI_TASK_STANCE_CLASSES,
         certainty_classes: int = MULTI_TASK_CERTAINTY_CLASSES,
+        time_classes: int = MULTI_TASK_TIME_CLASSES,
         encoder_alias: str = "",
         encoder_revision: str = "",
     ) -> None:
@@ -65,6 +67,7 @@ class TextMultiAxisClassifier(nn.Module):
             dropout=dropout,
             stance_classes=stance_classes,
             certainty_classes=certainty_classes,
+            time_classes=time_classes,
         )
         # Surface the encoder provenance on the module so the
         # checkpoint payload can persist the exact alias + revision
@@ -132,7 +135,7 @@ class TextMultiAxisClassifier(nn.Module):
         """Emit per-axis predictions for a batch of tokenised inputs.
 
         Uses the [CLS] token pooling convention. Returns the same
-        dict shape MultiTaskHead emits: ``{stance, factor, certainty}``.
+        dict shape MultiTaskHead emits: ``{stance, certainty, time}``.
         """
 
         outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
@@ -152,4 +155,5 @@ class TextMultiAxisClassifier(nn.Module):
             "dropout": self.head.dropout,
             "stance_classes": self.head.stance_classes,
             "certainty_classes": self.head.certainty_classes,
+            "time_classes": self.head.time_classes,
         }
