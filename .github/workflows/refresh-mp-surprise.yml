@@ -1,0 +1,75 @@
+name: refresh-mp-surprise
+
+# Weekly refresh of the monetary-policy surprise parquet at
+# data/external/fred/mp_surprises.parquet. Runs Sundays 06:00 UTC so a
+# fresh file is ready before the FOMC publication window on
+# Wednesday/Thursday. Also exposed as workflow_dispatch so the file can
+# be force-refreshed from the Actions tab between scheduled runs.
+#
+# Repo policy is review-before-merge, so the workflow files a pull
+# request against dev via peter-evans/create-pull-request instead of
+# direct-pushing the regenerated parquet.
+
+on:
+  schedule:
+    - cron: "0 6 * * 0"
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-mp-surprise
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: install backend with dev extras
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]"
+
+      # The Makefile target build-mp-surprises wraps `docker compose run`
+      # which we cannot use directly inside a GitHub-hosted runner job,
+      # so we invoke the same python entrypoint the make target wraps
+      # (app.data.mp_surprise). Output path matches the file the
+      # registered consumers (event_dataset_builder, rates_panel) read.
+      - name: refresh mp_surprises.parquet
+        env:
+          PYTHONPATH: backend
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          mkdir -p data/external/fred
+          python -m app.data.mp_surprise \
+            --output data/external/fred/mp_surprises.parquet
+
+      - name: create pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ci/refresh-mp-surprise
+          base: dev
+          add-paths: data/external/fred/mp_surprises.parquet
+          commit-message: "ci: weekly cron to refresh mp_surprise parquet from FRED"
+          title: "ci: weekly cron to refresh mp_surprise parquet from FRED"
+          body: |
+            Automated refresh of `data/external/fred/mp_surprises.parquet`
+            produced by `.github/workflows/refresh-mp-surprise.yml`.
+
+            Source: FRED constant-maturity Treasury proxies (see
+            `backend/app/data/mp_surprise.py` for the methodology note).
+            Review the diff before merging — only the latest rows
+            should change unless a methodology revision is expected.
+          delete-branch: true

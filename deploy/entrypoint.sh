@@ -18,6 +18,10 @@
 # the actual snapshot_download the slow part. If a non-eager encoder
 # is needed at request time, the lazy-fetch path in
 # app/data/embedding_cache.py (ensure_local) handles it.
+#
+# MP-surprise parquet refresh runs weekly via
+# .github/workflows/refresh-mp-surprise.yml; entrypoint reads the
+# latest committed parquet.
 
 set -e
 
