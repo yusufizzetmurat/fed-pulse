@@ -272,7 +272,8 @@ def _predict_for_meeting(
     label = target.get("tercile") if isinstance(target.get("tercile"), str) else None
     if label not in _TERCILE_LABELS:
         return None, None, None, None
-    probs = target.get("tercile_probs") if isinstance(target.get("tercile_probs"), dict) else {}
+    raw_probs = target.get("tercile_probs")
+    probs: dict[str, Any] = raw_probs if isinstance(raw_probs, dict) else {}
     prob = _coerce_float(probs.get(label))
     q33 = _coerce_float(out.get("cutoffs_q33"))
     q67 = _coerce_float(out.get("cutoffs_q67"))
