@@ -1,0 +1,377 @@
+"""Backtest the last N HAR-tercile predictions against realized terciles.
+
+Walks the persisted ``analysis_runs`` table for ``^GSPC``, extracts the
+predicted tercile from each row's analyze payload, and resolves the
+realized tercile off the forward 10-trading-day market history. Powers
+the HarAccuracyPanel card: an aggregate hit-rate plus per-tercile
+break-down + a compact row table.
+
+Realized tercile is read from the persisted payload's
+``forward_realized_vol_10d`` slot when present (forward-compat with the
+analyze response carrying that summary on future builds) and falls back
+to a fresh yfinance pull via ``fetch_event_study_window`` otherwise.
+Cutoffs default to the ones the prediction recorded
+(``cutoffs_q33`` / ``cutoffs_q67`` on the persisted ``har_baselines``
+block when set) and otherwise recompute on a 60-day RV window so a row
+that pre-dates the cutoff persistence still bucks honest.
+"""
+
+from __future__ import annotations
+
+import math
+from datetime import datetime, timezone
+from typing import Any, Iterable
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.db import AnalysisRun
+
+
+# Mirror the HAR-tercile label space (low / medium / high). The
+# /analyze response stores the late-fusion classifier under
+# ``regime_classification`` using the (calm / normal / high) label
+# space; this table maps it onto the HAR-tercile vocabulary so the
+# backtest is comparable.
+_TERCILE_LABELS: tuple[str, str, str] = ("low", "medium", "high")
+_REGIME_TO_TERCILE = {
+    "calm": "low",
+    "low": "low",
+    "normal": "medium",
+    "medium": "medium",
+    "high": "high",
+}
+
+# Trailing window the realized-tercile fallback uses to recompute
+# cutoffs when the persisted prediction did not pin them. Matches the
+# 60-trading-day window the HAR-tercile baseline trains its cutoffs on
+# in the research-side trainer.
+_FALLBACK_CUTOFF_WINDOW = 60
+_FORWARD_STEPS = 10
+_FORWARD_WINDOW_DAYS = 30
+
+
+def _coerce_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(result):
+        return None
+    return result
+
+
+def _normalize_tercile_label(label: Any) -> str | None:
+    if not isinstance(label, str):
+        return None
+    key = label.strip().lower()
+    if not key:
+        return None
+    return _REGIME_TO_TERCILE.get(key) or (key if key in _TERCILE_LABELS else None)
+
+
+def _extract_predicted_tercile(payload: Any) -> tuple[str | None, float | None]:
+    """Pull the predicted tercile + its probability off a persisted payload.
+
+    Order of precedence:
+      1. ``har_baselines`` block (forward-compat: future builds may
+         persist the HAR-tercile card directly into the analyze payload).
+      2. ``regime_classification`` (active late-fusion regime card),
+         mapping calm → low / normal → medium / high → high.
+    Returns ``(label, prob)`` with prob in [0, 1] when available; either
+    half may be None on a degraded payload.
+    """
+
+    if not isinstance(payload, dict):
+        return None, None
+
+    har_block = payload.get("har_baselines")
+    if isinstance(har_block, dict):
+        horizons = har_block.get("horizons")
+        if isinstance(horizons, list):
+            # Prefer the 22-day horizon (matches the 10-day forward
+            # resolution closest); fall back to whatever the first row
+            # carries when the structure is sparse.
+            ordered = sorted(
+                (h for h in horizons if isinstance(h, dict)),
+                key=lambda h: abs(int(h.get("h", 0) or 0) - 22),
+            )
+            for row in ordered:
+                label = _normalize_tercile_label(row.get("tercile"))
+                if label is None:
+                    continue
+                probs = row.get("tercile_probs") or {}
+                prob = _coerce_float(probs.get(label)) if isinstance(probs, dict) else None
+                return label, prob
+
+    regime = payload.get("regime_classification")
+    if isinstance(regime, dict):
+        argmax = _normalize_tercile_label(regime.get("argmax_class"))
+        if argmax is not None:
+            distribution = regime.get("distribution") or {}
+            prob: float | None = None
+            if isinstance(distribution, dict):
+                # The classifier exposes calm / normal / high keys; look
+                # the prob up under the ORIGINAL key, not the normalized
+                # tercile label, since the distribution is keyed on the
+                # regime vocabulary.
+                raw_argmax = regime.get("argmax_class")
+                if isinstance(raw_argmax, str):
+                    prob = _coerce_float(distribution.get(raw_argmax))
+                if prob is None:
+                    prob = _coerce_float(distribution.get(argmax))
+            return argmax, prob
+
+    return None, None
+
+
+def _extract_persisted_cutoffs(payload: Any) -> tuple[float | None, float | None]:
+    """Read q33 / q67 off the persisted ``har_baselines`` block when present."""
+
+    if not isinstance(payload, dict):
+        return None, None
+    har_block = payload.get("har_baselines")
+    if not isinstance(har_block, dict):
+        return None, None
+    q33 = _coerce_float(har_block.get("cutoffs_q33"))
+    q67 = _coerce_float(har_block.get("cutoffs_q67"))
+    return q33, q67
+
+
+def _extract_persisted_realized_rv(payload: Any) -> float | None:
+    """Pull the realized 10-day forward RV off the persisted payload.
+
+    Forward-compat: future analyze responses may stash the realized
+    forward-vol summary under ``forward_realized_vol_10d`` so the
+    backtest no longer needs the yfinance round trip. The current build
+    does not write that field, so this returns None and the caller
+    falls back to a live market fetch.
+    """
+
+    if not isinstance(payload, dict):
+        return None
+    direct = _coerce_float(payload.get("forward_realized_vol_10d"))
+    if direct is not None:
+        return direct
+    market = payload.get("market")
+    if isinstance(market, dict):
+        nested = _coerce_float(market.get("forward_realized_vol_10d"))
+        if nested is not None:
+            return nested
+    return None
+
+
+def _bucket_against_cutoffs(value: float, q33: float, q67: float) -> str:
+    if value < q33:
+        return "low"
+    if value < q67:
+        return "medium"
+    return "high"
+
+
+def _realized_vol_from_log_returns(log_returns: list[float]) -> float | None:
+    if len(log_returns) < 2:
+        return None
+    mean = sum(log_returns) / len(log_returns)
+    var = sum((value - mean) ** 2 for value in log_returns) / (len(log_returns) - 1)
+    return math.sqrt(max(var, 0.0))
+
+
+def _fetch_realized_rv_yf(event_date: str, symbol: str) -> float | None:
+    """Pull forward-10d realized vol off yfinance.
+
+    Wrapped behind a try / except so a yfinance flake on one row never
+    nukes the whole backtest — the offending row just lands unresolved.
+    """
+
+    try:
+        from app.services.market_data import fetch_event_study_window
+    except Exception:  # pragma: no cover — import-time defensive
+        return None
+    try:
+        bars = fetch_event_study_window(
+            event_date=event_date,
+            symbol=symbol,
+            steps=_FORWARD_STEPS,
+            window_days=_FORWARD_WINDOW_DAYS,
+        )
+    except Exception:
+        return None
+    if not bars:
+        return None
+    log_returns = [float(bar.get("log_return", 0.0)) for bar in bars]
+    return _realized_vol_from_log_returns(log_returns)
+
+
+def _fetch_rv_history_for_cutoffs(event_date: str, symbol: str) -> list[float]:
+    """Fetch the trailing 60-day daily realized vol window for cutoff fallback.
+
+    Returns an empty list on any failure so the caller knows to leave
+    the row unresolved rather than raise.
+    """
+
+    try:
+        from app.services.market_data import _download_close_series_in_window
+        from datetime import timedelta
+        from datetime import datetime as _dt
+
+        anchor = _dt.fromisoformat(event_date).date()
+        start = anchor - timedelta(days=_FALLBACK_CUTOFF_WINDOW * 2)
+        end = anchor
+        close_series = _download_close_series_in_window(
+            symbol=symbol, start=start, end=end
+        )
+    except Exception:
+        return []
+    if close_series is None or len(close_series) < 6:
+        return []
+    try:
+        returns = close_series.pct_change().dropna()
+        # Daily realized vol proxy = 5-day rolling std of returns
+        rolling = returns.rolling(5).std().dropna()
+        if rolling.empty:
+            return []
+        tail = rolling.tail(_FALLBACK_CUTOFF_WINDOW).tolist()
+        return [float(v) for v in tail if v is not None and math.isfinite(float(v))]
+    except Exception:
+        return []
+
+
+def _cutoffs_from_history(history: Iterable[float]) -> tuple[float | None, float | None]:
+    values = sorted(float(v) for v in history if math.isfinite(float(v)))
+    n = len(values)
+    if n < 3:
+        return None, None
+    q33_idx = max(0, min(n - 1, int(n / 3.0)))
+    q67_idx = max(0, min(n - 1, int(2.0 * n / 3.0)))
+    return values[q33_idx], values[q67_idx]
+
+
+def _resolve_realized_tercile(
+    *,
+    payload: Any,
+    event_date: str,
+    symbol: str,
+    pred_q33: float | None,
+    pred_q67: float | None,
+) -> tuple[str | None, float | None]:
+    """Best-effort resolution of the realized tercile for one row.
+
+    Returns ``(label, realized_rv)``. Either half may be None on a
+    failure (no forward window yet, yfinance flake, missing cutoffs).
+    """
+
+    rv = _extract_persisted_realized_rv(payload)
+    if rv is None:
+        rv = _fetch_realized_rv_yf(event_date, symbol)
+    if rv is None:
+        return None, None
+
+    if pred_q33 is not None and pred_q67 is not None and pred_q33 <= pred_q67:
+        return _bucket_against_cutoffs(rv, pred_q33, pred_q67), rv
+
+    history = _fetch_rv_history_for_cutoffs(event_date, symbol)
+    if not history:
+        return None, rv
+    q33, q67 = _cutoffs_from_history(history)
+    if q33 is None or q67 is None:
+        return None, rv
+    return _bucket_against_cutoffs(rv, q33, q67), rv
+
+
+def _aggregate_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute aggregate accuracy + per-tercile hit-rate over the rows.
+
+    Denominator for ``accuracy_overall`` is rows whose realized tercile
+    resolved. Denominator for each ``per_tercile_hit_rate`` entry is
+    rows whose PREDICTED tercile was that label AND whose realized
+    tercile resolved.
+    """
+
+    total = len(rows)
+    resolved_rows = [r for r in rows if r.get("realized_tercile") is not None]
+    resolved = len(resolved_rows)
+    overall: float | None = None
+    if resolved > 0:
+        hits = sum(1 for r in resolved_rows if r.get("correct"))
+        overall = hits / resolved
+
+    per_tercile: dict[str, float] = {}
+    for label in _TERCILE_LABELS:
+        subset = [r for r in resolved_rows if r.get("predicted_tercile") == label]
+        if not subset:
+            continue
+        hits = sum(1 for r in subset if r.get("correct"))
+        per_tercile[label] = hits / len(subset)
+
+    return {
+        "total_runs": total,
+        "resolved_runs": resolved,
+        "accuracy_overall": overall,
+        "per_tercile_hit_rate": per_tercile,
+    }
+
+
+def build_har_tercile_backtest(
+    session: Session,
+    *,
+    symbol: str = "^GSPC",
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Assemble the HAR-tercile backtest payload for the panel.
+
+    Walks the last ``limit`` ``analysis_runs`` rows for ``symbol`` in
+    chronological-descending order, extracts the predicted tercile and
+    resolves the realized one, then aggregates a top-line accuracy KPI
+    + per-tercile hit-rate. Returns the dict-shape the endpoint wraps
+    in ``HarTercileBacktestResponse``.
+    """
+
+    stmt = (
+        select(AnalysisRun)
+        .where(AnalysisRun.symbol == symbol)
+        .order_by(AnalysisRun.created_at.desc())
+        .limit(limit)
+    )
+    rows = list(session.execute(stmt).scalars().all())
+
+    out_rows: list[dict[str, Any]] = []
+    for row in rows:
+        payload = row.payload
+        predicted_label, predicted_prob = _extract_predicted_tercile(payload)
+        if predicted_label is None:
+            # No prediction we can backtest — skip the row entirely so
+            # the panel's denominator stays honest.
+            continue
+        pred_q33, pred_q67 = _extract_persisted_cutoffs(payload)
+        realized_label, realized_rv = _resolve_realized_tercile(
+            payload=payload,
+            event_date=row.document_date,
+            symbol=row.symbol,
+            pred_q33=pred_q33,
+            pred_q67=pred_q67,
+        )
+        correct: bool | None = None
+        if realized_label is not None:
+            correct = realized_label == predicted_label
+        out_rows.append(
+            {
+                "event_date": row.document_date,
+                "predicted_tercile": predicted_label,
+                "predicted_prob": float(predicted_prob) if predicted_prob is not None else 0.0,
+                "realized_tercile": realized_label,
+                "realized_rv": realized_rv,
+                "correct": correct,
+            }
+        )
+
+    metrics = _aggregate_metrics(out_rows)
+    return {
+        "symbol": symbol,
+        "horizon": _FORWARD_STEPS,
+        "rows": out_rows,
+        "metrics": metrics,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }

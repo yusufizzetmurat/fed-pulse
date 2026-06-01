@@ -57,6 +57,9 @@ from app.schemas import (
     MonetaryPolicySurpriseResponse,
     NextFomcForecastResponse,
     RatesReactionCard,
+    HarAccuracyMetrics,
+    HarTercileBacktestResponse,
+    HarTercileBacktestRow,
     HarTercileBaselineResponse,
     HarTercileHorizon,
     RealizedVolForecastResponse,
@@ -1877,6 +1880,60 @@ async def forecast_regime_baselines(
         cutoffs_q67=out["cutoffs_q67"],
         model_revision=out["model_revision"],
         generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+
+
+@app.get(
+    "/forecast/har-tercile-backtest",
+    response_model=HarTercileBacktestResponse,
+)
+def forecast_har_tercile_backtest(
+    symbol: str = Query(
+        "^GSPC",
+        description="Market ticker; only ^GSPC is supported (HAR-tercile is SPX-trained).",
+        min_length=1,
+        max_length=32,
+        pattern=r"^[A-Za-z0-9._=^/-]+$",
+    ),
+    limit: int = Query(
+        10,
+        ge=1,
+        le=50,
+        description="Number of most-recent persisted runs to backtest (1..50).",
+    ),
+    session: Session = Depends(get_session),
+) -> HarTercileBacktestResponse:
+    """Backtest the last N HAR-tercile predictions for ``symbol``.
+
+    Walks the persisted ``analysis_runs`` table, lines up each row's
+    predicted tercile with the realized tercile from the forward
+    10-trading-day window, and returns the rows + aggregate accuracy
+    metrics. Mirrors the ``^GSPC``-only constraint on the upstream
+    HAR-tercile baseline endpoint (the cutoffs are SPX-trained).
+    """
+
+    if symbol != "^GSPC":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "symbol_unsupported",
+                "message": (
+                    "HAR-tercile backtest is SPX-trained; only ^GSPC is supported."
+                ),
+            },
+        )
+
+    from app.services.har_tercile_backtest import build_har_tercile_backtest
+
+    out = build_har_tercile_backtest(session, symbol=symbol, limit=limit)
+    rows = [HarTercileBacktestRow(**row) for row in out["rows"]]
+    metrics = HarAccuracyMetrics(**out["metrics"])
+    return HarTercileBacktestResponse(
+        symbol=out["symbol"],
+        horizon=out["horizon"],
+        rows=rows,
+        metrics=metrics,
+        generated_at=out["generated_at"],
     )
 
 

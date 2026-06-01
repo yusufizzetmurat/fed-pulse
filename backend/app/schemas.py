@@ -1668,3 +1668,59 @@ class SemanticDiffResponse(BaseModel):
     token_spans: list[SemanticDiffSpan]
     topic_deltas: list[SemanticDiffTopic]
     summary: str
+
+
+class HarTercileBacktestRow(BaseModel):
+    """One resolved (or pending) row in the HAR-tercile backtest table.
+
+    A row carries the persisted predicted tercile (read off the analyze
+    payload's ``regime_classification`` card) and, when the forward
+    window has elapsed, the realized tercile bucketed off the same
+    cutoffs that produced the prediction. ``correct`` is None for rows
+    whose forward window has not yet closed.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    event_date: str
+    predicted_tercile: str
+    predicted_prob: float
+    realized_tercile: str | None = None
+    realized_rv: float | None = None
+    correct: bool | None = None
+
+
+class HarAccuracyMetrics(BaseModel):
+    """Aggregate accuracy KPIs across the HAR-tercile backtest rows.
+
+    ``total_runs`` is the number of rows in the window, regardless of
+    whether their forward window has resolved. ``resolved_runs`` counts
+    rows whose realized tercile could be derived. ``accuracy_overall``
+    is the hit rate across resolved rows only; ``per_tercile_hit_rate``
+    keys are the predicted-tercile labels and values are per-label hit
+    rates (denominator = resolved rows whose prediction was that label).
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    total_runs: int
+    resolved_runs: int
+    accuracy_overall: float | None = None
+    per_tercile_hit_rate: dict[str, float] = Field(default_factory=dict)
+
+
+class HarTercileBacktestResponse(BaseModel):
+    """Response wire shape for ``GET /forecast/har-tercile-backtest``.
+
+    Surfaces the last N persisted ^GSPC analyze runs with their stored
+    HAR-tercile prediction and the realized tercile derived from
+    forward market history. Drives the HarAccuracyPanel card.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbol: str
+    horizon: int
+    rows: list[HarTercileBacktestRow]
+    metrics: HarAccuracyMetrics
+    generated_at: str
