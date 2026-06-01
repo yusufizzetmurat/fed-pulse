@@ -101,3 +101,37 @@ scheduled meetings/year; the signal is low-frequency by construction.
   QLIKE for HAR / ens / ens+text, ΔQLIKE point + Bonferroni CI, seed dispersion, feature
   coverage/variation diagnostics).
 - This pre-registration is committed before that file exists.
+
+---
+
+## Result (run 2026-06-01, 300 epochs × 5 seeds × 5 folds, GPU) — **NULL**
+
+**Harness validated:** the baseline ensemble reproduces the known beat-HAR result —
+QLIKE(ens) < QLIKE(HAR) at every horizon (h1 0.197 vs 0.223; h5 0.198 vs 0.219;
+h22 0.327 vs 0.360). So the pipeline is correct; the null below is about the *text* increment.
+
+**Incremental text effect ΔQLIKE = QLIKE(ens) − QLIKE(ens+text):**
+
+| cell | QLIKE_HAR | QLIKE_ens | ens+text | ΔQLIKE | Bonferroni CI | hit |
+|------|----------:|----------:|---------:|-------:|---------------|-----|
+| h1 / full       | 0.2229 | 0.1974 | 0.1984 | −0.0010 | [−0.0027, 0.0006] | no |
+| h1 / post-FOMC  | 0.1926 | 0.1905 | 0.1901 | +0.0004 | [−0.0037, 0.0042] | no |
+| h5 / full       | 0.2194 | 0.1975 | 0.1977 | −0.0002 | [−0.0033, 0.0027] | no |
+| h5 / post-FOMC  | 0.2374 | 0.2155 | 0.2203 | −0.0048 | [−0.0184, 0.0034] | no |
+| h22 / full      | 0.3597 | 0.3268 | 0.3359 | −0.0092 | [−0.0308, 0.0071] | no |
+| h22 / post-FOMC | 0.3102 | 0.2938 | 0.2928 | +0.0011 | [−0.0222, 0.0214] | no |
+
+**0 / 6 cells hit.** Every CI straddles zero; point estimates are tiny and mostly negative
+(text slightly *hurts* at h5/h22 full). **Verdict: NULL.**
+
+**Why (the pre-flagged confound won):** the certainty signal varies (std 0.51) and spikes
+in crises — but textual uncertainty is collinear with the high-vol regime HAR already reads
+through its own lags + the realized measures (rs±, bv, rq, parkinson). Once the model knows
+realized vol is elevated, "the statement sounded uncertain" carries no *incremental*
+information. This is the same efficient-information story as the directional nulls, now
+confirmed for the second moment too.
+
+**Decision (per the pre-registered rule):** null → **stop**. Do not proceed to Corner B by
+default (the rule was "Corner B only if A shows anything"). Corner B (forward-guidance/time
+axis → 2Y/5Y curve) remains the only economically-motivated avenue left, but it should only
+be run as a fresh, separately-pre-registered test if we choose to spend on the last lottery ticket.
