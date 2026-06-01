@@ -1496,3 +1496,159 @@ class HarTercileBaselineResponse(BaseModel):
     )
     model_revision: str
     generated_at: str
+
+
+# Workspace-spine bundle: shared response models for the four
+# feature steps that build on top of this foundation. The feature
+# steps fill the service-layer builders that populate these
+# numbers; this module only owns the wire shape so the frontend
+# types and the OpenAPI snapshot can settle ahead of the wiring.
+#
+# SPINE separation: ExpectedVolumeHorizonForecast /
+# ExpectedVolumeForecastResponse are the only forecast surface in
+# this bundle (market data only). MonetaryPolicySurpriseResponse,
+# FuturesConsensusResponse and SemanticDiffResponse are descriptive
+# panels (text- or realized-derived) and never feed forecasts.
+class ExpectedVolumeHorizonForecast(BaseModel):
+    """HAR-based forecast of expected log-residual trading volume for
+    one horizon. ``point_log_residual`` is the model's point estimate
+    in log-volume residual space (after calendar adjustment when the
+    flag is set); ``point_pct_vs_baseline`` is the same number
+    expressed as a % deviation from the rolling calendar-adjusted
+    baseline so the card can render a human-readable headline.
+    ``r2_har`` is the offline pooled walk-forward R^2 of the HAR
+    volume head at this horizon, surfaced for the calibration chip.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    h: int
+    point_log_residual: float
+    point_pct_vs_baseline: float
+    band_lo_80: float
+    band_hi_80: float
+    band_lo_90: float
+    band_hi_90: float
+    r2_har: float
+    calendar_adjusted: bool
+
+
+class ExpectedVolumeForecastResponse(BaseModel):
+    """Multi-horizon HAR-volume forecast for the Expected Volume card.
+    Market-data-only forecast; never wired to text features.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbol: str
+    horizons: list[ExpectedVolumeHorizonForecast]
+    model_revision: str
+    generated_at: str
+
+
+class MonetaryPolicySurpriseResponse(BaseModel):
+    """Monetary-policy surprise (descriptive panel, not a forecast input).
+
+    ``mp_surprise_level_bps`` is the realized rate-path surprise in
+    basis points relative to the pre-meeting fed-funds futures
+    consensus. ``direction`` is the discrete sign bucket the panel
+    renders; ``no_surprise`` covers the inside-the-band cases.
+    ``is_intermeeting`` flags off-cycle actions where the consensus
+    baseline is constructed differently.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    event_date: str
+    mp_surprise_level_bps: float
+    direction: Literal["hawkish", "dovish", "no_surprise"]
+    magnitude_bps: float
+    is_intermeeting: bool
+    ff_target_prior_bps: float | None = None
+
+
+class FuturesConsensusHorizon(BaseModel):
+    """One horizon of the fed-funds futures implied-path consensus.
+
+    Probabilities are derived from the implied-rate distribution and
+    bucketed against the current target band; they sum to 1.0 across
+    hike / cut / pause.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    horizon_label: str
+    implied_rate_bps: float
+    change_vs_current_bps: float
+    probability_hike: float
+    probability_cut: float
+    probability_pause: float
+
+
+class FuturesConsensusResponse(BaseModel):
+    """FRED / CME-derived futures consensus panel.
+
+    Descriptive only — the rate-path expectations chart reads off
+    realized futures prices and never feeds the forecast cards.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    meeting_date: str
+    generated_at: str
+    current_target_lo_bps: float
+    current_target_hi_bps: float
+    horizons: list[FuturesConsensusHorizon]
+    methodology: str
+    data_source: str
+
+
+class SemanticDiffSpan(BaseModel):
+    """One token-aligned span of the current-vs-prior statement diff.
+
+    ``kind`` is the alignment bucket; ``paired_text`` carries the
+    matched span on the opposite side for ``substituted`` (and
+    optionally for ``added`` / ``removed`` if the aligner emitted a
+    near-match neighbour).
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    kind: Literal["unchanged", "added", "removed", "substituted"]
+    text: str
+    paired_text: str | None = None
+
+
+class SemanticDiffTopic(BaseModel):
+    """Topic-level emphasis delta across the two statements.
+
+    ``prior_emphasis`` and ``current_emphasis`` are the topic-share
+    masses in [0, 1]; ``delta`` = current - prior. ``sample_phrases``
+    are the highest-loading n-grams the panel surfaces alongside the
+    bar.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    topic: str
+    prior_emphasis: float
+    current_emphasis: float
+    delta: float
+    sample_phrases: list[str] = Field(default_factory=list)
+
+
+class SemanticDiffResponse(BaseModel):
+    """Semantic diff between the current statement and its prior.
+
+    Descriptive panel — the spans and topic deltas are post-hoc
+    explanations of the realized text change and never feed the
+    forecast surface.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    current_date: str
+    prior_date: str
+    token_spans: list[SemanticDiffSpan]
+    topic_deltas: list[SemanticDiffTopic]
+    summary: str
