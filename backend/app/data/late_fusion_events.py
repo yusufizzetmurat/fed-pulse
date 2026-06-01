@@ -128,6 +128,15 @@ def build_event_windows(bars: pd.DataFrame) -> pd.DataFrame:
         ret_immediate = _log_change(px_imm, px_ann)
         ret_delayed = _log_change(px_del, px_imm)
 
+        # Announcement-window volume (the event-frame volume-head target): total
+        # volume in [announce, announce+30min] and the abnormal-volume ratio vs the
+        # pre-window. Pre-window features predict it; text is not expected to.
+        imm_end = ann_dt + pd.Timedelta(minutes=_IMMEDIATE_MINUTES)
+        imm_window = day[(day["timestamp_et"] >= ann_dt) & (day["timestamp_et"] < imm_end)]
+        imm_volume = float(imm_window["volume"].sum())
+        pre_vol_sum = float(pre["volume"].sum())
+        abn_volume = imm_volume / pre_vol_sum if pre_vol_sum > 0 else None
+
         rows.append(
             {
                 "event_date": event_date_str,
@@ -147,6 +156,8 @@ def build_event_windows(bars: pd.DataFrame) -> pd.DataFrame:
                 "ret_delayed": ret_delayed,
                 "dir_delayed": None if ret_delayed is None else int(ret_delayed > 0),
                 "mag_delayed": None if ret_delayed is None else abs(ret_delayed),
+                "imm_volume": imm_volume,
+                "abn_volume": abn_volume,
                 "n_bars": int(len(day)),
                 "has_anchors": int(None not in (px_pre, px_ann, px_imm, px_del)),
             }
