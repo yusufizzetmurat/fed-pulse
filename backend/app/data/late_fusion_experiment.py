@@ -90,6 +90,7 @@ class Loaded:
     y_dir: np.ndarray
     y_mag: np.ndarray
     struct_names: list[str]
+    doc_type: np.ndarray
 
 
 def load_frame(spec: FrameSpec) -> Loaded:
@@ -112,9 +113,13 @@ def load_frame(spec: FrameSpec) -> Loaded:
     struct = merged[struct_names].to_numpy(dtype=np.float32)
     y_dir = merged[spec.dir_col].to_numpy(dtype=np.float32)
     y_mag = merged[spec.mag_col].to_numpy(dtype=np.float32)
+    doc_type = (
+        merged["doc_type"].to_numpy() if "doc_type" in merged.columns
+        else np.array(["statement"] * len(merged))
+    )
     # keep only rows with a defined target
     ok = ~(np.isnan(y_dir) | np.isnan(y_mag))
-    return Loaded(text[ok], struct[ok], y_dir[ok], y_mag[ok], struct_names)
+    return Loaded(text[ok], struct[ok], y_dir[ok], y_mag[ok], struct_names, doc_type[ok])
 
 
 def walk_forward_splits(n: int, n_folds: int, embargo: int) -> list[tuple[np.ndarray, np.ndarray]]:
@@ -204,6 +209,7 @@ class OOS:
     market: dict[str, np.ndarray]
     text: dict[str, np.ndarray]
     full: dict[str, np.ndarray]
+    doc_type: np.ndarray
 
 
 def run_frame(spec: FrameSpec, cfg: Config, residualize: bool) -> OOS:
@@ -216,7 +222,7 @@ def run_frame(spec: FrameSpec, cfg: Config, residualize: bool) -> OOS:
         spec.frame, len(splits), cfg.n_folds, n, first_oos, max(first_oos - 1, 0),
     )
     acc: dict[str, list[np.ndarray]] = {
-        "y_dir": [], "y_mag": [], "mag_baseline": [],
+        "y_dir": [], "y_mag": [], "mag_baseline": [], "doc_type": [],
         "market_dir": [], "market_mag": [], "text_dir": [], "text_mag": [],
         "full_dir": [], "full_mag": [],
     }
@@ -246,6 +252,7 @@ def run_frame(spec: FrameSpec, cfg: Config, residualize: bool) -> OOS:
         acc["y_mag"].append(ym_te_s)  # standardized magnitude target
         # baseline in standardized space is the train mean -> 0
         acc["mag_baseline"].append(np.zeros(len(test_idx), dtype=np.float32))
+        acc["doc_type"].append(data.doc_type[test_idx])
 
     cat = {k: np.concatenate(v) for k, v in acc.items()}
     return OOS(
@@ -253,6 +260,7 @@ def run_frame(spec: FrameSpec, cfg: Config, residualize: bool) -> OOS:
         market={"dir": cat["market_dir"], "mag": cat["market_mag"]},
         text={"dir": cat["text_dir"], "mag": cat["text_mag"]},
         full={"dir": cat["full_dir"], "mag": cat["full_mag"]},
+        doc_type=cat["doc_type"],
     )
 
 
@@ -326,6 +334,23 @@ def summarize(spec: FrameSpec, oos: OOS, cfg: Config, residualize: bool) -> dict
     }
 
 
+def per_doctype(oos: OOS) -> list[dict[str, object]]:
+    """Per-doc-type direction breakdown (which communications carry the signal)."""
+    rows: list[dict[str, object]] = []
+    for dt in sorted(set(oos.doc_type.tolist())):
+        mask = oos.doc_type == dt
+        if int(mask.sum()) < 30:
+            continue
+        b, c, p = _mcnemar(oos.y_dir[mask], oos.full["dir"][mask], oos.market["dir"][mask])
+        rows.append({
+            "doc_type": dt, "n": int(mask.sum()),
+            "acc_market": round(_acc(oos.y_dir[mask], oos.market["dir"][mask]), 4),
+            "acc_full": round(_acc(oos.y_dir[mask], oos.full["dir"][mask]), 4),
+            "mcnemar": {"full_better": b, "market_better": c, "p": round(p, 4)},
+        })
+    return rows
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description="Run the late-fusion experiment.")
@@ -346,6 +371,10 @@ def main() -> None:
             print(f"\n=== {frame_name.upper()} | {tag} ===")
             for key, val in result.items():
                 print(f"  {key}: {val}")
+            if frame_name == "daily" and not residualize:
+                print("  per_doc_type:")
+                for row in per_doctype(oos):
+                    print(f"    {row}")
 
 
 if __name__ == "__main__":

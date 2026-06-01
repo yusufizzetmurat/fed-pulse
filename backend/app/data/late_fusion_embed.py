@@ -38,7 +38,7 @@ DEFAULT_ALIAS = "finbert_fed_adjacent"
 EXPECTED_REPO_SUBSTR = "finbert-fed"
 EXPECTED_DIM = 768
 MAX_TOKENS = 512
-MAX_CHUNKS = 16  # cap very long speeches at ~8k tokens
+MAX_CHUNKS = 48  # cap very long testimony at ~24k tokens (raised from 16)
 
 
 @dataclass(frozen=True)
