@@ -243,14 +243,19 @@ def get_rv_backtest(
             # Event sits outside the available RV history (future
             # meeting / pre-history). Surface as a pending row so the
             # panel's denominator stays meaningful.
+            # Use None on every nullable field, matching the warmup-window
+            # pending branch above. The Pydantic float | None fields serialise
+            # nan as null today, but the conversion happens at the wire layer
+            # only — in-memory consumers (logging, metrics) would see nan,
+            # and the behaviour is undocumented across pydantic minor releases.
             out_rows.append(
                 {
                     "event_date": event_date,
-                    "point_forecast_rv": float("nan"),
-                    "band_lo_80": float("nan"),
-                    "band_hi_80": float("nan"),
-                    "band_lo_90": float("nan"),
-                    "band_hi_90": float("nan"),
+                    "point_forecast_rv": None,
+                    "band_lo_80": None,
+                    "band_hi_80": None,
+                    "band_lo_90": None,
+                    "band_hi_90": None,
                     "realized_rv": None,
                     "in_band_80": None,
                     "in_band_90": None,

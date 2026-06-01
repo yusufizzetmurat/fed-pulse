@@ -37,6 +37,7 @@ import difflib
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from app.config import DATA_DIR
 from app.schemas import (
@@ -166,7 +167,10 @@ def _is_majority_non_latin(text: str) -> bool:
     return (latin / len(stripped)) < LATIN_RATIO_THRESHOLD
 
 
-def _classify_input(text: str) -> str | None:
+DegradedStatus = Literal["no_input", "non_english", "no_prior"]
+
+
+def _classify_input(text: str) -> Literal["no_input", "non_english"] | None:
     """Bucket ``text`` for the silent-null edge cases.
 
     Returns one of ``"no_input"`` / ``"non_english"`` when the diff
@@ -188,7 +192,7 @@ def _classify_input(text: str) -> str | None:
 
 def _degraded_response(
     current_date: str,
-    status: str,
+    status: DegradedStatus,
     summary: str,
 ) -> SemanticDiffResponse:
     """Build the empty-payload response used by every edge-case path.
@@ -204,7 +208,7 @@ def _degraded_response(
         token_spans=[],
         topic_deltas=[],
         summary=summary,
-        status=status,  # type: ignore[arg-type]
+        status=status,
     )
 
 

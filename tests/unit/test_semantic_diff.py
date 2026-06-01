@@ -305,6 +305,25 @@ def test_build_response_with_non_ascii_input_returns_non_english(
     assert "Non-Latin" in out.summary
 
 
+def test_build_response_with_cyrillic_input_returns_non_english(
+    tmp_path: Path,
+) -> None:
+    """Cyrillic script is the most likely real-world non-Latin paste
+    (Bank of Russia / NBU communications). The ord() < 256 detector
+    must catch it cleanly past the token-count threshold."""
+
+    path = _write_statements(
+        tmp_path / "fomc_statements.json",
+        [{"date": "2026-03-18", "text": "Inflation remains elevated."}],
+    )
+
+    cyrillic_body = "  ".join(["инфляция"] * 8)
+    out = build_response("2026-05-01", cyrillic_body, path=path)
+    assert out.status == "non_english"
+    assert out.token_spans == []
+    assert out.topic_deltas == []
+
+
 def test_compute_token_spans_with_short_input_returns_empty() -> None:
     """compute_token_spans must not raise on the edge-case inputs."""
 
