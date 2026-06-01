@@ -280,6 +280,21 @@ def test_predict_abnormal_volume_passes_symbol_through(stub_predictor: Any) -> N
     assert out["symbol"] == "^NDX"
 
 
+def test_predict_abnormal_volume_missing_r2_returns_none(
+    stub_predictor: Any,
+) -> None:
+    """r2_har is optional on the artifact; an absent value must serialize
+    cleanly as None instead of NaN so FastAPI's stdlib JSON encoder does
+    not 500 (Out of range float values are not JSON compliant)."""
+
+    for h in (1, 5, 22):
+        del stub_predictor.spec["by_horizon"][f"h{h}"]["r2_har"]
+    vol = np.exp(np.linspace(20.0, 21.0, 30))
+    out = volume_forecaster.predict_abnormal_volume(vol.tolist())
+    for row in out["horizons"]:
+        assert row["r2_har"] is None
+
+
 def test_safe_float_handles_none_and_garbage() -> None:
     assert volume_forecaster._safe_float(None) is None
     assert volume_forecaster._safe_float("abc") is None

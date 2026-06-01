@@ -333,9 +333,10 @@ export default function WorkspacePage() {
           setExpectedVolumeError(errorMessage(err, "HAR-volume forecast unavailable."));
         }
       } finally {
-        if (!controller.signal.aborted) {
-          setExpectedVolumeLoading(false);
-        }
+        // setState after unmount is a no-op in React 18; clearing
+        // loading unconditionally avoids a sticky spinner if the
+        // controller aborts mid-fetch on real navigation.
+        setExpectedVolumeLoading(false);
       }
     })();
     return () => {
@@ -360,9 +361,7 @@ export default function WorkspacePage() {
           setLatestMpSurprise(null);
         }
       } finally {
-        if (!controller.signal.aborted) {
-          setLatestMpSurpriseLoading(false);
-        }
+        setLatestMpSurpriseLoading(false);
       }
     })();
     return () => {
@@ -391,9 +390,7 @@ export default function WorkspacePage() {
           setFuturesConsensus(null);
         }
       } finally {
-        if (!controller.signal.aborted) {
-          setFuturesConsensusLoading(false);
-        }
+        setFuturesConsensusLoading(false);
       }
     })();
     return () => {
@@ -411,6 +408,13 @@ export default function WorkspacePage() {
   // submit cannot retrigger the POST until the next submit.
   const [semanticDiffSeq, setSemanticDiffSeq] = React.useState(0);
   const semanticDiffInputRef = React.useRef<{ text: string; date: string } | null>(null);
+  // The semantic diff is anchored on the submitted text; if the user
+  // changes the symbol (or wipes the date) without resubmitting, the
+  // previously-rendered diff is stale and should drop out until the
+  // next submit reseeds it.
+  React.useEffect(() => {
+    setSemanticDiff(null);
+  }, [request.symbol]);
   React.useEffect(() => {
     if (semanticDiffSeq === 0) return;
     const submitted = semanticDiffInputRef.current;
@@ -436,9 +440,7 @@ export default function WorkspacePage() {
           setSemanticDiff(null);
         }
       } finally {
-        if (!controller.signal.aborted) {
-          setSemanticDiffLoading(false);
-        }
+        setSemanticDiffLoading(false);
       }
     })();
     return () => {

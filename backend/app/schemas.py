@@ -1529,7 +1529,7 @@ class ExpectedVolumeHorizonForecast(BaseModel):
     band_hi_80: float
     band_lo_90: float
     band_hi_90: float
-    r2_har: float
+    r2_har: float | None = None
     calendar_adjusted: bool
 
 

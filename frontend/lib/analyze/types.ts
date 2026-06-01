@@ -701,13 +701,12 @@ export interface BacktestResponse {
 }
 
 // HAR-tercile regime baseline served from
-// GET /forecast/regime/baselines?symbol=^GSPC. The wiki §20 eval
-// shows HAR-tercile beats both market-only and the text+market
-// fusion on the 3-class forward-RV classification task, so this
-// surface is the Workspace's primary regime headline; the existing
-// late-fusion card becomes a "second opinion" alongside it. The
-// numeric ``predicted_rv`` is the model's point estimate of forward
-// realized variance — annualized vol % is derived UI-side.
+// GET /forecast/regime/baselines?symbol=^GSPC. HAR-tercile is the
+// Workspace's primary regime headline on the 3-class forward-RV
+// classification task; the late-fusion card becomes a "second
+// opinion" alongside it. The numeric ``predicted_rv`` is the
+// model's point estimate of forward realized variance — annualized
+// vol % is derived UI-side.
 export type HarTercileLabel = "low" | "medium" | "high";
 
 export interface HarTercileHorizon {
@@ -744,7 +743,7 @@ export interface ExpectedVolumeHorizonForecast {
   band_hi_80: number;
   band_lo_90: number;
   band_hi_90: number;
-  r2_har: number;
+  r2_har: number | null;
   calendar_adjusted: boolean;
 }
 

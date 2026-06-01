@@ -43,9 +43,10 @@ interface HorizonColumnProps {
 function HorizonColumn({ horizon }: HorizonColumnProps) {
   const label = HORIZON_LABELS[horizon.h] ?? `${horizon.h}d`;
   const headlineTone = pctToneClass(horizon.point_pct_vs_baseline);
-  const r2 = Number.isFinite(horizon.r2_har)
-    ? `R² ${horizon.r2_har.toFixed(2)}`
-    : "R² N/A";
+  const r2 =
+    horizon.r2_har !== null && Number.isFinite(horizon.r2_har)
+      ? `R² ${horizon.r2_har.toFixed(2)}`
+      : "R² N/A";
   return (
     <div
       data-testid={`expected-volume-horizon-${horizon.h}`}

@@ -1,3 +1,6 @@
+time="2026-06-01T18:10:15+03:00" level=warning msg="Found orphan containers ([swe599-redis]) for this project. If you removed or renamed this service in your compose file, you can run this command with the --remove-orphans flag to clean it up."
+ Container fed-pulse-backend-run-b16eec00a82e Creating 
+ Container fed-pulse-backend-run-b16eec00a82e Created 
 {
   "components": {
     "schemas": {
@@ -1212,8 +1215,15 @@
             "type": "number"
           },
           "r2_har": {
-            "title": "R2 Har",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "R2 Har"
           }
         },
         "required": [
@@ -1224,7 +1234,6 @@
           "band_hi_80",
           "band_lo_90",
           "band_hi_90",
-          "r2_har",
           "calendar_adjusted"
         ],
         "title": "ExpectedVolumeHorizonForecast",

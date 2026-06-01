@@ -346,7 +346,7 @@ def predict_abnormal_volume(
                 "band_hi_80": float(band_hi_80),
                 "band_lo_90": float(band_lo_90),
                 "band_hi_90": float(band_hi_90),
-                "r2_har": float(r2) if r2 is not None else float("nan"),
+                "r2_har": r2,
                 "calendar_adjusted": bool(calendar_adjusted),
             }
         )
