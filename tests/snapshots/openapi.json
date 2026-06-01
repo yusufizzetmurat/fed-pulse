@@ -1,0 +1,5679 @@
+{
+  "components": {
+    "schemas": {
+      "AnalogCard": {
+        "description": "One historical analog returned by /analyze/analogs.\n\nThe card deliberately does NOT carry the raw\n``forward_realized_vol_10d`` target the project trains on \u2014 that\nvalue is the supervised label and surfacing it as an API field\nwould tempt downstream consumers to feed it back into a model.\nInstead the card exposes ``subsequent_vol_regime``, a coarse\n``calm`` / ``normal`` / ``high`` bucket pinned to the\n``VOL_REGIME_BUCKET_EDGES`` constant in ``app.retrieval.index``\n(held-out 2000-2015 reference distribution). The bucket label is a\nUI-only marker; treat it as informative for humans, not as a\nfeature for a downstream model.",
+        "properties": {
+          "axis_stance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Stored stance label for the analog statement (hawkish / dovish / neutral). None when absent.",
+            "title": "Axis Stance"
+          },
+          "event_date": {
+            "description": "ISO date of the historical FOMC statement.",
+            "title": "Event Date",
+            "type": "string"
+          },
+          "excerpt": {
+            "description": "First ~280 characters of the analog statement.",
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "similarity": {
+            "description": "Cosine similarity in [-1, 1] vs. the query embedding.",
+            "title": "Similarity",
+            "type": "number"
+          },
+          "subsequent_close_pct_20d": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "S&P 500 close-to-close % return over the 20 trading days following the event-day close.",
+            "title": "Subsequent Close Pct 20D"
+          },
+          "subsequent_close_pct_5d": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "S&P 500 close-to-close % return over the 5 trading days following the event-day close.",
+            "title": "Subsequent Close Pct 5D"
+          },
+          "subsequent_vol_regime": {
+            "anyOf": [
+              {
+                "enum": [
+                  "calm",
+                  "normal",
+                  "high"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Coarse post-event 10-day realised vol bucket \u2014 UI-only label, NOT a model feature. Do not feed back into a downstream model.",
+            "title": "Subsequent Vol Regime"
+          }
+        },
+        "required": [
+          "event_date",
+          "similarity",
+          "excerpt"
+        ],
+        "title": "AnalogCard",
+        "type": "object"
+      },
+      "AnalogsRequest": {
+        "additionalProperties": false,
+        "description": "Query a fine-tuned retrieval encoder for past FOMC statements that\nsound like ``text``. Returns top-``k`` analogs ordered by cosine\nsimilarity together with a coarse post-event volatility regime label\nso the caller can show \"what regime followed each analog\" without\nexposing the underlying supervised target value.",
+        "properties": {
+          "as_of_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Strict-backward walk-forward boundary: only analogs with ``event_date < as_of_date`` are eligible. Default is no boundary; for ML feature use always pass a date so the retrieval set does not leak future statements into the training fold.",
+            "title": "As Of Date"
+          },
+          "k": {
+            "default": 5,
+            "description": "Number of analogs to return (1-20).",
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "K",
+            "type": "integer"
+          },
+          "text": {
+            "description": "Statement text to match against past FOMC statements.",
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "AnalogsRequest",
+        "type": "object"
+      },
+      "AnalogsResponse": {
+        "description": "Result envelope for /analyze/analogs.",
+        "properties": {
+          "analogs": {
+            "items": {
+              "$ref": "#/components/schemas/AnalogCard"
+            },
+            "title": "Analogs",
+            "type": "array"
+          },
+          "encoder_alias": {
+            "description": "Registry alias of the encoder used to embed the query.",
+            "title": "Encoder Alias",
+            "type": "string"
+          },
+          "index_size": {
+            "description": "Total number of past statements in the loaded retrieval index.",
+            "title": "Index Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index_size",
+          "encoder_alias"
+        ],
+        "title": "AnalogsResponse",
+        "type": "object"
+      },
+      "AnalyzeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "description": "Document date in ISO format: YYYY-MM-DD",
+            "title": "Date",
+            "type": "string"
+          },
+          "horizon": {
+            "default": "3d",
+            "description": "Forecast horizon label",
+            "title": "Horizon",
+            "type": "string"
+          },
+          "include_realized": {
+            "default": false,
+            "description": "When true and date is in the past, include realized forward series overlay.",
+            "title": "Include Realized",
+            "type": "boolean"
+          },
+          "include_xai": {
+            "default": false,
+            "description": "When true, return per-sentence + per-token XAI attribution alongside the forecast.",
+            "title": "Include Xai",
+            "type": "boolean"
+          },
+          "mask_sentence_indices": {
+            "description": "Counterfactual: 0-based indices of sentences to drop from the text before running the pipeline. Sentences are split using the same tokenizer that produces xai.sentences. Empty list = no mask.",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Mask Sentence Indices",
+            "type": "array"
+          },
+          "symbol": {
+            "default": "^GSPC",
+            "description": "Market ticker, e.g. ^GSPC or DX-Y.NYB",
+            "title": "Symbol",
+            "type": "string"
+          },
+          "text": {
+            "description": "FOMC statement text",
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "date"
+        ],
+        "title": "AnalyzeRequest",
+        "type": "object"
+      },
+      "AnalyzeResponse": {
+        "properties": {
+          "credibility": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CredibilityResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "market": {
+            "$ref": "#/components/schemas/MarketDataResponse"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ModelDiagnosticsResponse"
+          },
+          "multi_axis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MultiAxisBlock"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PolicyActionCard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "prediction": {
+            "$ref": "#/components/schemas/PredictionResponse"
+          },
+          "rates_reaction": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/RatesReactionCard"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rates Reaction"
+          },
+          "regime_classification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegimeClassificationCard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "regime_classification_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InferenceStatusSurface"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "regime_regression": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegimeRegressionCard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sentiment": {
+            "$ref": "#/components/schemas/SentimentResponse"
+          },
+          "series": {
+            "$ref": "#/components/schemas/ForecastSeriesResponse"
+          },
+          "xai": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/XaiResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sentiment",
+          "prediction",
+          "market",
+          "model",
+          "series"
+        ],
+        "title": "AnalyzeResponse",
+        "type": "object"
+      },
+      "ArtifactFile": {
+        "description": "One file under ``data/artifacts/<section>/``.",
+        "properties": {
+          "modified_at": {
+            "description": "ISO-8601 mtime, UTC.",
+            "title": "Modified At",
+            "type": "string"
+          },
+          "relative_path": {
+            "description": "Path relative to data/artifacts/",
+            "title": "Relative Path",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "suffix": {
+            "description": "File extension including the dot, e.g. .json",
+            "title": "Suffix",
+            "type": "string"
+          }
+        },
+        "required": [
+          "relative_path",
+          "size_bytes",
+          "modified_at",
+          "suffix"
+        ],
+        "title": "ArtifactFile",
+        "type": "object"
+      },
+      "BacktestPositionEntry": {
+        "additionalProperties": false,
+        "description": "One {date, position} signal in the backtest request.",
+        "properties": {
+          "date": {
+            "description": "ISO date YYYY-MM-DD of the signal.",
+            "title": "Date",
+            "type": "string"
+          },
+          "position": {
+            "description": "Position in {-1, 0, 1}. Hawkish=-1, neutral=0, dovish=+1.",
+            "title": "Position",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "date",
+          "position"
+        ],
+        "title": "BacktestPositionEntry",
+        "type": "object"
+      },
+      "BacktestRequest": {
+        "additionalProperties": false,
+        "description": "Request body for POST /research/backtest.",
+        "properties": {
+          "horizon_days": {
+            "default": 5,
+            "description": "Forward holding period in trading days.",
+            "maximum": 60.0,
+            "minimum": 1.0,
+            "title": "Horizon Days",
+            "type": "integer"
+          },
+          "positions": {
+            "description": "At least one signal entry.",
+            "items": {
+              "$ref": "#/components/schemas/BacktestPositionEntry"
+            },
+            "minItems": 1,
+            "title": "Positions",
+            "type": "array"
+          },
+          "symbol": {
+            "default": "^GSPC",
+            "description": "Market ticker for the strategy backtest.",
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "positions"
+        ],
+        "title": "BacktestRequest",
+        "type": "object"
+      },
+      "BacktestResponse": {
+        "description": "Aggregate backtest metrics for the quant terminal.",
+        "properties": {
+          "alpha_cum_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alpha Cum Pct"
+          },
+          "benchmark_cum_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Cum Pct"
+          },
+          "cum_return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cum Return Pct"
+          },
+          "hit_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hit Rate"
+          },
+          "horizon_days": {
+            "title": "Horizon Days",
+            "type": "integer"
+          },
+          "max_dd_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Dd Pct"
+          },
+          "n_trades": {
+            "title": "N Trades",
+            "type": "integer"
+          },
+          "sharpe": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sharpe"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "trades": {
+            "items": {
+              "$ref": "#/components/schemas/BacktestTradeRow"
+            },
+            "title": "Trades",
+            "type": "array"
+          }
+        },
+        "required": [
+          "n_trades",
+          "horizon_days",
+          "symbol"
+        ],
+        "title": "BacktestResponse",
+        "type": "object"
+      },
+      "BacktestTradeRow": {
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "forward_return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forward Return Pct"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "strategy_return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Return Pct"
+          }
+        },
+        "required": [
+          "date",
+          "position"
+        ],
+        "title": "BacktestTradeRow",
+        "type": "object"
+      },
+      "Body_parse_document_documents_parse_post": {
+        "properties": {
+          "file": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "title": "Body_parse_document_documents_parse_post",
+        "type": "object"
+      },
+      "ChunkAttentionDiagnostics": {
+        "properties": {
+          "chunk_count": {
+            "title": "Chunk Count",
+            "type": "integer"
+          },
+          "chunk_previews": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Chunk Previews",
+            "type": "array"
+          },
+          "decay_coeffs": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Decay Coeffs",
+            "type": "array"
+          },
+          "lambda_value": {
+            "title": "Lambda Value",
+            "type": "number"
+          },
+          "weights": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Weights",
+            "type": "array"
+          }
+        },
+        "required": [
+          "chunk_count",
+          "weights",
+          "decay_coeffs",
+          "chunk_previews",
+          "lambda_value"
+        ],
+        "title": "ChunkAttentionDiagnostics",
+        "type": "object"
+      },
+      "ClassificationBreakdownClass": {
+        "properties": {
+          "class_id": {
+            "title": "Class Id",
+            "type": "integer"
+          },
+          "f1": {
+            "title": "F1",
+            "type": "number"
+          },
+          "pr_auc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Auc"
+          },
+          "precision": {
+            "title": "Precision",
+            "type": "number"
+          },
+          "recall": {
+            "title": "Recall",
+            "type": "number"
+          },
+          "roc_auc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Roc Auc"
+          },
+          "support": {
+            "title": "Support",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "class_id",
+          "precision",
+          "recall",
+          "f1",
+          "support"
+        ],
+        "title": "ClassificationBreakdownClass",
+        "type": "object"
+      },
+      "ClassificationBreakdownResponse": {
+        "description": "The richer eval emitted by app/evaluation/classification_breakdown.py.\n\nSurfaces the freshest ``best_trial.summary.metrics.classification_breakdown``\nblock written under ``data/artifacts/regime_*``. ``available`` is\nfalse when no qualifying artifact exists \u2014 the UI then falls back to\nits client-side aggregation across history rows.",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "class_labels": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Labels"
+          },
+          "confusion_matrix": {
+            "anyOf": [
+              {
+                "items": {
+                  "items": {
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confusion Matrix"
+          },
+          "macro_f1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Macro F1"
+          },
+          "macro_pr_auc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Macro Pr Auc"
+          },
+          "macro_precision": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Macro Precision"
+          },
+          "macro_recall": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Macro Recall"
+          },
+          "macro_roc_auc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Macro Roc Auc"
+          },
+          "n_classes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Classes"
+          },
+          "per_class": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ClassificationBreakdownClass"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Class"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClassificationBreakdownSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "weighted_f1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weighted F1"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "ClassificationBreakdownResponse",
+        "type": "object"
+      },
+      "ClassificationBreakdownSource": {
+        "properties": {
+          "checkpoint_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint Path"
+          },
+          "modified_at": {
+            "title": "Modified At",
+            "type": "string"
+          },
+          "relative_path": {
+            "title": "Relative Path",
+            "type": "string"
+          },
+          "training_package_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Training Package Id"
+          }
+        },
+        "required": [
+          "relative_path",
+          "modified_at"
+        ],
+        "title": "ClassificationBreakdownSource",
+        "type": "object"
+      },
+      "CredibilityResponse": {
+        "properties": {
+          "drift_score": {
+            "title": "Drift Score",
+            "type": "number"
+          },
+          "market_implied_gap": {
+            "title": "Market Implied Gap",
+            "type": "number"
+          },
+          "months_since_reversal": {
+            "title": "Months Since Reversal",
+            "type": "integer"
+          },
+          "realized_vs_stated_gap": {
+            "title": "Realized Vs Stated Gap",
+            "type": "number"
+          }
+        },
+        "required": [
+          "drift_score",
+          "realized_vs_stated_gap",
+          "market_implied_gap",
+          "months_since_reversal"
+        ],
+        "title": "CredibilityResponse",
+        "type": "object"
+      },
+      "CrossBankTransferSection": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/TransferMatrixCell"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "metric_name": {
+            "default": "macro_f1",
+            "title": "Metric Name",
+            "type": "string"
+          },
+          "source_files": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Files",
+            "type": "array"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "targets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "CrossBankTransferSection",
+        "type": "object"
+      },
+      "DocumentParseResponse": {
+        "properties": {
+          "char_count": {
+            "title": "Char Count",
+            "type": "integer"
+          },
+          "source_kind": {
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "source_metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Source Metadata",
+            "type": "object"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "char_count",
+          "source_kind",
+          "source_metadata"
+        ],
+        "title": "DocumentParseResponse",
+        "type": "object"
+      },
+      "EncoderBakeoffRow": {
+        "properties": {
+          "accuracy_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accuracy Mean"
+          },
+          "checkpoint": {
+            "title": "Checkpoint",
+            "type": "string"
+          },
+          "cohen_kappa": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cohen Kappa"
+          },
+          "encoder_key": {
+            "title": "Encoder Key",
+            "type": "string"
+          },
+          "macro_f1_ci_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Macro F1 Ci High"
+          },
+          "macro_f1_ci_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Macro F1 Ci Low"
+          },
+          "macro_f1_mean": {
+            "title": "Macro F1 Mean",
+            "type": "number"
+          },
+          "macro_f1_values": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Macro F1 Values",
+            "type": "array"
+          },
+          "seeds": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Seeds",
+            "type": "array"
+          },
+          "weighted_f1_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weighted F1 Mean"
+          }
+        },
+        "required": [
+          "encoder_key",
+          "checkpoint",
+          "seeds",
+          "macro_f1_values",
+          "macro_f1_mean"
+        ],
+        "title": "EncoderBakeoffRow",
+        "type": "object"
+      },
+      "EncoderBakeoffSection": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/EncoderBakeoffRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "source_files": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Files",
+            "type": "array"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "EncoderBakeoffSection",
+        "type": "object"
+      },
+      "EvaluationCoverageResponse": {
+        "description": "Empirical conformal coverage aggregated across recent history runs.\n\n``nominal`` is the conformal target the active model was calibrated\nto (read off the most-recent run that carries\n``series.forecast_confidence_level``). ``empirical`` is the fraction\nof runs whose realized regime label fell inside the predicted set.\nBoth are None when no qualifying runs exist.",
+        "properties": {
+          "computed_at": {
+            "title": "Computed At",
+            "type": "string"
+          },
+          "empirical": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Empirical"
+          },
+          "nominal": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nominal"
+          },
+          "runs_total": {
+            "title": "Runs Total",
+            "type": "integer"
+          },
+          "sample_size": {
+            "title": "Sample Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sample_size",
+          "runs_total",
+          "computed_at"
+        ],
+        "title": "EvaluationCoverageResponse",
+        "type": "object"
+      },
+      "ExpectedVolumeForecastResponse": {
+        "description": "Multi-horizon HAR-volume forecast for the Expected Volume card.\nMarket-data-only forecast; never wired to text features.",
+        "properties": {
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "horizons": {
+            "items": {
+              "$ref": "#/components/schemas/ExpectedVolumeHorizonForecast"
+            },
+            "title": "Horizons",
+            "type": "array"
+          },
+          "model_revision": {
+            "title": "Model Revision",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "horizons",
+          "model_revision",
+          "generated_at"
+        ],
+        "title": "ExpectedVolumeForecastResponse",
+        "type": "object"
+      },
+      "ExpectedVolumeHorizonForecast": {
+        "description": "HAR-based forecast of expected log-residual trading volume for\none horizon. ``point_log_residual`` is the model's point estimate\nin log-volume residual space (after calendar adjustment when the\nflag is set); ``point_pct_vs_baseline`` is the same number\nexpressed as a % deviation from the rolling calendar-adjusted\nbaseline so the card can render a human-readable headline.\n``r2_har`` is the offline pooled walk-forward R^2 of the HAR\nvolume head at this horizon, surfaced for the calibration chip.",
+        "properties": {
+          "band_hi_80": {
+            "title": "Band Hi 80",
+            "type": "number"
+          },
+          "band_hi_90": {
+            "title": "Band Hi 90",
+            "type": "number"
+          },
+          "band_lo_80": {
+            "title": "Band Lo 80",
+            "type": "number"
+          },
+          "band_lo_90": {
+            "title": "Band Lo 90",
+            "type": "number"
+          },
+          "calendar_adjusted": {
+            "title": "Calendar Adjusted",
+            "type": "boolean"
+          },
+          "h": {
+            "title": "H",
+            "type": "integer"
+          },
+          "point_log_residual": {
+            "title": "Point Log Residual",
+            "type": "number"
+          },
+          "point_pct_vs_baseline": {
+            "title": "Point Pct Vs Baseline",
+            "type": "number"
+          },
+          "r2_har": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "R2 Har"
+          }
+        },
+        "required": [
+          "h",
+          "point_log_residual",
+          "point_pct_vs_baseline",
+          "band_lo_80",
+          "band_hi_80",
+          "band_lo_90",
+          "band_hi_90",
+          "calendar_adjusted"
+        ],
+        "title": "ExpectedVolumeHorizonForecast",
+        "type": "object"
+      },
+      "FomcCalendarResponse": {
+        "properties": {
+          "past": {
+            "items": {
+              "$ref": "#/components/schemas/FomcMeetingResponse"
+            },
+            "title": "Past",
+            "type": "array"
+          },
+          "upcoming": {
+            "items": {
+              "$ref": "#/components/schemas/FomcMeetingResponse"
+            },
+            "title": "Upcoming",
+            "type": "array"
+          }
+        },
+        "required": [
+          "past",
+          "upcoming"
+        ],
+        "title": "FomcCalendarResponse",
+        "type": "object"
+      },
+      "FomcMeetingResponse": {
+        "properties": {
+          "meeting_date": {
+            "title": "Meeting Date",
+            "type": "string"
+          },
+          "meeting_type": {
+            "title": "Meeting Type",
+            "type": "string"
+          },
+          "minutes_release_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minutes Release Date"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "statement_release_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statement Release Date"
+          }
+        },
+        "required": [
+          "meeting_date",
+          "meeting_type"
+        ],
+        "title": "FomcMeetingResponse",
+        "type": "object"
+      },
+      "ForecastSeriesResponse": {
+        "properties": {
+          "conformal_coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Nominal coverage of conformal bands when forecast_band_source='conformal'.",
+            "title": "Conformal Coverage"
+          },
+          "forecast_band_source": {
+            "default": "gaussian_z",
+            "description": "Source of the forecast bands: 'gaussian_z' (z-score) or 'conformal'.",
+            "title": "Forecast Band Source",
+            "type": "string"
+          },
+          "forecast_close": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Forecast Close",
+            "type": "array"
+          },
+          "forecast_close_lower": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Forecast Close Lower",
+            "type": "array"
+          },
+          "forecast_close_upper": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Forecast Close Upper",
+            "type": "array"
+          },
+          "forecast_confidence_level": {
+            "title": "Forecast Confidence Level",
+            "type": "number"
+          },
+          "forecast_timestamps": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Forecast Timestamps",
+            "type": "array"
+          },
+          "forecast_volatility": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Forecast Volatility",
+            "type": "array"
+          },
+          "forecast_volatility_lower": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Forecast Volatility Lower",
+            "type": "array"
+          },
+          "forecast_volatility_upper": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Forecast Volatility Upper",
+            "type": "array"
+          },
+          "history_close": {
+            "items": {
+              "type": "number"
+            },
+            "title": "History Close",
+            "type": "array"
+          },
+          "history_volatility": {
+            "items": {
+              "type": "number"
+            },
+            "title": "History Volatility",
+            "type": "array"
+          },
+          "realized_close": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Close"
+          },
+          "realized_timestamps": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Timestamps"
+          },
+          "realized_volatility": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Volatility"
+          },
+          "timestamps": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Timestamps",
+            "type": "array"
+          },
+          "volatility_scale": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Volatility Scale",
+            "type": "object"
+          }
+        },
+        "required": [
+          "timestamps",
+          "history_close",
+          "history_volatility",
+          "forecast_timestamps",
+          "forecast_close",
+          "forecast_close_lower",
+          "forecast_close_upper",
+          "forecast_volatility",
+          "forecast_volatility_lower",
+          "forecast_volatility_upper",
+          "forecast_confidence_level",
+          "volatility_scale"
+        ],
+        "title": "ForecastSeriesResponse",
+        "type": "object"
+      },
+      "FuturesConsensusHorizon": {
+        "description": "One horizon of the fed-funds futures implied-path consensus.\n\nProbabilities are derived from the implied-rate distribution and\nbucketed against the current target band; they sum to 1.0 across\nhike / cut / pause.",
+        "properties": {
+          "change_vs_current_bps": {
+            "title": "Change Vs Current Bps",
+            "type": "number"
+          },
+          "horizon_label": {
+            "title": "Horizon Label",
+            "type": "string"
+          },
+          "implied_rate_bps": {
+            "title": "Implied Rate Bps",
+            "type": "number"
+          },
+          "probability_cut": {
+            "title": "Probability Cut",
+            "type": "number"
+          },
+          "probability_hike": {
+            "title": "Probability Hike",
+            "type": "number"
+          },
+          "probability_pause": {
+            "title": "Probability Pause",
+            "type": "number"
+          }
+        },
+        "required": [
+          "horizon_label",
+          "implied_rate_bps",
+          "change_vs_current_bps",
+          "probability_hike",
+          "probability_cut",
+          "probability_pause"
+        ],
+        "title": "FuturesConsensusHorizon",
+        "type": "object"
+      },
+      "FuturesConsensusResponse": {
+        "description": "FRED / CME-derived futures consensus panel.\n\nDescriptive only \u2014 the rate-path expectations chart reads off\nrealized futures prices and never feeds the forecast cards.",
+        "properties": {
+          "current_target_hi_bps": {
+            "title": "Current Target Hi Bps",
+            "type": "number"
+          },
+          "current_target_lo_bps": {
+            "title": "Current Target Lo Bps",
+            "type": "number"
+          },
+          "data_source": {
+            "title": "Data Source",
+            "type": "string"
+          },
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "horizons": {
+            "items": {
+              "$ref": "#/components/schemas/FuturesConsensusHorizon"
+            },
+            "title": "Horizons",
+            "type": "array"
+          },
+          "meeting_date": {
+            "title": "Meeting Date",
+            "type": "string"
+          },
+          "methodology": {
+            "title": "Methodology",
+            "type": "string"
+          }
+        },
+        "required": [
+          "meeting_date",
+          "generated_at",
+          "current_target_lo_bps",
+          "current_target_hi_bps",
+          "horizons",
+          "methodology",
+          "data_source"
+        ],
+        "title": "FuturesConsensusResponse",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HarTercileBaselineResponse": {
+        "description": "Multi-horizon HAR-tercile regime baseline for the headline regime card.\n\nPer wiki section 20, HAR-tercile is the strongest forward-vol-regime\nclassifier on the canonical fold protocol (beats market-only and the\ntext+market fused arm at h=1 and h=22; null at h=5). The frontend\nrenders this response as the headline regime card and demotes the\ntext+market fused card to a \"second opinion\" with explicit\nweaker-baseline disclosure.",
+        "properties": {
+          "cutoffs_q33": {
+            "description": "Lower tercile cutoff on realized variance used to bucket the HAR point forecast. Derived from the supplied RV history when the artifact does not pin a per-horizon train-slice cutoff.",
+            "title": "Cutoffs Q33",
+            "type": "number"
+          },
+          "cutoffs_q67": {
+            "description": "Upper tercile cutoff on realized variance.",
+            "title": "Cutoffs Q67",
+            "type": "number"
+          },
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "horizons": {
+            "items": {
+              "$ref": "#/components/schemas/HarTercileHorizon"
+            },
+            "title": "Horizons",
+            "type": "array"
+          },
+          "model_revision": {
+            "title": "Model Revision",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "horizons",
+          "cutoffs_q33",
+          "cutoffs_q67",
+          "model_revision",
+          "generated_at"
+        ],
+        "title": "HarTercileBaselineResponse",
+        "type": "object"
+      },
+      "HarTercileHorizon": {
+        "description": "HAR-tercile baseline classification for one forecast horizon.\n\n``predicted_rv`` is HAR's OLS point in realized-variance units.\n``tercile`` is the argmax bucket against the q33 / q67 cutoffs the\nresponse also returns; ``tercile_probs`` is the Gaussian-CDF mass\ntriple in log-RV space (sums to 1.0). ``macro_f1`` is wired through\nfrom wiki section 20 \u2014 the published HAR-tercile pooled macro-F1 on\nthe canonical 5-fold expanding walk-forward (0.687 / 0.685 / 0.654\nat h=1 / 5 / 22). The serving path does not recompute this number;\nit surfaces the offline-measured one so the frontend can render an\nhonest chip alongside the live point forecast.",
+        "properties": {
+          "h": {
+            "title": "H",
+            "type": "integer"
+          },
+          "macro_f1": {
+            "description": "Pooled macro-F1 for the HAR-tercile baseline at this horizon, read off wiki section 20 (Gated_Fusion_InfoNCE_Comprehensive_Null, Result 2). Not recomputed on the serving path.",
+            "title": "Macro F1",
+            "type": "number"
+          },
+          "macro_f1_source": {
+            "description": "Citation for the macro_f1 number (wiki section + result block).",
+            "title": "Macro F1 Source",
+            "type": "string"
+          },
+          "predicted_rv": {
+            "title": "Predicted Rv",
+            "type": "number"
+          },
+          "qlike_har": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pooled walk-forward QLIKE loss for HAR-OLS at this horizon.",
+            "title": "Qlike Har"
+          },
+          "qlike_model": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pooled walk-forward QLIKE loss for the QLIKE-DLq ensemble at this horizon (lower is better). None when the eval sidecar is missing.",
+            "title": "Qlike Model"
+          },
+          "tercile": {
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "title": "Tercile",
+            "type": "string"
+          },
+          "tercile_probs": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "Per-class probability over (low, medium, high). Sums to 1.0.",
+            "title": "Tercile Probs",
+            "type": "object"
+          }
+        },
+        "required": [
+          "h",
+          "predicted_rv",
+          "tercile",
+          "macro_f1",
+          "macro_f1_source"
+        ],
+        "title": "HarTercileHorizon",
+        "type": "object"
+      },
+      "HistoryDetail": {
+        "properties": {
+          "argmax_probability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Argmax Probability"
+          },
+          "argmax_regime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Argmax Regime"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "current_close": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Close"
+          },
+          "document_date": {
+            "title": "Document Date",
+            "type": "string"
+          },
+          "forecast_mode": {
+            "title": "Forecast Mode",
+            "type": "string"
+          },
+          "horizon": {
+            "title": "Horizon",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "predicted_close": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Close"
+          },
+          "predicted_volatility": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Volatility"
+          },
+          "regime_set_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regime Set Size"
+          },
+          "sentiment_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sentiment Score"
+          },
+          "stance": {
+            "title": "Stance",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "text_excerpt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text Excerpt"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "symbol",
+          "document_date",
+          "horizon",
+          "forecast_mode",
+          "stance",
+          "payload"
+        ],
+        "title": "HistoryDetail",
+        "type": "object"
+      },
+      "HistoryEntry": {
+        "properties": {
+          "argmax_probability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Argmax Probability"
+          },
+          "argmax_regime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Argmax Regime"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "current_close": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Close"
+          },
+          "document_date": {
+            "title": "Document Date",
+            "type": "string"
+          },
+          "forecast_mode": {
+            "title": "Forecast Mode",
+            "type": "string"
+          },
+          "horizon": {
+            "title": "Horizon",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "predicted_close": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Close"
+          },
+          "predicted_volatility": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Volatility"
+          },
+          "regime_set_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regime Set Size"
+          },
+          "sentiment_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sentiment Score"
+          },
+          "stance": {
+            "title": "Stance",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "text_excerpt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text Excerpt"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "symbol",
+          "document_date",
+          "horizon",
+          "forecast_mode",
+          "stance"
+        ],
+        "title": "HistoryEntry",
+        "type": "object"
+      },
+      "HistoryEventStudyResponse": {
+        "description": "Forward 10-trading-day price path anchored on the event date.\n\nBacks the event-study chart on /history/[id]: the realised close path\nplus the bucketed realised regime label so the headline can read\n\"predicted X, realized Y\".",
+        "properties": {
+          "event_date": {
+            "title": "Event Date",
+            "type": "string"
+          },
+          "forward_close": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Forward Close",
+            "type": "array"
+          },
+          "forward_dates": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Forward Dates",
+            "type": "array"
+          },
+          "forward_log_returns": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Forward Log Returns",
+            "type": "array"
+          },
+          "predicted_regime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Regime"
+          },
+          "realized_regime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Regime"
+          },
+          "realized_vol_10d": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Vol 10D"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_date",
+          "symbol",
+          "forward_dates",
+          "forward_close",
+          "forward_log_returns"
+        ],
+        "title": "HistoryEventStudyResponse",
+        "type": "object"
+      },
+      "HistoryList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryEntry"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "HistoryList",
+        "type": "object"
+      },
+      "HistoryRealizedBatchResponse": {
+        "description": "Batched realized payloads keyed by run_id. Missing runs (deleted,\nyfinance failure) come back under ``missing`` so the caller can render\na partial result instead of failing the whole page.",
+        "properties": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/HistoryRealizedResponse"
+            },
+            "title": "Items",
+            "type": "object"
+          },
+          "missing": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "missing"
+        ],
+        "title": "HistoryRealizedBatchResponse",
+        "type": "object"
+      },
+      "HistoryRealizedResponse": {
+        "properties": {
+          "close": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Close",
+            "type": "array"
+          },
+          "document_date": {
+            "title": "Document Date",
+            "type": "string"
+          },
+          "horizon": {
+            "title": "Horizon",
+            "type": "string"
+          },
+          "realized_regime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Regime"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "timestamps": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Timestamps",
+            "type": "array"
+          },
+          "volatility": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Volatility",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run_id",
+          "symbol",
+          "document_date",
+          "horizon",
+          "timestamps",
+          "close",
+          "volatility"
+        ],
+        "title": "HistoryRealizedResponse",
+        "type": "object"
+      },
+      "InferenceStatusSurface": {
+        "description": "Structured error surface for the per-card inference helpers (#341).\n\nSibling of :class:`RegimeClassificationCard` on the /analyze\nresponse. Populated when the card-build helper degrades through\none of three structured branches:\n\n- ``not_classification_mode`` -- the active checkpoint emits no\n  regime card by contract. Legitimate; UI renders the card as\n  absent.\n- ``inference_kwarg_missing`` -- the serving call site fed (or\n  omitted) a kwarg the checkpoint did not declare in its\n  inference contract sidecar. Operator-facing bug.\n- ``unexpected_exception`` -- anything else; ``exception_class``\n  carries the class name and ``detail`` the message so the\n  operator can grep for it without parsing logs.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "exception_class": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exception Class"
+          },
+          "missing_kwarg": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missing Kwarg"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "InferenceStatusSurface",
+        "type": "object"
+      },
+      "MarketDataResponse": {
+        "properties": {
+          "close": {
+            "title": "Close",
+            "type": "number"
+          },
+          "date_used": {
+            "title": "Date Used",
+            "type": "string"
+          },
+          "lookback_days": {
+            "title": "Lookback Days",
+            "type": "integer"
+          },
+          "requested_date": {
+            "title": "Requested Date",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "volatility_5d": {
+            "title": "Volatility 5D",
+            "type": "number"
+          }
+        },
+        "required": [
+          "symbol",
+          "requested_date",
+          "date_used",
+          "lookback_days",
+          "close",
+          "volatility_5d"
+        ],
+        "title": "MarketDataResponse",
+        "type": "object"
+      },
+      "MarketReactionPanel": {
+        "description": "Bundle of four reaction cards (#293).\n\nReturned by ``POST /analyze/market``. Includes one card per mounted\nrates head plus the existing vol-regime card. Heads not mounted on\nthe active checkpoint emit an empty ``rates`` list and ``None`` for\n``vol_regime`` so the frontend can render a graceful empty state.",
+        "properties": {
+          "checkpoint_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint Path"
+          },
+          "encoder_alias": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Encoder Alias"
+          },
+          "rates": {
+            "items": {
+              "$ref": "#/components/schemas/RatesReactionCard"
+            },
+            "title": "Rates",
+            "type": "array"
+          },
+          "vol_regime": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VolRegimeReactionCard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "MarketReactionPanel",
+        "type": "object"
+      },
+      "ModelDiagnosticsResponse": {
+        "properties": {
+          "adaptation_best_epoch": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adaptation Best Epoch"
+          },
+          "adaptation_combined_rmse": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adaptation Combined Rmse"
+          },
+          "adaptation_epochs_completed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adaptation Epochs Completed"
+          },
+          "adaptation_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adaptation Loss"
+          },
+          "best_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Loss"
+          },
+          "checkpoint_exists": {
+            "title": "Checkpoint Exists",
+            "type": "boolean"
+          },
+          "checkpoint_loaded": {
+            "title": "Checkpoint Loaded",
+            "type": "boolean"
+          },
+          "checkpoint_path": {
+            "title": "Checkpoint Path",
+            "type": "string"
+          },
+          "chunk_attention": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChunkAttentionDiagnostics"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "close_scale": {
+            "title": "Close Scale",
+            "type": "number"
+          },
+          "combined_rmse": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Combined Rmse"
+          },
+          "decay_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decay Rate"
+          },
+          "dropout": {
+            "title": "Dropout",
+            "type": "number"
+          },
+          "encoder_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Encoder Key"
+          },
+          "head_hidden_size": {
+            "title": "Head Hidden Size",
+            "type": "integer"
+          },
+          "hidden_size": {
+            "title": "Hidden Size",
+            "type": "integer"
+          },
+          "num_layers": {
+            "title": "Num Layers",
+            "type": "integer"
+          },
+          "runtime_mode": {
+            "title": "Runtime Mode",
+            "type": "string"
+          },
+          "sequence_length": {
+            "title": "Sequence Length",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "checkpoint_path",
+          "checkpoint_exists",
+          "checkpoint_loaded",
+          "runtime_mode",
+          "hidden_size",
+          "num_layers",
+          "dropout",
+          "head_hidden_size",
+          "close_scale",
+          "sequence_length"
+        ],
+        "title": "ModelDiagnosticsResponse",
+        "type": "object"
+      },
+      "MonetaryPolicySurpriseResponse": {
+        "description": "Monetary-policy surprise (descriptive panel, not a forecast input).\n\n``mp_surprise_level_bps`` is the realized rate-path surprise in\nbasis points relative to the pre-meeting fed-funds futures\nconsensus. ``direction`` is the discrete sign bucket the panel\nrenders; ``no_surprise`` covers the inside-the-band cases.\n``is_intermeeting`` flags off-cycle actions where the consensus\nbaseline is constructed differently.",
+        "properties": {
+          "direction": {
+            "enum": [
+              "hawkish",
+              "dovish",
+              "no_surprise"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "event_date": {
+            "title": "Event Date",
+            "type": "string"
+          },
+          "ff_target_prior_bps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ff Target Prior Bps"
+          },
+          "is_intermeeting": {
+            "title": "Is Intermeeting",
+            "type": "boolean"
+          },
+          "magnitude_bps": {
+            "title": "Magnitude Bps",
+            "type": "number"
+          },
+          "mp_surprise_level_bps": {
+            "title": "Mp Surprise Level Bps",
+            "type": "number"
+          }
+        },
+        "required": [
+          "event_date",
+          "mp_surprise_level_bps",
+          "direction",
+          "magnitude_bps",
+          "is_intermeeting"
+        ],
+        "title": "MonetaryPolicySurpriseResponse",
+        "type": "object"
+      },
+      "MultiAxisBlock": {
+        "description": "Multi-task head per-axis predictions surfaced on /analyze (#78).\n\nThe three axes mirror the multi-task head's three output branches.\nStance reuses the canonical 3-class classifier (also exposed on\nthe legacy ``sentiment`` field for back-compat); the other two\nbranches were populated for the first time with this block. Axes\nwhose checkpoint was trained on very few labels are flagged as\nlow-confidence; the frontend renders a muted card in that case.\n\nThe topic axis was retired in ADR 0044 \u2014 no upstream FOMC or\ncross-bank corpus shipped topic labels, and the only path that\never populated ``axis_topic`` was an internal macro-release\naugmentation that no longer fires on the rebuild path.",
+        "properties": {
+          "certainty": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MultiAxisCertaintyCard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "factor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MultiAxisFactorCard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stance": {
+            "$ref": "#/components/schemas/MultiAxisStanceCard"
+          }
+        },
+        "required": [
+          "stance"
+        ],
+        "title": "MultiAxisBlock",
+        "type": "object"
+      },
+      "MultiAxisCertaintyCard": {
+        "description": "Certainty prediction from the multi-task head.",
+        "properties": {
+          "confidence": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "distribution": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Distribution",
+            "type": "object"
+          },
+          "label": {
+            "description": "certain | uncertain | neutral",
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "confidence"
+        ],
+        "title": "MultiAxisCertaintyCard",
+        "type": "object"
+      },
+      "MultiAxisFactorCard": {
+        "description": "Forward-guidance factor regression in [-1, 1].\n\nPositive values lean hawkish, negative values lean dovish. Sourced\nfrom the multi-task head's tanh-bounded regression branch.\nConfidence reflects training-time coverage and is left to the\ncaller to calibrate; absent supervision, the field is None.",
+        "properties": {
+          "confidence": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "value": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "value",
+          "confidence"
+        ],
+        "title": "MultiAxisFactorCard",
+        "type": "object"
+      },
+      "MultiAxisStanceCard": {
+        "description": "Stance prediction from the multi-task head.",
+        "properties": {
+          "confidence": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "distribution": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "Per-class softmax probability over hawkish/dovish/neutral.",
+            "title": "Distribution",
+            "type": "object"
+          },
+          "label": {
+            "description": "hawkish | dovish | neutral",
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "confidence"
+        ],
+        "title": "MultiAxisStanceCard",
+        "type": "object"
+      },
+      "NextFomcAttributionRow": {
+        "properties": {
+          "brier": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brier"
+          },
+          "families": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Families",
+            "type": "array"
+          },
+          "log_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log Loss"
+          },
+          "macro_f1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Macro F1"
+          },
+          "n": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N"
+          },
+          "n_features": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Features"
+          },
+          "subset": {
+            "title": "Subset",
+            "type": "string"
+          },
+          "top1_accuracy": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top1 Accuracy"
+          }
+        },
+        "required": [
+          "subset",
+          "families"
+        ],
+        "title": "NextFomcAttributionRow",
+        "type": "object"
+      },
+      "NextFomcForecastResponse": {
+        "properties": {
+          "artifacts_dir": {
+            "title": "Artifacts Dir",
+            "type": "string"
+          },
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "feature_attribution": {
+            "items": {
+              "$ref": "#/components/schemas/NextFomcAttributionRow"
+            },
+            "title": "Feature Attribution",
+            "type": "array"
+          },
+          "headline": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NextFomcMeetingPrediction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/NextFomcMeetingPrediction"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "metrics_ex_pandemic": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NextFomcModelMetrics"
+            },
+            "title": "Metrics Ex Pandemic",
+            "type": "object"
+          },
+          "metrics_full_window": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NextFomcModelMetrics"
+            },
+            "title": "Metrics Full Window",
+            "type": "object"
+          },
+          "model_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Model Names",
+            "type": "array"
+          },
+          "ordinal_classes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ordinal Classes",
+            "type": "array"
+          },
+          "summary": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Summary",
+            "type": "object"
+          },
+          "upcoming_meeting": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NextFomcUpcomingMeeting"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "available",
+          "artifacts_dir",
+          "ordinal_classes"
+        ],
+        "title": "NextFomcForecastResponse",
+        "type": "object"
+      },
+      "NextFomcMeetingPrediction": {
+        "properties": {
+          "n_train_rows": {
+            "title": "N Train Rows",
+            "type": "integer"
+          },
+          "predicted_class": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Predicted Class",
+            "type": "object"
+          },
+          "probabilities": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            "title": "Probabilities",
+            "type": "object"
+          },
+          "target_as_of_ts": {
+            "title": "Target As Of Ts",
+            "type": "string"
+          },
+          "target_class": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Realised class, when known. None for the next-scheduled meeting.",
+            "title": "Target Class"
+          },
+          "target_event_date": {
+            "title": "Target Event Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_event_date",
+          "target_as_of_ts",
+          "n_train_rows",
+          "probabilities",
+          "predicted_class"
+        ],
+        "title": "NextFomcMeetingPrediction",
+        "type": "object"
+      },
+      "NextFomcModelMetrics": {
+        "properties": {
+          "brier": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brier"
+          },
+          "confusion_matrix": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "title": "Confusion Matrix",
+            "type": "object"
+          },
+          "log_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log Loss"
+          },
+          "macro_f1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Macro F1"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "top1_accuracy": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top1 Accuracy"
+          }
+        },
+        "required": [
+          "n"
+        ],
+        "title": "NextFomcModelMetrics",
+        "type": "object"
+      },
+      "NextFomcUpcomingMeeting": {
+        "properties": {
+          "days_until": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Until"
+          },
+          "meeting_date": {
+            "title": "Meeting Date",
+            "type": "string"
+          },
+          "meeting_type": {
+            "title": "Meeting Type",
+            "type": "string"
+          },
+          "statement_release_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statement Release Date"
+          }
+        },
+        "required": [
+          "meeting_date",
+          "meeting_type"
+        ],
+        "title": "NextFomcUpcomingMeeting",
+        "type": "object"
+      },
+      "PolicyActionCard": {
+        "description": "Mechanical policy decision extracted from the statement text (#446).\n\nSibling of :class:`RegimeClassificationCard` on the /analyze\nresponse. Pure extraction surface \u2014 no model inference, no\ncalibration. The four fields mirror the\n:class:`app.services.policy_action_extractor.PolicyAction`\ndataclass and are all optional so a statement that names no target\nrange (press conference Q&A, scraping miss, non-policy text) still\nserialises as a card with every field ``None``.\n\nUnits: ``target_range_low_bp`` / ``target_range_high_bp`` are in\nbasis points (3.50% \u2192 350). ``change_magnitude_bp`` is signed\n(positive on a hike, negative on a cut, zero on a hold). The\nfrontend renders the colour by ``change_direction``: hike = red,\ncut = green, hold = neutral.",
+        "properties": {
+          "balance_sheet_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "expansion",
+                  "tapering",
+                  "runoff"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Balance-sheet posture extracted from the paragraph that names balance-sheet operations. None when the paragraph is absent or carries no posture-defining keyword.",
+            "title": "Balance Sheet State"
+          },
+          "change_direction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "hike",
+                  "hold",
+                  "cut"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Verb-derived direction of the action. None when no policy verb is named (e.g. press-conference Q&A) and no prior midpoint was provided to the extractor.",
+            "title": "Change Direction"
+          },
+          "change_magnitude_bp": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Signed change in basis points relative to the prior meeting (positive on a hike, negative on a cut, zero on a hold). Pulled from in-prose magnitude phrases ('by 25 basis points', 'by 1/4 percentage point') first; falls back to ``this_mid - prior_mid`` when the caller supplied a prior midpoint.",
+            "title": "Change Magnitude Bp"
+          },
+          "target_range_high_bp": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Upper bound of the named target range, in basis points.",
+            "title": "Target Range High Bp"
+          },
+          "target_range_low_bp": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Lower bound of the named target range, in basis points (e.g. 350 for a 3.50% lower bound). None when no target range is named in the text.",
+            "title": "Target Range Low Bp"
+          }
+        },
+        "title": "PolicyActionCard",
+        "type": "object"
+      },
+      "PredictionResponse": {
+        "properties": {
+          "close": {
+            "title": "Close",
+            "type": "number"
+          },
+          "horizon": {
+            "title": "Horizon",
+            "type": "string"
+          },
+          "volatility": {
+            "title": "Volatility",
+            "type": "number"
+          }
+        },
+        "required": [
+          "close",
+          "volatility",
+          "horizon"
+        ],
+        "title": "PredictionResponse",
+        "type": "object"
+      },
+      "RatesReactionCard": {
+        "description": "Per-rates-head market-reaction card surfaced on /analyze/market (#293).\n\nThe card carries the model's point prediction in basis points for one\nrates head (``2y`` / ``5y`` / ``terminal``), the symmetric conformal\nband derived from the val-fitted residual quantile, the directional\nbucket (``easing`` / ``neutral`` / ``tightening``) the auxiliary\nclassifier emits, and the per-class probability distribution so the\nfrontend can render a probability bar alongside the headline number.",
+        "properties": {
+          "bucket_probabilities": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Per-bucket softmax probabilities over (easing, neutral, tightening). None when no aux classifier is mounted.",
+            "title": "Bucket Probabilities"
+          },
+          "coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Nominal conformal coverage (1 - alpha). None when bands are absent.",
+            "title": "Coverage"
+          },
+          "directional_bucket": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "easing | neutral | tightening (argmax of the auxiliary classifier). None when no aux classifier is mounted.",
+            "title": "Directional Bucket"
+          },
+          "head": {
+            "description": "Head short name: 2y | 5y | terminal",
+            "title": "Head",
+            "type": "string"
+          },
+          "lower_bps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Conformal band lower bound in bps. None when no calibration sidecar is present.",
+            "title": "Lower Bps"
+          },
+          "point_bps": {
+            "description": "Point prediction in basis points.",
+            "title": "Point Bps",
+            "type": "number"
+          },
+          "predicted_set": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Calibrated APS prediction set per rates head. None when no conformal sidecar is present.",
+            "title": "Predicted Set"
+          },
+          "upper_bps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Conformal band upper bound in bps. None when no calibration sidecar is present.",
+            "title": "Upper Bps"
+          }
+        },
+        "required": [
+          "head",
+          "point_bps"
+        ],
+        "title": "RatesReactionCard",
+        "type": "object"
+      },
+      "RealizedVolForecastResponse": {
+        "description": "Multi-horizon QLIKE-DLq forecast plus last-60d realized history.",
+        "properties": {
+          "history": {
+            "items": {
+              "type": "number"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "history_dates": {
+            "items": {
+              "type": "string"
+            },
+            "title": "History Dates",
+            "type": "array"
+          },
+          "horizons": {
+            "items": {
+              "$ref": "#/components/schemas/RealizedVolHorizonForecast"
+            },
+            "title": "Horizons",
+            "type": "array"
+          },
+          "model_revision": {
+            "title": "Model Revision",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "horizons",
+          "model_revision"
+        ],
+        "title": "RealizedVolForecastResponse",
+        "type": "object"
+      },
+      "RealizedVolHorizonForecast": {
+        "description": "Banded RV forecast for one horizon (1, 5, or 22 trading days).\n\n``point`` and the four ``band_*`` numbers are RV (variance) units, not\nlog-RV. ``qlike_model`` / ``qlike_har`` are the pooled walk-forward\nQLIKE losses (lower is better); the card surfaces the gain as a\nbeat-HAR badge. ``coverage_empirical_90`` is the prospective empirical\ncoverage of the 90% conformal band, for the calibration chip.",
+        "properties": {
+          "band_hi_80": {
+            "title": "Band Hi 80",
+            "type": "number"
+          },
+          "band_hi_90": {
+            "title": "Band Hi 90",
+            "type": "number"
+          },
+          "band_lo_80": {
+            "title": "Band Lo 80",
+            "type": "number"
+          },
+          "band_lo_90": {
+            "title": "Band Lo 90",
+            "type": "number"
+          },
+          "coverage_empirical_90": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage Empirical 90"
+          },
+          "h": {
+            "title": "H",
+            "type": "integer"
+          },
+          "point": {
+            "title": "Point",
+            "type": "number"
+          },
+          "qlike_har": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qlike Har"
+          },
+          "qlike_model": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qlike Model"
+          }
+        },
+        "required": [
+          "h",
+          "point",
+          "band_lo_80",
+          "band_hi_80",
+          "band_lo_90",
+          "band_hi_90"
+        ],
+        "title": "RealizedVolHorizonForecast",
+        "type": "object"
+      },
+      "RegimeClassificationCard": {
+        "description": "Calibrated prediction-set output from the vol-regime classifier (#216).\n\nSurfaces the conformal APS set on the /analyze response. ``predicted_set``\nholds the class labels the calibrated threshold admits at the\n``coverage`` level; ``set_label`` is the UI-friendly bracketed string;\n``distribution`` is the raw per-class softmax for the inference row so\nthe frontend can render a bar chart alongside the set chips.\n\nPopulated only when the active checkpoint is classification-mode AND\na sibling ``.conformal.json`` manifest with ``softmax_quantile`` exists.\nPre-#216 regression-only checkpoints leave the field as ``None`` on\nthe response and the legacy uncalibrated max-softmax stays on the\n``sentiment`` block.",
+        "properties": {
+          "argmax_class": {
+            "title": "Argmax Class",
+            "type": "string"
+          },
+          "bucket_source": {
+            "default": "classification",
+            "description": "Declares which head produced argmax_class: 'regression' means the 3-class label was bucketed UI-side from log_rv_point against the active checkpoint's vol_regime_quantiles cutoffs (see app.services.regime_bucketing); 'classification' means the label came from the 3-class softmax head's argmax.",
+            "enum": [
+              "regression",
+              "classification"
+            ],
+            "title": "Bucket Source",
+            "type": "string"
+          },
+          "coverage": {
+            "title": "Coverage",
+            "type": "number"
+          },
+          "distribution": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Distribution",
+            "type": "object"
+          },
+          "log_rv_lower": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "80% conformal-band lower bound around log_rv_point (matches the existing close/vol band convention). None when no conformal manifest is on disk or the regression head is not active.",
+            "title": "Log Rv Lower"
+          },
+          "log_rv_point": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Regression-head point prediction in standardised log(forward realized vol) space, or None on a classification-only checkpoint. See ADR 0015 / #322.",
+            "title": "Log Rv Point"
+          },
+          "log_rv_upper": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "See log_rv_lower; upper bound.",
+            "title": "Log Rv Upper"
+          },
+          "predicted_set": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Predicted Set",
+            "type": "array"
+          },
+          "set_label": {
+            "title": "Set Label",
+            "type": "string"
+          },
+          "set_size": {
+            "title": "Set Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "predicted_set",
+          "set_label",
+          "set_size",
+          "coverage",
+          "distribution",
+          "argmax_class"
+        ],
+        "title": "RegimeClassificationCard",
+        "type": "object"
+      },
+      "RegimeRegressionCard": {
+        "description": "Regression-head sibling block on the /analyze response (#304).\n\nThe classification card stays the headline; this block carries the\nsame dual-head regression output (``log_rv_point`` + symmetric 90%\nconformal band) as a standalone surface so a downstream consumer\ncan read the continuous prediction without parsing it out of the\nclassification card. Populated only when the active checkpoint\nmounts the regression head (``head_mode`` in ``regression`` /\n``dual``) AND ``build_regime_classification_card`` returned a card\nwhose ``log_rv_point`` is non-null; otherwise the field stays\n``None`` on the response.\n\nUnits mirror :class:`RegimeClassificationCard`: ``log_rv_point`` is\nin standardised log(forward realized vol) space (the per-fold\ntrain-slice standardiser the dual-head trainer fits, see\n``log_rv_scaler`` on the run summary). ``log_rv_lower`` /\n``log_rv_upper`` are the symmetric conformal interval at\n``coverage`` nominal coverage; on a checkpoint without a conformal\nsidecar the bounds collapse to ``None`` even when the point\nestimate is populated.",
+        "properties": {
+          "coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Nominal coverage on the conformal interval (0.9 by default; matches the manifest's nominal_coverage when the sidecar carries one). None when the regression head is mounted but no conformal manifest is on disk.",
+            "title": "Coverage"
+          },
+          "log_rv_lower": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log Rv Lower"
+          },
+          "log_rv_point": {
+            "title": "Log Rv Point",
+            "type": "number"
+          },
+          "log_rv_upper": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log Rv Upper"
+          }
+        },
+        "required": [
+          "log_rv_point"
+        ],
+        "title": "RegimeRegressionCard",
+        "type": "object"
+      },
+      "ResearchArtifactsResponse": {
+        "properties": {
+          "artifacts_root": {
+            "title": "Artifacts Root",
+            "type": "string"
+          },
+          "cross_bank_transfer": {
+            "$ref": "#/components/schemas/CrossBankTransferSection"
+          },
+          "encoder_bakeoff": {
+            "$ref": "#/components/schemas/EncoderBakeoffSection"
+          },
+          "sections": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/ArtifactFile"
+              },
+              "type": "array"
+            },
+            "title": "Sections",
+            "type": "object"
+          }
+        },
+        "required": [
+          "artifacts_root",
+          "sections",
+          "encoder_bakeoff",
+          "cross_bank_transfer"
+        ],
+        "title": "ResearchArtifactsResponse",
+        "type": "object"
+      },
+      "ResearchRegistryBaseline": {
+        "properties": {
+          "cls_f1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cls F1"
+          },
+          "dual_f1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dual F1"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "regression_f1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regression F1"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "title": "ResearchRegistryBaseline",
+        "type": "object"
+      },
+      "ResearchRegistryResponse": {
+        "description": "Quant-facing encoder registry response (\u00a76.41 manifest).\n\nFiltered by default to non-negative \u0394 on the requested surface so\nthe dashboard does not surface negative-lift encoders. Use\n?include_rejected=true to see the full table including nulls and\nnegatives.",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "baseline": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResearchRegistryBaseline"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "head": {
+            "default": "",
+            "title": "Head",
+            "type": "string"
+          },
+          "rejected_count": {
+            "default": 0,
+            "title": "Rejected Count",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchRegistryRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "seeds": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Seeds",
+            "type": "array"
+          },
+          "source_wiki_section": {
+            "default": "",
+            "title": "Source Wiki Section",
+            "type": "string"
+          },
+          "surface": {
+            "enum": [
+              "dual",
+              "cls"
+            ],
+            "title": "Surface",
+            "type": "string"
+          },
+          "training_package_id": {
+            "default": "",
+            "title": "Training Package Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "available",
+          "surface"
+        ],
+        "title": "ResearchRegistryResponse",
+        "type": "object"
+      },
+      "ResearchRegistryRow": {
+        "properties": {
+          "cache_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "hf:// URI of the shareable embedding cache parquet, if published.",
+            "title": "Cache Uri"
+          },
+          "checkpoint_relpath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint Relpath"
+          },
+          "cls_f1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cls F1"
+          },
+          "delta_cls": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\u0394 macro-F1 on the classification-only surface vs no-text baseline.",
+            "title": "Delta Cls"
+          },
+          "delta_dual": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\u0394 macro-F1 on the dual-head surface vs no-text baseline.",
+            "title": "Delta Dual"
+          },
+          "dual_f1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dual F1"
+          },
+          "encoder_alias": {
+            "title": "Encoder Alias",
+            "type": "string"
+          },
+          "encoder_display": {
+            "title": "Encoder Display",
+            "type": "string"
+          },
+          "is_winner": {
+            "default": false,
+            "description": "True iff the active surfaces \u0394 is >= 0 (non-negative lift).",
+            "title": "Is Winner",
+            "type": "boolean"
+          },
+          "notes": {
+            "default": "",
+            "title": "Notes",
+            "type": "string"
+          },
+          "regression_f1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regression F1"
+          }
+        },
+        "required": [
+          "encoder_alias",
+          "encoder_display"
+        ],
+        "title": "ResearchRegistryRow",
+        "type": "object"
+      },
+      "SemanticDiffRequest": {
+        "additionalProperties": false,
+        "description": "Inbound body for ``POST /fomc/semantic-diff``.\n\n``current_date`` selects the strict-prior FOMC statement off disk;\n``current_text`` is the pasted body the panel diffs against that\nprior. Both fields are required \u2014 the cold-start case is still a\nvalid call, the service just returns an empty span list when no\nstrict-prior is on file for the supplied date.",
+        "properties": {
+          "current_date": {
+            "description": "Document date in ISO format: YYYY-MM-DD",
+            "title": "Current Date",
+            "type": "string"
+          },
+          "current_text": {
+            "description": "FOMC statement text to diff",
+            "minLength": 1,
+            "title": "Current Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "current_date",
+          "current_text"
+        ],
+        "title": "SemanticDiffRequest",
+        "type": "object"
+      },
+      "SemanticDiffResponse": {
+        "description": "Semantic diff between the current statement and its prior.\n\nDescriptive panel \u2014 the spans and topic deltas are post-hoc\nexplanations of the realized text change and never feed the\nforecast surface.",
+        "properties": {
+          "current_date": {
+            "title": "Current Date",
+            "type": "string"
+          },
+          "prior_date": {
+            "title": "Prior Date",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "token_spans": {
+            "items": {
+              "$ref": "#/components/schemas/SemanticDiffSpan"
+            },
+            "title": "Token Spans",
+            "type": "array"
+          },
+          "topic_deltas": {
+            "items": {
+              "$ref": "#/components/schemas/SemanticDiffTopic"
+            },
+            "title": "Topic Deltas",
+            "type": "array"
+          }
+        },
+        "required": [
+          "current_date",
+          "prior_date",
+          "token_spans",
+          "topic_deltas",
+          "summary"
+        ],
+        "title": "SemanticDiffResponse",
+        "type": "object"
+      },
+      "SemanticDiffSpan": {
+        "description": "One token-aligned span of the current-vs-prior statement diff.\n\n``kind`` is the alignment bucket; ``paired_text`` carries the\nmatched span on the opposite side for ``substituted`` (and\noptionally for ``added`` / ``removed`` if the aligner emitted a\nnear-match neighbour).",
+        "properties": {
+          "kind": {
+            "enum": [
+              "unchanged",
+              "added",
+              "removed",
+              "substituted"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "paired_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paired Text"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "text"
+        ],
+        "title": "SemanticDiffSpan",
+        "type": "object"
+      },
+      "SemanticDiffTopic": {
+        "description": "Topic-level emphasis delta across the two statements.\n\n``prior_emphasis`` and ``current_emphasis`` are the topic-share\nmasses in [0, 1]; ``delta`` = current - prior. ``sample_phrases``\nare the highest-loading n-grams the panel surfaces alongside the\nbar.",
+        "properties": {
+          "current_emphasis": {
+            "title": "Current Emphasis",
+            "type": "number"
+          },
+          "delta": {
+            "title": "Delta",
+            "type": "number"
+          },
+          "prior_emphasis": {
+            "title": "Prior Emphasis",
+            "type": "number"
+          },
+          "sample_phrases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sample Phrases",
+            "type": "array"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "prior_emphasis",
+          "current_emphasis",
+          "delta"
+        ],
+        "title": "SemanticDiffTopic",
+        "type": "object"
+      },
+      "SentimentResponse": {
+        "properties": {
+          "is_in_distribution": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is In Distribution"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "ood_energy": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ood Energy"
+          },
+          "ood_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ood Threshold"
+          },
+          "raw": {
+            "items": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            "title": "Raw",
+            "type": "array"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "label",
+          "score",
+          "raw"
+        ],
+        "title": "SentimentResponse",
+        "type": "object"
+      },
+      "SettingsCheckpoint": {
+        "description": "One file under ``backend/models/`` surfaced on the settings page.\n\nInventory only; nothing here mutates the running singleton. ``role``\nis inferred from the filename (forecaster / multi_axis / lora /\ncalibration) and ``is_active`` flags the file the active service is\ncurrently loaded from. The diagnostic fields (output_mode,\nencoder_alias, conformal_sidecar_present) only populate on the\nactive forecaster + active multi-axis entries.\n\n#342: ``required_kwargs`` mirrors the inference-contract sidecar\n(empty list when no sidecar \u2014 pre-#341 legacy artefact).\n``supplied_at_inference`` maps each declared kwarg to the live\nserving wiring; mismatches drive the red-badge surface on the\nsettings page. ``inference_contract_status`` is ``\"sidecar_absent\"``\nfor legacy checkpoints, otherwise ``\"present\"``.",
+        "properties": {
+          "conformal_sidecar_present": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conformal Sidecar Present"
+          },
+          "encoder_alias": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Encoder Alias"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "inference_contract_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inference Contract Status"
+          },
+          "is_active": {
+            "default": false,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "modified_at": {
+            "title": "Modified At",
+            "type": "string"
+          },
+          "output_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Mode"
+          },
+          "relative_path": {
+            "title": "Relative Path",
+            "type": "string"
+          },
+          "required_kwargs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Kwargs",
+            "type": "array"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "supplied_at_inference": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Supplied At Inference",
+            "type": "object"
+          }
+        },
+        "required": [
+          "filename",
+          "relative_path",
+          "role",
+          "size_bytes",
+          "modified_at"
+        ],
+        "title": "SettingsCheckpoint",
+        "type": "object"
+      },
+      "SettingsCheckpointsResponse": {
+        "properties": {
+          "checkpoints": {
+            "items": {
+              "$ref": "#/components/schemas/SettingsCheckpoint"
+            },
+            "title": "Checkpoints",
+            "type": "array"
+          },
+          "models_dir": {
+            "title": "Models Dir",
+            "type": "string"
+          }
+        },
+        "required": [
+          "models_dir",
+          "checkpoints"
+        ],
+        "title": "SettingsCheckpointsResponse",
+        "type": "object"
+      },
+      "SymbolDescriptor": {
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "default_horizon": {
+            "title": "Default Horizon",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "name",
+          "category",
+          "default_horizon"
+        ],
+        "title": "SymbolDescriptor",
+        "type": "object"
+      },
+      "SymbolListResponse": {
+        "properties": {
+          "symbols": {
+            "items": {
+              "$ref": "#/components/schemas/SymbolDescriptor"
+            },
+            "title": "Symbols",
+            "type": "array"
+          }
+        },
+        "required": [
+          "symbols"
+        ],
+        "title": "SymbolListResponse",
+        "type": "object"
+      },
+      "TrajectoryMarker": {
+        "description": "One past FOMC meeting rendered as a semantic marker on the panel chart.",
+        "properties": {
+          "axis_stance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Stored stance label (hawkish / dovish / neutral) for the meeting. None when the panel was trained against a corpus without labels.",
+            "title": "Axis Stance"
+          },
+          "embedding_2d": {
+            "description": "PCA / UMAP projection of the meeting's encoder embedding to 2-D space, used as the marker's (x, y) coordinates.",
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Embedding 2D",
+            "type": "array"
+          },
+          "event_date": {
+            "description": "ISO date of the historical FOMC meeting.",
+            "title": "Event Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_date",
+          "embedding_2d"
+        ],
+        "title": "TrajectoryMarker",
+        "type": "object"
+      },
+      "TrajectoryProjection": {
+        "description": "Next-meeting projection \u2014 predicted class + calibrated confidence band.",
+        "properties": {
+          "class_probs": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "Per-class probability over hawkish / dovish / neutral. Sums to 1.0 after defensive renormalisation.",
+            "title": "Class Probs",
+            "type": "object"
+          },
+          "confidence_band": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "APS-calibrated stance set (Romano et al. 2020). Empty when no conformal sidecar shipped with the bundle; the UI then renders the argmax marker without the confidence ring.",
+            "title": "Confidence Band"
+          },
+          "conformal_alpha": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Conformal mis-coverage level applied to confidence_band.",
+            "title": "Conformal Alpha"
+          },
+          "predicted_stance": {
+            "description": "Argmax over the next-meeting stance distribution.",
+            "title": "Predicted Stance",
+            "type": "string"
+          }
+        },
+        "required": [
+          "predicted_stance"
+        ],
+        "title": "TrajectoryProjection",
+        "type": "object"
+      },
+      "TrajectoryRequest": {
+        "additionalProperties": false,
+        "description": "Project the FOMC stance trajectory as of ``as_of_date``.\n\nStrict-backward by construction: the history slice only considers\nmeetings whose ``event_date <= as_of_date``. ``history_length``\ncaps the number of recent meetings rendered in the panel chart.\nDefaults to 12 (~1.5 years of FOMC meetings) per the \u00a73 Panel 4\nspec.",
+        "properties": {
+          "as_of_date": {
+            "description": "As-of date for the trajectory projection (YYYY-MM-DD).",
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "history_length": {
+            "default": 12,
+            "description": "Number of past meetings to surface in the panel (1-60).",
+            "maximum": 60.0,
+            "minimum": 1.0,
+            "title": "History Length",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "as_of_date"
+        ],
+        "title": "TrajectoryRequest",
+        "type": "object"
+      },
+      "TrajectoryResponse": {
+        "description": "Result envelope for /analyze/trajectory.",
+        "properties": {
+          "architecture": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "lstm | transformer \u2014 which arm produced the projection.",
+            "title": "Architecture"
+          },
+          "as_of_date": {
+            "default": "",
+            "description": "Echo of the request as_of_date (ISO YYYY-MM-DD).",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "available": {
+            "description": "False when no trajectory bundle is loaded on this host.",
+            "title": "Available",
+            "type": "boolean"
+          },
+          "baseline_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Name of the strongest naive baseline the lift verdict compared against. None when no baseline comparison is available.",
+            "title": "Baseline Used"
+          },
+          "delta_dir_acc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Transformer directional accuracy minus the strongest naive baseline's directional accuracy. None when no baseline comparison is available.",
+            "title": "Delta Dir Acc"
+          },
+          "encoder_alias": {
+            "default": "",
+            "description": "Registry alias of the encoder backing the meeting embeddings.",
+            "title": "Encoder Alias",
+            "type": "string"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/TrajectoryMarker"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "history_length": {
+            "default": 0,
+            "description": "How many past meetings were considered (after truncation).",
+            "title": "History Length",
+            "type": "integer"
+          },
+          "lift_vs_baseline": {
+            "default": false,
+            "description": "True iff the Transformer arm beats the strongest naive baseline (previous_stance / rolling_majority(3) / small-LSTM) by >= 5pp directional accuracy on the canonical fold protocol. False when the holdout slice is empty, when the bundle predates #332, or when the lift did not clear the threshold.",
+            "title": "Lift Vs Baseline",
+            "type": "boolean"
+          },
+          "projected_next": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrajectoryProjection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "train_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Walk-forward boundary from the bundle manifest.",
+            "title": "Train End"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional non-fatal advisory \u2014 set when ``as_of_date`` is beyond the bundle's ``train_end`` so the caller can flag that the projection extrapolates beyond the fold.",
+            "title": "Warning"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "TrajectoryResponse",
+        "type": "object"
+      },
+      "TransferMatrixCell": {
+        "properties": {
+          "metric": {
+            "title": "Metric",
+            "type": "number"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "target",
+          "metric"
+        ],
+        "title": "TransferMatrixCell",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "VolRegimeReactionCard": {
+        "description": "Vol-regime card mirroring the rates card shape on /analyze/market (#293).\n\nCarries the dual-head log(RV) regression prediction (or ``None`` when\nthe active checkpoint mounts only the classifier), the regime\nclassification distribution, and the calibrated APS prediction set\nderived from the existing softmax_quantile.",
+        "properties": {
+          "coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage"
+          },
+          "log_rv_lower": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log Rv Lower"
+          },
+          "log_rv_point": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Standardised log(forward realized vol) prediction from the dual-head regression branch. None on classification-only checkpoints.",
+            "title": "Log Rv Point"
+          },
+          "log_rv_upper": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log Rv Upper"
+          },
+          "predicted_set": {
+            "description": "Calibrated APS prediction set (list of regime labels).",
+            "items": {
+              "type": "string"
+            },
+            "title": "Predicted Set",
+            "type": "array"
+          },
+          "regime_label": {
+            "description": "Argmax regime label: calm | normal | high.",
+            "title": "Regime Label",
+            "type": "string"
+          },
+          "regime_probabilities": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "Per-class softmax probabilities over the regime classes.",
+            "title": "Regime Probabilities",
+            "type": "object"
+          }
+        },
+        "required": [
+          "regime_label"
+        ],
+        "title": "VolRegimeReactionCard",
+        "type": "object"
+      },
+      "XaiFeatureFamilyAttribution": {
+        "description": "One feature-family bar on a panel attribution chart (#297).\n\nEmitted under :class:`XaiPanelAttribution.families`. ``magnitude`` is\nthe L1 attribution sum across all features in the family (always\nnon-negative); ``signed`` is the sum-with-sign so the frontend can\ncolour the bar by direction.",
+        "properties": {
+          "family": {
+            "title": "Family",
+            "type": "string"
+          },
+          "magnitude": {
+            "title": "Magnitude",
+            "type": "number"
+          },
+          "signed": {
+            "title": "Signed",
+            "type": "number"
+          }
+        },
+        "required": [
+          "family",
+          "magnitude",
+          "signed"
+        ],
+        "title": "XaiFeatureFamilyAttribution",
+        "type": "object"
+      },
+      "XaiPanelAttribution": {
+        "description": "Integrated-gradients attribution for one /analyze panel (#297).\n\nReturned under :class:`XaiResponse.panels`. One entry per active\npanel (regime, rates_2y/5y/terminal, trajectory). ``unavailable``\nflips to True when the panel cannot be explained (panel not active\non the checkpoint, kwarg mismatch, runtime error); the frontend\nthen renders the \"explanation unavailable\" badge rather than an\nempty bar chart.",
+        "properties": {
+          "families": {
+            "items": {
+              "$ref": "#/components/schemas/XaiFeatureFamilyAttribution"
+            },
+            "title": "Families",
+            "type": "array"
+          },
+          "n_steps": {
+            "default": 0,
+            "description": "Integrated-gradients integration step count used to compute this panel's attribution.",
+            "title": "N Steps",
+            "type": "integer"
+          },
+          "panel": {
+            "title": "Panel",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "unavailable": {
+            "default": false,
+            "title": "Unavailable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "panel",
+          "target"
+        ],
+        "title": "XaiPanelAttribution",
+        "type": "object"
+      },
+      "XaiResponse": {
+        "properties": {
+          "method": {
+            "default": "keyword_salience_v1",
+            "title": "Method",
+            "type": "string"
+          },
+          "panels": {
+            "items": {
+              "$ref": "#/components/schemas/XaiPanelAttribution"
+            },
+            "title": "Panels",
+            "type": "array"
+          },
+          "sentences": {
+            "items": {
+              "$ref": "#/components/schemas/XaiSentenceAttribution"
+            },
+            "title": "Sentences",
+            "type": "array"
+          }
+        },
+        "title": "XaiResponse",
+        "type": "object"
+      },
+      "XaiSentenceAttribution": {
+        "properties": {
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "topTokens": {
+            "items": {
+              "$ref": "#/components/schemas/XaiTokenAttribution"
+            },
+            "title": "Toptokens",
+            "type": "array"
+          }
+        },
+        "required": [
+          "text",
+          "score"
+        ],
+        "title": "XaiSentenceAttribution",
+        "type": "object"
+      },
+      "XaiTokenAttribution": {
+        "properties": {
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "weight": {
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "token",
+          "weight"
+        ],
+        "title": "XaiTokenAttribution",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "FOMC Sentiment API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/analyze": {
+      "post": {
+        "description": "Async handler \u2014 heavy sync work (transformers, yfinance, torch) runs in\nthe thread pool so the event loop stays responsive under load.",
+        "operationId": "analyze_analyze_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyzeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Analyze"
+      }
+    },
+    "/analyze/analogs": {
+      "post": {
+        "description": "Return historical FOMC statements that semantically match ``text``.\n\nLoads the fine-tuned retrieval encoder + persisted analog index on\nfirst hit via the singleton at ``app.services.analogs``. When no\nbundle is present (fresh checkout, encoder not yet trained) the\nresponse is shaped with an empty ``analogs`` list and\n``index_size=0`` so the frontend can render an empty state rather\nthan treating the call as a 5xx. Unexpected failures surface as a\nsanitized 503 \u2014 internal paths / exception text never leak to the\nclient.",
+        "operationId": "analyze_analogs_analyze_analogs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalogsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalogsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Analyze Analogs"
+      }
+    },
+    "/analyze/market": {
+      "post": {
+        "description": "Build the four-card market-reaction panel for one document (#293).\n\nReuses the trained shared encoder + per-fold scalers persisted on\nthe active forecaster checkpoint. Returns an empty payload (empty\n``rates`` list + ``vol_regime=None``) when the active checkpoint\nhas neither rates heads nor a classification surface mounted, so a\nfresh checkout that has not yet run the rates-head sweep does not\nsurface a 5xx.",
+        "operationId": "analyze_market_analyze_market_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketReactionPanel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Analyze Market"
+      }
+    },
+    "/analyze/trajectory": {
+      "post": {
+        "description": "Project the FOMC stance trajectory ending at ``as_of_date``.\n\nLoads the trajectory bundle (LSTM or Transformer arm + per-meeting\nembedding index) on first hit via the singleton at\n:mod:`app.services.trajectory`. When no bundle is present the\nresponse is shaped with ``available=False`` and an empty\n``history`` so the frontend renders an empty state rather than\ntreating the call as a 5xx. Unexpected failures surface as a\nsanitized 503.",
+        "operationId": "analyze_trajectory_analyze_trajectory_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrajectoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrajectoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Analyze Trajectory"
+      }
+    },
+    "/documents": {
+      "get": {
+        "operationId": "list_documents_documents_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Documents"
+      }
+    },
+    "/documents/by-date": {
+      "get": {
+        "description": "Look up an FOMC statement or minutes by event date so the calendar\npage can prefill the analyze textarea on click. ``kind`` is one of\n``auto`` (try statement first, then minutes), ``statement``, or\n``minutes``.",
+        "operationId": "get_document_by_date_documents_by_date_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date",
+            "required": true,
+            "schema": {
+              "title": "Date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "default": "auto",
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Document By Date"
+      }
+    },
+    "/documents/parse": {
+      "post": {
+        "description": "Normalise a document from one of three modes into the same plain-text\nshape the analyze form consumes. Exactly one of `text`, `url`, or `file`\nmust be supplied.",
+        "operationId": "parse_document_documents_parse_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_parse_document_documents_parse_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentParseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Parse Document"
+      }
+    },
+    "/evaluation/classification-breakdown": {
+      "get": {
+        "description": "Surface the freshest classification breakdown written by the\nregime training scripts under ``data/artifacts/regime_*``. When no\nqualifying artifact exists the response is ``available=False`` and\nthe /performance dashboard falls back to its client-side\naggregation.",
+        "operationId": "evaluation_classification_breakdown_evaluation_classification_breakdown_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassificationBreakdownResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Evaluation Classification Breakdown"
+      }
+    },
+    "/evaluation/coverage": {
+      "get": {
+        "description": "Aggregate empirical conformal coverage across recent history runs.\n\nEmpirical = fraction of runs where the realized regime label fell\ninside that run's predicted set. Nominal is the conformal target the\nactive model was calibrated to (read off the most-recent run that\ncarries ``series.forecast_confidence_level``). Rows without a\n``regime_classification.predicted_set`` or without a fetchable\nrealized regime are skipped. Results cached for 5 minutes.",
+        "operationId": "evaluation_coverage_evaluation_coverage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "symbol",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lookback_runs",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Lookback Runs",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationCoverageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evaluation Coverage"
+      }
+    },
+    "/fomc/calendar": {
+      "get": {
+        "operationId": "fomc_calendar_fomc_calendar_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "upcoming_limit",
+            "required": false,
+            "schema": {
+              "default": 12,
+              "maximum": 60,
+              "minimum": 1,
+              "title": "Upcoming Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "past_limit",
+            "required": false,
+            "schema": {
+              "default": 12,
+              "maximum": 60,
+              "minimum": 0,
+              "title": "Past Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD; defaults to today",
+            "in": "query",
+            "name": "as_of",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "YYYY-MM-DD; defaults to today",
+              "title": "As Of"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FomcCalendarResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fomc Calendar"
+      }
+    },
+    "/fomc/futures-consensus": {
+      "get": {
+        "description": "Fed-funds path consensus via the DGS Treasury short-end proxy.\n\nBuilds the descriptive panel that anchors the workspace's\nrate-path expectations column. The implied rate at the three short\nDGS tenors is read off the latest non-null FRED observation; the\nchange vs. the current target band midpoint is bucketed into\nhike / cut / pause probabilities via a normal CDF (25 bps\nthreshold, 12.5 bps sigma). The response carries a methodology\nfootnote so the panel never implies an OIS-clean expectation.\n\nReturns 503 with a structured detail when the FRED client cannot\nreach the upstream API or when the FOMC calendar has no upcoming\nmeeting on or after the requested as-of date \u2014 the front-end then\nrenders the \"unavailable\" placeholder rather than a generic error.",
+        "operationId": "fomc_futures_consensus_fomc_futures_consensus_get",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD; defaults to today",
+            "in": "query",
+            "name": "as_of",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "YYYY-MM-DD; defaults to today",
+              "title": "As Of"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FuturesConsensusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fomc Futures Consensus"
+      }
+    },
+    "/fomc/latest-mp-surprise": {
+      "get": {
+        "description": "Latest realized monetary-policy surprise (descriptive chip).\n\nReads the most recent FOMC row from\n``data/external/fred/mp_surprises.parquet`` built by\n:mod:`app.data.mp_surprise` and returns it as a wire response. The\nsurprise level is the strict-prior bps quantity the upstream module\ndocuments; serving picks the latest ``event_date`` row, classifies\nthe sign against the symmetric no-surprise band, and reports the\nmagnitude. Returns 503 with a structured detail when the parquet is\nmissing \u2014 the front-end chip degrades to an \"unavailable\" placeholder.",
+        "operationId": "fomc_latest_mp_surprise_fomc_latest_mp_surprise_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonetaryPolicySurpriseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Fomc Latest Mp Surprise"
+      }
+    },
+    "/fomc/semantic-diff": {
+      "post": {
+        "description": "Semantic diff between the pasted statement and its strict-prior.\n\nLoads the most recent FOMC statement strictly before\n``payload.current_date`` off ``/data/fomc_statements.json`` and\nreturns the composite response \u2014 token-level redline spans plus\nsix-topic emphasis deltas. The descriptive surface never feeds a\nforecast head; the cold-start (no strict-prior) case returns\nempty spans + topic list with an explanatory summary so the panel\ncan render the banner-only mode.",
+        "operationId": "fomc_semantic_diff_fomc_semantic_diff_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SemanticDiffRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SemanticDiffResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fomc Semantic Diff"
+      }
+    },
+    "/forecast/abnormal-volume": {
+      "get": {
+        "description": "Multi-horizon HAR-volume forecast for the Expected Volume card.\n\nPulls the last 120 daily volumes for ``symbol`` and runs the cached\nHAR Corsi head (lag1 + 5-day mean + 22-day mean) with optional\nweekday / month-end / quarter-end seasonality dummies and conformal\n80% / 90% bands. Market-data only \u2014 text features never feed this\nforecast surface. Returns a structured 503 on artifact-load failure\nor insufficient market history.",
+        "operationId": "forecast_abnormal_volume_forecast_abnormal_volume_get",
+        "parameters": [
+          {
+            "description": "Market ticker; defaults to S&P 500.",
+            "in": "query",
+            "name": "symbol",
+            "required": false,
+            "schema": {
+              "default": "^GSPC",
+              "description": "Market ticker; defaults to S&P 500.",
+              "maxLength": 32,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._=^/-]+$",
+              "title": "Symbol",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExpectedVolumeForecastResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Forecast Abnormal Volume"
+      }
+    },
+    "/forecast/realized-vol": {
+      "get": {
+        "description": "Multi-horizon QLIKE-DLq RV forecast for the volatility-outlook card.\n\nReads recent daily realized variance (intraday parquet preferred,\nyfinance close-to-close fallback) and runs the cached ensemble +\nconformal bands. Returns a 503 with a structured error when the\nartifact cannot be loaded or the history is insufficient.",
+        "operationId": "forecast_realized_vol_forecast_realized_vol_get",
+        "parameters": [
+          {
+            "description": "Market ticker; defaults to S&P 500.",
+            "in": "query",
+            "name": "symbol",
+            "required": false,
+            "schema": {
+              "default": "^GSPC",
+              "description": "Market ticker; defaults to S&P 500.",
+              "maxLength": 32,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._=^/-]+$",
+              "title": "Symbol",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RealizedVolForecastResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Forecast Realized Vol"
+      }
+    },
+    "/forecast/regime/baselines": {
+      "get": {
+        "description": "HAR-tercile regime baseline (wiki section 20 headline).\n\nBucketing HAR's predicted realized variance through the per-series\ntercile cutoffs beats the text+market fused regime classifier at\nh=1 and h=22 and ties it at h=5 on the canonical fold protocol.\nThe frontend renders this response as the primary regime card and\ndemotes the late-fusion classifier to a \"second opinion\" surface.\nReturns 422 on a non-SPX symbol (the artifact is SPX-trained) and a\nstructured 503 on artifact-load failure.",
+        "operationId": "forecast_regime_baselines_forecast_regime_baselines_get",
+        "parameters": [
+          {
+            "description": "Market ticker; only ^GSPC is supported (artifact is SPX-trained).",
+            "in": "query",
+            "name": "symbol",
+            "required": false,
+            "schema": {
+              "default": "^GSPC",
+              "description": "Market ticker; only ^GSPC is supported (artifact is SPX-trained).",
+              "maxLength": 32,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._=^/-]+$",
+              "title": "Symbol",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HarTercileBaselineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Forecast Regime Baselines"
+      }
+    },
+    "/forecasts/next-fomc": {
+      "get": {
+        "description": "Read ``data/artifacts/next_fomc/`` for the decisions dashboard.\n\nReturns ``available: False`` when the forecaster has not been run\nagainst this checkout. The dashboard surfaces the empty-state with\nthe documented ``make next-fomc`` instruction in that case.",
+        "operationId": "next_fomc_forecast_forecasts_next_fomc_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NextFomcForecastResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Next Fomc Forecast"
+      }
+    },
+    "/health": {
+      "get": {
+        "description": "Liveness probe + serving-contract status (#341, extended in #393).\n\nThe probe always returns ``status: \"ok\"`` (uvicorn is up and\nserving). Each serving artefact (forecaster + multi-axis classifier\n+ trajectory bundle) surfaces a structured contract block: ``ok``\nwhen the sidecar matches the serving signature, ``sidecar_absent``\non a legacy artefact, and a structured failure code otherwise.\nForecaster counters track structured-error increments so an\noperator can spot a stuck contract without parsing logs.",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health Check"
+      }
+    },
+    "/history": {
+      "get": {
+        "operationId": "get_history_history_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "symbol",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
+            }
+          },
+          {
+            "in": "query",
+            "name": "horizon",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Horizon"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stance",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stance"
+            }
+          },
+          {
+            "in": "query",
+            "name": "document_date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Document Date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 2147483647,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get History"
+      }
+    },
+    "/history-realized": {
+      "get": {
+        "description": "Batch the per-row realized fetch the /history list page used to do\none row at a time. ``ids`` is the comma-joined run-id list; deleted\nrows and yfinance failures land under ``missing`` so a single broken\nrow does not nuke the table render.",
+        "operationId": "get_history_realized_batch_history_realized_get",
+        "parameters": [
+          {
+            "description": "Comma-separated run IDs (max 50)",
+            "in": "query",
+            "name": "ids",
+            "required": true,
+            "schema": {
+              "description": "Comma-separated run IDs (max 50)",
+              "title": "Ids",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryRealizedBatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get History Realized Batch"
+      }
+    },
+    "/history/{run_id}": {
+      "delete": {
+        "operationId": "delete_history_run_history__run_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete History Run"
+      },
+      "get": {
+        "operationId": "get_history_run_history__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get History Run"
+      }
+    },
+    "/history/{run_id}/event-study": {
+      "get": {
+        "description": "Forward 10-trading-day close path + bucketed realised regime.\n\nPowers the event-study chart on /history/[id]. Pulls the next 10\ntrading bars after the stored event date from yfinance, computes\nlog-returns and the realised-vol bucket, and surfaces both predicted\nand realised regime labels for the headline.",
+        "operationId": "get_history_run_event_study_history__run_id__event_study_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryEventStudyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get History Run Event Study"
+      }
+    },
+    "/history/{run_id}/realized": {
+      "get": {
+        "operationId": "get_history_run_realized_history__run_id__realized_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryRealizedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get History Run Realized"
+      }
+    },
+    "/research/artifacts": {
+      "get": {
+        "description": "Aggregate artefact metadata + parsed shapes for the research tab.\n\nMissing sections are not an error; the response marks each one\nunavailable so the dashboard can render an empty state without\nissuing a second request.",
+        "operationId": "research_artifacts_research_artifacts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchArtifactsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Research Artifacts"
+      }
+    },
+    "/research/backtest": {
+      "post": {
+        "description": "Run the stance-directional backtest engine on a caller-supplied\n{date, position} series.\n\nFrontend (or any caller) supplies the positions; this endpoint\nlooks up the S&P forward returns per date and aggregates Sharpe,\nhit-rate, max-drawdown, and benchmark deltas. Decouples the\nengine from any specific signal source so the same harness can\nserve oracle backtests, history-driven backtests, and live-\nclassifier backtests interchangeably.",
+        "operationId": "research_backtest_research_backtest_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BacktestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Research Backtest"
+      }
+    },
+    "/research/registry": {
+      "get": {
+        "description": "Quant-facing encoder bake-off registry from the \u00a76.41 manifest.\n\nFiltered by default to rows with non-negative \u0394 on the active\nsurface (``dual`` or ``cls``) so the dashboard never surfaces\nnegative-lift encoders. Pass ``include_rejected=true`` to see the\nfull table including nulls/negatives.",
+        "operationId": "research_registry_research_registry_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "surface",
+            "required": false,
+            "schema": {
+              "default": "dual",
+              "title": "Surface",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_rejected",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Rejected",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchRegistryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Research Registry"
+      }
+    },
+    "/settings/checkpoints": {
+      "get": {
+        "description": "Read-only inventory of model files under ``backend/models/``.\n\nSurfaces filename, size, mtime, inferred role, and an ``is_active``\nflag pointing at the file each live service is currently loaded\nfrom. Diagnostic fields (``output_mode``, ``encoder_alias``,\n``conformal_sidecar_present``) only populate on the active\nforecaster and multi-axis entries \u2014 everything else stays None so\nthe response stays serialisable on a fresh checkout.",
+        "operationId": "list_settings_checkpoints_settings_checkpoints_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsCheckpointsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Settings Checkpoints"
+      }
+    },
+    "/symbols": {
+      "get": {
+        "description": "Symbol universe the workspace asset picker reads.\n\nLoads ``backend/app/data/symbols.json`` from the package directory\n(resolved relative to this module so the path works regardless of\nthe Compose volume layout). Falls back to a single S&P 500 entry so\nthe endpoint never 500s on a fresh checkout where the data file is\nmissing.",
+        "operationId": "list_symbols_symbols_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SymbolListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Symbols"
+      }
+    }
+  }
+}

@@ -180,6 +180,111 @@ def run(
     return results
 
 
+def _conformal_quantile(scores: np.ndarray, alpha: float) -> float:
+    """One-sided ``1-alpha`` quantile of absolute residuals (log space)."""
+    if scores.size == 0:
+        return 0.0
+    return float(np.quantile(np.abs(scores), 1.0 - alpha))
+
+
+def fit_production_artifact(
+    volume_path: Path,
+    out_path: Path,
+    *,
+    n_folds: int = 5,
+    seeds: tuple[int, ...] = (11, 22, 33),
+    alphas: tuple[float, ...] = (0.10, 0.20),
+    symbol: str = "^GSPC",
+) -> dict[str, object]:
+    """Build the deployable HAR-volume serving artifact.
+
+    Distinct from :func:`run`, which is an evaluation-only routine that
+    reports R^2 / DL-minus-HAR CIs. This builder fits the HAR baseline on
+    ALL valid-target history (no test split), collects pooled walk-forward
+    OOS residuals to derive the prospective conformal quantiles, and
+    saves the per-horizon serving spec the
+    :mod:`app.services.volume_forecaster` layer consumes:
+
+    - ``har_coef``: ``[intercept, daily, weekly, monthly]`` on the
+      Corsi triple (lag1, mean over 5, mean over 22), full-history fit.
+    - ``calendar_dummy_names`` / ``calendar_dummy_coef``: weekday +
+      month-end / quarter-end seasonality block, full-history fit.
+    - ``conformal_quantiles``: ``{"0.10": q90, "0.20": q80}`` half-widths
+      from pooled walk-forward OOS HAR residuals.
+    - ``r2_har``: pooled walk-forward HAR R^2 for the calibration chip.
+    """
+
+    data = load_log_volume(volume_path, symbol=symbol)
+    log_vol = data["log_vol"].to_numpy()
+    har = _har_matrix(log_vol)
+    cal, cal_names = _calendar_features(data["date"])
+
+    spec: dict[str, object] = {
+        "model": "volume_har",
+        "symbol": symbol,
+        "n_days": int(len(log_vol)),
+        "seeds": list(seeds),
+        "n_folds": n_folds,
+        "alphas": list(alphas),
+        "date_first": str(data["date"].iloc[0].date()),
+        "date_last": str(data["date"].iloc[-1].date()),
+        "by_horizon": {},
+    }
+    by_h: dict[str, dict[str, object]] = {}
+
+    for h in _HORIZONS:
+        target = _forward_target(log_vol, h)
+        valid = ~(np.isnan(har).any(axis=1) | np.isnan(target))
+        x_har, y = har[valid], target[valid]
+        x_cal = cal[valid]
+
+        # Full-history HAR coefficient fit (no train/test split — the
+        # serving layer needs the all-data estimate).
+        a_all = np.column_stack([np.ones(len(x_har)), x_har])
+        har_coef, *_ = np.linalg.lstsq(a_all, y, rcond=None)
+
+        # Full-history seasonality coefficient fit on the HAR residuals,
+        # so dot(cal, cal_coef) captures the calendar contribution
+        # additively on log space.
+        har_fit = a_all @ har_coef
+        cal_resid = y - har_fit
+        cal_coef, *_ = np.linalg.lstsq(x_cal, cal_resid, rcond=None)
+
+        # Pooled walk-forward HAR OOS residuals → prospective conformal
+        # widths. Uses the same walk-forward scaffolding as ``run``.
+        splits = walk_forward_splits(len(y), n_folds, embargo=h)
+        oy, op = [], []
+        for tr, te in splits:
+            xh_tr, xh_te = _standardize(x_har[tr], x_har[te])
+            op.append(_ols(xh_tr, y[tr], xh_te))
+            oy.append(y[te])
+        yy, pp = np.concatenate(oy), np.concatenate(op)
+        base = float(yy.mean())
+        scores = yy - pp
+        quantiles = {f"{a:.2f}": _conformal_quantile(scores, a) for a in alphas}
+
+        by_h[f"h{h}"] = {
+            "har_coef": [float(c) for c in har_coef.tolist()],
+            "calendar_dummy_names": list(cal_names),
+            "calendar_dummy_coef": [float(c) for c in cal_coef.tolist()],
+            "conformal_quantiles": quantiles,
+            "r2_har": round(_r2(yy, pp, base), 4),
+            "n_oos": int(len(yy)),
+        }
+        logger.info(
+            "h%d serving artifact: HAR R^2 %.4f | q80 %.4f | q90 %.4f",
+            h,
+            by_h[f"h{h}"]["r2_har"],
+            quantiles.get("0.20", 0.0),
+            quantiles.get("0.10", 0.0),
+        )
+
+    spec["by_horizon"] = by_h
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(spec, indent=2))
+    return spec
+
+
 def run_event_window(event_frame_path: Path, n_folds: int = 5) -> dict[str, object]:
     """Event-window volume head: forecast the FOMC announcement-window volume from
     pre-window features (market-based), walk-forward. Honest predictive feature."""
@@ -222,9 +327,20 @@ def main() -> None:
         "--event-frame", type=Path,
         default=DATA_DIR / "processed" / "late_fusion" / "event_frame.parquet",
     )
+    parser.add_argument(
+        "--serving-artifact", type=Path, default=None,
+        help=(
+            "Path for the deployable serving JSON consumed by "
+            "app.services.volume_forecaster (har_coef + calendar block + "
+            "conformal_quantiles). Omit to skip the production fit."
+        ),
+    )
     args = parser.parse_args()
     result = run(args.volume, args.out)
     print(json.dumps(result, indent=2))
+    if args.serving_artifact is not None:
+        artifact = fit_production_artifact(args.volume, args.serving_artifact)
+        print("serving artifact horizons:", list(artifact["by_horizon"]))  # type: ignore[arg-type]
     if args.event_frame.exists():
         ev = run_event_window(args.event_frame)
         print("event-window volume head:", json.dumps(ev))

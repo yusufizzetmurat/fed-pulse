@@ -5,8 +5,11 @@ import { toast } from "sonner";
 
 import { AnalyzeForm } from "@/components/analyze/AnalyzeForm";
 import { CredibilityKpis } from "@/components/analyze/CredibilityKpis";
+import { ExpectedVolumeCard } from "@/components/analyze/ExpectedVolumeCard";
+import { FuturesConsensusPanel } from "@/components/analyze/FuturesConsensusPanel";
 import { HistoricalAnalogPanel } from "@/components/analyze/HistoricalAnalogPanel";
 import { MarketReactionPanel } from "@/components/analyze/MarketReactionPanel";
+import { MonetaryPolicySurpriseChip } from "@/components/analyze/MonetaryPolicySurpriseChip";
 import { MultiAxisInterpretation } from "@/components/analyze/MultiAxisInterpretation";
 import { PipelineTrace } from "@/components/analyze/PipelineTrace";
 import { PolicyActionCard } from "@/components/analyze/PolicyActionCard";
@@ -17,8 +20,8 @@ import {
 } from "@/components/analyze/RegimeHistoryStrip";
 import { SecondOpinionRegime } from "@/components/analyze/SecondOpinionRegime";
 import { HistoricalContextBadge } from "@/components/analyze/HistoricalContextBadge";
+import { SemanticDiffPanel } from "@/components/analyze/SemanticDiffPanel";
 import { SentenceStrikeXaiPanel } from "@/components/analyze/SentenceStrikeXaiPanel";
-import { StatementDeltaCard } from "@/components/analyze/StatementDeltaCard";
 import { TldrCard } from "@/components/analyze/TldrCard";
 import { VolatilityOutlookCard } from "@/components/analyze/VolatilityOutlookCard";
 import { WorkspaceMetaStrip } from "@/components/analyze/WorkspaceMetaStrip";
@@ -30,8 +33,12 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  fetchExpectedVolumeForecast,
+  fetchFuturesConsensus,
   fetchHistoryRealizedBatch,
+  fetchLatestMpSurprise,
   fetchRealizedVolForecast,
+  fetchSemanticDiff,
   postAnalyze,
   postAnalyzeAnalogs,
   postAnalyzeMarket,
@@ -49,10 +56,14 @@ import type {
   AnalogsResponse,
   AnalyzeRequest,
   AnalyzeResult,
+  ExpectedVolumeForecastResponse,
+  FuturesConsensusResponse,
   HistoryEntry,
   Horizon,
   MarketReactionPanelResponse,
+  MonetaryPolicySurpriseResponse,
   RealizedVolForecastResponse,
+  SemanticDiffResponse,
 } from "@/lib/analyze/types";
 import {
   DEFAULT_HORIZON,
@@ -123,6 +134,18 @@ export default function WorkspacePage() {
   const [volForecast, setVolForecast] = React.useState<RealizedVolForecastResponse | null>(null);
   const [volForecastLoading, setVolForecastLoading] = React.useState(false);
   const [volForecastError, setVolForecastError] = React.useState<string | null>(null);
+  const [expectedVolume, setExpectedVolume] =
+    React.useState<ExpectedVolumeForecastResponse | null>(null);
+  const [expectedVolumeLoading, setExpectedVolumeLoading] = React.useState(false);
+  const [expectedVolumeError, setExpectedVolumeError] = React.useState<string | null>(null);
+  const [latestMpSurprise, setLatestMpSurprise] =
+    React.useState<MonetaryPolicySurpriseResponse | null>(null);
+  const [latestMpSurpriseLoading, setLatestMpSurpriseLoading] = React.useState(false);
+  const [futuresConsensus, setFuturesConsensus] =
+    React.useState<FuturesConsensusResponse | null>(null);
+  const [futuresConsensusLoading, setFuturesConsensusLoading] = React.useState(false);
+  const [semanticDiff, setSemanticDiff] = React.useState<SemanticDiffResponse | null>(null);
+  const [semanticDiffLoading, setSemanticDiffLoading] = React.useState(false);
   const coverage = useSharedCoverage(request.symbol);
   const recentHistory = useSharedRecentHistory(request.symbol, 12);
   const harBaselines = useHarBaselines(request.symbol);
@@ -284,6 +307,147 @@ export default function WorkspacePage() {
     };
   }, [apiBaseUrl, request.symbol]);
 
+  // Expected Volume forecast card is HAR-volume over market history,
+  // market-data only. 503 (artifact missing) renders the unavailable
+  // placeholder rather than a generic error toast. The AbortController
+  // cleanup is the only concurrency guard we need: a re-render or
+  // StrictMode remount tears down the prior fetch before the next one
+  // commits state, matching the volForecast effect convention above.
+  React.useEffect(() => {
+    const controller = new AbortController();
+    setExpectedVolumeLoading(true);
+    setExpectedVolumeError(null);
+    (async () => {
+      try {
+        const data = await fetchExpectedVolumeForecast(
+          apiBaseUrl,
+          request.symbol,
+          controller.signal,
+        );
+        if (!controller.signal.aborted) {
+          setExpectedVolume(data);
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          setExpectedVolume(null);
+          setExpectedVolumeError(errorMessage(err, "HAR-volume forecast unavailable."));
+        }
+      } finally {
+        // setState after unmount is a no-op in React 18; clearing
+        // loading unconditionally avoids a sticky spinner if the
+        // controller aborts mid-fetch on real navigation.
+        setExpectedVolumeLoading(false);
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl, request.symbol]);
+
+  // MP-surprise chip is descriptive and global (latest FOMC event).
+  // 503 is normalised to null inside the fetcher; here we just render
+  // the unavailable placeholder.
+  React.useEffect(() => {
+    const controller = new AbortController();
+    setLatestMpSurpriseLoading(true);
+    (async () => {
+      try {
+        const data = await fetchLatestMpSurprise(apiBaseUrl, controller.signal);
+        if (!controller.signal.aborted) {
+          setLatestMpSurprise(data);
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setLatestMpSurprise(null);
+        }
+      } finally {
+        setLatestMpSurpriseLoading(false);
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl]);
+
+  // FRED futures-consensus panel pulls the short-end DGS proxy on
+  // mount and on every request.date change so the consensus tracks
+  // the workspace as-of date. 503 already collapses to null in the
+  // fetcher.
+  React.useEffect(() => {
+    const controller = new AbortController();
+    setFuturesConsensusLoading(true);
+    (async () => {
+      try {
+        const data = await fetchFuturesConsensus(apiBaseUrl, {
+          asOf: request.date,
+          signal: controller.signal,
+        });
+        if (!controller.signal.aborted) {
+          setFuturesConsensus(data);
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setFuturesConsensus(null);
+        }
+      } finally {
+        setFuturesConsensusLoading(false);
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl, request.date]);
+
+  // Semantic-diff panel is gated on /analyze submit completion. The
+  // diff describes "the just-analyzed statement vs the prior" — there
+  // is no use case for diffing mid-typing, and POST /fomc/semantic-diff
+  // runs difflib + topic emphasis server-side so per-keystroke fan-out
+  // would hammer the backend on every paste. Each submit bumps a seq
+  // and snapshots the submitted (text, date) into refs; the effect
+  // depends on the seq alone, so re-typing in the textarea after a
+  // submit cannot retrigger the POST until the next submit.
+  const [semanticDiffSeq, setSemanticDiffSeq] = React.useState(0);
+  const semanticDiffInputRef = React.useRef<{ text: string; date: string } | null>(null);
+  // The semantic diff is anchored on the submitted text; if the user
+  // changes the symbol (or wipes the date) without resubmitting, the
+  // previously-rendered diff is stale and should drop out until the
+  // next submit reseeds it.
+  React.useEffect(() => {
+    setSemanticDiff(null);
+  }, [request.symbol]);
+  React.useEffect(() => {
+    if (semanticDiffSeq === 0) return;
+    const submitted = semanticDiffInputRef.current;
+    if (!submitted || !submitted.text.trim()) {
+      setSemanticDiff(null);
+      setSemanticDiffLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setSemanticDiffLoading(true);
+    (async () => {
+      try {
+        const data = await fetchSemanticDiff(
+          apiBaseUrl,
+          { current_date: submitted.date, current_text: submitted.text },
+          controller.signal,
+        );
+        if (!controller.signal.aborted) {
+          setSemanticDiff(data);
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setSemanticDiff(null);
+        }
+      } finally {
+        setSemanticDiffLoading(false);
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl, semanticDiffSeq]);
+
   // #317 finding #14: monotonic seq for /analyze/market fetches. A
   // second submit before the first market fetch resolves bumps the
   // seq; the late-arriving resolver checks the seq and skips state
@@ -302,6 +466,11 @@ export default function WorkspacePage() {
     const marketTicket = marketPanelSeqRef.current;
     const analogsTicket = analogsPanelSeqRef.current;
     setAnalogsLoading(true);
+    // Snapshot the submitted (text, date) for the semantic-diff effect
+    // and bump the seq so it fires exactly once per submit, independent
+    // of any post-submit typing in the textarea.
+    semanticDiffInputRef.current = { text: request.text, date: request.date };
+    setSemanticDiffSeq((prev) => prev + 1);
     try {
       // #317 finding #13: dispatch /analyze + /analyze/market in
       // parallel rather than sequentially -- the market panel does
@@ -515,12 +684,6 @@ export default function WorkspacePage() {
             onSelect={(symbol) => setRequest((prev) => ({ ...prev, symbol }))}
           />
 
-          <VolatilityOutlookCard
-            forecast={volForecast}
-            loading={volForecastLoading}
-            error={volForecastError}
-          />
-
           {loading && !result ? (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <Skeleton className="h-32 w-full xl:col-span-4" />
@@ -532,19 +695,55 @@ export default function WorkspacePage() {
             </div>
           ) : null}
 
-          <SectionDivider label="Model prediction" />
+          {/* SPINE forecast zone — market-data-only cards. No descriptive
+              panels render between these three so the reader sees forecast
+              numbers grouped together without any text-derived commentary
+              implying it feeds the predictions. */}
+          <SectionDivider label="Forecasts" />
           <HarRegimeHeadline
             baselines={harBaselines.data}
             loading={harBaselines.loading}
             error={harBaselines.error}
             symbol={request.symbol}
           />
+          <VolatilityOutlookCard
+            forecast={volForecast}
+            loading={volForecastLoading}
+            error={volForecastError}
+          />
+          <ExpectedVolumeCard
+            forecast={expectedVolume}
+            loading={expectedVolumeLoading}
+            error={expectedVolumeError}
+            symbol={request.symbol}
+          />
+
+          {/* SPINE boundary — descriptive panels follow. These are
+              text-derived or realized-rate commentary and never feed the
+              forecast cards above. */}
+          <div className="border-t-2 border-dashed border-border/70 mt-8 pt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Descriptive context
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Text- and realized-rate panels. Descriptive only — these signals
+              never feed the forecast cards above.
+            </p>
+          </div>
+          <MonetaryPolicySurpriseChip
+            data={latestMpSurprise}
+            loading={latestMpSurpriseLoading}
+          />
+          <FuturesConsensusPanel
+            data={futuresConsensus}
+            loading={futuresConsensusLoading}
+          />
+          <SemanticDiffPanel data={semanticDiff} loading={semanticDiffLoading} />
 
           {result ? (
             <>
               <SectionDivider label="Statement analysis" />
               <TldrCard result={result} />
-              <StatementDeltaCard result={result} />
               <WorkspaceMetaStrip result={result} />
 
               {result.regime_classification ? (

@@ -48,8 +48,8 @@ export function SecondOpinionRegime({
   const distribution = regime.distribution ?? {};
   const argmaxProb = distribution[regime.argmax_class] ?? 0;
 
-  // Anchor the HAR cross-check on the 1-day horizon — the wiki §20
-  // table where the late-fusion underperformance is largest.
+  // Anchor the HAR cross-check on the 1-day horizon where the
+  // late-fusion underperformance vs HAR-tercile is largest.
   const harOneDay = React.useMemo(() => {
     if (!harBaselines) return null;
     return harBaselines.horizons.find((h) => h.h === 1) ?? null;

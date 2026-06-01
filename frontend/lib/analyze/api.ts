@@ -8,7 +8,9 @@ import type {
   BacktestResponse,
   ClassificationBreakdownResponse,
   EvaluationCoverageResponse,
+  ExpectedVolumeForecastResponse,
   FomcCalendarResponse,
+  FuturesConsensusResponse,
   HarTercileBaselineResponse,
   HistoryDetail,
   HistoryEventStudyResponse,
@@ -17,10 +19,12 @@ import type {
   HistoryRealizedBatchResponse,
   HistoryRealizedResponse,
   MarketReactionPanelResponse,
+  MonetaryPolicySurpriseResponse,
   NextFomcForecastResponse,
   RealizedVolForecastResponse,
   ResearchArtifactsResponse,
   ResearchRegistryResponse,
+  SemanticDiffResponse,
   SettingsCheckpointsResponse,
   SymbolListResponse,
   TrainJobState,
@@ -283,6 +287,32 @@ export async function fetchRealizedVolForecast(
   return response.data as RealizedVolForecastResponse;
 }
 
+// Workspace-spine expected-volume forecast. Backend returns 503 when
+// the HAR-volume artifact cannot be loaded or the volume history is
+// insufficient; the fetcher folds that into ``null`` so the card's
+// data==null branch renders the tailored "unavailable" placeholder
+// rather than the generic error path. Matches the parity contract
+// shared with ``fetchLatestMpSurprise`` and ``fetchFuturesConsensus``.
+export async function fetchExpectedVolumeForecast(
+  baseUrl: string,
+  symbol: string = "^GSPC",
+  signal?: AbortSignal,
+): Promise<ExpectedVolumeForecastResponse | null> {
+  try {
+    const response = await axios.get(`${baseUrl}/forecast/abnormal-volume`, {
+      params: { symbol },
+      signal,
+    });
+    return response.data as ExpectedVolumeForecastResponse;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 503) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+
 export async function fetchResearchRegistry(
   baseUrl: string,
   options?: { surface?: "dual" | "cls"; includeRejected?: boolean }
@@ -293,6 +323,72 @@ export async function fetchResearchRegistry(
   const response = await axios.get(`${baseUrl}/research/registry`, { params });
   return response.data as ResearchRegistryResponse;
 }
+
+// Workspace-spine MP-surprise chip. The backend returns 503 when the
+// parquet artifact is missing; callers translate that into the chip's
+// "unavailable" placeholder rather than surfacing a generic error.
+export async function fetchLatestMpSurprise(
+  baseUrl: string,
+  signal?: AbortSignal,
+): Promise<MonetaryPolicySurpriseResponse | null> {
+  try {
+    const response = await axios.get(`${baseUrl}/fomc/latest-mp-surprise`, {
+      signal,
+    });
+    return response.data as MonetaryPolicySurpriseResponse;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 503) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+
+// Workspace-spine FRED futures-consensus descriptive panel. The
+// endpoint pulls the short-end DGS Treasury proxy and the current
+// fed-funds target band off FRED; the backend returns 503 when FRED
+// is unreachable or the FOMC calendar has no upcoming meeting on or
+// after the as-of date. Callers translate the 503 into the panel's
+// "unavailable" placeholder rather than surfacing a generic error.
+export async function fetchFuturesConsensus(
+  baseUrl: string,
+  options?: { asOf?: string; signal?: AbortSignal },
+): Promise<FuturesConsensusResponse | null> {
+  const params: Record<string, string> = {};
+  if (options?.asOf) params.as_of = options.asOf;
+  try {
+    const response = await axios.get(`${baseUrl}/fomc/futures-consensus`, {
+      params,
+      signal: options?.signal,
+    });
+    return response.data as FuturesConsensusResponse;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 503) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+
+// Workspace-spine semantic-diff descriptive panel. The backend POST
+// accepts the pasted statement body + its ISO date; the strict-prior
+// statement is loaded server-side off the on-disk statements JSON.
+// Cold-start (no strict-prior available) returns empty span and
+// topic lists with an explanatory summary — the panel renders the
+// banner-only mode in that case.
+export async function fetchSemanticDiff(
+  baseUrl: string,
+  body: { current_date: string; current_text: string },
+  signal?: AbortSignal,
+): Promise<SemanticDiffResponse> {
+  const response = await axios.post(`${baseUrl}/fomc/semantic-diff`, body, {
+    signal,
+  });
+  return response.data as SemanticDiffResponse;
+}
+
 
 export async function fetchHarBaselines(
   baseUrl: string,

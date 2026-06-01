@@ -701,13 +701,12 @@ export interface BacktestResponse {
 }
 
 // HAR-tercile regime baseline served from
-// GET /forecast/regime/baselines?symbol=^GSPC. The wiki §20 eval
-// shows HAR-tercile beats both market-only and the text+market
-// fusion on the 3-class forward-RV classification task, so this
-// surface is the Workspace's primary regime headline; the existing
-// late-fusion card becomes a "second opinion" alongside it. The
-// numeric ``predicted_rv`` is the model's point estimate of forward
-// realized variance — annualized vol % is derived UI-side.
+// GET /forecast/regime/baselines?symbol=^GSPC. HAR-tercile is the
+// Workspace's primary regime headline on the 3-class forward-RV
+// classification task; the late-fusion card becomes a "second
+// opinion" alongside it. The numeric ``predicted_rv`` is the
+// model's point estimate of forward realized variance — annualized
+// vol % is derived UI-side.
 export type HarTercileLabel = "low" | "medium" | "high";
 
 export interface HarTercileHorizon {
@@ -725,4 +724,93 @@ export interface HarTercileBaselineResponse {
   symbol: string;
   horizons: HarTercileHorizon[];
   source_wiki_section: string;
+}
+
+// Workspace-spine bundle: shared response types matching the
+// backend Pydantic models in backend/app/schemas.py.
+//
+// SPINE separation:
+//   - ExpectedVolumeForecastResponse is the only forecast surface
+//     in this bundle (HAR over market data only).
+//   - MonetaryPolicySurpriseResponse, FuturesConsensusResponse and
+//     SemanticDiffResponse are descriptive panels (text- or
+//     realized-derived) and never feed forecasts.
+export interface ExpectedVolumeHorizonForecast {
+  h: number;
+  point_log_residual: number;
+  point_pct_vs_baseline: number;
+  band_lo_80: number;
+  band_hi_80: number;
+  band_lo_90: number;
+  band_hi_90: number;
+  r2_har: number | null;
+  calendar_adjusted: boolean;
+}
+
+export interface ExpectedVolumeForecastResponse {
+  symbol: string;
+  horizons: ExpectedVolumeHorizonForecast[];
+  model_revision: string;
+  generated_at: string;
+}
+
+export type MonetaryPolicySurpriseDirection =
+  | "hawkish"
+  | "dovish"
+  | "no_surprise";
+
+export interface MonetaryPolicySurpriseResponse {
+  event_date: string;
+  mp_surprise_level_bps: number;
+  direction: MonetaryPolicySurpriseDirection;
+  magnitude_bps: number;
+  is_intermeeting: boolean;
+  ff_target_prior_bps?: number | null;
+}
+
+export interface FuturesConsensusHorizon {
+  horizon_label: string;
+  implied_rate_bps: number;
+  change_vs_current_bps: number;
+  probability_hike: number;
+  probability_cut: number;
+  probability_pause: number;
+}
+
+export interface FuturesConsensusResponse {
+  meeting_date: string;
+  generated_at: string;
+  current_target_lo_bps: number;
+  current_target_hi_bps: number;
+  horizons: FuturesConsensusHorizon[];
+  methodology: string;
+  data_source: string;
+}
+
+export type SemanticDiffSpanKind =
+  | "unchanged"
+  | "added"
+  | "removed"
+  | "substituted";
+
+export interface SemanticDiffSpan {
+  kind: SemanticDiffSpanKind;
+  text: string;
+  paired_text?: string | null;
+}
+
+export interface SemanticDiffTopic {
+  topic: string;
+  prior_emphasis: number;
+  current_emphasis: number;
+  delta: number;
+  sample_phrases: string[];
+}
+
+export interface SemanticDiffResponse {
+  current_date: string;
+  prior_date: string;
+  token_spans: SemanticDiffSpan[];
+  topic_deltas: SemanticDiffTopic[];
+  summary: string;
 }

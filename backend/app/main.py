@@ -43,7 +43,10 @@ from app.schemas import (
     DocumentParseResponse,
     DocumentParseUrlRequest,
     EvaluationCoverageResponse,
+    ExpectedVolumeForecastResponse,
+    ExpectedVolumeHorizonForecast,
     FomcCalendarResponse,
+    FuturesConsensusResponse,
     HistoryDetail,
     HistoryEntry,
     HistoryEventStudyResponse,
@@ -51,6 +54,7 @@ from app.schemas import (
     HistoryRealizedBatchResponse,
     HistoryRealizedResponse,
     MarketReactionPanel,
+    MonetaryPolicySurpriseResponse,
     NextFomcForecastResponse,
     RatesReactionCard,
     HarTercileBaselineResponse,
@@ -61,6 +65,8 @@ from app.schemas import (
     BacktestRequest,
     BacktestResponse,
     ResearchRegistryResponse,
+    SemanticDiffRequest,
+    SemanticDiffResponse,
     SettingsCheckpoint,
     SettingsCheckpointsResponse,
     SymbolDescriptor,
@@ -1427,6 +1433,117 @@ def fomc_calendar(
     )
 
 
+@app.get(
+    "/fomc/latest-mp-surprise",
+    response_model=MonetaryPolicySurpriseResponse,
+)
+async def fomc_latest_mp_surprise() -> MonetaryPolicySurpriseResponse:
+    """Latest realized monetary-policy surprise (descriptive chip).
+
+    Reads the most recent FOMC row from
+    ``data/external/fred/mp_surprises.parquet`` built by
+    :mod:`app.data.mp_surprise` and returns it as a wire response. The
+    surprise level is the strict-prior bps quantity the upstream module
+    documents; serving picks the latest ``event_date`` row, classifies
+    the sign against the symmetric no-surprise band, and reports the
+    magnitude. Returns 503 with a structured detail when the parquet is
+    missing — the front-end chip degrades to an "unavailable" placeholder.
+    """
+
+    from app.services.mp_surprise_service import (
+        MpSurpriseUnavailable,
+        load_latest_mp_surprise,
+    )
+
+    try:
+        return await run_in_threadpool(load_latest_mp_surprise)
+    except MpSurpriseUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "mp_surprise_unavailable", "message": str(exc)},
+        ) from exc
+
+
+@app.get(
+    "/fomc/futures-consensus",
+    response_model=FuturesConsensusResponse,
+)
+async def fomc_futures_consensus(
+    as_of: str | None = Query(default=None, description="YYYY-MM-DD; defaults to today"),
+) -> FuturesConsensusResponse:
+    """Fed-funds path consensus via the DGS Treasury short-end proxy.
+
+    Builds the descriptive panel that anchors the workspace's
+    rate-path expectations column. The implied rate at the three short
+    DGS tenors is read off the latest non-null FRED observation; the
+    change vs. the current target band midpoint is bucketed into
+    hike / cut / pause probabilities via a normal CDF (25 bps
+    threshold, 12.5 bps sigma). The response carries a methodology
+    footnote so the panel never implies an OIS-clean expectation.
+
+    Returns 503 with a structured detail when the FRED client cannot
+    reach the upstream API or when the FOMC calendar has no upcoming
+    meeting on or after the requested as-of date — the front-end then
+    renders the "unavailable" placeholder rather than a generic error.
+    """
+
+    reference: date | None = None
+    if as_of:
+        try:
+            reference = date.fromisoformat(as_of)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="as_of must be YYYY-MM-DD",
+            ) from exc
+
+    from app.services.futures_consensus import (
+        FuturesConsensusUnavailable,
+        get_consensus,
+    )
+
+    try:
+        return await run_in_threadpool(get_consensus, reference)
+    except FuturesConsensusUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "futures_consensus_unavailable", "message": str(exc)},
+        ) from exc
+
+
+@app.post(
+    "/fomc/semantic-diff",
+    response_model=SemanticDiffResponse,
+)
+async def fomc_semantic_diff(payload: SemanticDiffRequest) -> SemanticDiffResponse:
+    """Semantic diff between the pasted statement and its strict-prior.
+
+    Loads the most recent FOMC statement strictly before
+    ``payload.current_date`` off ``/data/fomc_statements.json`` and
+    returns the composite response — token-level redline spans plus
+    six-topic emphasis deltas. The descriptive surface never feeds a
+    forecast head; the cold-start (no strict-prior) case returns
+    empty spans + topic list with an explanatory summary so the panel
+    can render the banner-only mode.
+    """
+
+    try:
+        current_date = date.fromisoformat(payload.current_date[:10]).isoformat()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="current_date must be ISO-8601 YYYY-MM-DD",
+        ) from exc
+
+    from app.services.semantic_diff import build_response
+
+    return await run_in_threadpool(
+        build_response,
+        current_date,
+        payload.current_text,
+    )
+
+
 @app.post("/documents/parse", response_model=DocumentParseResponse)
 async def parse_document(
     text: str | None = Form(default=None),
@@ -1745,6 +1862,101 @@ async def forecast_regime_baselines(
         cutoffs_q67=out["cutoffs_q67"],
         model_revision=out["model_revision"],
         generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+
+
+_VOLUME_HISTORY_DAYS = 120
+_VOLUME_MIN_DAYS = 22
+
+
+def _load_volume_history(symbol: str) -> list[float]:
+    """Pull the last 120 daily share volumes for ``symbol``.
+
+    Reads daily bars off yfinance (the same source the volume head was
+    trained against). Drops non-positive rows so the log transform
+    inside the predictor cannot blow up. Returns chronological volumes
+    in raw share units; the service module handles the log + HAR.
+    """
+
+    import yfinance as yf
+
+    ticker = yf.Ticker(symbol)
+    frame = ticker.history(period="180d", auto_adjust=True)
+    if frame is None or frame.empty:
+        raise RuntimeError(f"no market history available for {symbol}")
+    vol = frame["Volume"].astype(float).dropna()
+    if hasattr(vol, "columns"):
+        vol = vol.iloc[:, 0].dropna()
+    vol = vol[vol > 0]
+    if len(vol) < _VOLUME_MIN_DAYS:
+        raise RuntimeError(f"insufficient volume history for {symbol}")
+    series = vol.tolist()
+    if len(series) > _VOLUME_HISTORY_DAYS:
+        series = series[-_VOLUME_HISTORY_DAYS:]
+    return series
+
+
+@app.get(
+    "/forecast/abnormal-volume",
+    response_model=ExpectedVolumeForecastResponse,
+)
+async def forecast_abnormal_volume(
+    symbol: str = Query(
+        "^GSPC",
+        description="Market ticker; defaults to S&P 500.",
+        min_length=1,
+        max_length=32,
+        pattern=r"^[A-Za-z0-9._=^/-]+$",
+    ),
+) -> ExpectedVolumeForecastResponse:
+    """Multi-horizon HAR-volume forecast for the Expected Volume card.
+
+    Pulls the last 120 daily volumes for ``symbol`` and runs the cached
+    HAR Corsi head (lag1 + 5-day mean + 22-day mean) with optional
+    weekday / month-end / quarter-end seasonality dummies and conformal
+    80% / 90% bands. Market-data only — text features never feed this
+    forecast surface. Returns a structured 503 on artifact-load failure
+    or insufficient market history.
+    """
+
+    from app.services.volume_forecaster import (
+        VolumeForecasterUnavailable,
+        predict_abnormal_volume,
+    )
+
+    try:
+        vol_hist = await run_in_threadpool(_load_volume_history, symbol)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "history_unavailable", "message": str(exc)},
+        ) from exc
+
+    try:
+        out = await run_in_threadpool(predict_abnormal_volume, vol_hist, symbol)
+    except VolumeForecasterUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "model_unavailable", "message": str(exc)},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "history_invalid", "message": str(exc)},
+        ) from exc
+    except Exception as exc:  # pragma: no cover -- defensive against HF surprises
+        logger.warning("volume_forecast_failed", exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "forecast_failed", "message": str(exc)},
+        ) from exc
+
+    horizons = [ExpectedVolumeHorizonForecast(**h) for h in out["horizons"]]
+    return ExpectedVolumeForecastResponse(
+        symbol=out["symbol"],
+        horizons=horizons,
+        model_revision=out["model_revision"],
+        generated_at=out["generated_at"],
     )
 
 
