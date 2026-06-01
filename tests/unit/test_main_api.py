@@ -138,6 +138,73 @@ def test_analyze_rejects_unknown_field():
     assert response.status_code == 422
 
 
+def _write_statement_fixture(tmp_path, *, date_iso: str, text: str):
+    import json
+
+    payload = [
+        {
+            "date": date_iso,
+            "title": f"FOMC Statement {date_iso}",
+            "document_type": "Statement",
+            "text": text,
+        }
+    ]
+    (tmp_path / "fomc_statements.json").write_text(json.dumps(payload), encoding="utf-8")
+    (tmp_path / "fomc_minutes.json").write_text("[]", encoding="utf-8")
+
+
+def test_documents_by_date_returns_cleaned_text(monkeypatch, tmp_path):
+    """The read path strips Implementation Note / voting roster / nav
+    chrome so consumers (frontend prefill, downstream embeddings) never
+    see the boilerplate even when the on-disk JSON predates the scraper
+    hygiene wiring."""
+
+    dirty = (
+        "The Committee decided to maintain the target range for the federal "
+        "funds rate. Voting for the monetary policy action were Jerome H. "
+        "Powell, Chair; John C. Williams, Vice Chair; and Loretta J. Mester. "
+        "Implementation Note issued January 29, 2020 Federal Reserve actions "
+        "to support liquidity"
+    )
+    _write_statement_fixture(tmp_path, date_iso="2020-01-29", text=dirty)
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+
+    client = TestClient(main_mod.app)
+    response = client.get("/documents/by-date", params={"date": "2020-01-29", "kind": "statement"})
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert "Implementation Note" not in payload["text"]
+    assert "Jerome H. Powell" not in payload["text"]
+    assert "Vice Chair" not in payload["text"]
+    # Substantive policy sentence is preserved.
+    assert "target range for the federal funds rate" in payload["text"]
+
+
+def test_documents_by_date_preserves_dissent_signal(monkeypatch, tmp_path):
+    dirty = (
+        "The Committee decided to lower the target range. "
+        "Voting for the monetary policy action were Jerome H. Powell, Chair; "
+        "and Randal K. Quarles. Voting against this action was Loretta J. "
+        "Mester, who preferred to reduce the target range for the federal "
+        "funds rate to 1/2 to 3/4 percent at this meeting. "
+        "Implementation Note issued March 15, 2020"
+    )
+    _write_statement_fixture(tmp_path, date_iso="2020-03-15", text=dirty)
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+
+    client = TestClient(main_mod.app)
+    response = client.get("/documents/by-date", params={"date": "2020-03-15", "kind": "statement"})
+    assert response.status_code == 200, response.text
+    cleaned_text = response.json()["text"]
+    # Dissent signal preserved end-to-end through the endpoint.
+    assert "Voting against this action was Loretta J. Mester" in cleaned_text
+    assert "preferred to reduce the target range" in cleaned_text
+    # Implementation Note + the "Voting for ..." roster are gone.
+    assert "Implementation Note" not in cleaned_text
+    assert "Voting for the monetary policy action" not in cleaned_text
+    assert "Randal K. Quarles" not in cleaned_text
+
+
 def test_symbols_endpoint_returns_only_trained_symbols():
     """GET /symbols exposes exactly the five tickers the HAR / RV /
     Expected-Volume models are trained against. Anything else would

@@ -115,6 +115,7 @@ from app.services.market_data import (
 from app.services.policy_action_extractor import extract_policy_action
 from app.services.text_encoder import analyze_text
 from app.services.forecaster_text_embedding import encode_text_pooled
+from app.services.text_hygiene import clean_fomc_text
 
 logger = logging.getLogger(__name__)
 
@@ -526,6 +527,15 @@ def list_documents():
     return {"count": len(documents), "documents": documents}
 
 
+def _hygiene_kind_for(document_type: str) -> str:
+    lowered = document_type.lower()
+    if lowered.startswith("minutes"):
+        return "minutes"
+    if lowered.startswith("press"):
+        return "press_conference"
+    return "statement"
+
+
 @app.get("/documents/by-date")
 def get_document_by_date(date: str, kind: str = "auto"):
     """Look up an FOMC statement or minutes by event date so the calendar
@@ -572,11 +582,12 @@ def get_document_by_date(date: str, kind: str = "auto"):
             text = str(item.get("text") or item.get("content") or "")
             if not text:
                 continue
+            cleaned = clean_fomc_text(text, kind=_hygiene_kind_for(document_type))
             return {
                 "date": date,
                 "kind": document_type.lower(),
                 "title": str(item.get("title", "")),
-                "text": text,
+                "text": cleaned,
                 "source_file": filename,
             }
     raise HTTPException(
