@@ -125,9 +125,7 @@ def compute_backtest_metrics(
         position = _validate_position(entry.get("position"))
         forward_pct = _lookup_forward_pct(date, horizon_days, symbol)
         strategy_pct = (
-            None
-            if forward_pct is None or position == 0
-            else round(position * forward_pct, 4)
+            None if forward_pct is None or position == 0 else round(position * forward_pct, 4)
         )
         trades.append(
             BacktestTrade(
@@ -159,9 +157,7 @@ def compute_backtest_metrics(
     # strategy_return_pct is not None; the inner check below is for
     # mypy's benefit (it cannot narrow on attribute access alone).
     strategy_pcts: list[float] = [
-        t.strategy_return_pct
-        for t in realized
-        if t.strategy_return_pct is not None
+        t.strategy_return_pct for t in realized if t.strategy_return_pct is not None
     ]
     # #564 review F1: benchmark compounds over EVERY trade with valid
     # forward data (incl. neutral positions). Restricting to ``realized``
@@ -170,27 +166,17 @@ def compute_backtest_metrics(
     # the strategy missed. Full-window buy-and-hold is the standard
     # baseline.
     forward_pcts: list[float] = [
-        t.forward_return_pct
-        for t in trades
-        if t.forward_return_pct is not None
+        t.forward_return_pct for t in trades if t.forward_return_pct is not None
     ]
 
     mean = sum(strategy_pcts) / n_trades
-    variance = (
-        sum((r - mean) ** 2 for r in strategy_pcts) / (n_trades - 1)
-        if n_trades > 1
-        else 0.0
-    )
+    variance = sum((r - mean) ** 2 for r in strategy_pcts) / (n_trades - 1) if n_trades > 1 else 0.0
     std = math.sqrt(variance)
     # Annualization: each trade is a discrete holding-period return.
     # The standard convention is mean / std * sqrt(periods_per_year)
     # where periods_per_year = trading_days / horizon_days.
     periods_per_year = TRADING_DAYS_PER_YEAR / max(horizon_days, 1)
-    sharpe = (
-        round((mean / std) * math.sqrt(periods_per_year), 4)
-        if std > 0
-        else None
-    )
+    sharpe = round((mean / std) * math.sqrt(periods_per_year), 4) if std > 0 else None
 
     hits = sum(1 for r in strategy_pcts if r > 0)
     hit_rate = round(hits / n_trades, 4)

@@ -90,7 +90,7 @@ def compute_recall_at_k(  # noqa: C901 — multi-input validation + multi-k pass
         or query_embeddings.size == 0
         or len(ground_truth_matches) == 0
     ):
-        return {k: 0.0 for k in k_clean}
+        return dict.fromkeys(k_clean, 0.0)
 
     if len(ground_truth_matches) != query_embeddings.shape[0]:
         raise ValueError(
@@ -121,7 +121,7 @@ def compute_recall_at_k(  # noqa: C901 — multi-input validation + multi-k pass
     # over the similarity matrix.
     ranked = np.argsort(-sims, axis=1)[:, :max_k]
 
-    hits: dict[int, int] = {k: 0 for k in k_clean}
+    hits: dict[int, int] = dict.fromkeys(k_clean, 0)
     scored = 0
     for row_idx, gt in enumerate(ground_truth_matches):
         gt_int = int(gt)
@@ -134,7 +134,7 @@ def compute_recall_at_k(  # noqa: C901 — multi-input validation + multi-k pass
                 hits[k] += 1
 
     if scored == 0:
-        return {k: 0.0 for k in k_clean}
+        return dict.fromkeys(k_clean, 0.0)
     return {k: hits[k] / scored for k in k_clean}
 
 

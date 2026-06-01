@@ -7,6 +7,7 @@ import type {
   BacktestPositionEntry,
   BacktestResponse,
   ClassificationBreakdownResponse,
+  DocumentDetailResponse,
   EvaluationCoverageResponse,
   ExpectedVolumeForecastResponse,
   FomcCalendarResponse,
@@ -25,6 +26,7 @@ import type {
   RealizedVolForecastResponse,
   ResearchArtifactsResponse,
   ResearchRegistryResponse,
+  RvBacktestResponse,
   SemanticDiffResponse,
   SettingsCheckpointsResponse,
   SymbolListResponse,
@@ -246,6 +248,31 @@ export async function fetchFomcCalendar(
   return response.data as FomcCalendarResponse;
 }
 
+// Path-based document viewer fetcher. The backend 404s when the row
+// isn't on disk; the page renders a tailored not-found state off the
+// nullable return rather than threading an axios error through the
+// generic toast path. Anything other than 404 propagates so the page
+// can surface a 500 banner.
+export async function fetchDocumentDetail(
+  baseUrl: string,
+  type: string,
+  date: string,
+  signal?: AbortSignal,
+): Promise<DocumentDetailResponse | null> {
+  try {
+    const response = await axios.get(
+      `${baseUrl}/documents/${encodeURIComponent(type)}/${encodeURIComponent(date)}`,
+      { signal },
+    );
+    return response.data as DocumentDetailResponse;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 404) {
+      return null;
+    }
+    throw err;
+  }
+}
+
 export async function fetchResearchArtifacts(
   baseUrl: string
 ): Promise<ResearchArtifactsResponse> {
@@ -421,6 +448,31 @@ export async function fetchHarTercileBacktest(
       signal,
     });
     return response.data as HarTercileBacktestResponse;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 503) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+// QLIKE-RV backtest fetcher. Mirrors ``fetchHarTercileBacktest``: 503
+// (model / history unavailable) folds into ``null`` so the panel
+// renders the tailored "unavailable" placeholder rather than the
+// generic error path. 400 (non-^GSPC symbol) propagates as an axios
+// error so the caller can surface a tailored toast.
+export async function fetchRvBacktest(
+  baseUrl: string,
+  symbol: string,
+  limit: number = 10,
+  signal?: AbortSignal,
+): Promise<RvBacktestResponse | null> {
+  try {
+    const response = await axios.get(`${baseUrl}/forecast/rv-backtest`, {
+      params: { symbol, limit },
+      signal,
+    });
+    return response.data as RvBacktestResponse;
   } catch (err) {
     if (axios.isAxiosError(err) && err.response?.status === 503) {
       return null;

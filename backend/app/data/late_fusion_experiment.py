@@ -39,8 +39,14 @@ _BASE = DATA_DIR / "processed" / "late_fusion"
 
 # Compact, economically-motivated SEP feature set (dense relative horizons).
 _SEP_FEATURES = [
-    "sep_point_ffr_h0", "sep_point_ffr_h1", "sep_point_ffr_LR", "sep_disp_ffr_h0",
-    "sep_point_gdp_h0", "sep_point_unemployment_h0", "sep_point_pce_h0", "sep_available",
+    "sep_point_ffr_h0",
+    "sep_point_ffr_h1",
+    "sep_point_ffr_LR",
+    "sep_disp_ffr_h0",
+    "sep_point_gdp_h0",
+    "sep_point_unemployment_h0",
+    "sep_point_pce_h0",
+    "sep_available",
 ]
 
 
@@ -57,14 +63,22 @@ class FrameSpec:
 
 _SPECS = {
     "event": FrameSpec(
-        frame="event_frame.parquet", emb="event_text_emb.parquet", join_key="event_date",
-        market_features=["pre_ret", "pre_rv", "log_pre_volume"], sep_features=_SEP_FEATURES,
-        dir_col="dir_immediate", mag_col="mag_immediate",
+        frame="event_frame.parquet",
+        emb="event_text_emb.parquet",
+        join_key="event_date",
+        market_features=["pre_ret", "pre_rv", "log_pre_volume"],
+        sep_features=_SEP_FEATURES,
+        dir_col="dir_immediate",
+        mag_col="mag_immediate",
     ),
     "daily": FrameSpec(
-        frame="daily_frame.parquet", emb="daily_text_emb.parquet", join_key="row_hash",
-        market_features=["ret_5d", "ret_22d", "rv_22"], sep_features=[],
-        dir_col="dir_nextday", mag_col="mag_nextday",
+        frame="daily_frame.parquet",
+        emb="daily_text_emb.parquet",
+        join_key="row_hash",
+        market_features=["ret_5d", "ret_22d", "rv_22"],
+        sep_features=[],
+        dir_col="dir_nextday",
+        mag_col="mag_nextday",
     ),
 }
 
@@ -114,7 +128,8 @@ def load_frame(spec: FrameSpec) -> Loaded:
     y_dir = merged[spec.dir_col].to_numpy(dtype=np.float32)
     y_mag = merged[spec.mag_col].to_numpy(dtype=np.float32)
     doc_type = (
-        merged["doc_type"].to_numpy() if "doc_type" in merged.columns
+        merged["doc_type"].to_numpy()
+        if "doc_type" in merged.columns
         else np.array(["statement"] * len(merged))
     )
     # keep only rows with a defined target
@@ -159,12 +174,21 @@ def _residualize(
     aug_tr = np.hstack([struct_tr, np.ones((len(struct_tr), 1), dtype=np.float32)])
     beta, *_ = np.linalg.lstsq(aug_tr, text_tr, rcond=None)
     aug_te = np.hstack([struct_te, np.ones((len(struct_te), 1), dtype=np.float32)])
-    return (text_tr - aug_tr @ beta).astype(np.float32), (text_te - aug_te @ beta).astype(np.float32)
+    return (text_tr - aug_tr @ beta).astype(np.float32), (text_te - aug_te @ beta).astype(
+        np.float32
+    )
 
 
 def _train_predict(
-    text_tr: np.ndarray, struct_tr: np.ndarray, ydir_tr: np.ndarray, ymag_tr: np.ndarray,
-    text_te: np.ndarray, struct_te: np.ndarray, use_text: bool, use_struct: bool, cfg: Config,
+    text_tr: np.ndarray,
+    struct_tr: np.ndarray,
+    ydir_tr: np.ndarray,
+    ymag_tr: np.ndarray,
+    text_te: np.ndarray,
+    struct_te: np.ndarray,
+    use_text: bool,
+    use_struct: bool,
+    cfg: Config,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Seed-averaged predictions (dir probability, magnitude) on the test split."""
     dir_probs, mags = [], []
@@ -176,8 +200,10 @@ def _train_predict(
     for seed in cfg.seeds:
         torch.manual_seed(seed)
         model = LateFusionModel(
-            text_dim=text_tr.shape[1], struct_dim=struct_tr.shape[1],
-            use_text=use_text, use_struct=use_struct,
+            text_dim=text_tr.shape[1],
+            struct_dim=struct_tr.shape[1],
+            use_text=use_text,
+            use_struct=use_struct,
         )
         opt = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
         model.train()
@@ -219,12 +245,24 @@ def run_frame(spec: FrameSpec, cfg: Config, residualize: bool) -> OOS:
     first_oos = int(splits[0][1].min()) if splits else -1
     logger.info(
         "%s: %d/%d folds usable (n=%d); OOS starts at row %d (rows 0-%d are train-only)",
-        spec.frame, len(splits), cfg.n_folds, n, first_oos, max(first_oos - 1, 0),
+        spec.frame,
+        len(splits),
+        cfg.n_folds,
+        n,
+        first_oos,
+        max(first_oos - 1, 0),
     )
     acc: dict[str, list[np.ndarray]] = {
-        "y_dir": [], "y_mag": [], "mag_baseline": [], "doc_type": [],
-        "market_dir": [], "market_mag": [], "text_dir": [], "text_mag": [],
-        "full_dir": [], "full_mag": [],
+        "y_dir": [],
+        "y_mag": [],
+        "mag_baseline": [],
+        "doc_type": [],
+        "market_dir": [],
+        "market_mag": [],
+        "text_dir": [],
+        "text_mag": [],
+        "full_dir": [],
+        "full_mag": [],
     }
     for train_idx, test_idx in splits:
         s_tr, s_te = _standardize(data.struct[train_idx], data.struct[test_idx])
@@ -240,7 +278,9 @@ def run_frame(spec: FrameSpec, cfg: Config, residualize: bool) -> OOS:
         ym_te_s = ((data.y_mag[test_idx] - mag_mean) / mag_std).astype(np.float32)
 
         configs = {
-            "market": (False, True), "text": (True, False), "full": (True, True),
+            "market": (False, True),
+            "text": (True, False),
+            "full": (True, True),
         }
         for name, (use_text, use_struct) in configs.items():
             dprob, mag = _train_predict(
@@ -256,7 +296,9 @@ def run_frame(spec: FrameSpec, cfg: Config, residualize: bool) -> OOS:
 
     cat = {k: np.concatenate(v) for k, v in acc.items()}
     return OOS(
-        y_dir=cat["y_dir"], y_mag=cat["y_mag"], mag_baseline=cat["mag_baseline"],
+        y_dir=cat["y_dir"],
+        y_mag=cat["y_mag"],
+        mag_baseline=cat["mag_baseline"],
         market={"dir": cat["market_dir"], "mag": cat["market_mag"]},
         text={"dir": cat["text_dir"], "mag": cat["text_mag"]},
         full={"dir": cat["full_dir"], "mag": cat["full_mag"]},
@@ -268,7 +310,9 @@ def _acc(y: np.ndarray, prob: np.ndarray) -> float:
     return float(((prob > 0.5).astype(np.float32) == y).mean())
 
 
-def _mcnemar(y: np.ndarray, prob_full: np.ndarray, prob_market: np.ndarray) -> tuple[int, int, float]:
+def _mcnemar(
+    y: np.ndarray, prob_full: np.ndarray, prob_market: np.ndarray
+) -> tuple[int, int, float]:
     """Paired McNemar test (continuity-corrected) for full vs market direction.
 
     b = full correct & market wrong; c = full wrong & market correct. Returns
@@ -287,9 +331,7 @@ def _mcnemar(y: np.ndarray, prob_full: np.ndarray, prob_market: np.ndarray) -> t
     return b, c, float(p)
 
 
-def _block_boot_ci(
-    fn: Callable[[np.ndarray], float], oos: OOS, cfg: Config
-) -> tuple[float, float]:
+def _block_boot_ci(fn: Callable[[np.ndarray], float], oos: OOS, cfg: Config) -> tuple[float, float]:
     """Moving-block bootstrap CI on a scalar statistic ``fn(idx)`` over OOS rows."""
     n = len(oos.y_dir)
     rng = np.random.default_rng(0)
@@ -314,21 +356,34 @@ def summarize(spec: FrameSpec, oos: OOS, cfg: Config, residualize: bool) -> dict
 
     dir_gain = _block_boot_ci(
         lambda i: _acc(oos.y_dir[i], oos.full["dir"][i]) - _acc(oos.y_dir[i], oos.market["dir"][i]),
-        oos, cfg,
+        oos,
+        cfg,
     )
     base = float(oos.mag_baseline.mean())
     mag_gain = _block_boot_ci(
-        lambda i: _r2(oos.y_mag[i], oos.full["mag"][i], base) - _r2(oos.y_mag[i], oos.market["mag"][i], base),
-        oos, cfg,
+        lambda i: _r2(oos.y_mag[i], oos.full["mag"][i], base)
+        - _r2(oos.y_mag[i], oos.market["mag"][i], base),
+        oos,
+        cfg,
     )
     b, c, mcnemar_p = _mcnemar(oos.y_dir, oos.full["dir"], oos.market["dir"])
     return {
-        "frame": spec.frame, "residualize": residualize, "n": int(len(oos.y_dir)),
+        "frame": spec.frame,
+        "residualize": residualize,
+        "n": int(len(oos.y_dir)),
         "majority": round(majority, 4),
-        "dir_acc": {"market": round(acc_market, 4), "text": round(acc_text, 4), "full": round(acc_full, 4)},
+        "dir_acc": {
+            "market": round(acc_market, 4),
+            "text": round(acc_text, 4),
+            "full": round(acc_full, 4),
+        },
         "dir_text_lift_ci90": [round(dir_gain[0], 4), round(dir_gain[1], 4)],
         "dir_mcnemar": {"full_better": b, "market_better": c, "p": round(mcnemar_p, 4)},
-        "mag_r2": {"market": round(r2_market, 4), "text": round(r2_text, 4), "full": round(r2_full, 4)},
+        "mag_r2": {
+            "market": round(r2_market, 4),
+            "text": round(r2_text, 4),
+            "full": round(r2_full, 4),
+        },
         "mag_text_lift_ci90": [round(mag_gain[0], 4), round(mag_gain[1], 4)],
         "note": "bootstrap CI is conditional on fitted models (may be narrow); mcnemar is the paired test",
     }
@@ -342,12 +397,15 @@ def per_doctype(oos: OOS) -> list[dict[str, object]]:
         if int(mask.sum()) < 30:
             continue
         b, c, p = _mcnemar(oos.y_dir[mask], oos.full["dir"][mask], oos.market["dir"][mask])
-        rows.append({
-            "doc_type": dt, "n": int(mask.sum()),
-            "acc_market": round(_acc(oos.y_dir[mask], oos.market["dir"][mask]), 4),
-            "acc_full": round(_acc(oos.y_dir[mask], oos.full["dir"][mask]), 4),
-            "mcnemar": {"full_better": b, "market_better": c, "p": round(p, 4)},
-        })
+        rows.append(
+            {
+                "doc_type": dt,
+                "n": int(mask.sum()),
+                "acc_market": round(_acc(oos.y_dir[mask], oos.market["dir"][mask]), 4),
+                "acc_full": round(_acc(oos.y_dir[mask], oos.full["dir"][mask]), 4),
+                "mcnemar": {"full_better": b, "market_better": c, "p": round(p, 4)},
+            }
+        )
     return rows
 
 

@@ -170,9 +170,7 @@ def _validate_train_end(train_end: str | None) -> str | None:
     try:
         return date_type.fromisoformat(text).isoformat()
     except ValueError as exc:
-        raise ValueError(
-            f"train_end {train_end!r} is not a valid ISO date (YYYY-MM-DD)"
-        ) from exc
+        raise ValueError(f"train_end {train_end!r} is not a valid ISO date (YYYY-MM-DD)") from exc
 
 
 def resolve_train_end_from_fold(
@@ -191,23 +189,17 @@ def resolve_train_end_from_fold(
 
     manifest_path = events_parquet.parent / FOLD_MANIFEST_FILENAME
     if not manifest_path.exists():
-        raise ValueError(
-            f"fold manifest not found at {manifest_path}; pass --train-end explicitly"
-        )
+        raise ValueError(f"fold manifest not found at {manifest_path}; pass --train-end explicitly")
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     folds = payload.get("folds") or []
     for fold in folds:
         if fold.get("fold_id") == fold_id:
             train_end = fold.get("train_end")
             if not train_end:
-                raise ValueError(
-                    f"fold {fold_id!r} in {manifest_path} carries no train_end"
-                )
+                raise ValueError(f"fold {fold_id!r} in {manifest_path} carries no train_end")
             return str(train_end)
     available = sorted(str(f.get("fold_id", "")) for f in folds)
-    raise ValueError(
-        f"fold_id {fold_id!r} not found in {manifest_path}; available: {available}"
-    )
+    raise ValueError(f"fold_id {fold_id!r} not found in {manifest_path}; available: {available}")
 
 
 def _filter_events_by_train_end(events: pd.DataFrame, train_end: str) -> pd.DataFrame:
@@ -261,9 +253,7 @@ def build_training_pairs(  # noqa: C901 — flat column-validation guards keep t
     """
 
     if pair_policy not in PAIR_POLICIES:
-        raise ValueError(
-            f"unknown pair_policy {pair_policy!r}; expected one of {PAIR_POLICIES}"
-        )
+        raise ValueError(f"unknown pair_policy {pair_policy!r}; expected one of {PAIR_POLICIES}")
 
     if "event_kind" not in events.columns:
         raise KeyError("events parquet missing 'event_kind' column")
@@ -296,10 +286,7 @@ def _build_same_meeting_pairs(df: pd.DataFrame) -> list[TrainingPair]:
         if not anchor_text:
             continue
         anchor_date = str(anchor_row.get("event_date", ""))
-        siblings = df[
-            (df["event_date"] == anchor_date)
-            & (df["event_kind"].isin(POSITIVE_KINDS))
-        ]
+        siblings = df[(df["event_date"] == anchor_date) & (df["event_kind"].isin(POSITIVE_KINDS))]
         for _, sibling in siblings.iterrows():
             sibling_text = _clean_text(sibling.get("text"))
             if not sibling_text or sibling_text == anchor_text:
@@ -352,9 +339,7 @@ def _build_shared_axis_pairs(df: pd.DataFrame) -> list[TrainingPair]:  # noqa: C
     same label.
     """
 
-    available_axes = [
-        col for col in SHARED_AXIS_COLUMNS if col in df.columns
-    ]
+    available_axes = [col for col in SHARED_AXIS_COLUMNS if col in df.columns]
     if not available_axes:
         return []
 
@@ -512,22 +497,17 @@ def fine_tune_and_index(  # noqa: PLR0913 — keyword-only training-script knobs
     """
 
     if pair_policy not in PAIR_POLICIES:
-        raise ValueError(
-            f"unknown pair_policy {pair_policy!r}; expected one of {PAIR_POLICIES}"
-        )
+        raise ValueError(f"unknown pair_policy {pair_policy!r}; expected one of {PAIR_POLICIES}")
     if batch_size < 2:
         # MNRL builds its negatives from the rest of the in-batch
         # positives; a batch of 1 means there are no negatives and the
         # loss silently degenerates to zero. Fail fast so a broken
         # encoder never ships.
         raise ValueError(
-            "MultipleNegativesRankingLoss requires batch_size >= 2; "
-            f"got batch_size={batch_size}"
+            "MultipleNegativesRankingLoss requires batch_size >= 2; " f"got batch_size={batch_size}"
         )
     if train_end is not None and fold_id is not None:
-        raise ValueError(
-            "--train-end and --fold-id are mutually exclusive; pass only one"
-        )
+        raise ValueError("--train-end and --fold-id are mutually exclusive; pass only one")
 
     resolved_train_end: str | None
     if fold_id is not None:

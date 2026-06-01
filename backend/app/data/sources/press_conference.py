@@ -47,9 +47,7 @@ class FomcPressConferenceScraper:
     def write(self, parsed: Iterable[ParsedPressConference], output_path: Path) -> int:
         return write_press_conferences_json(parsed, output_path)
 
-    def build_qa_lookup(
-        self, parsed: Iterable[ParsedPressConference]
-    ) -> dict[str, dict[str, str]]:
+    def build_qa_lookup(self, parsed: Iterable[ParsedPressConference]) -> dict[str, dict[str, str]]:
         return build_qa_lookup(parsed)
 
 

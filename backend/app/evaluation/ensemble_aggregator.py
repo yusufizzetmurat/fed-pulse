@@ -167,14 +167,14 @@ def _plurality_vote(per_arch_argmaxes: Sequence[int]) -> int:
 
 
 def _align_per_cell(
-    selected_trials_per_arch: Mapping[str, Sequence[Mapping[str, object]]]
+    selected_trials_per_arch: Mapping[str, Sequence[Mapping[str, object]]],
 ) -> dict[tuple[str | None, int | None], dict[str, Mapping[str, object]]]:
     """Group selected trials by ``(fold_id, seed)`` so the ensemble
     averages run only on cells where every architecture has data.
     Cells with incomplete coverage are dropped."""
 
-    by_cell: dict[tuple[str | None, int | None], dict[str, Mapping[str, object]]] = (
-        defaultdict(dict)
+    by_cell: dict[tuple[str | None, int | None], dict[str, Mapping[str, object]]] = defaultdict(
+        dict
     )
     for arch, trials in selected_trials_per_arch.items():
         for trial in trials:
@@ -263,9 +263,7 @@ def aggregate(  # noqa: C901, PLR0913
     # Step 1: select the best (arch, hp) from each architecture's sweep.
     per_arch_best_trials: dict[str, list[Mapping[str, object]]] = {}
     for arch, blobs in per_arch_sweep_blobs.items():
-        cells: dict[tuple[str, str | None], list[Mapping[str, object]]] = defaultdict(
-            list
-        )
+        cells: dict[tuple[str, str | None], list[Mapping[str, object]]] = defaultdict(list)
         inferred_metric = "macro_f1"
         for blob in blobs:
             trials = blob.get("trials", [])
@@ -369,9 +367,7 @@ def aggregate(  # noqa: C901, PLR0913
             resampled.sort()
             alpha = (1.0 - coverage) / 2.0
             lo_idx = max(0, min(n_resamples - 1, int(alpha * n_resamples)))
-            hi_idx = max(
-                0, min(n_resamples - 1, int((1.0 - alpha) * n_resamples) - 1)
-            )
+            hi_idx = max(0, min(n_resamples - 1, int((1.0 - alpha) * n_resamples) - 1))
             ci = BootstrapCI(
                 point=float(pooled_breakdown.macro_f1),
                 lo=resampled[lo_idx],
@@ -405,9 +401,7 @@ def _render_markdown(payload: Mapping[str, object]) -> str:
         if isinstance(first, EnsemblePooled):
             architectures = first.architectures
     if architectures:
-        lines.append(
-            "Ensembling architectures: " + ", ".join(f"`{a}`" for a in architectures)
-        )
+        lines.append("Ensembling architectures: " + ", ".join(f"`{a}`" for a in architectures))
         lines.append("")
     lines.append("| Strategy | n_pooled | macro-F1 | 95% CI |")
     lines.append("| --- | ---: | ---: | --- |")
@@ -600,9 +594,7 @@ class MultiRunEnsembleResult:
                 {"dropped": d, "redundant_with": k, "kappa": float(kappa)}
                 for d, k, kappa in self.dropped_run_ids
             ],
-            "agreement": {
-                f"{a}|{b}": float(v) for (a, b), v in self.agreement.items()
-            },
+            "agreement": {f"{a}|{b}": float(v) for (a, b), v in self.agreement.items()},
             "per_fold": [row.to_dict() for row in self.per_fold],
             "pooled_breakdown": self.pooled_breakdown.to_dict(),
             "calibration_strategy": self.calibration_strategy,
@@ -621,19 +613,13 @@ def _load_run_trials(spec: RunSpec) -> list[Mapping[str, object]]:
 
     path = Path(spec.results_path)
     if not path.exists():
-        raise FileNotFoundError(
-            f"run {spec.run_id!r} results not found at {path!s}"
-        )
+        raise FileNotFoundError(f"run {spec.run_id!r} results not found at {path!s}")
     blob = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(blob, Mapping):
-        raise ValueError(
-            f"run {spec.run_id!r} results blob is not a JSON object: {path!s}"
-        )
+        raise ValueError(f"run {spec.run_id!r} results blob is not a JSON object: {path!s}")
     trials = blob.get("trials", [])
     if not isinstance(trials, list):
-        raise ValueError(
-            f"run {spec.run_id!r} results blob has no 'trials' list: {path!s}"
-        )
+        raise ValueError(f"run {spec.run_id!r} results blob has no 'trials' list: {path!s}")
     out: list[Mapping[str, object]] = []
     for trial in trials:
         if isinstance(trial, Mapping):
@@ -695,9 +681,7 @@ def _cohen_kappa(preds_a: Sequence[int], preds_b: Sequence[int]) -> float:
     """
 
     if len(preds_a) != len(preds_b):
-        raise ValueError(
-            f"preds_a length {len(preds_a)} != preds_b length {len(preds_b)}"
-        )
+        raise ValueError(f"preds_a length {len(preds_a)} != preds_b length {len(preds_b)}")
     n = len(preds_a)
     if n == 0:
         return float("nan")
@@ -706,8 +690,8 @@ def _cohen_kappa(preds_a: Sequence[int], preds_b: Sequence[int]) -> float:
         return 1.0 if all(int(a) == int(b) for a, b in zip(preds_a, preds_b)) else 0.0
     agree = sum(1 for a, b in zip(preds_a, preds_b) if int(a) == int(b))
     p_o = agree / n
-    marg_a = {c: 0 for c in classes}
-    marg_b = {c: 0 for c in classes}
+    marg_a = dict.fromkeys(classes, 0)
+    marg_b = dict.fromkeys(classes, 0)
     for a, b in zip(preds_a, preds_b):
         marg_a[int(a)] += 1
         marg_b[int(b)] += 1
@@ -720,7 +704,10 @@ def _cohen_kappa(preds_a: Sequence[int], preds_b: Sequence[int]) -> float:
 def _validate_run_layouts(
     specs: Sequence[RunSpec],
     trials_by_run: Mapping[str, Sequence[Mapping[str, object]]],
-) -> tuple[tuple[tuple[str, int | None], ...], dict[str, dict[tuple[str, int | None], Mapping[str, object]]]]:
+) -> tuple[
+    tuple[tuple[str, int | None], ...],
+    dict[str, dict[tuple[str, int | None], Mapping[str, object]]],
+]:
     """Confirm every run has the same ``(fold_id, seed)`` trial set.
 
     Returns the canonical trial-id sequence (sorted, derived from the
@@ -731,9 +718,7 @@ def _validate_run_layouts(
     if not specs:
         raise ValueError("multi-run ensemble requires at least one RunSpec")
     canonical: list[tuple[str, int | None]] | None = None
-    lookup: dict[
-        str, dict[tuple[str, int | None], Mapping[str, object]]
-    ] = {}
+    lookup: dict[str, dict[tuple[str, int | None], Mapping[str, object]]] = {}
     for spec in specs:
         trials = trials_by_run.get(spec.run_id, [])
         per_run: dict[tuple[str, int | None], Mapping[str, object]] = {}
@@ -817,9 +802,7 @@ def per_fold_conformal_calibration(
         return float("nan"), float("nan"), float("nan")
     sets = [predict_conformal_set(row, softmax_q) for row in fold_softmax]
     coverage = empirical_classification_coverage(sets, fold_targets)
-    avg_set_size = (
-        sum(len(s) for s in sets) / len(sets) if sets else float("nan")
-    )
+    avg_set_size = sum(len(s) for s in sets) / len(sets) if sets else float("nan")
     return float(softmax_q), float(coverage), float(avg_set_size)
 
 
@@ -928,8 +911,7 @@ def aggregate_multi_run_ensemble(  # noqa: C901, PLR0913
             rows = _test_predictions(trial)
             if rows is None:
                 raise ValueError(
-                    f"run {spec.run_id!r} trial {tid!r} missing "
-                    "test_metrics.predictions/targets"
+                    f"run {spec.run_id!r} trial {tid!r} missing " "test_metrics.predictions/targets"
                 )
             preds, _targets = rows
             flat.extend(preds)
@@ -951,9 +933,7 @@ def aggregate_multi_run_ensemble(  # noqa: C901, PLR0913
     raw_weights = [float(spec.weight) for spec in kept_specs]
     total_w = sum(raw_weights)
     if total_w <= 0:
-        raise ValueError(
-            "kept runs have non-positive weight sum; cannot normalise"
-        )
+        raise ValueError("kept runs have non-positive weight sum; cannot normalise")
     weights = [w / total_w for w in raw_weights]
 
     # Step: per-fold logit averaging + conformal calibration.
@@ -979,22 +959,18 @@ def aggregate_multi_run_ensemble(  # noqa: C901, PLR0913
             ref_rows = _test_predictions(lookup[kept_specs[0].run_id][tid])
             if ref_rows is None:
                 raise ValueError(
-                    f"kept run {kept_specs[0].run_id!r} missing test_metrics "
-                    f"on trial {tid!r}"
+                    f"kept run {kept_specs[0].run_id!r} missing test_metrics " f"on trial {tid!r}"
                 )
             _ref_preds, ref_targets = ref_rows
             n_rows_trial = len(ref_targets)
 
             # Per-row aggregated logits across kept runs.
-            avg_logits: list[list[float]] = [
-                [0.0] * n_classes for _ in range(n_rows_trial)
-            ]
+            avg_logits: list[list[float]] = [[0.0] * n_classes for _ in range(n_rows_trial)]
             for spec, w in zip(kept_specs, weights):
                 logits = _row_logits(lookup[spec.run_id][tid])
                 if logits is None:
                     raise ValueError(
-                        f"run {spec.run_id!r} trial {tid!r} missing "
-                        "test_metrics.class_scores"
+                        f"run {spec.run_id!r} trial {tid!r} missing " "test_metrics.class_scores"
                     )
                 if len(logits) != n_rows_trial:
                     raise ValueError(
@@ -1020,9 +996,7 @@ def aggregate_multi_run_ensemble(  # noqa: C901, PLR0913
             for row in avg_logits:
                 probs = _softmax(row)
                 fold_softmax.append(probs)
-                fold_preds.append(
-                    max(range(n_classes), key=lambda c: probs[c])
-                )
+                fold_preds.append(max(range(n_classes), key=lambda c: probs[c]))
             fold_targets.extend(int(y) for y in ref_targets)
 
         # Per-fold conformal calibration on the averaged softmax. This

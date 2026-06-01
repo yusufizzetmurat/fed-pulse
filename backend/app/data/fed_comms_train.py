@@ -142,7 +142,13 @@ def _standardize(x_tr: np.ndarray, x_te: np.ndarray) -> tuple[np.ndarray, np.nda
 
 
 def _block_bootstrap_r2_ci(
-    pred: np.ndarray, true: np.ndarray, base: np.ndarray, *, block: int, seed: int, n_boot: int = 1000
+    pred: np.ndarray,
+    true: np.ndarray,
+    base: np.ndarray,
+    *,
+    block: int,
+    seed: int,
+    n_boot: int = 1000,
 ) -> tuple[float, float]:
     """Relative OOS-R² CI via a moving-block bootstrap (block ≥ horizon).
 
@@ -190,8 +196,12 @@ def _train_fusion_fold(
     enable_deterministic_mode(seed)
     har, tgt = data["har"], data["targets"]
     nt = tgt.shape[1]
-    har_te_pred = np.column_stack([_fit_predict_ols(har[tr], tgt[tr, k], har[te]) for k in range(nt)])
-    har_tr_pred = np.column_stack([_fit_predict_ols(har[tr], tgt[tr, k], har[tr]) for k in range(nt)])
+    har_te_pred = np.column_stack(
+        [_fit_predict_ols(har[tr], tgt[tr, k], har[te]) for k in range(nt)]
+    )
+    har_tr_pred = np.column_stack(
+        [_fit_predict_ols(har[tr], tgt[tr, k], har[tr]) for k in range(nt)]
+    )
     resid = tgt[tr] - har_tr_pred
 
     n = len(tr)
@@ -234,7 +244,12 @@ def _train_fusion_fold(
         for s in range(0, len(order), 256):
             b = core_pos[order[s : s + 256]]
             opt.zero_grad()
-            batch = {"text_emb": emb_t[b], "market_feat": mf_t[b], "text_mask": mask_t[b], "targets": y_t[b]}
+            batch = {
+                "text_emb": emb_t[b],
+                "market_feat": mf_t[b],
+                "text_mask": mask_t[b],
+                "targets": y_t[b],
+            }
             loss = fusion_loss(model, batch, info_nce_weight=info_nce_weight)["loss"]
             loss.backward()  # type: ignore[no-untyped-call]
             opt.step()
@@ -328,10 +343,14 @@ def run(
             "mkt_only": _oos_r2(mkt[:, k], true[:, k], base[:, k]),
             "fused": _oos_r2(fused[:, k], true[:, k], base[:, k]),
         }
-        row["fused_vs_har_ci90"] = list(_bootstrap_r2_ci(fused[:, k], true[:, k], har[:, k], seed=seed))
+        row["fused_vs_har_ci90"] = list(
+            _bootstrap_r2_ci(fused[:, k], true[:, k], har[:, k], seed=seed)
+        )
         # text isolation: fused vs the SAME model with the gate forced off (market-only).
         # The difference is purely the text contribution; CI ≤ 0 ⇒ text adds nothing.
-        row["text_vs_mkt_ci90"] = list(_bootstrap_r2_ci(fused[:, k], true[:, k], mkt[:, k], seed=seed))
+        row["text_vs_mkt_ci90"] = list(
+            _bootstrap_r2_ci(fused[:, k], true[:, k], mkt[:, k], seed=seed)
+        )
         # block bootstrap (block = horizon) — honest CI under overlapping-window autocorrelation
         row["text_vs_mkt_block_ci90"] = list(
             _block_bootstrap_r2_ci(fused[:, k], true[:, k], mkt[:, k], block=max(h, 1), seed=seed)
@@ -408,7 +427,9 @@ def main() -> int:
     )
     args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / "fusion_bakeoff.json").write_text(json.dumps(res, indent=2), encoding="utf-8")
-    print(f"target={res['measure']}  n_eval={res['n_eval']}  text_active_frac={res['text_active_frac']:.3f}")
+    print(
+        f"target={res['measure']}  n_eval={res['n_eval']}  text_active_frac={res['text_active_frac']:.3f}"
+    )
     print(f"gate_by_type={ {k: round(v, 3) for k, v in res['gate_by_type'].items()} }")
     hdr = f"{'horizon':<8}{'HAR':>8}{'mkt':>8}{'fused':>8}{'txt-vs-mkt(iid)':>20}{'txt-vs-mkt(block)':>22}"
     print(hdr)

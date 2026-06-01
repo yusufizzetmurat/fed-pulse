@@ -100,9 +100,29 @@ def _read_latest(path: Path) -> _LatestRow:
 
     level = latest["mp_surprise_level"]
     if level is None or (isinstance(level, float) and level != level):  # NaN check
-        raise MpSurpriseUnavailable(
-            "latest mp_surprises row has a null mp_surprise_level"
-        )
+        raise MpSurpriseUnavailable("latest mp_surprises row has a null mp_surprise_level")
+
+    # Defensive guard for partially-populated rows: the latest event
+    # row can carry a usable mp_surprise_level but a malformed
+    # event_date (NaN / empty) or NaN is_intermeeting flag — both of
+    # which would silently coerce to misleading wire values
+    # (``"nan"`` and ``True``). Surfacing the missing-data condition
+    # here lets the API translate to a structured 503 instead of
+    # leaking a corrupt row into the descriptive chip.
+    event_date_raw = latest["event_date"]
+    if event_date_raw is None or (
+        isinstance(event_date_raw, float) and event_date_raw != event_date_raw
+    ):
+        raise MpSurpriseUnavailable("latest mp_surprises row has a null event_date")
+    event_date_str = str(event_date_raw).strip()
+    if not event_date_str:
+        raise MpSurpriseUnavailable("latest mp_surprises row has an empty event_date")
+
+    is_intermeeting_raw = latest["is_intermeeting"]
+    if is_intermeeting_raw is None or (
+        isinstance(is_intermeeting_raw, float) and is_intermeeting_raw != is_intermeeting_raw
+    ):
+        raise MpSurpriseUnavailable("latest mp_surprises row has a null is_intermeeting flag")
 
     prior_pct = latest.get("ff_target_prior") if "ff_target_prior" in df.columns else None
     prior_bps: float | None
@@ -113,9 +133,9 @@ def _read_latest(path: Path) -> _LatestRow:
         prior_bps = float(prior_pct) * 100.0
 
     return _LatestRow(
-        event_date=str(latest["event_date"]),
+        event_date=event_date_str,
         mp_surprise_level_bps=float(level),
-        is_intermeeting=bool(latest["is_intermeeting"]),
+        is_intermeeting=bool(is_intermeeting_raw),
         ff_target_prior_bps=prior_bps,
     )
 

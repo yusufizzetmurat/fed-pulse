@@ -500,9 +500,9 @@ def _pre_post_yields(
                 break
 
     if pre_date is not None and post_date is not None:
-        assert pre_date < on_date < post_date, (
-            f"no-look-ahead contract violated: pre={pre_date} on={on_date} post={post_date}"
-        )
+        assert (
+            pre_date < on_date < post_date
+        ), f"no-look-ahead contract violated: pre={pre_date} on={on_date} post={post_date}"
     return (pre_value, post_value, pre_date, post_date)
 
 
@@ -581,8 +581,7 @@ def _strictly_prior_pre_and_trailing_yield(
 
     if pre_date is not None and trail_date is not None:
         assert trail_date < pre_date < on_date, (
-            "strict-prior contract violated: "
-            f"trail={trail_date} pre={pre_date} on={on_date}"
+            "strict-prior contract violated: " f"trail={trail_date} pre={pre_date} on={on_date}"
         )
     return (pre_value, trail_value, pre_date, trail_date)
 
@@ -977,8 +976,12 @@ def build_mp_surprises(
         )
 
     # ---- Maps ----
-    target_upper = _series_to_map(fred_responses["DFEDTARU"]) if "DFEDTARU" in fred_responses else {}
-    target_lower = _series_to_map(fred_responses["DFEDTARL"]) if "DFEDTARL" in fred_responses else {}
+    target_upper = (
+        _series_to_map(fred_responses["DFEDTARU"]) if "DFEDTARU" in fred_responses else {}
+    )
+    target_lower = (
+        _series_to_map(fred_responses["DFEDTARL"]) if "DFEDTARL" in fred_responses else {}
+    )
     target_single = _series_to_map(fred_responses["DFEDTAR"]) if "DFEDTAR" in fred_responses else {}
     curve_maps: dict[int, dict[_dt.date, float]] = {}
     for tenor, sid in CURVE_SERIES_BY_TENOR.items():
@@ -1041,8 +1044,16 @@ def build_mp_surprises(
                 s_map,
                 trading_days=trading_days_sorted,
             )
-            pre_curve.append(CurvePoint(months_ahead=tenor, implied_rate=pre if pre is not None else float("nan")))
-            post_curve.append(CurvePoint(months_ahead=tenor, implied_rate=post if post is not None else float("nan")))
+            pre_curve.append(
+                CurvePoint(
+                    months_ahead=tenor, implied_rate=pre if pre is not None else float("nan")
+                )
+            )
+            post_curve.append(
+                CurvePoint(
+                    months_ahead=tenor, implied_rate=post if post is not None else float("nan")
+                )
+            )
             # Strict-prior trailing drift: replaces the leaky post-leg
             # contribution to the surprise-level and PCA-path inputs.
             pre_v, trail_v, _, _ = _strictly_prior_pre_and_trailing_yield(
@@ -1118,11 +1129,7 @@ def build_mp_surprises(
                 if p.implied_rate == p.implied_rate:  # NaN-safe
                     pre_1m_curve_value = float(p.implied_rate)
                 break
-        if (
-            prior_target is None
-            or after_target is None
-            or pre_1m_curve_value is None
-        ):
+        if prior_target is None or after_target is None or pre_1m_curve_value is None:
             per_meeting_delta_level[ed] = None
         else:
             actual_change_bps = (float(after_target) - float(prior_target)) * 100.0
@@ -1235,7 +1242,9 @@ def build_mp_surprises(
         r["data_version"] = data_version
     frame = pd.DataFrame(out_rows) if out_rows else _empty_frame()
     if not frame.empty:
-        frame = frame.sort_values(["event_date", "meeting_id"], kind="mergesort").reset_index(drop=True)
+        frame = frame.sort_values(["event_date", "meeting_id"], kind="mergesort").reset_index(
+            drop=True
+        )
         frame = frame[list(COLUMN_ORDER)]
     return BuildArtifacts(
         frame=frame,
@@ -1474,11 +1483,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     spx_cache_path = (
-        Path(args.spx_cache_path)
-        if args.spx_cache_path
-        else cache_dir / "_spx_gspc.parquet"
+        Path(args.spx_cache_path) if args.spx_cache_path else cache_dir / "_spx_gspc.parquet"
     )
-    spx_map = _fetch_spx_close_via_yfinance(start=fetch_start, end=fetch_end, cache_path=spx_cache_path)
+    spx_map = _fetch_spx_close_via_yfinance(
+        start=fetch_start, end=fetch_end, cache_path=spx_cache_path
+    )
 
     calendar_path = Path(args.fomc_calendar_csv) if args.fomc_calendar_csv else None
     calendar = load_fomc_calendar(path=calendar_path, start=start, end=end)
@@ -1512,7 +1521,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"[mp-surprise] methodology: {artifacts.methodology}")
     print(f"[mp-surprise] data_version: {artifacts.data_version}")
     print(f"[mp-surprise] parquet sha256: {parquet_sha}")
-    print(f"[mp-surprise] PCA explained_variance_ratio: {artifacts.path_model.explained_variance_ratio:.4f}")
+    print(
+        f"[mp-surprise] PCA explained_variance_ratio: {artifacts.path_model.explained_variance_ratio:.4f}"
+    )
     print("[mp-surprise] 5 most recent meetings:")
     if not artifacts.frame.empty:
         tail = artifacts.frame.tail(5)

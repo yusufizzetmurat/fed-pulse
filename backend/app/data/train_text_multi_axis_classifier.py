@@ -407,9 +407,7 @@ def _gtfintechlab_dataset_rows(  # noqa: PLR0913 — same cross-bank context as 
     rows: list[_AxisRow] = []
     for config in configs:
         try:
-            splits = list(
-                hf_mod.get_dataset_split_names(dataset_id, config, revision=revision)
-            )
+            splits = list(hf_mod.get_dataset_split_names(dataset_id, config, revision=revision))
         except Exception:
             _logger.exception(
                 "gtfintechlab_splits_failed dataset=%s config=%s",
@@ -492,9 +490,7 @@ def _load_gtfintechlab_rows(
     for dataset_id in dataset_ids:
         revision = _dataset_revision(dataset_id)
         if revision is None:
-            _logger.warning(
-                "gtfintechlab_revision_missing dataset=%s (skipping)", dataset_id
-            )
+            _logger.warning("gtfintechlab_revision_missing dataset=%s (skipping)", dataset_id)
             continue
         provenance = _provenance_for_gtfintechlab_dataset(dataset_id)
         rows.extend(
@@ -536,9 +532,7 @@ def _fit_class_weights(
         return torch.ones(n_classes, dtype=torch.float32)
     raw = [1.0 / (c + smoothing) for c in counts]
     total = sum(raw)
-    return torch.tensor(
-        [(w / total) * n_classes for w in raw], dtype=torch.float32
-    )
+    return torch.tensor([(w / total) * n_classes for w in raw], dtype=torch.float32)
 
 
 def _build_axis_class_weights(rows: list[_AxisRow]) -> dict[str, torch.Tensor]:
@@ -602,24 +596,16 @@ def _collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
     out: dict[str, torch.Tensor] = {}
     out["input_ids"] = torch.stack([item["input_ids"] for item in batch])
     out["attention_mask"] = torch.stack([item["attention_mask"] for item in batch])
-    out["target_stance"] = torch.tensor(
-        [item["target_stance"] for item in batch], dtype=torch.long
-    )
+    out["target_stance"] = torch.tensor([item["target_stance"] for item in batch], dtype=torch.long)
     out["target_certainty"] = torch.tensor(
         [item["target_certainty"] for item in batch], dtype=torch.long
     )
-    out["target_time"] = torch.tensor(
-        [item["target_time"] for item in batch], dtype=torch.long
-    )
-    out["mask_stance"] = torch.tensor(
-        [item["mask_stance"] for item in batch], dtype=torch.bool
-    )
+    out["target_time"] = torch.tensor([item["target_time"] for item in batch], dtype=torch.long)
+    out["mask_stance"] = torch.tensor([item["mask_stance"] for item in batch], dtype=torch.bool)
     out["mask_certainty"] = torch.tensor(
         [item["mask_certainty"] for item in batch], dtype=torch.bool
     )
-    out["mask_time"] = torch.tensor(
-        [item["mask_time"] for item in batch], dtype=torch.bool
-    )
+    out["mask_time"] = torch.tensor([item["mask_time"] for item in batch], dtype=torch.bool)
     # ``source`` and ``provenance`` are per-row strings (the per-bank
     # eval and the first-epoch sanity log read them); the rest of the
     # batch is torch.Tensor. The mixed-type return signature is
@@ -761,15 +747,11 @@ def _compute_weighted_total_loss(
         return loss_fn(logits, targets, masks)
     if torch.all(stance_sample_weight == 1.0):
         return loss_fn(logits, targets, masks)
-    return loss_fn(
-        logits, targets, masks, stance_sample_weight=stance_sample_weight
-    )
+    return loss_fn(logits, targets, masks, stance_sample_weight=stance_sample_weight)
 
 
 @torch.no_grad()
-def _macro_f1_from_arrays(
-    predictions: list[int], targets: list[int], n_classes: int
-) -> float:
+def _macro_f1_from_arrays(predictions: list[int], targets: list[int], n_classes: int) -> float:
     """Plain unweighted macro-F1 over the supplied row-level arrays.
 
     Avoids a heavy sklearn dependency on what is otherwise a small
@@ -976,18 +958,12 @@ def _save_checkpoint(  # noqa: PLR0913 — kw-only checkpoint envelope; collapsi
             # disk to an events_parquet-trained one, blocking
             # reproducibility audits.
             "data_source": getattr(args, "data_source", "events_parquet"),
-            "gtfintechlab_fed_only": bool(
-                getattr(args, "gtfintechlab_fed_only", False)
-            ),
+            "gtfintechlab_fed_only": bool(getattr(args, "gtfintechlab_fed_only", False)),
             # Bundle A.1: record the cross-bank arm + weight so a
             # checkpoint trained under ``stance_masked`` cannot be
             # confused with one trained under ``weighted`` on disk.
-            "cross_bank_supervision": str(
-                getattr(args, "cross_bank_supervision", "off")
-            ),
-            "cross_bank_stance_weight": float(
-                getattr(args, "cross_bank_stance_weight", 0.25)
-            ),
+            "cross_bank_supervision": str(getattr(args, "cross_bank_supervision", "off")),
+            "cross_bank_stance_weight": float(getattr(args, "cross_bank_stance_weight", 0.25)),
             # When ``--gtfintechlab-fed-only`` is combined with a
             # non-``off`` cross-bank arm, ``main()`` warns and the
             # loader restricts to FOMC — so the run did NOT actually
@@ -1066,9 +1042,7 @@ def main(argv: list[str] | None = None) -> int:
             )
     else:
         if not args.training_package_id:
-            raise SystemExit(
-                "--training-package-id is required when --data-source=events_parquet"
-            )
+            raise SystemExit("--training-package-id is required when --data-source=events_parquet")
         package_dir = DATA_DIR / "processed" / args.training_package_id
         events_path = package_dir / "events.parquet"
         rows = _load_supervised_rows(events_path)
@@ -1224,9 +1198,7 @@ def _write_per_bank_breakdown(
 
     if checkpoint_path.exists():
         try:
-            best_payload = torch.load(
-                checkpoint_path, map_location=device, weights_only=False
-            )
+            best_payload = torch.load(checkpoint_path, map_location=device, weights_only=False)
             best_state = best_payload.get("model_state_dict")
             if best_state:
                 model.load_state_dict(best_state)
@@ -1242,9 +1214,7 @@ def _write_per_bank_breakdown(
     # ``with_name(stem + ".per_bank_metrics.json")`` works whether or not the
     # user-supplied checkpoint path carries an extension; ``with_suffix("")``
     # raises ValueError on suffix-less paths.
-    per_bank_path = checkpoint_path.with_name(
-        checkpoint_path.stem + ".per_bank_metrics.json"
-    )
+    per_bank_path = checkpoint_path.with_name(checkpoint_path.stem + ".per_bank_metrics.json")
     per_bank_path.parent.mkdir(parents=True, exist_ok=True)
     import json as _json
 
@@ -1278,9 +1248,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--training-package-id",
         default="",
-        help=(
-            "Required when --data-source=events_parquet; ignored otherwise."
-        ),
+        help=("Required when --data-source=events_parquet; ignored otherwise."),
     )
     parser.add_argument("--encoder-alias", default=DEFAULT_ENCODER_ALIAS)
     parser.add_argument(

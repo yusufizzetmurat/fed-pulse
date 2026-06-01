@@ -133,9 +133,7 @@ class _RegimeFocalLoss(nn.Module):
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         from app.training.loss import focal_cross_entropy
 
-        return focal_cross_entropy(
-            logits, target, gamma=self.gamma, weight=self.weight
-        )
+        return focal_cross_entropy(logits, target, gamma=self.gamma, weight=self.weight)
 
 
 def _resolve_device(device: str | torch.device | None = None) -> torch.device:
@@ -222,9 +220,7 @@ def _move_to_device(tensor: None, device: torch.device) -> None: ...
 def _move_to_device(tensor: torch.Tensor, device: torch.device) -> torch.Tensor: ...
 
 
-def _move_to_device(
-    tensor: torch.Tensor | None, device: torch.device
-) -> torch.Tensor | None:
+def _move_to_device(tensor: torch.Tensor | None, device: torch.device) -> torch.Tensor | None:
     """Move ``tensor`` to ``device`` once. Returns ``None`` unchanged."""
 
     if tensor is None:
@@ -301,9 +297,7 @@ def _build_model(
                 load_warm_start_into_adapter,
             )
 
-            warm_meta = load_warm_start_into_adapter(
-                adapter, text_adapter_warm_start, strict=False
-            )
+            warm_meta = load_warm_start_into_adapter(adapter, text_adapter_warm_start, strict=False)
             model.text_adapter_warm_start = warm_meta  # type: ignore[assignment]
     if device is not None:
         model = model.to(device)
@@ -318,7 +312,9 @@ def _build_model(
     return model  # type: ignore[return-value]
 
 
-def _zero_credibility(model: nn.Module, batch_size: int, device: torch.device) -> torch.Tensor | None:
+def _zero_credibility(
+    model: nn.Module, batch_size: int, device: torch.device
+) -> torch.Tensor | None:
     """Return a zero credibility tensor for the batch when the model expects one.
 
     Models trained with ``credibility_features=True`` must always receive a
@@ -352,9 +348,7 @@ def _allocate_credibility_buffer(
     return torch.zeros((max_batch_size, dim), dtype=torch.float32, device=device)
 
 
-def _slice_credibility_buffer(
-    buffer: torch.Tensor | None, batch_size: int
-) -> torch.Tensor | None:
+def _slice_credibility_buffer(buffer: torch.Tensor | None, batch_size: int) -> torch.Tensor | None:
     """Slice a pre-allocated credibility buffer to the active batch size."""
 
     if buffer is None:
@@ -423,16 +417,13 @@ def _resolve_compile_amp_flags(
     effective_amp = use_amp and architecture not in _AMP_INCOMPATIBLE_ARCHITECTURES
     if use_amp and not effective_amp:
         _logger.warning(
-            "autocast disabled for architecture=%r (incompatible); "
-            "running fp32 forward instead",
+            "autocast disabled for architecture=%r (incompatible); " "running fp32 forward instead",
             architecture,
         )
     return effective_compile, effective_amp
 
 
-def _maybe_compile_model(
-    model: nn.Module, *, use_compile: bool
-) -> nn.Module:
+def _maybe_compile_model(model: nn.Module, *, use_compile: bool) -> nn.Module:
     """Wrap ``model`` in ``torch.compile`` when ``use_compile`` is on.
 
     ``mode="reduce-overhead"`` is the documented setting for the
@@ -529,20 +520,14 @@ def _compute_rates_loss(
             if bool(cls_mask.any().item()):
                 # Replace masked rows with class 0 so cross_entropy stays
                 # finite; the mask zeros the row's contribution below.
-                safe_target = torch.where(
-                    cls_mask, cls_target, torch.zeros_like(cls_target)
-                )
-                per_row = F.cross_entropy(
-                    cls_logits, safe_target, reduction="none"
-                )
+                safe_target = torch.where(cls_mask, cls_target, torch.zeros_like(cls_target))
+                per_row = F.cross_entropy(cls_logits, safe_target, reduction="none")
                 per_row = per_row * cls_mask.to(per_row.dtype)
                 denom = float(cls_mask.sum().item()) or 1.0
                 ce = per_row.sum() / denom
                 ce_weight = (1.0 - alpha) if mode == "dual" else 1.0
                 ce_contrib = ce_weight * ce
-                head_loss = (
-                    ce_contrib if head_loss is None else head_loss + ce_contrib
-                )
+                head_loss = ce_contrib if head_loss is None else head_loss + ce_contrib
         if head_loss is None:
             continue
         loss_accum = head_loss if loss_accum is None else loss_accum + head_loss
@@ -570,9 +555,7 @@ class RatesPartitionTensors:
     index the same row order the DataLoader emits.
     """
 
-    per_head: dict[str, "RatesHeadPartitionBundle"] = dataclasses.field(
-        default_factory=dict
-    )
+    per_head: dict[str, "RatesHeadPartitionBundle"] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass
@@ -662,9 +645,7 @@ def _compute_rates_partition_metrics(
                     continue
                 heads_with_output.add(name)
                 pred_std = out[pred_key].detach().to("cpu")
-                cls_logits_tensor = (
-                    out[cls_key].detach().to("cpu") if cls_key in out else None
-                )
+                cls_logits_tensor = out[cls_key].detach().to("cpu") if cls_key in out else None
                 cls_softmax_tensor = (
                     torch.softmax(cls_logits_tensor, dim=-1)
                     if cls_logits_tensor is not None
@@ -703,18 +684,14 @@ def _compute_rates_partition_metrics(
     # #317 finding #18: short-circuit + log when the model lacks rates
     # heads so operators see why the conformal sidecar is empty.
     if not heads_with_output:
-        _logger.info(
-            "rates partition metrics skipped: model exposes no rates head outputs"
-        )
+        _logger.info("rates partition metrics skipped: model exposes no rates head outputs")
         return None
     out_metrics: dict[str, dict[str, Any]] = {}
     for name in head_names:
         preds = pred_buffers[name]
         actuals = actual_buffers[name]
         masks = mask_buffers[name]
-        kept_pairs = [
-            (p, a) for p, a, m in zip(preds, actuals, masks) if m
-        ]
+        kept_pairs = [(p, a) for p, a, m in zip(preds, actuals, masks) if m]
         if not kept_pairs:
             out_metrics[name] = {
                 "predictions_bps": [],
@@ -968,7 +945,15 @@ def _unpack_batch(
         return batch_x, batch_y, batch_text, batch_text_missing, None, None, trailing_rates_index
     if arity == 5:
         batch_x, batch_y, batch_text, batch_text_missing, batch_log_rv = batch_list
-        return batch_x, batch_y, batch_text, batch_text_missing, None, batch_log_rv, trailing_rates_index
+        return (
+            batch_x,
+            batch_y,
+            batch_text,
+            batch_text_missing,
+            None,
+            batch_log_rv,
+            trailing_rates_index,
+        )
     # Multi-task aux tensors are a 4-tensor block (certainty /
     # certainty_mask / time / time_mask). The factor axis pair was
     # retired (text cannot predict the GSS target) and the topic axis
@@ -998,10 +983,17 @@ def _unpack_batch(
         batch_text = batch_list[2]
         batch_text_missing = batch_list[3]
         mt_aux = {key: batch_list[4 + idx] for idx, key in enumerate(_MULTI_TASK_AUX_KEYS)}
-        return batch_x, batch_y, batch_text, batch_text_missing, mt_aux, batch_list[8], trailing_rates_index
+        return (
+            batch_x,
+            batch_y,
+            batch_text,
+            batch_text_missing,
+            mt_aux,
+            batch_list[8],
+            trailing_rates_index,
+        )
     raise ValueError(
-        f"unexpected batch arity from DataLoader: {arity} "
-        "(want 2, 3, 4, 5, 6, 7, 8, or 9)"
+        f"unexpected batch arity from DataLoader: {arity} " "(want 2, 3, 4, 5, 6, 7, 8, or 9)"
     )
 
 
@@ -1068,9 +1060,7 @@ def _maybe_write_classification_conformal_manifest(
     class_names = _resolve_class_names_for_conformal(n_classes)
     predicted_sets = [predict_conformal_set(row, softmax_q) for row in class_scores]
     try:
-        class_cond = compute_class_conditional_coverage(
-            predicted_sets, targets, class_names
-        )
+        class_cond = compute_class_conditional_coverage(predicted_sets, targets, class_names)
     except ValueError as exc:
         print(
             f"[conformal] class-conditional coverage skipped: {exc}",
@@ -1078,9 +1068,7 @@ def _maybe_write_classification_conformal_manifest(
         )
         class_cond = None
     try:
-        set_size = compute_set_size_distribution(
-            predicted_sets, n_classes=n_classes
-        )
+        set_size = compute_set_size_distribution(predicted_sets, n_classes=n_classes)
     except ValueError as exc:
         print(
             f"[conformal] set-size distribution skipped: {exc}",
@@ -1159,14 +1147,10 @@ def _maybe_write_classification_conformal_manifest(
         flush=True,
     )
     if class_cond is not None:
-        cov_repr = ", ".join(
-            f"{k}={v:.3f}" for k, v in class_cond.items()
-        )
+        cov_repr = ", ".join(f"{k}={v:.3f}" for k, v in class_cond.items())
         print(f"[conformal] class-conditional coverage: {cov_repr}", flush=True)
     if set_size is not None:
-        size_repr = ", ".join(
-            f"|S|={k}:{v:.3f}" for k, v in set_size.items()
-        )
+        size_repr = ", ".join(f"|S|={k}:{v:.3f}" for k, v in set_size.items())
         print(f"[conformal] set-size distribution: {size_repr}", flush=True)
     if flagged:
         print(
@@ -1255,21 +1239,14 @@ def _maybe_write_rates_conformal_manifest(
         softmax_rows_raw = head_block.get("cls_softmax_scores") or []
         true_classes_raw = head_block.get("cls_true_classes") or []
         cls_mask_raw = head_block.get("cls_mask") or []
-        if (
-            len(softmax_rows_raw) >= 2
-            and len(true_classes_raw) == len(softmax_rows_raw)
-        ):
+        if len(softmax_rows_raw) >= 2 and len(true_classes_raw) == len(softmax_rows_raw):
             mask = (
                 cls_mask_raw
                 if len(cls_mask_raw) == len(softmax_rows_raw)
                 else [True] * len(softmax_rows_raw)
             )
-            softmax_rows = [
-                row for row, m in zip(softmax_rows_raw, mask) if m
-            ]
-            true_classes = [
-                int(c) for c, m in zip(true_classes_raw, mask) if m
-            ]
+            softmax_rows = [row for row, m in zip(softmax_rows_raw, mask) if m]
+            true_classes = [int(c) for c, m in zip(true_classes_raw, mask) if m]
             if len(softmax_rows) >= 2:
                 try:
                     cls_q = calibrate_classification_conformal(
@@ -1439,9 +1416,7 @@ def _fit_axis_class_weights_from_mask(
         return torch.ones(n_classes, dtype=torch.float32)
     raw = [1.0 / (c + smoothing) for c in counts]
     total = sum(raw)
-    return torch.tensor(
-        [(w / total) * n_classes for w in raw], dtype=torch.float32
-    )
+    return torch.tensor([(w / total) * n_classes for w in raw], dtype=torch.float32)
 
 
 def _run_train_forward_multi_task(
@@ -1724,9 +1699,7 @@ def _maybe_add_dual_head_loss(
 _DUAL_HEAD_SCALE_WARNED: bool = False
 
 
-def _assert_dual_head_scales_balanced(
-    ce_loss: torch.Tensor, mse_loss: torch.Tensor
-) -> None:
+def _assert_dual_head_scales_balanced(ce_loss: torch.Tensor, mse_loss: torch.Tensor) -> None:
     """Log a one-shot warning when CE / MSE scales drift apart."""
 
     global _DUAL_HEAD_SCALE_WARNED
@@ -1947,9 +1920,7 @@ def _build_partition_log_rv_target(
         # TensorDataset row-count invariant.
         leading_target = sequence_group[sequence_length]
         leading_vol = getattr(leading_target, "forward_realized_vol_10d", None)
-        if leading_vol is None or (
-            isinstance(leading_vol, float) and leading_vol != leading_vol
-        ):
+        if leading_vol is None or (isinstance(leading_vol, float) and leading_vol != leading_vol):
             continue
         for idx in range(sequence_length, len(sequence_group)):
             target_row = sequence_group[idx]
@@ -2070,15 +2041,13 @@ def _build_partition_aux_log_rv_targets(
         return None, aux_log_rv_scalers
 
     per_horizon_values: dict[int, list[float]] = {h: [] for h in horizons}
-    fallback_counts: dict[int, int] = {h: 0 for h in horizons}
+    fallback_counts: dict[int, int] = dict.fromkeys(horizons, 0)
     for sequence_group in sequence_groups:
         if len(sequence_group) < sequence_length + 1:
             continue
         leading_target = sequence_group[sequence_length]
         leading_vol = getattr(leading_target, "forward_realized_vol_10d", None)
-        if leading_vol is None or (
-            isinstance(leading_vol, float) and leading_vol != leading_vol
-        ):
+        if leading_vol is None or (isinstance(leading_vol, float) and leading_vol != leading_vol):
             continue
         for idx in range(sequence_length, len(sequence_group)):
             target_row = sequence_group[idx]
@@ -2188,8 +2157,7 @@ def _evaluate_model(
     _eval_underlying = model.module if hasattr(model, "module") else model
     _eval_underlying = getattr(_eval_underlying, "_orig_mod", _eval_underlying)
     has_regression_head = (
-        is_classification
-        and getattr(_eval_underlying, "regression_head", None) is not None
+        is_classification and getattr(_eval_underlying, "regression_head", None) is not None
     )
     total_loss_sum = torch.zeros((), dtype=torch.float64, device=device)
     total_items = torch.zeros((), dtype=torch.int64, device=device)
@@ -2263,12 +2231,8 @@ def _evaluate_model(
     # the per-row gate tensor so the post-loop summariser can attach
     # the gate distribution to the EvaluationMetrics. Empty on every
     # legacy single-modal path.
-    multimodal_underlying = (
-        model.module if hasattr(model, "module") else model
-    )
-    multimodal_forward = getattr(
-        multimodal_underlying, "forward_with_modality_outputs", None
-    )
+    multimodal_underlying = model.module if hasattr(model, "module") else model
+    multimodal_forward = getattr(multimodal_underlying, "forward_with_modality_outputs", None)
     gate_chunks: list[torch.Tensor] = []
     use_text_path = bool(getattr(model, "_text_path_active", False)) or (
         multimodal_forward is not None
@@ -2330,7 +2294,8 @@ def _evaluate_model(
                     pooled, lora_missing = encode_batch_pooled(
                         encoder_lora_bundle,
                         batch_text,
-                        batch_text_missing if batch_text_missing is not None
+                        batch_text_missing
+                        if batch_text_missing is not None
                         else torch.ones_like(batch_text, dtype=torch.long),
                     )
                     kwargs["text_embedding"] = pooled
@@ -2350,14 +2315,10 @@ def _evaluate_model(
                 # surfaced accuracy / F1 / breakdown so the
                 # EvaluationMetrics shape stays identical to the
                 # single-task path.
-                logits_dict = _run_train_forward_multi_task(
-                    model, batch_x, kwargs
-                )
+                logits_dict = _run_train_forward_multi_task(model, batch_x, kwargs)
                 assert batch_mt_aux is not None  # narrowed by the guard above
                 assert multi_task_loss_fn is not None  # narrowed by ``multi_task_active``
-                stance_mask = torch.ones(
-                    (batch_size,), dtype=torch.bool, device=batch_x.device
-                )
+                stance_mask = torch.ones((batch_size,), dtype=torch.bool, device=batch_x.device)
                 mt_targets = {
                     "stance": batch_y,
                     "certainty": batch_mt_aux["certainty"].to(device, non_blocking=non_blocking),
@@ -2365,12 +2326,12 @@ def _evaluate_model(
                 }
                 mt_masks = {
                     "stance_mask": stance_mask,
-                    "certainty_mask": batch_mt_aux["certainty_mask"].to(device, non_blocking=non_blocking),
+                    "certainty_mask": batch_mt_aux["certainty_mask"].to(
+                        device, non_blocking=non_blocking
+                    ),
                     "time_mask": batch_mt_aux["time_mask"].to(device, non_blocking=non_blocking),
                 }
-                loss, axis_breakdown = multi_task_loss_fn(
-                    logits_dict, mt_targets, mt_masks
-                )
+                loss, axis_breakdown = multi_task_loss_fn(logits_dict, mt_targets, mt_masks)
                 predictions = logits_dict["stance"]
                 total_loss_sum += loss.detach().to(torch.float64) * batch_size
                 for axis_name in ("stance", "certainty", "time"):
@@ -2383,7 +2344,9 @@ def _evaluate_model(
                 # numbers.
                 if has_regression_head and "log_rv" in logits_dict and batch_log_rv is not None:
                     log_rv_pred = logits_dict["log_rv"].detach().to(torch.float64)
-                    log_rv_true = batch_log_rv.to(device, non_blocking=non_blocking).to(torch.float64)
+                    log_rv_true = batch_log_rv.to(device, non_blocking=non_blocking).to(
+                        torch.float64
+                    )
                     diff = log_rv_pred - log_rv_true
                     log_rv_squared_error_sum += torch.square(diff).sum()
                     log_rv_abs_error_sum += torch.abs(diff).sum()
@@ -2397,9 +2360,7 @@ def _evaluate_model(
                 # mounted; the headline classification surface still
                 # reads off the stance logits so the eval contract on
                 # legacy callers stays compatible.
-                logits_dict = _run_train_forward_multi_task(
-                    model, batch_x, kwargs
-                )
+                logits_dict = _run_train_forward_multi_task(model, batch_x, kwargs)
                 predictions = logits_dict["stance"]
                 loss = loss_fn(predictions, batch_y)
                 if ce_weight is not None:
@@ -2412,7 +2373,9 @@ def _evaluate_model(
                     total_loss_sum += loss.detach().to(torch.float64) * batch_size
                 if "log_rv" in logits_dict and batch_log_rv is not None:
                     log_rv_pred = logits_dict["log_rv"].detach().to(torch.float64)
-                    log_rv_true = batch_log_rv.to(device, non_blocking=non_blocking).to(torch.float64)
+                    log_rv_true = batch_log_rv.to(device, non_blocking=non_blocking).to(
+                        torch.float64
+                    )
                     diff = log_rv_pred - log_rv_true
                     log_rv_squared_error_sum += torch.square(diff).sum()
                     log_rv_abs_error_sum += torch.abs(diff).sum()
@@ -2447,9 +2410,7 @@ def _evaluate_model(
                     total_loss_sum += loss.detach().to(torch.float64) * batch_size
             total_items += batch_size
             if is_classification:
-                pred_class_chunks.append(
-                    predictions.argmax(dim=1).detach().to("cpu", torch.long)
-                )
+                pred_class_chunks.append(predictions.argmax(dim=1).detach().to("cpu", torch.long))
                 true_class_chunks.append(batch_y.detach().to("cpu", torch.long))
                 # Per-class softmax probabilities ride alongside the
                 # argmax so the breakdown helper can compute one-vs-rest
@@ -2486,7 +2447,11 @@ def _evaluate_model(
     # not ``sum_b (loss_b * batch_size) / total_batch_size``. Falls back
     # to the per-item count when no class weights were supplied.
     total_weight_value = float(total_weight_sum.item()) if ce_weight is not None else 0.0
-    loss_divisor = total_weight_value if (ce_weight is not None and total_weight_value > 0.0) else float(total_items_int)
+    loss_divisor = (
+        total_weight_value
+        if (ce_weight is not None and total_weight_value > 0.0)
+        else float(total_items_int)
+    )
     # Per-axis multi-task breakdown (#273 follow-up). Computed only on
     # the multi-task eval path; the single-task path leaves the dict
     # empty so the existing classification_breakdown payload shape stays
@@ -2509,11 +2474,13 @@ def _evaluate_model(
             compute_classification_breakdown,
         )
 
-        pred_classes = torch.cat(pred_class_chunks) if pred_class_chunks else torch.empty(0, dtype=torch.long)
-        true_classes = torch.cat(true_class_chunks) if true_class_chunks else torch.empty(0, dtype=torch.long)
-        class_scores_tensor = (
-            torch.cat(class_score_chunks) if class_score_chunks else None
+        pred_classes = (
+            torch.cat(pred_class_chunks) if pred_class_chunks else torch.empty(0, dtype=torch.long)
         )
+        true_classes = (
+            torch.cat(true_class_chunks) if true_class_chunks else torch.empty(0, dtype=torch.long)
+        )
+        class_scores_tensor = torch.cat(class_score_chunks) if class_score_chunks else None
         n_classes_eval = int(getattr(model, "n_classes", 3) or 3)
         regime_acc = (
             float((pred_classes == true_classes).float().mean().item())
@@ -2548,9 +2515,7 @@ def _evaluate_model(
             predictions_payload = [int(x) for x in pred_classes.tolist()]
             targets_payload = [int(x) for x in true_classes.tolist()]
             if class_scores_list is not None:
-                scores_payload = [
-                    [float(p) for p in row] for row in class_scores_list
-                ]
+                scores_payload = [[float(p) for p in row] for row in class_scores_list]
 
         gate_summary = _summarise_gate(gate_chunks, true_classes, n_classes_eval)
 
@@ -2565,13 +2530,9 @@ def _evaluate_model(
         regression_loss_value: float | None = None
         regression_r2_log_rv_value: float | None = None
         if has_regression_head and log_rv_items_int > 0:
-            regression_loss_value = float(
-                log_rv_squared_error_sum.item() / log_rv_items_int
-            )
+            regression_loss_value = float(log_rv_squared_error_sum.item() / log_rv_items_int)
             regression_rmse_log_rv_value = math.sqrt(regression_loss_value)
-            regression_mae_log_rv_value = float(
-                log_rv_abs_error_sum.item() / log_rv_items_int
-            )
+            regression_mae_log_rv_value = float(log_rv_abs_error_sum.item() / log_rv_items_int)
             # R^2 = 1 - SSE / SST. SST is the partition's sum of
             # squared deviations from the mean target; we accumulate
             # sum + sum-of-squares above so SST = sum(y^2) - sum(y)^2 / n.
@@ -2693,9 +2654,7 @@ def _build_partition_tensors(
         for group in sequence_groups:
             if len(group) < sequence_length + 1:
                 continue
-            target_value = getattr(
-                group[sequence_length], "forward_realized_vol_10d", None
-            )
+            target_value = getattr(group[sequence_length], "forward_realized_vol_10d", None)
             if target_value is None:
                 continue
             if target_value != target_value:  # NaN
@@ -2806,13 +2765,15 @@ def train_model(
     # the deprecation warning fires only when the legacy kwarg is the
     # one being used (positional ambiguity is impossible because both
     # are keyword-only). See issue #181 for the broader rename pass.
-    validation_split = _resolve_validation_fraction(
-        validation_fraction, validation_split
-    )
+    validation_split = _resolve_validation_fraction(validation_fraction, validation_split)
     if seed is not None:
         enable_deterministic_mode(seed)
     device_obj = _resolve_device(device)
-    active_model_config = ModelConfig.from_model(base_model) if base_model is not None else _coerce_model_config(model_config)
+    active_model_config = (
+        ModelConfig.from_model(base_model)
+        if base_model is not None
+        else _coerce_model_config(model_config)
+    )
 
     # Two split protocols are honoured:
     #
@@ -2840,9 +2801,7 @@ def train_model(
     train_mt_aux: dict[str, torch.Tensor] | None = None
     val_mt_aux: dict[str, torch.Tensor] | None = None
     test_mt_aux: dict[str, torch.Tensor] | None = None
-    multi_task_loss_active = bool(
-        getattr(active_model_config, "multi_task_loss", False)
-    )
+    multi_task_loss_active = bool(getattr(active_model_config, "multi_task_loss", False))
     # #304 dual-head methodology. The log(RV) target tensor lives on
     # each partition only when ``head_mode in {regression, dual}``;
     # default ``classification`` leaves the three slots ``None`` so
@@ -2855,8 +2814,7 @@ def train_model(
     # can invert the standardised regression head output.
     log_rv_scaler: tuple[float, float] | None = None
     active_head_mode = str(
-        getattr(active_model_config, "head_mode", "classification")
-        or "classification"
+        getattr(active_model_config, "head_mode", "classification") or "classification"
     )
     dual_head_active = active_head_mode in {"regression", "dual"}
     # #292 rates heads. Resolve the active set + mode/alpha so the
@@ -2864,12 +2822,10 @@ def train_model(
     # the same configuration. Empty tuple ⇒ no rates heads mount and
     # the legacy partition build path stays byte-identical.
     active_rates_heads: tuple[str, ...] = tuple(
-        str(name).lower()
-        for name in getattr(active_model_config, "rates_heads", ()) or ()
+        str(name).lower() for name in getattr(active_model_config, "rates_heads", ()) or ()
     )
     active_rates_head_mode = str(
-        getattr(active_model_config, "rates_head_mode", "regression")
-        or "regression"
+        getattr(active_model_config, "rates_head_mode", "regression") or "regression"
     )
     active_rates_alpha = float(getattr(active_model_config, "rates_alpha", 0.5))
     # #305 per-head target derivation. ``raw`` (default) keeps the
@@ -2901,9 +2857,7 @@ def train_model(
     active_aux_horizons: tuple[int, ...] = tuple(
         int(h) for h in getattr(active_model_config, "aux_horizons", ()) or ()
     )
-    active_aux_horizon_alpha = float(
-        getattr(active_model_config, "aux_horizon_alpha", 0.3)
-    )
+    active_aux_horizon_alpha = float(getattr(active_model_config, "aux_horizon_alpha", 0.3))
     aux_horizons_active = bool(active_aux_horizons)
     train_aux_log_rv: torch.Tensor | None = None
     val_aux_log_rv: torch.Tensor | None = None
@@ -2911,14 +2865,18 @@ def train_model(
     aux_log_rv_scalers: dict[int, tuple[float, float]] | None = None
     # ``ModelConfig.sequence_length=0`` means "use module default" so
     # checkpoints saved before #530 keep the byte-identical 20-bar window.
-    active_sequence_length = int(
-        getattr(active_model_config, "sequence_length", 0) or 0
-    ) or SEQUENCE_LENGTH
+    active_sequence_length = (
+        int(getattr(active_model_config, "sequence_length", 0) or 0) or SEQUENCE_LENGTH
+    )
 
     if walk_forward_path:
-        train_groups: list[list[FeatureVector]] = [list(group) for group in train_sequence_groups or []]
+        train_groups: list[list[FeatureVector]] = [
+            list(group) for group in train_sequence_groups or []
+        ]
         val_groups: list[list[FeatureVector]] = [list(group) for group in val_sequence_groups or []]
-        test_groups: list[list[FeatureVector]] = [list(group) for group in test_sequence_groups or []]
+        test_groups: list[list[FeatureVector]] = [
+            list(group) for group in test_sequence_groups or []
+        ]
         # Phase 9 V2 (#195) per-fold quantile fit. In classification
         # mode we fit (n_classes-1) interior cutoffs on the train slice
         # only so val + test see the same boundaries the optimiser saw.
@@ -2953,8 +2911,11 @@ def train_model(
             )
             if _active_label_mode == "absolute":
                 fitted_quantiles = tuple(
-                    float(v) for v in getattr(
-                        active_model_config, "absolute_vol_thresholds", DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+                    float(v)
+                    for v in getattr(
+                        active_model_config,
+                        "absolute_vol_thresholds",
+                        DEFAULT_ABSOLUTE_VOL_THRESHOLDS,
                     )
                 )
                 active_model_config = dataclasses.replace(
@@ -3026,9 +2987,7 @@ def train_model(
         # tensor materialisation so the tokeniser is shared across
         # train / val / test. When ``encoder_lora`` is off (default)
         # the bundle stays ``None`` and the static-cache path runs.
-        encoder_lora_active = bool(
-            getattr(active_model_config, "encoder_lora", False)
-        )
+        encoder_lora_active = bool(getattr(active_model_config, "encoder_lora", False))
         encoder_lora_bundle: Any = None
         if encoder_lora_active:
             from app.training.encoder_lora import build_lora_encoder
@@ -3058,14 +3017,16 @@ def train_model(
                 "multi_task_loss=True requires output_mode='classification'; "
                 f"got output_mode={active_output_mode!r}"
             )
-        train_x, train_y, close_scale, train_text_emb, train_text_missing = _build_partition_tensors(
-            train_groups,
-            fallback_text_in_dim=fallback_text_in_dim,
-            close_scale=None,
-            output_mode=active_output_mode,
-            vol_regime_quantiles=fitted_quantiles,
-            lora_bundle=encoder_lora_bundle,
-            sequence_length=active_sequence_length,
+        train_x, train_y, close_scale, train_text_emb, train_text_missing = (
+            _build_partition_tensors(
+                train_groups,
+                fallback_text_in_dim=fallback_text_in_dim,
+                close_scale=None,
+                output_mode=active_output_mode,
+                vol_regime_quantiles=fitted_quantiles,
+                lora_bundle=encoder_lora_bundle,
+                sequence_length=active_sequence_length,
+            )
         )
         # Multi-task aux tensors (#273) — sibling call so the partition
         # tensorisation contract on _build_partition_tensors stays a
@@ -3087,13 +3048,11 @@ def train_model(
                 sequence_length=active_sequence_length,
             )
             if aux_horizons_active:
-                train_aux_log_rv, aux_log_rv_scalers = (
-                    _build_partition_aux_log_rv_targets(
-                        train_groups,
-                        aux_horizons=active_aux_horizons,
-                        vol_regime_quantiles=fitted_quantiles,
-                        sequence_length=active_sequence_length,
-                    )
+                train_aux_log_rv, aux_log_rv_scalers = _build_partition_aux_log_rv_targets(
+                    train_groups,
+                    aux_horizons=active_aux_horizons,
+                    vol_regime_quantiles=fitted_quantiles,
+                    sequence_length=active_sequence_length,
                 )
         # #292 rates heads -- per-partition targets fitted on train.
         if rates_heads_active and active_output_mode == "classification":
@@ -3294,7 +3253,9 @@ def train_model(
                 "branch does not materialise the per-axis target tensors"
             )
         if sequence_groups is not None:
-            active_sequence_groups: list[list[FeatureVector]] = [list(group) for group in sequence_groups]
+            active_sequence_groups: list[list[FeatureVector]] = [
+                list(group) for group in sequence_groups
+            ]
         else:
             active_sequence_groups = load_training_sequences_from_data(data_dir)
         if vectors:
@@ -3323,8 +3284,11 @@ def train_model(
             )
             if _active_label_mode_legacy == "absolute":
                 legacy_fitted_quantiles = tuple(
-                    float(v) for v in getattr(
-                        active_model_config, "absolute_vol_thresholds", DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+                    float(v)
+                    for v in getattr(
+                        active_model_config,
+                        "absolute_vol_thresholds",
+                        DEFAULT_ABSOLUTE_VOL_THRESHOLDS,
                     )
                 )
             else:
@@ -3363,13 +3327,11 @@ def train_model(
                 sequence_length=active_sequence_length,
             )
             if aux_horizons_active:
-                legacy_full_aux_log_rv, aux_log_rv_scalers = (
-                    _build_partition_aux_log_rv_targets(
-                        active_sequence_groups,
-                        aux_horizons=active_aux_horizons,
-                        vol_regime_quantiles=legacy_fitted_quantiles,
-                        sequence_length=active_sequence_length,
-                    )
+                legacy_full_aux_log_rv, aux_log_rv_scalers = _build_partition_aux_log_rv_targets(
+                    active_sequence_groups,
+                    aux_horizons=active_aux_horizons,
+                    vol_regime_quantiles=legacy_fitted_quantiles,
+                    sequence_length=active_sequence_length,
                 )
         text_emb_tensor, text_missing_tensor, _text_emb_dim = _build_text_embedding_tensors(
             active_sequence_groups,
@@ -3402,7 +3364,9 @@ def train_model(
                     total_windows=0,
                     train_windows=0,
                     validation_windows=0,
-                    checkpoint_path=str(checkpoint_path) if checkpoint_path is not None else str(BEST_MODEL_PATH),
+                    checkpoint_path=str(checkpoint_path)
+                    if checkpoint_path is not None
+                    else str(BEST_MODEL_PATH),
                     checkpoint_saved=False,
                     best_epoch=None,
                     metrics=None,
@@ -3502,7 +3466,9 @@ def train_model(
                 total_windows=0,
                 train_windows=0,
                 validation_windows=0,
-                checkpoint_path=str(checkpoint_path) if checkpoint_path is not None else str(BEST_MODEL_PATH),
+                checkpoint_path=str(checkpoint_path)
+                if checkpoint_path is not None
+                else str(BEST_MODEL_PATH),
                 checkpoint_saved=False,
                 best_epoch=None,
                 metrics=None,
@@ -3700,6 +3666,7 @@ def train_model(
     # does not perturb the byte-identity regression contract on the
     # legacy regression path.
     wd_value = float(weight_decay)
+
     # Round 5 (#244): build a unified param iterator that yields both
     # the forecaster's parameters AND (when LoRA is on) the encoder
     # adapter parameters. The base encoder is frozen by
@@ -3731,7 +3698,12 @@ def train_model(
             # is the standard "is this a vector parameter" gate that
             # catches biases + LN.weight + LN.bias + embedding norms
             # without enumerating module types.
-            if name.endswith(".bias") or param.ndim <= 1 or "norm" in name.lower() or "pos" in name.lower():
+            if (
+                name.endswith(".bias")
+                or param.ndim <= 1
+                or "norm" in name.lower()
+                or "pos" in name.lower()
+            ):
                 no_decay_params.append(param)
             else:
                 decay_params.append(param)
@@ -3792,9 +3764,7 @@ def train_model(
     # :func:`ordinal_cross_entropy` while preserving the
     # ``loss_fn(predictions, batch_y)`` call shape every downstream call
     # site assumes.
-    _active_regime_loss_mode = str(
-        getattr(work_model, "regime_loss_mode", "ce") or "ce"
-    )
+    _active_regime_loss_mode = str(getattr(work_model, "regime_loss_mode", "ce") or "ce")
     loss_fn: nn.Module
     if _active_output_mode == "classification":
         # A1 (#206) -- pass the per-fold class weights when available.
@@ -3870,7 +3840,9 @@ def train_model(
             certainty_weight=certainty_weight,
             time_weight=time_weight,
             lambda_stance=float(getattr(active_model_config, "multi_task_lambda_stance", 1.0)),
-            lambda_certainty=float(getattr(active_model_config, "multi_task_lambda_certainty", 0.3)),
+            lambda_certainty=float(
+                getattr(active_model_config, "multi_task_lambda_certainty", 0.3)
+            ),
             lambda_time=float(getattr(active_model_config, "multi_task_lambda_time", 0.3)),
             regime_loss_mode=_active_regime_loss_mode,
             focal_gamma=float(getattr(active_model_config, "focal_gamma", 2.0)),
@@ -3910,9 +3882,7 @@ def train_model(
     # tensor and the train step's dual-head branch never fires. The
     # value is read from the active ModelConfig so a resumed checkpoint
     # reuses the same alpha the original run trained under.
-    regression_alpha = float(
-        getattr(active_model_config, "regression_alpha", 0.5)
-    )
+    regression_alpha = float(getattr(active_model_config, "regression_alpha", 0.5))
     if dual_head_active and _active_output_mode != "classification":
         # ADR 0015 (#322) flipped the ``head_mode`` default to
         # ``regression``, which means the close/vol regression
@@ -3973,8 +3943,7 @@ def train_model(
     info_nce_loss_fn: nn.Module | None = None
     infonce_lambda = 0.0
     multimodal_active = (
-        str(getattr(active_model_config, "fusion_mode", "concat") or "concat")
-        == "gated_infonce"
+        str(getattr(active_model_config, "fusion_mode", "concat") or "concat") == "gated_infonce"
     )
     if multimodal_active and multi_task_loss_active:
         raise ValueError(
@@ -4004,18 +3973,14 @@ def train_model(
     # Pre-allocate the credibility zero buffer at the maximum batch size
     # so the train + eval loops don't pay an allocation per batch.
     cred_max_batch = min(batch_size, len(train_x))
-    train_credibility_buffer = _allocate_credibility_buffer(
-        work_model, cred_max_batch, device_obj
-    )
+    train_credibility_buffer = _allocate_credibility_buffer(work_model, cred_max_batch, device_obj)
     val_credibility_buffer = _allocate_credibility_buffer(
         work_model, min(batch_size, len(val_x_used)), device_obj
     )
     scaler: "torch.cuda.amp.GradScaler | None" = None
     if effective_amp:
         scaler = torch.cuda.amp.GradScaler()
-    forward_model: nn.Module = _maybe_compile_model(
-        work_model, use_compile=effective_compile
-    )
+    forward_model: nn.Module = _maybe_compile_model(work_model, use_compile=effective_compile)
 
     # Grad clipping is opt-in: ``grad_clip_norm > 0.0`` enables the
     # per-step clip with that norm. The legacy ``max_norm=1.0`` clip
@@ -4041,9 +4006,7 @@ def train_model(
     # the classification head while the encoder representation stays
     # fixed. The boundary is logged once so post-hoc analysis can find
     # the transition in the run log.
-    lora_freeze_epoch_cfg = getattr(
-        active_model_config, "lora_curriculum_freeze_epoch", None
-    )
+    lora_freeze_epoch_cfg = getattr(active_model_config, "lora_curriculum_freeze_epoch", None)
     lora_freeze_epoch: int | None = (
         int(lora_freeze_epoch_cfg) if lora_freeze_epoch_cfg is not None else None
     )
@@ -4096,9 +4059,7 @@ def train_model(
             # below were the hot kernel-launch source the perf rewrite
             # eliminates.
             optimizer.zero_grad(set_to_none=True)
-            credibility = _slice_credibility_buffer(
-                train_credibility_buffer, batch_x.size(0)
-            )
+            credibility = _slice_credibility_buffer(train_credibility_buffer, batch_x.size(0))
             kwargs: dict[str, torch.Tensor] = {}
             if credibility is not None:
                 kwargs["credibility"] = credibility
@@ -4131,9 +4092,7 @@ def train_model(
             # ``forward_multi_task`` and uses :class:`MultiTaskLoss`;
             # the single-task path keeps the legacy CE / SmoothL1 + the
             # optional InfoNCE alignment term.
-            amp_ctx: Any = (
-                torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
-            )
+            amp_ctx: Any = torch.cuda.amp.autocast() if effective_amp else contextlib.nullcontext()
             if multi_task_loss_fn is not None and batch_mt_aux is None:
                 raise RuntimeError(
                     "multi_task_loss_fn is active but the DataLoader yielded "
@@ -4144,9 +4103,7 @@ def train_model(
             with amp_ctx:
                 if multi_task_loss_fn is not None:
                     assert batch_mt_aux is not None  # the guard above narrows this
-                    logits_dict = _run_train_forward_multi_task(
-                        forward_model, batch_x, kwargs
-                    )
+                    logits_dict = _run_train_forward_multi_task(forward_model, batch_x, kwargs)
                     stance_mask = torch.ones(
                         (batch_x.size(0),), dtype=torch.bool, device=batch_x.device
                     )
@@ -4195,9 +4152,7 @@ def train_model(
                     # ``head_mode='classification'``, so the rates-only
                     # path keeps the CE loss unchanged before adding the
                     # rates contribution.
-                    logits_dict = _run_train_forward_multi_task(
-                        forward_model, batch_x, kwargs
-                    )
+                    logits_dict = _run_train_forward_multi_task(forward_model, batch_x, kwargs)
                     stance_logits = logits_dict["stance"]
                     ce_loss = loss_fn(stance_logits, batch_y)
                     loss = _combine_dual_head_loss(
@@ -4288,24 +4243,17 @@ def train_model(
                 if best_val_metrics is not None
                 else float("inf")
             )
-            improved = (
-                best_val_metrics is None
-                or current_rmse + 1e-6 < best_rmse
-            )
+            improved = best_val_metrics is None or current_rmse + 1e-6 < best_rmse
         elif _active_output_mode == "classification":
             current_macro_f1 = float(eval_metrics.regime_f1_macro or 0.0)
-            best_macro_f1 = float(
-                getattr(best_val_metrics, "regime_f1_macro", 0.0) or 0.0
-            ) if best_val_metrics is not None else -1.0
-            improved = (
-                best_val_metrics is None
-                or current_macro_f1 > best_macro_f1 + 1e-6
+            best_macro_f1 = (
+                float(getattr(best_val_metrics, "regime_f1_macro", 0.0) or 0.0)
+                if best_val_metrics is not None
+                else -1.0
             )
+            improved = best_val_metrics is None or current_macro_f1 > best_macro_f1 + 1e-6
         else:
-            improved = (
-                best_val_metrics is None
-                or eval_metrics.loss + 1e-6 < best_val_metrics.loss
-            )
+            improved = best_val_metrics is None or eval_metrics.loss + 1e-6 < best_val_metrics.loss
         if improved:
             best_val_metrics = eval_metrics
             _copy_state_inplace(best_state, work_model.state_dict())
@@ -4456,7 +4404,9 @@ def train_model(
         validation_split=validation_split,
         early_stopping_patience=early_stopping_patience,
         sequence_groups=len(sequence_groups_for_summary),
-        total_windows=len(train_x) + (len(val_x) if val_x is not None else 0) + (len(test_x) if test_x is not None else 0),
+        total_windows=len(train_x)
+        + (len(val_x) if val_x is not None else 0)
+        + (len(test_x) if test_x is not None else 0),
         train_windows=len(train_x),
         validation_windows=len(val_x) if val_x is not None else 0,
         checkpoint_path=str(checkpoint_target),
@@ -4500,8 +4450,8 @@ def train_model(
     if save_checkpoint:
         from app.training.checkpoint import _save_model_checkpoint
 
-        sidecar_encoder_alias, sidecar_inference_features = (
-            resolve_sidecar_registry_handle(text_encoder)
+        sidecar_encoder_alias, sidecar_inference_features = resolve_sidecar_registry_handle(
+            text_encoder
         )
 
         # `close_scale` was fitted on this fold's training rows in
@@ -4524,9 +4474,7 @@ def train_model(
         # epoch. The /analyze inference path reads the manifest via
         # ``app.services.forecaster._conformal_manifest_for`` to build
         # calibrated prediction sets.
-        _maybe_write_classification_conformal_manifest(
-            best_val_metrics, checkpoint_target
-        )
+        _maybe_write_classification_conformal_manifest(best_val_metrics, checkpoint_target)
         # #292 -- per-head rates residual + softmax quantiles. Fitted
         # on the val partition's rates predictions / targets so the
         # inference path can emit a calibrated bps band + APS set per
@@ -4538,8 +4486,7 @@ def train_model(
         if not val_partition_is_real:
             if rates_heads_active:
                 _logger.warning(
-                    "rates conformal calibration skipped: "
-                    "no validation partition available"
+                    "rates conformal calibration skipped: " "no validation partition available"
                 )
         else:
             _maybe_write_rates_conformal_manifest(
@@ -4557,6 +4504,7 @@ def train_model(
             get_peft_model_state_dict: Any = None
             try:
                 from peft import get_peft_model_state_dict as _peft_state_dict
+
                 get_peft_model_state_dict = _peft_state_dict
             except ImportError:  # pragma: no cover - defensive
                 get_peft_model_state_dict = None
@@ -4595,9 +4543,7 @@ def bootstrap_checkpoint(
     early_stopping_patience: int = 10,
     checkpoint_path: str | Path = BEST_MODEL_PATH,
 ) -> TrainingResult:
-    resolved_fraction = _resolve_validation_fraction(
-        validation_fraction, validation_split
-    )
+    resolved_fraction = _resolve_validation_fraction(validation_fraction, validation_split)
     return train_model(
         vectors=vectors,
         epochs=epochs,

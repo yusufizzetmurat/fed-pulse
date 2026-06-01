@@ -236,9 +236,7 @@ def build_user_prompt(document_text: str) -> str:
         )
     feature_section = "\n\n".join(feature_section_lines)
 
-    schema_lines = ", ".join(
-        f'"{f.name}": "<one of: {" | ".join(f.levels)}>"' for f in CATALOG
-    )
+    schema_lines = ", ".join(f'"{f.name}": "<one of: {" | ".join(f.levels)}>"' for f in CATALOG)
     schema = "{" + schema_lines + "}"
 
     return (

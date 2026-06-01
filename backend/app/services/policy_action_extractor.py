@@ -64,9 +64,7 @@ class PolicyAction:
 # bare-fraction form (``1/4`` on its own) parses without forcing a
 # leading integer; ``\d+(?:\.\d+)?`` covers the decimal + integer
 # cases.
-_NUMBER_TOKEN = (
-    r"(?:\d+\s*-\s*\d+/\d+|\d+\s+\d+/\d+|\d+/\d+|\d+(?:\.\d+)?)"
-)
+_NUMBER_TOKEN = r"(?:\d+\s*-\s*\d+/\d+|\d+\s+\d+/\d+|\d+/\d+|\d+(?:\.\d+)?)"
 _RANGE_DECIMAL_RE = re.compile(
     rf"({_NUMBER_TOKEN})\s*(?:to|-|–|—)\s*({_NUMBER_TOKEN})\s*percent",
     flags=re.IGNORECASE,
@@ -315,14 +313,8 @@ def extract_policy_action(
     if direction == "hold":
         signed_magnitude = 0
     elif in_prose_magnitude is not None and direction in {"hike", "cut"}:
-        signed_magnitude = (
-            in_prose_magnitude if direction == "hike" else -in_prose_magnitude
-        )
-    elif (
-        prior_target_range_mid_bp is not None
-        and low_bp is not None
-        and high_bp is not None
-    ):
+        signed_magnitude = in_prose_magnitude if direction == "hike" else -in_prose_magnitude
+    elif prior_target_range_mid_bp is not None and low_bp is not None and high_bp is not None:
         delta = _midpoint_bp(low_bp, high_bp) - prior_target_range_mid_bp
         signed_magnitude = delta
         if direction is None:

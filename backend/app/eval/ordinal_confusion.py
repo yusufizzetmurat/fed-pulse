@@ -34,9 +34,7 @@ from app.config import BACKEND_ROOT
 _DEFAULT_ARTEFACT = (
     BACKEND_ROOT / "artifacts" / "experiments" / "dual_head_comparison_canonical.json"
 )
-_DEFAULT_OUTPUT = (
-    BACKEND_ROOT / "artifacts" / "experiments" / "ordinal_confusion.json"
-)
+_DEFAULT_OUTPUT = BACKEND_ROOT / "artifacts" / "experiments" / "ordinal_confusion.json"
 
 
 def decompose_ordinal(
@@ -122,15 +120,17 @@ def extract_cells(sweep_path: Path) -> list[OrdinalCell]:
                     )
                     continue
                 d = decompose_ordinal(cm_raw)
-                cells.append(OrdinalCell(
-                    head_mode=head_mode,
-                    seed=seed,
-                    fold_id=fold_id,
-                    adjacent_error_rate=d["adjacent_error_rate"],
-                    non_adjacent_error_rate=d["non_adjacent_error_rate"],
-                    ordinal_accuracy=d["ordinal_accuracy"],
-                    total_errors=int(d["total_errors"]),
-                ))
+                cells.append(
+                    OrdinalCell(
+                        head_mode=head_mode,
+                        seed=seed,
+                        fold_id=fold_id,
+                        adjacent_error_rate=d["adjacent_error_rate"],
+                        non_adjacent_error_rate=d["non_adjacent_error_rate"],
+                        ordinal_accuracy=d["ordinal_accuracy"],
+                        total_errors=int(d["total_errors"]),
+                    )
+                )
     return cells
 
 
@@ -170,16 +170,18 @@ def aggregate_by_arm(cells: Sequence[OrdinalCell]) -> list[ArmSummary]:
         adj_mu, adj_sd = _mean_std([c.adjacent_error_rate for c in arm])
         na_mu, na_sd = _mean_std([c.non_adjacent_error_rate for c in arm])
         oa_mu, oa_sd = _mean_std([c.ordinal_accuracy for c in arm])
-        summaries.append(ArmSummary(
-            head_mode=head_mode,
-            n_cells=len(arm),
-            mean_adjacent_error_rate=adj_mu,
-            std_adjacent_error_rate=adj_sd,
-            mean_non_adjacent_error_rate=na_mu,
-            std_non_adjacent_error_rate=na_sd,
-            mean_ordinal_accuracy=oa_mu,
-            std_ordinal_accuracy=oa_sd,
-        ))
+        summaries.append(
+            ArmSummary(
+                head_mode=head_mode,
+                n_cells=len(arm),
+                mean_adjacent_error_rate=adj_mu,
+                std_adjacent_error_rate=adj_sd,
+                mean_non_adjacent_error_rate=na_mu,
+                std_non_adjacent_error_rate=na_sd,
+                mean_ordinal_accuracy=oa_mu,
+                std_ordinal_accuracy=oa_sd,
+            )
+        )
     return summaries
 
 
@@ -223,11 +225,13 @@ def _render_markdown(result: dict[str, Any]) -> str:
         "|---|---:|---|---|---|",
     ]
     for s in result.get("arm_summaries", []):
+
         def _cell(d: dict[str, Any]) -> str:
             mu, sd = d.get("mean"), d.get("std")
             if mu is None:
                 return "n/a"
             return f"{mu:.4f} ± {sd:.4f}" if sd is not None else f"{mu:.4f}"
+
         lines.append(
             f"| {s['head_mode']} | {s['n_cells']}"
             f" | {_cell(s['adjacent_error_rate'])}"

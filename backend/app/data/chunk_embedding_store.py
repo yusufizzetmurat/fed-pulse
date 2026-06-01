@@ -83,7 +83,9 @@ def _embed_batch(
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build chunk embedding store for a training package.")
+    parser = argparse.ArgumentParser(
+        description="Build chunk embedding store for a training package."
+    )
     parser.add_argument("--training-package-id", required=True)
     parser.add_argument("--data-dir", default="/data")
     parser.add_argument("--output-name", default="chunk_embeddings.parquet")
@@ -157,7 +159,9 @@ def main() -> int:
         if docs_processed % 200 == 0:
             elapsed = time.time() - started_at
             rate = docs_processed / max(elapsed, 1e-6)
-            print(f"[chunk_store] docs={docs_processed} chunks={embedded + len(pending_chunks)} rate={rate:.1f} doc/s")
+            print(
+                f"[chunk_store] docs={docs_processed} chunks={embedded + len(pending_chunks)} rate={rate:.1f} doc/s"
+            )
 
     _flush()
     elapsed = time.time() - started_at

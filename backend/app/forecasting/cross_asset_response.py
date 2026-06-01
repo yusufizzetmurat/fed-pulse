@@ -263,9 +263,7 @@ def _collapse_events_to_meeting_axis(events: pd.DataFrame) -> pd.DataFrame:
         ["event_date", "asset_symbol", "horizon", "_kind_rank", "event_kind"],
         kind="mergesort",
     )
-    e = e.drop_duplicates(
-        subset=["event_date", "asset_symbol", "horizon"], keep="first"
-    )
+    e = e.drop_duplicates(subset=["event_date", "asset_symbol", "horizon"], keep="first")
     return e.drop(columns=["_kind_rank"]).reset_index(drop=True)
 
 
@@ -411,7 +409,11 @@ def build_supervised_rows(
         if mp_row is None and not mp_surprises.empty:
             mp_row = pd.Series(dict.fromkeys(mp_surprises.columns))
 
-        ois_vec = _extract_ois_features(mp_row) if mp_row is not None else [0.0] * len(_ois_feature_names())
+        ois_vec = (
+            _extract_ois_features(mp_row)
+            if mp_row is not None
+            else [0.0] * len(_ois_feature_names())
+        )
         text_vec = _extract_text_features(event_row)
         cred_vec = _extract_credibility_features(event_row)
         macro_vec = _extract_macro_features(macro_state, feature_event_date)
@@ -439,9 +441,7 @@ def build_supervised_rows(
         seen_assets.add(asset)
         seen_horizons.add(horizon)
 
-    out_rows.sort(
-        key=lambda r: (r.feature_event_date, r.asset_symbol, r.horizon)
-    )
+    out_rows.sort(key=lambda r: (r.feature_event_date, r.asset_symbol, r.horizon))
     summary["rows_emitted"] = len(out_rows)
     summary["asset_universe"] = sorted(seen_assets)
     summary["horizons"] = sorted(seen_horizons)
@@ -474,9 +474,7 @@ def _build_feature_matrix(
     return matrix, tuple(col_names)
 
 
-def _standardise(
-    X_train: np.ndarray, X_test: np.ndarray
-) -> tuple[np.ndarray, np.ndarray]:
+def _standardise(X_train: np.ndarray, X_test: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Fit per-column ``(mean, std)`` on train; apply to both.
 
     Train-only fit honours the project's no-leakage contract.
@@ -513,9 +511,7 @@ def _rows_for_cell(
 ) -> list[CrossAssetRow]:
     """Subset by ``(asset, horizon)``; preserves time ordering."""
 
-    return [
-        r for r in rows if r.asset_symbol == asset and r.horizon == horizon
-    ]
+    return [r for r in rows if r.asset_symbol == asset and r.horizon == horizon]
 
 
 def walk_forward_predict_cell(
@@ -591,15 +587,11 @@ def walk_forward_predict_cell(
                 try:
                     from sklearn.ensemble import HistGradientBoostingRegressor
 
-                    gbt = HistGradientBoostingRegressor(
-                        random_state=random_state, max_iter=200
-                    )
+                    gbt = HistGradientBoostingRegressor(random_state=random_state, max_iter=200)
                     gbt.fit(X_tr_s, y_train)
                     per_model["hist_gbt"] = float(gbt.predict(X_te_s)[0])
                 except Exception as exc:  # noqa: BLE001
-                    LOGGER.warning(
-                        "HistGradientBoostingRegressor failed at row %d: %s", i, exc
-                    )
+                    LOGGER.warning("HistGradientBoostingRegressor failed at row %d: %s", i, exc)
 
         per_model = {k: round(v, 8) for k, v in per_model.items()}
 
@@ -679,10 +671,7 @@ def walk_forward_predict_pooled(
         # cells are excluded to avoid leaking same-event information
         # across assets.
         train_mask = np.asarray(
-            [
-                rows_sorted[j].feature_event_date < row.feature_event_date
-                for j in range(n)
-            ],
+            [rows_sorted[j].feature_event_date < row.feature_event_date for j in range(n)],
             dtype=bool,
         )
         X_train = X_sorted[train_mask]
@@ -696,9 +685,7 @@ def walk_forward_predict_pooled(
                 X_tr_s, X_te_s = _standardise(X_train, X_test)
                 model = Ridge(alpha=ridge_alpha, random_state=random_state)
                 model.fit(X_tr_s, y_train)
-                per_model["pooled_ridge"] = round(
-                    float(model.predict(X_te_s)[0]), 8
-                )
+                per_model["pooled_ridge"] = round(float(model.predict(X_te_s)[0]), 8)
             except Exception as exc:  # noqa: BLE001
                 LOGGER.warning("Pooled ridge fit failed at row %d: %s", i, exc)
         preds.append(
@@ -719,9 +706,7 @@ def walk_forward_predict_pooled(
 # ---------------------------------------------------------------------------
 
 
-def compute_cell_metrics(
-    preds: Sequence[CellPrediction], model_name: str
-) -> dict[str, Any]:
+def compute_cell_metrics(preds: Sequence[CellPrediction], model_name: str) -> dict[str, Any]:
     """RMSE / MAE / R^2 / directional-hit-rate for one model in one cell.
 
     The directional hit rate is ``mean(sign(pred) == sign(truth))``
@@ -751,13 +736,13 @@ def compute_cell_metrics(
     yt = np.asarray(y_true, dtype=np.float64)
     yp = np.asarray(y_pred, dtype=np.float64)
     err = yp - yt
-    rmse = float(math.sqrt(float((err ** 2).mean())))
+    rmse = float(math.sqrt(float((err**2).mean())))
     mae = float(np.abs(err).mean())
     var_truth = float(((yt - yt.mean()) ** 2).sum())
     if var_truth <= 1e-18:
         r2: float | None = None
     else:
-        ss_res = float((err ** 2).sum())
+        ss_res = float((err**2).sum())
         r2 = float(1.0 - ss_res / var_truth)
 
     truth_sign = np.sign(yt)
@@ -833,9 +818,7 @@ def _per_cell_metrics(
     out: dict[str, dict[str, dict[str, Any]]] = {}
     for (asset, horizon), cell_preds in by_cell.items():
         cell_id = f"{asset}|h{horizon}"
-        out[cell_id] = {
-            m: compute_cell_metrics(cell_preds, m) for m in model_names
-        }
+        out[cell_id] = {m: compute_cell_metrics(cell_preds, m) for m in model_names}
     return out
 
 
@@ -894,9 +877,7 @@ def run(
         )
         # Merge ``pooled_ridge`` predictions onto matching per-cell
         # CellPrediction entries keyed by (date, asset, horizon).
-        index = {
-            (p.feature_event_date, p.asset_symbol, p.horizon): p for p in per_cell_preds
-        }
+        index = {(p.feature_event_date, p.asset_symbol, p.horizon): p for p in per_cell_preds}
         for pp in pooled_preds:
             key = (pp.feature_event_date, pp.asset_symbol, pp.horizon)
             target = index.get(key)
@@ -904,9 +885,7 @@ def run(
                 target.predictions.update(pp.predictions)
             else:
                 per_cell_preds.append(pp)
-        per_cell_preds.sort(
-            key=lambda p: (p.feature_event_date, p.asset_symbol, p.horizon)
-        )
+        per_cell_preds.sort(key=lambda p: (p.feature_event_date, p.asset_symbol, p.horizon))
 
     model_names = _aggregate_model_names(per_cell_preds)
 
@@ -1004,9 +983,7 @@ def _run_ablations(
             cell_preds.extend(preds)
         per_cell: dict[str, dict[str, Any]] = {}
         for asset, horizon in HEADLINE_CELLS:
-            this_cell = [
-                p for p in cell_preds if p.asset_symbol == asset and p.horizon == horizon
-            ]
+            this_cell = [p for p in cell_preds if p.asset_symbol == asset and p.horizon == horizon]
             per_cell[f"{asset}|h{horizon}"] = compute_cell_metrics(this_cell, "ridge")
         out[name] = {
             "families": list(fams),
@@ -1038,12 +1015,8 @@ def _run_ablations(
     ):
         baseline_per_cell: dict[str, dict[str, Any]] = {}
         for asset, horizon in HEADLINE_CELLS:
-            this_cell = [
-                p for p in base_preds if p.asset_symbol == asset and p.horizon == horizon
-            ]
-            baseline_per_cell[f"{asset}|h{horizon}"] = compute_cell_metrics(
-                this_cell, model_name
-            )
+            this_cell = [p for p in base_preds if p.asset_symbol == asset and p.horizon == horizon]
+            baseline_per_cell[f"{asset}|h{horizon}"] = compute_cell_metrics(this_cell, model_name)
         out[label] = {
             "families": [label],
             "n_features": 0,
@@ -1127,9 +1100,7 @@ def _format_attribution_md(ablations: Mapping[str, Any]) -> str:
         cell_id = f"{asset}|h{horizon}"
         lines.append(f"## Headline cell: {cell_id}")
         lines.append("")
-        lines.append(
-            "| Subset | Families | #features | n | RMSE | MAE | R^2 | DirHitRate |"
-        )
+        lines.append("| Subset | Families | #features | n | RMSE | MAE | R^2 | DirHitRate |")
         lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
         for name, payload in ablations.items():
             cells = payload.get("headline_cells", {})
@@ -1185,10 +1156,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         default=None,
-        help=(
-            "Override for the artifact output dir. Default: "
-            "data/artifacts/cross_asset/."
-        ),
+        help=("Override for the artifact output dir. Default: " "data/artifacts/cross_asset/."),
     )
     parser.add_argument(
         "--events-name",
@@ -1239,9 +1207,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _resolve_iterable(
-    flag: Iterable[Any] | None, default: tuple[Any, ...]
-) -> tuple[Any, ...]:
+def _resolve_iterable(flag: Iterable[Any] | None, default: tuple[Any, ...]) -> tuple[Any, ...]:
     if not flag:
         return default
     return tuple(flag)
@@ -1256,18 +1222,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     events = _load_parquet_safely(package_dir / args.events_name)
     mp = _load_parquet_safely(fred_dir / args.mp_surprises_name)
     ling_path = package_dir / args.linguistic_name
-    linguistic = (
-        _load_parquet_safely(ling_path) if ling_path.exists() else pd.DataFrame()
-    )
+    linguistic = _load_parquet_safely(ling_path) if ling_path.exists() else pd.DataFrame()
     macro_path = fred_dir / args.macro_state_name
-    macro = (
-        _load_parquet_safely(macro_path) if macro_path.exists() else pd.DataFrame()
-    )
+    macro = _load_parquet_safely(macro_path) if macro_path.exists() else pd.DataFrame()
 
     output_dir = (
-        Path(args.output_dir)
-        if args.output_dir
-        else data_dir / "artifacts" / "cross_asset"
+        Path(args.output_dir) if args.output_dir else data_dir / "artifacts" / "cross_asset"
     )
 
     artifacts = run(
@@ -1283,12 +1243,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     print(f"[cross-asset] rows emitted: {artifacts.summary['rows_emitted']}")
-    print(
-        f"[cross-asset] asset universe: {', '.join(artifacts.asset_universe) or '<none>'}"
-    )
-    print(
-        f"[cross-asset] horizons: {', '.join(str(h) for h in artifacts.horizons) or '<none>'}"
-    )
+    print(f"[cross-asset] asset universe: {', '.join(artifacts.asset_universe) or '<none>'}")
+    print(f"[cross-asset] horizons: {', '.join(str(h) for h in artifacts.horizons) or '<none>'}")
     print(f"[cross-asset] models: {', '.join(artifacts.metrics['model_names'])}")
     print(f"[cross-asset] output dir: {output_dir}")
     return 0

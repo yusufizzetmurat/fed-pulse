@@ -308,7 +308,9 @@ def load_research_registry(
         row_dual = _safe_float_or_none(row.get("dual_f1"))
         row_cls = _safe_float_or_none(row.get("cls_f1"))
         delta_dual = (
-            None if row_dual is None or baseline_dual is None else round(row_dual - baseline_dual, 4)
+            None
+            if row_dual is None or baseline_dual is None
+            else round(row_dual - baseline_dual, 4)
         )
         delta_cls = (
             None if row_cls is None or baseline_cls is None else round(row_cls - baseline_cls, 4)

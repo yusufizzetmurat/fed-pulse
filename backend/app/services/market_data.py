@@ -177,9 +177,7 @@ def _parse_iso_date(value: str) -> date:
 def _download_close_series_in_window(symbol: str, start: date, end: date) -> Any:
     if _market_source() == "snapshot":
         series = _load_snapshot_series(symbol)
-        window = series.loc[
-            (series.index.date >= start) & (series.index.date < end)
-        ]
+        window = series.loc[(series.index.date >= start) & (series.index.date < end)]
         if window.empty:
             raise RuntimeError(
                 f"Snapshot has no rows for {symbol} in [{start}, {end}). "
@@ -243,7 +241,11 @@ def fetch_market_snapshot(
 
     returns = close_series.pct_change().dropna()
     rolling = returns.rolling(volatility_window).std()
-    vol = float(rolling.loc[:latest_idx].iloc[-1]) if not rolling.loc[:latest_idx].dropna().empty else 0.0
+    vol = (
+        float(rolling.loc[:latest_idx].iloc[-1])
+        if not rolling.loc[:latest_idx].dropna().empty
+        else 0.0
+    )
 
     return {
         "symbol": symbol,

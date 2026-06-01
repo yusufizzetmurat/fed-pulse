@@ -40,6 +40,7 @@ from app.schemas import (
     ClassificationBreakdownClass,
     ClassificationBreakdownResponse,
     ClassificationBreakdownSource,
+    DocumentDetailResponse,
     DocumentParseResponse,
     DocumentParseUrlRequest,
     EvaluationCoverageResponse,
@@ -65,6 +66,9 @@ from app.schemas import (
     RealizedVolForecastResponse,
     RealizedVolHistoricalBand,
     RealizedVolHorizonForecast,
+    RvBacktestCoverage,
+    RvBacktestResponse,
+    RvBacktestRow,
     ResearchArtifactsResponse,
     BacktestRequest,
     BacktestResponse,
@@ -89,7 +93,9 @@ from app.services.document_parser import (
     parse_url,
 )
 from app.services.decision_forecast import load_next_fomc_artifacts
-from app.services.classification_breakdown_loader import load_latest as load_classification_breakdown
+from app.services.classification_breakdown_loader import (
+    load_latest as load_classification_breakdown,
+)
 from app.services.fomc_calendar import get_calendar
 from app.services.research_artifacts import (
     SECTIONS as RESEARCH_SECTIONS,
@@ -229,9 +235,7 @@ async def _lifespan(app: FastAPI):
         if multi_axis_checkpoint_exists():
             get_multi_axis_classifier()
     except Exception:  # pragma: no cover — never let warmup block startup
-        get_logger("fed_pulse").warning(
-            "multi_axis_classifier_warmup_failed", exc_info=True
-        )
+        get_logger("fed_pulse").warning("multi_axis_classifier_warmup_failed", exc_info=True)
     get_logger("fed_pulse").info("startup", service="fomc-api")
     try:
         yield
@@ -395,17 +399,14 @@ def list_settings_checkpoints() -> SettingsCheckpointsResponse:
     else:
         try:
             serving_kwargs = (
-                collect_serving_forward_kwargs(ForecasterServingModel)
-                or SERVING_FORWARD_KWARGS
+                collect_serving_forward_kwargs(ForecasterServingModel) or SERVING_FORWARD_KWARGS
             )
         except Exception:  # pragma: no cover -- defensive
             # Live-signature introspection failed but the imports landed.
             # Fall back to the static constant per ADR 0025 so the
             # settings page still renders meaningful supplied/required
             # badges rather than painting every kwarg red.
-            logger.warning(
-                "settings_checkpoints_serving_kwargs_probe_failed", exc_info=True
-            )
+            logger.warning("settings_checkpoints_serving_kwargs_probe_failed", exc_info=True)
             serving_kwargs = SERVING_FORWARD_KWARGS
 
     for entry in sorted(MODELS_DIR.glob("*.pt"), key=lambda p: p.name):
@@ -416,7 +417,9 @@ def list_settings_checkpoints() -> SettingsCheckpointsResponse:
         resolved = entry.resolve()
         role = _checkpoint_role(entry.name)
         is_active_forecaster = role == "forecaster" and resolved == active_forecaster
-        is_active_multi_axis = role == "multi_axis" and active_multi_axis is not None and resolved == active_multi_axis
+        is_active_multi_axis = (
+            role == "multi_axis" and active_multi_axis is not None and resolved == active_multi_axis
+        )
         sidecar_present: bool | None = None
         if role == "forecaster":
             sidecar_present = entry.with_suffix(".conformal.json").exists()
@@ -434,9 +437,7 @@ def list_settings_checkpoints() -> SettingsCheckpointsResponse:
             else:
                 contract_status = "present"
                 required_kwargs = [str(k) for k in contract.required_kwargs]
-                supplied = {
-                    name: (name in serving_kwargs) for name in required_kwargs
-                }
+                supplied = {name: (name in serving_kwargs) for name in required_kwargs}
 
         items.append(
             SettingsCheckpoint(
@@ -446,11 +447,15 @@ def list_settings_checkpoints() -> SettingsCheckpointsResponse:
                 size_bytes=int(stat.st_size),
                 modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
                 is_active=is_active_forecaster or is_active_multi_axis,
-                output_mode=active_forecaster_meta.get("output_mode") if is_active_forecaster else None,
+                output_mode=active_forecaster_meta.get("output_mode")
+                if is_active_forecaster
+                else None,
                 encoder_alias=(
                     active_forecaster_meta.get("encoder_alias")
                     if is_active_forecaster
-                    else active_multi_axis_alias if is_active_multi_axis else None
+                    else active_multi_axis_alias
+                    if is_active_multi_axis
+                    else None
                 ),
                 conformal_sidecar_present=sidecar_present,
                 required_kwargs=required_kwargs,
@@ -490,9 +495,7 @@ def list_symbols() -> SymbolListResponse:
         except Exception:
             logger.warning("symbols_load_failed path=%s", path, exc_info=True)
             continue
-    return SymbolListResponse(
-        symbols=[SymbolDescriptor(**entry) for entry in _SYMBOLS_FALLBACK]
-    )
+    return SymbolListResponse(symbols=[SymbolDescriptor(**entry) for entry in _SYMBOLS_FALLBACK])
 
 
 @app.get("/documents")
@@ -511,7 +514,9 @@ def list_documents():
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Failed to read {filename}: {exc}") from exc
+            raise HTTPException(
+                status_code=500, detail=f"Failed to read {filename}: {exc}"
+            ) from exc
 
         if not isinstance(payload, list):
             continue
@@ -600,6 +605,82 @@ def get_document_by_date(date: str, kind: str = "auto"):
     )
 
 
+# Path-based document viewer for the calendar's badge click-through.
+# Statement / minutes / press_conference each live in their own JSON
+# cache under DATA_DIR; the source mapping below pins the canonical
+# kind tokens used in the URL path against the on-disk filename and
+# the human-readable document_type fallback embedded on each row.
+_DOCUMENT_DETAIL_SOURCES: dict[str, tuple[str, str]] = {
+    "statement": ("fomc_statements.json", "Statement"),
+    "minutes": ("fomc_minutes.json", "Minutes"),
+    "press_conference": ("press_conferences.json", "Press Conference"),
+}
+
+
+@app.get(
+    "/documents/{type}/{date}",
+    response_model=DocumentDetailResponse,
+)
+def get_document_detail(type: str, date: str) -> DocumentDetailResponse:
+    """Return the cleaned text body for a single FOMC document so the
+    calendar's badge click-through can render the statement / minutes /
+    press-conference text inline. ``type`` is one of the keys in
+    :data:`_DOCUMENT_DETAIL_SOURCES`; ``date`` is the ISO event date
+    the source row indexes against. 404 when the row is not on disk
+    (e.g., a far-future meeting with no statement collected yet).
+    """
+
+    if type not in _DOCUMENT_DETAIL_SOURCES:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"type must be one of {sorted(_DOCUMENT_DETAIL_SOURCES)}; got {type!r}"),
+        )
+
+    filename, default_type = _DOCUMENT_DETAIL_SOURCES[type]
+    path = DATA_DIR / filename
+    if not path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"No {type} document on file for {date!r}.",
+        )
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read {filename}: {exc}") from exc
+
+    if not isinstance(payload, list):
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected payload shape in {filename}: expected a JSON list.",
+        )
+
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("date", "")) != date:
+            continue
+        text = str(item.get("text") or item.get("content") or "")
+        if not text:
+            continue
+        cleaned = clean_fomc_text(text, kind=type)
+        source_url = item.get("url")
+        scraped_at = item.get("scraped_at_utc") or item.get("scraped_at")
+        return DocumentDetailResponse(
+            type=type,
+            date=date,
+            title=str(item.get("title", "")),
+            cleaned_text=cleaned,
+            source_url=str(source_url) if isinstance(source_url, str) else None,
+            scraped_at=str(scraped_at) if isinstance(scraped_at, str) else None,
+        )
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"No {type} document on file for {date!r}.",
+    )
+
+
 def _build_analyze_response(
     payload: AnalyzeRequest,
     *,
@@ -647,7 +728,9 @@ def _build_analyze_response(
         if realized:
             forecast["series"]["realized_timestamps"] = [str(point["date"]) for point in realized]
             forecast["series"]["realized_close"] = [float(point["close"]) for point in realized]
-            forecast["series"]["realized_volatility"] = [float(point["volatility_5d"]) for point in realized]
+            forecast["series"]["realized_volatility"] = [
+                float(point["volatility_5d"]) for point in realized
+            ]
 
     regime_payload = _safe_regime_classification(history_vectors)
     # #341: structured-status payloads carry a ``status`` key and never
@@ -656,8 +739,10 @@ def _build_analyze_response(
     # serialisable against the AnalyzeResponse schema.
     regime_card: dict[str, Any] | None = None
     regime_status: dict[str, Any] | None = None
-    if isinstance(regime_payload, dict) and regime_payload.get("status") and (
-        "predicted_set" not in regime_payload
+    if (
+        isinstance(regime_payload, dict)
+        and regime_payload.get("status")
+        and ("predicted_set" not in regime_payload)
     ):
         regime_status = regime_payload
     else:
@@ -685,9 +770,7 @@ def _build_analyze_response(
         # structured-degrade try/except). Guard the dispatch defensively
         # so an IG runtime failure cannot break /analyze.
         try:
-            panel_attributions = build_panel_attributions(
-                history_vectors, as_of_date=payload.date
-            )
+            panel_attributions = build_panel_attributions(history_vectors, as_of_date=payload.date)
         except Exception:  # noqa: BLE001 -- defensive: never break /analyze
             logger.warning("xai_panel_attribution_failed", exc_info=True)
             panel_attributions = []
@@ -841,9 +924,7 @@ def _safe_regime_classification(history_vectors: list[Any]) -> dict[str, Any] | 
     try:
         result = build_regime_classification_card(history_vectors)
     except TypeError as exc:
-        _forecaster_service._contract_counters[
-            "regime_classification_inference_kwarg_missing"
-        ] += 1
+        _forecaster_service._contract_counters["regime_classification_inference_kwarg_missing"] += 1
         missing = _extract_missing_kwarg_from_typeerror(exc)
         logger.warning(
             "regime_classification_inference_kwarg_missing kwarg=%s detail=%s",
@@ -855,9 +936,7 @@ def _safe_regime_classification(history_vectors: list[Any]) -> dict[str, Any] | 
             "missing_kwarg": missing,
         }
     except Exception as exc:  # pragma: no cover — defensive, see #216 follow-up
-        _forecaster_service._contract_counters[
-            "regime_classification_unexpected_exception"
-        ] += 1
+        _forecaster_service._contract_counters["regime_classification_unexpected_exception"] += 1
         logger.warning(
             "regime_classification_card_failed exception_class=%s detail=%s",
             type(exc).__name__,
@@ -895,9 +974,7 @@ def _extract_missing_kwarg_from_typeerror(exc: TypeError) -> str | None:
     return None
 
 
-def _build_multi_axis_block(
-    text: str, sentiment: dict[str, Any]
-) -> dict[str, Any] | None:
+def _build_multi_axis_block(text: str, sentiment: dict[str, Any]) -> dict[str, Any] | None:
     """Build the multi-axis card block from the available text signals (#78).
 
     Two paths:
@@ -1031,9 +1108,7 @@ async def analyze(payload: AnalyzeRequest):
             detail="Analyze pipeline failed: serving runtime error",
         ) from None
     except Exception as exc:  # pragma: no cover
-        logger.exception(
-            "analyze_unexpected_exception exception_class=%s", type(exc).__name__
-        )
+        logger.exception("analyze_unexpected_exception exception_class=%s", type(exc).__name__)
         raise HTTPException(
             status_code=500, detail="Analyze pipeline failed: unexpected error"
         ) from None
@@ -1297,9 +1372,7 @@ def get_history_realized_batch(
         id_list.append(chunk)
 
     if not id_list:
-        raise HTTPException(
-            status_code=422, detail="ids must contain at least one run id"
-        )
+        raise HTTPException(status_code=422, detail="ids must contain at least one run id")
     if len(id_list) > 50:
         raise HTTPException(
             status_code=422,
@@ -1485,9 +1558,7 @@ def _meeting_with_availability(
     enriched = dict(meeting_dict)
     enriched["statement_available"] = bool(key and key in availability["statement"])
     enriched["minutes_available"] = bool(key and key in availability["minutes"])
-    enriched["press_conference_available"] = bool(
-        key and key in availability["press_conference"]
-    )
+    enriched["press_conference_available"] = bool(key and key in availability["press_conference"])
     return enriched
 
 
@@ -1503,9 +1574,7 @@ def fomc_calendar(
             reference = date.fromisoformat(as_of)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="as_of must be YYYY-MM-DD") from exc
-    calendar = get_calendar(
-        as_of=reference, upcoming_limit=upcoming_limit, past_limit=past_limit
-    )
+    calendar = get_calendar(as_of=reference, upcoming_limit=upcoming_limit, past_limit=past_limit)
     availability = _load_calendar_text_availability()
     return FomcCalendarResponse(
         past=[
@@ -1783,8 +1852,28 @@ _RV_HISTORY_DAYS = 60
 _RV_MIN_DAYS = 22
 
 
-def _load_rv_history(symbol: str) -> tuple[list[float], list[str]]:
-    """Pull the last 60 daily realized-vol values for ``symbol``.
+def _yfinance_period_for(days: int) -> str:
+    """Pick the smallest yfinance period that comfortably covers ``days`` bars.
+
+    yfinance's ``period`` argument is calendar-day denominated, while the
+    RV series is trading-day denominated (~252/yr), so we pad generously
+    and let the caller trim. The shortest period that fits the live
+    realized-vol card stays at ``120d``; longer windows (used by the
+    backtest panel, which needs to resolve event dates persisted across
+    months) climb through the canonical ``1y`` / ``2y`` / ``5y`` slots.
+    """
+
+    if days <= 90:
+        return "120d"
+    if days <= 252:
+        return "1y"
+    if days <= 504:
+        return "2y"
+    return "5y"
+
+
+def _load_rv_history(symbol: str, days: int = _RV_HISTORY_DAYS) -> tuple[list[float], list[str]]:
+    """Pull the trailing daily realized-vol values for ``symbol``.
 
     Prefers the Alpha Vantage 5-min intraday RV parquet (the same series
     the production model was trained on). The parquet is SPX-only, so
@@ -1793,6 +1882,12 @@ def _load_rv_history(symbol: str) -> tuple[list[float], list[str]]:
     missing for SPX we fall back to the same yfinance proxy so the card
     still renders on a fresh checkout. Returns RV (variance) units in
     chronological order plus their ISO date stamps.
+
+    ``days`` caps the trailing window. The live ``/forecast/realized-vol``
+    card uses the default 60 days (it only needs the recent prefix); the
+    ``/forecast/rv-backtest`` panel passes a larger value so persisted
+    FOMC event dates from prior months can still be aligned to the RV
+    series. The yfinance fallback period is widened accordingly.
     """
 
     import pandas as pd
@@ -1802,7 +1897,7 @@ def _load_rv_history(symbol: str) -> tuple[list[float], list[str]]:
     if symbol == "^GSPC" and DEFAULT_RV_PARQUET.exists():
         df = pd.read_parquet(DEFAULT_RV_PARQUET)
         if "rv" in df.columns and "date" in df.columns:
-            df = df.sort_values("date").tail(_RV_HISTORY_DAYS)
+            df = df.sort_values("date").tail(days)
             rv = df["rv"].astype(float).tolist()
             dates = df["date"].astype(str).tolist()
             if len(rv) >= _RV_MIN_DAYS:
@@ -1812,7 +1907,7 @@ def _load_rv_history(symbol: str) -> tuple[list[float], list[str]]:
     import yfinance as yf
 
     ticker = yf.Ticker(symbol)
-    frame = ticker.history(period="120d", auto_adjust=True)
+    frame = ticker.history(period=_yfinance_period_for(days), auto_adjust=True)
     if frame is None or frame.empty:
         raise RuntimeError(f"no market history available for {symbol}")
     close = frame["Close"].astype(float).dropna()
@@ -1826,9 +1921,9 @@ def _load_rv_history(symbol: str) -> tuple[list[float], list[str]]:
     rv_arr = (r * r).astype(float)
     dates = [d.strftime("%Y-%m-%d") for d in close.index[1:]]
     rv = rv_arr.tolist()
-    if len(rv) > _RV_HISTORY_DAYS:
-        rv = rv[-_RV_HISTORY_DAYS:]
-        dates = dates[-_RV_HISTORY_DAYS:]
+    if len(rv) > days:
+        rv = rv[-days:]
+        dates = dates[-days:]
     return rv, dates
 
 
@@ -1859,24 +1954,30 @@ async def forecast_realized_vol(
     try:
         rv_hist, hist_dates = await run_in_threadpool(_load_rv_history, symbol)
     except Exception as exc:
-        raise HTTPException(status_code=503, detail={"error": "history_unavailable", "message": str(exc)}) from exc
+        raise HTTPException(
+            status_code=503, detail={"error": "history_unavailable", "message": str(exc)}
+        ) from exc
 
     try:
         out = await run_in_threadpool(predict_rv, rv_hist)
     except RvForecasterUnavailable as exc:
-        raise HTTPException(status_code=503, detail={"error": "model_unavailable", "message": str(exc)}) from exc
+        raise HTTPException(
+            status_code=503, detail={"error": "model_unavailable", "message": str(exc)}
+        ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=503, detail={"error": "history_invalid", "message": str(exc)}) from exc
+        raise HTTPException(
+            status_code=503, detail={"error": "history_invalid", "message": str(exc)}
+        ) from exc
     except Exception as exc:  # pragma: no cover -- defensive against torch/HF surprises
         logger.warning("rv_forecast_failed", exc_info=True)
-        raise HTTPException(status_code=503, detail={"error": "forecast_failed", "message": str(exc)}) from exc
+        raise HTTPException(
+            status_code=503, detail={"error": "forecast_failed", "message": str(exc)}
+        ) from exc
 
     # Walk-forward past 80% bands. Failure here must not break the
     # primary forecast surface, so degrade to None.
     try:
-        bands_rows = await run_in_threadpool(
-            predict_rv_historical_bands, rv_hist, hist_dates
-        )
+        bands_rows = await run_in_threadpool(predict_rv_historical_bands, rv_hist, hist_dates)
         historical_bands = [RealizedVolHistoricalBand(**row) for row in bands_rows] or None
     except Exception:  # pragma: no cover -- defensive
         logger.warning("rv_historical_bands_failed", exc_info=True)
@@ -1919,9 +2020,7 @@ async def forecast_regime_baselines(
             status_code=422,
             detail={
                 "error": "symbol_unsupported",
-                "message": (
-                    "HAR-tercile baseline is SPX-trained; only ^GSPC is supported."
-                ),
+                "message": ("HAR-tercile baseline is SPX-trained; only ^GSPC is supported."),
             },
         )
 
@@ -2000,9 +2099,7 @@ def forecast_har_tercile_backtest(
             status_code=400,
             detail={
                 "error": "symbol_unsupported",
-                "message": (
-                    "HAR-tercile backtest is SPX-trained; only ^GSPC is supported."
-                ),
+                "message": ("HAR-tercile backtest is SPX-trained; only ^GSPC is supported."),
             },
         )
 
@@ -2016,6 +2113,77 @@ def forecast_har_tercile_backtest(
         horizon=out["horizon"],
         rows=rows,
         metrics=metrics,
+        generated_at=out["generated_at"],
+    )
+
+
+@app.get(
+    "/forecast/rv-backtest",
+    response_model=RvBacktestResponse,
+)
+def forecast_rv_backtest(
+    symbol: str = Query(
+        "^GSPC",
+        description="Market ticker; only ^GSPC is supported (RV artifact is SPX-only).",
+        min_length=1,
+        max_length=32,
+        pattern=r"^[A-Za-z0-9._=^/-]+$",
+    ),
+    limit: int = Query(
+        10,
+        ge=1,
+        le=50,
+        description="Number of most-recent persisted runs to backtest (1..50).",
+    ),
+    session: Session = Depends(get_session),
+) -> RvBacktestResponse:
+    """Empirical band coverage of the last N QLIKE-RV predictions.
+
+    Walks the persisted ``analysis_runs`` table for ``symbol``, replays
+    the QLIKE-DLq h=1 ensemble on each event date's leading RV prefix,
+    and counts how many resolved rows fell inside the published 80% /
+    90% bands. Mirrors the ^GSPC-only constraint on the upstream RV
+    forecast endpoint (the artifact is SPX-trained).
+    """
+
+    if symbol != "^GSPC":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "symbol_unsupported",
+                "message": ("RV backtest is SPX-only; only ^GSPC is supported."),
+            },
+        )
+
+    from app.services.rv_backtest import get_rv_backtest
+    from app.services.rv_forecaster import RvForecasterUnavailable
+
+    try:
+        out = get_rv_backtest(session, symbol=symbol, limit=limit)
+    except RvForecasterUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "model_unavailable", "message": str(exc)},
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "history_unavailable", "message": str(exc)},
+        ) from exc
+    except Exception as exc:  # pragma: no cover -- defensive
+        logger.warning("rv_backtest_failed", exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "backtest_failed", "message": str(exc)},
+        ) from exc
+
+    rows = [RvBacktestRow(**row) for row in out["rows"]]
+    coverage = RvBacktestCoverage(**out["coverage"])
+    return RvBacktestResponse(
+        symbol=out["symbol"],
+        horizon=out["horizon"],
+        rows=rows,
+        coverage=coverage,
         generated_at=out["generated_at"],
     )
 
@@ -2183,14 +2351,10 @@ async def analyze_market(payload: AnalyzeRequest) -> MarketReactionPanel:
         text_embedding=pooled_text_embedding,
     )
     try:
-        result = await run_in_threadpool(
-            build_market_reaction_panel, history_vectors
-        )
+        result = await run_in_threadpool(build_market_reaction_panel, history_vectors)
     except Exception:  # pragma: no cover -- defensive
         logger.exception("analyze_market_failed")
-        raise HTTPException(
-            status_code=503, detail="Market reaction panel unavailable"
-        ) from None
+        raise HTTPException(status_code=503, detail="Market reaction panel unavailable") from None
     if result is None:
         return MarketReactionPanel(rates=[], vol_regime=None)
     # #341: ``build_market_reaction_panel`` now returns a structured
@@ -2210,9 +2374,7 @@ async def analyze_market(payload: AnalyzeRequest) -> MarketReactionPanel:
     cards = [RatesReactionCard(**row) for row in result.get("rates", [])]
     vol_regime_payload = result.get("vol_regime")
     vol_regime = (
-        VolRegimeReactionCard(**vol_regime_payload)
-        if vol_regime_payload is not None
-        else None
+        VolRegimeReactionCard(**vol_regime_payload) if vol_regime_payload is not None else None
     )
     return MarketReactionPanel(
         rates=cards,
@@ -2271,9 +2433,7 @@ async def analyze_analogs(payload: AnalogsRequest) -> AnalogsResponse:
         raise HTTPException(status_code=422, detail="Invalid analog query") from None
     except Exception:  # never let a downstream failure 500 the whole API
         logger.exception("analyze_analogs_failed")
-        raise HTTPException(
-            status_code=503, detail="Analog retrieval unavailable"
-        ) from None
+        raise HTTPException(status_code=503, detail="Analog retrieval unavailable") from None
 
     if result is None:
         return AnalogsResponse(
@@ -2346,16 +2506,12 @@ async def analyze_trajectory(payload: TrajectoryRequest) -> TrajectoryResponse:
         raise HTTPException(status_code=422, detail="Invalid trajectory query") from None
     except Exception:  # never let a downstream failure 500 the whole API
         logger.exception("analyze_trajectory_failed")
-        raise HTTPException(
-            status_code=503, detail="Trajectory projection unavailable"
-        ) from None
+        raise HTTPException(status_code=503, detail="Trajectory projection unavailable") from None
 
     history = [TrajectoryMarker(**marker) for marker in result.get("history", [])]
     projection_payload = result.get("projected_next")
     projection = (
-        TrajectoryProjection(**projection_payload)
-        if projection_payload is not None
-        else None
+        TrajectoryProjection(**projection_payload) if projection_payload is not None else None
     )
     return TrajectoryResponse(
         available=bool(result.get("available", False)),

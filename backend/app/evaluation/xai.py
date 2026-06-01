@@ -15,19 +15,51 @@ _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
 # → dovish. Term weights are coarse — sufficient for a sentence-rank salience
 # heuristic, not for a calibrated regression.
 _HAWKISH_WEIGHTS: dict[str, float] = {
-    "tighten": 0.9, "tightening": 0.9, "raise": 0.7, "raised": 0.7,
-    "increase": 0.6, "increases": 0.6, "elevated": 0.7, "inflation": 0.5,
-    "persistent": 0.6, "strong": 0.5, "robust": 0.5, "firmly": 0.6,
-    "decisively": 0.7, "committed": 0.6, "vigilant": 0.7, "above": 0.4,
-    "overheating": 0.9, "expansion": 0.4, "solid": 0.4,
-    "hike": 0.9, "hikes": 0.9, "restrictive": 0.8,
+    "tighten": 0.9,
+    "tightening": 0.9,
+    "raise": 0.7,
+    "raised": 0.7,
+    "increase": 0.6,
+    "increases": 0.6,
+    "elevated": 0.7,
+    "inflation": 0.5,
+    "persistent": 0.6,
+    "strong": 0.5,
+    "robust": 0.5,
+    "firmly": 0.6,
+    "decisively": 0.7,
+    "committed": 0.6,
+    "vigilant": 0.7,
+    "above": 0.4,
+    "overheating": 0.9,
+    "expansion": 0.4,
+    "solid": 0.4,
+    "hike": 0.9,
+    "hikes": 0.9,
+    "restrictive": 0.8,
 }
 _DOVISH_WEIGHTS: dict[str, float] = {
-    "ease": 0.9, "easing": 0.9, "cut": 0.9, "cuts": 0.9, "lower": 0.6,
-    "reduce": 0.6, "reduces": 0.6, "weakening": 0.7, "weakness": 0.7,
-    "downside": 0.7, "soften": 0.7, "softer": 0.6, "moderate": 0.4,
-    "moderating": 0.5, "patient": 0.5, "gradual": 0.4, "accommodative": 0.9,
-    "support": 0.4, "decline": 0.5, "stimulus": 0.7, "transitory": 0.6,
+    "ease": 0.9,
+    "easing": 0.9,
+    "cut": 0.9,
+    "cuts": 0.9,
+    "lower": 0.6,
+    "reduce": 0.6,
+    "reduces": 0.6,
+    "weakening": 0.7,
+    "weakness": 0.7,
+    "downside": 0.7,
+    "soften": 0.7,
+    "softer": 0.6,
+    "moderate": 0.4,
+    "moderating": 0.5,
+    "patient": 0.5,
+    "gradual": 0.4,
+    "accommodative": 0.9,
+    "support": 0.4,
+    "decline": 0.5,
+    "stimulus": 0.7,
+    "transitory": 0.6,
 }
 
 
@@ -98,12 +130,13 @@ def attribute_text(text: str, *, top_k_per_sentence: int = 5) -> list[SentenceAt
     """Per-sentence attribution covering the whole document body."""
 
     return [
-        attribute_sentence(sentence, top_k=top_k_per_sentence)
-        for sentence in split_sentences(text)
+        attribute_sentence(sentence, top_k=top_k_per_sentence) for sentence in split_sentences(text)
     ]
 
 
-def to_response(attributions: list[SentenceAttribution], *, method: str = "keyword_salience_v1") -> dict[str, object]:
+def to_response(
+    attributions: list[SentenceAttribution], *, method: str = "keyword_salience_v1"
+) -> dict[str, object]:
     """Shape the attribution output to match the frontend `XaiResponse` type
     (`{ sentences: [{ text, score, topTokens: [{ token, weight }] }], method }`).
     """

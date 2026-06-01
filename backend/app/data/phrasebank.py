@@ -179,17 +179,12 @@ def _write_cache(path: Path, rows: list[PhraseBankRow]) -> None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     frame = pd.DataFrame(
-        [
-            {"row_id": r.row_id, "sentence": r.sentence, "label": r.label_idx}
-            for r in rows
-        ]
+        [{"row_id": r.row_id, "sentence": r.sentence, "label": r.label_idx} for r in rows]
     )
     frame.to_parquet(path)
 
 
-def _download_from_hub(
-    dataset_id: str, subset: str, revision: str | None
-) -> list[PhraseBankRow]:
+def _download_from_hub(dataset_id: str, subset: str, revision: str | None) -> list[PhraseBankRow]:
     """Pull PhraseBank from the HF mirror — read-only.
 
     Lazy import of :mod:`datasets` so the module is importable in CI
@@ -258,9 +253,7 @@ def load_phrasebank_rows(
     """
 
     if subset not in VALID_SUBSETS:
-        raise ValueError(
-            f"PhraseBank subset {subset!r} not in {VALID_SUBSETS!r}"
-        )
+        raise ValueError(f"PhraseBank subset {subset!r} not in {VALID_SUBSETS!r}")
 
     if local_jsonl is not None:
         if not local_jsonl.exists():

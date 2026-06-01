@@ -36,9 +36,7 @@ OUTPUT_FILENAME = "regional_research.json"
 LSE_POST_URL_PATTERN = re.compile(
     r"^https://libertystreeteconomics\.newyorkfed\.org/(\d{4})/(\d{2})/[a-z0-9-]+/?$"
 )
-DATE_FROM_URL_PATTERN = re.compile(
-    r"libertystreeteconomics\.newyorkfed\.org/(\d{4})/(\d{2})/"
-)
+DATE_FROM_URL_PATTERN = re.compile(r"libertystreeteconomics\.newyorkfed\.org/(\d{4})/(\d{2})/")
 
 
 @dataclass(frozen=True)
@@ -82,8 +80,10 @@ def extract_lse_listing(html: str) -> list[RegionalResearchListingEntry]:
     for anchor in soup.select("a[href]"):
         raw_href = anchor.get("href") or ""
         href = (
-            raw_href if isinstance(raw_href, str) else " ".join(map(str, raw_href))
-        ).strip().rstrip("/")
+            (raw_href if isinstance(raw_href, str) else " ".join(map(str, raw_href)))
+            .strip()
+            .rstrip("/")
+        )
         if not href:
             continue
         # Normalize trailing slash for the pattern check
@@ -99,9 +99,7 @@ def extract_lse_listing(html: str) -> list[RegionalResearchListingEntry]:
         if not date_iso:
             continue
 
-        entries.append(
-            RegionalResearchListingEntry(date=date_iso, title=title, url=candidate)
-        )
+        entries.append(RegionalResearchListingEntry(date=date_iso, title=title, url=candidate))
     return entries
 
 
@@ -204,10 +202,7 @@ def write_regional_research_json(
 # default ``Python-urllib/x.y`` UA on some edge nodes. Identifying the
 # project in the UA keeps the traffic auditable on the upstream's side
 # and matches the convention the federalreserve.gov scrapers use.
-_USER_AGENT = (
-    "fed-pulse-data-ingester/1.0 "
-    "(+https://github.com/yusufizzetmurat/fed-pulse)"
-)
+_USER_AGENT = "fed-pulse-data-ingester/1.0 " "(+https://github.com/yusufizzetmurat/fed-pulse)"
 
 
 def _http_get_text(url: str, *, timeout: float) -> str:
@@ -290,9 +285,7 @@ def pull_regional_research_archive(  # noqa: PLR0913
     try:
         written = write_regional_research_json(parsed, tmp_path)
         if written == 0:
-            raise RuntimeError(
-                f"Regional research pull from {archive_url} produced zero rows"
-            )
+            raise RuntimeError(f"Regional research pull from {archive_url} produced zero rows")
         tmp_path.replace(target_path)
         return written
     except Exception:

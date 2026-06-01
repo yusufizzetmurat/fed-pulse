@@ -199,6 +199,29 @@ function ColdStartBanner({ summary }: { summary: string }) {
   );
 }
 
+// Informational banner for the silent-null edge cases the backend
+// surfaces via ``SemanticDiffResponse.status``. We never blank the
+// panel on an edge case — the user gets a parseable reason instead.
+function StatusBanner({
+  title,
+  summary,
+  testId,
+}: {
+  title: string;
+  summary: string;
+  testId: string;
+}) {
+  return (
+    <div
+      className="rounded-md border border-dashed border-border bg-muted/30 p-3 text-xs text-muted-foreground"
+      data-testid={testId}
+    >
+      <p className="font-medium text-foreground">{title}</p>
+      <p className="mt-1">{summary}</p>
+    </div>
+  );
+}
+
 export interface SemanticDiffPanelProps {
   data: SemanticDiffResponse | null;
   loading?: boolean;
@@ -243,7 +266,42 @@ export function SemanticDiffPanel({
     );
   }
 
+  // Surface the silent-null edge cases the backend signalled via
+  // ``status``. ``no_prior`` keeps the existing cold-start banner so
+  // older clients (status undefined + empty lists) still match.
+  if (data.status === "no_input") {
+    return (
+      <WorkspaceSection
+        title="Semantic diff vs prior statement"
+        description="Token redline + topic emphasis shifts (descriptive)"
+        variant="descriptive"
+      >
+        <StatusBanner
+          title="Input too short to diff"
+          summary={data.summary}
+          testId="semantic-diff-no-input"
+        />
+      </WorkspaceSection>
+    );
+  }
+  if (data.status === "non_english") {
+    return (
+      <WorkspaceSection
+        title="Semantic diff vs prior statement"
+        description="Token redline + topic emphasis shifts (descriptive)"
+        variant="descriptive"
+      >
+        <StatusBanner
+          title="Non-Latin text — diff not run"
+          summary={data.summary}
+          testId="semantic-diff-non-english"
+        />
+      </WorkspaceSection>
+    );
+  }
+
   const isColdStart =
+    data.status === "no_prior" ||
     !data.prior_date ||
     (data.token_spans.length === 0 && data.topic_deltas.length === 0);
 

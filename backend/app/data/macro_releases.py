@@ -52,8 +52,8 @@ DEFAULT_MACRO_RELEASES_CSV = _DATA_DIR / "external" / "macro_releases.csv"
 # Map release_kind -> FRED release_id. Used by refresh_from_fred. Verified
 # against https://api.stlouisfed.org/fred/releases?api_key=<key>&file_type=json
 _FRED_RELEASE_IDS: dict[str, int] = {
-    "NFP": 50,   # "Employment Situation" (BLS) -- includes Nonfarm Payrolls
-    "CPI": 10,   # "Consumer Price Index" (BLS)
+    "NFP": 50,  # "Employment Situation" (BLS) -- includes Nonfarm Payrolls
+    "CPI": 10,  # "Consumer Price Index" (BLS)
     # ISM Manufacturing PMI is a private (non-FRED) release. We keep the
     # ISM column in the CSV but refresh_from_fred leaves it untouched.
 }
@@ -95,9 +95,7 @@ def load_macro_release_calendar(path: Path) -> MacroReleaseCalendar:
     elif suffix in {".parquet", ".pq"}:
         records = _read_parquet(path)
     else:
-        raise ValueError(
-            f"Unsupported macro release calendar format: {path} ({suffix})"
-        )
+        raise ValueError(f"Unsupported macro release calendar format: {path} ({suffix})")
     by_kind: dict[str, set[_dt.date]] = {kind: set() for kind in _KNOWN_KINDS}
     for kind, raw_date in records:
         if kind not in _KNOWN_KINDS:

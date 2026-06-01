@@ -2,7 +2,7 @@ import * as React from "react";
 import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
-import { Calendar as CalendarIcon, Clock } from "lucide-react";
+import { Calendar as CalendarIcon, ChevronRight, Clock } from "lucide-react";
 import { toast } from "sonner";
 
 import { Header } from "@/components/shell/header";
@@ -96,61 +96,107 @@ interface MeetingRowProps {
   contextLabel?: string | null;
 }
 
-const ROW_CONTENT_CLASSES =
-  "flex w-full min-h-[44px] flex-col gap-2 rounded-sm px-2 py-3 text-left hover:bg-accent/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3";
+// Row layout. The row itself is a passive container — navigation lives
+// on an explicit "Analyze" affordance (link or button) that sits as a
+// sibling of the availability badges so each badge can be a real anchor
+// without being nested inside another anchor's content model.
+const ROW_LAYOUT_CLASSES =
+  "flex w-full min-h-[44px] flex-col gap-2 rounded-sm px-2 py-3 text-left transition-colors hover:bg-accent/40 focus-within:bg-accent/40 sm:min-h-0 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3";
+
+const ROW_ACTION_CLASSES =
+  "inline-flex items-center gap-1 rounded-sm px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 const TEXT_AVAILABILITY_BADGES: Array<{
   key: "statement_available" | "minutes_available" | "press_conference_available";
   label: string;
+  // Path segment for the viewer route. Mirrors the backend's
+  // _DOCUMENT_DETAIL_SOURCES keys.
+  kind: "statement" | "minutes" | "press_conference";
 }> = [
-  { key: "statement_available", label: "Statement" },
-  { key: "minutes_available", label: "Minutes" },
-  { key: "press_conference_available", label: "Presser" },
+  { key: "statement_available", label: "Statement", kind: "statement" },
+  { key: "minutes_available", label: "Minutes", kind: "minutes" },
+  { key: "press_conference_available", label: "Presser", kind: "press_conference" },
 ];
 
 function AvailabilityBadge({
   label,
   available,
+  href,
 }: {
   label: string;
   available: boolean;
+  // Path-based viewer link the badge navigates to when the document
+  // is on file. Undefined / null on rows that have no collected text;
+  // the badge then renders as a plain span so the calendar row's own
+  // click target keeps owning navigation.
+  href?: string | null;
 }) {
   const titleText = available
     ? `${label} on file`
     : `${label} not collected`;
-  // Plain inline chip rather than a nested Link/button — the parent row
-  // already owns the navigation. The title attribute carries the
-  // hover-tooltip in a way that survives the row's outer click target.
+  const className =
+    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium leading-none transition-colors " +
+    (available
+      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20"
+      : "border-dashed border-muted-foreground/40 text-muted-foreground/70");
+  const dot = (
+    <span
+      aria-hidden="true"
+      className={
+        "h-1.5 w-1.5 rounded-full " +
+        (available ? "bg-emerald-500" : "bg-muted-foreground/40")
+      }
+    />
+  );
+  if (available && href) {
+    // Badges are real anchors. The row's analyze affordance is a
+    // sibling element (see MeetingRow), so this <Link> is never nested
+    // inside another anchor — middle-click / open-in-new-tab / context
+    // menu / focus order all behave like normal links.
+    return (
+      <Link
+        href={href}
+        data-testid={`availability-${label.toLowerCase()}`}
+        data-available="true"
+        title={titleText}
+        aria-label={titleText}
+        className={className}
+      >
+        {dot}
+        {label}
+      </Link>
+    );
+  }
   return (
     <span
       data-testid={`availability-${label.toLowerCase()}`}
       data-available={available ? "true" : "false"}
       title={titleText}
       aria-label={titleText}
-      className={
-        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium leading-none transition-colors " +
-        (available
-          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-          : "border-dashed border-muted-foreground/40 text-muted-foreground/70")
-      }
+      className={className}
     >
-      <span
-        aria-hidden="true"
-        className={
-          "h-1.5 w-1.5 rounded-full " +
-          (available ? "bg-emerald-500" : "bg-muted-foreground/40")
-        }
-      />
+      {dot}
       {label}
     </span>
   );
 }
 
-function MeetingRowBody({
+interface MeetingRowDetailsProps {
+  meeting: FomcMeeting;
+  predictedAction?: string | null;
+  contextLabel?: string | null;
+}
+
+// Renders the row's visible content: meeting metadata, availability
+// badges (which are real anchors when on file), and forecast /
+// meeting-type badges. The body intentionally contains no link or
+// button wrapping the whole row — the navigation affordance is a
+// sibling so the badge anchors are never nested inside another anchor.
+function MeetingRowDetails({
   meeting,
   predictedAction,
   contextLabel,
-}: Pick<MeetingRowProps, "meeting" | "predictedAction" | "contextLabel">) {
+}: MeetingRowDetailsProps) {
   return (
     <>
       <div className="space-y-0.5">
@@ -165,11 +211,16 @@ function MeetingRowBody({
           {contextLabel ? <span>· {contextLabel}</span> : null}
         </div>
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
-          {TEXT_AVAILABILITY_BADGES.map(({ key, label }) => (
+          {TEXT_AVAILABILITY_BADGES.map(({ key, label, kind }) => (
             <AvailabilityBadge
               key={key}
               label={label}
               available={Boolean(meeting[key])}
+              href={
+                meeting[key]
+                  ? `/documents/${kind}/${meeting.meeting_date}`
+                  : null
+              }
             />
           ))}
         </div>
@@ -183,7 +234,12 @@ function MeetingRowBody({
         <Badge variant="outline" className="capitalize">
           {meeting.meeting_type}
         </Badge>
-        <span className="text-xs text-muted-foreground">Analyze →</span>
+        {/* The visible analyze cue. The actual click target is the
+            sibling Link/button rendered by MeetingRow — keeping the
+            badge anchors as un-nested siblings. */}
+        <span aria-hidden="true" className="text-xs text-muted-foreground">
+          Analyze →
+        </span>
       </div>
     </>
   );
@@ -191,29 +247,36 @@ function MeetingRowBody({
 
 function MeetingRow({ meeting, onAnalyze, href, predictedAction, contextLabel }: MeetingRowProps) {
   const targetDate = meeting.statement_release_date ?? meeting.meeting_date;
+  const analyzeLabel = `Analyze FOMC meeting on ${meeting.meeting_date}`;
   return (
-    <li className="border-b border-border last:border-0">
-      {href ? (
-        <Link href={href} className={ROW_CONTENT_CLASSES}>
-          <MeetingRowBody
-            meeting={meeting}
-            predictedAction={predictedAction}
-            contextLabel={contextLabel}
-          />
-        </Link>
-      ) : (
-        <button
-          type="button"
-          onClick={() => onAnalyze?.(targetDate)}
-          className={ROW_CONTENT_CLASSES}
-        >
-          <MeetingRowBody
-            meeting={meeting}
-            predictedAction={predictedAction}
-            contextLabel={contextLabel}
-          />
-        </button>
-      )}
+    <li className="relative border-b border-border last:border-0">
+      <div className={ROW_LAYOUT_CLASSES}>
+        <MeetingRowDetails
+          meeting={meeting}
+          predictedAction={predictedAction}
+          contextLabel={contextLabel}
+        />
+        {href ? (
+          <Link
+            href={href}
+            aria-label={analyzeLabel}
+            data-testid="meeting-row-action"
+            className={ROW_ACTION_CLASSES}
+          >
+            <ChevronRight aria-hidden="true" className="h-4 w-4" />
+          </Link>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onAnalyze?.(targetDate)}
+            aria-label={analyzeLabel}
+            data-testid="meeting-row-action"
+            className={ROW_ACTION_CLASSES}
+          >
+            <ChevronRight aria-hidden="true" className="h-4 w-4" />
+          </button>
+        )}
+      </div>
     </li>
   );
 }

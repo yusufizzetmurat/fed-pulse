@@ -51,9 +51,7 @@ _N_CLASSES = 3
 _DEFAULT_ARTEFACT = (
     BACKEND_ROOT / "artifacts" / "experiments" / "dual_head_comparison_canonical.json"
 )
-_DEFAULT_OUTPUT = (
-    BACKEND_ROOT / "artifacts" / "experiments" / "discretize_at_eval.json"
-)
+_DEFAULT_OUTPUT = BACKEND_ROOT / "artifacts" / "experiments" / "discretize_at_eval.json"
 
 
 def bucketize(predictions: Sequence[float], bin_edges: Sequence[float]) -> list[int]:
@@ -174,13 +172,15 @@ def extract_discretized_cells(
                 [int(t) for t in targets],
                 [float(e) for e in edges],
             )
-            cells.append(DiscretizedCell(
-                head_mode="regression_discretized",
-                seed=seed,
-                fold_id=fold_id,
-                n_events=len(preds),
-                f1_macro_discretized=f1,
-            ))
+            cells.append(
+                DiscretizedCell(
+                    head_mode="regression_discretized",
+                    seed=seed,
+                    fold_id=fold_id,
+                    n_events=len(preds),
+                    f1_macro_discretized=f1,
+                )
+            )
     return cells, n_skipped
 
 
@@ -240,11 +240,17 @@ def _paired(  # noqa: PLR0913 -- bootstrap knobs surface as named kwargs by desi
     n = len(deltas)
     if n == 0:
         return PairedTest(
-            label_a=label_a, label_b=label_b, n_pairs=0,
-            mean_delta=float("nan"), std_delta=float("nan"),
-            wilcoxon_stat=float("nan"), p_value=float("nan"),
+            label_a=label_a,
+            label_b=label_b,
+            n_pairs=0,
+            mean_delta=float("nan"),
+            std_delta=float("nan"),
+            wilcoxon_stat=float("nan"),
+            p_value=float("nan"),
             effect_size_d=float("nan"),
-            ci_lo=float("nan"), ci_hi=float("nan"), ci_coverage=coverage,
+            ci_lo=float("nan"),
+            ci_hi=float("nan"),
+            ci_coverage=coverage,
         )
     mu = sum(deltas) / n
     var = sum((d - mu) ** 2 for d in deltas) / (n - 1) if n > 1 else 0.0
@@ -252,14 +258,24 @@ def _paired(  # noqa: PLR0913 -- bootstrap knobs surface as named kwargs by desi
     stat, pval = wilcoxon_signed_rank(deltas)
     es = effect_size(deltas)
     _, lo, hi = block_bootstrap_ci_deltas(
-        deltas, fold_labels,
-        n_resamples=n_resamples, coverage=coverage, seed=bootstrap_seed,
+        deltas,
+        fold_labels,
+        n_resamples=n_resamples,
+        coverage=coverage,
+        seed=bootstrap_seed,
     )
     return PairedTest(
-        label_a=label_a, label_b=label_b, n_pairs=n,
-        mean_delta=mu, std_delta=sd,
-        wilcoxon_stat=stat, p_value=pval, effect_size_d=es,
-        ci_lo=lo, ci_hi=hi, ci_coverage=coverage,
+        label_a=label_a,
+        label_b=label_b,
+        n_pairs=n,
+        mean_delta=mu,
+        std_delta=sd,
+        wilcoxon_stat=stat,
+        p_value=pval,
+        effect_size_d=es,
+        ci_lo=lo,
+        ci_hi=hi,
+        ci_coverage=coverage,
     )
 
 
@@ -296,12 +312,20 @@ def compute_discretize_at_eval(
         for c in cells:
             disc_by_cell[(c.seed, c.fold_id)] = c.f1_macro_discretized
         all_disc_cells.extend(cells)
-        cls_by_cell.update(_extract_classification_cells(
-            payload, "classification", "regime_f1_macro",
-        ))
-        dual_by_cell.update(_extract_classification_cells(
-            payload, "dual", "regime_f1_macro",
-        ))
+        cls_by_cell.update(
+            _extract_classification_cells(
+                payload,
+                "classification",
+                "regime_f1_macro",
+            )
+        )
+        dual_by_cell.update(
+            _extract_classification_cells(
+                payload,
+                "dual",
+                "regime_f1_macro",
+            )
+        )
 
     disc_f1 = [c.f1_macro_discretized for c in all_disc_cells]
     disc_mu, disc_sd = _mean_std(disc_f1)
@@ -316,18 +340,28 @@ def compute_discretize_at_eval(
 
     paired: list[PairedTest] = []
     if disc_by_cell:
-        paired.append(_paired(
-            disc_by_cell, dual_by_cell,
-            "regression_discretized", "dual",
-            coverage=coverage, n_resamples=n_resamples,
-            bootstrap_seed=bootstrap_seed,
-        ))
-        paired.append(_paired(
-            disc_by_cell, cls_by_cell,
-            "regression_discretized", "classification",
-            coverage=coverage, n_resamples=n_resamples,
-            bootstrap_seed=bootstrap_seed,
-        ))
+        paired.append(
+            _paired(
+                disc_by_cell,
+                dual_by_cell,
+                "regression_discretized",
+                "dual",
+                coverage=coverage,
+                n_resamples=n_resamples,
+                bootstrap_seed=bootstrap_seed,
+            )
+        )
+        paired.append(
+            _paired(
+                disc_by_cell,
+                cls_by_cell,
+                "regression_discretized",
+                "classification",
+                coverage=coverage,
+                n_resamples=n_resamples,
+                bootstrap_seed=bootstrap_seed,
+            )
+        )
 
     return {
         "sweep_artefacts": [str(p) for p in sweep_paths],

@@ -289,9 +289,7 @@ def _load_state() -> "_ClassifierState | _LoadFailure":
 
         ref = encoder_ref(encoder_alias)
         if ref is None or not ref.revision:
-            raise ValueError(
-                f"Encoder alias {encoder_alias!r} is unpinned in registry.yaml"
-            )
+            raise ValueError(f"Encoder alias {encoder_alias!r} is unpinned in registry.yaml")
         tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
             ref.repo,
             revision=ref.revision,
@@ -321,9 +319,7 @@ def _load_state() -> "_ClassifierState | _LoadFailure":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     model.eval()
-    max_length = int(
-        (payload.get("training_args") or {}).get("max_length") or DEFAULT_MAX_LENGTH
-    )
+    max_length = int((payload.get("training_args") or {}).get("max_length") or DEFAULT_MAX_LENGTH)
     return _ClassifierState(
         model=model,
         tokenizer=tokenizer,

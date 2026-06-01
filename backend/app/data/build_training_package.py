@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import DATA_DIR as DEFAULT_DATA_DIR
+
 DEFAULT_INPUT = DEFAULT_DATA_DIR / "interim" / "phase2" / "registry_quality_passed.jsonl"
 DEFAULT_REPORT_DIR = DEFAULT_DATA_DIR / "interim" / "phase2" / "quality_reports"
 DEFAULT_PROCESSED_ROOT = DEFAULT_DATA_DIR / "processed"
@@ -81,7 +82,9 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build versioned Phase 2 training package with train/val/test splits and walk-forward folds."
     )
-    parser.add_argument("--input", default=str(DEFAULT_INPUT), help="Quality-passed JSONL registry.")
+    parser.add_argument(
+        "--input", default=str(DEFAULT_INPUT), help="Quality-passed JSONL registry."
+    )
     parser.add_argument(
         "--quality-report-dir",
         default=str(DEFAULT_REPORT_DIR),
@@ -89,10 +92,20 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dataset-version", required=True, help="Dataset version identifier.")
     parser.add_argument("--feature-version", required=True, help="Feature version identifier.")
-    parser.add_argument("--training-package-id", default="", help="Training package id. Auto-generated when omitted.")
-    parser.add_argument("--protocol", default=DEFAULT_PROTOCOL, help="Evaluation protocol identifier.")
-    parser.add_argument("--processed-root", default=str(DEFAULT_PROCESSED_ROOT), help="Processed package root.")
-    parser.add_argument("--min-train-ratio", type=float, default=0.6, help="Min train date ratio for fold seed.")
+    parser.add_argument(
+        "--training-package-id",
+        default="",
+        help="Training package id. Auto-generated when omitted.",
+    )
+    parser.add_argument(
+        "--protocol", default=DEFAULT_PROTOCOL, help="Evaluation protocol identifier."
+    )
+    parser.add_argument(
+        "--processed-root", default=str(DEFAULT_PROCESSED_ROOT), help="Processed package root."
+    )
+    parser.add_argument(
+        "--min-train-ratio", type=float, default=0.6, help="Min train date ratio for fold seed."
+    )
     parser.add_argument("--fold-count", type=int, default=5, help="Target walk-forward fold count.")
     parser.add_argument(
         "--source-drift-tolerance",
@@ -147,7 +160,9 @@ def _auto_training_package_id(dataset_version: str, feature_version: str, protoc
     return f"tp_{dataset_version}_{feature_version}_{protocol_short}_v1.0"
 
 
-def _time_split(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+def _time_split(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     n = len(rows)
     train_end = max(1, int(n * 0.7))
     val_end = max(train_end + 1, int(n * 0.85))
@@ -155,7 +170,9 @@ def _time_split(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[
     return rows[:train_end], rows[train_end:val_end], rows[val_end:]
 
 
-def _rows_between(rows: list[dict[str, Any]], start_date: str, end_date: str) -> list[dict[str, Any]]:
+def _rows_between(
+    rows: list[dict[str, Any]], start_date: str, end_date: str
+) -> list[dict[str, Any]]:
     return [r for r in rows if start_date <= str(r.get("event_date", "")) <= end_date]
 
 
@@ -185,7 +202,9 @@ def _source_drift_max(train: dict[str, int], split: dict[str, int]) -> float:
     return max(abs(train_shares.get(k, 0.0) - split_shares.get(k, 0.0)) for k in keys)
 
 
-def _build_folds(rows: list[dict[str, Any]], min_train_ratio: float, fold_count: int) -> list[FoldRange]:
+def _build_folds(
+    rows: list[dict[str, Any]], min_train_ratio: float, fold_count: int
+) -> list[FoldRange]:
     unique_dates = sorted({str(r.get("event_date", "")) for r in rows if r.get("event_date")})
     if len(unique_dates) < 8:
         return []
@@ -211,7 +230,9 @@ def _build_folds(rows: list[dict[str, Any]], min_train_ratio: float, fold_count:
         train_rows = _rows_between(rows, *train_dates)
         val_rows = _rows_between(rows, *val_dates)
         test_rows = _rows_between(rows, *test_dates)
-        cls_count = Counter(str(r.get("mapped_label", "")) for r in test_rows if r.get("mapped_label"))
+        cls_count = Counter(
+            str(r.get("mapped_label", "")) for r in test_rows if r.get("mapped_label")
+        )
 
         train_sources = _source_distribution(train_rows)
         val_sources = _source_distribution(val_rows)
@@ -345,7 +366,9 @@ def main() -> int:
         schema=FoldRowSchema,
     )
 
-    folds = _build_folds(supervised_rows, min_train_ratio=args.min_train_ratio, fold_count=args.fold_count)
+    folds = _build_folds(
+        supervised_rows, min_train_ratio=args.min_train_ratio, fold_count=args.fold_count
+    )
 
     drift_violations: list[tuple[str, float]] = []
     if args.source_drift_tolerance > 0:
@@ -400,14 +423,14 @@ def main() -> int:
         "label_counts": dict(Counter(str(r.get("mapped_label", "")) for r in supervised_rows)),
         "registry_parquet_written": parquet_written,
         "source_drift_tolerance": args.source_drift_tolerance,
-        "source_drift_per_fold": {
-            fold.fold_id: fold.source_drift_max for fold in folds
-        },
+        "source_drift_per_fold": {fold.fold_id: fold.source_drift_max for fold in folds},
         "source_drift_max_across_folds": max(
             (fold.source_drift_max for fold in folds), default=0.0
         ),
     }
-    (package_dir / "dataset_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    (package_dir / "dataset_metadata.json").write_text(
+        json.dumps(metadata, indent=2), encoding="utf-8"
+    )
 
     # Immutability sidecar (docs/benchmark-policy.md). A later load
     # whose manifest disagrees with this hash raises so a silent
@@ -422,4 +445,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

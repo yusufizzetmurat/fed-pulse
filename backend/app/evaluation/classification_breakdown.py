@@ -119,9 +119,7 @@ def _binary_roc_auc(scores: Sequence[float], labels: Sequence[int]) -> float | N
         i = j + 1
     rank_sum_pos = sum(rank for rank, label in zip(ranks, labels) if label == 1)
     # AUC = (R_pos - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
-    auc = (rank_sum_pos - pos_count * (pos_count + 1) / 2.0) / (
-        pos_count * neg_count
-    )
+    auc = (rank_sum_pos - pos_count * (pos_count + 1) / 2.0) / (pos_count * neg_count)
     return float(auc)
 
 
@@ -243,12 +241,8 @@ def compute_classification_breakdown(
 
     classes_with_support = [m for m in per_class if m.support > 0]
     if classes_with_support:
-        macro_precision = sum(m.precision for m in classes_with_support) / len(
-            classes_with_support
-        )
-        macro_recall = sum(m.recall for m in classes_with_support) / len(
-            classes_with_support
-        )
+        macro_precision = sum(m.precision for m in classes_with_support) / len(classes_with_support)
+        macro_recall = sum(m.recall for m in classes_with_support) / len(classes_with_support)
         macro_f1 = sum(m.f1 for m in classes_with_support) / len(classes_with_support)
         total_support = sum(m.support for m in classes_with_support)
         weighted_f1 = (
@@ -291,14 +285,15 @@ def render_confusion_matrix_text(
         else [str(c) for c in range(n)]
     )
     column_width = max(6, *(len(label) for label in labels))
-    header = "true\\pred".ljust(column_width) + " " + " ".join(
-        label.rjust(column_width) for label in labels
+    header = (
+        "true\\pred".ljust(column_width)
+        + " "
+        + " ".join(label.rjust(column_width) for label in labels)
     )
     rows = []
     for r, label in enumerate(labels):
         row_cells = " ".join(
-            str(breakdown.confusion_matrix[r][c]).rjust(column_width)
-            for c in range(n)
+            str(breakdown.confusion_matrix[r][c]).rjust(column_width) for c in range(n)
         )
         rows.append(label.ljust(column_width) + " " + row_cells)
     return "\n".join([header, *rows])

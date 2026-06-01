@@ -86,9 +86,7 @@ def render_confusion_matrix_png(
         raise ValueError("confusion_matrix must not be empty")
     n = len(confusion_matrix)
     if any(len(row) != n for row in confusion_matrix):
-        raise ValueError(
-            "confusion_matrix must be square; got rows of varying length"
-        )
+        raise ValueError("confusion_matrix must be square; got rows of varying length")
 
     labels = (
         list(class_labels)

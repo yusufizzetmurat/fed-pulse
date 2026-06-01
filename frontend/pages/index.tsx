@@ -15,6 +15,7 @@ import { PipelineTrace } from "@/components/analyze/PipelineTrace";
 import { PolicyActionCard } from "@/components/analyze/PolicyActionCard";
 import { HarAccuracyPanel } from "@/components/analyze/HarAccuracyPanel";
 import { HarRegimeHeadline } from "@/components/analyze/HarRegimeHeadline";
+import { RvAccuracyPanel } from "@/components/analyze/RvAccuracyPanel";
 import {
   RegimeHistoryStrip,
   type RegimeHistoryEntry,
@@ -40,6 +41,7 @@ import {
   fetchHistoryRealizedBatch,
   fetchLatestMpSurprise,
   fetchRealizedVolForecast,
+  fetchRvBacktest,
   fetchSemanticDiff,
   postAnalyze,
   postAnalyzeAnalogs,
@@ -66,6 +68,7 @@ import type {
   MarketReactionPanelResponse,
   MonetaryPolicySurpriseResponse,
   RealizedVolForecastResponse,
+  RvBacktestResponse,
   SemanticDiffResponse,
 } from "@/lib/analyze/types";
 import {
@@ -156,6 +159,9 @@ export default function WorkspacePage() {
     React.useState<HarTercileBacktestResponse | null>(null);
   const [harBacktestLoading, setHarBacktestLoading] = React.useState(false);
   const [harBacktestError, setHarBacktestError] = React.useState<string | null>(null);
+  const [rvBacktest, setRvBacktest] = React.useState<RvBacktestResponse | null>(null);
+  const [rvBacktestLoading, setRvBacktestLoading] = React.useState(false);
+  const [rvBacktestError, setRvBacktestError] = React.useState<string | null>(null);
 
   // Apply saved workspace prefs (default symbol / horizon) after mount.
   // Doing this in an effect rather than the initial state preserves the
@@ -387,6 +393,47 @@ export default function WorkspacePage() {
         }
       } finally {
         setHarBacktestLoading(false);
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl, request.symbol]);
+
+  // QLIKE-RV band coverage panel — same ^GSPC-only constraint as the
+  // HAR-tercile backtest (the RV artifact is SPX-trained). The
+  // fetcher folds a 503 (model / history unavailable) into null so
+  // the panel renders its tailored "unavailable" branch.
+  React.useEffect(() => {
+    const controller = new AbortController();
+    if (request.symbol !== "^GSPC") {
+      setRvBacktest(null);
+      setRvBacktestLoading(false);
+      setRvBacktestError(null);
+      return;
+    }
+    setRvBacktestLoading(true);
+    setRvBacktestError(null);
+    (async () => {
+      try {
+        const data = await fetchRvBacktest(
+          apiBaseUrl,
+          request.symbol,
+          10,
+          controller.signal,
+        );
+        if (!controller.signal.aborted) {
+          setRvBacktest(data);
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          setRvBacktest(null);
+          setRvBacktestError(
+            errorMessage(err, "RV backtest unavailable."),
+          );
+        }
+      } finally {
+        setRvBacktestLoading(false);
       }
     })();
     return () => {
@@ -761,6 +808,14 @@ export default function WorkspacePage() {
               data={harBacktest}
               loading={harBacktestLoading}
               error={harBacktestError}
+              symbol={request.symbol}
+            />
+          ) : null}
+          {request.symbol === "^GSPC" ? (
+            <RvAccuracyPanel
+              data={rvBacktest}
+              loading={rvBacktestLoading}
+              error={rvBacktestError}
               symbol={request.symbol}
             />
           ) : null}

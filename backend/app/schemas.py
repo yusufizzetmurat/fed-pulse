@@ -385,7 +385,8 @@ class VolRegimeReactionCard(BaseModel):
     log_rv_lower: float | None = None
     log_rv_upper: float | None = None
     regime_label: str = Field(
-        ..., description="Argmax regime label: calm | normal | high.",
+        ...,
+        description="Argmax regime label: calm | normal | high.",
     )
     regime_probabilities: dict[str, float] = Field(
         default_factory=dict,
@@ -860,6 +861,27 @@ class DocumentParseResponse(BaseModel):
     source_metadata: dict[str, str]
 
 
+class DocumentDetailResponse(BaseModel):
+    """Single FOMC document body served to the path-based
+    ``/documents/{type}/{date}`` viewer. The text payload is the
+    hygiene-cleaned body — boilerplate (Implementation Note, voting
+    roster, navigation chrome) is stripped before it lands here so the
+    frontend can render it as prose without further pre-processing."""
+
+    type: str = Field(..., description="One of statement / minutes / press_conference.")
+    date: str = Field(..., description="Event ISO date the document indexes against.")
+    title: str = Field(..., description="Source title; empty when the JSON row omits it.")
+    cleaned_text: str = Field(..., description="Body after text_hygiene.clean_fomc_text().")
+    source_url: str | None = Field(
+        default=None,
+        description="Federal Reserve permalink when the row carries one.",
+    )
+    scraped_at: str | None = Field(
+        default=None,
+        description="ISO-8601 UTC timestamp the source row was scraped at.",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Research / training / decisions endpoints (Phase 8 multi-page expansion)
 # ---------------------------------------------------------------------------
@@ -1005,7 +1027,9 @@ class AnalogsRequest(BaseModel):
 
     model_config = _STRICT_REQUEST_CONFIG
 
-    text: str = Field(..., min_length=1, description="Statement text to match against past FOMC statements.")
+    text: str = Field(
+        ..., min_length=1, description="Statement text to match against past FOMC statements."
+    )
     k: int = Field(default=5, ge=1, le=20, description="Number of analogs to return (1-20).")
     as_of_date: date | None = Field(
         default=None,
@@ -1035,9 +1059,7 @@ class AnalogsRequest(BaseModel):
             try:
                 return date.fromisoformat(value)
             except ValueError as exc:
-                raise ValueError(
-                    f"as_of_date must be ISO YYYY-MM-DD, got {value!r}"
-                ) from exc
+                raise ValueError(f"as_of_date must be ISO YYYY-MM-DD, got {value!r}") from exc
         return value
 
 
@@ -1059,7 +1081,9 @@ class AnalogCard(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     event_date: str = Field(..., description="ISO date of the historical FOMC statement.")
-    similarity: float = Field(..., description="Cosine similarity in [-1, 1] vs. the query embedding.")
+    similarity: float = Field(
+        ..., description="Cosine similarity in [-1, 1] vs. the query embedding."
+    )
     axis_stance: str | None = Field(
         default=None,
         description="Stored stance label for the analog statement (hawkish / dovish / neutral). None when absent.",
@@ -1096,8 +1120,12 @@ class AnalogsResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     analogs: list[AnalogCard] = Field(default_factory=list)
-    index_size: int = Field(..., description="Total number of past statements in the loaded retrieval index.")
-    encoder_alias: str = Field(..., description="Registry alias of the encoder used to embed the query.")
+    index_size: int = Field(
+        ..., description="Total number of past statements in the loaded retrieval index."
+    )
+    encoder_alias: str = Field(
+        ..., description="Registry alias of the encoder used to embed the query."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1136,9 +1164,7 @@ class TrajectoryRequest(BaseModel):
             try:
                 return date.fromisoformat(value)
             except ValueError as exc:
-                raise ValueError(
-                    f"as_of_date must be ISO YYYY-MM-DD, got {value!r}"
-                ) from exc
+                raise ValueError(f"as_of_date must be ISO YYYY-MM-DD, got {value!r}") from exc
         return value
 
 
@@ -1327,13 +1353,16 @@ class ResearchRegistryResponse(BaseModel):
 
 # #299 PR-B — stance-directional backtest engine
 
+
 class BacktestPositionEntry(BaseModel):
     """One {date, position} signal in the backtest request."""
 
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
     date: str = Field(..., description="ISO date YYYY-MM-DD of the signal.")
-    position: int = Field(..., description="Position in {-1, 0, 1}. Hawkish=-1, neutral=0, dovish=+1.")
+    position: int = Field(
+        ..., description="Position in {-1, 0, 1}. Hawkish=-1, neutral=0, dovish=+1."
+    )
 
 
 class BacktestRequest(BaseModel):
@@ -1662,7 +1691,11 @@ class SemanticDiffRequest(BaseModel):
     model_config = _STRICT_REQUEST_CONFIG
 
     current_date: str = Field(..., description="Document date in ISO format: YYYY-MM-DD")
-    current_text: str = Field(..., min_length=1, description="FOMC statement text to diff")
+    # No ``min_length`` guard: empty / whitespace-only / non-Latin bodies
+    # must still reach :func:`app.services.semantic_diff.build_response`,
+    # which returns a parseable degraded response with a ``status`` field
+    # instead of raising. See SemanticDiffResponse.status.
+    current_text: str = Field(..., description="FOMC statement text to diff")
 
 
 class SemanticDiffResponse(BaseModel):
@@ -1671,6 +1704,13 @@ class SemanticDiffResponse(BaseModel):
     Descriptive panel — the spans and topic deltas are post-hoc
     explanations of the realized text change and never feed the
     forecast surface.
+
+    ``status`` carries a parseable signal for the panel to surface
+    an informational banner when the service could not produce a
+    meaningful diff (empty / near-empty / non-Latin input, or no
+    strict-prior on file). The field is optional and defaults to
+    ``None`` for backward compatibility — older clients that ignore
+    it still see the same empty-list cold-start shape they used to.
     """
 
     model_config = _FORBID_FROZEN_CONFIG
@@ -1680,6 +1720,7 @@ class SemanticDiffResponse(BaseModel):
     token_spans: list[SemanticDiffSpan]
     topic_deltas: list[SemanticDiffTopic]
     summary: str
+    status: Literal["ok", "no_input", "no_prior", "non_english"] | None = None
 
 
 class HarTercileBacktestRow(BaseModel):
@@ -1735,4 +1776,70 @@ class HarTercileBacktestResponse(BaseModel):
     horizon: int
     rows: list[HarTercileBacktestRow]
     metrics: HarAccuracyMetrics
+    generated_at: str
+
+
+class RvBacktestRow(BaseModel):
+    """One resolved (or pending) row in the QLIKE-RV backtest table.
+
+    Carries the h=1 point forecast + 80% / 90% conformal bands for the
+    persisted FOMC event date, the realized RV on the predicted bar, and
+    per-band hit flags. The forecast columns are None on pending rows
+    whose event sits inside HAR's monthly-lag warmup window or beyond
+    the right edge of the available RV history; ``in_band_*`` are None
+    whenever the realized RV is unresolved.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    event_date: str
+    point_forecast_rv: float | None = None
+    band_lo_80: float | None = None
+    band_hi_80: float | None = None
+    band_lo_90: float | None = None
+    band_hi_90: float | None = None
+    realized_rv: float | None = None
+    in_band_80: bool | None = None
+    in_band_90: bool | None = None
+
+
+class RvBacktestCoverage(BaseModel):
+    """Aggregate empirical band coverage across the backtest rows.
+
+    ``empirical_coverage_80`` / ``empirical_coverage_90`` are the fraction
+    of resolved rows whose realized RV landed inside the corresponding
+    conformal band. ``pending_runs`` reports rows we could not score
+    (event date in the HAR warmup window or outside the available RV
+    history); keeping it separate from ``resolved_runs`` keeps the
+    coverage denominator honest. ``nominal_coverage_*`` are pinned at the
+    calibration targets (0.80 / 0.90) so the frontend can render a
+    nominal-vs-empirical gap chip without re-deriving the constants.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    total_runs: int
+    resolved_runs: int
+    pending_runs: int = 0
+    empirical_coverage_80: float | None = None
+    empirical_coverage_90: float | None = None
+    nominal_coverage_80: float = 0.80
+    nominal_coverage_90: float = 0.90
+
+
+class RvBacktestResponse(BaseModel):
+    """Response wire shape for ``GET /forecast/rv-backtest``.
+
+    Walks the last N persisted ^GSPC analyze runs and reports the
+    QLIKE-RV h=1 point forecast + 80% / 90% bands against the realized
+    RV on the same bar. Drives the RvAccuracyPanel card alongside the
+    HAR-tercile accuracy surface.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbol: str
+    horizon: int
+    rows: list[RvBacktestRow]
+    coverage: RvBacktestCoverage
     generated_at: str

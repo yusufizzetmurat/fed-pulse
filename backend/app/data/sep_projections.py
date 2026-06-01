@@ -143,12 +143,8 @@ class SepReleaseRow:
             "ffr_median_current_year": _clean_float(self.ffr_median_current_year),
             "ffr_median_next_year": _clean_float(self.ffr_median_next_year),
             "ffr_median_longer_run": _clean_float(self.ffr_median_longer_run),
-            "ffr_range_upper_current": _clean_float(
-                self.ffr_range_upper_current
-            ),
-            "ffr_range_lower_current": _clean_float(
-                self.ffr_range_lower_current
-            ),
+            "ffr_range_upper_current": _clean_float(self.ffr_range_upper_current),
+            "ffr_range_lower_current": _clean_float(self.ffr_range_lower_current),
             "source": self.source,
         }
 
@@ -191,9 +187,7 @@ def _series_to_map(series: FredSeriesResponse) -> dict[_dt.date, float]:
     return out
 
 
-def _value_on_or_before(
-    series_map: Mapping[_dt.date, float], target: _dt.date
-) -> float | None:
+def _value_on_or_before(series_map: Mapping[_dt.date, float], target: _dt.date) -> float | None:
     """Return the most recent series value with date ``<= target``.
 
     FRED publishes SEP series at quarter-end dates that occasionally
@@ -246,19 +240,11 @@ def load_fixture_csv(
             rows.append(
                 SepReleaseRow(
                     meeting_date=md,
-                    ffr_median_current_year=_clean_float(
-                        row.get("ffr_median_current_year")
-                    ),
-                    ffr_median_next_year=_clean_float(
-                        row.get("ffr_median_next_year")
-                    ),
+                    ffr_median_current_year=_clean_float(row.get("ffr_median_current_year")),
+                    ffr_median_next_year=_clean_float(row.get("ffr_median_next_year")),
                     ffr_median_longer_run=_clean_float(row.get("ffr_median_longer_run")),
-                    ffr_range_upper_current=_clean_float(
-                        row.get("ffr_range_upper_current")
-                    ),
-                    ffr_range_lower_current=_clean_float(
-                        row.get("ffr_range_lower_current")
-                    ),
+                    ffr_range_upper_current=_clean_float(row.get("ffr_range_upper_current")),
+                    ffr_range_lower_current=_clean_float(row.get("ffr_range_lower_current")),
                     source="fixture_csv",
                 )
             )
@@ -329,18 +315,14 @@ def build_from_fred_responses(
         next_year_value: float | None = None
         if md.year + 1 >= EARLIEST_NEXT_YEAR_VINTAGE:
             sid = _resolve_next_year_series_id(md)
-            next_year_value = _value_on_or_before(
-                next_year_maps.get(sid, {}), md
-            )
+            next_year_value = _value_on_or_before(next_year_maps.get(sid, {}), md)
         row = SepReleaseRow(
             meeting_date=md,
             ffr_median_current_year=_value_on_or_before(
                 maps.get("ffr_median_current_year", {}), md
             ),
             ffr_median_next_year=next_year_value,
-            ffr_median_longer_run=_value_on_or_before(
-                maps.get("ffr_median_longer_run", {}), md
-            ),
+            ffr_median_longer_run=_value_on_or_before(maps.get("ffr_median_longer_run", {}), md),
             ffr_range_upper_current=_value_on_or_before(
                 maps.get("ffr_range_upper_current", {}), md
             ),
@@ -351,10 +333,7 @@ def build_from_fred_responses(
         )
         # Drop a row if both medians are missing; one of them at
         # minimum is required for the row to be useful.
-        if (
-            row.ffr_median_current_year is None
-            and row.ffr_median_longer_run is None
-        ):
+        if row.ffr_median_current_year is None and row.ffr_median_longer_run is None:
             continue
         rows.append(row)
     return rows
@@ -417,9 +396,7 @@ def _hydrate_next_year_responses(
             # block the build; the next-year slot for that release
             # collapses to ``None`` and the composer's missing flag
             # carries the signal.
-            print(
-                f"[sep-projections] next-year series {sid} unavailable ({exc}); skipping"
-            )
+            print(f"[sep-projections] next-year series {sid} unavailable ({exc}); skipping")
     return responses
 
 
@@ -458,11 +435,7 @@ def _data_version_hash(rows: Sequence[SepReleaseRow]) -> str:
     parts: list[str] = []
     for row in rows:
         d = row.to_dict()
-        parts.append(
-            "|".join(
-                str(d.get(col, "")) for col in COLUMN_ORDER if col != "data_version"
-            )
-        )
+        parts.append("|".join(str(d.get(col, "")) for col in COLUMN_ORDER if col != "data_version"))
     payload = "\n".join(sorted(parts))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
@@ -598,9 +571,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         from app.data.mp_surprise import load_fomc_calendar
 
-        calendar_path = (
-            Path(args.fomc_calendar_csv) if args.fomc_calendar_csv else None
-        )
+        calendar_path = Path(args.fomc_calendar_csv) if args.fomc_calendar_csv else None
         calendar = load_fomc_calendar(path=calendar_path, start=start, end=end)
         sep_dates = filter_sep_meeting_dates(m.meeting_date for m in calendar)
         try:

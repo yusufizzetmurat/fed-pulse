@@ -183,6 +183,79 @@ def test_null_latest_level_raises_unavailable(tmp_path: Path) -> None:
         load_latest_mp_surprise(parquet)
 
 
+def test_null_event_date_raises_unavailable(tmp_path: Path) -> None:
+    """A NaN ``event_date`` on the latest row must surface as a structured
+    unavailable instead of leaking ``'nan'`` onto the wire chip."""
+
+    parquet = tmp_path / "mp_surprises.parquet"
+    pd.DataFrame(
+        [
+            {
+                "event_date": None,
+                "meeting_id": 20260429,
+                "ff_target_prior": 3.625,
+                "ff_target_after": 3.625,
+                "mp_surprise_level": 12.0,
+                "mp_surprise_path_factor": 0.0,
+                "is_intermeeting": False,
+                "methodology": "ois_proxy",
+            }
+        ]
+    ).to_parquet(parquet, index=False)
+
+    with pytest.raises(MpSurpriseUnavailable, match="event_date"):
+        load_latest_mp_surprise(parquet)
+
+
+def test_empty_event_date_raises_unavailable(tmp_path: Path) -> None:
+    """An empty-after-strip ``event_date`` must not silently coerce to a
+    blank chip — the wrapper rejects the row up front."""
+
+    parquet = tmp_path / "mp_surprises.parquet"
+    pd.DataFrame(
+        [
+            {
+                "event_date": "   ",
+                "meeting_id": 20260429,
+                "ff_target_prior": 3.625,
+                "ff_target_after": 3.625,
+                "mp_surprise_level": 12.0,
+                "mp_surprise_path_factor": 0.0,
+                "is_intermeeting": False,
+                "methodology": "ois_proxy",
+            }
+        ]
+    ).to_parquet(parquet, index=False)
+
+    with pytest.raises(MpSurpriseUnavailable, match="event_date"):
+        load_latest_mp_surprise(parquet)
+
+
+def test_null_is_intermeeting_raises_unavailable(tmp_path: Path) -> None:
+    """A NaN ``is_intermeeting`` on the latest row must surface as a
+    structured unavailable instead of coercing ``float('nan')`` to ``True``
+    via ``bool(...)`` and emitting a misleading flag on the chip."""
+
+    parquet = tmp_path / "mp_surprises.parquet"
+    pd.DataFrame(
+        [
+            {
+                "event_date": "2026-04-29",
+                "meeting_id": 20260429,
+                "ff_target_prior": 3.625,
+                "ff_target_after": 3.625,
+                "mp_surprise_level": 12.0,
+                "mp_surprise_path_factor": 0.0,
+                "is_intermeeting": float("nan"),
+                "methodology": "ois_proxy",
+            }
+        ]
+    ).to_parquet(parquet, index=False)
+
+    with pytest.raises(MpSurpriseUnavailable, match="is_intermeeting"):
+        load_latest_mp_surprise(parquet)
+
+
 def test_endpoint_returns_503_when_parquet_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     """``GET /fomc/latest-mp-surprise`` degrades to a structured 503."""
 

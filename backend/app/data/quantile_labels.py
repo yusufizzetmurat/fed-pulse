@@ -118,7 +118,8 @@ def compute_bin_edges(
     """
 
     finite = [
-        float(v) for v in train_values
+        float(v)
+        for v in train_values
         if v is not None and not (isinstance(v, float) and math.isnan(v))
     ]
     if not finite:

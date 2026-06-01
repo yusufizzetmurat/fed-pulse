@@ -143,7 +143,7 @@ def _calendar_pages() -> list[str]:
             if ARCHIVE_PATTERN.match(href):
                 pages.add(urljoin(BASE_URL, href))
     except Exception:  # pragma: no cover - the explicit enumeration above is
-                        # already sufficient; the dynamic pass is opportunistic.
+        # already sufficient; the dynamic pass is opportunistic.
         pass
     return sorted(pages, reverse=True)
 
@@ -154,11 +154,23 @@ def _calendar_pages() -> list[str]:
 # date at 14:00 ET. Sourced from the Fed's published meeting calendar.
 _FOMC_MEETING_DATES_GAP: tuple[str, ...] = (
     # 2021
-    "20210127", "20210317", "20210428", "20210616", "20210728", "20210922",
-    "20211103", "20211215",
+    "20210127",
+    "20210317",
+    "20210428",
+    "20210616",
+    "20210728",
+    "20210922",
+    "20211103",
+    "20211215",
     # 2022
-    "20220126", "20220316", "20220504", "20220615", "20220727", "20220921",
-    "20221102", "20221214",
+    "20220126",
+    "20220316",
+    "20220504",
+    "20220615",
+    "20220727",
+    "20220921",
+    "20221102",
+    "20221214",
 )
 
 
@@ -312,7 +324,9 @@ def _scrape_documents_for_type(
         document = FomcDocument(
             date=date_value,
             meeting_type=_meeting_type_from_title(title, body),
-            title=_normalized_title(title or fallback_title, document_type, document_url, date_value),
+            title=_normalized_title(
+                title or fallback_title, document_type, document_url, date_value
+            ),
             url=document_url,
             source_page=source_page,
             document_type=document_type,

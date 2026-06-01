@@ -168,9 +168,7 @@ def class_balanced_weights(
     if isinstance(class_counts, torch.Tensor):
         counts = class_counts.detach().to(dtype=torch.float64, device="cpu")
     else:
-        counts = torch.tensor(
-            [float(c) for c in class_counts], dtype=torch.float64
-        )
+        counts = torch.tensor([float(c) for c in class_counts], dtype=torch.float64)
     if counts.numel() == 0:
         return torch.zeros(0, dtype=torch.float32)
     beta_v = float(beta)
@@ -392,9 +390,7 @@ class MultiTaskLoss(nn.Module):
                 reduction="none",
             )
         else:
-            per_row = F.cross_entropy(
-                active_logits, active_target, weight=weight, reduction="none"
-            )
+            per_row = F.cross_entropy(active_logits, active_target, weight=weight, reduction="none")
         weight_total = active_sample_weight.sum()
         # ``> 0`` keeps the zero-weight collapse on the same graph-
         # attached zero path the empty-mask branch uses; otherwise the

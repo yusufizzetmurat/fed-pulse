@@ -22,6 +22,70 @@ from typing import Literal
 DocumentKind = Literal["statement", "minutes", "press_conference"]
 
 
+# Per-kind feature flag for the top-of-page banner scrub. The chrome lives
+# on every Fed page we ingest, so all three kinds default to ``True``; if a
+# regression shows up on one kind we can drop that kind from the set
+# without disturbing the other transforms.
+_TOP_BANNER_KINDS: frozenset[str] = frozenset({"statement", "minutes", "press_conference"})
+
+
+# 0. Top-of-page banner — UTF-8 BOM plus the Fed's site-wide navigation
+# header. The minutes scraper carries the literal BOM (or its mojibake
+# 0xEF 0xBB 0xBF Latin-1 form) followed by "Skip to main content", the
+# "An official website of the United States government" .gov banner, the
+# "Stay Connected" social-media row, the "Subscribe to RSS / Email" menu,
+# and the global site map BEFORE the article body starts. The footer
+# regexes downstream can't reach this because the postal-address anchor
+# only fires at the real footer thousands of characters later. We cut
+# from the start of the document up to the first real body marker.
+_LEADING_BOM_RE = re.compile(
+    # Real UTF-8 BOM (﻿) plus the mojibake form (ï»¿)
+    # that shows up when the source page was decoded as Latin-1 before
+    # being re-saved as UTF-8.
+    r"^[﻿ï»¿\s]+",
+)
+
+# The first body marker after the chrome banner — anchor the cut here.
+# Only phrase-anchors are admitted. An earlier draft accepted a fallback
+# calendar-date alternation ("January 25-26, 2011", "March 15, 2011",
+# ...), but pre-2012 minutes carry the page title "FRB: FOMC Minutes,
+# <date>" AT THE VERY TOP — ahead of the chrome — so the date alternation
+# matched the title-line date and left all the nav chrome ("skip to main
+# navigation ... Site Map ... A-Z Index ... Advanced Search ...") in the
+# cleaned body for 33/148 minutes docs (the 2007-2011 cohort). Every
+# banner-prefixed document in the corpus already carries one of the
+# phrase anchors below downstream of the chrome (verified across all
+# 148 minutes + 64 statements), so the date fallback is unnecessary
+# in addition to being unsafe.
+_BODY_ANCHOR_RE = re.compile(
+    r"(?:"
+    r"For release at\b"
+    r"|For immediate release\b"
+    r"|Information received since\b"
+    r"|The Federal Open Market Committee\b"
+    r"|A (?:joint )?meeting of the Federal Open Market Committee\b"
+    r"|Minutes of the Federal Open Market Committee\b"
+    r")",
+    flags=re.IGNORECASE,
+)
+
+# Telltale tokens that the scraped HTML carried the site-wide nav banner
+# at the top of the document. We only invoke the body-anchor cut when
+# one of these is present in the leading window, so a clean document
+# whose first sentence happens to start with a calendar date is left
+# untouched.
+_TOP_BANNER_SIGNALS_RE = re.compile(
+    r"(?:"
+    r"Skip to main (?:content|navigation)"
+    r"|An official website of the United States [Gg]overnment"
+    r"|Official websites use \.gov"
+    r"|Secure \.gov websites use HTTPS"
+    r"|Share sensitive information only on official"
+    r")",
+    flags=re.IGNORECASE,
+)
+
+
 # 1. "Return to text" markers in footnotes (with or without surrounding brackets).
 _RETURN_TO_TEXT_RE = re.compile(r"\s*\[?\s*Return to text\s*\]?", flags=re.IGNORECASE)
 
@@ -77,7 +141,9 @@ _NAV_FRAGMENT_RES = (
     # The release-time clause is short and bounded by "Share"; allow periods
     # inside the time stamp ("p.m.") but cap the span so a legitimate
     # sentence ending in "Share" elsewhere in the body cannot be eaten.
-    re.compile(r"\bFor (?:release|immediate release)[^\n]{0,120}?\bShare\b\.?", flags=re.IGNORECASE),
+    re.compile(
+        r"\bFor (?:release|immediate release)[^\n]{0,120}?\bShare\b\.?", flags=re.IGNORECASE
+    ),
     # The Fed nav-chrome row reads "Share Print PDF" (or "Share Print"). Anchor
     # to that adjacency — never strip a bare "Share", which is a common noun
     # in policy text ("market share", "Structure and Share Data", "share of
@@ -171,8 +237,7 @@ _VOTING_FOR_RE = re.compile(
 # "Voting against this action" anchor. As above, do not fall back to
 # end-of-text.
 _VOTING_FOR_ACTION_RE = re.compile(
-    r"\s*Voting for this action[:]\s.*?"
-    r"(?=\s*Voting against this action\b)",
+    r"\s*Voting for this action[:]\s.*?" r"(?=\s*Voting against this action\b)",
     flags=re.IGNORECASE | re.DOTALL,
 )
 
@@ -198,6 +263,50 @@ _ALTERNATE_VOTER_RE = re.compile(
 _NBSP_RE = re.compile(r"[   ]")
 _WS_RUN_RE = re.compile(r"[ \t]{2,}")
 _BLANK_LINE_RUN_RE = re.compile(r"\n\s*\n\s*\n+")
+
+
+def _strip_top_banner(text: str) -> str:
+    """Strip the leading BOM and the Fed's site-wide navigation banner.
+
+    The minutes scraper writes the article HTML verbatim, so every
+    page carries a UTF-8 BOM followed by "Skip to main content", the
+    .gov boilerplate ("An official website of the United States
+    government" / "Secure .gov websites use HTTPS" / "Share sensitive
+    information only on official, secure websites."), the "Stay
+    Connected" social-media row, the "Subscribe to RSS / Email" menu,
+    and the global site map BEFORE the article body starts. We cut
+    from the start of the document up to the first real body marker
+    — one of the "For release at" / "Information received" / "The
+    Federal Open Market Committee" / "Minutes of the Federal Open
+    Market Committee" phrasings.
+
+    The cut only runs when the leading window carries at least one
+    chrome signal ("Skip to main content" / .gov boilerplate). A
+    clean document whose first sentence happens to start with a
+    calendar date is left untouched.
+    """
+
+    if not text:
+        return text
+
+    # Always strip a leading BOM (real or mojibake) so the byte does
+    # not leak into downstream tokenisers even on clean docs.
+    cleaned = _LEADING_BOM_RE.sub("", text)
+
+    # Only invoke the body-anchor cut when the leading window carries
+    # a chrome signal. Bound the window at 4k chars — the longest
+    # banner observed in the corpus runs ~3.5k characters.
+    head_window = cleaned[:4000]
+    if not _TOP_BANNER_SIGNALS_RE.search(head_window):
+        return cleaned
+
+    # Find the first body anchor anywhere in the document. The chrome
+    # banner can stretch past 4k on a few minutes pages (the global
+    # site map runs long), so do not bound the anchor search.
+    anchor = _BODY_ANCHOR_RE.search(cleaned)
+    if anchor is None:
+        return cleaned
+    return cleaned[anchor.start() :]
 
 
 def _strip_return_to_text(text: str) -> str:
@@ -285,6 +394,12 @@ def clean_fomc_text(raw: str, *, kind: DocumentKind = "statement") -> str:
         return ""
 
     cleaned = raw
+    # The top-of-page banner cut runs FIRST so every subsequent
+    # transform sees the already-de-headered text. Gated by the
+    # per-kind flag so we can dial back a single kind if a regression
+    # appears without disturbing the others.
+    if kind in _TOP_BANNER_KINDS:
+        cleaned = _strip_top_banner(cleaned)
     cleaned = _strip_return_to_text(cleaned)
     cleaned = _strip_last_update(cleaned)
     cleaned = _strip_board_footer(cleaned)
@@ -296,9 +411,6 @@ def clean_fomc_text(raw: str, *, kind: DocumentKind = "statement") -> str:
     cleaned = _strip_implementation_note(cleaned)
     cleaned = _collapse_whitespace(cleaned)
 
-    # ``kind`` is accepted for future per-kind extensions; today it does
-    # not branch behaviour. Reference it to keep linters quiet.
-    del kind
     return cleaned
 
 

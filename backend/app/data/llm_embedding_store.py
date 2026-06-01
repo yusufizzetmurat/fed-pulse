@@ -19,6 +19,7 @@ from app.services.gemini_client import embed_text
 
 
 from app.config import DATA_DIR as DEFAULT_DATA_DIR
+
 DEFAULT_REGISTRY = DEFAULT_DATA_DIR / "raw" / "phase2" / "source_registry.jsonl"
 DEFAULT_OUTPUT = DEFAULT_DATA_DIR / "interim" / "phase2" / "llm_embeddings.parquet"
 

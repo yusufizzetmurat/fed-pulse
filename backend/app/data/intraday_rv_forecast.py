@@ -278,8 +278,14 @@ def run(
             dl_resid = _train_fold(full[tr], resid, full[te], seed=seed, epochs=300, device="cpu")
             pools["dl"].extend((har_pred + dl_resid[:, 0]).tolist())
             dl_q = _train_fold_qlike(
-                har_fit_tr, full[tr], resid, full[te], har_pred,
-                seed=seed, epochs=300, device="cpu",
+                har_fit_tr,
+                full[tr],
+                resid,
+                full[te],
+                har_pred,
+                seed=seed,
+                epochs=300,
+                device="cpu",
             )
             pools["dl_qlike"].extend(dl_q.tolist())
             if market is not None:

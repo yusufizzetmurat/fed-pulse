@@ -229,8 +229,7 @@ def bundle_available() -> bool:
     if not bundle.exists():
         return False
     return all(
-        (bundle / name).exists()
-        for name in (PARQUET_NAME, NPZ_NAME, MODEL_NAME, MANIFEST_NAME)
+        (bundle / name).exists() for name in (PARQUET_NAME, NPZ_NAME, MODEL_NAME, MANIFEST_NAME)
     )
 
 
@@ -359,8 +358,7 @@ def _load_state() -> "_TrajectoryState | _LoadFailure":
     ok, status = _validate_contract(bundle_dir / MODEL_NAME, model)
     if not ok:
         raise RuntimeError(
-            "trajectory bundle inference contract incompatible with "
-            f"serving signature: {status}"
+            "trajectory bundle inference contract incompatible with " f"serving signature: {status}"
         )
 
     try:
@@ -561,13 +559,9 @@ def _market_for(
 
     if state.metadata is not None and not state.metadata.empty:
         if text_hash and "text_hash" in state.metadata.columns:
-            row = state.metadata[
-                state.metadata["text_hash"].astype(str) == str(text_hash)
-            ]
+            row = state.metadata[state.metadata["text_hash"].astype(str) == str(text_hash)]
         else:
-            row = state.metadata[
-                state.metadata["event_date"].astype(str) == event_date
-            ]
+            row = state.metadata[state.metadata["event_date"].astype(str) == event_date]
         if not row.empty:
             r0 = row.iloc[0]
             y = r0.get("pre_meeting_trailing_2y_yield_change_5d_bps")
@@ -601,14 +595,10 @@ def _to_float_or_none(value: Any) -> float | None:
     return scalar
 
 
-def _standardise_embedding(
-    embedding: np.ndarray, state: _TrajectoryState
-) -> np.ndarray:
+def _standardise_embedding(embedding: np.ndarray, state: _TrajectoryState) -> np.ndarray:
     if state.feature_mean.size == 0:
         return embedding
-    return np.asarray(
-        (embedding - state.feature_mean) / state.feature_std, dtype=np.float32
-    )
+    return np.asarray((embedding - state.feature_mean) / state.feature_std, dtype=np.float32)
 
 
 def build_trajectory_inputs(
@@ -634,16 +624,12 @@ def build_trajectory_inputs(
 
     history_length = max(1, min(int(history_length), MAX_HISTORY_LENGTH))
     as_of_iso = as_of_date.isoformat()
-    history_df = _slice_history(
-        state.metadata, as_of_iso=as_of_iso, history_length=history_length
-    )
+    history_df = _slice_history(state.metadata, as_of_iso=as_of_iso, history_length=history_length)
 
     history_markers: list[dict[str, Any]] = []
     embeddings_window: list[np.ndarray] = []
     market_blocks: list[np.ndarray] = []
-    metadata_has_hash = (
-        state.metadata is not None and "text_hash" in state.metadata.columns
-    )
+    metadata_has_hash = state.metadata is not None and "text_hash" in state.metadata.columns
     for _, row in history_df.iterrows():
         event_date = str(row["event_date"])
         text_hash_raw = row.get("text_hash") if metadata_has_hash else None
@@ -666,22 +652,14 @@ def build_trajectory_inputs(
         # ``text_hash`` when the bundle carries it so the embedding,
         # market block, and history marker all point at the same row.
         if text_hash and metadata_has_hash:
-            matches = state.metadata.index[
-                state.metadata["text_hash"].astype(str) == text_hash
-            ]
+            matches = state.metadata.index[state.metadata["text_hash"].astype(str) == text_hash]
         else:
-            matches = state.metadata.index[
-                state.metadata["event_date"].astype(str) == event_date
-            ]
+            matches = state.metadata.index[state.metadata["event_date"].astype(str) == event_date]
         parquet_idx = int(matches[0])
         raw_emb = state.embeddings[parquet_idx]
         embeddings_window.append(_standardise_embedding(raw_emb, state))
         y, v = _market_for(state, event_date, text_hash=text_hash)
-        market_blocks.append(
-            market_feature_vector(
-                trailing_2y_yield_change_5d_bps=y, vix_close=v
-            )
-        )
+        market_blocks.append(market_feature_vector(trailing_2y_yield_change_5d_bps=y, vix_close=v))
 
     warning: str | None = None
     if state.train_end and as_of_iso > str(state.train_end):
@@ -701,9 +679,7 @@ def build_trajectory_inputs(
         market_blocks,
         history_length=history_length,
     )
-    inputs_tensor = torch.tensor(
-        padded_inputs[np.newaxis, ...], dtype=torch.float32
-    )
+    inputs_tensor = torch.tensor(padded_inputs[np.newaxis, ...], dtype=torch.float32)
     mask_tensor = torch.tensor(mask[np.newaxis, ...], dtype=torch.bool)
     return history_markers, inputs_tensor, mask_tensor, as_of_iso, warning
 
@@ -727,10 +703,8 @@ def project_trajectory(
     import torch
 
     history_length = max(1, min(int(history_length), MAX_HISTORY_LENGTH))
-    history_markers, inputs_tensor, mask_tensor, as_of_iso, warning = (
-        build_trajectory_inputs(
-            state, as_of_date=as_of_date, history_length=history_length
-        )
+    history_markers, inputs_tensor, mask_tensor, as_of_iso, warning = build_trajectory_inputs(
+        state, as_of_date=as_of_date, history_length=history_length
     )
 
     if inputs_tensor is None or mask_tensor is None:

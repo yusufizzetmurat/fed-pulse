@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 
+import pytest
+
+from app.services import text_hygiene
 from app.services.text_hygiene import (
     _collapse_whitespace,
     _strip_board_footer,
@@ -9,8 +14,56 @@ from app.services.text_hygiene import (
     _strip_last_update,
     _strip_nav_chrome,
     _strip_return_to_text,
+    _strip_top_banner,
     _strip_voting_roster,
     clean_fomc_text,
+)
+
+
+# A verbatim head sampled from the 2007-2011 minutes layout (e.g. doc 72
+# in /data/fomc_minutes.json, 2011-01-26). The page-title line "FRB: FOMC
+# Minutes, <calendar date>" appears AHEAD of the chrome banner, so any
+# anchor that accepts a bare calendar date matches inside the title and
+# leaves the entire nav chrome ("skip to main navigation ... Site Map ...
+# A-Z Index ... Advanced Search ...") in the cleaned body. The legitimate
+# body anchor is "Minutes of the Federal Open Market Committee" further
+# downstream of the chrome.
+REAL_OLD_BANNER_HEAD = (
+    "FRB: FOMC Minutes, January 25-26, 2011 skip to main navigation skip "
+    "to secondary navigation skip to content What's New · What's Next "
+    "· Site Map · A-Z Index · Careers · RSS · All "
+    "Videos · Current FAQs Search Advanced Search About the Fed News "
+    "& Events Monetary Policy Banking Information & Regulation Payment "
+    "Systems Economic Research & Data Consumer Information Community "
+    "Development Reporting Forms Publications skip to content Menu Home > "
+    "Monetary Policy > Federal Open Market Committee Print Minutes of the "
+    "Federal Open Market Committee January 25-26, 2011 FOMC Minutes "
+    "Summary of Economic Projections A meeting of the Federal Open Market "
+    "Committee was held in the offices of the Board of Governors in "
+    "Washington, D.C., on Tuesday, January 25, 2011, at 1:00 p.m."
+)
+
+
+# A verbatim head sampled from /data/fomc_minutes.json (doc 0, dated
+# 2020-01-29). The BOM at the start is the literal mojibake form the
+# scraper persisted ('ï»¿' = 0xEF 0xBB 0xBF interpreted as Latin-1).
+REAL_BANNER_HEAD = (
+    "ï»¿ The Fed - Monetary Policy: Skip to main content An official "
+    "website of the United States Government Here's how you know Official "
+    "websites use .gov A .gov website belongs to an official government "
+    "organization in the United States. Secure .gov websites use HTTPS A "
+    "lock ( Lock Locked padlock icon ) or https:// means you've safely "
+    "connected to the .gov website. Share sensitive information only on "
+    "official, secure websites. Back to Home Board of Governors of the "
+    "Federal Reserve System Stay Connected Federal Reserve Facebook Page "
+    "Federal Reserve YouTube Page Subscribe to RSS Subscribe to Email "
+    "About the Fed News & Events Monetary Policy Supervision Economic "
+    "Research Data Consumers & Communities Financial Stability Payment "
+    "Systems FOMC Minutes Minutes of the Federal Open Market Committee "
+    "January 28-29, 2020 A joint meeting of the Federal Open Market "
+    "Committee and the Board of Governors was held in the offices of the "
+    "Board of Governors of the Federal Reserve System in Washington, "
+    "D.C., on Tuesday, January 28, 2020, at 10:00 a.m."
 )
 
 
@@ -439,3 +492,186 @@ def test_stay_connected_footer_banner_is_still_stripped():
     assert "Stay Connected" not in cleaned
     assert "Facebook Page" not in cleaned
     assert "YouTube Page" not in cleaned
+
+
+# ---------------------------------------------------------------------------
+# Top-of-page banner scrub (BOM + Fed site-wide nav chrome)
+# ---------------------------------------------------------------------------
+
+
+def test_strip_top_banner_drops_bom_and_skip_to_main_content():
+    """Verbatim banner fixture from the scraped minutes corpus. The cut
+    must drop the BOM, ".gov" boilerplate, and "Skip to main content"
+    chrome but leave the article body intact starting at the first
+    real Fed body marker.
+    """
+
+    cleaned = _strip_top_banner(REAL_BANNER_HEAD)
+
+    # BOM mojibake and chrome are gone.
+    assert "ï»¿" not in cleaned
+    assert "Skip to main content" not in cleaned
+    assert "An official website of the United States" not in cleaned
+    assert "Secure .gov websites use HTTPS" not in cleaned
+    assert "Share sensitive information only on official" not in cleaned
+    assert "Subscribe to RSS" not in cleaned
+    # Body anchor survives and the cut starts there.
+    assert cleaned.startswith("Minutes of the Federal Open Market Committee")
+    # The full first sentence of the body survives intact.
+    assert "A joint meeting of the Federal Open Market Committee" in cleaned
+    assert "Washington, D.C., on Tuesday, January 28, 2020" in cleaned
+
+
+def test_strip_top_banner_leaves_clean_statement_untouched():
+    """Statements scraped from the press-release endpoint do not carry
+    the global site-wide chrome. The cut MUST be a no-op for them so
+    we don't accidentally amputate a real document.
+    """
+
+    raw = (
+        "January 29, 2020\n"
+        "For release at 2:00 p.m. EST Share\n"
+        "Information received since the Federal Open Market Committee met "
+        "in December indicates that the labor market remains strong."
+    )
+    cleaned = _strip_top_banner(raw)
+    assert cleaned == raw
+
+
+def test_strip_top_banner_strips_real_bom_codepoint():
+    """The proper U+FEFF BOM (not the mojibake form) is also dropped."""
+
+    raw = "﻿" + "Skip to main content For release at 2:00 p.m. body"
+    cleaned = _strip_top_banner(raw)
+    assert "﻿" not in cleaned
+    assert "Skip to main content" not in cleaned
+    assert cleaned.startswith("For release at")
+
+
+def test_strip_top_banner_handles_empty_string():
+    assert _strip_top_banner("") == ""
+
+
+def test_strip_top_banner_drops_nav_chrome_on_2007_2011_layout():
+    """The 2007-2011 minutes page-title line leads with "FRB: FOMC
+    Minutes, <date>" BEFORE the chrome banner. An anchor that admitted
+    a bare calendar date would match inside the title and leave the
+    "skip to main navigation ... Site Map ... A-Z Index ... Advanced
+    Search ..." chrome in the cleaned body. The cut must skip past the
+    chrome and start at "Minutes of the Federal Open Market Committee".
+    """
+
+    cleaned = _strip_top_banner(REAL_OLD_BANNER_HEAD)
+
+    # Nav chrome unique to this older layout is gone.
+    assert "skip to main navigation" not in cleaned.lower()
+    assert "Site Map" not in cleaned
+    assert "A-Z Index" not in cleaned
+    assert "Advanced Search" not in cleaned
+    # The cut starts at the real body anchor.
+    assert cleaned.startswith("Minutes of the Federal Open Market Committee")
+    # The first body sentence survives intact.
+    assert "A meeting of the Federal Open Market Committee" in cleaned
+    assert "Washington, D.C., on Tuesday, January 25, 2011" in cleaned
+
+
+# ---------------------------------------------------------------------------
+# End-to-end clean_fomc_text with the top-banner scrub
+# ---------------------------------------------------------------------------
+
+
+def test_clean_minutes_strips_top_banner_and_preserves_first_body_sentence():
+    """End-to-end clean over the real-banner fixture: top chrome is
+    gone, the first body sentence survives.
+    """
+
+    cleaned = clean_fomc_text(REAL_BANNER_HEAD, kind="minutes")
+
+    # Top banner is gone in its entirety.
+    assert "Skip to main content" not in cleaned
+    assert "An official website of the United States" not in cleaned
+    assert ".gov website" not in cleaned
+    assert "Subscribe to RSS" not in cleaned
+    assert "Facebook Page" not in cleaned
+    # The body's first sentence survives.
+    assert "Minutes of the Federal Open Market Committee" in cleaned
+    assert "A joint meeting of the Federal Open Market Committee" in cleaned
+    assert "Washington, D.C." in cleaned
+
+
+def test_clean_respects_per_kind_flag_excluding_press_conference(monkeypatch):
+    """When a kind is removed from _TOP_BANNER_KINDS, clean_fomc_text
+    leaves the top banner alone — this exercises the dial-back per
+    kind escape hatch.
+    """
+
+    monkeypatch.setattr(
+        text_hygiene,
+        "_TOP_BANNER_KINDS",
+        frozenset({"statement", "minutes"}),
+    )
+
+    cleaned = clean_fomc_text(REAL_BANNER_HEAD, kind="press_conference")
+
+    # With the flag excluded, the chrome is still present.
+    assert "Skip to main content" in cleaned
+    assert "An official website of the United States" in cleaned
+
+
+def test_clean_with_per_kind_flag_still_strips_when_kind_included(monkeypatch):
+    """Counter-test: the same fixture under a kind that IS in the
+    flagged set still gets the banner cut.
+    """
+
+    monkeypatch.setattr(
+        text_hygiene,
+        "_TOP_BANNER_KINDS",
+        frozenset({"statement", "minutes"}),
+    )
+
+    cleaned = clean_fomc_text(REAL_BANNER_HEAD, kind="minutes")
+    assert "Skip to main content" not in cleaned
+    assert "Minutes of the Federal Open Market Committee" in cleaned
+
+
+# ---------------------------------------------------------------------------
+# Real-corpus regression: sampled statement keeps its article-body anchors
+# ---------------------------------------------------------------------------
+
+
+# Docker mounts the host ``./data`` at ``/data`` in the backend container
+# and at ``<repo>/data`` on the host. Probe both so this test runs in
+# either environment.
+_CANDIDATE_DATA_DIRS = (
+    Path("/data"),
+    Path(__file__).resolve().parents[2] / "data",
+)
+_STATEMENTS_PATH = next(
+    (d / "fomc_statements.json" for d in _CANDIDATE_DATA_DIRS if (d / "fomc_statements.json").exists()),
+    _CANDIDATE_DATA_DIRS[0] / "fomc_statements.json",
+)
+
+
+@pytest.mark.skipif(
+    not _STATEMENTS_PATH.exists(),
+    reason="fomc_statements.json not present in the test environment",
+)
+def test_clean_statement_real_corpus_keeps_anchors():
+    """Load a real statement from disk and assert the cleaner does not
+    erase the "Federal Open Market Committee" / "Information received"
+    anchors that downstream models tokenise. This is the safety net
+    against an over-aggressive banner cut on a clean document.
+    """
+
+    with _STATEMENTS_PATH.open("r", encoding="utf-8") as fh:
+        statements = json.load(fh)
+
+    sample = statements[0]
+    raw = sample["text"]
+    cleaned = clean_fomc_text(raw, kind="statement")
+
+    assert "Federal Open Market Committee" in cleaned
+    assert "Information received" in cleaned
+    # The cleaned text must not be empty or a tiny stub — the cleaner
+    # should preserve the bulk of the article body.
+    assert len(cleaned) > 0.5 * len(raw)

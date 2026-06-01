@@ -73,9 +73,7 @@ CROSS_SOURCE_TYPES: tuple[str, ...] = (
 # carry numeric factor columns lifted off ``multi_axis_extras``. The
 # harness dispatches these through ``evaluate_continuous_source`` instead
 # of the stance-classification path.
-CROSS_SOURCE_CONTINUOUS_TYPES: tuple[str, ...] = (
-    "gss_factor_decomposition",
-)
+CROSS_SOURCE_CONTINUOUS_TYPES: tuple[str, ...] = ("gss_factor_decomposition",)
 
 # Per continuous source_type, the ``multi_axis_extras`` keys to score
 # the model's signed stance score against. Order matters only for the
@@ -275,9 +273,7 @@ def evaluate_source(
     """
 
     if not rows:
-        raise ValueError(
-            f"No labelled rows for source_type={source_type!r} in registry."
-        )
+        raise ValueError(f"No labelled rows for source_type={source_type!r} in registry.")
     record_ids = [r.record_id for r in rows if r.record_id]
     if record_ids and len(record_ids) != len(set(record_ids)):
         raise ValueError(
@@ -474,9 +470,7 @@ def evaluate_continuous_source(
     """
 
     if not rows:
-        raise ValueError(
-            f"No continuous rows for source_type={source_type!r} in registry."
-        )
+        raise ValueError(f"No continuous rows for source_type={source_type!r} in registry.")
     target_keys = CONTINUOUS_TARGETS.get(source_type, ())
     if not target_keys:
         raise ValueError(
@@ -492,9 +486,7 @@ def evaluate_continuous_source(
         scores, latencies = predict_fn(rows)
 
     if len(scores) != len(rows):
-        raise ValueError(
-            f"predict_fn returned {len(scores)} scores for {len(rows)} rows."
-        )
+        raise ValueError(f"predict_fn returned {len(scores)} scores for {len(rows)} rows.")
 
     targets: dict[str, dict[str, float | int | None]] = {}
     for key in target_keys:
@@ -787,9 +779,7 @@ def _parse_source_types(spec: str) -> list[str] | None:
         if not token:
             continue
         if token not in CROSS_SOURCE_TYPES:
-            raise ValueError(
-                f"unknown source_type {token!r}; allowed: {CROSS_SOURCE_TYPES}"
-            )
+            raise ValueError(f"unknown source_type {token!r}; allowed: {CROSS_SOURCE_TYPES}")
         out.append(token)
     return out
 

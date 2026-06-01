@@ -166,9 +166,7 @@ def compute_analog_summary_features(
         stance_score = 0.0
     else:
         agreements = sum(
-            1
-            for h in hits
-            if _norm_stance(getattr(h, "axis_stance", None)) == current_stance
+            1 for h in hits if _norm_stance(getattr(h, "axis_stance", None)) == current_stance
         )
         stance_score = float(agreements) / float(n)
 

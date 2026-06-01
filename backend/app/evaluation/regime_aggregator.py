@@ -43,7 +43,12 @@ def aggregate_by_regime(
     holdouts: Iterable[Mapping[str, Any]],
     *,
     regime_windows: Iterable[tuple[str, str, str]] = REGIME_WINDOWS,
-    metric_keys: Iterable[str] = ("combined_rmse", "close_rmse", "volatility_rmse", "directional_accuracy"),
+    metric_keys: Iterable[str] = (
+        "combined_rmse",
+        "close_rmse",
+        "volatility_rmse",
+        "directional_accuracy",
+    ),
     bootstrap_block_size: int = 1,
     bootstrap_resamples: int = 1000,
     bootstrap_coverage: float = 0.95,

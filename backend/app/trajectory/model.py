@@ -132,9 +132,7 @@ class TrajectoryConfig:
     def from_dict(cls, payload: dict[str, Any]) -> "TrajectoryConfig":
         arch = str(payload.get("architecture", "lstm"))
         if arch not in ("lstm", "transformer"):
-            raise ValueError(
-                f"architecture must be 'lstm' or 'transformer', got {arch!r}"
-            )
+            raise ValueError(f"architecture must be 'lstm' or 'transformer', got {arch!r}")
         return cls(
             architecture=arch,  # type: ignore[arg-type]
             embedding_dim=int(payload["embedding_dim"]),
@@ -144,9 +142,7 @@ class TrajectoryConfig:
             dropout=float(payload.get("dropout", DEFAULT_DROPOUT)),
             lstm_hidden=int(payload.get("lstm_hidden", DEFAULT_LSTM_HIDDEN)),
             lstm_layers=int(payload.get("lstm_layers", DEFAULT_LSTM_LAYERS)),
-            transformer_layers=int(
-                payload.get("transformer_layers", DEFAULT_TRANSFORMER_LAYERS)
-            ),
+            transformer_layers=int(payload.get("transformer_layers", DEFAULT_TRANSFORMER_LAYERS)),
             transformer_d_model=int(
                 payload.get("transformer_d_model", DEFAULT_TRANSFORMER_D_MODEL)
             ),
@@ -244,9 +240,7 @@ def pad_sequence(
     if not embeddings:
         emb_dim = 1
         mkt_dim = MARKET_FEATURE_DIM
-        zero_input = np.zeros(
-            (history_length, emb_dim + mkt_dim), dtype=np.float32
-        )
+        zero_input = np.zeros((history_length, emb_dim + mkt_dim), dtype=np.float32)
         zero_mask = np.zeros(history_length, dtype=bool)
         return zero_input, zero_mask
 
@@ -327,9 +321,7 @@ def _LSTMTrajectoryModel(config: TrajectoryConfig, torch_mod: Any) -> Any:
             self.dropout = nn.Dropout(config.dropout)
             self.head = nn.Linear(config.lstm_hidden, config.n_classes)
 
-        def forward(
-            self, inputs: Any, mask: Any | None = None
-        ) -> tuple[Any, Any]:
+        def forward(self, inputs: Any, mask: Any | None = None) -> tuple[Any, Any]:
             projected = self.input_proj(inputs)
             outputs, _ = self.lstm(projected)
             pooled = _final_real_position(outputs, mask, torch_mod)
@@ -349,9 +341,7 @@ def _TransformerTrajectoryModel(config: TrajectoryConfig, torch_mod: Any) -> Any
         def __init__(self) -> None:
             super().__init__()
             self.config = config
-            self.input_proj = nn.Linear(
-                config.input_dim, config.transformer_d_model
-            )
+            self.input_proj = nn.Linear(config.input_dim, config.transformer_d_model)
             # Learned positional embeddings — sequence is short so a
             # full table is cheaper than a sin/cos one and easier to
             # introspect.
@@ -372,9 +362,7 @@ def _TransformerTrajectoryModel(config: TrajectoryConfig, torch_mod: Any) -> Any
             self.dropout = nn.Dropout(config.dropout)
             self.head = nn.Linear(config.transformer_d_model, config.n_classes)
 
-        def forward(
-            self, inputs: Any, mask: Any | None = None
-        ) -> tuple[Any, Any]:
+        def forward(self, inputs: Any, mask: Any | None = None) -> tuple[Any, Any]:
             batch_size, seq_len, _ = inputs.shape
             projected = self.input_proj(inputs)
             positions = torch_mod.arange(seq_len, device=inputs.device)
@@ -400,9 +388,7 @@ def _TransformerTrajectoryModel(config: TrajectoryConfig, torch_mod: Any) -> Any
                     mask_bool[all_pad, -1] = True
                     effective_mask = mask_bool
                 key_padding_mask = ~mask_bool
-            encoded = self.encoder(
-                projected, src_key_padding_mask=key_padding_mask
-            )
+            encoded = self.encoder(projected, src_key_padding_mask=key_padding_mask)
             pooled = _final_real_position(encoded, effective_mask, torch_mod)
             pooled = self.dropout(pooled)
             logits = self.head(pooled)

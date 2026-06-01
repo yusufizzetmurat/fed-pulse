@@ -42,8 +42,12 @@ def fetch_month(symbol: str, month: str, key: str) -> pd.DataFrame:
     resp = requests.get(
         _URL,
         params={
-            "function": "TIME_SERIES_INTRADAY", "symbol": symbol, "interval": "1min",
-            "month": month, "outputsize": "full", "apikey": key,
+            "function": "TIME_SERIES_INTRADAY",
+            "symbol": symbol,
+            "interval": "1min",
+            "month": month,
+            "outputsize": "full",
+            "apikey": key,
         },
         timeout=60,
     )
@@ -55,8 +59,11 @@ def fetch_month(symbol: str, month: str, key: str) -> pd.DataFrame:
     frame = pd.DataFrame(payload[ts_key]).T.reset_index(names="timestamp_et")
     frame = frame.rename(
         columns={
-            "1. open": "open", "2. high": "high", "3. low": "low",
-            "4. close": "close", "5. volume": "volume",
+            "1. open": "open",
+            "2. high": "high",
+            "3. low": "low",
+            "4. close": "close",
+            "5. volume": "volume",
         }
     )
     for col in ("open", "high", "low", "close", "volume"):
@@ -75,7 +82,9 @@ def backfill(
     for i, month in enumerate(months):
         try:
             by_month[month] = fetch_month(symbol, month, key)
-            logger.info("fetched %s (%d/%d): %d bars", month, i + 1, len(months), len(by_month[month]))
+            logger.info(
+                "fetched %s (%d/%d): %d bars", month, i + 1, len(months), len(by_month[month])
+            )
         except Exception as exc:  # noqa: BLE001 - log and continue past a bad month
             logger.warning("skip %s: %s", month, exc)
         time.sleep(pause)
@@ -98,7 +107,9 @@ def backfill(
         sub["event_date"] = date
         sub["symbol"] = symbol
         sub["timestamp_et"] = clock[in_day & in_win].to_numpy()
-        rows.append(sub[["event_date", "timestamp_et", "open", "high", "low", "close", "volume", "symbol"]])
+        rows.append(
+            sub[["event_date", "timestamp_et", "open", "high", "low", "close", "volume", "symbol"]]
+        )
 
     new = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
     if out_path.exists() and not new.empty:
@@ -111,8 +122,10 @@ def backfill(
     combined.to_parquet(out_path, index=False)
     logger.info(
         "wrote %d new bars across %d dates; total events now %d -> %s",
-        len(new), new["event_date"].nunique() if not new.empty else 0,
-        combined["event_date"].nunique() if not combined.empty else 0, out_path,
+        len(new),
+        new["event_date"].nunique() if not new.empty else 0,
+        combined["event_date"].nunique() if not combined.empty else 0,
+        out_path,
     )
     return combined
 
@@ -121,11 +134,13 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description="Backfill pre-2013 FOMC intraday bars.")
     parser.add_argument(
-        "--corpus", type=Path,
+        "--corpus",
+        type=Path,
         default=DATA_DIR / "external" / "fed_comms" / "fed_communications.parquet",
     )
     parser.add_argument(
-        "--out", type=Path,
+        "--out",
+        type=Path,
         default=DATA_DIR / "external" / "alphavantage_bars" / "spx_intraday_fomc_days.parquet",
     )
     parser.add_argument("--before", default="2013-01-01")

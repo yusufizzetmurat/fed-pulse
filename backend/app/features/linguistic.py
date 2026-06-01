@@ -740,9 +740,7 @@ def fit_lda(
     for slot, topic_idx in assignments.items():
         seeds = TOPIC_SEED_WORDS[slot]
         overlap = set(top_words[topic_idx][:SEED_OVERLAP_TOP_N]) & set(seeds)
-        coherence[slot] = (
-            f"clean (overlap with seeds: {sorted(overlap)})"
-        )
+        coherence[slot] = f"clean (overlap with seeds: {sorted(overlap)})"
     # Slots that did NOT clear the seed-overlap floor are recorded so
     # the audit JSON makes the drop-to-misc explicit. Downstream
     # readers can see at a glance which named slot was emitted as 0.0.
@@ -773,15 +771,9 @@ def fit_lda(
                 f"vocabulary (threshold {diag.overlap_threshold})"
             )
         elif diag.status == "unassigned_no_seed_in_vocab":
-            reason = (
-                "no slot seed word survived the vectoriser's vocabulary "
-                "cutoffs"
-            )
+            reason = "no slot seed word survived the vectoriser's vocabulary " "cutoffs"
         else:
-            reason = (
-                "every fitted topic was already claimed by a "
-                "higher-priority slot"
-            )
+            reason = "every fitted topic was already claimed by a " "higher-priority slot"
         warnings.warn(
             f"[linguistic.lda] named slot {diag.slot!r} fell into the misc "
             f"bucket -- {reason}. The slot emits 0.0 for every document in "
@@ -899,8 +891,7 @@ def compute_linguistic_features(
     else:
         shares = _topic_shares(text, lda_artifact)
         topic_named = {
-            slot: float(shares[idx])
-            for slot, idx in lda_artifact.topic_assignments.items()
+            slot: float(shares[idx]) for slot, idx in lda_artifact.topic_assignments.items()
         }
         for slot in NAMED_TOPIC_KEYS:
             topic_named.setdefault(slot, 0.0)
@@ -1117,9 +1108,7 @@ def build_linguistic_feature_frame(
     rows: list[dict[str, Any]] = []
     for doc in docs:
         prior_tokens = prior_tokens_by_hash.get(doc.text_hash)
-        vec = compute_linguistic_features(
-            doc.text, artifact, prior_statement_tokens=prior_tokens
-        )
+        vec = compute_linguistic_features(doc.text, artifact, prior_statement_tokens=prior_tokens)
         row = {"text_hash": doc.text_hash}
         row.update(vec.as_dict())
         rows.append(row)
@@ -1140,9 +1129,7 @@ def _empty_frame() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def save_lda_artifact(
-    artifact: LdaArtifact, *, model_path: Path, topics_path: Path
-) -> None:
+def save_lda_artifact(artifact: LdaArtifact, *, model_path: Path, topics_path: Path) -> None:
     """Persist the fitted LDA bundle + top-words JSON.
 
     Top-words are written sorted by topic index; the JSON is dumped
@@ -1164,7 +1151,9 @@ def save_lda_artifact(
 
     # Invert ``topic_assignments`` so the JSON makes per-topic narration
     # natural: every topic index lists its top words and its label.
-    label_for_topic: dict[int, str] = {idx: slot for slot, idx in artifact.topic_assignments.items()}
+    label_for_topic: dict[int, str] = {
+        idx: slot for slot, idx in artifact.topic_assignments.items()
+    }
     for offset, idx in enumerate(artifact.misc_topic_indices, start=1):
         label_for_topic[idx] = f"misc_{offset}"
     payload = {
@@ -1185,9 +1174,7 @@ def save_lda_artifact(
         ],
     }
     topics_path.parent.mkdir(parents=True, exist_ok=True)
-    topics_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    topics_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def load_lda_artifact(model_path: Path) -> LdaArtifact:
@@ -1197,8 +1184,7 @@ def load_lda_artifact(model_path: Path) -> LdaArtifact:
     lda: LatentDirichletAllocation = bundle["lda"]
     vocab = vectorizer.get_feature_names_out().tolist()
     top_words = [
-        _top_words_for_topic(lda, vocab, t, TOP_WORDS_PER_TOPIC)
-        for t in range(lda.n_components)
+        _top_words_for_topic(lda, vocab, t, TOP_WORDS_PER_TOPIC) for t in range(lda.n_components)
     ]
     return LdaArtifact(
         vectorizer=vectorizer,
@@ -1265,9 +1251,7 @@ def update_sources_lock_for_linguistic_features(
         "feature_column_count": len(feature_columns),
         "retrieved_at_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(),
     }
-    lock_path.write_text(
-        _json.dumps(existing, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    lock_path.write_text(_json.dumps(existing, indent=2, sort_keys=True), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

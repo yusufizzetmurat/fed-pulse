@@ -205,6 +205,116 @@ def test_documents_by_date_preserves_dissent_signal(monkeypatch, tmp_path):
     assert "Randal K. Quarles" not in cleaned_text
 
 
+def _write_document_detail_fixtures(tmp_path):
+    """Seed all three FOMC document caches the calendar viewer reads
+    against so the path-based `/documents/{type}/{date}` endpoint can
+    serve every kind from a single tmp_path."""
+
+    import json
+
+    (tmp_path / "fomc_statements.json").write_text(
+        json.dumps(
+            [
+                {
+                    "date": "2024-09-18",
+                    "title": "Federal Reserve issues FOMC statement",
+                    "document_type": "Statement",
+                    "text": (
+                        "The Committee decided to lower the target range for the "
+                        "federal funds rate. Implementation Note issued September 18, 2024"
+                    ),
+                    "url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20240918a.htm",
+                    "scraped_at_utc": "2026-05-30T00:00:00+00:00",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "fomc_minutes.json").write_text(
+        json.dumps(
+            [
+                {
+                    "date": "2024-09-18",
+                    "title": "FOMC Minutes 2024-09-18",
+                    "document_type": "Minutes",
+                    "text": "Minutes body discussing the September meeting in depth.",
+                    "url": "https://www.federalreserve.gov/monetarypolicy/fomcminutes20240918.htm",
+                    "scraped_at_utc": "2026-05-30T00:00:00+00:00",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "press_conferences.json").write_text(
+        json.dumps(
+            [
+                {
+                    "date": "2024-09-18",
+                    "title": "September 17-18, 2024 FOMC Meeting",
+                    "document_type": "press_conference",
+                    "text": "Chair Powell press conference transcript body.",
+                    "url": "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20240918.htm",
+                    "scraped_at_utc": "2026-05-30T00:00:00+00:00",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_document_detail_serves_statement_with_hygiene(monkeypatch, tmp_path):
+    _write_document_detail_fixtures(tmp_path)
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+
+    client = TestClient(main_mod.app)
+    response = client.get("/documents/statement/2024-09-18")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["type"] == "statement"
+    assert payload["date"] == "2024-09-18"
+    assert payload["title"] == "Federal Reserve issues FOMC statement"
+    # Hygiene strips the Implementation Note tail.
+    assert "Implementation Note" not in payload["cleaned_text"]
+    assert "target range for the federal funds rate" in payload["cleaned_text"]
+    assert payload["source_url"].endswith("monetary20240918a.htm")
+    assert payload["scraped_at"] == "2026-05-30T00:00:00+00:00"
+
+
+def test_document_detail_serves_minutes_and_press_conference(monkeypatch, tmp_path):
+    _write_document_detail_fixtures(tmp_path)
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+
+    client = TestClient(main_mod.app)
+
+    minutes = client.get("/documents/minutes/2024-09-18")
+    assert minutes.status_code == 200
+    assert minutes.json()["type"] == "minutes"
+    assert "September meeting" in minutes.json()["cleaned_text"]
+
+    press = client.get("/documents/press_conference/2024-09-18")
+    assert press.status_code == 200
+    assert press.json()["type"] == "press_conference"
+    assert "press conference transcript" in press.json()["cleaned_text"]
+
+
+def test_document_detail_404_when_missing(monkeypatch, tmp_path):
+    _write_document_detail_fixtures(tmp_path)
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+
+    client = TestClient(main_mod.app)
+    response = client.get("/documents/statement/1999-01-01")
+    assert response.status_code == 404
+
+
+def test_document_detail_422_on_unknown_type(monkeypatch, tmp_path):
+    _write_document_detail_fixtures(tmp_path)
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+
+    client = TestClient(main_mod.app)
+    response = client.get("/documents/speech/2024-09-18")
+    assert response.status_code == 422
+
+
 def test_load_rv_history_skips_spx_parquet_for_non_gspc_symbols(monkeypatch, tmp_path):
     """The SPX intraday RV parquet must only feed ^GSPC.
 

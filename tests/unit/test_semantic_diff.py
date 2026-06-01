@@ -126,8 +126,11 @@ def test_compute_topic_deltas_returns_six_canonical_topics() -> None:
 def test_compute_topic_deltas_with_no_topic_hits_emits_zero_shares() -> None:
     """A document with no topic phrases still emits the six rows at zero."""
 
-    prior = "alpha beta gamma"
-    current = "delta epsilon zeta"
+    # Both bodies clear the MIN_INPUT_TOKENS gate but use vocabulary
+    # the canonical topic phrase list doesn't cover, so every row
+    # should land at zero rather than tripping the silent-null guard.
+    prior = "alpha beta gamma delta epsilon zeta"
+    current = "eta theta iota kappa lambda mu"
 
     topics = compute_topic_deltas(prior, current)
 
@@ -160,13 +163,18 @@ def test_build_response_cold_start_returns_banner_summary(tmp_path: Path) -> Non
     )
 
     out = build_response(
-        "2026-01-28", "Some pasted statement text.", path=path
+        "2026-01-28",
+        # Past MIN_INPUT_TOKENS so cold-start fires, not the no_input
+        # short-circuit.
+        "Some pasted statement text that runs past the gate.",
+        path=path,
     )
 
     assert out.prior_date == ""
     assert out.token_spans == []
     assert out.topic_deltas == []
     assert "Earliest statement" in out.summary
+    assert out.status == "no_prior"
 
 
 def test_build_response_with_prior_populates_spans_and_topics(tmp_path: Path) -> None:
@@ -208,13 +216,155 @@ def test_build_response_with_missing_file_returns_cold_start(tmp_path: Path) -> 
 
     out = build_response(
         "2026-05-01",
-        "any current body",
+        "any current body that exceeds the minimum token gate",
         path=tmp_path / "missing.json",
     )
 
     assert out.prior_date == ""
     assert out.token_spans == []
     assert out.topic_deltas == []
+    assert out.status == "no_prior"
+
+
+def test_build_response_with_empty_input_returns_no_input_status(
+    tmp_path: Path,
+) -> None:
+    """Empty current_text is silent-null with status=no_input."""
+
+    path = _write_statements(
+        tmp_path / "fomc_statements.json",
+        [{"date": "2026-03-18", "text": "Inflation remains elevated."}],
+    )
+
+    out = build_response("2026-05-01", "", path=path)
+
+    assert out.status == "no_input"
+    assert out.prior_date == ""
+    assert out.token_spans == []
+    assert out.topic_deltas == []
+    # Summary surfaces the token count so the panel can render
+    # "Input too short to diff (n=0 tokens)" rather than blanking.
+    assert "0 tokens" in out.summary
+
+
+def test_build_response_with_whitespace_only_input_returns_no_input(
+    tmp_path: Path,
+) -> None:
+    """Whitespace-only current_text never raises and reports no_input."""
+
+    path = _write_statements(
+        tmp_path / "fomc_statements.json",
+        [{"date": "2026-03-18", "text": "Inflation remains elevated."}],
+    )
+
+    out = build_response("2026-05-01", "   \n\t  ", path=path)
+
+    assert out.status == "no_input"
+    assert out.token_spans == []
+    assert out.topic_deltas == []
+
+
+def test_build_response_with_single_token_returns_no_input(
+    tmp_path: Path,
+) -> None:
+    """Single-token bodies trip the MIN_INPUT_TOKENS gate."""
+
+    path = _write_statements(
+        tmp_path / "fomc_statements.json",
+        [{"date": "2026-03-18", "text": "Inflation remains elevated."}],
+    )
+
+    out = build_response("2026-05-01", "hawkish", path=path)
+
+    assert out.status == "no_input"
+    assert out.token_spans == []
+    # Summary uses the singular noun on a one-token input.
+    assert "1 token" in out.summary
+    assert "tokens" not in out.summary.replace("1 token", "")
+
+
+def test_build_response_with_non_ascii_input_returns_non_english(
+    tmp_path: Path,
+) -> None:
+    """Majority-non-Latin input short-circuits with status=non_english."""
+
+    path = _write_statements(
+        tmp_path / "fomc_statements.json",
+        [{"date": "2026-03-18", "text": "Inflation remains elevated."}],
+    )
+
+    # A CJK block well past MIN_INPUT_TOKENS — the non-Latin gate
+    # must fire before the token-count gate.
+    cjk_body = "  ".join(["通货膨胀"] * 8)
+
+    out = build_response("2026-05-01", cjk_body, path=path)
+
+    assert out.status == "non_english"
+    assert out.token_spans == []
+    assert out.topic_deltas == []
+    assert "Non-Latin" in out.summary
+
+
+def test_build_response_with_cyrillic_input_returns_non_english(
+    tmp_path: Path,
+) -> None:
+    """Cyrillic script is the most likely real-world non-Latin paste
+    (Bank of Russia / NBU communications). The ord() < 256 detector
+    must catch it cleanly past the token-count threshold."""
+
+    path = _write_statements(
+        tmp_path / "fomc_statements.json",
+        [{"date": "2026-03-18", "text": "Inflation remains elevated."}],
+    )
+
+    cyrillic_body = "  ".join(["инфляция"] * 8)
+    out = build_response("2026-05-01", cyrillic_body, path=path)
+    assert out.status == "non_english"
+    assert out.token_spans == []
+    assert out.topic_deltas == []
+
+
+def test_compute_token_spans_with_short_input_returns_empty() -> None:
+    """compute_token_spans must not raise on the edge-case inputs."""
+
+    assert compute_token_spans("prior body", "hi") == []
+    # Non-Latin current body short-circuits to the same empty shape.
+    assert compute_token_spans("prior body", "通货膨胀 通货膨胀 通货膨胀") == []
+
+
+def test_compute_topic_deltas_with_short_input_returns_empty() -> None:
+    """compute_topic_deltas must not raise on the edge-case inputs."""
+
+    assert compute_topic_deltas("inflation labor", "hi") == []
+    assert compute_topic_deltas("inflation labor", "通货膨胀 通货膨胀 通货膨胀") == []
+
+
+def test_build_response_ok_path_carries_ok_status(tmp_path: Path) -> None:
+    """The happy path tags the response with status=ok."""
+
+    path = _write_statements(
+        tmp_path / "fomc_statements.json",
+        [
+            {
+                "date": "2026-03-18",
+                "text": (
+                    "Inflation remains elevated. Labor market is strong. "
+                    "Economic activity continues to expand."
+                ),
+            },
+        ],
+    )
+
+    out = build_response(
+        "2026-05-01",
+        (
+            "Inflation has eased but remains elevated. The labor market is "
+            "strong and economic activity is expanding."
+        ),
+        path=path,
+    )
+
+    assert out.status == "ok"
 
 
 def test_endpoint_returns_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -284,7 +434,14 @@ def test_endpoint_cold_start_returns_banner(
     client = TestClient(main_mod.app)
     response = client.post(
         "/fomc/semantic-diff",
-        json={"current_date": "2026-05-01", "current_text": "anything"},
+        json={
+            "current_date": "2026-05-01",
+            # Past MIN_INPUT_TOKENS so the no_input gate doesn't fire
+            # ahead of the cold-start path.
+            "current_text": (
+                "anything that exceeds the minimum input gate token count"
+            ),
+        },
     )
 
     assert response.status_code == 200
@@ -293,3 +450,4 @@ def test_endpoint_cold_start_returns_banner(
     assert body["token_spans"] == []
     assert body["topic_deltas"] == []
     assert "Earliest statement" in body["summary"]
+    assert body["status"] == "no_prior"

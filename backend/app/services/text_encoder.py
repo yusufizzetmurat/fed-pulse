@@ -43,9 +43,11 @@ MODEL_ID = _OVERRIDE or (
 # built from the wrong encoder (the silent-fallback contamination bug: the
 # primary HF repo can 404, and the run would otherwise proceed on distilbert
 # sentiment vectors with no error).
-STRICT_PRIMARY = (
-    os.environ.get("FED_PULSE_REQUIRE_PRIMARY_SENTIMENT") or ""
-).strip().lower() in {"1", "true", "yes"}
+STRICT_PRIMARY = (os.environ.get("FED_PULSE_REQUIRE_PRIMARY_SENTIMENT") or "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 # The model id the singleton actually loaded; differs from MODEL_ID on fallback.
 _loaded_model_id: str | None = None
@@ -53,6 +55,40 @@ _loaded_model_id: str | None = None
 DEFAULT_MAX_TOKENS = 480
 DEFAULT_STRIDE = 400
 DEFAULT_CLASSIFIER_MAX_LENGTH = 512
+
+# Stance edge-case gates. The stance classifier was trained on English
+# FOMC text and reports stale class probabilities on degenerate input;
+# the gates below let :func:`analyze_text` short-circuit with a
+# ``status`` flag instead of feeding the model rubbish. Thresholds
+# match :mod:`app.services.semantic_diff` so the wire surface stays
+# consistent across descriptive panels.
+STANCE_MIN_INPUT_TOKENS: int = 5
+STANCE_LATIN_RATIO_THRESHOLD: float = 0.5
+
+
+def _classify_stance_input(text: str) -> str | None:
+    """Bucket ``text`` for the silent-null stance edge cases.
+
+    Returns ``"no_input"`` / ``"non_english"`` when the stance head
+    should short-circuit, or ``None`` when the input is healthy
+    enough to run through the classifier. Order matches
+    :func:`app.services.semantic_diff._classify_input` so a long
+    block of CJK reports as ``non_english`` rather than
+    ``no_input``.
+    """
+
+    if not text or not text.strip():
+        return "no_input"
+    stripped = "".join(text.split())
+    if stripped:
+        latin = sum(1 for ch in stripped if ord(ch) < 256)
+        if (latin / len(stripped)) < STANCE_LATIN_RATIO_THRESHOLD:
+            return "non_english"
+    tokens = text.split()
+    if len(tokens) < STANCE_MIN_INPUT_TOKENS:
+        return "no_input"
+    return None
+
 
 _classifier = None
 _classifier_lock = threading.Lock()
@@ -327,12 +363,23 @@ def analyze_text(text: str) -> dict[str, Any]:
     classifier remains the fallback. Returned shape stays
     ``{label, score, raw[]}`` so the /analyze + prepare_training_data
     + attention_ablation surfaces stay drop-in.
+
+    Edge-case contract: empty / whitespace-only / majority-non-Latin
+    inputs never reach the classifier. The function returns the
+    standard ``{label: "UNKNOWN", score: 0.0, raw: []}`` block with
+    an extra ``status`` key so callers can surface a parseable
+    informational banner instead of a misleading stance label. The
+    classifier path otherwise returns ``status="ok"``.
     """
 
     text_value = text or ""
+    edge_status = _classify_stance_input(text_value)
+    if edge_status is not None:
+        return {"label": "UNKNOWN", "score": 0.0, "raw": [], "status": edge_status}
     response = _stance_from_multi_axis(text_value)
     if response is None:
         response = aggregate_label(encode_chunks(text_value))
+    response.setdefault("status", "ok")
 
     manifest_path = resolve_ood_manifest_path()
     if manifest_path is None:
@@ -347,9 +394,7 @@ def analyze_text(text: str) -> dict[str, Any]:
 
     classifier = get_classifier()
     chunks = split_into_chunks(text_value, classifier=classifier)
-    ood = score_text_ood(
-        text_value, classifier=classifier, manifest=manifest, chunks=chunks
-    )
+    ood = score_text_ood(text_value, classifier=classifier, manifest=manifest, chunks=chunks)
     response["ood_energy"] = ood.get("ood_energy")
     response["ood_threshold"] = ood.get("ood_threshold")
     response["is_in_distribution"] = ood.get("is_in_distribution")
@@ -388,10 +433,7 @@ def _stance_from_multi_axis(text: str) -> dict[str, Any] | None:
     if not stance:
         return None
     distribution = stance.get("distribution") or {}
-    raw = [
-        {"label": str(name), "score": float(score)}
-        for name, score in distribution.items()
-    ]
+    raw = [{"label": str(name), "score": float(score)} for name, score in distribution.items()]
     return {
         "label": str(stance.get("label", "")),
         "score": float(stance.get("confidence", 0.0) or 0.0),
@@ -417,16 +459,12 @@ def aggregate_label(encodings: list[ChunkEncoding]) -> dict[str, Any]:
         return {"label": "UNKNOWN", "score": 0.0, "raw": []}
 
     averaged: list[dict[str, float | str]] = [
-        {"label": label, "score": score / score_count}
-        for label, score in aggregate.items()
+        {"label": label, "score": score / score_count} for label, score in aggregate.items()
     ]
     best = max(averaged, key=lambda item: float(item["score"]))
 
     return {
         "label": str(best["label"]),
         "score": float(best["score"]),
-        "raw": [
-            {"label": str(item["label"]), "score": float(item["score"])}
-            for item in averaged
-        ],
+        "raw": [{"label": str(item["label"]), "score": float(item["score"])} for item in averaged],
     }

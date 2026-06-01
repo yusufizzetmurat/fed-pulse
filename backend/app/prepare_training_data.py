@@ -131,7 +131,9 @@ def build_training_groups(
                 continue
             date_used = str(market["date_used"])
             elapsed_days = float(
-                (datetime.date.fromisoformat(date_used) - datetime.date.fromisoformat(date_value)).days
+                (
+                    datetime.date.fromisoformat(date_used) - datetime.date.fromisoformat(date_value)
+                ).days
             )
             grouped_records[symbol].append(
                 PreparedTrainingRecord(
@@ -209,7 +211,9 @@ def main() -> int:
     print(f"Symbols: {', '.join(symbols)}")
 
     if not valid_documents:
-        print("No valid raw documents found. Ensure scraper output exists and includes date/text fields.")
+        print(
+            "No valid raw documents found. Ensure scraper output exists and includes date/text fields."
+        )
         return 1
 
     output_path = prepare_training_dataset(

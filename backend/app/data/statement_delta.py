@@ -101,9 +101,7 @@ def compute_delta_spans(
     prior_tokens = _normalise(prior_text)
     if not current_tokens or not prior_tokens:
         return None
-    matcher = difflib.SequenceMatcher(
-        a=prior_tokens, b=current_tokens, autojunk=False
-    )
+    matcher = difflib.SequenceMatcher(a=prior_tokens, b=current_tokens, autojunk=False)
     inserted: list[str] = []
     deleted: list[str] = []
     substituted: list[tuple[str, str]] = []
@@ -178,9 +176,7 @@ def compute_delta_for_event(
         if deleted_text:
             channels.append(list(encode_text(deleted_text)))
         if substituted_pairs:
-            sub_text = " ".join(
-                f"[OLD] {old} [NEW] {new}" for old, new in substituted_pairs
-            )
+            sub_text = " ".join(f"[OLD] {old} [NEW] {new}" for old, new in substituted_pairs)
             channels.append(list(encode_text(sub_text)))
         if channels:
             embedding = _mean_pool(channels)

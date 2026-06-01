@@ -30,9 +30,7 @@ from app.config import BACKEND_ROOT
 _DEFAULT_ARTEFACT = (
     BACKEND_ROOT / "artifacts" / "experiments" / "dual_head_comparison_canonical.json"
 )
-_DEFAULT_OUTPUT = (
-    BACKEND_ROOT / "artifacts" / "experiments" / "paired_comparisons.json"
-)
+_DEFAULT_OUTPUT = BACKEND_ROOT / "artifacts" / "experiments" / "paired_comparisons.json"
 
 
 def _extract_cells(
@@ -202,11 +200,19 @@ def compare_two(  # noqa: PLR0913 -- bootstrap knobs + Holm placeholder are inde
     n = len(deltas)
     if n == 0:
         return ComparisonResult(
-            label_a=label_a, label_b=label_b, metric=metric, n_pairs=0,
-            mean_delta=float("nan"), std_delta=float("nan"),
-            wilcoxon_stat=float("nan"), p_value=float("nan"),
-            p_value_holm=p_value_holm, effect_size_d=float("nan"),
-            ci_lo=float("nan"), ci_hi=float("nan"), ci_coverage=coverage,
+            label_a=label_a,
+            label_b=label_b,
+            metric=metric,
+            n_pairs=0,
+            mean_delta=float("nan"),
+            std_delta=float("nan"),
+            wilcoxon_stat=float("nan"),
+            p_value=float("nan"),
+            p_value_holm=p_value_holm,
+            effect_size_d=float("nan"),
+            ci_lo=float("nan"),
+            ci_hi=float("nan"),
+            ci_coverage=coverage,
         )
     mu = sum(deltas) / n
     var = sum((d - mu) ** 2 for d in deltas) / (n - 1) if n > 1 else 0.0
@@ -214,15 +220,26 @@ def compare_two(  # noqa: PLR0913 -- bootstrap knobs + Holm placeholder are inde
     stat, pval = wilcoxon_signed_rank(deltas)
     es = effect_size(deltas)
     point, lo, hi = block_bootstrap_ci_deltas(
-        deltas, fold_labels,
-        n_resamples=n_resamples, coverage=coverage, seed=bootstrap_seed,
+        deltas,
+        fold_labels,
+        n_resamples=n_resamples,
+        coverage=coverage,
+        seed=bootstrap_seed,
     )
     return ComparisonResult(
-        label_a=label_a, label_b=label_b, metric=metric, n_pairs=n,
-        mean_delta=mu, std_delta=sd,
-        wilcoxon_stat=stat, p_value=pval,
-        p_value_holm=p_value_holm, effect_size_d=es,
-        ci_lo=lo, ci_hi=hi, ci_coverage=coverage,
+        label_a=label_a,
+        label_b=label_b,
+        metric=metric,
+        n_pairs=n,
+        mean_delta=mu,
+        std_delta=sd,
+        wilcoxon_stat=stat,
+        p_value=pval,
+        p_value_holm=p_value_holm,
+        effect_size_d=es,
+        ci_lo=lo,
+        ci_hi=hi,
+        ci_coverage=coverage,
     )
 
 
@@ -239,11 +256,17 @@ def compute_paired_comparisons(  # noqa: PLR0913 -- bootstrap knobs surface as n
     raw: list[ComparisonResult] = []
     for sweep_path in sweep_paths:
         for label_a, label_b in comparison_pairs:
-            raw.append(compare_two(
-                sweep_path, label_a, label_b, metric,
-                n_resamples=n_resamples, coverage=coverage,
-                bootstrap_seed=bootstrap_seed,
-            ))
+            raw.append(
+                compare_two(
+                    sweep_path,
+                    label_a,
+                    label_b,
+                    metric,
+                    n_resamples=n_resamples,
+                    coverage=coverage,
+                    bootstrap_seed=bootstrap_seed,
+                )
+            )
     corrected = holm_bonferroni([r.p_value for r in raw])
     return [dataclasses.replace(r, p_value_holm=corrected[i]) for i, r in enumerate(raw)]
 
@@ -254,8 +277,10 @@ def _render_markdown(results: list[ComparisonResult]) -> str:
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for r in results:
+
         def _f(v: float) -> str:
             return "n/a" if v != v else f"{v:.4f}"
+
         lines.append(
             f"| {r.label_a} vs {r.label_b} | {r.n_pairs}"
             f" | {_f(r.mean_delta)} | {_f(r.wilcoxon_stat)}"
@@ -266,9 +291,7 @@ def _render_markdown(results: list[ComparisonResult]) -> str:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description="Paired statistical tests on sweep config comparisons."
-    )
+    p = argparse.ArgumentParser(description="Paired statistical tests on sweep config comparisons.")
     p.add_argument(
         "--sweep-artefacts",
         nargs="+",

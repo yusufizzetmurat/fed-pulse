@@ -233,9 +233,7 @@ class AppendixResult:
 # ---------------------------------------------------------------------------
 
 
-def _per_row_squared_errors(
-    predictions: Sequence[float], targets: Sequence[float]
-) -> list[float]:
+def _per_row_squared_errors(predictions: Sequence[float], targets: Sequence[float]) -> list[float]:
     out: list[float] = []
     for p, t in zip(predictions, targets):
         if not (math.isfinite(p) and math.isfinite(t)):
@@ -264,8 +262,14 @@ def compute_rmse_cell(  # noqa: PLR0913 — keyword-only metric/bootstrap surfac
     sq_errors = _per_row_squared_errors(predictions, targets)
     if not sq_errors:
         return CellMetrics(
-            asset=asset, horizon=horizon, model=model, metric="rmse",
-            point=float("nan"), ci_low=float("nan"), ci_high=float("nan"), n=0,
+            asset=asset,
+            horizon=horizon,
+            model=model,
+            metric="rmse",
+            point=float("nan"),
+            ci_low=float("nan"),
+            ci_high=float("nan"),
+            n=0,
         )
     point = math.sqrt(sum(sq_errors) / len(sq_errors))
     ci = block_bootstrap_ci(
@@ -314,8 +318,14 @@ def compute_mape_cell(  # noqa: PLR0913 — keyword-only metric/bootstrap surfac
     contributions = _per_row_absolute_percent_errors(predictions, targets)
     if not contributions:
         return CellMetrics(
-            asset=asset, horizon=horizon, model=model, metric="mape",
-            point=float("nan"), ci_low=float("nan"), ci_high=float("nan"), n=0,
+            asset=asset,
+            horizon=horizon,
+            model=model,
+            metric="mape",
+            point=float("nan"),
+            ci_low=float("nan"),
+            ci_high=float("nan"),
+            n=0,
         )
     point = sum(contributions) / len(contributions)
     ci = block_bootstrap_ci(
@@ -366,8 +376,14 @@ def compute_directional_cell(  # noqa: PLR0913 — keyword-only metric/bootstrap
         indicators.append(1.0 if sign_p == sign_t else 0.0)
     if not indicators:
         return CellMetrics(
-            asset=asset, horizon=horizon, model=model, metric="directional_accuracy",
-            point=float("nan"), ci_low=float("nan"), ci_high=float("nan"), n=0,
+            asset=asset,
+            horizon=horizon,
+            model=model,
+            metric="directional_accuracy",
+            point=float("nan"),
+            ci_low=float("nan"),
+            ci_high=float("nan"),
+            n=0,
         )
     point = sum(indicators) / len(indicators)
     ci = block_bootstrap_ci(
@@ -427,7 +443,9 @@ def run_baseline_appendix(
         # prints the same message to stderr.
         result = AppendixResult(training_package_id=training_package_id, cells=cells)
         (output_dir / "lstm_baseline_appendix.json").write_text(
-            json.dumps({**result.to_dict(), "note": "no checkpoint at the configured path"}, indent=2),
+            json.dumps(
+                {**result.to_dict(), "note": "no checkpoint at the configured path"}, indent=2
+            ),
             encoding="utf-8",
         )
         return result
@@ -508,9 +526,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         checkpoint_path=Path(args.checkpoint) if args.checkpoint else None,
         package_dir=Path(args.package_dir) if args.package_dir else None,
     )
-    print(
-        f"appendix: emitted {len(result.cells)} cells under {args.output}"
-    )
+    print(f"appendix: emitted {len(result.cells)} cells under {args.output}")
     return 0
 
 

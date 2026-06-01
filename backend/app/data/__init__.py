@@ -11,4 +11,3 @@ Canonical capability-first entrypoints:
 - baseline_spec_generator
 - pipeline_data_prep
 """
-

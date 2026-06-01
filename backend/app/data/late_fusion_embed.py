@@ -83,7 +83,11 @@ def load_encoder(
     model = model.to(device).eval()
     logger.info(
         "loaded encoder repo=%s rev=%s type=%s dim=%d device=%s",
-        repo, revision, model.config.model_type, model.config.hidden_size, device,
+        repo,
+        revision,
+        model.config.model_type,
+        model.config.hidden_size,
+        device,
     )
     return Encoder(tokenizer, model, device, repo, revision, model.config.hidden_size)
 
@@ -112,7 +116,9 @@ def embed_documents(enc: Encoder, texts: list[str]) -> np.ndarray:
         if n_chunks > MAX_CHUNKS:
             logger.warning(
                 "doc %d: %d chunks available, capping at %d (tail dropped)",
-                i, n_chunks, MAX_CHUNKS,
+                i,
+                n_chunks,
+                MAX_CHUNKS,
             )
         ids = enc_tok["input_ids"][:MAX_CHUNKS].to(enc.device)
         mask = enc_tok["attention_mask"][:MAX_CHUNKS].to(enc.device)
@@ -148,8 +154,14 @@ def embed_frame(
     norms = np.linalg.norm(embeddings, axis=1)
     logger.info(
         "embedded %d docs from %s | dim=%d repo=%s rev=%s | norm mean=%.4f std=%.4f | fp=%s",
-        len(frame), frame_path.name, enc.dim, enc.repo, enc.revision,
-        float(norms.mean()), float(norms.std()), _fingerprint(embeddings),
+        len(frame),
+        frame_path.name,
+        enc.dim,
+        enc.repo,
+        enc.revision,
+        float(norms.mean()),
+        float(norms.std()),
+        _fingerprint(embeddings),
     )
     return out
 

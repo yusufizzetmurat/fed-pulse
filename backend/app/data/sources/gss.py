@@ -96,9 +96,7 @@ def _parse_gss_factors_row(
         else "n/a"
     )
     path_repr = (
-        f"{extras['gss_path_factor']:+.2f}"
-        if extras.get("gss_path_factor") is not None
-        else "n/a"
+        f"{extras['gss_path_factor']:+.2f}" if extras.get("gss_path_factor") is not None else "n/a"
     )
     text = (
         f"GSS factor decomposition for {event_date}: "
@@ -169,9 +167,7 @@ def _parse_surprises_csv(text: str) -> dict[str, dict[str, Any]]:
         # schema drift (renamed date column, all-empty value cells). Surface
         # it at debug so an operator running --log-level=DEBUG sees it
         # without spamming a quiet run.
-        logger.debug(
-            "GSS surprises CSV parsed to zero rows; check date/value columns"
-        )
+        logger.debug("GSS surprises CSV parsed to zero rows; check date/value columns")
     return by_date
 
 
@@ -206,9 +202,7 @@ class GssFactorsScraper:
         reader = csv.DictReader(io.StringIO(html))
         rows = [dict(row) for row in reader]
         if not rows:
-            logger.debug(
-                "GSS factors CSV parsed to zero rows; check header / row format"
-            )
+            logger.debug("GSS factors CSV parsed to zero rows; check header / row format")
         return rows
 
     def parse_entry(self, raw_html: str, *, source_url: str) -> dict[str, Any] | None:

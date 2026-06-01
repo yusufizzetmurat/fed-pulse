@@ -84,7 +84,9 @@ def _parse_args() -> argparse.Namespace:
         description="Map source labels into deterministic 3-class taxonomy (hawkish/dovish/neutral)."
     )
     parser.add_argument("--input", default=str(DEFAULT_INPUT), help="Source registry JSONL.")
-    parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="Output labeled registry JSONL.")
+    parser.add_argument(
+        "--output", default=str(DEFAULT_OUTPUT), help="Output labeled registry JSONL."
+    )
     parser.add_argument(
         "--exceptions-output",
         default=str(DEFAULT_EXCEPTIONS),
@@ -316,4 +318,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

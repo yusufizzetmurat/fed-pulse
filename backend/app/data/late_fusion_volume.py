@@ -90,8 +90,12 @@ def _mlp_fit_predict(
 ) -> np.ndarray:
     torch.manual_seed(seed)
     model = nn.Sequential(
-        nn.Linear(x_tr.shape[1], 64), nn.GELU(), nn.Dropout(0.1),
-        nn.Linear(64, 32), nn.GELU(), nn.Linear(32, 1),
+        nn.Linear(x_tr.shape[1], 64),
+        nn.GELU(),
+        nn.Dropout(0.1),
+        nn.Linear(64, 32),
+        nn.GELU(),
+        nn.Linear(32, 1),
     )
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
     xt, yt = torch.from_numpy(x_tr).float(), torch.from_numpy(y_tr).float().unsqueeze(1)
@@ -134,7 +138,11 @@ def run(
     har = _har_matrix(log_vol)
     cal, _ = _calendar_features(data["date"])
 
-    results: dict[str, object] = {"model": "volume-head", "n_days": int(len(log_vol)), "by_horizon": {}}
+    results: dict[str, object] = {
+        "model": "volume-head",
+        "n_days": int(len(log_vol)),
+        "by_horizon": {},
+    }
     by_h: dict[str, dict[str, object]] = {}
     for h in _HORIZONS:
         target = _forward_target(log_vol, h)
@@ -171,8 +179,12 @@ def run(
         }
         logger.info(
             "h%d: HAR %.4f | rich-lin %.4f | DL %.4f | DL-HAR %s | richlin-HAR %s",
-            h, by_h[f"h{h}"]["r2_har"], by_h[f"h{h}"]["r2_rich_linear"], by_h[f"h{h}"]["r2_dl"],
-            by_h[f"h{h}"]["dl_minus_har_ci90"], by_h[f"h{h}"]["richlin_minus_har_ci90"],
+            h,
+            by_h[f"h{h}"]["r2_har"],
+            by_h[f"h{h}"]["r2_rich_linear"],
+            by_h[f"h{h}"]["r2_dl"],
+            by_h[f"h{h}"]["dl_minus_har_ci90"],
+            by_h[f"h{h}"]["richlin_minus_har_ci90"],
         )
     results["by_horizon"] = by_h
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -316,19 +328,28 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description="Forward daily volume head.")
     parser.add_argument(
-        "--volume", type=Path,
-        default=DATA_DIR / "processed" / "tp_v3_full_rebuild_2026_05_30" / "_market_cache" / "GSPC.parquet",
+        "--volume",
+        type=Path,
+        default=DATA_DIR
+        / "processed"
+        / "tp_v3_full_rebuild_2026_05_30"
+        / "_market_cache"
+        / "GSPC.parquet",
     )
     parser.add_argument(
-        "--out", type=Path,
+        "--out",
+        type=Path,
         default=DATA_DIR / "processed" / "late_fusion" / "volume_head_eval.json",
     )
     parser.add_argument(
-        "--event-frame", type=Path,
+        "--event-frame",
+        type=Path,
         default=DATA_DIR / "processed" / "late_fusion" / "event_frame.parquet",
     )
     parser.add_argument(
-        "--serving-artifact", type=Path, default=None,
+        "--serving-artifact",
+        type=Path,
+        default=None,
         help=(
             "Path for the deployable serving JSON consumed by "
             "app.services.volume_forecaster (har_coef + calendar block + "

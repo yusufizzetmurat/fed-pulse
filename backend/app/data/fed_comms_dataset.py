@@ -147,9 +147,7 @@ def _trailing_corr(a: np.ndarray, b: np.ndarray, window: int) -> np.ndarray:
     return out
 
 
-def _correlation_columns(
-    dates: Any, market_cache_dir: Path | str
-) -> dict[str, np.ndarray]:
+def _correlation_columns(dates: Any, market_cache_dir: Path | str) -> dict[str, np.ndarray]:
     """Trailing 22-day cross-asset correlations aligned to the RV `dates`.
 
     corr_tnx[t] = corr(GSPC daily log return, TNX daily yield change) over the
@@ -174,7 +172,9 @@ def _correlation_columns(
     if dxy_path.exists():
         frames["DXY"] = pd.read_parquet(dxy_path)
     elif series.get("GSPC") is not None:  # cache present but DXY missing → loud, not silent all-NaN
-        print(f"[fed_comms_dataset] WARNING: DXY cache not found at {dxy_path}; corr_dxy will be NaN")
+        print(
+            f"[fed_comms_dataset] WARNING: DXY cache not found at {dxy_path}; corr_dxy will be NaN"
+        )
     for name, df in frames.items():
         if df is None:
             base[name] = np.nan
@@ -185,14 +185,22 @@ def _correlation_columns(
     base = base.ffill()  # carry last known close into market holidays/gaps (no bfill → no leak)
 
     def _log_ret(col: str) -> np.ndarray:
-        p = base[col].to_numpy(dtype=np.float64) if col in base.columns else np.full(len(base), np.nan)
+        p = (
+            base[col].to_numpy(dtype=np.float64)
+            if col in base.columns
+            else np.full(len(base), np.nan)
+        )
         r = np.full(len(p), np.nan)
         r[1:] = np.log(p[1:] / p[:-1])
         return r
 
     gspc_ret = _log_ret("GSPC")
     dxy_ret = _log_ret("DXY")
-    tnx = base["TNX"].to_numpy(dtype=np.float64) if "TNX" in base.columns else np.full(len(base), np.nan)
+    tnx = (
+        base["TNX"].to_numpy(dtype=np.float64)
+        if "TNX" in base.columns
+        else np.full(len(base), np.nan)
+    )
     tnx_chg = np.full(len(tnx), np.nan)
     tnx_chg[1:] = tnx[1:] - tnx[:-1]  # daily 10y yield change (level diff, not log)
     return {
@@ -259,9 +267,7 @@ def _rate_vol_columns(dates: Any, market_cache_dir: Path | str) -> dict[str, np.
 
     tnx = series.get("TNX")
     out["rate_vol_10y"] = (
-        _trailing_for(_merge_level(tnx, "TNX"))
-        if tnx is not None
-        else np.full(len(base), np.nan)
+        _trailing_for(_merge_level(tnx, "TNX")) if tnx is not None else np.full(len(base), np.nan)
     )
 
     two_year = _load_dgs2_levels(base["date"].tolist(), market_cache_dir)
