@@ -152,9 +152,7 @@ def _fetch_rv_history_uncached(event_date: str, symbol: str) -> list[float]:
         anchor = date.fromisoformat(event_date)
         start = anchor - timedelta(days=_RV_HISTORY_WINDOW * 3)
         end = anchor  # exclusive in the underlying yfinance call
-        close_series = _download_close_series_in_window(
-            symbol=symbol, start=start, end=end
-        )
+        close_series = _download_close_series_in_window(symbol=symbol, start=start, end=end)
     except Exception:
         return []
     if close_series is None or len(close_series) < 3:
