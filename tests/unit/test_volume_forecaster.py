@@ -40,10 +40,13 @@ def _make_spec(*, with_calendar: bool = True) -> dict[str, Any]:
                 "month_end",
                 "quarter_end",
             ]
-            # All-zero seasonality coefficients keep the calendar layer
-            # active (so the flag flips true) without disturbing the
-            # point forecast — the back-transform math stays exact.
-            row["calendar_dummy_coef"] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            # Non-zero seasonality coefficients so the calendar block
+            # genuinely moves the forecast when a recognized dummy
+            # fires. The ``calendar_adjusted`` flag now reflects whether
+            # the dot-product against the recognized row is non-zero —
+            # an all-zero coefficient vector or a non-matching date
+            # would (correctly) leave the flag False.
+            row["calendar_dummy_coef"] = [0.01, 0.0, 0.0, 0.0, 0.01, 0.0]
         by_horizon[f"h{h}"] = row
     return {
         "model": "volume_har",
@@ -78,7 +81,12 @@ def test_predict_abnormal_volume_returns_three_horizons(stub_predictor: Any) -> 
     rng = np.random.default_rng(0)
     # Generate roughly steady daily volumes around 1e9 shares.
     vol = np.exp(rng.normal(loc=21.0, scale=0.05, size=30))
-    out = volume_forecaster.predict_abnormal_volume(vol.tolist())
+    # Monday, day 25 → both ``dow_0`` and ``month_end`` fire so the
+    # non-zero coefs in the stub spec produce a real adjustment and
+    # ``calendar_adjusted`` flips true.
+    out = volume_forecaster.predict_abnormal_volume(
+        vol.tolist(), forecast_date="2026-05-25"
+    )
 
     assert set(out.keys()) >= {
         "symbol",
@@ -132,6 +140,81 @@ def test_predict_abnormal_volume_skips_calendar_when_absent(
     try:
         vol = np.exp(np.linspace(20.0, 21.0, 30))
         out = volume_forecaster.predict_abnormal_volume(vol.tolist())
+        for row in out["horizons"]:
+            assert row["calendar_adjusted"] is False
+    finally:
+        volume_forecaster._VolumePredictor.reset()
+
+
+def test_predict_abnormal_volume_zero_coefs_dont_flip_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All-zero calendar coefficients on recognized names must NOT flip the chip.
+
+    The flag follows the actual adjustment value, not the mere presence
+    of recognized names — an artifact that ships zero coefficients does
+    not move the forecast and the UI must not claim a calendar
+    adjustment when none exists.
+    """
+
+    spec = _make_spec(with_calendar=True)
+    for h in (1, 5, 22):
+        spec["by_horizon"][f"h{h}"]["calendar_dummy_coef"] = [0.0] * 6
+
+    volume_forecaster._VolumePredictor.reset()
+    instance = volume_forecaster._VolumePredictor.__new__(
+        volume_forecaster._VolumePredictor
+    )
+    instance.model_dir = volume_forecaster.MODEL_DIR  # type: ignore[attr-defined]
+    instance.spec = spec  # type: ignore[attr-defined]
+    instance.revision = "stub-zero-cal@2026-05-30"  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        volume_forecaster._VolumePredictor,
+        "get",
+        classmethod(lambda cls: instance),
+    )
+    try:
+        vol = np.exp(np.linspace(20.0, 21.0, 30))
+        out = volume_forecaster.predict_abnormal_volume(
+            vol.tolist(), forecast_date="2026-05-25"
+        )
+        for row in out["horizons"]:
+            assert row["calendar_adjusted"] is False
+    finally:
+        volume_forecaster._VolumePredictor.reset()
+
+
+def test_predict_abnormal_volume_non_matching_date_doesnt_flip_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recognized names whose row evaluates to all-zero must NOT flip the chip.
+
+    Friday baseline (no ``dow_0..dow_3`` fires) plus a mid-month date
+    (no ``month_end`` / ``quarter_end``) makes every recognized dummy
+    zero — the dot-product is zero even with non-zero coefficients, so
+    the flag must report no adjustment.
+    """
+
+    volume_forecaster._VolumePredictor.reset()
+    instance = volume_forecaster._VolumePredictor.__new__(
+        volume_forecaster._VolumePredictor
+    )
+    instance.model_dir = volume_forecaster.MODEL_DIR  # type: ignore[attr-defined]
+    instance.spec = _make_spec(with_calendar=True)  # type: ignore[attr-defined]
+    instance.revision = "stub-friday@2026-05-30"  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        volume_forecaster._VolumePredictor,
+        "get",
+        classmethod(lambda cls: instance),
+    )
+    try:
+        vol = np.exp(np.linspace(20.0, 21.0, 30))
+        # 2026-05-15 is a Friday (weekday=4) and day 15 — Friday baseline
+        # (no dow dummy fires) and mid-month (no month_end). All
+        # recognized dummies evaluate to zero.
+        out = volume_forecaster.predict_abnormal_volume(
+            vol.tolist(), forecast_date="2026-05-15"
+        )
         for row in out["horizons"]:
             assert row["calendar_adjusted"] is False
     finally:
