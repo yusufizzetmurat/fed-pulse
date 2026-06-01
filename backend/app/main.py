@@ -51,6 +51,7 @@ from app.schemas import (
     HistoryRealizedBatchResponse,
     HistoryRealizedResponse,
     MarketReactionPanel,
+    MonetaryPolicySurpriseResponse,
     NextFomcForecastResponse,
     RatesReactionCard,
     HarTercileBaselineResponse,
@@ -1425,6 +1426,37 @@ def fomc_calendar(
         past=[meeting.to_dict() for meeting in calendar["past"]],  # type: ignore[arg-type]
         upcoming=[meeting.to_dict() for meeting in calendar["upcoming"]],  # type: ignore[arg-type]
     )
+
+
+@app.get(
+    "/fomc/latest-mp-surprise",
+    response_model=MonetaryPolicySurpriseResponse,
+)
+async def fomc_latest_mp_surprise() -> MonetaryPolicySurpriseResponse:
+    """Latest realized monetary-policy surprise (descriptive chip).
+
+    Reads the most recent FOMC row from
+    ``data/external/fred/mp_surprises.parquet`` built by
+    :mod:`app.data.mp_surprise` and returns it as a wire response. The
+    surprise level is the strict-prior bps quantity the upstream module
+    documents; serving picks the latest ``event_date`` row, classifies
+    the sign against the symmetric no-surprise band, and reports the
+    magnitude. Returns 503 with a structured detail when the parquet is
+    missing — the front-end chip degrades to an "unavailable" placeholder.
+    """
+
+    from app.services.mp_surprise_service import (
+        MpSurpriseUnavailable,
+        load_latest_mp_surprise,
+    )
+
+    try:
+        return await run_in_threadpool(load_latest_mp_surprise)
+    except MpSurpriseUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "mp_surprise_unavailable", "message": str(exc)},
+        ) from exc
 
 
 @app.post("/documents/parse", response_model=DocumentParseResponse)

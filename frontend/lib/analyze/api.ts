@@ -17,6 +17,7 @@ import type {
   HistoryRealizedBatchResponse,
   HistoryRealizedResponse,
   MarketReactionPanelResponse,
+  MonetaryPolicySurpriseResponse,
   NextFomcForecastResponse,
   RealizedVolForecastResponse,
   ResearchArtifactsResponse,
@@ -293,6 +294,27 @@ export async function fetchResearchRegistry(
   const response = await axios.get(`${baseUrl}/research/registry`, { params });
   return response.data as ResearchRegistryResponse;
 }
+
+// Workspace-spine MP-surprise chip. The backend returns 503 when the
+// parquet artifact is missing; callers translate that into the chip's
+// "unavailable" placeholder rather than surfacing a generic error.
+export async function fetchLatestMpSurprise(
+  baseUrl: string,
+  signal?: AbortSignal,
+): Promise<MonetaryPolicySurpriseResponse | null> {
+  try {
+    const response = await axios.get(`${baseUrl}/fomc/latest-mp-surprise`, {
+      signal,
+    });
+    return response.data as MonetaryPolicySurpriseResponse;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 503) {
+      return null;
+    }
+    throw err;
+  }
+}
+
 
 export async function fetchHarBaselines(
   baseUrl: string,
