@@ -9,7 +9,7 @@ import {
   YAxis,
   ZAxis,
 } from "recharts";
-import { Compass, Sparkles } from "lucide-react";
+import { AlertTriangle, Compass, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -54,6 +54,10 @@ export interface TrajectoryResponse {
   lift_vs_baseline?: boolean;
   delta_dir_acc?: number | null;
   baseline_used?: string | null;
+  // Non-fatal advisory from the backend — populated when the requested
+  // as_of_date sits beyond the bundle's train_end so the caller can
+  // flag that the projection extrapolates past the fold boundary.
+  warning?: string | null;
 }
 
 interface TrajectoryPanelProps {
@@ -311,6 +315,16 @@ export function TrajectoryPanel({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {data.warning ? (
+          <div
+            role="alert"
+            data-testid="trajectory-warning"
+            className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200"
+          >
+            <AlertTriangle className="mt-[1px] h-3.5 w-3.5 shrink-0" />
+            <span>{data.warning}</span>
+          </div>
+        ) : null}
         <div className="h-72 min-h-[270px] w-full">
           <ResponsiveContainer width="100%" height="100%">
             <ScatterChart margin={{ top: 12, right: 16, bottom: 12, left: 12 }}>
