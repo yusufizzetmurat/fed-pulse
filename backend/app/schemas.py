@@ -699,6 +699,24 @@ class HistoryRealizedBatchResponse(BaseModel):
     missing: list[str]
 
 
+class HistoryEventStudyResponse(BaseModel):
+    """Forward 10-trading-day price path anchored on the event date.
+
+    Backs the event-study chart on /history/[id]: the realised close path
+    plus the bucketed realised regime label so the headline can read
+    "predicted X, realized Y".
+    """
+
+    event_date: str
+    symbol: str
+    forward_dates: list[str]
+    forward_close: list[float]
+    forward_log_returns: list[float]
+    realized_vol_10d: float | None = None
+    predicted_regime: str | None = None
+    realized_regime: str | None = None
+
+
 class EvaluationCoverageResponse(BaseModel):
     """Empirical conformal coverage aggregated across recent history runs.
 
@@ -1363,3 +1381,38 @@ class BacktestResponse(BaseModel):
     alpha_cum_pct: float | None = None
     horizon_days: int
     symbol: str
+
+
+class RealizedVolHorizonForecast(BaseModel):
+    """Banded RV forecast for one horizon (1, 5, or 22 trading days).
+
+    ``point`` and the four ``band_*`` numbers are RV (variance) units, not
+    log-RV. ``qlike_model`` / ``qlike_har`` are the pooled walk-forward
+    QLIKE losses (lower is better); the card surfaces the gain as a
+    beat-HAR badge. ``coverage_empirical_90`` is the prospective empirical
+    coverage of the 90% conformal band, for the calibration chip.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    h: int
+    point: float
+    band_lo_80: float
+    band_hi_80: float
+    band_lo_90: float
+    band_hi_90: float
+    qlike_model: float | None = None
+    qlike_har: float | None = None
+    coverage_empirical_90: float | None = None
+
+
+class RealizedVolForecastResponse(BaseModel):
+    """Multi-horizon QLIKE-DLq forecast plus last-60d realized history."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbol: str
+    horizons: list[RealizedVolHorizonForecast]
+    history: list[float] = Field(default_factory=list)
+    history_dates: list[str] = Field(default_factory=list)
+    model_revision: str

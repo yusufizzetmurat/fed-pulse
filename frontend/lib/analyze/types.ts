@@ -99,6 +99,17 @@ export interface HistoryRealizedBatchResponse {
   missing: string[];
 }
 
+export interface HistoryEventStudyResponse {
+  event_date: string;
+  symbol: string;
+  forward_dates: string[];
+  forward_close: number[];
+  forward_log_returns: number[];
+  realized_vol_10d?: number | null;
+  predicted_regime?: string | null;
+  realized_regime?: string | null;
+}
+
 export interface EvaluationCoverageResponse {
   nominal: number | null;
   empirical: number | null;
@@ -654,6 +665,26 @@ export interface BacktestTradeRow {
   position: number;
   forward_return_pct: number | null;
   strategy_return_pct: number | null;
+}
+
+export interface RealizedVolHorizonForecast {
+  h: number;
+  point: number;
+  band_lo_80: number;
+  band_hi_80: number;
+  band_lo_90: number;
+  band_hi_90: number;
+  qlike_model: number | null;
+  qlike_har: number | null;
+  coverage_empirical_90: number | null;
+}
+
+export interface RealizedVolForecastResponse {
+  symbol: string;
+  horizons: RealizedVolHorizonForecast[];
+  history: number[];
+  history_dates: string[];
+  model_revision: string;
 }
 
 export interface BacktestResponse {

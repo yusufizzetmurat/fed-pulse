@@ -10,12 +10,14 @@ import type {
   EvaluationCoverageResponse,
   FomcCalendarResponse,
   HistoryDetail,
+  HistoryEventStudyResponse,
   HistoryList,
   HistoryQuery,
   HistoryRealizedBatchResponse,
   HistoryRealizedResponse,
   MarketReactionPanelResponse,
   NextFomcForecastResponse,
+  RealizedVolForecastResponse,
   ResearchArtifactsResponse,
   ResearchRegistryResponse,
   SettingsCheckpointsResponse,
@@ -120,6 +122,15 @@ export async function fetchHistoryRealized(
 ): Promise<HistoryRealizedResponse> {
   const response = await axios.get(`${baseUrl}/history/${runId}/realized`, { signal });
   return response.data as HistoryRealizedResponse;
+}
+
+export async function fetchHistoryEventStudy(
+  baseUrl: string,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<HistoryEventStudyResponse> {
+  const response = await axios.get(`${baseUrl}/history/${runId}/event-study`, { signal });
+  return response.data as HistoryEventStudyResponse;
 }
 
 // Batched companion to ``fetchHistoryRealized``. The /history list page
@@ -257,6 +268,18 @@ export async function fetchNextFomcForecast(
 ): Promise<NextFomcForecastResponse> {
   const response = await axios.get(`${baseUrl}/forecasts/next-fomc`);
   return response.data as NextFomcForecastResponse;
+}
+
+export async function fetchRealizedVolForecast(
+  baseUrl: string,
+  symbol: string = "^GSPC",
+  signal?: AbortSignal,
+): Promise<RealizedVolForecastResponse> {
+  const response = await axios.get(`${baseUrl}/forecast/realized-vol`, {
+    params: { symbol },
+    signal,
+  });
+  return response.data as RealizedVolForecastResponse;
 }
 
 export async function fetchResearchRegistry(

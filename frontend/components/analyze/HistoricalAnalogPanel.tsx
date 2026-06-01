@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
+import { friendlyEncoderName } from "@/lib/analyze/encoders";
 import { cn } from "@/lib/utils";
 import type {
   AnalogCard,
@@ -282,7 +283,9 @@ export function HistoricalAnalogPanel({
         analog does not give away the answer. Index size:{" "}
         <span className="numeric">{analogs.index_size.toLocaleString()}</span>
         {" "}past statements · model variant{" "}
-        <code className="rounded bg-muted px-1">{analogs.encoder_alias}</code>.
+        <code className="rounded bg-muted px-1" title={analogs.encoder_alias}>
+          {friendlyEncoderName(analogs.encoder_alias)}
+        </code>.
       </p>
     </div>
   );

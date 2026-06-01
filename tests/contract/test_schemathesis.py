@@ -39,6 +39,10 @@ schema = schemathesis.openapi.from_asgi("/openapi.json", app)
 # matching endpoint while still catching 500s from the same handler.
 _EXPECTED_5XX_BY_PATH: dict[str, set[int]] = {
     "/documents/parse": {502},
+    # Documented "history unavailable" / "artifact not loaded" 503 — the
+    # handler returns a structured body for unknown symbols and cold-load
+    # failures rather than crashing.
+    "/forecast/realized-vol": {503},
 }
 
 
