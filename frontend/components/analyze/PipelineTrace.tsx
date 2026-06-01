@@ -15,6 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { friendlyEncoderName } from "@/lib/analyze/encoders";
 import { cn } from "@/lib/utils";
 import type {
   AnalyzeResult,
@@ -153,7 +154,7 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
     icon: <Layers className="h-3.5 w-3.5" />,
     state: ood === false ? "warn" : "ok",
     summary: encoderKey
-      ? `Model variant: ${encoderKey}${ood === false ? " · unfamiliar text flag set" : ""}`
+      ? `Model variant: ${friendlyEncoderName(encoderKey)}${ood === false ? " · unfamiliar text flag set" : ""}`
       : "Model variant: default",
     body: (
       <div className="space-y-3">
