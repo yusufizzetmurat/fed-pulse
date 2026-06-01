@@ -39,6 +39,23 @@ def test_next_day_target_and_anchor() -> None:
     assert row["anchor_date"] == str(daily["date"].iloc[30].date())
 
 
+def test_row_hash_present_and_unique() -> None:
+    daily = _daily_close(60)
+    d = daily["date"].iloc[30]
+    corpus = pd.DataFrame(
+        {
+            "date": [str(d.date()), str(d.date())],
+            "doc_type": ["speech", "statement"],  # same date, different type/text
+            "speaker": ["A", "B"],
+            "title": ["t1", "t2"],
+            "text": ["alpha", "beta"],
+        }
+    )
+    out = build_daily_frame(corpus, daily)
+    assert "row_hash" in out.columns
+    assert out["row_hash"].is_unique  # distinct docs -> distinct keys
+
+
 def test_comm_on_nontrading_day_anchors_forward() -> None:
     daily = _daily_close(60, start="2020-01-01")
     # pick a Saturday between two business days

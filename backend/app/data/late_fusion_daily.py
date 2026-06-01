@@ -19,6 +19,7 @@ reference only and must not be used as a target with t0-dated features.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 from pathlib import Path
 
@@ -78,9 +79,16 @@ def build_daily_frame(
         t1 = t0 + 1
 
         ret_nextday = float(log_close[t1] - log_close[t0])
-        anchor_ts = pd.Timestamp(trade_dates[t1])
+        t1_ts = pd.Timestamp(trade_dates[t1])  # RV lookup target is on t1, not t0
+        # Stable content-based id so embeddings join by key, not by row position.
+        # Full text + title in the digest so near-duplicate openings stay distinct.
+        text_val = str(doc["text"])
+        row_hash = hashlib.sha256(
+            f"{comm_date.date()}|{doc['doc_type']}|{doc.get('title')}|{text_val}".encode()
+        ).hexdigest()[:16]
         rows.append(
             {
+                "row_hash": row_hash,
                 "comm_date": comm_date.strftime("%Y-%m-%d"),
                 "anchor_date": pd.Timestamp(trade_dates[t0]).strftime("%Y-%m-%d"),
                 "doc_type": doc["doc_type"],
@@ -96,7 +104,7 @@ def build_daily_frame(
                 "ret_nextday": ret_nextday,
                 "dir_nextday": int(ret_nextday > 0),
                 "mag_nextday": abs(ret_nextday),
-                "fwd_rv": rv_by_date.get(anchor_ts),
+                "fwd_rv": rv_by_date.get(t1_ts),  # target: RV on t1
             }
         )
 
@@ -105,6 +113,9 @@ def build_daily_frame(
     out = pd.DataFrame(rows)
     if out.empty:
         return out
+    dup = int(out["row_hash"].duplicated().sum())
+    if dup:
+        logger.warning("%d duplicate row_hash values (non-unique join key)", dup)
     return out.sort_values(["comm_date", "doc_type"]).reset_index(drop=True)
 
 
