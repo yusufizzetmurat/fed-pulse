@@ -43,6 +43,10 @@ _EXPECTED_5XX_BY_PATH: dict[str, set[int]] = {
     # handler returns a structured body for unknown symbols and cold-load
     # failures rather than crashing.
     "/forecast/realized-vol": {503},
+    # Same pattern as /forecast/realized-vol: a 503 with a structured
+    # body is the documented response when the HAR-volume artifact
+    # cannot be loaded or the symbol has insufficient market history.
+    "/forecast/abnormal-volume": {503},
 }
 
 

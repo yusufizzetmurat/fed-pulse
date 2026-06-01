@@ -138,6 +138,45 @@ def test_predict_abnormal_volume_skips_calendar_when_absent(
         volume_forecaster._VolumePredictor.reset()
 
 
+def test_predict_abnormal_volume_unknown_calendar_names_dont_flip_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A future seasonality block this service can't decode must NOT flip the chip.
+
+    Otherwise the UX would show "calendar-adjusted" while the math
+    collapsed to the no-calendar branch (dot-product against a zero
+    vector). Guard against that drift.
+    """
+
+    spec = _make_spec(with_calendar=False)
+    for h in (1, 5, 22):
+        spec["by_horizon"][f"h{h}"]["calendar_dummy_names"] = [
+            "holiday_block_a",
+            "holiday_block_b",
+        ]
+        spec["by_horizon"][f"h{h}"]["calendar_dummy_coef"] = [0.5, -0.5]
+
+    volume_forecaster._VolumePredictor.reset()
+    instance = volume_forecaster._VolumePredictor.__new__(
+        volume_forecaster._VolumePredictor
+    )
+    instance.model_dir = volume_forecaster.MODEL_DIR  # type: ignore[attr-defined]
+    instance.spec = spec  # type: ignore[attr-defined]
+    instance.revision = "stub-unknown-cal@2026-05-30"  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        volume_forecaster._VolumePredictor,
+        "get",
+        classmethod(lambda cls: instance),
+    )
+    try:
+        vol = np.exp(np.linspace(20.0, 21.0, 30))
+        out = volume_forecaster.predict_abnormal_volume(vol.tolist())
+        for row in out["horizons"]:
+            assert row["calendar_adjusted"] is False
+    finally:
+        volume_forecaster._VolumePredictor.reset()
+
+
 def test_predict_abnormal_volume_rejects_short_history(stub_predictor: Any) -> None:
     with pytest.raises(ValueError):
         volume_forecaster.predict_abnormal_volume([1e9] * 10)

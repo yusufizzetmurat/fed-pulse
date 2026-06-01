@@ -1,12 +1,21 @@
 """Serving layer for the HAR-based expected-volume forecaster.
 
 Mirrors :mod:`app.services.rv_forecaster` but speaks log-volume instead of
-log-realized-variance. The artifact is the JSON produced by
-:func:`app.data.late_fusion_volume.run`: per-horizon HAR coefficients on
-Corsi log-volume lags (daily / weekly / monthly), an optional weekly +
-month-end / quarter-end seasonality block, conformal residual quantiles at
-the 80% / 90% bands, and the offline pooled walk-forward R^2 that the
-calibration chip surfaces.
+log-realized-variance. The serving artifact is the JSON produced by
+:func:`app.data.late_fusion_volume.fit_production_artifact`: per-horizon
+HAR coefficients on Corsi log-volume lags ``[intercept, daily, weekly,
+monthly]``, an optional weekday + month-end / quarter-end seasonality
+block (``calendar_dummy_names`` / ``calendar_dummy_coef``), conformal
+residual quantiles at the 80% / 90% bands, and the offline pooled
+walk-forward R^2 the calibration chip surfaces.
+
+Note the contract is enforced at load time — :func:`predict_abnormal_volume`
+raises :class:`VolumeForecasterUnavailable` if ``by_horizon['h{h}']['har_coef']``
+is missing or shorter than 4 entries. The evaluation-only
+:func:`app.data.late_fusion_volume.run` emits ``r2_har`` / ``r2_rich_linear``
+/ ``r2_dl`` / ``*_minus_har_ci90`` but NOT ``har_coef`` /
+``conformal_quantiles`` / calendar block, so its JSON is not a valid
+serving artifact; use :func:`fit_production_artifact` for that.
 
 The card is intentionally market-data only: it consumes a recent daily
 log-volume history and emits the per-horizon expected log-residual against
@@ -161,7 +170,7 @@ def _har_lag_row(log_vol: np.ndarray) -> tuple[float, float, float]:
 
 def _calendar_features_row(
     forecast_date: datetime, dummy_names: list[str]
-) -> list[float]:
+) -> tuple[list[float], bool]:
     """Build the calendar-feature row matching the artifact ``dummy_names``.
 
     Mirrors :func:`app.data.late_fusion_volume._calendar_features`:
@@ -169,6 +178,12 @@ def _calendar_features_row(
     (month-end in Mar/Jun/Sep/Dec). Any name the artifact does not
     declare degrades to 0.0 so an artifact with a different seasonality
     block still serializes cleanly.
+
+    Returns the dummy row plus a flag indicating whether at least one
+    artifact name was recognized by this service. An artifact that
+    declares only unrecognized names (e.g. a future holiday block) ends
+    up with an all-zero feature vector — that is not a true calendar
+    adjustment and the chip on the UI must not claim otherwise.
     """
 
     dow = forecast_date.weekday()
@@ -177,6 +192,7 @@ def _calendar_features_row(
     is_month_end = dom >= 25
     is_quarter_end = is_month_end and month in (3, 6, 9, 12)
     row: list[float] = []
+    recognized = False
     for name in dummy_names:
         if name.startswith("dow_"):
             try:
@@ -185,13 +201,16 @@ def _calendar_features_row(
                 row.append(0.0)
                 continue
             row.append(1.0 if dow == k else 0.0)
+            recognized = True
         elif name == "month_end":
             row.append(1.0 if is_month_end else 0.0)
+            recognized = True
         elif name == "quarter_end":
             row.append(1.0 if is_quarter_end else 0.0)
+            recognized = True
         else:
             row.append(0.0)
-    return row
+    return row, recognized
 
 
 def _point_log_residual(
@@ -228,9 +247,13 @@ def _point_log_residual(
         and len(dummy_names) == len(dummy_coef)
         and dummy_names
     ):
-        cal_row = _calendar_features_row(forecast_date, dummy_names)
+        cal_row, recognized = _calendar_features_row(forecast_date, dummy_names)
         log_pred += float(np.dot(np.asarray(dummy_coef, dtype=np.float64), cal_row))
-        calendar_adjusted = True
+        # Only flip the chip when at least one dummy name was actually
+        # recognized by this service. A spec that declares only unknown
+        # names dot-products into a zero vector — the math collapses to
+        # the no-calendar branch, so the UX signal must as well.
+        calendar_adjusted = recognized
     baseline = mean22
     return log_pred - baseline, calendar_adjusted
 

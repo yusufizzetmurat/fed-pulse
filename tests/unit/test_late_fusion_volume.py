@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 import pytest
 
-from app.data.late_fusion_volume import _forward_target, _har_matrix, _ols, _r2
+from app.data.late_fusion_volume import (
+    _forward_target,
+    _har_matrix,
+    _ols,
+    _r2,
+    fit_production_artifact,
+)
 
 
 def test_har_features_use_only_past() -> None:
@@ -43,3 +52,37 @@ def test_ols_recovers_linear_relation() -> None:
     y = 3.0 * x[:, 0] - 2.0 * x[:, 1] + 1.0
     pred = _ols(x, y, x)
     assert np.allclose(pred, y, atol=1e-6)
+
+
+def test_fit_production_artifact_emits_serving_contract(tmp_path: Path) -> None:
+    """The deployable artifact must carry every field the serving layer
+    reads — har_coef (len 4), calendar_dummy_names/coef (matched length),
+    conformal_quantiles at 0.10 + 0.20, and r2_har — for every horizon.
+    """
+
+    rng = np.random.default_rng(0)
+    n = 300
+    dates = pd.date_range("2024-01-01", periods=n, freq="B")
+    log_vol = 21.0 + 0.05 * np.cumsum(rng.standard_normal(n))
+    frame = pd.DataFrame({"date": dates, "volume": np.exp(log_vol)})
+    vol_path = tmp_path / "vol.parquet"
+    frame.to_parquet(vol_path)
+
+    out_path = tmp_path / "volume_har_artifact.json"
+    spec = fit_production_artifact(
+        vol_path, out_path, n_folds=3, alphas=(0.10, 0.20)
+    )
+    assert out_path.exists()
+    by_h = spec["by_horizon"]
+    assert set(by_h) == {"h1", "h5", "h22"}  # type: ignore[arg-type]
+    for hk in ("h1", "h5", "h22"):
+        row = by_h[hk]  # type: ignore[index]
+        assert len(row["har_coef"]) == 4, "intercept + d + w + m"
+        assert row["calendar_dummy_names"], "must carry seasonality names"
+        assert len(row["calendar_dummy_coef"]) == len(row["calendar_dummy_names"])
+        quants = row["conformal_quantiles"]
+        assert "0.10" in quants and "0.20" in quants
+        assert quants["0.10"] >= quants["0.20"] >= 0.0, (
+            "90% half-width must be at least 80%"
+        )
+        assert "r2_har" in row
