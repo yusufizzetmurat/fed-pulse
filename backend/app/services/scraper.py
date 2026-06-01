@@ -175,9 +175,9 @@ def _modern_statement_urls() -> list[tuple[str, str]]:
 
     candidates: list[str] = list(_FOMC_MEETING_DATES_GAP)
     try:
-        from app.services.fomc_calendar import _PAST_MEETINGS, _UPCOMING_MEETINGS
+        from app.services.fomc_calendar import list_all_meetings
 
-        for meeting in (*_PAST_MEETINGS, *_UPCOMING_MEETINGS):
+        for meeting in list_all_meetings():
             # The statement releases on the meeting_date for one-day meetings
             # and on the second day for two-day meetings; meeting_date in the
             # calendar dataclass is the *meeting* date, which the URL slug
