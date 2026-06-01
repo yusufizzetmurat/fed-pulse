@@ -24,6 +24,7 @@ from app.models.config import (
     FEATURE_SIZE,
     MULTI_TASK_CERTAINTY_LABELS,
     MULTI_TASK_STANCE_LABELS,
+    MULTI_TASK_TIME_LABELS,
     RICH_FEATURE_SIZE,
     RICH_LINGUISTIC_DIM,
     RICH_PRESS_CONF_DIM,
@@ -1322,13 +1323,12 @@ def _attach_rich_features(
         target_stance_idx = MULTI_TASK_STANCE_LABELS.index(target_stance_str)
         target_stance_present = True
 
-    target_factor_value = _coerce_finite_float(event_row.get("axis_factor"))
-    if target_factor_value is None:
-        target_factor = 0.0
-        target_factor_present = False
-    else:
-        target_factor = max(min(float(target_factor_value), 1.0), -1.0)
-        target_factor_present = True
+    time_raw = event_row.get("axis_time_label")
+    time_idx = -1
+    time_present = False
+    if isinstance(time_raw, str) and time_raw.strip().lower() in MULTI_TASK_TIME_LABELS:
+        time_idx = MULTI_TASK_TIME_LABELS.index(time_raw.strip().lower())
+        time_present = True
 
     # Certainty: prefer the categorical ``axis_certain_label`` (string)
     # from gtfintechlab rows; fall back to the numeric ``axis_certainty``
@@ -1374,8 +1374,8 @@ def _attach_rich_features(
         vector.stance_missing = stance_missing
         vector.target_stance_idx = target_stance_idx
         vector.target_stance_present = target_stance_present
-        vector.target_factor = target_factor
-        vector.target_factor_present = target_factor_present
+        vector.target_time_idx = time_idx
+        vector.target_time_present = time_present
         vector.target_certainty_idx = target_certainty_idx
         vector.target_certainty_present = target_certainty_present
         vector.rich_payload = True
@@ -3690,8 +3690,8 @@ def _build_multi_task_target_tensors(
 ) -> dict[str, torch.Tensor] | None:
     """Materialise per-axis targets aligned with ``_build_training_tensors``.
 
-    Returns a dict of 8 1-D tensors: 4 target tensors (stance / factor /
-    certainty / topic) and 4 corresponding mask tensors. Row alignment
+    Returns a dict of 6 1-D tensors: 3 target tensors (stance /
+    certainty / time) and 3 corresponding mask tensors. Row alignment
     matches the classification rows ``_build_training_tensors`` emits —
     same filter (drop rows whose ``forward_realized_vol_10d`` is missing
     so ``vol_regime_class_for`` returns -1), same iteration order. Mask
@@ -3704,10 +3704,10 @@ def _build_multi_task_target_tensors(
 
     stance_targets: list[int] = []
     stance_masks: list[bool] = []
-    factor_targets: list[float] = []
-    factor_masks: list[bool] = []
     certainty_targets: list[int] = []
     certainty_masks: list[bool] = []
+    time_targets: list[int] = []
+    time_masks: list[bool] = []
 
     for sequence_group in sequence_groups:
         if len(sequence_group) < sequence_length + 1:
@@ -3725,11 +3725,6 @@ def _build_multi_task_target_tensors(
             stance_targets.append(max(stance_idx, 0))
             stance_masks.append(stance_present)
 
-            factor_val = float(getattr(target_row, "target_factor", 0.0) or 0.0)
-            factor_present = bool(getattr(target_row, "target_factor_present", False))
-            factor_targets.append(factor_val)
-            factor_masks.append(factor_present)
-
             certainty_idx = int(getattr(target_row, "target_certainty_idx", -1) or 0)
             certainty_present = bool(
                 getattr(target_row, "target_certainty_present", False)
@@ -3737,15 +3732,20 @@ def _build_multi_task_target_tensors(
             certainty_targets.append(max(certainty_idx, 0))
             certainty_masks.append(certainty_present)
 
+            time_idx_val = int(getattr(target_row, "target_time_idx", -1) or 0)
+            time_present = bool(getattr(target_row, "target_time_present", False))
+            time_targets.append(max(time_idx_val, 0))
+            time_masks.append(time_present)
+
     if not stance_targets:
         return None
     return {
         "stance": torch.tensor(stance_targets, dtype=torch.long),
         "stance_mask": torch.tensor(stance_masks, dtype=torch.bool),
-        "factor": torch.tensor(factor_targets, dtype=torch.float32),
-        "factor_mask": torch.tensor(factor_masks, dtype=torch.bool),
         "certainty": torch.tensor(certainty_targets, dtype=torch.long),
         "certainty_mask": torch.tensor(certainty_masks, dtype=torch.bool),
+        "time": torch.tensor(time_targets, dtype=torch.long),
+        "time_mask": torch.tensor(time_masks, dtype=torch.bool),
     }
 
 

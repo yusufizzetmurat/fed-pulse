@@ -37,7 +37,8 @@ class _StubEncoder(nn.Module):
 
 
 def test_classifier_emits_three_axis_dict_from_stub_encoder() -> None:
-    """Post-ADR-0044: topic branch retired; classifier emits stance / factor / certainty."""
+    """Active axes: stance / certainty / time. Factor was retired (text
+    cannot predict the GSS target); topic was retired in ADR 0044."""
     torch.manual_seed(0)
     encoder = _StubEncoder(hidden_size=16, vocab_size=30)
     model = TextMultiAxisClassifier(
@@ -51,10 +52,10 @@ def test_classifier_emits_three_axis_dict_from_stub_encoder() -> None:
     input_ids = torch.randint(0, 30, (2, 12))
     attention_mask = torch.ones_like(input_ids)
     out = model(input_ids=input_ids, attention_mask=attention_mask)
-    assert set(out.keys()) == {"stance", "factor", "certainty"}
+    assert set(out.keys()) == {"stance", "certainty", "time"}
     assert out["stance"].shape == (2, 3)
-    assert out["factor"].shape == (2,)
     assert out["certainty"].shape == (2, 3)
+    assert out["time"].shape == (2, 2)
 
 
 def test_metadata_round_trips_encoder_provenance() -> None:
@@ -76,30 +77,8 @@ def test_metadata_round_trips_encoder_provenance() -> None:
     assert meta["hidden_size"] == 8
     assert meta["head_hidden_size"] == 4
     assert meta["stance_classes"] == 3
-
-
-def test_factor_branch_stays_in_minus_one_to_one_range() -> None:
-    """Tanh bound on the factor head — same contract as the shared
-    MultiTaskHead unit test, exercised here through the classifier
-    wrapper so a future refactor that bypasses the head is caught."""
-
-    torch.manual_seed(1)
-    encoder = _StubEncoder(hidden_size=16, vocab_size=30)
-    model = TextMultiAxisClassifier(
-        encoder,
-        hidden_size=16,
-        head_hidden_size=8,
-        dropout=0.0,
-    )
-    # Push activations through with extreme weights to provoke
-    # saturation; without tanh the factor branch could exceed 1.
-    with torch.no_grad():
-        model.head.factor.weight.fill_(10.0)
-        model.head.factor.bias.fill_(10.0)
-    input_ids = torch.randint(0, 30, (4, 8))
-    out = model(input_ids=input_ids, attention_mask=torch.ones_like(input_ids))
-    assert torch.all(out["factor"] >= -1.0)
-    assert torch.all(out["factor"] <= 1.0)
+    assert meta["certainty_classes"] == 3
+    assert meta["time_classes"] == 2
 
 
 def test_from_encoder_alias_forwards_trust_remote_code(monkeypatch) -> None:

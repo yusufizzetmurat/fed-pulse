@@ -274,18 +274,24 @@ RICH_PRESS_CONF_SLICE = slice(
     RICH_SEP_MISSING_SLICE.stop + RICH_PRESS_CONF_DIM,
 )
 
-# Multi-task head (#78) axis cardinalities and canonical label maps.
-# The multi-task head emits three branches (stance / certainty / factor);
-# the cardinalities are pinned here so the loader, the model factory,
-# and the inference path agree on the shape. The topic axis was retired
-# per ADR 0044 — no upstream FOMC corpus or cross-bank gtfintechlab
-# dataset ships topic labels, and the only path that ever populated
-# ``axis_topic`` was the internal macro-release augmentation which the
-# rebuild path no longer fires.
+# Multi-task head axis cardinalities and canonical label maps.
+# Active axes: stance / certainty / time.
+# The topic axis was retired per ADR 0044 (no upstream source ships
+# topic labels). The factor axis (Gurkaynak-Sack-Swanson market-derived
+# forward-guidance loading, a regression target in [-1, 1]) is retired
+# because (a) it is a market-derived FORECASTING target that text cannot
+# predict, (b) the canonical training pool had 0 % axis_factor coverage
+# so the regression head trained exclusively on the masked-out path and
+# emitted noise, and (c) the inference gate always set factor=None in
+# the /analyze response (ADR 0018). The time axis (forward-looking /
+# not-forward-looking from the gtfintechlab corpus) replaces it and
+# carries ~5 992 real text-description labels.
 MULTI_TASK_STANCE_CLASSES = 3
 MULTI_TASK_CERTAINTY_CLASSES = 3
+MULTI_TASK_TIME_CLASSES = 2
 MULTI_TASK_STANCE_LABELS: tuple[str, ...] = ("hawkish", "dovish", "neutral")
 MULTI_TASK_CERTAINTY_LABELS: tuple[str, ...] = ("certain", "uncertain", "neutral")
+MULTI_TASK_TIME_LABELS: tuple[str, ...] = ("forward looking", "not forward looking")
 
 # Text-embedding adapter dim search axis. The forecaster sweep iterates
 # over these values so the diminishing-returns curve across {32, 64, 128}
@@ -595,15 +601,15 @@ class ModelConfig:
     # #273 follow-up to the multi-task head (#272). When True, the
     # training loop swaps the single-axis CrossEntropy for
     # :class:`app.training.loss.MultiTaskLoss`, which folds per-axis
-    # CE / SmoothL1 terms onto stance / factor / certainty with per-axis
+    # CE terms onto stance / certainty / time with per-axis
     # class weights and a per-row availability mask. Default False keeps
     # the byte-identity regression contract on every existing
     # classification run (stance-only training). The topic axis was
     # retired in ADR 0044 (no upstream source ships topic labels).
     multi_task_loss: bool = False
     multi_task_lambda_stance: float = 1.0
-    multi_task_lambda_factor: float = 0.3
     multi_task_lambda_certainty: float = 0.3
+    multi_task_lambda_time: float = 0.3
     # #470 regime-loss variant. ``"ce"`` (default) keeps the standard
     # cross-entropy on the 3-class regime stance head byte-identical to
     # every pre-#470 run. ``"ordinal_ce"`` swaps in the bin-distance-
@@ -838,8 +844,8 @@ class ModelConfig:
             infonce_latent_dim=int(getattr(model, "infonce_latent_dim", 64)),
             multi_task_loss=bool(getattr(model, "multi_task_loss", False)),
             multi_task_lambda_stance=float(getattr(model, "multi_task_lambda_stance", 1.0)),
-            multi_task_lambda_factor=float(getattr(model, "multi_task_lambda_factor", 0.3)),
             multi_task_lambda_certainty=float(getattr(model, "multi_task_lambda_certainty", 0.3)),
+            multi_task_lambda_time=float(getattr(model, "multi_task_lambda_time", 0.3)),
             regime_loss_mode=str(getattr(model, "regime_loss_mode", "ce") or "ce"),
             class_weight_power=float(getattr(model, "class_weight_power", 1.0)),
             focal_gamma=float(getattr(model, "focal_gamma", 2.0)),
@@ -1268,16 +1274,17 @@ class FeatureVector:
     # is the per-axis mask the loss reads to decide whether the row
     # contributes to that axis's loss. Indices use the canonical
     # mappings: stance {hawkish: 0, dovish: 1, neutral: 2}, certainty
-    # {certain: 0, uncertain: 1, neutral: 2}. Factor is a signed scalar
-    # in [-1, 1] (no idx). When a label is absent the target field stays
-    # at its default and the mask is False, so the masked loss
-    # contributes zero for that axis on that row. The topic axis was
-    # retired in ADR 0044 — no upstream FOMC or cross-bank corpus ships
-    # topic labels.
+    # {certain: 0, uncertain: 1, neutral: 2}, time {forward looking: 0,
+    # not forward looking: 1}. When a label is absent the target field
+    # stays at its default and the mask is False, so the masked loss
+    # contributes zero for that axis on that row. The factor axis was
+    # retired (market-derived GSS target text cannot predict; 0% pool
+    # coverage); the topic axis was retired in ADR 0044 — no upstream
+    # FOMC or cross-bank corpus ships topic labels.
     target_stance_idx: int = -1
     target_stance_present: bool = False
-    target_factor: float = 0.0
-    target_factor_present: bool = False
+    target_time_idx: int = -1
+    target_time_present: bool = False
     target_certainty_idx: int = -1
     target_certainty_present: bool = False
 

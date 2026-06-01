@@ -185,7 +185,6 @@ def test_multi_axis_save_emits_sidecar(tmp_path: Path, monkeypatch) -> None:
         metrics={"loss": 0.1},
         args=args,
         class_weights={},
-        factor_coverage=0.0,
     )
 
     sidecar = sidecar_path_for(ckpt)

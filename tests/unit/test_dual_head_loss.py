@@ -102,7 +102,7 @@ def test_forward_multi_task_emits_log_rv_branch_on_dual_head() -> None:
     model = _build_model("dual")
     x = torch.zeros((4, 20, model.input_size))
     out = model.forward_multi_task(x)
-    assert set(out.keys()) == {"stance", "factor", "certainty", "log_rv"}
+    assert set(out.keys()) == {"stance", "certainty", "time", "log_rv"}
     assert out["log_rv"].shape == (4,)
 
 
@@ -112,7 +112,7 @@ def test_forward_multi_task_omits_log_rv_on_classification_only() -> None:
     model = _build_model("classification")
     x = torch.zeros((4, 20, model.input_size))
     out = model.forward_multi_task(x)
-    assert set(out.keys()) == {"stance", "factor", "certainty"}
+    assert set(out.keys()) == {"stance", "certainty", "time"}
 
 
 # ---------------------------------------------------------------------------

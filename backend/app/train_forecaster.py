@@ -735,8 +735,8 @@ def _parse_args() -> argparse.Namespace:
         dest="multi_task_loss",
         action="store_true",
         help=(
-            "Train classification with MultiTaskLoss over stance / factor / "
-            "certainty instead of single-axis CrossEntropy. "
+            "Train classification with MultiTaskLoss over stance / certainty / "
+            "time instead of single-axis CrossEntropy. "
             "Per-axis class weights fit on the train slice; per-row mask "
             "drops axes whose label is absent on a given row."
         ),
@@ -749,10 +749,10 @@ def _parse_args() -> argparse.Namespace:
         help="Loss weight on the stance branch when --multi-task-loss is on.",
     )
     parser.add_argument(
-        "--multi-task-lambda-factor",
+        "--multi-task-lambda-time",
         type=float,
         default=0.3,
-        help="Loss weight on the factor regression branch.",
+        help="Loss weight on the time (forward-looking) classification branch.",
     )
     parser.add_argument(
         "--multi-task-lambda-certainty",
@@ -1391,7 +1391,7 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         infonce_latent_dim=int(getattr(args, "infonce_latent_dim", 64)),
         multi_task_loss=bool(getattr(args, "multi_task_loss", False)),
         multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
-        multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
+        multi_task_lambda_time=float(getattr(args, "multi_task_lambda_time", 0.3)),
         multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
         class_weight_power=float(getattr(args, "class_weight_power", 1.0)),
         head_mode=str(getattr(args, "head_mode", "classification") or "classification"),
@@ -1655,7 +1655,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                                 infonce_latent_dim=int(getattr(args, "infonce_latent_dim", 64)),
                                 multi_task_loss=bool(getattr(args, "multi_task_loss", False)),
                                 multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
-                                multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
+                                multi_task_lambda_time=float(getattr(args, "multi_task_lambda_time", 0.3)),
                                 multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
                                 class_weight_power=float(getattr(args, "class_weight_power", 1.0)),
                                 head_mode=str(getattr(args, "head_mode", "classification") or "classification"),
@@ -1780,7 +1780,7 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                         infonce_latent_dim=int(getattr(args, "infonce_latent_dim", 64)),
                         multi_task_loss=bool(getattr(args, "multi_task_loss", False)),
                         multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
-                        multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
+                        multi_task_lambda_time=float(getattr(args, "multi_task_lambda_time", 0.3)),
                         multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
                         class_weight_power=float(getattr(args, "class_weight_power", 1.0)),
                         head_mode=str(getattr(args, "head_mode", "classification") or "classification"),

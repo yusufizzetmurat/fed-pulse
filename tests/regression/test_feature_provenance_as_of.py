@@ -367,8 +367,8 @@ def _audit_inventory_covers_every_field() -> set[str]:
         "raw_text",
         "target_stance_idx",
         "target_stance_present",
-        "target_factor",
-        "target_factor_present",
+        "target_time_idx",
+        "target_time_present",
         "target_certainty_idx",
         "target_certainty_present",
     }

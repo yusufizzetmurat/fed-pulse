@@ -8,8 +8,9 @@ branches from a shared pre-classifier stem:
   legacy 3-class head; the existing CrossEntropy loss reads from this
   branch on the training path so the headline macro-F1 stays
   comparable to the single-head baseline).
-- ``factor`` — scalar regression in ``[-1, 1]`` (tanh-bounded).
 - ``certainty`` — 3-class logits over ``{certain, uncertain, neutral}``.
+- ``time`` — 2-class logits over ``{forward looking, not forward
+  looking}`` (gtfintechlab ``time_label``).
 
 The shared stem (LayerNorm + Linear + GELU + Dropout) mirrors the
 existing single-head pre-classifier so the representation capacity
@@ -17,8 +18,11 @@ per branch is comparable to the baseline. Each branch is a single
 linear projection from the stem output, which keeps the parameter
 count small on top of the recurrent core.
 
-The topic branch was retired in ADR 0044 because no upstream FOMC
-corpus or cross-bank gtfintechlab dataset ships topic labels.
+The factor branch (GSS market-derived regression target) was retired
+because text cannot predict it and the training pool had 0% coverage;
+the time branch replaces it. The topic branch was retired in ADR 0044
+because no upstream FOMC corpus or cross-bank gtfintechlab dataset
+ships topic labels.
 
 Loss masking lives in :class:`app.training.loss.MultiTaskLoss`; the
 head itself is mask-unaware (it always emits the same shape).
@@ -32,6 +36,7 @@ from torch import nn
 from app.models.config import (
     MULTI_TASK_CERTAINTY_CLASSES,
     MULTI_TASK_STANCE_CLASSES,
+    MULTI_TASK_TIME_CLASSES,
 )
 
 
@@ -44,7 +49,7 @@ class MultiTaskHead(nn.Module):
     independent linears applied to the stem output.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 — per-axis class-count kwargs surface by design
         self,
         hidden_size: int,
         head_hidden_size: int,
@@ -52,6 +57,7 @@ class MultiTaskHead(nn.Module):
         *,
         stance_classes: int = MULTI_TASK_STANCE_CLASSES,
         certainty_classes: int = MULTI_TASK_CERTAINTY_CLASSES,
+        time_classes: int = MULTI_TASK_TIME_CLASSES,
     ) -> None:
         super().__init__()
         self.hidden_size = int(hidden_size)
@@ -59,6 +65,7 @@ class MultiTaskHead(nn.Module):
         self.dropout = float(dropout)
         self.stance_classes = int(stance_classes)
         self.certainty_classes = int(certainty_classes)
+        self.time_classes = int(time_classes)
 
         self.stem = nn.Sequential(
             nn.LayerNorm(self.hidden_size),
@@ -67,8 +74,8 @@ class MultiTaskHead(nn.Module):
             nn.Dropout(self.dropout),
         )
         self.stance = nn.Linear(self.head_hidden_size, self.stance_classes)
-        self.factor = nn.Linear(self.head_hidden_size, 1)
         self.certainty = nn.Linear(self.head_hidden_size, self.certainty_classes)
+        self.time = nn.Linear(self.head_hidden_size, self.time_classes)
 
     def forward(self, pooled: torch.Tensor) -> dict[str, torch.Tensor]:
         """Emit per-axis predictions from the pooled backbone output.
@@ -76,19 +83,16 @@ class MultiTaskHead(nn.Module):
         Returns a dict with three keys:
 
         - ``stance`` — ``(B, stance_classes)`` raw logits
-        - ``factor`` — ``(B,)`` tanh-bounded scalar in ``[-1, 1]``
         - ``certainty`` — ``(B, certainty_classes)`` raw logits
+        - ``time`` — ``(B, time_classes)`` raw logits
 
-        Classification branches return raw logits so CrossEntropy can
-        apply log-softmax internally. The factor branch applies a tanh
-        bound at emit time because the upstream label support is in
-        ``[-1, 1]`` and an unconstrained linear regressor would drift
-        outside that range on rows with no factor supervision.
+        All branches return raw logits so CrossEntropy can apply
+        log-softmax internally.
         """
 
         stem = self.stem(pooled)
         return {
             "stance": self.stance(stem),
-            "factor": torch.tanh(self.factor(stem).squeeze(-1)),
             "certainty": self.certainty(stem),
+            "time": self.time(stem),
         }

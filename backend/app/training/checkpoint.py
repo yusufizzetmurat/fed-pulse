@@ -190,11 +190,11 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
             multi_task_lambda_stance=float(
                 raw.get("multi_task_lambda_stance", 1.0)
             ),
-            multi_task_lambda_factor=float(
-                raw.get("multi_task_lambda_factor", 0.3)
-            ),
             multi_task_lambda_certainty=float(
                 raw.get("multi_task_lambda_certainty", 0.3)
+            ),
+            multi_task_lambda_time=float(
+                raw.get("multi_task_lambda_time", 0.3)
             ),
             # #214: round-trip press-conf opt-in.
             use_press_conf=bool(raw.get("use_press_conf", False)),

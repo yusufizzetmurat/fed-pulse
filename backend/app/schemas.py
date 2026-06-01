@@ -263,19 +263,20 @@ class MultiAxisStanceCard(BaseModel):
     )
 
 
-class MultiAxisFactorCard(BaseModel):
-    """Forward-guidance factor regression in [-1, 1].
+class MultiAxisTimeCard(BaseModel):
+    """Forward-looking horizon classification from the multi-task head.
 
-    Positive values lean hawkish, negative values lean dovish. Sourced
-    from the multi-task head's tanh-bounded regression branch.
-    Confidence reflects training-time coverage and is left to the
-    caller to calibrate; absent supervision, the field is None.
+    Two classes: ``forward looking`` (the statement references future
+    actions or expectations) vs ``not forward looking`` (backward-looking
+    or current-state only). Sourced from the gtfintechlab ``time_label``
+    column; trained on ~5 992 labelled sentences.
     """
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    value: float = Field(..., ge=-1.0, le=1.0)
+    label: str = Field(..., description="forward looking | not forward looking")
     confidence: float = Field(..., ge=0.0, le=1.0)
+    distribution: dict[str, float] = Field(default_factory=dict)
 
 
 class MultiAxisCertaintyCard(BaseModel):
@@ -291,24 +292,16 @@ class MultiAxisCertaintyCard(BaseModel):
 class MultiAxisBlock(BaseModel):
     """Multi-task head per-axis predictions surfaced on /analyze (#78).
 
-    The three axes mirror the multi-task head's three output branches.
-    Stance reuses the canonical 3-class classifier (also exposed on
-    the legacy ``sentiment`` field for back-compat); the other two
-    branches were populated for the first time with this block. Axes
-    whose checkpoint was trained on very few labels are flagged as
-    low-confidence; the frontend renders a muted card in that case.
-
-    The topic axis was retired in ADR 0044 — no upstream FOMC or
-    cross-bank corpus shipped topic labels, and the only path that
-    ever populated ``axis_topic`` was an internal macro-release
-    augmentation that no longer fires on the rebuild path.
+    Active axes: stance / certainty / time. The factor axis (GSS
+    market-derived regression target) was retired — text cannot predict it
+    and the training pool had 0% coverage. Topic was retired in ADR 0044.
     """
 
     model_config = _FORBID_FROZEN_CONFIG
 
     stance: MultiAxisStanceCard
-    factor: MultiAxisFactorCard | None = None
     certainty: MultiAxisCertaintyCard | None = None
+    time: MultiAxisTimeCard | None = None
 
 
 class RatesReactionCard(BaseModel):

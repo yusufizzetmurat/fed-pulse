@@ -453,10 +453,10 @@ def _maybe_compile_model(
 
 
 _MULTI_TASK_AUX_KEYS: tuple[str, ...] = (
-    "factor",
-    "factor_mask",
     "certainty",
     "certainty_mask",
+    "time",
+    "time_mask",
 )
 
 
@@ -828,7 +828,7 @@ def _make_partition_dataset(
     - 3: ``(x, y, log_rv)`` -- #304 dual-head log(RV) target only
     - 4: ``(x, y, text_emb, text_missing)``
     - 5: text + log_rv combined
-    - 6: ``(x, y, factor, factor_mask, certainty, certainty_mask)``
+    - 6: ``(x, y, certainty, certainty_mask, time, time_mask)``
     - 7: mt_aux + log_rv combined
     - 8: text + multi-task combined
     - 9: text + multi-task + log_rv combined
@@ -899,10 +899,11 @@ def _unpack_batch(
     """Decode a DataLoader batch into ``(x, y, text, text_missing, mt_aux, log_rv, rates_index)``.
 
     Eight batch shapes are tolerated; see :func:`_make_partition_dataset`
-    for the arity-to-contents map. ``mt_aux`` is a 4-key dict (factor,
-    factor_mask, certainty, certainty_mask) when the multi-task path is
-    active and ``None`` otherwise; the topic axis pair was retired in
-    ADR 0044. ``log_rv`` is the dual-head regression target tensor
+    for the arity-to-contents map. ``mt_aux`` is a 4-key dict (certainty,
+    certainty_mask, time, time_mask) when the multi-task path is
+    active and ``None`` otherwise; the factor axis pair was retired
+    (text cannot predict the GSS target) and the topic axis pair was
+    retired in ADR 0044. ``log_rv`` is the dual-head regression target tensor
     (#304); ``None`` on classification-only runs. When ``aux_horizons``
     (#471) is non-empty the partition builder folds the per-horizon
     stacked targets into ``log_rv`` as a 2-D ``(N, 1+H)`` tensor with
@@ -968,10 +969,12 @@ def _unpack_batch(
     if arity == 5:
         batch_x, batch_y, batch_text, batch_text_missing, batch_log_rv = batch_list
         return batch_x, batch_y, batch_text, batch_text_missing, None, batch_log_rv, trailing_rates_index
-    # Multi-task aux tensors went from 6 (factor / factor_mask / certainty /
-    # certainty_mask / topic / topic_mask) to 4 in ADR 0044 after the
-    # topic axis was retired. The arity table reads against the current
-    # 4-tensor aux block; legacy 6-tensor batches are no longer produced.
+    # Multi-task aux tensors are a 4-tensor block (certainty /
+    # certainty_mask / time / time_mask). The factor axis pair was
+    # retired (text cannot predict the GSS target) and the topic axis
+    # pair was retired in ADR 0044. The arity table reads against the
+    # current 4-tensor aux block; legacy 6-tensor batches are no longer
+    # produced.
     if arity == 6:
         batch_x = batch_list[0]
         batch_y = batch_list[1]
@@ -1662,7 +1665,7 @@ def _maybe_add_dual_head_loss(
     """Augment an existing multi-task loss with the dual-head MSE.
 
     The multi-task path already pays the per-axis losses (stance CE +
-    factor SmoothL1 + certainty CE) inside :class:`MultiTaskLoss`; this
+    certainty CE + time CE) inside :class:`MultiTaskLoss`; this
     helper preserves the full multi-task objective and adds the dual-
     head log(RV) MSE on top so the three axis branches keep learning
     under every head_mode. (Topic was retired in ADR 0044.)
@@ -1678,7 +1681,7 @@ def _maybe_add_dual_head_loss(
       stance head's classification view is the secondary surface. The
       regression head is the primary learning signal here; the
       per-axis losses still contribute their (smaller) gradient so the
-      certainty / factor branches continue to learn. The previous
+      certainty / time branches continue to learn. The previous
       implementation discarded ``loss`` entirely, which silently
       stopped the three axis branches under multi-task + regression.
 
@@ -1797,9 +1800,9 @@ def _zero_derived_text_features(
     rich tensor zeros up to [29:35]; an 80-dim rich tensor zeros every
     slice including the LLM block).
 
-    The multi-task aux ``factor`` / ``certainty`` / ``topic`` masks are
-    set to all-False so the auxiliary loss contribution from those axes
-    drops to zero, matching the "derived features off" semantics on the
+    The multi-task aux ``certainty`` / ``time`` masks are set to
+    all-False so the auxiliary loss contribution from those axes drops
+    to zero, matching the "derived features off" semantics on the
     multi-task supervision arm.
 
     The helper is called BEFORE the per-fold rich-feature RobustScaler
@@ -1822,7 +1825,7 @@ def _zero_derived_text_features(
             x[..., start:effective_stop] = 0.0
     if mt_aux is not None:
         new_aux = dict(mt_aux)
-        for axis in ("factor", "certainty"):
+        for axis in ("certainty", "time"):
             mask_key = f"{axis}_mask"
             if mask_key in new_aux:
                 new_aux[mask_key] = torch.zeros_like(new_aux[mask_key])
@@ -2209,8 +2212,8 @@ def _evaluate_model(
     # actually run against MultiTaskLoss.
     mt_axis_loss_sums: dict[str, torch.Tensor] = {
         "stance": torch.zeros((), dtype=torch.float64, device=device),
-        "factor": torch.zeros((), dtype=torch.float64, device=device),
         "certainty": torch.zeros((), dtype=torch.float64, device=device),
+        "time": torch.zeros((), dtype=torch.float64, device=device),
     }
     # Weighted CE bookkeeping. When ``loss_fn`` is
     # ``CrossEntropyLoss(weight=w, reduction='mean')`` the per-batch
@@ -2357,20 +2360,20 @@ def _evaluate_model(
                 )
                 mt_targets = {
                     "stance": batch_y,
-                    "factor": batch_mt_aux["factor"].to(device, non_blocking=non_blocking),
                     "certainty": batch_mt_aux["certainty"].to(device, non_blocking=non_blocking),
+                    "time": batch_mt_aux["time"].to(device, non_blocking=non_blocking),
                 }
                 mt_masks = {
                     "stance_mask": stance_mask,
-                    "factor_mask": batch_mt_aux["factor_mask"].to(device, non_blocking=non_blocking),
                     "certainty_mask": batch_mt_aux["certainty_mask"].to(device, non_blocking=non_blocking),
+                    "time_mask": batch_mt_aux["time_mask"].to(device, non_blocking=non_blocking),
                 }
                 loss, axis_breakdown = multi_task_loss_fn(
                     logits_dict, mt_targets, mt_masks
                 )
                 predictions = logits_dict["stance"]
                 total_loss_sum += loss.detach().to(torch.float64) * batch_size
-                for axis_name in ("stance", "factor", "certainty"):
+                for axis_name in ("stance", "certainty", "time"):
                     mt_axis_loss_sums[axis_name] += (
                         axis_breakdown[axis_name].detach().to(torch.float64) * batch_size
                     )
@@ -2492,7 +2495,7 @@ def _evaluate_model(
     if multi_task_active and total_items_int > 0:
         multi_task_axis_losses = {
             axis: float(mt_axis_loss_sums[axis].item()) / float(total_items_int)
-            for axis in ("stance", "factor", "certainty")
+            for axis in ("stance", "certainty", "time")
         }
 
     if is_classification:
@@ -3267,7 +3270,7 @@ def train_model(
             print(
                 "[train_model] derived-text-features OFF: zeroed slices "
                 "[0], [10:25], [25:29], [29:35], [45:80] on x before "
-                "scaler fit; masked factor/certainty on mt_aux",
+                "scaler fit; masked certainty/time on mt_aux",
                 flush=True,
             )
         test_x = apply_rich_feature_scaler_tensor(test_x, rich_feature_scaler)
@@ -3836,13 +3839,17 @@ def train_model(
     # checkpoint contract on every pre-#273 caller stays byte-identical.
     multi_task_class_weights_payload: dict[str, Any] | None = None
     if multi_task_loss_active and _active_output_mode == "classification":
-        from app.models.config import MULTI_TASK_CERTAINTY_CLASSES
+        from app.models.config import (
+            MULTI_TASK_CERTAINTY_CLASSES,
+            MULTI_TASK_TIME_CLASSES,
+        )
         from app.training.loss import MultiTaskLoss
 
         # Per-axis class counts pinned in app.models.config; the head
         # uses these exact constants so the fitted class-weight tensors
         # match the logit shape.
         n_certainty_classes = int(MULTI_TASK_CERTAINTY_CLASSES)
+        n_time_classes = int(MULTI_TASK_TIME_CLASSES)
         if train_mt_aux is None:
             raise RuntimeError(
                 "multi_task_loss_active=True but train_mt_aux is None; "
@@ -3853,12 +3860,18 @@ def train_model(
             train_mt_aux["certainty_mask"],
             n_certainty_classes,
         ).to(device_obj)
+        time_weight = _fit_axis_class_weights_from_mask(
+            train_mt_aux["time"],
+            train_mt_aux["time_mask"],
+            n_time_classes,
+        ).to(device_obj)
         multi_task_loss_fn = MultiTaskLoss(
             stance_weight=class_weight_tensor,  # vol-regime weights
             certainty_weight=certainty_weight,
+            time_weight=time_weight,
             lambda_stance=float(getattr(active_model_config, "multi_task_lambda_stance", 1.0)),
-            lambda_factor=float(getattr(active_model_config, "multi_task_lambda_factor", 0.3)),
             lambda_certainty=float(getattr(active_model_config, "multi_task_lambda_certainty", 0.3)),
+            lambda_time=float(getattr(active_model_config, "multi_task_lambda_time", 0.3)),
             regime_loss_mode=_active_regime_loss_mode,
             focal_gamma=float(getattr(active_model_config, "focal_gamma", 2.0)),
         ).to(device_obj)
@@ -3874,18 +3887,19 @@ def train_model(
                 else None
             ),
             "certainty": certainty_weight.detach().cpu().tolist(),
+            "time": time_weight.detach().cpu().tolist(),
             "lambdas": {
                 "stance": float(multi_task_loss_fn.lambda_stance),
-                "factor": float(multi_task_loss_fn.lambda_factor),
                 "certainty": float(multi_task_loss_fn.lambda_certainty),
+                "time": float(multi_task_loss_fn.lambda_time),
             },
             "regime_loss_mode": _active_regime_loss_mode,
         }
         print(
             "[train_model] multi_task_loss active: "
             f"lambda_stance={multi_task_loss_fn.lambda_stance} "
-            f"lambda_factor={multi_task_loss_fn.lambda_factor} "
-            f"lambda_certainty={multi_task_loss_fn.lambda_certainty}",
+            f"lambda_certainty={multi_task_loss_fn.lambda_certainty} "
+            f"lambda_time={multi_task_loss_fn.lambda_time}",
             flush=True,
         )
 
@@ -4138,13 +4152,13 @@ def train_model(
                     )
                     mt_targets = {
                         "stance": batch_y,
-                        "factor": batch_mt_aux["factor"],
                         "certainty": batch_mt_aux["certainty"],
+                        "time": batch_mt_aux["time"],
                     }
                     mt_masks = {
                         "stance_mask": stance_mask,
-                        "factor_mask": batch_mt_aux["factor_mask"],
                         "certainty_mask": batch_mt_aux["certainty_mask"],
+                        "time_mask": batch_mt_aux["time_mask"],
                     }
                     loss, _ = multi_task_loss_fn(logits_dict, mt_targets, mt_masks)
                     loss = _maybe_add_dual_head_loss(

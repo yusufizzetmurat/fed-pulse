@@ -2489,7 +2489,7 @@
         "type": "object"
       },
       "MultiAxisBlock": {
-        "description": "Multi-task head per-axis predictions surfaced on /analyze (#78).\n\nThe three axes mirror the multi-task head's three output branches.\nStance reuses the canonical 3-class classifier (also exposed on\nthe legacy ``sentiment`` field for back-compat); the other two\nbranches were populated for the first time with this block. Axes\nwhose checkpoint was trained on very few labels are flagged as\nlow-confidence; the frontend renders a muted card in that case.\n\nThe topic axis was retired in ADR 0044 \u2014 no upstream FOMC or\ncross-bank corpus shipped topic labels, and the only path that\never populated ``axis_topic`` was an internal macro-release\naugmentation that no longer fires on the rebuild path.",
+        "description": "Multi-task head per-axis predictions surfaced on /analyze (#78).\n\nActive axes: stance / certainty / time. The factor axis (GSS\nmarket-derived regression target) was retired \u2014 text cannot predict it\nand the training pool had 0% coverage. Topic was retired in ADR 0044.",
         "properties": {
           "certainty": {
             "anyOf": [
@@ -2501,18 +2501,18 @@
               }
             ]
           },
-          "factor": {
+          "stance": {
+            "$ref": "#/components/schemas/MultiAxisStanceCard"
+          },
+          "time": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/MultiAxisFactorCard"
+                "$ref": "#/components/schemas/MultiAxisTimeCard"
               },
               {
                 "type": "null"
               }
             ]
-          },
-          "stance": {
-            "$ref": "#/components/schemas/MultiAxisStanceCard"
           }
         },
         "required": [
@@ -2550,29 +2550,6 @@
         "title": "MultiAxisCertaintyCard",
         "type": "object"
       },
-      "MultiAxisFactorCard": {
-        "description": "Forward-guidance factor regression in [-1, 1].\n\nPositive values lean hawkish, negative values lean dovish. Sourced\nfrom the multi-task head's tanh-bounded regression branch.\nConfidence reflects training-time coverage and is left to the\ncaller to calibrate; absent supervision, the field is None.",
-        "properties": {
-          "confidence": {
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "title": "Confidence",
-            "type": "number"
-          },
-          "value": {
-            "maximum": 1.0,
-            "minimum": -1.0,
-            "title": "Value",
-            "type": "number"
-          }
-        },
-        "required": [
-          "value",
-          "confidence"
-        ],
-        "title": "MultiAxisFactorCard",
-        "type": "object"
-      },
       "MultiAxisStanceCard": {
         "description": "Stance prediction from the multi-task head.",
         "properties": {
@@ -2601,6 +2578,35 @@
           "confidence"
         ],
         "title": "MultiAxisStanceCard",
+        "type": "object"
+      },
+      "MultiAxisTimeCard": {
+        "description": "Forward-looking horizon classification from the multi-task head.\n\nTwo classes: ``forward looking`` (the statement references future\nactions or expectations) vs ``not forward looking`` (backward-looking\nor current-state only). Sourced from the gtfintechlab ``time_label``\ncolumn; trained on ~5 992 labelled sentences.",
+        "properties": {
+          "confidence": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "distribution": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Distribution",
+            "type": "object"
+          },
+          "label": {
+            "description": "forward looking | not forward looking",
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "confidence"
+        ],
+        "title": "MultiAxisTimeCard",
         "type": "object"
       },
       "NextFomcAttributionRow": {
