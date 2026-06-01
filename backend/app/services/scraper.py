@@ -178,11 +178,15 @@ def _modern_statement_urls() -> list[tuple[str, str]]:
         from app.services.fomc_calendar import list_all_meetings
 
         for meeting in list_all_meetings():
-            # The statement releases on the meeting_date for one-day meetings
-            # and on the second day for two-day meetings; meeting_date in the
-            # calendar dataclass is the *meeting* date, which the URL slug
-            # tracks. The 'a' suffix is the policy statement.
-            candidates.append(meeting.meeting_date.strftime("%Y%m%d"))
+            # The Fed publishes statements on the meeting's CONCLUDING day
+            # (day-2 for the standard two-day FOMC schedule). The calendar
+            # dataclass stores ``meeting_date`` as day-1 and the release
+            # date in ``statement_release_date``; the URL slug tracks the
+            # release date, not the meeting start. Fall back to
+            # ``meeting_date`` for any entry where the release date is
+            # nullable / absent.
+            release_date = meeting.statement_release_date or meeting.meeting_date
+            candidates.append(release_date.strftime("%Y%m%d"))
     except Exception:  # pragma: no cover - calendar import is best-effort.
         pass
 
