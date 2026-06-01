@@ -411,9 +411,9 @@ def _hydrate_next_year_responses(
                 cache_dir=cache_dir,
                 force_refresh=force_refresh,
             )
-        except (RuntimeError, OSError) as exc:
-            # A single missing year (e.g. the FRED API returns a 404
-            # for a vintage that has not been published yet) must not
+        except Exception as exc:  # noqa: BLE001 - any failure on a single
+            # vintage (404 for a vintage not yet published, 400 for a
+            # series id FRED has renamed, network timeout, etc.) must not
             # block the build; the next-year slot for that release
             # collapses to ``None`` and the composer's missing flag
             # carries the signal.

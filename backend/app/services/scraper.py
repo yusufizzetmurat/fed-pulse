@@ -122,12 +122,25 @@ def _normalized_title(title: str, document_type: str, document_url: str, date_va
 
 
 def _calendar_pages() -> list[str]:
-    root = _fetch_soup(CALENDAR_URL)
-    pages = {CALENDAR_URL}
-    for anchor in root.select("a[href]"):
-        href = _href_str(anchor)
-        if ARCHIVE_PATTERN.match(href):
-            pages.add(urljoin(BASE_URL, href))
+    # The current fomccalendars.htm carries the past ~5 years inline and no
+    # longer links to the historical archives, so link-discovery alone yields
+    # a 5-year window. Enumerate the historical archive years explicitly so
+    # statements + minutes back to 1994 (the first year Fed releases FOMC
+    # statements publicly) are reachable. The dynamic-discovery loop stays
+    # as a belt-and-suspenders fallback in case the Fed re-introduces the
+    # links one day.
+    pages: set[str] = {CALENDAR_URL}
+    for year in range(1994, 2021):
+        pages.add(f"{BASE_URL}/monetarypolicy/fomchistorical{year}.htm")
+    try:
+        root = _fetch_soup(CALENDAR_URL)
+        for anchor in root.select("a[href]"):
+            href = _href_str(anchor)
+            if ARCHIVE_PATTERN.match(href):
+                pages.add(urljoin(BASE_URL, href))
+    except Exception:  # pragma: no cover - the explicit enumeration above is
+                        # already sufficient; the dynamic pass is opportunistic.
+        pass
     return sorted(pages, reverse=True)
 
 
