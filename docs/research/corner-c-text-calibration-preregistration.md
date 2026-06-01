@@ -70,3 +70,35 @@ project if it lands.
 ## Artifacts
 
 - `data/artifacts/corner_c_text_calibration/result.json`. Committed before it exists.
+
+---
+
+## Result (run 2026-06-01, 300 epochs × 5 seeds × 5 folds) — **technical hit at h1, but negligible**
+
+| horizon | MSE\|resid\| base | +u | ΔMSE | DM p | band cov low-u | high-u | hit |
+|---|---:|---:|---:|---:|---:|---:|---|
+| **h1**  | 0.13937 | 0.13900 | **+0.000365** | **0.003** | 0.861 | 0.855 | **yes** |
+| h5      | 0.08674 | 0.08673 | +0.00001 | 0.80 | 0.863 | 0.911 | no (coverage backwards) |
+| h22     | 0.04116 | 0.04121 | −0.00006 | 0.10 | 0.903 | 0.919 | no |
+
+**Verdict per the pre-registered rule: hit at h1** — DM p=0.003 (< Bonferroni 0.0333), ΔMSE>0,
+and the constant 90% band under-covers slightly more on high-`u` days (0.855 vs 0.861), the
+predicted direction. This is the **first formally-passing pre-registered text result** in the
+whole project.
+
+**But it is tiny and fragile, and I will not oversell it:**
+- Effect size ≈ **0.26%** MSE reduction in predicting `|residual|`. Statistically real at
+  n≈4400, economically negligible.
+- **Only h1.** h5 is flat *and* its conditional-coverage gap runs the **wrong way** (high-`u`
+  better covered); h22 is null. No consistency across horizons.
+- The u-conditional coverage spread at h1 (0.861 vs 0.855) is trivial next to the band's overall
+  ~86% vs nominal 90% under-coverage — `u` barely moves the calibration.
+
+**Honest interpretation:** the *one* place text shows any incremental signal is exactly the
+second-order channel we hypothesized — calibration, not level — which is theoretically tidy. But
+the magnitude is too small and too horizon-fragile to build a production `u`-conditioned band on.
+It refines, rather than overturns, the headline: text is essentially closed for forecasting; the
+faintest residual signal lives in 1-day error-magnitude calibration, and even there it is a flicker.
+
+**Decision:** report as-is (a hit by the pre-committed rule, flagged as negligible). Do **not**
+p-hack a robustness search to inflate or kill it. Move to Corner D (the FX target) as planned.
