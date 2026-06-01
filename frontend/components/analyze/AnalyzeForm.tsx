@@ -27,6 +27,11 @@ interface AnalyzeFormProps {
   onChange: (next: AnalyzeRequest) => void;
   onSubmit: () => void;
   loading: boolean;
+  // Fires when the user picks an entry from the sample-loader dropdown.
+  // The parent uses this hook to clear stale analysis cards before the
+  // new sample's request takes effect; falls back to onChange when the
+  // host page does not need that behaviour.
+  onSampleLoad?: (next: AnalyzeRequest) => void;
 }
 
 // Exported so the picker behavior is unit-testable independent of the
@@ -45,7 +50,7 @@ export function applySampleStatement(
   };
 }
 
-export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormProps) {
+export function AnalyzeForm({ value, onChange, onSubmit, loading, onSampleLoad }: AnalyzeFormProps) {
   const submitLabel = loading ? "Running analysis…" : "Analyze";
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -160,7 +165,10 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
             </Button>
             <Select
               value=""
-              onValueChange={(id) => onChange(applySampleStatement(value, id))}
+              onValueChange={(id) => {
+                const next = applySampleStatement(value, id);
+                (onSampleLoad ?? onChange)(next);
+              }}
             >
               <SelectTrigger
                 className="h-9 min-h-[44px] w-full sm:min-h-9 sm:w-[16rem]"
