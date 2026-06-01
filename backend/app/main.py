@@ -53,6 +53,8 @@ from app.schemas import (
     MarketReactionPanel,
     NextFomcForecastResponse,
     RatesReactionCard,
+    HarTercileBaselineResponse,
+    HarTercileHorizon,
     RealizedVolForecastResponse,
     RealizedVolHorizonForecast,
     ResearchArtifactsResponse,
@@ -1670,6 +1672,79 @@ async def forecast_realized_vol(
         history=rv_hist,
         history_dates=hist_dates,
         model_revision=out["model_revision"],
+    )
+
+
+@app.get("/forecast/regime/baselines", response_model=HarTercileBaselineResponse)
+async def forecast_regime_baselines(
+    symbol: str = Query(
+        "^GSPC",
+        description="Market ticker; only ^GSPC is supported (artifact is SPX-trained).",
+        min_length=1,
+        max_length=32,
+        pattern=r"^[A-Za-z0-9._=^/-]+$",
+    ),
+) -> HarTercileBaselineResponse:
+    """HAR-tercile regime baseline (wiki section 20 headline).
+
+    Bucketing HAR's predicted realized variance through the per-series
+    tercile cutoffs beats the text+market fused regime classifier at
+    h=1 and h=22 and ties it at h=5 on the canonical fold protocol.
+    The frontend renders this response as the primary regime card and
+    demotes the late-fusion classifier to a "second opinion" surface.
+    Returns 422 on a non-SPX symbol (the artifact is SPX-trained) and a
+    structured 503 on artifact-load failure.
+    """
+
+    if symbol != "^GSPC":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "symbol_unsupported",
+                "message": (
+                    "HAR-tercile baseline is SPX-trained; only ^GSPC is supported."
+                ),
+            },
+        )
+
+    from app.services.har_tercile import predict_har_regime
+    from app.services.rv_forecaster import RvForecasterUnavailable
+
+    try:
+        rv_hist, _hist_dates = await run_in_threadpool(_load_rv_history, symbol)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "history_unavailable", "message": str(exc)},
+        ) from exc
+
+    try:
+        out = await run_in_threadpool(predict_har_regime, rv_hist)
+    except RvForecasterUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "har_unavailable", "message": str(exc)},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "history_invalid", "message": str(exc)},
+        ) from exc
+    except Exception as exc:  # pragma: no cover - defensive against torch/HF surprises
+        logger.warning("har_tercile_baseline_failed", exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "har_unavailable", "message": str(exc)},
+        ) from exc
+
+    horizons = [HarTercileHorizon(**h) for h in out["horizons"]]
+    return HarTercileBaselineResponse(
+        symbol=symbol,
+        horizons=horizons,
+        cutoffs_q33=out["cutoffs_q33"],
+        cutoffs_q67=out["cutoffs_q67"],
+        model_revision=out["model_revision"],
+        generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
 
 
