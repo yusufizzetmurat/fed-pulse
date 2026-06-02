@@ -44,6 +44,9 @@ def _write_cross_bank_matrix(root: Path, *, payload: dict, name: str = "transfer
 
 def test_research_artifacts_empty_state(client, monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    # Point REPO_ROOT at a temp dir so the rerun-JSON loader sees nothing
+    # and falls back to the phase3 walk (empty in tmp_path).
+    monkeypatch.setattr(main_mod, "REPO_ROOT", tmp_path)
     response = client.get("/research/artifacts")
     assert response.status_code == 200
     body = response.json()
@@ -94,6 +97,8 @@ def test_research_artifacts_with_bakeoff_and_transfer(
         },
     )
     monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    # No rerun JSON under tmp_path → loader falls back to the phase3 walk.
+    monkeypatch.setattr(main_mod, "REPO_ROOT", tmp_path)
 
     response = client.get("/research/artifacts")
     assert response.status_code == 200
@@ -133,6 +138,7 @@ def test_research_artifacts_accepts_matrix_shape(client, monkeypatch, tmp_path):
         },
     )
     monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(main_mod, "REPO_ROOT", tmp_path)
 
     response = client.get("/research/artifacts")
     body = response.json()
@@ -141,6 +147,79 @@ def test_research_artifacts_accepts_matrix_shape(client, monkeypatch, tmp_path):
     cells = {(c["source"], c["target"]): c["metric"] for c in transfer["cells"]}
     assert cells[("fed", "fed")] == 0.63
     assert cells[("ecb", "ecb")] == 0.58
+
+
+def test_research_artifacts_prefers_rerun_json(client, monkeypatch, tmp_path):
+    # Phase3 fixture would yield 0.55/0.57 if the legacy walk fired.
+    artifacts_root = tmp_path / "artifacts"
+    _write_phase3_aggregate(
+        artifacts_root,
+        name="run-old/aggregate.json",
+        by_encoder={
+            "bert-base-uncased": {
+                "checkpoint": "bert-base-uncased",
+                "per_seed": {
+                    "11": {"macro_f1": 0.55, "weighted_f1": 0.58, "accuracy": 0.60},
+                },
+            },
+        },
+    )
+    # Drop a rerun JSON at the first known candidate path under tmp_path.
+    rerun_dir = tmp_path / "docs" / "research"
+    rerun_dir.mkdir(parents=True)
+    rerun_path = rerun_dir / "nlp-baseline-bakeoff-2026-06-02-rerun.json"
+    rerun_path.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "model_key": "fomc_roberta",
+                        "checkpoint": "gtfintechlab/FOMC-RoBERTa",
+                        "seed": 11,
+                        "classification": {
+                            "macro_f1": 0.508,
+                            "weighted_f1": 0.50,
+                            "accuracy": 0.52,
+                        },
+                    },
+                    {
+                        "model_key": "fomc_roberta",
+                        "checkpoint": "gtfintechlab/FOMC-RoBERTa",
+                        "seed": 29,
+                        "classification": {
+                            "macro_f1": 0.508,
+                            "weighted_f1": 0.50,
+                            "accuracy": 0.52,
+                        },
+                    },
+                    {
+                        "model_key": "majority",
+                        "checkpoint": "majority-class",
+                        "seed": 11,
+                        "classification": {
+                            "macro_f1": 0.187,
+                            "weighted_f1": 0.22,
+                            "accuracy": 0.39,
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(main_mod, "REPO_ROOT", tmp_path)
+
+    response = client.get("/research/artifacts")
+    body = response.json()
+    bakeoff = body["encoder_bakeoff"]
+    assert bakeoff["available"] is True
+    keys = {row["encoder_key"] for row in bakeoff["rows"]}
+    # Legacy phase3 row absent; rerun model_keys present.
+    assert keys == {"fomc_roberta", "majority"}
+    fomc_row = next(r for r in bakeoff["rows"] if r["encoder_key"] == "fomc_roberta")
+    assert fomc_row["seeds"] == [11, 29]
+    assert pytest.approx(fomc_row["macro_f1_mean"], rel=1e-4) == 0.508
 
 
 def test_research_artifacts_section_skips_dotfiles(tmp_path):

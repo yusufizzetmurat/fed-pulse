@@ -28,6 +28,14 @@ LOGGER = logging.getLogger(__name__)
 
 SECTIONS: tuple[str, ...] = ("phase3", "cross_bank", "cross_asset", "next_fomc")
 
+# Priority-ordered list of rerun JSON paths (relative to repo root). The
+# zero-shot NLP baseline rerun JSON lives outside ``data/artifacts/``, so
+# the bake-off loader checks these locations first and only falls back
+# to the legacy ``phase3/**aggregate.json`` walk when none exist.
+RERUN_BAKEOFF_CANDIDATES: tuple[str, ...] = (
+    "docs/research/nlp-baseline-bakeoff-2026-06-02-rerun.json",
+)
+
 
 @dataclass(frozen=True)
 class ArtifactFileInfo:
@@ -76,14 +84,125 @@ def _iter_aggregate_files(artifacts_root: Path) -> Iterable[Path]:
     yield from sorted(section_dir.rglob("aggregate.json"))
 
 
-def load_encoder_bakeoff(artifacts_root: Path) -> dict[str, Any]:
-    """Aggregate per-encoder macro-F1 across phase3/**/aggregate.json files.
+def _resolve_rerun_bakeoff_path(repo_root: Path | None) -> Path | None:
+    """Return the first existing rerun JSON path, or ``None``.
+
+    The rerun JSON is the source of truth for the Bake-off tab when it
+    exists; the legacy ``phase3/**aggregate.json`` walk is only a
+    fallback for environments without the ``docs/`` tree.
+    """
+
+    if repo_root is None:
+        return None
+    for relative in RERUN_BAKEOFF_CANDIDATES:
+        candidate = repo_root / relative
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def load_encoder_bakeoff_rerun(path: Path) -> dict[str, Any]:
+    """Read the rerun-JSON schema and aggregate per ``model_key``.
+
+    The rerun file has a flat ``results[]`` array, one entry per
+    (model_key, seed). This function groups by ``model_key``, collects
+    per-seed macro-F1 / weighted-F1 / accuracy, and returns the same
+    output shape as :func:`load_encoder_bakeoff` so the API response
+    stays unchanged.
+    """
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        LOGGER.warning("research_artifacts: failed to parse %s: %s", path, exc)
+        return {
+            "available": False,
+            "coverage": None,
+            "rows": [],
+            "source_files": [],
+        }
+
+    results = payload.get("results") or []
+    by_encoder: dict[str, dict[str, Any]] = {}
+    for entry in results:
+        model_key = entry.get("model_key")
+        if not isinstance(model_key, str) or not model_key:
+            continue
+        seed_value = entry.get("seed")
+        try:
+            seed_int = int(seed_value)
+        except (TypeError, ValueError):
+            continue
+        bucket = by_encoder.setdefault(
+            model_key,
+            {
+                "encoder_key": model_key,
+                "checkpoint": str(entry.get("checkpoint", "")),
+                "seeds": [],
+                "macro_f1_values": [],
+                "weighted_f1_values": [],
+                "accuracy_values": [],
+            },
+        )
+        if seed_int in bucket["seeds"]:
+            continue
+        if not bucket["checkpoint"] and entry.get("checkpoint"):
+            bucket["checkpoint"] = str(entry["checkpoint"])
+        classification = entry.get("classification") or {}
+        bucket["seeds"].append(seed_int)
+        bucket["macro_f1_values"].append(_safe_float(classification.get("macro_f1")))
+        bucket["weighted_f1_values"].append(_safe_float(classification.get("weighted_f1")))
+        bucket["accuracy_values"].append(_safe_float(classification.get("accuracy")))
+
+    rows: list[dict[str, Any]] = []
+    for encoder_key in sorted(by_encoder):
+        bucket = by_encoder[encoder_key]
+        # Keep seeds sorted so the UI renders a stable order.
+        paired = sorted(zip(bucket["seeds"], bucket["macro_f1_values"], strict=False))
+        seeds_sorted = [s for s, _ in paired]
+        macro_sorted = [m for _, m in paired]
+        rows.append(
+            {
+                "encoder_key": encoder_key,
+                "checkpoint": bucket["checkpoint"],
+                "seeds": seeds_sorted,
+                "macro_f1_values": macro_sorted,
+                "macro_f1_mean": _mean_or_zero(macro_sorted),
+                "macro_f1_ci_low": None,
+                "macro_f1_ci_high": None,
+                "weighted_f1_mean": _mean_or_zero(bucket["weighted_f1_values"]),
+                "accuracy_mean": _mean_or_zero(bucket["accuracy_values"]),
+                "cohen_kappa": None,
+            }
+        )
+
+    return {
+        "available": bool(rows),
+        "coverage": 0.95,
+        "rows": rows,
+        "source_files": [str(path)],
+    }
+
+
+def load_encoder_bakeoff(
+    artifacts_root: Path,
+    repo_root: Path | None = None,
+) -> dict[str, Any]:
+    """Aggregate per-encoder macro-F1 for the Bake-off dashboard tab.
 
     Returns a dict with ``available``, ``coverage``, ``rows``, and
     ``source_files``. ``rows`` is a list of dicts shaped like
-    :class:`EncoderBakeoffRow` (see ``app.schemas``). When no aggregate
-    files exist, ``available`` is False and ``rows`` is empty.
+    :class:`EncoderBakeoffRow` (see ``app.schemas``).
+
+    When a rerun JSON listed in :data:`RERUN_BAKEOFF_CANDIDATES` exists
+    under ``repo_root``, it is the source of truth. Otherwise the loader
+    falls back to the legacy ``phase3/**/aggregate.json`` walk so local
+    dev environments without the ``docs/`` tree still work.
     """
+
+    rerun_path = _resolve_rerun_bakeoff_path(repo_root)
+    if rerun_path is not None:
+        return load_encoder_bakeoff_rerun(rerun_path)
 
     files = list(_iter_aggregate_files(artifacts_root))
     if not files:
