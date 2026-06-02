@@ -85,3 +85,20 @@ sharpen what the descriptive layer can and cannot honestly claim. If the primary
 is not significant, report that the instrument does **not** track realised policy
 (a stronger caveat the dashboard would then need). No post-hoc test selection;
 the four tests above are the complete committed set.
+
+## Baseline result (snapshot for retrain gating)
+
+Reproducible artefact pinned alongside this pre-reg as
+[`stance-instrument-validity-baseline-result.json`](./stance-instrument-validity-baseline-result.json).
+Headline numbers from that snapshot (n=122 meetings, 2011-01-26 to 2026-04-29):
+
+- PRIMARY Spearman(s, Δff) = **+0.284** (perm p = 0.001, CI95 [+0.069, +0.468])
+- mean s by action: cut −0.533, hold −0.584, hike +0.420
+- AUC hike-vs-cut **0.778** (CI95 [0.594, 0.944])
+- ordinal Spearman +0.262, leading s_t vs Δff_{t+1} rho −0.034 (p 0.658)
+
+**Gate for Lead-1 retrains:** rebuild `stance_daily.parquet` via
+`scripts/build_stance_daily.py` and re-run `scripts/stance_instrument_validity.py`
+after each retrain. A retrain "wins" against this baseline iff
+`mean(s|cut) < mean(s|hold)` and AUC(s, cut-vs-hold) > 0.5 — the dovish-end
+resolution finding the Lead-1 loss knobs target.
