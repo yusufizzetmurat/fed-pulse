@@ -1,5 +1,6 @@
 import * as React from "react";
 import Head from "next/head";
+import Link from "next/link";
 import { useRouter } from "next/router";
 import { FlaskConical } from "lucide-react";
 import {
@@ -658,21 +659,28 @@ export default function ResearchPage() {
   return (
     <>
       <Head>
-        <title>Research — Fed Pulse</title>
+        <title>Labs — Fed Pulse</title>
       </Head>
       <div className="min-h-screen bg-background text-foreground">
         <Header />
         <StatusBar />
         <main id="main-content" tabIndex={-1} className="container space-y-5 py-6 focus:outline-none">
-          <div className="space-y-1">
+          <div className="space-y-2">
             <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
               <FlaskConical className="h-6 w-6 text-primary" />
-              Research console
+              Labs
             </h1>
             <p className="max-w-2xl text-sm text-muted-foreground">
               Research artefacts the model is built on. The Bake-off compares text encoders.
               The Transfer matrix shows how a model trained on one central bank&apos;s statements
               performs on another&apos;s. Files lists the raw artefact JSONs you can download.
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Diff two analyses side-by-side in{" "}
+              <Link href="/compare" className="font-medium text-primary underline-offset-2 hover:underline">
+                Compare runs
+              </Link>
+              .
             </p>
           </div>
 
