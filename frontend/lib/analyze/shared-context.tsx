@@ -381,9 +381,13 @@ export function useSharedCalendar(): CalendarState {
 export function useSharedCoverage(symbol: string | undefined): CoverageState {
   const ctx = useSharedContext();
   const symKey = symbol ?? "";
+  const { ensureCoverage } = ctx;
   React.useEffect(() => {
-    ctx.ensureCoverage(symbol);
-  }, [ctx, symbol]);
+    ensureCoverage(symbol);
+    // Pull the stable callback out of ctx so the effect re-runs only when
+    // symbol actually changes, not on every provider re-render — matches
+    // the pattern used by useHarBaselines below.
+  }, [ensureCoverage, symbol]);
   return ctx.coverageMap[symKey] ?? LOADING_COVERAGE;
 }
 
@@ -407,8 +411,13 @@ export function useSharedRecentHistory(
   const ctx = useSharedContext();
   const symKey = symbol ?? "";
   const mapKey = `${symKey}|${limit}`;
+  const { ensureRecentHistory } = ctx;
   React.useEffect(() => {
-    ctx.ensureRecentHistory(symbol, limit);
-  }, [ctx, symbol, limit]);
+    ensureRecentHistory(symbol, limit);
+    // Pull the stable callback out of ctx so the effect re-runs only on
+    // (symbol, limit) change. Putting `ctx` in deps thrashes the endpoint
+    // because every fetch updates state inside the provider, which gives
+    // ctx a new reference, which re-fires the effect, which re-fetches.
+  }, [ensureRecentHistory, symbol, limit]);
   return ctx.recentHistoryMap[mapKey] ?? LOADING_RECENT_HISTORY;
 }
