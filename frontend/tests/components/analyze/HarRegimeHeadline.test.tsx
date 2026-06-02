@@ -33,7 +33,10 @@ function fixture(): HarTercileBaselineResponse {
         macro_f1_source: "wiki §20",
       },
     ],
-    source_wiki_section: "20_Gated_Fusion_InfoNCE_Comprehensive_Null",
+    cutoffs_q33: 8e-5,
+    cutoffs_q67: 1.3e-4,
+    model_revision: "har-tercile-v1",
+    generated_at: "2026-05-30T00:00:00Z",
   };
 }
 
@@ -93,7 +96,10 @@ describe("HarRegimeHeadline", () => {
         baselines={{
           symbol: "^GSPC",
           horizons: [],
-          source_wiki_section: "20_Gated_Fusion_InfoNCE_Comprehensive_Null",
+          cutoffs_q33: 8e-5,
+          cutoffs_q67: 1.3e-4,
+          model_revision: "har-tercile-v1",
+          generated_at: "2026-05-30T00:00:00Z",
         }}
         symbol="^GSPC"
       />,

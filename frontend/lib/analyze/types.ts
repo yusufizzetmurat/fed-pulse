@@ -796,7 +796,10 @@ export interface HarTercileHorizon {
 export interface HarTercileBaselineResponse {
   symbol: string;
   horizons: HarTercileHorizon[];
-  source_wiki_section: string;
+  cutoffs_q33: number;
+  cutoffs_q67: number;
+  model_revision: string;
+  generated_at: string;
 }
 
 // HAR-tercile backtest served from
