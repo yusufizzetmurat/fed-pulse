@@ -55,6 +55,7 @@ logger = logging.getLogger(__name__)
 LABELS = ["hawkish", "dovish", "neutral"]
 _L2I = {lab: i for i, lab in enumerate(LABELS)}
 BASE_ENCODER = "yusufizzetmurat/finbert-fed-adjacent"
+_VALID_LOSS_MODES: frozenset[str] = frozenset({"ce", "ce_balanced", "focal"})
 _ROBERTA_MAP = {"LABEL_0": "dovish", "LABEL_1": "hawkish", "LABEL_2": "neutral"}
 
 # FOMC-RoBERTa's training data — train ours on the same, exclude from the test.
@@ -112,12 +113,14 @@ def _class_weights(
     - ``ce`` and ``focal`` use plain inverse-frequency weights (the
       pre-Lead-1 default).
     - ``ce_balanced`` uses Cui et al. (2019) class-balanced effective-
-      number weighting with ``β = cb_beta``. At high β the rare-class
-      weight saturates instead of running to ``N_majority / N_rare``
-      under naive inverse-frequency. That regularises the rare-class
-      signal: instead of giving the cut class an exploding gradient,
-      the encoder gets a calmer, more learnable hold-vs-cut signal.
-      Pair with focal for harder examples.
+      number weighting with ``β = cb_beta``. The effective number
+      asymptotes at ``(1 - β^n) / (1 - β)``; the regularising effect
+      is meaningful only when ``n × (1 - β)`` is small (β around 0.99
+      on ~100-row classes). At β = 0.999 with the TDW pool's per-class
+      counts in the hundreds, the weights converge to naive
+      inverse-frequency. The knob is wired in for completeness; the
+      retrain matrix has to actually run to see whether dropping β
+      to 0.99 / 0.95 changes the hold-vs-cut behaviour.
     """
 
     safe = np.maximum(counts.astype(np.float64), 1.0)
@@ -141,11 +144,21 @@ def _focal_loss(
     weight: torch.Tensor,
     gamma: float,
 ) -> torch.Tensor:
-    """Class-balanced focal loss, ``(1 - p_t)^γ`` modulator on CE."""
+    """Class-balanced focal loss, ``(1 - p_t)^γ`` modulator on CE.
+
+    The naive form ``exp(log_softmax) → p_t → (1 - p_t)^γ`` underflows
+    to exactly 0 / exactly 1 once the suppressed-class log-prob crosses
+    the float32 floor (~-88). On a converging classifier the easy
+    examples regularly cross that floor, so the modulator silently
+    cancels itself out on the very samples focal-loss is supposed to
+    down-weight. ``torch.clamp`` on ``target_probs`` keeps the
+    modulator faithful at the boundary without changing behaviour
+    elsewhere.
+    """
 
     log_probs = torch.log_softmax(logits, dim=-1)
     target_log_probs = log_probs.gather(1, targets.unsqueeze(1)).squeeze(1)
-    target_probs = torch.exp(target_log_probs)
+    target_probs = torch.exp(target_log_probs).clamp(min=1e-7, max=1.0 - 1e-7)
     modulator = (1.0 - target_probs) ** gamma
     target_weight = weight[targets]
     return -(modulator * target_weight * target_log_probs).mean()
@@ -162,6 +175,12 @@ def train(
     cb_beta: float = 0.999,
     focal_gamma: float = 2.0,
 ) -> tuple[Any, Any]:
+    if loss_mode not in _VALID_LOSS_MODES:
+        # argparse's choices= guards the CLI entry; this fires if a
+        # caller imports and invokes train() programmatically with a
+        # typo. Silently falling through to plain CE would mask the
+        # bug and run a different objective than the caller asked for.
+        raise ValueError(f"loss_mode={loss_mode!r} is not one of {sorted(_VALID_LOSS_MODES)}")
     tok = AutoTokenizer.from_pretrained(BASE_ENCODER)  # type: ignore[no-untyped-call]
     model = AutoModelForSequenceClassification.from_pretrained(
         BASE_ENCODER,

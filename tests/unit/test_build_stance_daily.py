@@ -62,19 +62,25 @@ def test_score_one_returns_none_when_distribution_empty(monkeypatch, builder) ->
     assert builder._score_one("any text") is None
 
 
-def test_score_one_tolerates_one_sided_distribution(monkeypatch, builder) -> None:
+def test_score_one_rejects_one_sided_distribution(monkeypatch, builder) -> None:
+    """Softmax always populates both hawkish + dovish keys; a missing
+    key signals a truncated payload, not a legitimate ``P(class) = 0``.
+    The reducer drops these rows entirely rather than fabricating a
+    score from the present-key value alone.
+    """
+
     _patched_score(
         monkeypatch,
         builder,
         {"stance": {"distribution": {"hawkish": 0.6}}},  # only hawkish present
     )
-    assert builder._score_one("any text") == pytest.approx(0.6)
+    assert builder._score_one("any text") is None
     _patched_score(
         monkeypatch,
         builder,
         {"stance": {"distribution": {"dovish": 0.4}}},  # only dovish present
     )
-    assert builder._score_one("any text") == pytest.approx(-0.4)
+    assert builder._score_one("any text") is None
 
 
 def test_score_one_handles_missing_keys(monkeypatch, builder) -> None:
