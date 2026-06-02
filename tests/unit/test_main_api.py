@@ -383,10 +383,13 @@ def test_forecast_realized_vol_surfaces_historical_bands(monkeypatch):
     dates = [f"2026-03-{i + 1:02d}" for i in range(30)]
     rv = [1e-4 + i * 1e-6 for i in range(30)]
     monkeypatch.setattr(main_mod, "_load_rv_history", lambda symbol: (rv, dates))
+    # The endpoint passes ``intraday_measures`` as a second positional/
+    # keyword arg now (PR introducing live intraday wiring). The stub
+    # accepts and ignores it so the historical-bands surface still tests.
     monkeypatch.setattr(
         rv_forecaster,
         "predict_rv",
-        lambda hist: {
+        lambda hist, intraday_measures=None: {
             "horizons": [
                 {
                     "h": 1,
@@ -423,6 +426,8 @@ def test_forecast_realized_vol_surfaces_historical_bands(monkeypatch):
                 },
             ],
             "model_revision": "stub@2026-05-29",
+            "realized_features_source": "training_means",
+            "realized_features_date": None,
         },
     )
     monkeypatch.setattr(
