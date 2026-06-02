@@ -785,7 +785,7 @@ export default function WorkspacePage() {
             <div className="flex flex-wrap items-center gap-2">
               <HistoricalContextBadge result={result} documentDate={request.date} />
               <Badge variant="outline" className="numeric text-[10px]">
-                horizon · {request.horizon}
+                forecast curve · {request.horizon}
               </Badge>
             </div>
           </div>
