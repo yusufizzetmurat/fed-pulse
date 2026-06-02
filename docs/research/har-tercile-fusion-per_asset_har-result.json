@@ -1,0 +1,564 @@
+{
+  "arm_key": "per_asset_har",
+  "comparator": "fusion-TP HAR-tercile baseline (SPX 5-min intraday RV, n_rows_valid=1999)",
+  "comparator_path": "docs/research/recover-A-result.json",
+  "baseline_fusion_spx": {
+    "h1": {
+      "pooled": 0.6873,
+      "fold_mean": 0.629,
+      "fold_std": 0.042
+    },
+    "h5": {
+      "pooled": 0.685,
+      "fold_mean": 0.618,
+      "fold_std": 0.034
+    },
+    "h22": {
+      "pooled": 0.6542,
+      "fold_mean": 0.554,
+      "fold_std": 0.046
+    }
+  },
+  "protocol": {
+    "rv_proxy": "daily log_return squared (yfinance daily closes); 5-min intraday RV unavailable for NDX/DJI",
+    "date_window": "2005-01-03 to 2026-05-29 (matches fusion TP)",
+    "har_space": "log",
+    "forward_target": "log-mean over t+1..t+h",
+    "folds": "walk_forward_splits, n_folds=5, embargo=23",
+    "macro_f1": "pooled across 5 folds (canonical); also per-fold mean+/-std",
+    "horizons": [
+      1,
+      5,
+      22
+    ],
+    "seeds": "OLS HAR deterministic; n_seeds=1"
+  },
+  "by_asset": {
+    "^NDX": {
+      "first_date": "2005-01-04",
+      "last_date": "2026-05-29",
+      "n_days": 5384,
+      "by_horizon": {
+        "h1": {
+          "horizon": 1,
+          "per_fold": [
+            {
+              "fold": 1,
+              "train_start": "2005-01-04",
+              "train_end": "2008-06-25",
+              "test_start": "2008-07-30",
+              "test_end": "2012-02-17",
+              "n_train": 875,
+              "n_test": 897,
+              "macro_f1": 0.22936357384960307,
+              "q33": -10.973508625480276,
+              "q67": -9.279421375973852
+            },
+            {
+              "fold": 2,
+              "train_start": "2005-01-04",
+              "train_end": "2012-01-17",
+              "test_start": "2012-02-21",
+              "test_end": "2015-09-14",
+              "n_train": 1772,
+              "n_test": 897,
+              "macro_f1": 0.2902711273355563,
+              "q33": -10.877112373307588,
+              "q67": -9.021079780217566
+            },
+            {
+              "fold": 3,
+              "train_start": "2005-01-04",
+              "train_end": "2015-08-11",
+              "test_start": "2015-09-15",
+              "test_end": "2019-04-08",
+              "n_train": 2669,
+              "n_test": 897,
+              "macro_f1": 0.3018752905472375,
+              "q33": -11.131971493724302,
+              "q67": -9.24113843636864
+            },
+            {
+              "fold": 4,
+              "train_start": "2005-01-04",
+              "train_end": "2019-03-06",
+              "test_start": "2019-04-09",
+              "test_end": "2022-10-27",
+              "n_train": 3566,
+              "n_test": 897,
+              "macro_f1": 0.29603359246135114,
+              "q33": -11.284079085634675,
+              "q67": -9.33916976308895
+            },
+            {
+              "fold": 5,
+              "train_start": "2005-01-04",
+              "train_end": "2022-09-26",
+              "test_start": "2022-10-28",
+              "test_end": "2026-05-28",
+              "n_train": 4463,
+              "n_test": 897,
+              "macro_f1": 0.19230585263998887,
+              "q33": -11.165189005378183,
+              "q67": -9.193375118835565
+            }
+          ],
+          "fold_macro_f1_mean": 0.26196988736674737,
+          "fold_macro_f1_std": 0.04352007997954746,
+          "pooled_macro_f1": 0.298528083153189,
+          "n_pooled": 4485
+        },
+        "h5": {
+          "horizon": 5,
+          "per_fold": [
+            {
+              "fold": 1,
+              "train_start": "2005-01-04",
+              "train_end": "2008-06-26",
+              "test_start": "2008-07-31",
+              "test_end": "2012-02-17",
+              "n_train": 876,
+              "n_test": 896,
+              "macro_f1": 0.4882718533806992,
+              "q33": -9.713708699808077,
+              "q67": -9.007209187934404
+            },
+            {
+              "fold": 2,
+              "train_start": "2005-01-04",
+              "train_end": "2012-01-17",
+              "test_start": "2012-02-21",
+              "test_end": "2015-09-11",
+              "n_train": 1772,
+              "n_test": 896,
+              "macro_f1": 0.41727604672329005,
+              "q33": -9.494017242165247,
+              "q67": -8.624959339234634
+            },
+            {
+              "fold": 3,
+              "train_start": "2005-01-04",
+              "train_end": "2015-08-10",
+              "test_start": "2015-09-14",
+              "test_end": "2019-04-04",
+              "n_train": 2668,
+              "n_test": 896,
+              "macro_f1": 0.5135251928987773,
+              "q33": -9.762726278922822,
+              "q67": -8.90097281212584
+            },
+            {
+              "fold": 4,
+              "train_start": "2005-01-04",
+              "train_end": "2019-03-04",
+              "test_start": "2019-04-05",
+              "test_end": "2022-10-24",
+              "n_train": 3564,
+              "n_test": 896,
+              "macro_f1": 0.5274109092102887,
+              "q33": -9.867593803470275,
+              "q67": -8.947178164543578
+            },
+            {
+              "fold": 5,
+              "train_start": "2005-01-04",
+              "train_end": "2022-09-21",
+              "test_start": "2022-10-25",
+              "test_end": "2026-05-21",
+              "n_train": 4460,
+              "n_test": 896,
+              "macro_f1": 0.43317464144456636,
+              "q33": -9.79815459180426,
+              "q67": -8.80391873167401
+            }
+          ],
+          "fold_macro_f1_mean": 0.4759317287315243,
+          "fold_macro_f1_std": 0.04355298105143329,
+          "pooled_macro_f1": 0.5437027098196755,
+          "n_pooled": 4480
+        },
+        "h22": {
+          "horizon": 22,
+          "per_fold": [
+            {
+              "fold": 1,
+              "train_start": "2005-01-04",
+              "train_end": "2008-06-24",
+              "test_start": "2008-07-29",
+              "test_end": "2012-02-10",
+              "n_train": 874,
+              "n_test": 893,
+              "macro_f1": 0.5011779527742337,
+              "q33": -9.5670065519612,
+              "q67": -8.848878380602242
+            },
+            {
+              "fold": 2,
+              "train_start": "2005-01-04",
+              "train_end": "2012-01-09",
+              "test_start": "2012-02-13",
+              "test_end": "2015-08-31",
+              "n_train": 1767,
+              "n_test": 893,
+              "macro_f1": 0.3590510169316404,
+              "q33": -9.366114666816134,
+              "q67": -8.590586001936273
+            },
+            {
+              "fold": 3,
+              "train_start": "2005-01-04",
+              "train_end": "2015-07-29",
+              "test_start": "2015-09-01",
+              "test_end": "2019-03-20",
+              "n_train": 2660,
+              "n_test": 893,
+              "macro_f1": 0.45166666666666666,
+              "q33": -9.55709894007328,
+              "q67": -8.86558437861731
+            },
+            {
+              "fold": 4,
+              "train_start": "2005-01-04",
+              "train_end": "2019-02-14",
+              "test_start": "2019-03-21",
+              "test_end": "2022-10-04",
+              "n_train": 3553,
+              "n_test": 893,
+              "macro_f1": 0.48091870072267584,
+              "q33": -9.623686165514021,
+              "q67": -8.902199433147993
+            },
+            {
+              "fold": 5,
+              "train_start": "2005-01-04",
+              "train_end": "2022-08-31",
+              "test_start": "2022-10-05",
+              "test_end": "2026-04-28",
+              "n_train": 4446,
+              "n_test": 893,
+              "macro_f1": 0.47540536432329344,
+              "q33": -9.57539346650283,
+              "q67": -8.768654394689186
+            }
+          ],
+          "fold_macro_f1_mean": 0.45364394028370203,
+          "fold_macro_f1_std": 0.04985716645765175,
+          "pooled_macro_f1": 0.5506979355991218,
+          "n_pooled": 4465
+        }
+      }
+    },
+    "^DJI": {
+      "first_date": "2005-01-04",
+      "last_date": "2026-05-29",
+      "n_days": 5384,
+      "by_horizon": {
+        "h1": {
+          "horizon": 1,
+          "per_fold": [
+            {
+              "fold": 1,
+              "train_start": "2005-01-04",
+              "train_end": "2008-06-25",
+              "test_start": "2008-07-30",
+              "test_end": "2012-02-17",
+              "n_train": 875,
+              "n_test": 897,
+              "macro_f1": 0.32676831964206543,
+              "q33": -11.804730823601357,
+              "q67": -10.02748544506924
+            },
+            {
+              "fold": 2,
+              "train_start": "2005-01-04",
+              "train_end": "2012-01-17",
+              "test_start": "2012-02-21",
+              "test_end": "2015-09-14",
+              "n_train": 1772,
+              "n_test": 897,
+              "macro_f1": 0.2884062640160201,
+              "q33": -11.447695305470631,
+              "q67": -9.513329921031179
+            },
+            {
+              "fold": 3,
+              "train_start": "2005-01-04",
+              "train_end": "2015-08-11",
+              "test_start": "2015-09-15",
+              "test_end": "2019-04-08",
+              "n_train": 2669,
+              "n_test": 897,
+              "macro_f1": 0.32922610862194973,
+              "q33": -11.671254973079346,
+              "q67": -9.755984532678758
+            },
+            {
+              "fold": 4,
+              "train_start": "2005-01-04",
+              "train_end": "2019-03-06",
+              "test_start": "2019-04-09",
+              "test_end": "2022-10-27",
+              "n_train": 3566,
+              "n_test": 897,
+              "macro_f1": 0.30957819737742825,
+              "q33": -11.817144200974116,
+              "q67": -9.850798438842022
+            },
+            {
+              "fold": 5,
+              "train_start": "2005-01-04",
+              "train_end": "2022-09-26",
+              "test_start": "2022-10-28",
+              "test_end": "2026-05-28",
+              "n_train": 4463,
+              "n_test": 897,
+              "macro_f1": 0.23179651638055712,
+              "q33": -11.721332253673314,
+              "q67": -9.778824328500919
+            }
+          ],
+          "fold_macro_f1_mean": 0.29715508120760414,
+          "fold_macro_f1_std": 0.035799755037876926,
+          "pooled_macro_f1": 0.3394759235306252,
+          "n_pooled": 4485
+        },
+        "h5": {
+          "horizon": 5,
+          "per_fold": [
+            {
+              "fold": 1,
+              "train_start": "2005-01-04",
+              "train_end": "2008-06-26",
+              "test_start": "2008-07-31",
+              "test_end": "2012-02-17",
+              "n_train": 876,
+              "n_test": 896,
+              "macro_f1": 0.48287605140416806,
+              "q33": -10.513087611471825,
+              "q67": -9.564859543984026
+            },
+            {
+              "fold": 2,
+              "train_start": "2005-01-04",
+              "train_end": "2012-01-17",
+              "test_start": "2012-02-21",
+              "test_end": "2015-09-11",
+              "n_train": 1772,
+              "n_test": 896,
+              "macro_f1": 0.3532660124444719,
+              "q33": -10.199146139601972,
+              "q67": -9.026585332162838
+            },
+            {
+              "fold": 3,
+              "train_start": "2005-01-04",
+              "train_end": "2015-08-10",
+              "test_start": "2015-09-14",
+              "test_end": "2019-04-04",
+              "n_train": 2668,
+              "n_test": 896,
+              "macro_f1": 0.5587076039603068,
+              "q33": -10.396585650376155,
+              "q67": -9.31545775325246
+            },
+            {
+              "fold": 4,
+              "train_start": "2005-01-04",
+              "train_end": "2019-03-04",
+              "test_start": "2019-04-05",
+              "test_end": "2022-10-24",
+              "n_train": 3564,
+              "n_test": 896,
+              "macro_f1": 0.4848319851689748,
+              "q33": -10.506385970180935,
+              "q67": -9.38291865255927
+            },
+            {
+              "fold": 5,
+              "train_start": "2005-01-04",
+              "train_end": "2022-09-21",
+              "test_start": "2022-10-25",
+              "test_end": "2026-05-21",
+              "n_train": 4460,
+              "n_test": 896,
+              "macro_f1": 0.385827664399093,
+              "q33": -10.45414290751065,
+              "q67": -9.320910843763025
+            }
+          ],
+          "fold_macro_f1_mean": 0.45310186347540293,
+          "fold_macro_f1_std": 0.07421440604801793,
+          "pooled_macro_f1": 0.5280854520536731,
+          "n_pooled": 4480
+        },
+        "h22": {
+          "horizon": 22,
+          "per_fold": [
+            {
+              "fold": 1,
+              "train_start": "2005-01-04",
+              "train_end": "2008-06-24",
+              "test_start": "2008-07-29",
+              "test_end": "2012-02-10",
+              "n_train": 874,
+              "n_test": 893,
+              "macro_f1": 0.47125910853238456,
+              "q33": -10.28360810597284,
+              "q67": -9.504603945379667
+            },
+            {
+              "fold": 2,
+              "train_start": "2005-01-04",
+              "train_end": "2012-01-09",
+              "test_start": "2012-02-13",
+              "test_end": "2015-08-31",
+              "n_train": 1767,
+              "n_test": 893,
+              "macro_f1": 0.3620426326091106,
+              "q33": -9.951687550658361,
+              "q67": -8.964441597236988
+            },
+            {
+              "fold": 3,
+              "train_start": "2005-01-04",
+              "train_end": "2015-07-29",
+              "test_start": "2015-09-01",
+              "test_end": "2019-03-20",
+              "n_train": 2660,
+              "n_test": 893,
+              "macro_f1": 0.5320183047832351,
+              "q33": -10.093221597238184,
+              "q67": -9.340301245366417
+            },
+            {
+              "fold": 4,
+              "train_start": "2005-01-04",
+              "train_end": "2019-02-14",
+              "test_start": "2019-03-21",
+              "test_end": "2022-10-04",
+              "n_train": 3553,
+              "n_test": 893,
+              "macro_f1": 0.49483357516598514,
+              "q33": -10.18052061192447,
+              "q67": -9.36268255882704
+            },
+            {
+              "fold": 5,
+              "train_start": "2005-01-04",
+              "train_end": "2022-08-31",
+              "test_start": "2022-10-05",
+              "test_end": "2026-04-28",
+              "n_train": 4446,
+              "n_test": 893,
+              "macro_f1": 0.40271346307742895,
+              "q33": -10.115993482174382,
+              "q67": -9.289029661517267
+            }
+          ],
+          "fold_macro_f1_mean": 0.4525734168336289,
+          "fold_macro_f1_std": 0.06185208833780624,
+          "pooled_macro_f1": 0.5549904292108703,
+          "n_pooled": 4465
+        }
+      }
+    }
+  },
+  "headline": {
+    "^NDX": {
+      "h1": {
+        "pooled_macro_f1": 0.298528083153189,
+        "fold_macro_f1_mean": 0.26196988736674737,
+        "fold_macro_f1_std": 0.04352007997954746,
+        "n_pooled": 4485
+      },
+      "h5": {
+        "pooled_macro_f1": 0.5437027098196755,
+        "fold_macro_f1_mean": 0.4759317287315243,
+        "fold_macro_f1_std": 0.04355298105143329,
+        "n_pooled": 4480
+      },
+      "h22": {
+        "pooled_macro_f1": 0.5506979355991218,
+        "fold_macro_f1_mean": 0.45364394028370203,
+        "fold_macro_f1_std": 0.04985716645765175,
+        "n_pooled": 4465
+      }
+    },
+    "^DJI": {
+      "h1": {
+        "pooled_macro_f1": 0.3394759235306252,
+        "fold_macro_f1_mean": 0.29715508120760414,
+        "fold_macro_f1_std": 0.035799755037876926,
+        "n_pooled": 4485
+      },
+      "h5": {
+        "pooled_macro_f1": 0.5280854520536731,
+        "fold_macro_f1_mean": 0.45310186347540293,
+        "fold_macro_f1_std": 0.07421440604801793,
+        "n_pooled": 4480
+      },
+      "h22": {
+        "pooled_macro_f1": 0.5549904292108703,
+        "fold_macro_f1_mean": 0.4525734168336289,
+        "fold_macro_f1_std": 0.06185208833780624,
+        "n_pooled": 4465
+      }
+    }
+  },
+  "delta_vs_recovered_baseline": {
+    "^NDX": {
+      "h1": {
+        "pooled_delta_vs_baseline": -0.388771916846811,
+        "fold_mean_delta_vs_baseline": -0.36703011263325264,
+        "sigma_denom_used": 0.04352007997954746,
+        "fold_mean_delta_in_sigmas": -8.433580839137722,
+        "beats_baseline_by_1sigma_fold_mean": false,
+        "beats_baseline_by_1sigma_pooled_conservative": false
+      },
+      "h5": {
+        "pooled_delta_vs_baseline": -0.14129729018032455,
+        "fold_mean_delta_vs_baseline": -0.1420682712684757,
+        "sigma_denom_used": 0.04355298105143329,
+        "fold_mean_delta_in_sigmas": -3.261964344087082,
+        "beats_baseline_by_1sigma_fold_mean": false,
+        "beats_baseline_by_1sigma_pooled_conservative": false
+      },
+      "h22": {
+        "pooled_delta_vs_baseline": -0.10350206440087817,
+        "fold_mean_delta_vs_baseline": -0.10035605971629802,
+        "sigma_denom_used": 0.04985716645765175,
+        "fold_mean_delta_in_sigmas": -2.0128713051019376,
+        "beats_baseline_by_1sigma_fold_mean": false,
+        "beats_baseline_by_1sigma_pooled_conservative": false
+      }
+    },
+    "^DJI": {
+      "h1": {
+        "pooled_delta_vs_baseline": -0.3478240764693748,
+        "fold_mean_delta_vs_baseline": -0.33184491879239586,
+        "sigma_denom_used": 0.042,
+        "fold_mean_delta_in_sigmas": -7.901069495057044,
+        "beats_baseline_by_1sigma_fold_mean": false,
+        "beats_baseline_by_1sigma_pooled_conservative": false
+      },
+      "h5": {
+        "pooled_delta_vs_baseline": -0.15691454794632698,
+        "fold_mean_delta_vs_baseline": -0.16489813652459706,
+        "sigma_denom_used": 0.07421440604801793,
+        "fold_mean_delta_in_sigmas": -2.2219154650096544,
+        "beats_baseline_by_1sigma_fold_mean": false,
+        "beats_baseline_by_1sigma_pooled_conservative": false
+      },
+      "h22": {
+        "pooled_delta_vs_baseline": -0.09920957078912973,
+        "fold_mean_delta_vs_baseline": -0.10142658316637115,
+        "sigma_denom_used": 0.06185208833780624,
+        "fold_mean_delta_in_sigmas": -1.6398247155767502,
+        "beats_baseline_by_1sigma_fold_mean": false,
+        "beats_baseline_by_1sigma_pooled_conservative": false
+      }
+    }
+  },
+  "beats_outside_ci": false,
+  "caveats": "Fusion TP carries only SPX 5-min intraday RV. NDX and DJI have no intraday source in this repository, so the per-asset arm uses a daily r^2 proxy. The proxy is noisier than 5-min RV, which structurally caps macro-F1; this is a data limit, not an arm failure. Date window matched to the fusion TP (2005-01-03 to 2026-05-29) so fold sizes and embargo are comparable."
+}
