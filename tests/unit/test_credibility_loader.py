@@ -89,7 +89,7 @@ def test_assemble_inputs_filters_fred_series_to_trailing_window(tmp_path: Path) 
             ("2024-02-01", 4.5),
             ("2024-03-01", 5.0),
             ("2024-04-01", 5.25),
-            ("2024-05-01", 5.5),
+            ("2024-05-01", 5.5),  # same-day as as_of — excluded (strict ``< as_of``)
             ("2024-06-01", 5.5),  # post-as-of — excluded
         ]
     )
@@ -103,7 +103,10 @@ def test_assemble_inputs_filters_fred_series_to_trailing_window(tmp_path: Path) 
         fred_response=response,
         realized_window_days=200,
     )
-    assert inputs.realized_path == [4.0, 4.5, 5.0, 5.25, 5.5]
+    # The 2024-05-01 observation is the FRED close on the FOMC release day
+    # itself; including it would feed the announcement's own market reaction
+    # back into its credibility feature. The cutoff is therefore strict.
+    assert inputs.realized_path == [4.0, 4.5, 5.0, 5.25]
     # stated_path is clipped to the matched horizon from stance_history
     assert inputs.stated_path == [0.3, -0.1]
 

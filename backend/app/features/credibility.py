@@ -122,22 +122,19 @@ def realized_vs_stated_gap(
 
 
 def market_implied_gap(sep_terminal: float | None, ois_terminal: float | None) -> float:
-    """SEP-implied terminal rate minus OIS-implied terminal rate, clipped to
-    `[-1, 1]` (units: percentage points scaled by 1/4 since the SEP-OIS gap
-    rarely exceeds 4pp in observed history).
+    """SEP-implied terminal rate minus market-implied terminal rate, clipped
+    to ``[-1, 1]`` (scaled by 1/4 since the gap rarely exceeds 4pp in
+    observed history).
+
+    The Fed publishes a long-run median fed-funds projection in its quarterly
+    Summary of Economic Projections; the market-implied long-run is
+    approximated by the 5-year Treasury yield (DGS5) where a clean OIS
+    forward is unavailable on FRED. Both lookups live in
+    :mod:`app.services.credibility_loader` and are strict ``< as_of`` so a
+    same-day FOMC release cannot leak into its own credibility feature.
 
     Returns 0.0 if either value is missing so downstream consumers don't have
     to special-case None.
-
-    **Status.** The SEP / OIS terminal-rate loaders are not yet wired into the
-    serving / training paths, so every caller in this repository today passes
-    ``sep_terminal=None`` and ``ois_terminal=None`` and this function returns
-    0.0 unconditionally. The 4-vector ``CredibilityVector`` is therefore
-    effectively 3 active axes plus this reserved slot. Downstream models see
-    a constant zero column which depresses the RobustScaler IQR but does not
-    leak information. Treat any paper-facing description as "3 active
-    credibility axes plus 1 reserved (market-implied gap, populated when
-    SEP / OIS feeds are wired)" until those loaders land.
     """
 
     if sep_terminal is None or ois_terminal is None:
