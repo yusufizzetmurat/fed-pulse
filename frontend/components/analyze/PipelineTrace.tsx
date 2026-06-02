@@ -146,19 +146,17 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
     key: "encode",
     title: "Encode",
     blurb:
-      "Runs the text through the language model. Flags inputs that look unlike anything the model was trained on, so the workspace can warn before trusting the result.",
+      "Runs the text through the language model and emits the encoder embedding the downstream heads consume.",
     icon: <Layers className="h-3.5 w-3.5" />,
     state: "ok",
     summary: encoderKey
       ? `Model variant: ${friendlyEncoderName(encoderKey)}`
       : "Model variant: default",
     body: (
-      <div className="space-y-3">
-        <dl className="grid gap-x-4 gap-y-1.5 text-sm sm:grid-cols-2">
-          <dt className="text-muted-foreground">Model variant</dt>
-          <dd className="numeric text-right">{encoderKey ?? "default"}</dd>
-        </dl>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        Model variant: <span className="numeric text-foreground">{encoderKey ?? "default"}</span>. No
+        OOD signal available.
+      </p>
     ),
   };
 
