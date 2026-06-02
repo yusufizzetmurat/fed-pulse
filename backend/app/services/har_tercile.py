@@ -20,6 +20,7 @@ mass triple instead of a single argmax.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -225,57 +226,84 @@ def predict_har_regime(
             resid = y_valid - a_full @ np.asarray(fallback_coef)
             fallback_sigma_log = float(np.std(resid, ddof=1))
 
-    horizons_out: list[dict[str, Any]] = []
-    for h in _HORIZONS:
-        hk = f"h{h}"
-        if pred is not None:
-            row = pred.spec["by_horizon"][hk]
-        else:
-            row = {}
-        coef = (har_coef or {}).get(h)
-        if coef is None:
-            if is_canonical:
-                coef = row["har_coef"]
-            else:
-                assert fallback_coef is not None
-                coef = fallback_coef
-        log_point = _har_point_log_rv(log_rv, coef)
-        predicted_rv = float(math.exp(log_point))
-        # 80% conformal band width -> sigma in log-RV space; the QLIKE-DLq
-        # band is the QLIKE-DLq ensemble's, but the HAR baseline shares
-        # the same residual dispersion order-of-magnitude. Falls back to
-        # the in-sample residual sigma for non-canonical symbols, or to a
-        # one-hot when even that is unavailable.
-        q80 = float(row.get("conformal_quantiles", {}).get("0.20", 0.0))
-        if q80 > 0.0:
-            sigma_log = q80 / _CONFIDENCE_Z
-        else:
-            sigma_log = fallback_sigma_log
-        probs = _soft_tercile_probs(predicted_rv, cutoffs_q33, cutoffs_q67, sigma_log)
-        tercile_idx = _bucket_index(predicted_rv, cutoffs_q33, cutoffs_q67)
-        eval_row = eval_block.get(hk, {}) if isinstance(eval_block, dict) else {}
-        macro_f1 = _HAR_TERCILE_MACRO_F1[h] if is_canonical else None
-        macro_f1_src = _HAR_TERCILE_F1_SOURCE if is_canonical else (
-            "Per-call OLS HAR(1,5,22) fit; baseline macro-F1 not pinned for non-SPX symbols."
-        )
-        horizons_out.append(
-            {
-                "h": h,
-                "predicted_rv": predicted_rv,
-                "tercile": _TERCILE_LABELS[tercile_idx],
-                "tercile_probs": probs,
-                "macro_f1": macro_f1,
-                "macro_f1_source": macro_f1_src,
-                "qlike_model": _safe_float(eval_row.get("qlike_ens")),
-                "qlike_har": _safe_float(eval_row.get("qlike_har")),
-            }
-        )
+    ctx = _PredictCtx(
+        log_rv=log_rv,
+        pred=pred,
+        eval_block=eval_block,
+        har_coef=har_coef,
+        fallback_coef=fallback_coef,
+        fallback_sigma_log=fallback_sigma_log,
+        cutoffs_q33=cutoffs_q33,
+        cutoffs_q67=cutoffs_q67,
+        is_canonical=is_canonical,
+    )
+    horizons_out = [_predict_for_horizon(h, ctx) for h in _HORIZONS]
     return {
         "horizons": horizons_out,
         "cutoffs_q33": float(cutoffs_q33),
         "cutoffs_q67": float(cutoffs_q67),
         "model_revision": (pred.revision if pred is not None else "per-call-ols-fit"),
         "symbol": symbol,
+    }
+
+
+@dataclass(frozen=True)
+class _PredictCtx:
+    """Frozen context bundle for :func:`_predict_for_horizon`.
+
+    Bundles the per-call inputs the inner helper needs so the function
+    signature stays inside the ruff PLR0913 budget while still keeping
+    every input named for readability.
+    """
+
+    log_rv: np.ndarray
+    pred: Any
+    eval_block: dict[str, Any]
+    har_coef: dict[int, list[float]] | None
+    fallback_coef: list[float] | None
+    fallback_sigma_log: float
+    cutoffs_q33: float
+    cutoffs_q67: float
+    is_canonical: bool
+
+
+def _predict_for_horizon(h: int, ctx: _PredictCtx) -> dict[str, Any]:
+    """Run the HAR-tercile prediction for one horizon ``h``.
+
+    Extracted from :func:`predict_har_regime` to keep the cyclomatic
+    complexity of the outer call within the ruff C901 budget; the
+    selection logic (canonical vs per-call HAR coefs, conformal band vs
+    in-sample sigma) lives here.
+    """
+
+    hk = f"h{h}"
+    row = ctx.pred.spec["by_horizon"][hk] if ctx.pred is not None else {}
+    coef = (ctx.har_coef or {}).get(h)
+    if coef is None:
+        coef = row["har_coef"] if ctx.is_canonical else ctx.fallback_coef
+        assert coef is not None
+    log_point = _har_point_log_rv(ctx.log_rv, coef)
+    predicted_rv = float(math.exp(log_point))
+    q80 = float(row.get("conformal_quantiles", {}).get("0.20", 0.0))
+    sigma_log = q80 / _CONFIDENCE_Z if q80 > 0.0 else ctx.fallback_sigma_log
+    probs = _soft_tercile_probs(predicted_rv, ctx.cutoffs_q33, ctx.cutoffs_q67, sigma_log)
+    tercile_idx = _bucket_index(predicted_rv, ctx.cutoffs_q33, ctx.cutoffs_q67)
+    eval_row = ctx.eval_block.get(hk, {}) if isinstance(ctx.eval_block, dict) else {}
+    macro_f1 = _HAR_TERCILE_MACRO_F1[h] if ctx.is_canonical else None
+    macro_f1_src = (
+        _HAR_TERCILE_F1_SOURCE
+        if ctx.is_canonical
+        else "Per-call OLS HAR(1,5,22) fit; baseline macro-F1 not pinned for non-SPX symbols."
+    )
+    return {
+        "h": h,
+        "predicted_rv": predicted_rv,
+        "tercile": _TERCILE_LABELS[tercile_idx],
+        "tercile_probs": probs,
+        "macro_f1": macro_f1,
+        "macro_f1_source": macro_f1_src,
+        "qlike_model": _safe_float(eval_row.get("qlike_ens")),
+        "qlike_har": _safe_float(eval_row.get("qlike_har")),
     }
 
 
