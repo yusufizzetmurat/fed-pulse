@@ -88,8 +88,8 @@ describe("ComparePage", () => {
     fetchHistoryMock.mockResolvedValue({ total: 2, limit: 50, offset: 0, items: ENTRIES });
     const { default: ComparePage } = await import("@/pages/compare");
     render(<ComparePage />);
-    await waitFor(() => expect(screen.getByText(/Run A/)).toBeInTheDocument());
-    expect(screen.getByText(/Run B/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText(/Run A/).length).toBeGreaterThan(0));
+    expect(screen.getAllByText(/Run B/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Pick a run/).length).toBeGreaterThan(0);
   });
 
@@ -109,7 +109,7 @@ describe("ComparePage", () => {
       expect(fetchHistoryRunMock).toHaveBeenCalledWith("http://localhost:8000", "run-a");
       expect(fetchHistoryRunMock).toHaveBeenCalledWith("http://localhost:8000", "run-b");
     });
-    await waitFor(() => expect(screen.getByText(/Δ A − B/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Run A vs\. Run B/)).toBeInTheDocument());
     expect(screen.getByText(/A shifts hawkish vs\. B/i)).toBeInTheDocument();
   });
 });
