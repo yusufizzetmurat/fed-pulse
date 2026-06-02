@@ -21,7 +21,7 @@ services:
       context: .
       dockerfile: Dockerfile.prod
       args:
-        NEXT_PUBLIC_API_URL: https://fedpulse.yusufizzetmurat.com
+        NEXT_PUBLIC_API_URL: https://fedpulse.yusufizzetmurat.com/api
     container_name: fed-pulse-backend
     restart: always
     env_file:
@@ -49,7 +49,7 @@ services:
       context: .
       dockerfile: Dockerfile.prod
       args:
-        NEXT_PUBLIC_API_URL: https://fedpulse.yusufizzetmurat.com
+        NEXT_PUBLIC_API_URL: https://fedpulse.yusufizzetmurat.com/api
     container_name: fed-pulse-frontend
     restart: always
     # The FE entrypoint never touches HF Hub (FED_PULSE_SKIP_EAGER_PULL=1)
@@ -62,7 +62,7 @@ services:
       - NODE_ENV=production
       - FED_PULSE_SVC_MASK=frontend
       - FED_PULSE_SKIP_EAGER_PULL=1
-      - NEXT_PUBLIC_API_URL=https://fedpulse.yusufizzetmurat.com
+      - NEXT_PUBLIC_API_URL=https://fedpulse.yusufizzetmurat.com/api
       - HF_HOME=/home/fedpulse/.cache/huggingface
       - HUGGINGFACE_HUB_CACHE=/home/fedpulse/.cache/huggingface
     volumes:
