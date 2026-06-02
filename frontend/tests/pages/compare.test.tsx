@@ -28,16 +28,6 @@ vi.mock("@/lib/analyze/api", () => ({
   resolveApiBaseUrl: () => "http://localhost:8000",
   fetchHistory: (...args: unknown[]) => fetchHistoryMock(...args),
   fetchHistoryRun: (...args: unknown[]) => fetchHistoryRunMock(...args),
-  // `compare()` defers to fetchHistoryRun under the hood; the page calls
-  // compare(baseUrl, id, id) for single-slot loads and compare(a, b) for
-  // pairs. Mirror that fan-out here so the test asserts both slot fetches.
-  compare: async (_base: string, idA: string, idB: string) => {
-    const [a, b] = await Promise.all([
-      fetchHistoryRunMock(_base, idA),
-      fetchHistoryRunMock(_base, idB),
-    ]);
-    return { a, b };
-  },
 }));
 
 const ENTRIES = [
@@ -111,5 +101,14 @@ describe("ComparePage", () => {
     });
     await waitFor(() => expect(screen.getByText(/Run A vs\. Run B/)).toBeInTheDocument());
     expect(screen.getByText(/A shifts hawkish vs\. B/i)).toBeInTheDocument();
+    // The renamed "Sentiment score Δ" tile should sit next to its formatted
+    // numeric badge: run-a scored 0.82, run-b scored 0.71, so the delta
+    // tile shows +0.110 (three-decimal signed delta).
+    const scoreLabel = screen.getByText(/Sentiment score Δ/);
+    const scoreValue = scoreLabel.parentElement?.querySelector("dd");
+    expect(scoreValue).not.toBeNull();
+    expect(scoreValue!.textContent).toMatch(/\+0\.110/);
+    expect(screen.getByText(/Credibility drift Δ/)).toBeInTheDocument();
+    expect(screen.getByText(/Realized vs\. stated gap Δ/)).toBeInTheDocument();
   });
 });
