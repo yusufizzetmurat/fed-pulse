@@ -115,8 +115,17 @@ def test_predict_rv_returns_three_horizons_with_bands(stub_predictor: Any) -> No
     rv = np.abs(rng.normal(scale=1e-4, size=30)) + 1e-5
     out = rv_forecaster.predict_rv(rv.tolist())
 
-    assert set(out.keys()) == {"horizons", "model_revision"}
+    assert set(out.keys()) == {
+        "horizons",
+        "model_revision",
+        "realized_features_source",
+        "realized_features_date",
+    }
     assert out["model_revision"] == "stub@2026-05-29"
+    # No intraday_measures passed → forecaster must surface the
+    # HAR-grade fallback flag with no measure date.
+    assert out["realized_features_source"] == "training_means"
+    assert out["realized_features_date"] is None
     horizons = out["horizons"]
     assert [row["h"] for row in horizons] == [1, 5, 22]
 
@@ -129,6 +138,44 @@ def test_predict_rv_returns_three_horizons_with_bands(stub_predictor: Any) -> No
         assert math.isfinite(row["qlike_har"])
         assert row["qlike_model"] < row["qlike_har"]
         assert 0.5 < row["coverage_empirical_90"] < 1.0
+
+
+def test_predict_rv_surfaces_live_source_when_intraday_supplied(stub_predictor: Any) -> None:
+    """Passing live intraday measures flips the source flag to ``live``.
+
+    The forecast value itself need not differ much for the stub (which
+    holds feat_mean ≈ realized values), but the flag is the load-bearing
+    signal the dashboard uses to badge QLIKE-full vs HAR-fallback.
+    """
+
+    rng = np.random.default_rng(0)
+    rv = np.abs(rng.normal(scale=1e-4, size=30)) + 1e-5
+    intraday = {
+        "rv": 1.2e-4,
+        "rs_pos": 6e-5,
+        "rs_neg": 6e-5,
+        "bv": 1.0e-4,
+        "rq": 8e-8,
+        "rskew": -0.1,
+        "rkurt": 4.2,
+        "parkinson": 1.3e-4,
+        "rvol": 1.5e9,
+        "n_ret": 78.0,
+    }
+    out = rv_forecaster.predict_rv(rv.tolist(), intraday_measures=intraday)
+    assert out["realized_features_source"] == "live"
+
+
+def test_predict_rv_falls_back_when_intraday_measure_key_missing(stub_predictor: Any) -> None:
+    """Malformed intraday dict (missing key) must degrade to training_means
+    rather than raise — the forecast should still serve at HAR-grade.
+    """
+
+    rng = np.random.default_rng(1)
+    rv = np.abs(rng.normal(scale=1e-4, size=30)) + 1e-5
+    bad = {"rs_pos": 6e-5, "rs_neg": 6e-5}  # missing bv/rq/rskew/rkurt/parkinson/rvol
+    out = rv_forecaster.predict_rv(rv.tolist(), intraday_measures=bad)
+    assert out["realized_features_source"] == "training_means"
 
 
 def test_predict_rv_rejects_short_history(stub_predictor: Any) -> None:
