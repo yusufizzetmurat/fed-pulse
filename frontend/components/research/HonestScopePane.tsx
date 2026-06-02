@@ -102,15 +102,15 @@ export function HonestScopePane() {
           <CardContent className="space-y-3">
             <DoesNotPredict
               title="Price direction or magnitude from FOMC text"
-              detail="Across four encoders (finbert_fed_adjacent, bge-large, e5-large, gte-large), text robustly hurts next-day vol forecasting. The fused text+market regime classifier underperforms HAR-tercile by ~0.10 macro-F1 at 1-day."
+              detail="Across four encoders (finbert_fed_adjacent, bge-large, e5-large, gte-large), adding FOMC text to the next-day vol forecaster produced no gain — and in the un-regularized fusion a small but consistent loss. Correctly gating the fusion (below) removes the drag without adding any signal."
               metric="Text-vs-market 95% block CI  [−0.022, −0.009] at 1-day"
-              source="Block-bootstrap incremental CI, four-encoder mean, daily n=1999"
+              source="Block-bootstrap incremental CI, four-encoder mean, daily n=1999 (un-regularized fusion)"
             />
             <DoesNotPredict
               title="Volatility regime FROM text"
-              detail="The late-fusion classifier is still rendered on the Workspace as a second opinion, but only as a transparency disclosure. HAR-tercile is the headline because it&apos;s the better predictor."
-              metric="Late-fusion macro-F1  0.592 (1d) — 0.095 below HAR-tercile"
-              source="Pooled walk-forward eval on the fused text+market head"
+              detail="The late-fusion classifier is rendered on the Workspace as a second opinion. With output-level residual fusion the learned gate collapses to ≈0.01 — the model is free to use FOMC text and learns to ignore it, landing at its own market-only level. HAR-tercile is still the headline because it&apos;s the better predictor."
+              metric="Late-fusion macro-F1  0.629 (1d) — text-neutral, ~0.06 below HAR-tercile"
+              source="Pooled walk-forward eval; fused 0.629 vs gate-off market-only 0.631 (gate≈0.01)"
             />
             <DoesNotPredict
               title="Surprise → drift channel"

@@ -101,19 +101,21 @@ export function SecondOpinionRegime({
           <Badge
             variant="outline"
             className="numeric text-[10px]"
-            title="Late-fusion macro-F1 on the 1-day forward-RV regime task, pooled walk-forward eval, n=1999."
+            title="Late-fusion macro-F1 on the 1-day forward-RV regime task, pooled walk-forward eval, n=1999. Text-neutral residual fusion: fused 0.629 vs gate-off market-only 0.631."
           >
-            macro-F1 0.592 (1-day)
+            macro-F1 0.629 (1-day)
           </Badge>
         </div>
       </div>
       <div className="flex items-start gap-2 rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         <p>
-          Weaker than the HAR baseline above. The text+market fusion underperforms
-          HAR-tercile by ~0.10 macro-F1 at 1-day under the pooled walk-forward eval
-          (n=1999); the text channel itself robustly hurts the model — block-bootstrap
-          95% CI [-0.022, -0.009] at 1-day across four encoders. Surfaced for transparency.
+          Still below the HAR baseline above (~0.06 macro-F1 at 1-day), but text-neutral:
+          with output-level residual fusion the learned gate collapses to ≈0.01, so the
+          fused forecast matches its own market-only path (0.629 vs 0.631; the fused−market
+          95% block CI includes 0). The model is free to use FOMC text and learns to ignore
+          it — the text adds no forecasting signal and no longer drags the model down.
+          Surfaced for transparency.
         </p>
       </div>
       <RegimeHeadline

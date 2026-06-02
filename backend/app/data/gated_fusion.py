@@ -1,4 +1,4 @@
-"""Gated text↔market fusion forecaster with an InfoNCE alignment objective.
+"""Gated text↔market fusion forecaster.
 
 The model fuses a (precomputed) Fed-communication text embedding with a market
 feature vector through a learned scalar **gate**, then forecasts forward
@@ -8,12 +8,21 @@ pure market path — it can never do worse than market-only by leaning on absent
 text. The gate value is itself an interpretable readout of "how much did text
 matter here."
 
-Alongside the supervised forecast loss, an **InfoNCE** term aligns each
-communication's text embedding with an encoder of its realized forward-RV
-outcome (CLIP-style symmetric contrastive loss with in-batch negatives),
-computed only over rows that carry text. Text encoding is done upstream and
-cached; this module consumes embeddings so training stays fast and the encoder
-choice is swappable.
+The **canonical** fusion is the text-neutral one (``residual_logits=True``):
+text proposes a *gated additive correction* to the market head's logits, the
+market head is supervised directly, and an L1 penalty + closed gate init keep
+the gate near zero. As gate→0 the fused output collapses to ``market_logits``
+exactly, so a fusion that finds no signal in the text can do no worse than
+market-only — it learns to ignore uninformative text rather than overfit it.
+
+Two contrastive objectives are retained as optional research arms (they are
+*not* part of the canonical text-neutral config): an **InfoNCE** term that
+aligns each communication's text embedding with an encoder of its realized
+forward-RV outcome (CLIP-style, in-batch negatives), and a label-aware
+**SupCon** term for the regime classifier. On this corpus both make the text
+*look* label-useful on the train fold and open the gate, which hurts OOS;
+``supcon_weight=0`` / ``info_nce_weight=0`` disables them. Text encoding is done
+upstream and cached so training stays fast and the encoder choice is swappable.
 """
 
 from __future__ import annotations
@@ -35,9 +44,15 @@ class GatedFusionForecaster(nn.Module):
         *,
         d_hidden: int = 128,
         temperature: float = 0.07,
+        gate_init_bias: float = 0.0,
+        residual_logits: bool = False,
     ) -> None:
         super().__init__()
         self.temperature = temperature
+        # residual_logits: fuse at the OUTPUT (logit) level — pred = market_logits
+        # + gate * text_correction — so gate→0 collapses to the market head EXACTLY
+        # (text-neutral by construction), vs the default representation-space add.
+        self.residual_logits = residual_logits
         self.text_proj = nn.Sequential(
             nn.Linear(d_text, d_hidden), nn.GELU(), nn.LayerNorm(d_hidden)
         )
@@ -49,9 +64,18 @@ class GatedFusionForecaster(nn.Module):
         )
         # scalar gate from [text rep, market rep, text-present flag]
         self.gate_net = nn.Linear(2 * d_hidden + 1, 1)
+        # Optionally start the gate ~closed (negative bias → sigmoid≈0) so the
+        # model defaults to the pure-market path and only opens the text gate if
+        # it demonstrably lowers the loss. gate_init_bias=-3 → sigmoid≈0.047.
+        nn.init.constant_(self.gate_net.bias, gate_init_bias)
         self.head = nn.Sequential(
             nn.Linear(d_hidden, d_hidden), nn.GELU(), nn.Linear(d_hidden, n_horizons)
         )
+        # residual-logit mode: text proposes a gated additive correction to the
+        # market head's logits (init ~0 so it starts as no correction).
+        self.text_head = nn.Linear(d_hidden, n_horizons)
+        nn.init.zeros_(self.text_head.weight)
+        nn.init.zeros_(self.text_head.bias)
         # outcome encoder used only for the InfoNCE alignment
         self.outcome_enc = nn.Sequential(
             nn.Linear(n_horizons, d_hidden), nn.GELU(), nn.LayerNorm(d_hidden)
@@ -65,9 +89,18 @@ class GatedFusionForecaster(nn.Module):
         mask = text_mask.float().unsqueeze(1)
         gate = torch.sigmoid(self.gate_net(torch.cat([zt, zm, mask], dim=1)))
         gate = gate * mask  # FLOOR: no fresh text → gate 0 → pure market path
-        fused = zm + gate * zt
-        pred = self.head(fused)
-        return {"pred": pred, "gate": gate.squeeze(1), "z_text": zt}
+        market_logits = self.head(zm)
+        if self.residual_logits:
+            # Output-level residual: gate→0 ⇒ pred == market_logits exactly.
+            pred = market_logits + gate * self.text_head(zt)
+        else:
+            pred = self.head(zm + gate * zt)
+        return {
+            "pred": pred,
+            "gate": gate.squeeze(1),
+            "z_text": zt,
+            "market_logits": market_logits,
+        }
 
     def encode_outcome(self, targets: torch.Tensor) -> torch.Tensor:
         return cast(torch.Tensor, self.outcome_enc(targets))
@@ -156,18 +189,42 @@ def fusion_clf_loss(
     *,
     supcon_weight: float = 0.1,
     supcon_temp: float = 0.1,
+    gate_l1_weight: float = 0.0,
+    market_aux_weight: float = 0.0,
 ) -> dict[str, torch.Tensor]:
-    """Cross-entropy regime loss + λ·SupCon text alignment.
+    """Cross-entropy regime loss + λ·SupCon text alignment + optional gate L1.
 
     `batch` keys: text_emb, market_feat, text_mask, labels (B,) int64. The model's
     `pred` head outputs `n_classes` logits (built with n_horizons=n_classes).
+
+    ``gate_l1_weight`` penalises an open gate (mean gate value), so the text path
+    only opens when it lowers the CE by more than the penalty — the mechanism that
+    keeps the fused model text-neutral (fused ≥ market-only) rather than letting it
+    overfit text noise. Set ``supcon_weight=0`` for the contrastive-free variant.
     """
 
     out = model(batch["text_emb"], batch["market_feat"], batch["text_mask"])
     ce = torch.nn.functional.cross_entropy(out["pred"], batch["labels"])
     sc = supcon_loss(out["z_text"], batch["labels"], batch["text_mask"], temperature=supcon_temp)
-    total = ce + supcon_weight * sc
-    return {"loss": total, "ce": ce, "supcon": sc, "gate": out["gate"], "logits": out["pred"]}
+    gate_l1 = out["gate"].mean()
+    # Directly supervise the market head so market_logits stays a valid standalone
+    # forecast; with the residual-logit fusion this guarantees fused ≥ market-only
+    # as the gate closes (text can only add a gated correction on top).
+    market_ce = (
+        torch.nn.functional.cross_entropy(out["market_logits"], batch["labels"])
+        if market_aux_weight > 0
+        else ce.new_zeros(())
+    )
+    total = ce + supcon_weight * sc + gate_l1_weight * gate_l1 + market_aux_weight * market_ce
+    return {
+        "loss": total,
+        "ce": ce,
+        "supcon": sc,
+        "gate_l1": gate_l1,
+        "market_ce": market_ce,
+        "gate": out["gate"],
+        "logits": out["pred"],
+    }
 
 
 def build_model(

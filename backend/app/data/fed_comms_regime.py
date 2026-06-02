@@ -5,10 +5,16 @@ Magnitude-RV is the worst target for text (HAR owns it). This reframes to a
 **macro-F1**, where text's coarse hawkish/dovish/uncertainty signal has a fair
 shot and a coarse metric can reveal value an R² washes out.
 
-Same leak-safe gated-fusion machinery as the regression trainer, but with a
-cross-entropy head and a **supervised-contrastive (SupCon)** alignment term
-(label-aware — same-regime statements attract, unlike vanilla InfoNCE which
-would push them apart). Tercile thresholds are fit on the train fold only.
+Same leak-safe gated-fusion machinery as the regression trainer, with a
+cross-entropy head. The **canonical config** is the text-neutral one:
+output-level **residual-logit fusion** (``pred = market_logits + gate·text``)
+with the market head directly supervised and an L1 penalty + closed gate init,
+so the gate collapses to ≈0 and the fused forecast cannot underperform its own
+market-only path — the model is free to use text and learns to ignore it.
+The earlier contrastive variant (``supcon_weight>0``, representation-space
+fusion) is retained as an optional research arm: it made text *look*
+label-useful on the train fold and opened the gate, which dragged the model OOS
+(fused 0.592 < market 0.608). Tercile thresholds are fit on the train fold only.
 
 Reported per horizon: macro-F1 for fused vs the gate-off market-only path, vs a
 majority-class floor, vs a HAR-tercile baseline (classify by HAR's predicted-RV
@@ -77,9 +83,13 @@ def _train_regime_fold(
     *,
     seed: int,
     epochs: int,
-    supcon_weight: float = 0.1,
+    supcon_weight: float = 0.0,
     warmup: int = 8,
     patience: int = 12,
+    gate_l1_weight: float = 0.1,
+    gate_init_bias: float = -3.0,
+    residual_logits: bool = True,
+    market_aux_weight: float = 0.5,
 ) -> dict[str, np.ndarray]:
     """Train a regime classifier for horizon index k; return test predictions + labels."""
 
@@ -113,7 +123,10 @@ def _train_regime_fold(
     emb_te = ((data["text_emb"][te] - em) / es) * data["text_mask"][te][:, None]
 
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = build_model(emb.shape[1], mf.shape[1], _N_CLASSES).to(dev)
+    model = build_model(
+        emb.shape[1], mf.shape[1], _N_CLASSES,
+        gate_init_bias=gate_init_bias, residual_logits=residual_logits,
+    ).to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 
     def tt(a: np.ndarray, long: bool = False) -> "torch.Tensor":
@@ -136,7 +149,10 @@ def _train_regime_fold(
                 "text_mask": mask_t[b],
                 "labels": y_t[b],
             }
-            loss = fusion_clf_loss(model, batch, supcon_weight=lam)["loss"]
+            loss = fusion_clf_loss(
+                model, batch, supcon_weight=lam, gate_l1_weight=gate_l1_weight,
+                market_aux_weight=market_aux_weight,
+            )["loss"]
             loss.backward()  # type: ignore[no-untyped-call]
             opt.step()
         model.eval()
@@ -179,6 +195,11 @@ def run(
     n_folds: int = 5,
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
     measure: str = "rv",
+    supcon_weight: float = 0.0,
+    gate_l1_weight: float = 0.1,
+    gate_init_bias: float = -3.0,
+    residual_logits: bool = True,
+    market_aux_weight: float = 0.5,
 ) -> dict[str, Any]:
     import pandas as pd
 
@@ -196,7 +217,12 @@ def run(
         }
         for tr_l, te_l in folds:
             tr, te = idx_all[np.array(tr_l)], idx_all[np.array(te_l)]
-            out = _train_regime_fold(data, tr, te, k, seed=seed, epochs=epochs)
+            out = _train_regime_fold(
+                data, tr, te, k, seed=seed, epochs=epochs,
+                supcon_weight=supcon_weight, gate_l1_weight=gate_l1_weight,
+                gate_init_bias=gate_init_bias, residual_logits=residual_logits,
+                market_aux_weight=market_aux_weight,
+            )
             for kk in pools:
                 pools[kk].append(out[kk])
         cat = {kk: np.concatenate(v) for kk, v in pools.items()}
@@ -215,6 +241,7 @@ def run(
         if active.sum() > 5:
             row["fused_f1_active"] = _macro_f1(cat["true"][active], cat["fused"][active])
             row["mkt_f1_active"] = _macro_f1(cat["true"][active], cat["mkt"][active])
+            row["gate_mean_active"] = float(cat["gate"][active].mean())
         results["by_horizon"][f"h{h}"] = row
     return results
 
