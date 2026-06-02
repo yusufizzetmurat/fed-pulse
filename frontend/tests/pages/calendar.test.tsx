@@ -184,10 +184,13 @@ describe("CalendarPage", () => {
     const presserBadges = screen.getAllByTestId("availability-presser");
 
     // Past row has on-file statement + minutes — both should be anchor
-    // tags pointing at the path-based viewer keyed off the statement
-    // release date (day-2 of the two-day meeting), which is the date the
-    // scraper writes into the JSON cache's "date" field. Falling back to
-    // meeting_date would 404 every click.
+    // tags pointing at the path-based viewer keyed off the per-kind
+    // release date. statement uses statement_release_date (day-2 of the
+    // two-day meeting); minutes uses minutes_release_date (~21 days
+    // later); presser falls back to statement_release_date since the
+    // press conference happens on the meeting's concluding day. A
+    // blanket fallback to a single date would 404 the minutes click
+    // every time the two release dates differ.
     const pastStatement = badgeForMeeting(statementBadges, "2024-09-17");
     expect(pastStatement.tagName).toBe("A");
     expect(pastStatement).toHaveAttribute(
@@ -199,7 +202,7 @@ describe("CalendarPage", () => {
     expect(pastMinutes.tagName).toBe("A");
     expect(pastMinutes).toHaveAttribute(
       "href",
-      "/documents/minutes/2024-09-18",
+      "/documents/minutes/2024-10-09",
     );
 
     // Past row presser is not on file — must stay a span.
@@ -246,5 +249,92 @@ describe("CalendarPage", () => {
     expect(minutes).toHaveAttribute("data-available", "false");
     expect(presser).toHaveAttribute("data-available", "false");
     expect(statement).toHaveAttribute("title", "Statement not collected");
+  });
+
+  it("routes each badge kind to its own release date", async () => {
+    // Regression: every badge kind must use the date the backend's
+    // JSON cache is keyed on. statement_release_date and
+    // minutes_release_date differ by ~3 weeks, so a blanket fallback
+    // would 404 the minutes click. Presser shares the meeting's
+    // concluding day with the statement, so it falls back to
+    // statement_release_date.
+    fetchFomcCalendarMock.mockResolvedValue({
+      upcoming: [],
+      past: [
+        {
+          meeting_date: "2024-09-17",
+          meeting_type: "scheduled",
+          statement_release_date: "2024-09-18",
+          minutes_release_date: "2024-10-09",
+          statement_available: true,
+          minutes_available: true,
+          press_conference_available: true,
+        },
+      ],
+    });
+    const { default: CalendarPage } = await import("@/pages/calendar");
+    render(<CalendarPage />);
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("availability-statement").length).toBe(1),
+    );
+    const statement = screen.getByTestId("availability-statement");
+    const minutes = screen.getByTestId("availability-minutes");
+    const presser = screen.getByTestId("availability-presser");
+    expect(statement.tagName).toBe("A");
+    expect(statement).toHaveAttribute(
+      "href",
+      "/documents/statement/2024-09-18",
+    );
+    expect(minutes.tagName).toBe("A");
+    expect(minutes).toHaveAttribute(
+      "href",
+      "/documents/minutes/2024-10-09",
+    );
+    expect(presser.tagName).toBe("A");
+    expect(presser).toHaveAttribute(
+      "href",
+      "/documents/press_conference/2024-09-18",
+    );
+  });
+
+  it("falls back to meeting_date when a per-kind release date is missing", async () => {
+    // Far-future rows can ship without statement_release_date /
+    // minutes_release_date. Each badge must still produce a usable href
+    // rather than rendering "/documents/minutes/undefined".
+    fetchFomcCalendarMock.mockResolvedValue({
+      upcoming: [],
+      past: [
+        {
+          meeting_date: "2024-09-17",
+          meeting_type: "scheduled",
+          // statement / minutes release dates intentionally absent
+          statement_available: true,
+          minutes_available: true,
+          press_conference_available: true,
+        },
+      ],
+    });
+    const { default: CalendarPage } = await import("@/pages/calendar");
+    render(<CalendarPage />);
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("availability-statement").length).toBe(1),
+    );
+    const statement = screen.getByTestId("availability-statement");
+    const minutes = screen.getByTestId("availability-minutes");
+    const presser = screen.getByTestId("availability-presser");
+    expect(statement).toHaveAttribute(
+      "href",
+      "/documents/statement/2024-09-17",
+    );
+    expect(minutes).toHaveAttribute(
+      "href",
+      "/documents/minutes/2024-09-17",
+    );
+    expect(presser).toHaveAttribute(
+      "href",
+      "/documents/press_conference/2024-09-17",
+    );
   });
 });
