@@ -3262,9 +3262,8 @@ def fit_rich_feature_scaler_tensor(
 
     Constant columns (IQR < ``epsilon`` on the train slice) get their
     IQR coerced to ``1.0`` so the transform reduces to a pure
-    centering step. Catches the placeholder
-    ``credibility_market_implied_gap`` (always 0.0 by contract today)
-    and any per-family ablation that zeros a slot before fit time.
+    centering step. Catches any per-family ablation that zeros a slot
+    before fit time (e.g. ``--ablate-credibility``).
     """
 
     import numpy as np
