@@ -669,6 +669,29 @@ class HistoryList(BaseModel):
     offset: int
 
 
+class StanceContextPoint(BaseModel):
+    """One historical (date, score) pair for the rolling z-score baseline."""
+
+    document_date: str
+    stance_score: float
+
+
+class StanceContextResponse(BaseModel):
+    """Trailing stance-score summary for the dashboard tile.
+
+    ``stance_score = P(hawkish) - P(dovish)`` per the validity study;
+    the tile renders the current run as a z-score against this trailing
+    mean/std rather than as a raw absolute number. ``mean`` and ``std``
+    are ``null`` when fewer than two usable historical rows are found,
+    in which case the tile falls back to the raw-value rendering.
+    """
+
+    n: int
+    mean: float | None
+    std: float | None
+    history: list[StanceContextPoint]
+
+
 class HistoryRealizedResponse(BaseModel):
     run_id: str
     symbol: str

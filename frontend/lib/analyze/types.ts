@@ -159,6 +159,22 @@ export interface MultiAxisStance {
   distribution?: Partial<Record<StanceAxis, number>>;
 }
 
+export interface StanceContextPoint {
+  document_date: string;
+  stance_score: number;
+}
+
+// Trailing stance-score window for the rolling-z dashboard tile.
+// stance_score = P(hawkish) - P(dovish). Mean/std null when fewer than
+// two usable historical rows are present; the tile falls back to the
+// raw-value rendering in that case.
+export interface StanceContextResponse {
+  n: number;
+  mean: number | null;
+  std: number | null;
+  history: StanceContextPoint[];
+}
+
 export interface MultiAxisFactor {
   value: number;
   confidence: number;

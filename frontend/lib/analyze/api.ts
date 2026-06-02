@@ -29,6 +29,7 @@ import type {
   RvBacktestResponse,
   SemanticDiffResponse,
   SettingsCheckpointsResponse,
+  StanceContextResponse,
   SymbolListResponse,
   TrainJobState,
   TrainJobSummary,
@@ -108,6 +109,28 @@ export async function fetchHistory(
 ): Promise<HistoryList> {
   const response = await axios.get(`${baseUrl}/history`, { params: query, signal });
   return response.data as HistoryList;
+}
+
+export async function fetchRecentStanceScores(
+  baseUrl: string,
+  params: {
+    symbol: string;
+    horizon?: string;
+    n?: number;
+    excludeRunId?: string;
+  },
+  signal?: AbortSignal,
+): Promise<StanceContextResponse> {
+  const response = await axios.get(`${baseUrl}/history/recent-stance-scores`, {
+    params: {
+      symbol: params.symbol,
+      horizon: params.horizon,
+      n: params.n,
+      exclude_run_id: params.excludeRunId,
+    },
+    signal,
+  });
+  return response.data as StanceContextResponse;
 }
 
 export async function fetchHistoryRun(

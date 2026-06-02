@@ -4461,6 +4461,71 @@
         "title": "SettingsCheckpointsResponse",
         "type": "object"
       },
+      "StanceContextPoint": {
+        "description": "One historical (date, score) pair for the rolling z-score baseline.",
+        "properties": {
+          "document_date": {
+            "title": "Document Date",
+            "type": "string"
+          },
+          "stance_score": {
+            "title": "Stance Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "document_date",
+          "stance_score"
+        ],
+        "title": "StanceContextPoint",
+        "type": "object"
+      },
+      "StanceContextResponse": {
+        "description": "Trailing stance-score summary for the dashboard tile.\n\n``stance_score = P(hawkish) - P(dovish)`` per the validity study;\nthe tile renders the current run as a z-score against this trailing\nmean/std rather than as a raw absolute number. ``mean`` and ``std``\nare ``null`` when fewer than two usable historical rows are found,\nin which case the tile falls back to the raw-value rendering.",
+        "properties": {
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/StanceContextPoint"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "std": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Std"
+          }
+        },
+        "required": [
+          "n",
+          "mean",
+          "std",
+          "history"
+        ],
+        "title": "StanceContextResponse",
+        "type": "object"
+      },
       "SymbolDescriptor": {
         "properties": {
           "category": {
@@ -6042,6 +6107,90 @@
           }
         },
         "summary": "Get History Realized Batch"
+      }
+    },
+    "/history/recent-stance-scores": {
+      "get": {
+        "description": "Trailing ``n`` stance-score points for the rolling-z dashboard tile.\n\nThe current run is excluded from the trailing window when its id is\npassed via ``exclude_run_id`` so the z-score is computed against\nhistory rather than against itself.\n\nRegistered ABOVE ``/history/{run_id}`` because FastAPI matches\nroutes in declaration order \u2014 a generic ``{run_id}`` segment would\notherwise swallow ``recent-stance-scores`` as a literal id and 404\non lookup.",
+        "operationId": "get_recent_stance_scores_history_recent_stance_scores_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "symbol",
+            "required": true,
+            "schema": {
+              "title": "Symbol",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "horizon",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Horizon"
+            }
+          },
+          {
+            "in": "query",
+            "name": "n",
+            "required": false,
+            "schema": {
+              "default": 12,
+              "maximum": 120,
+              "minimum": 1,
+              "title": "N",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "exclude_run_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Exclude Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StanceContextResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Recent Stance Scores"
       }
     },
     "/history/{run_id}": {

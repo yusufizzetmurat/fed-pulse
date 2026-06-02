@@ -77,6 +77,8 @@ from app.schemas import (
     SemanticDiffResponse,
     SettingsCheckpoint,
     SettingsCheckpointsResponse,
+    StanceContextPoint,
+    StanceContextResponse,
     SymbolDescriptor,
     SymbolListResponse,
     TrajectoryMarker,
@@ -1239,6 +1241,46 @@ def get_history(
     )
     items = [HistoryEntry(**row.to_summary()) for row in rows]
     return HistoryList(items=items, total=total, limit=limit, offset=offset)
+
+
+@app.get("/history/recent-stance-scores", response_model=StanceContextResponse)
+def get_recent_stance_scores(
+    symbol: str = Query(...),
+    horizon: str | None = Query(default=None),
+    n: int = Query(default=12, ge=1, le=120),
+    exclude_run_id: str | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> StanceContextResponse:
+    """Trailing ``n`` stance-score points for the rolling-z dashboard tile.
+
+    The current run is excluded from the trailing window when its id is
+    passed via ``exclude_run_id`` so the z-score is computed against
+    history rather than against itself.
+
+    Registered ABOVE ``/history/{run_id}`` because FastAPI matches
+    routes in declaration order — a generic ``{run_id}`` segment would
+    otherwise swallow ``recent-stance-scores`` as a literal id and 404
+    on lookup.
+    """
+
+    from app.services.stance_context import build_stance_context
+
+    ctx = build_stance_context(
+        session,
+        symbol=symbol,
+        horizon=horizon,
+        n=n,
+        exclude_run_id=exclude_run_id,
+    )
+    return StanceContextResponse(
+        n=ctx.n,
+        mean=ctx.mean,
+        std=ctx.std,
+        history=[
+            StanceContextPoint(document_date=p.document_date, stance_score=p.stance_score)
+            for p in ctx.history
+        ],
+    )
 
 
 @app.get("/history/{run_id}", response_model=HistoryDetail)

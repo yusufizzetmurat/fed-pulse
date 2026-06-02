@@ -38,6 +38,7 @@ import {
   fetchExpectedVolumeForecast,
   fetchFuturesConsensus,
   fetchHarTercileBacktest,
+  fetchRecentStanceScores,
   fetchHistoryRealizedBatch,
   fetchLatestMpSurprise,
   fetchRealizedVolForecast,
@@ -70,6 +71,7 @@ import type {
   RealizedVolForecastResponse,
   RvBacktestResponse,
   SemanticDiffResponse,
+  StanceContextResponse,
 } from "@/lib/analyze/types";
 import {
   DEFAULT_HORIZON,
@@ -156,6 +158,7 @@ export default function WorkspacePage() {
   const coverage = useSharedCoverage(request.symbol);
   const recentHistory = useSharedRecentHistory(request.symbol, 12);
   const harBaselines = useHarBaselines(request.symbol);
+  const [stanceContext, setStanceContext] = React.useState<StanceContextResponse | null>(null);
   const [harBacktest, setHarBacktest] =
     React.useState<HarTercileBacktestResponse | null>(null);
   const [harBacktestLoading, setHarBacktestLoading] = React.useState(false);
@@ -320,6 +323,37 @@ export default function WorkspacePage() {
       controller.abort();
     };
   }, [apiBaseUrl, request.symbol]);
+
+  // Trailing stance-score baseline for the rolling-z dashboard tile.
+  // Fired on every symbol change and after each fresh /analyze so the
+  // window stays aligned with the latest persisted runs. A network
+  // failure here is silent — the StanceTile falls back to its raw
+  // confidence rendering when context is null.
+  React.useEffect(() => {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const data = await fetchRecentStanceScores(
+          apiBaseUrl,
+          { symbol: request.symbol, horizon: request.horizon, n: 12 },
+          controller.signal,
+        );
+        if (!controller.signal.aborted) {
+          setStanceContext(data);
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setStanceContext(null);
+        }
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+    // ``result`` is the dep on purpose: a fresh /analyze response is a
+    // new object reference, so the effect refires and we pick up the
+    // row that was just persisted to history.
+  }, [apiBaseUrl, request.symbol, request.horizon, result]);
 
   // Expected Volume forecast card is HAR-volume over market history,
   // market-data only. 503 (artifact missing) renders the unavailable
@@ -933,7 +967,10 @@ export default function WorkspacePage() {
               <SectionDivider label="Sentiment and context" />
               <div className="grid gap-4 xl:grid-cols-2">
                 {result.multi_axis ? (
-                  <MultiAxisInterpretation multiAxis={result.multi_axis} />
+                  <MultiAxisInterpretation
+                    multiAxis={result.multi_axis}
+                    stanceContext={stanceContext}
+                  />
                 ) : (
                   <EmptyState
                     variant="inline"
