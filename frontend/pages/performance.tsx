@@ -312,6 +312,13 @@ export default function PerformancePage() {
               predicted vs what actually happened. The per-asset breakdown shows accuracy by
               symbol.
             </p>
+            <p className="max-w-2xl text-xs text-muted-foreground">
+              Training-time macro-F1 ({"~"}0.48 pooled walk-forward) is the model's
+              measured generalisation; the live top-pick accuracy below is on the
+              resolved subset of dashboard runs and reflects how often the calibrated
+              argmax matched the realised regime under the active text-neutral
+              residual-fusion checkpoint. The two numbers are not directly comparable.
+            </p>
           </div>
 
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">

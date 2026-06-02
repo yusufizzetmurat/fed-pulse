@@ -543,6 +543,14 @@ export default function HistoryPage() {
               Past regime predictions. Realized regime is bucketed from the post-event 10d-forward vol path
               against the classifier&apos;s trained quantile cutoffs.
             </p>
+            <p className="max-w-2xl text-xs text-muted-foreground">
+              The text-neutral residual-fusion canonical collapses to a single argmax
+              (typically Calm) when the gate is closed, so the live hit-rate is low by
+              construction. Treat the number as the cost of running the late-fusion
+              second opinion alongside HAR-tercile, not as the regime model&apos;s
+              underlying quality. The HAR-tercile baseline above the workspace fold
+              is the headline forecast.
+            </p>
           </div>
 
           <div
