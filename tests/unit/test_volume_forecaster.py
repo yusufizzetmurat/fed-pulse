@@ -308,27 +308,43 @@ def test_load_spec_falls_back_to_cold_start_fit(
 ) -> None:
     """HF download failure must trigger the in-process cold-start fit.
 
-    Monkeypatches ``_download_artifact`` to raise
-    ``VolumeForecasterUnavailable``, fakes yfinance to return a synthetic
-    180-bar volume frame, and monkeypatches
-    ``app.data.late_fusion_volume.fit_production_artifact`` to return a
-    minimal valid spec, then asserts ``_load_spec`` returns the spec
-    from the cold-start branch (no HF hit succeeded, no on-disk
-    artifact existed).
+    Walks the full cold-start branch of ``_load_spec``:
+
+    * ``_download_artifact`` is forced to raise
+      ``VolumeForecasterUnavailable`` so the ``not spec_path.exists()``
+      arm falls through to ``_cold_start_fit``.
+    * ``yfinance.Ticker`` is replaced so ``_cold_start_fit.history`` returns
+      a synthetic 180-bar daily-volume frame instead of hitting the network.
+    * ``app.data.late_fusion_volume.fit_production_artifact`` is replaced
+      with a stub that records the parquet path the cold-start wrote, so
+      we can confirm the cold-start actually serialized real bars and
+      pointed the fit at them.
+
+    The assertions then prove the cold-start path executed end-to-end
+    (HF raised, ticker was instantiated, parquet was materialized, fit
+    was called with the on-disk artifact target) and that ``_load_spec``
+    returned the stubbed spec verbatim.
     """
 
     import pandas as pd
 
     from app.data import late_fusion_volume
 
-    def _raise(_target_dir: Any) -> dict[str, Any]:
+    download_calls: list[Any] = []
+
+    def _raise(target_dir: Any) -> dict[str, Any]:
+        download_calls.append(target_dir)
         raise volume_forecaster.VolumeForecasterUnavailable("hf repo missing")
 
+    ticker_calls: list[str] = []
+
     class _FakeTicker:
-        def __init__(self, _symbol: str) -> None:
-            pass
+        def __init__(self, symbol: str) -> None:
+            ticker_calls.append(symbol)
 
         def history(self, period: str, auto_adjust: bool) -> pd.DataFrame:
+            assert period == volume_forecaster._COLD_START_PERIOD
+            assert auto_adjust is True
             dates = pd.bdate_range(end="2026-05-30", periods=180)
             return pd.DataFrame(
                 {"Volume": np.linspace(1.0e9, 1.2e9, len(dates))},
@@ -339,7 +355,10 @@ def test_load_spec_falls_back_to_cold_start_fit(
     fit_calls: list[tuple[Any, Any]] = []
 
     def _stub_fit(vol_path: Any, out_path: Any) -> dict[str, Any]:
-        fit_calls.append((vol_path, out_path))
+        # Cold-start must hand off a real parquet on disk; loading it
+        # back proves the synthetic frame survived the round trip.
+        replayed = pd.read_parquet(vol_path)
+        fit_calls.append((replayed, out_path))
         return fake_spec
 
     import yfinance as yf
@@ -349,10 +368,17 @@ def test_load_spec_falls_back_to_cold_start_fit(
     monkeypatch.setattr(late_fusion_volume, "fit_production_artifact", _stub_fit)
 
     spec = volume_forecaster._load_spec(tmp_path)
-    assert spec is fake_spec
+
+    # HF arm was tried first, with the target dir _load_spec received.
+    assert download_calls == [tmp_path]
+    # Cold-start instantiated yfinance with the canonical symbol.
+    assert ticker_calls == [volume_forecaster._COLD_START_SYMBOL]
+    # Exactly one fit, with the on-disk artifact target under tmp_path.
     assert len(fit_calls) == 1
-    # ``fit_production_artifact`` is called with the temp parquet path
-    # the cold-start writes plus the on-disk artifact target under
-    # ``tmp_path / ARTIFACT_FILENAME``.
-    _, out_path = fit_calls[0]
+    replayed, out_path = fit_calls[0]
     assert out_path == tmp_path / volume_forecaster.ARTIFACT_FILENAME
+    assert list(replayed.columns) == ["date", "volume"]
+    assert len(replayed) == 180
+    assert (replayed["volume"] > 0).all()
+    # _load_spec returned the cold-start spec verbatim.
+    assert spec is fake_spec
