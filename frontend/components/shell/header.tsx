@@ -6,6 +6,7 @@ import {
   BookOpen,
   Calendar,
   FlaskConical,
+  Gavel,
   GitCompare,
   Github,
   History as HistoryIcon,
@@ -16,14 +17,13 @@ import {
 } from "lucide-react";
 
 import { SkipLink } from "@/components/shell/skip-link";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS: Array<{ href: string; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { href: "/", label: "Workspace", icon: Activity },
-  { href: "/decisions", label: "Predictions", icon: LineChart },
+  { href: "/decisions", label: "Decisions", icon: Gavel },
   { href: "/history", label: "History", icon: HistoryIcon },
   { href: "/compare", label: "Compare", icon: GitCompare },
   { href: "/calendar", label: "Calendar", icon: Calendar },
@@ -63,12 +63,6 @@ export function Header() {
           >
             <Activity className="h-4 w-4 text-primary" aria-hidden="true" />
             <span>Fed Pulse</span>
-            <Badge
-              variant="outline"
-              className="ml-1 hidden text-[10px] uppercase tracking-wide sm:inline-flex"
-            >
-              Volatility Regime
-            </Badge>
           </Link>
           <nav aria-label="Primary" className="hidden items-center gap-0.5 sm:flex">
             {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
