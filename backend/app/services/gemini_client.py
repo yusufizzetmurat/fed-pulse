@@ -79,9 +79,7 @@ def score_passage(text: str, *, model: Any) -> dict[str, Any]:
         # zero on a real read). Surface the raw response so an operator
         # can spot prompt drift or model regressions without enabling
         # debug logging across the rest of the service.
-        _logger.warning(
-            "gemini_parse_failure label=%s raw=%r", label, raw[:512]
-        )
+        _logger.warning("gemini_parse_failure label=%s raw=%r", label, raw[:512])
     return {"label": label, "confidence": confidence, "raw": raw}
 
 

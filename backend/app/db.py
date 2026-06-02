@@ -264,10 +264,7 @@ def list_runs(
     if document_date:
         stmt = stmt.where(AnalysisRun.document_date == document_date)
 
-    count_stmt = (
-        select(func.count())
-        .select_from(stmt.order_by(None).subquery())
-    )
+    count_stmt = select(func.count()).select_from(stmt.order_by(None).subquery())
     total_count = int(session.execute(count_stmt).scalar() or 0)
 
     stmt = stmt.order_by(AnalysisRun.created_at.desc()).limit(limit).offset(offset)
