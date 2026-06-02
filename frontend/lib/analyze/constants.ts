@@ -23,5 +23,15 @@ export const SYMBOL_OPTIONS: SymbolOption[] = [
 
 export const HORIZON_OPTIONS: Horizon[] = ["1d", "3d", "5d", "10d"];
 
+// Symbols the HAR-tercile baseline + backtest endpoints support. ^GSPC
+// serves from the pinned QLIKE-DLq artifact; ^NDX and ^DJI use a
+// per-call OLS HAR fit. FX / commodity tickers stay out of scope —
+// HAR-tercile is fit on equity-index RV.
+export const HAR_TERCILE_SUPPORTED_SYMBOLS: readonly string[] = [
+  "^GSPC",
+  "^NDX",
+  "^DJI",
+];
+
 export const REAL_TRAIN_POLL_INTERVAL_MS = 2000;
 export const REAL_TRAIN_POLL_MAX = 180;

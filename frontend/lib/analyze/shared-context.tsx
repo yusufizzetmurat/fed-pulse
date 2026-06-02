@@ -91,6 +91,22 @@ const LOADING_HAR_BASELINES: HarBaselinesState = {
   error: null,
 };
 
+function _harBaselineErrorMessage(err: unknown, symbol: string | undefined): string {
+  // Axios attaches the parsed response body to err.response.data. The
+  // /forecast/regime/baselines endpoint returns a structured
+  // { code, detail: { error, message } } payload for unsupported symbols
+  // (status 422). Prefer that human-readable string over the generic
+  // "Request failed with status code 422" axios surfaces by default.
+  const e = err as { response?: { status?: number; data?: { detail?: { message?: string } | string } }; message?: string };
+  const status = e?.response?.status;
+  const detail = e?.response?.data?.detail;
+  const detailMsg = typeof detail === "object" && detail !== null ? detail.message : undefined;
+  if (status === 422 && detailMsg) {
+    return `${detailMsg} (${symbol ?? "this symbol"})`;
+  }
+  return e?.message || "HAR baselines fetch failed";
+}
+
 export function SymbolCalendarProvider({ children }: { children: React.ReactNode }) {
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
 
@@ -242,7 +258,7 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
             [symKey]: {
               data: null,
               loading: false,
-              error: (err as Error).message || "HAR baselines fetch failed",
+              error: _harBaselineErrorMessage(err, symbol),
             },
           }));
         });

@@ -10,7 +10,7 @@ export type ErrorCategory = "model_unavailable" | "bad_input" | "network" | "not
 interface AxiosLikeError {
   response?: {
     status?: number;
-    data?: { detail?: string };
+    data?: { detail?: string | { error?: string; message?: string } };
   };
   request?: unknown;
   message?: string;
@@ -33,6 +33,21 @@ const MODEL_UNAVAILABLE_COPY = "Model unavailable. Try again later or check the 
 const NETWORK_COPY = "Network error. Check your connection and try again.";
 const NOT_FOUND_COPY = "Not found.";
 const FALLBACK_COPY = "Something went wrong. Try again.";
+
+function _extractDetail(err: AxiosLikeError): string | null {
+  // Backend handlers return one of:
+  //   detail: "human readable string"
+  //   detail: { error: "code", message: "human readable string" }
+  // Both forms should surface to the user; the dict form is the common
+  // shape for the per-symbol unsupported / unavailable rejections.
+  const detail = err.response?.data?.detail;
+  if (typeof detail === "string" && detail.trim().length > 0) return detail;
+  if (detail && typeof detail === "object" && typeof (detail as { message?: string }).message === "string") {
+    const msg = (detail as { message: string }).message.trim();
+    if (msg.length > 0) return msg;
+  }
+  return null;
+}
 
 export function categorizeError(err: unknown): { category: ErrorCategory; message: string } {
   if (!err) return { category: "network", message: FALLBACK_COPY };
@@ -57,27 +72,27 @@ export function categorizeError(err: unknown): { category: ErrorCategory; messag
   const status = axiosErr.response?.status;
   if (status != null) {
     if (BAD_INPUT_STATUSES.has(status)) {
-      const detail = axiosErr.response?.data?.detail;
       return {
         category: "bad_input",
-        message:
-          typeof detail === "string" && detail.trim().length > 0
-            ? detail
-            : "Request rejected. Check the inputs and try again.",
+        message: _extractDetail(axiosErr) || "Request rejected. Check the inputs and try again.",
       };
     }
     if (NOT_FOUND_STATUSES.has(status)) {
-      const detail = axiosErr.response?.data?.detail;
       return {
         category: "not_found",
-        message:
-          typeof detail === "string" && detail.trim().length > 0
-            ? detail
-            : NOT_FOUND_COPY,
+        message: _extractDetail(axiosErr) || NOT_FOUND_COPY,
       };
     }
     if (MODEL_UNAVAILABLE_STATUSES.has(status)) {
-      return { category: "model_unavailable", message: MODEL_UNAVAILABLE_COPY };
+      // Backend services frequently return a structured 503 with
+      // {detail: {error, message}} for "data unavailable for this symbol"
+      // (e.g. FX tickers without yfinance volume). Surface the inner
+      // message when present so the user sees the actual reason rather
+      // than the generic "Model unavailable" fallback.
+      return {
+        category: "model_unavailable",
+        message: _extractDetail(axiosErr) || MODEL_UNAVAILABLE_COPY,
+      };
     }
   }
 

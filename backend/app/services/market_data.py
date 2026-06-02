@@ -62,6 +62,22 @@ def is_fomc_day(value: date) -> bool:
     return value in _fomc_days()
 
 
+def _is_fomc_day_after_cutoff(timestamp: datetime) -> bool:
+    """Return True iff ``timestamp`` falls on an FOMC day strictly after 14:00 ET.
+
+    Same cutoff semantics as :func:`assert_fomc_day_market_cutoff`. Used by
+    the serving paths to drop bad bars from a series without aborting the
+    whole request, while the offline builder path keeps the hard assertion.
+    """
+
+    if not is_fomc_day(timestamp.date()):
+        return False
+    anchored = timestamp.replace(tzinfo=timezone.utc) if timestamp.tzinfo is None else timestamp
+    local = anchored.astimezone(FOMC_ZONE)
+    cutoff = datetime.combine(local.date(), FOMC_LOCAL_CUTOFF_TIME, tzinfo=FOMC_ZONE)
+    return local > cutoff
+
+
 def assert_fomc_day_market_cutoff(
     timestamp: datetime,
     *,
@@ -80,28 +96,57 @@ def assert_fomc_day_market_cutoff(
     ``America/New_York`` local time so DST is handled automatically and
     the cutoff is the same 14:00 wall-clock both halves of the year.
 
-    Raises ``ValueError`` on violation so the caller can surface a clear
-    error to the operator. No silent coercion: a bad row is a bug, not a
-    rounding error.
+    Raises ``ValueError`` on violation. The offline event-dataset builder
+    uses this strict form so a leaked bar aborts the build. Serving paths
+    use :func:`_is_fomc_day_after_cutoff` to drop the offending bar from
+    the series rather than failing the request.
     """
 
-    if not is_fomc_day(timestamp.date()):
-        return  # Not an FOMC day -> cutoff does not apply.
-
+    if not _is_fomc_day_after_cutoff(timestamp):
+        return
     if timestamp.tzinfo is None:
         anchored = timestamp.replace(tzinfo=timezone.utc)
     else:
         anchored = timestamp
     local = anchored.astimezone(FOMC_ZONE)
     cutoff = datetime.combine(local.date(), FOMC_LOCAL_CUTOFF_TIME, tzinfo=FOMC_ZONE)
-    if local > cutoff:
-        raise ValueError(
-            f"{feature_name} dated {local.isoformat()} is after the FOMC "
-            f"14:00 ET cutoff ({cutoff.isoformat()}) on a meeting day. "
-            "Same-day post-announcement bars leak the policy decision into the "
-            "feature frame. Drop the bar or rebuild the feature with an "
-            "as-of timestamp ≤ 14:00 ET."
+    raise ValueError(
+        f"{feature_name} dated {local.isoformat()} is after the FOMC "
+        f"14:00 ET cutoff ({cutoff.isoformat()}) on a meeting day. "
+        "Same-day post-announcement bars leak the policy decision into the "
+        "feature frame. Drop the bar or rebuild the feature with an "
+        "as-of timestamp ≤ 14:00 ET."
+    )
+
+
+def _filter_leak_safe(series: Any) -> Any:
+    """Drop FOMC-day bars whose timestamp sits after the 14:00 ET cutoff.
+
+    Mirrors the offline-builder leak guard at serve time without erroring
+    out the request. The dropped bars are exactly the ones that would have
+    leaked the policy decision into the feature frame, so removing them
+    preserves the same no-leak contract via skip rather than raise.
+    """
+
+    import logging as _logging
+
+    if series.empty:
+        return series
+    keep_mask = []
+    dropped = 0
+    for idx in series.index:
+        ts = idx.to_pydatetime() if hasattr(idx, "to_pydatetime") else idx
+        leaks = _is_fomc_day_after_cutoff(ts)
+        keep_mask.append(not leaks)
+        if leaks:
+            dropped += 1
+    if dropped:
+        _logging.getLogger(__name__).info(
+            "market_data_leak_filter dropped_bars=%d total=%d",
+            dropped,
+            len(series),
         )
+    return series[keep_mask]
 
 
 def _safe_symbol(symbol: str) -> str:
@@ -149,8 +194,7 @@ def _snapshot_frame_to_series(frame: Any) -> Any:
 
     if "date" not in frame.columns or "close" not in frame.columns:
         raise RuntimeError(
-            "Snapshot parquet must contain 'date' and 'close' columns; got "
-            f"{list(frame.columns)}"
+            f"Snapshot parquet must contain 'date' and 'close' columns; got {list(frame.columns)}"
         )
     index = pd.to_datetime(frame["date"]).dt.tz_localize(None)
     series = pd.Series(frame["close"].astype(float).to_numpy(), index=index, name="Close")
@@ -257,6 +301,17 @@ def fetch_market_snapshot(
     if valid.empty:
         raise RuntimeError(f"No market data on or before {requested_date.isoformat()} for {symbol}")
 
+    # Drop any FOMC-day bars whose timestamp sits after the 14:00 ET cutoff
+    # before picking the latest valid index. The offline event-dataset
+    # builder still asserts; at serve time the contract is identical
+    # (no leaked bar enters the feature frame) but the request continues
+    # against the most recent CLEAN bar instead of erroring out the user.
+    valid = _filter_leak_safe(valid)
+    if valid.empty:
+        raise RuntimeError(
+            f"No leak-safe market data on or before {requested_date.isoformat()} for {symbol}"
+        )
+
     latest_idx = valid.index[-1]
     date_used = latest_idx.date()
     lag_days = (requested_date - date_used).days
@@ -264,11 +319,6 @@ def fetch_market_snapshot(
         raise RuntimeError(
             f"Nearest trading day is {lag_days} days before requested date; increase lookback window."
         )
-
-    assert_fomc_day_market_cutoff(
-        latest_idx.to_pydatetime() if hasattr(latest_idx, "to_pydatetime") else latest_idx,
-        feature_name="market_snapshot_close",
-    )
 
     returns = close_series.pct_change().dropna()
     rolling = returns.rolling(volatility_window).std()
@@ -311,15 +361,21 @@ def fetch_market_sequence(
     if valid.empty:
         raise RuntimeError(f"No market data on or before {requested_date.isoformat()} for {symbol}")
 
+    # Drop FOMC-day bars whose timestamp sits after the 14:00 ET cutoff
+    # before assembling the sequence. The offline builder still hard-asserts;
+    # at serve time we skip the leaked bar so the rest of the lookback is
+    # still usable.
+    valid = _filter_leak_safe(valid)
+    if valid.empty:
+        raise RuntimeError(
+            f"No leak-safe market data on or before {requested_date.isoformat()} for {symbol}"
+        )
+
     returns = close_series.pct_change().dropna()
     rolling = returns.rolling(5).std()
 
     points: list[dict[str, float | str]] = []
     for idx, close_value in valid.tail(sequence_length).items():
-        assert_fomc_day_market_cutoff(
-            idx.to_pydatetime() if hasattr(idx, "to_pydatetime") else idx,
-            feature_name="market_sequence_close",
-        )
         vol = rolling.loc[:idx].iloc[-1] if not rolling.loc[:idx].dropna().empty else 0.0
         points.append(
             {
