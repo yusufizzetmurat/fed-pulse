@@ -1,6 +1,30 @@
 # Pre-registration — heterogeneous ensemble to push the QLIKE-RV edge
 
-**Date:** 2026-06-02 · **Status:** pre-registered before looking at results.
+**Date:** 2026-06-02 · **Status:** COMPLETE — null (see Result below).
+
+## Result (2026-06-02, 300 epochs)
+
+| horizon | HAR | A MLP-5 | B MLP-8 | C Hetero-8 | C−A 96.7% CI (primary) | C−B 90% CI |
+|---|---:|---:|---:|---:|---|---|
+| h1  | 0.2236 | 0.1980 | 0.1976 | 0.1975 | [−0.0014, +0.0021] | [−0.0012, +0.0014] |
+| h5  | 0.2197 | 0.1982 | 0.1971 | 0.1969 | [−0.0004, +0.0035] | [−0.0012, +0.0016] |
+| h22 | 0.3568 | 0.3188 | 0.3196 | 0.3140 | [−0.0049, +0.0128] | [−0.0018, +0.0106] |
+
+**Verdict: NULL.** The Bonferroni-corrected primary CI (C over A) includes 0 at
+all three horizons, so decision-rule criterion 1 fails everywhere. Point
+estimates nominally favour the heterogeneous ensemble (C ≤ A at every horizon,
+largest at h22 ≈ 1.5%), but the gain is not significant, and the count-matched
+control (C−B) also straddles 0 — no evidence that *architectural diversity*
+helps beyond adding members. The σ-LSTM members are individually slightly worse
+than the MLP (QLIKE 0.203/0.199/0.320 vs MLP ≈0.198/0.197/0.319), so they
+contribute decorrelation but not strength — insufficient to move the ensemble.
+
+Both ensembles remain well above HAR (C-vs-HAR 90% CI strictly > 0 at every
+horizon), so the standing QLIKE edge is reproduced; it is just not *widened* by
+σ-LSTM diversity. **Per the decision rule: keep the MLP-5 production ensemble,
+report the null, do not chase the h22 nominal gain** (tuning on this data would
+be the p-hacking the pre-registration exists to prevent). Artifact:
+`data/artifacts/qlike_hetero_ensemble/result.json`.
 
 ## Motivation
 
