@@ -322,8 +322,7 @@ def _get_model() -> ForecasterServingModel:
             ok, _status = _validate_serving_contract(BEST_MODEL_PATH)
             if not ok:
                 raise RuntimeError(
-                    "checkpoint inference contract incompatible with serving "
-                    f"signature: {_status}"
+                    f"checkpoint inference contract incompatible with serving signature: {_status}"
                 )
             raw_config = payload.get("model_config") if isinstance(payload, dict) else None
             resolved = _coerce_model_config(raw_config)
@@ -498,9 +497,7 @@ def compute_credibility_for_inference(
 
         ref = encoder_ref("finbert_fed_adjacent_xbank_dapt")
         if ref is not None and ref.revision:
-            paths = resolve_cache_paths(
-                "finbert_fed_adjacent_xbank_dapt", revision=ref.revision
-            )
+            paths = resolve_cache_paths("finbert_fed_adjacent_xbank_dapt", revision=ref.revision)
             if paths.parquet.exists():
                 embedding_path = paths.parquet
     except Exception:  # pragma: no cover -- defensive

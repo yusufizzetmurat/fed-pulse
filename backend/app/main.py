@@ -730,12 +730,8 @@ def _build_credibility_block(
         embedding_path = None
 
     stance_by_date: list[tuple[str, float]] = []
-    current_stance_score = (
-        float(
-            (sentiment.get("score") or 0.0)
-            if isinstance(sentiment.get("score"), int | float)
-            else 0.0
-        )
+    current_stance_score = float(
+        (sentiment.get("score") or 0.0) if isinstance(sentiment.get("score"), int | float) else 0.0
     )
     try:
         with session_scope() as session:
@@ -770,9 +766,7 @@ def _build_credibility_block(
         logger.warning("credibility_loader_failed", exc_info=True)
         return None
 
-    drift_trend = _build_drift_trend(
-        embedding_path=embedding_path, as_of_ts=as_of
-    )
+    drift_trend = _build_drift_trend(embedding_path=embedding_path, as_of_ts=as_of)
 
     # The realized-vs-stated axis is reliable only when both the stance
     # series and the realized DFF window carry > 1 point. The loader
@@ -782,9 +776,7 @@ def _build_credibility_block(
     # when no API key is set, so check for the series file itself rather
     # than the directory to detect an actually-populated cache.
     realized_gap: float | None
-    _dff_cached = (
-        fred_cache_dir is not None and (Path(fred_cache_dir) / "DFF.json").exists()
-    )
+    _dff_cached = fred_cache_dir is not None and (Path(fred_cache_dir) / "DFF.json").exists()
     if _dff_cached and len(stance_by_date) >= 2:
         realized_gap = float(vector.realized_vs_stated_gap)
     else:
@@ -804,9 +796,7 @@ def _build_credibility_block(
     }
 
 
-def _build_drift_trend(
-    *, embedding_path: Path | None, as_of_ts: str
-) -> list[float]:
+def _build_drift_trend(*, embedding_path: Path | None, as_of_ts: str) -> list[float]:
     """Per-prior cosine distance against the mean of the remaining priors.
 
     Builds a short sparkline (newest-last) so the credibility card has
@@ -834,11 +824,7 @@ def _build_drift_trend(
         df = df.sort_values("event_date").tail(6)
     except Exception:  # noqa: BLE001
         return []
-    embeddings = [
-        [float(v) for v in row]
-        for row in df["embedding"].tolist()
-        if row is not None
-    ]
+    embeddings = [[float(v) for v in row] for row in df["embedding"].tolist() if row is not None]
     if len(embeddings) < 2:
         return []
     trend: list[float] = []
