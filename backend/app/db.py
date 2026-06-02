@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     create_engine,
     delete,
+    func,
     select,
 )
 from sqlalchemy.engine import Engine
@@ -263,9 +264,11 @@ def list_runs(
     if document_date:
         stmt = stmt.where(AnalysisRun.document_date == document_date)
 
-    count_stmt = stmt.with_only_columns(AnalysisRun.id).order_by(None)
-    total = session.execute(count_stmt).scalars().all()
-    total_count = len(total)
+    count_stmt = (
+        select(func.count())
+        .select_from(stmt.order_by(None).subquery())
+    )
+    total_count = int(session.execute(count_stmt).scalar() or 0)
 
     stmt = stmt.order_by(AnalysisRun.created_at.desc()).limit(limit).offset(offset)
     rows = list(session.execute(stmt).scalars().all())

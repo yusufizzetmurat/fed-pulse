@@ -141,6 +141,11 @@ def main() -> None:
             f"C-vs-A 96.7%CI [{c[0]:+.4f},{c[1]:+.4f}]"
         )
 
+    expected_horizons = {f"h{h}" for h in HORIZONS}
+    assert set(out["by_horizon"].keys()) == expected_horizons, (
+        f"by_horizon keys drifted from pre-registration: "
+        f"expected {sorted(expected_horizons)}, got {sorted(out['by_horizon'].keys())}"
+    )
     Path(OUT).parent.mkdir(parents=True, exist_ok=True)
     Path(OUT).write_text(json.dumps(out, indent=2))
     print(f"saved -> {OUT}")

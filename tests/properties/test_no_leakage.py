@@ -86,3 +86,42 @@ def test_train_window_strictly_precedes_val_and_test_windows(fold: dict[str, str
     assert fold["train_start"] <= fold["train_end"] < fold["val_start"]
     assert fold["val_start"] <= fold["val_end"] < fold["test_start"]
     assert fold["test_start"] <= fold["test_end"]
+
+
+def test_rich_feature_vector_width_matches_constant() -> None:
+    """Sequence-leakage guard at the feature-row level.
+
+    ``FeatureVector.as_rich_list`` is the canonical row builder used to
+    assemble training batches; if a future change appends a column past
+    the declared ``RICH_FEATURE_SIZE`` constant without updating the
+    constant the loader would silently widen rows and downstream
+    consumers (scaler, model input head, sequence batcher) would mis-
+    interpret the trailing slot. Encode the width contract as a test
+    so that drift fails CI loudly.
+    """
+
+    pytest.importorskip("torch", reason="FeatureVector chains pull torch transitively")
+    from app.models.config import (
+        FEATURE_SIZE,
+        RICH_FEATURE_SIZE,
+        FeatureVector,
+    )
+
+    row = FeatureVector(
+        date="2024-01-01",
+        sentiment_score=0.0,
+        market_close=100.0,
+        market_volatility=0.01,
+        close_change_pct=0.0,
+        volatility_change=0.0,
+        elapsed_time=0.0,
+    )
+    base = row.as_list()
+    assert len(base) == FEATURE_SIZE, (
+        f"FeatureVector.as_list width drifted: expected {FEATURE_SIZE}, got {len(base)}"
+    )
+    rich = row.as_rich_list()
+    assert len(rich) == RICH_FEATURE_SIZE, (
+        f"FeatureVector.as_rich_list width drifted: "
+        f"expected {RICH_FEATURE_SIZE}, got {len(rich)}"
+    )

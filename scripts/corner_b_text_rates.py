@@ -28,7 +28,11 @@ BONF_P = FAMILY_ALPHA / N_TESTS  # 0.025
 
 
 def _load_yield(sym: str) -> pd.DataFrame:
-    obs = json.load(open(f"data/external/fred/{sym}.json"))["observations"]
+    fred_path = Path(f"data/external/fred/{sym}.json")
+    if not fred_path.exists():
+        raise FileNotFoundError(f"Required FRED series {fred_path} not found")
+    with fred_path.open("r", encoding="utf-8") as fh:
+        obs = json.load(fh)["observations"]
     df = pd.DataFrame(obs)[["date", "value"]]
     df = df[df["value"] != "."].copy()
     df["date"] = pd.to_datetime(df["date"])
@@ -62,6 +66,10 @@ def _dm_pvalue(e1: np.ndarray, e2: np.ndarray, lag: int) -> tuple[float, float]:
 
 
 def run_experiment() -> dict[str, Any]:
+    if not Path(STANCE).exists():
+        raise FileNotFoundError(f"Required stance feature {STANCE} not found")
+    if not Path(EVENTS).exists():
+        raise FileNotFoundError(f"Required events table {EVENTS} not found")
     y2 = _load_yield("DGS2").rename(columns={"y": "y2"})
     y1 = _load_yield("DGS1").rename(columns={"y": "y1"})
     yld = y2.merge(y1, on="date", how="inner").sort_values("date").reset_index(drop=True)

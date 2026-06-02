@@ -1384,6 +1384,7 @@ def _conformal_manifest_for(checkpoint_path: Path | None) -> Any:
     # on 3.11 and 3.12+.
     manifest_path = checkpoint_path.with_name(checkpoint_path.stem + ".conformal.json")
     if not manifest_path.exists():
+        logger.warning("conformal_manifest_missing path=%s", manifest_path)
         return None
     try:
         from app.evaluation.conformal import load_manifest

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import sys
+import logging
 from pathlib import Path
 from typing import Any
 
 import torch
+
+logger = logging.getLogger(__name__)
 
 from app.evaluation.metrics import EvaluationMetrics, TrainingRunSummary
 from app.models.config import (
@@ -122,9 +124,19 @@ def _coerce_payload_config(payload: dict[str, Any] | None) -> ModelConfig:
     raw = payload.get("model_config")
     if isinstance(raw, ModelConfig):
         return raw
+    # Walk the payload top-level for an ``input_size`` shim so a
+    # checkpoint that stored the dim at the payload root rehydrates
+    # against the right feature width instead of silently falling back
+    # to the legacy ``FEATURE_SIZE`` constant.
+    payload_input_size = _checkpoint_input_size(payload)
     if isinstance(raw, dict):
         return ModelConfig(
-            input_size=int(raw.get("input_size", FEATURE_SIZE)),
+            input_size=int(
+                raw.get(
+                    "input_size",
+                    payload_input_size if payload_input_size is not None else FEATURE_SIZE,
+                )
+            ),
             hidden_size=int(raw.get("hidden_size", ModelConfig().hidden_size)),
             num_layers=int(raw.get("num_layers", ModelConfig().num_layers)),
             dropout=float(raw.get("dropout", ModelConfig().dropout)),
@@ -438,9 +450,11 @@ def _load_state_dict_loose(model: ForecasterBase, state_dict: dict[str, Any], so
     missing = list(getattr(result, "missing_keys", []) or [])
     unexpected = list(getattr(result, "unexpected_keys", []) or [])
     if missing or unexpected:
-        print(
-            f"[forecaster] checkpoint {source}: missing={missing} unexpected={unexpected}",
-            file=sys.stderr,
+        logger.warning(
+            "checkpoint_load_mismatch source=%s missing=%s unexpected=%s",
+            source,
+            missing,
+            unexpected,
         )
 
 

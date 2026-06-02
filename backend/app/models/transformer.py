@@ -11,6 +11,15 @@ class _SinusoidalPositionalEncoding(nn.Module):
 
     def __init__(self, hidden_size: int, max_len: int = 32) -> None:
         super().__init__()
+        # Sinusoidal PE writes sin into even channels and cos into odd
+        # channels, so an odd ``hidden_size`` leaves the final channel
+        # unwritten and the encoder layer downstream silently sees a
+        # shape mismatch only at the first forward call. Reject the bad
+        # config up front instead.
+        if hidden_size % 2 != 0:
+            raise ValueError(
+                f"hidden_size must be even for sinusoidal PE; got {hidden_size}"
+            )
         position = torch.arange(max_len).unsqueeze(1)
         div_term = torch.exp(
             torch.arange(0, hidden_size, 2) * (-math.log(10000.0) / hidden_size)

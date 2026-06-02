@@ -94,7 +94,11 @@ export function RegimeHeadline({
   const uniformProb = 1 / classCount;
   let textContribLabel: string | null = null;
   let textContribTitle: string | null = null;
-  if (typeof marketOnlyArgmaxProb === "number" && Number.isFinite(marketOnlyArgmaxProb)) {
+  if (
+    typeof marketOnlyArgmaxProb === "number"
+    && Number.isFinite(marketOnlyArgmaxProb)
+    && Number.isFinite(argmaxProb)
+  ) {
     const deltaPp = (argmaxProb - marketOnlyArgmaxProb) * 100;
     const rounded = Math.round(deltaPp * 10) / 10;
     const sign = rounded > 0 ? "+" : rounded < 0 ? "−" : "±";
@@ -102,7 +106,7 @@ export function RegimeHeadline({
     textContribTitle = `Top-pick probability under text vs market-only: ${(
       argmaxProb * 100
     ).toFixed(1)}% vs ${(marketOnlyArgmaxProb * 100).toFixed(1)}%.`;
-  } else if (argmaxProb - uniformProb < 0.02) {
+  } else if (Number.isFinite(argmaxProb) && argmaxProb - uniformProb < 0.02) {
     textContribLabel = "text channel: weak";
     textContribTitle = "Top-pick probability is within 2pp of uniform. The text barely moved the prediction.";
   }

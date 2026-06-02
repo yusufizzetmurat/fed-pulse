@@ -223,7 +223,7 @@ export function XaiPanel({ xai, previewMode }: XaiPanelProps) {
         ) : (
           <p className="space-x-1.5 text-sm leading-7">
             {xai.sentences.map((sentence, idx) => (
-              <SentenceChip key={`${idx}-${sentence.text.slice(0, 16)}`} sentence={sentence} />
+              <SentenceChip key={idx} sentence={sentence} />
             ))}
           </p>
         )}

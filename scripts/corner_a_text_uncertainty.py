@@ -23,6 +23,7 @@ from app.data.dense_daily_dataset import walk_forward_splits
 from app.data.dense_forecast_train import _fit_predict_ols
 from app.data.intraday_rv_forecast import _forward_log_rv, _qlike, _qlike_pointwise
 from app.data.intraday_rv_production import _build_full, _ensemble_predict
+from app.determinism import enable_deterministic_mode
 
 SEEDS = (11, 22, 33, 44, 55)
 HORIZONS = (1, 5, 22)
@@ -67,6 +68,14 @@ def _boot_gain_ci(
 
 
 def run_experiment(device: str = "cpu") -> dict[str, Any]:
+    # Anchor every numpy / torch RNG to the first official seed before
+    # any data load or ensemble call so the run is byte-deterministic
+    # across reruns (matches the pre-registration contract).
+    enable_deterministic_mode(SEEDS[0])
+    if not Path(RV_PATH).exists():
+        raise FileNotFoundError(f"Required RV data {RV_PATH} not found")
+    if not Path(FEAT_PATH).exists():
+        raise FileNotFoundError(f"Required feature data {FEAT_PATH} not found")
     df = pd.read_parquet(RV_PATH).sort_values("date").reset_index(drop=True)
     df["date"] = pd.to_datetime(df["date"])
     feat = pd.read_parquet(FEAT_PATH)
@@ -156,6 +165,17 @@ def run_experiment(device: str = "cpu") -> dict[str, Any]:
                 out["hit_cells"].append(f"h{h}:{cell}")
         out["by_horizon"][f"h{h}"] = row
 
+    expected_horizons = {f"h{h}" for h in HORIZONS}
+    assert set(out["by_horizon"].keys()) == expected_horizons, (
+        f"by_horizon keys drifted from pre-registration: "
+        f"expected {sorted(expected_horizons)}, got {sorted(out['by_horizon'].keys())}"
+    )
+    expected_cells = {"full", "post_fomc"}
+    for horizon_key, row in out["by_horizon"].items():
+        assert set(row.keys()) == expected_cells, (
+            f"{horizon_key} cells drifted: expected {sorted(expected_cells)}, "
+            f"got {sorted(row.keys())}"
+        )
     out["verdict"] = "CORNER_A_POSITIVE" if out["hit_cells"] else "NULL"
     Path(OUT_PATH).parent.mkdir(parents=True, exist_ok=True)
     Path(OUT_PATH).write_text(json.dumps(out, indent=2))

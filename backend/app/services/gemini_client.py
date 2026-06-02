@@ -12,10 +12,13 @@ as a quality signal.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
 from app.services.langsmith_client import traced
+
+_logger = logging.getLogger(__name__)
 
 ALLOWED_LABELS = ("hawkish", "dovish", "neutral")
 
@@ -70,6 +73,15 @@ def score_passage(text: str, *, model: Any) -> dict[str, Any]:
     response = model.generate_content(prompt)
     raw = getattr(response, "text", "") or ""
     label, confidence = _parse_response(raw)
+    if confidence == 0.0:
+        # A zero-confidence return out of ``_parse_response`` always
+        # signals a parse / schema failure (the parser does not emit
+        # zero on a real read). Surface the raw response so an operator
+        # can spot prompt drift or model regressions without enabling
+        # debug logging across the rest of the service.
+        _logger.warning(
+            "gemini_parse_failure label=%s raw=%r", label, raw[:512]
+        )
     return {"label": label, "confidence": confidence, "raw": raw}
 
 

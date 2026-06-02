@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
 from app.config import DATA_DIR, MODEL_CHECKPOINT_DIR
+
+logger = logging.getLogger(__name__)
 
 # v2 reference: 20-day lookback over daily bars. v1 used 5 (sub-week)
 # which was too short for the recurrent core to learn temporal structure.
@@ -1497,6 +1500,12 @@ class FeatureVector:
             out = out + press_conf_block
         # #443 statement-delta tail.
         if self.statement_delta_embedding is not None:
+            if len(self.statement_delta_embedding) > RICH_STATEMENT_DELTA_DIM:
+                logger.warning(
+                    "statement_delta_embedding truncated from %d to %d",
+                    len(self.statement_delta_embedding),
+                    RICH_STATEMENT_DELTA_DIM,
+                )
             delta_block = [
                 float(v) for v in self.statement_delta_embedding[:RICH_STATEMENT_DELTA_DIM]
             ]

@@ -131,13 +131,30 @@ def encode_text_pooled(text: str) -> list[float] | None:
     outputs = state.model(input_ids=input_ids, attention_mask=attention_mask)
     hidden = outputs.last_hidden_state  # (1, T, H)
     mask = attention_mask.unsqueeze(-1).float()
+    # When tokenisation collapses to all-padding (special tokens only),
+    # there are no real-content positions to pool over. Returning a zero
+    # vector here would be semantically different from the empty-text
+    # guard above, so collapse to None for consistency.
+    real_token_counts = mask.sum(dim=1)
+    if bool((real_token_counts == 0).any().item()):
+        del input_ids, attention_mask, outputs, hidden, mask, real_token_counts
+        return None
     summed = (hidden * mask).sum(dim=1)
-    counts = mask.sum(dim=1).clamp(min=1.0)
+    counts = real_token_counts.clamp(min=1.0)
     pooled_cpu = (summed / counts).squeeze(0).cpu().tolist()
     # Free the on-device intermediates explicitly so a long-lived server
     # process does not stack ~1.5 MB of GPU residency per call until the
     # next Python GC pass.
-    del input_ids, attention_mask, outputs, hidden, mask, summed, counts
+    del (
+        input_ids,
+        attention_mask,
+        outputs,
+        hidden,
+        mask,
+        summed,
+        counts,
+        real_token_counts,
+    )
     return [float(v) for v in pooled_cpu]
 
 

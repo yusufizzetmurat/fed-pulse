@@ -26,6 +26,7 @@ from app.data.intraday_rv_forecast import _har_lags  # noqa: E402
 from app.data.intraday_rv_production import _conformal_quantile, _ensemble_predict  # noqa: E402
 from app.models.config import MULTI_TASK_CERTAINTY_LABELS as CL  # noqa: E402
 from app.services import multi_axis_classifier as mac  # noqa: E402
+from app.determinism import enable_deterministic_mode  # noqa: E402
 
 SEEDS = (11, 22, 33, 44, 55)
 H = 1
@@ -87,6 +88,11 @@ def _score_u() -> pd.DataFrame:
 
 
 def run_experiment(device: str = "cpu") -> dict[str, Any]:
+    enable_deterministic_mode(SEEDS[0])
+    if not Path(DXY).exists():
+        raise FileNotFoundError(f"Required DXY cache {DXY} not found")
+    if not Path(EVENTS).exists():
+        raise FileNotFoundError(f"Required events table {EVENTS} not found")
     px = pd.read_parquet(DXY)[["date", "close"]].copy()
     px["date"] = pd.to_datetime(px["date"])
     px = px.sort_values("date").reset_index(drop=True)

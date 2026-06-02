@@ -379,6 +379,12 @@ def _train_variant(
 
     if best_state is not None:
         model.load_state_dict(best_state)
+        # Putting the model in eval() drops dropout + switches batchnorm
+        # to inference mode; without this the "final" RMSE the ablation
+        # logs still reflects the training-time stochasticity that the
+        # best-state was captured under, which silently shifts the
+        # numbers downstream graders compare against.
+        model.eval()
 
     # Final evaluation: per-target RMSE + directional accuracy on val set.
     close_se: list[float] = []

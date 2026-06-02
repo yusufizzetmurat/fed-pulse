@@ -87,6 +87,7 @@ class DemoArgs:
     headless: bool
     wait_timeout_ms: int
     keep_open: bool
+    strict: bool = False
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> DemoArgs:
@@ -124,6 +125,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> DemoArgs:
         default=30_000,
         help="Per-step wait timeout in milliseconds.",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit non-zero when any panel is skipped instead of treating skips as soft.",
+    )
     args = parser.parse_args(argv)
 
     if args.output_dir is not None:
@@ -152,6 +158,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> DemoArgs:
         headless=not args.headed,
         wait_timeout_ms=args.wait_timeout_ms,
         keep_open=args.keep_open,
+        strict=args.strict,
     )
 
 
@@ -240,6 +247,8 @@ def run_demo(args: DemoArgs) -> int:
         page.wait_for_timeout(300)
         _capture(page, output_dir, "statement_decomposition", timestamp)
 
+        skip_count = 0
+
         # ---- Step 3: market reaction. ---------------------------------
         # Cold-start dev backends produce a regression-only checkpoint;
         # the market panel then collapses to an "evidence unavailable"
@@ -250,6 +259,7 @@ def run_demo(args: DemoArgs) -> int:
             _capture(page, output_dir, "market_reaction", timestamp)
         except Exception as exc:  # noqa: BLE001
             print(f"[demo]   market_reaction panel skipped: {exc}")
+            skip_count += 1
 
         # ---- Step 4: historical analogs. ------------------------------
         try:
@@ -257,6 +267,7 @@ def run_demo(args: DemoArgs) -> int:
             _capture(page, output_dir, "historical_analogs", timestamp)
         except Exception as exc:  # noqa: BLE001 - analog index may be absent on a fresh deploy
             print(f"[demo]   historical_analogs panel skipped: {exc}")
+            skip_count += 1
 
         # ---- Step 5: trajectory. --------------------------------------
         try:
@@ -264,6 +275,7 @@ def run_demo(args: DemoArgs) -> int:
             _capture(page, output_dir, "trajectory", timestamp)
         except Exception as exc:  # noqa: BLE001
             print(f"[demo]   trajectory panel skipped: {exc}")
+            skip_count += 1
 
         # ---- Step 6: settings / checkpoint surface. -------------------
         page.goto(f"{args.frontend_url}/settings", wait_until="domcontentloaded")
@@ -285,6 +297,9 @@ def run_demo(args: DemoArgs) -> int:
         context.close()
         browser.close()
 
+    if args.strict and skip_count > 0:
+        print(f"[demo] {skip_count} panels skipped in strict mode")
+        return 1
     print("[demo] OK")
     return 0
 

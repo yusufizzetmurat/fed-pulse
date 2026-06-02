@@ -22,6 +22,7 @@ from app.data.dense_daily_dataset import walk_forward_splits
 from app.data.dense_forecast_train import _fit_predict_ols
 from app.data.intraday_rv_forecast import _forward_log_rv
 from app.data.intraday_rv_production import _build_full, _conformal_quantile, _ensemble_predict
+from app.determinism import enable_deterministic_mode
 
 SEEDS = (11, 22, 33, 44, 55)
 HORIZONS = (1, 5, 22)
@@ -53,6 +54,11 @@ def _dm_pvalue(e1: np.ndarray, e2: np.ndarray, lag: int) -> tuple[float, float]:
 
 
 def run_experiment(device: str = "cpu") -> dict[str, Any]:
+    enable_deterministic_mode(SEEDS[0])
+    if not Path(RV_PATH).exists():
+        raise FileNotFoundError(f"Required RV data {RV_PATH} not found")
+    if not Path(FEAT_PATH).exists():
+        raise FileNotFoundError(f"Required feature data {FEAT_PATH} not found")
     df = pd.read_parquet(RV_PATH).sort_values("date").reset_index(drop=True)
     df["date"] = pd.to_datetime(df["date"])
     feat = pd.read_parquet(FEAT_PATH)

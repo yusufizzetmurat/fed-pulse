@@ -28,6 +28,7 @@ import time
 from collections import defaultdict
 from datetime import date, datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger("app.services.intraday_features")
 
@@ -55,6 +56,18 @@ def reset_cache() -> None:
 
 def _today_iso() -> str:
     return datetime.now(timezone.utc).date().isoformat()
+
+
+def _trading_day_et() -> str:
+    """Anchor cache key to America/New_York trading day, not UTC date.
+
+    Bars publish on the NYSE schedule, so a UTC date boundary at midnight
+    cuts across the 14:00 / 16:00 ET trading-day boundary and can stitch
+    pre-close and post-close bars under the same cache key. Bucketing on
+    ET date keeps each trading session in its own slot.
+    """
+
+    return datetime.now(ZoneInfo("America/New_York")).date().isoformat()
 
 
 def _fetch_intraday_bars_yf(symbol: str) -> Any | None:
@@ -151,7 +164,7 @@ def recent_realized_measures(symbol: str, *, as_of: str | None = None) -> dict[s
     the dashboard does not hammer yfinance on every page refresh.
     """
 
-    key = (symbol, as_of or _today_iso())
+    key = (symbol, as_of or _trading_day_et())
     now = time.monotonic()
     cached = _cache.get(key)
     if cached is not None and now - cached[0] < _CACHE_TTL_SECONDS:
