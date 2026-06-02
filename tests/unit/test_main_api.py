@@ -138,6 +138,123 @@ def test_analyze_rejects_unknown_field():
     assert response.status_code == 422
 
 
+@pytest.mark.parametrize("horizon", ["1d", "3d", "5d", "10d"])
+def test_analyze_supports_all_horizons(monkeypatch, horizon):
+    """/analyze must return 200 for every horizon the workspace offers.
+
+    The frontend horizon picker exposes 1d/3d/5d/10d; an earlier audit
+    flagged that anything other than 10d surfaced an error. This
+    parametrized contract test pins the four picker options through the
+    request path so a regression on any of them fails CI rather than the
+    user. The mocked forecast slice scales its step count off the
+    horizon label so the realized-overlay key alignment also exercises
+    each step count.
+    """
+
+    monkeypatch.setattr(
+        main_mod,
+        "analyze_text",
+        lambda _: {
+            "label": "neutral",
+            "score": 0.0,
+            "raw": [{"label": "neutral", "score": 0.0}],
+        },
+    )
+    monkeypatch.setattr(
+        main_mod,
+        "fetch_market_snapshot",
+        lambda **_: {
+            "symbol": "^GSPC",
+            "requested_date": "2026-03-19",
+            "date_used": "2026-03-19",
+            "lookback_days": 7,
+            "close": 5600.0,
+            "volatility_5d": 0.01,
+        },
+    )
+    monkeypatch.setattr(
+        main_mod,
+        "fetch_market_history",
+        lambda **_: [
+            {"date": "2026-03-18", "close": 5580.0, "volatility_5d": 0.011},
+            {"date": "2026-03-19", "close": 5600.0, "volatility_5d": 0.010},
+        ],
+    )
+
+    steps = int(horizon[:-1])
+
+    monkeypatch.setattr(
+        main_mod,
+        "forecast_quantitative_series",
+        lambda **_: {
+            "prediction": {"close": 5610.0, "volatility": 0.012, "horizon": horizon},
+            "model": {
+                "checkpoint_path": "backend/models/forecaster_best.pt",
+                "checkpoint_exists": True,
+                "checkpoint_loaded": True,
+                "runtime_mode": "fast",
+                "hidden_size": 64,
+                "num_layers": 2,
+                "dropout": 0.15,
+                "head_hidden_size": 32,
+                "close_scale": 10000.0,
+                "sequence_length": 5,
+            },
+            "series": {
+                "timestamps": ["2026-03-18", "2026-03-19"],
+                "history_close": [5580.0, 5600.0],
+                "history_volatility": [0.011, 0.01],
+                "forecast_timestamps": [f"2026-03-19+{i + 1}" for i in range(steps)],
+                "forecast_close": [5605.0 + i for i in range(steps)],
+                "forecast_close_lower": [5589.0] * steps,
+                "forecast_close_upper": [5621.0] * steps,
+                "forecast_volatility": [0.0115] * steps,
+                "forecast_volatility_lower": [0.0110] * steps,
+                "forecast_volatility_upper": [0.0120] * steps,
+                "forecast_confidence_level": 0.8,
+                "volatility_scale": {"suggested_ymin": 0.0, "suggested_ymax": 0.02},
+            },
+        },
+    )
+    monkeypatch.setattr(main_mod, "parse_horizon_steps", lambda h: int(h[:-1]))
+    monkeypatch.setattr(
+        main_mod,
+        "fetch_realized_forward",
+        lambda **_: [
+            {
+                "date": f"2026-03-{20 + i:02d}",
+                "close": 5606.0 + i,
+                "volatility_5d": 0.0112 + i * 1e-4,
+            }
+            for i in range(steps)
+        ],
+    )
+    monkeypatch.setattr(main_mod, "_record_history", lambda *_args, **_kwargs: None)
+
+    client = TestClient(main_mod.app)
+    response = client.post(
+        "/analyze",
+        json={
+            "text": "sample",
+            "date": "2026-03-19",
+            "symbol": "^GSPC",
+            "horizon": horizon,
+            "include_realized": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["prediction"]["horizon"] == horizon
+    assert len(payload["series"]["forecast_timestamps"]) == steps
+    assert len(payload["series"]["forecast_close"]) == steps
+    assert len(payload["series"]["realized_timestamps"]) == steps
+    # Every per-horizon analyze response must still carry the descriptive
+    # blocks the workspace renders so a non-10d horizon never strips a
+    # tile out of the payload shape.
+    for key in ("sentiment", "market", "model", "multi_axis", "policy_action"):
+        assert key in payload
+
+
 def _write_statement_fixture(tmp_path, *, date_iso: str, text: str):
     import json
 
