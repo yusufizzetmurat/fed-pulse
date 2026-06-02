@@ -4542,7 +4542,13 @@ def bootstrap_checkpoint(
     validation_split: float | None = None,
     early_stopping_patience: int = 10,
     checkpoint_path: str | Path = BEST_MODEL_PATH,
+    seed: int = 11,
 ) -> TrainingResult:
+    # Cold-start production fits run with the official seed 11 so two boots
+    # against the same vector history produce byte-identical first
+    # predictions. train_model only enables deterministic mode when ``seed``
+    # is non-None; an unseeded bootstrap means the live forecaster diverges
+    # from the seed-11 walk-forward artifact the QLIKE-beats-HAR claim rests on.
     resolved_fraction = _resolve_validation_fraction(validation_fraction, validation_split)
     return train_model(
         vectors=vectors,
@@ -4553,4 +4559,5 @@ def bootstrap_checkpoint(
         early_stopping_patience=early_stopping_patience,
         checkpoint_path=checkpoint_path,
         save_checkpoint=True,
+        seed=seed,
     )

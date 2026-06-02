@@ -1146,6 +1146,12 @@ def _fit_market_model(
 
     Returns ``(alpha, beta)``. Falls back to ``(0.0, 1.0)`` when input is
     degenerate (empty, single point, or zero benchmark variance).
+
+    Uses the unbiased ``ddof=1`` sample estimator for both covariance and
+    benchmark variance, matching the rest of the volatility math in this
+    file (e.g. the rolling-std blocks) and the documented OLS convention.
+    The ÷n population estimator gives an identical β point estimate (the
+    factor cancels in cov / var_b) but biases any reported variance / SE.
     """
 
     n = min(len(asset_returns), len(bench_returns))
@@ -1155,8 +1161,8 @@ def _fit_market_model(
     b = list(bench_returns[-n:])
     mean_a = sum(a) / n
     mean_b = sum(b) / n
-    cov = sum((ai - mean_a) * (bi - mean_b) for ai, bi in zip(a, b)) / n
-    var_b = sum((bi - mean_b) ** 2 for bi in b) / n
+    cov = sum((ai - mean_a) * (bi - mean_b) for ai, bi in zip(a, b)) / (n - 1)
+    var_b = sum((bi - mean_b) ** 2 for bi in b) / (n - 1)
     if var_b <= 1e-18:
         return (0.0, 1.0)
     beta = cov / var_b
