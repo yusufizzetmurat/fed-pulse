@@ -480,6 +480,19 @@ artefacts:
       - text_embedding_missing
       - credibility
 
+  volume_har_canonical:
+    hf_uri: hf://yusufizzetmurat/fomc-volume-har
+    revision: "540b25a8d66c6f0110dd02b89f10e507139c80b8"
+    eager: true
+    description: |
+      HAR Corsi log-volume artifact for the Expected Volume card. JSON
+      bundle of per-horizon (h=1, 5, 22) regression coefficients, weekday
+      and month-end / quarter-end seasonality block, and conformal
+      residual quantiles. Eager-pulled into
+      ``backend/models/volume_har/volume_har_artifact.json`` so cold
+      starts skip the in-process fit against live yfinance volume.
+    inference_features: []
+
   retrieval_bundle:
     hf_uri: hf://yusufizzetmurat/fed-pulse-retrieval
     revision: "a4693b818e4e2a738f3e32c844f45c651424ee3e"
