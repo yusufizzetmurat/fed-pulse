@@ -69,7 +69,13 @@ def _stub_predict_har_regime(monkeypatch, mapping: dict[str, dict[str, Any]]) ->
 
     from app.services import har_tercile as _ht
 
-    def _fake_predict(rv_history, cutoffs_q33=None, cutoffs_q67=None, har_coef=None):
+    def _fake_predict(
+        rv_history,
+        cutoffs_q33=None,
+        cutoffs_q67=None,
+        har_coef=None,
+        symbol="^GSPC",
+    ):
         key = f"{float(rv_history[0]):.6f}"
         spec = mapping[key]
         return {
@@ -398,9 +404,12 @@ def test_aggregate_metrics_zero_resolved_returns_none_accuracy() -> None:
     assert metrics["per_tercile_hit_rate"] == {}
 
 
-def test_endpoint_rejects_non_gspc_symbol(client) -> None:
+def test_endpoint_rejects_unsupported_symbol(client) -> None:
+    # ^NDX and ^DJI are now accepted (per-call OLS HAR fit). FX tickers
+    # like DX-Y.NYB stay outside the supported set; the endpoint returns
+    # a structured 400 listing the equity-index family that is in scope.
     response = client.get(
-        "/forecast/har-tercile-backtest", params={"symbol": "^NDX"}
+        "/forecast/har-tercile-backtest", params={"symbol": "DX-Y.NYB"}
     )
     assert response.status_code == 400
     body = response.json()

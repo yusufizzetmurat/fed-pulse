@@ -1880,7 +1880,9 @@ def _load_package_sequences_with_metadata(
     # Loading it unconditionally costs one cheap parquet read and
     # prevents the silent all-None projection that would otherwise
     # fire under ``--no-rich-features --rates-target-mode=fomc_attributable``.
-    mp_surprise_lookup: dict[str, dict[str, float]] = _read_mp_surprise_lookup(package_dir)
+    mp_surprise_lookup: dict[str, dict[str, float | None]] = _read_mp_surprise_lookup(
+        package_dir
+    )
     # #215 SEP dot-plot lookup. Loaded only when the opt-in flag fires so
     # the legacy / opt-out path stays byte-identical to pre-#215 (a
     # parquet on disk doesn't change behaviour unless --use-sep is set).
@@ -2783,7 +2785,9 @@ def load_training_sequences_from_package(
     # (gated) and the fomc-attributable rates-target projection (always
     # computed). Load unconditionally so `--no-rich-features` does not
     # silently null every projection.
-    mp_surprise_lookup: dict[str, dict[str, float]] = _read_mp_surprise_lookup(package_dir)
+    mp_surprise_lookup: dict[str, dict[str, float | None]] = _read_mp_surprise_lookup(
+        package_dir
+    )
     # #215 SEP lookup (legacy loader path mirror -- see the matched site
     # in ``_load_package_sequences_with_metadata``).
     sep_lookup: dict[str, dict[str, Any]] = (
