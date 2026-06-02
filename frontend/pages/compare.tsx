@@ -423,18 +423,18 @@ function DeltaSummary({ delta }: { delta: CompareDelta }) {
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <GitCompare className="h-4 w-4 text-primary" />
-          Δ A − B
+          Run A vs. Run B
         </CardTitle>
         <CardDescription>{describeStanceShift(delta.stanceShift)}</CardDescription>
       </CardHeader>
       <CardContent>
-        <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
           <div>
             <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Regime</dt>
             <dd className="mt-1 flex items-center gap-1">{argmaxLine}</dd>
           </div>
           <div>
-            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Set size</dt>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Regime set size</dt>
             <dd className="numeric mt-1">
               {regime.setSizeA ?? "—"} vs {regime.setSizeB ?? "—"}
             </dd>
@@ -454,7 +454,16 @@ function DeltaSummary({ delta }: { delta: CompareDelta }) {
             ) : null}
           </div>
           <div>
-            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Shift score</dt>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Sentiment score Δ</dt>
+            <dd
+              className={`numeric mt-1 flex items-center gap-1 ${deltaColorClass(delta.scoreDelta)}`}
+            >
+              <DeltaIcon value={delta.scoreDelta} />
+              {formatDelta(delta.scoreDelta, 3)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Credibility drift Δ</dt>
             <dd
               className={`numeric mt-1 flex items-center gap-1 ${deltaColorClass(delta.driftDelta)}`}
             >
@@ -463,7 +472,7 @@ function DeltaSummary({ delta }: { delta: CompareDelta }) {
             </dd>
           </div>
           <div>
-            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">What was done vs. said</dt>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Realized vs. stated gap Δ</dt>
             <dd
               className={`numeric mt-1 flex items-center gap-1 ${deltaColorClass(delta.realizedGapDelta)}`}
             >
@@ -643,8 +652,10 @@ export default function ComparePage() {
             <div className="space-y-2">
               <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Compare runs</h1>
               <p className="max-w-2xl text-muted-foreground">
-                Pick two past analyses and see the stance, prediction, and confidence deltas side by
-                side. Selections are sticky in the URL; share the link to send a paired view.
+                Pick two past analyses to compare their monetary-policy stance, credibility signals,
+                and volatility-regime classifications. Each delta is Run A minus Run B: a positive
+                value means Run A is higher on that dimension. Selections are sticky in the URL;
+                share the link to send a paired view.
               </p>
             </div>
             <Button
