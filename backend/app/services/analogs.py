@@ -47,11 +47,27 @@ from app.retrieval.index import (
 
 _logger = logging.getLogger(__name__)
 
-DEFAULT_RETRIEVAL_DIR = (
-    DATA_DIR / "artifacts" / "retrieval" / "finbert_fed_adjacent_xbank_dapt_retrieval"
-)
+DEFAULT_RETRIEVAL_BUNDLE_NAME = "finbert_fed_adjacent_xbank_dapt_retrieval"
 DEFAULT_CHECKPOINT_SUBDIR = "checkpoint"
 DEFAULT_MAX_LENGTH = 256
+
+
+def _default_retrieval_dir() -> Path:
+    """Lazy-resolve the default bundle dir from the current DATA_DIR.
+
+    Importing ``DATA_DIR`` at module-load time freezes the path even when
+    a test fixture later monkeypatches ``app.config.DATA_DIR``
+    (or ``loaders.DATA_DIR``). The fail-open contract for "retrieval
+    bundle missing -> emit zeros + missing flag" requires the resolver
+    to follow whatever ``DATA_DIR`` is in force at call time, not at
+    module-load time.
+    """
+
+    # Re-import inside the function so monkeypatching ``app.config.DATA_DIR``
+    # in tests takes effect on each call.
+    from app import config as _app_config
+
+    return _app_config.DATA_DIR / "artifacts" / "retrieval" / DEFAULT_RETRIEVAL_BUNDLE_NAME
 
 
 @dataclass(frozen=True)
@@ -100,7 +116,7 @@ def _resolve_bundle_dir() -> Path:
     override = (os.environ.get("FED_PULSE_RETRIEVAL_DIR") or "").strip()
     if override:
         return Path(override)
-    return DEFAULT_RETRIEVAL_DIR
+    return _default_retrieval_dir()
 
 
 def _resolve_checkpoint_dir(bundle_dir: Path) -> Path:
