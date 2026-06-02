@@ -1,7 +1,35 @@
 # Pre-registration — reverse direction: does the market predict the Fed?
 
-**Date:** 2026-06-02 · **Status:** pre-registered before looking at any
-feature↔target relationship. (Schema/availability confirmed; relationships not.)
+**Date:** 2026-06-02 · **Status:** COMPLETE — null (primary); suggestive-but-not-significant directional lead. See Result.
+
+## Result (2026-06-02)
+
+Usable meetings after requiring complete pre-meeting features: **76** (2016-03-16
+→ 2026-04-29, OOS = 36) — far below the ~130 estimate, because the
+`pre_meeting_*` rate-expectation columns in `events.parquet` are only dense from
+2016. Underpowered; read accordingly.
+
+| test | M0 (persistence) | M1 (market) | statistic | verdict |
+|---|---:|---:|---|---|
+| **Primary** OOS MSE of stance `s` | 0.3327 | 0.3148 | incr-R² **+0.054**, CI90 **[−0.147, +0.237]**; DM p **0.335** | fails (CI ∋ 0, DM n.s.) |
+| Secondary directional `sign(Δs)` | — | — | dir-acc **0.667**, binom p **0.033** | fails Bonferroni (0.05/3 = 0.0167) |
+
+**Verdict: NULL by the decision rule.** The primary test fails both conditions —
+market state does not lower stance MSE over persistence at a significant level,
+and the incremental-R² CI includes 0. The directional secondary (the model calls
+the *direction* of the hawkish/dovish shift 67% of the time) is suggestive that
+markets weakly anticipate the Fed's turn, but it is a secondary test, does not
+survive multiplicity, sits on only 36 OOS meetings, and is contradicted by the
+flat primary. **It is a lead, not a result; not chased on this data per the
+pre-registered rule.**
+
+**Pre-registerable follow-up (NOT done here, to avoid post-hoc tuning):** rebuild
+the pre-meeting rate-expectation features from FRED Treasury yields back to 2010
+(roughly doubling n), re-pre-register, and test the directional channel as the
+*primary* with proper power. The certainty-axis secondary was deferred:
+`stance_daily.parquet` carries only `s`, so it needs re-scoring first.
+
+Artifact: `data/artifacts/reverse_market_predicts_fed/result.json`.
 
 ## Motivation
 
