@@ -82,7 +82,11 @@ function ProbabilityBar({
               ? `rgba(56, 189, 248, ${0.2 + Math.abs(bp) / 90})`
               : bp > 0
               ? `rgba(244, 114, 182, ${0.2 + bp / 90})`
-              : "rgba(148, 163, 184, 0.45)";
+              : // Hold (bp=0) was rgba(148,163,184,0.45) — too close to the
+                // container background to read when one class carries 100%
+                // of the mass. Use the same slate but at full opacity so
+                // the segment is visibly distinct from the bar border.
+                "rgba(100, 116, 139, 0.85)";
           return (
             <div
               key={cls}
