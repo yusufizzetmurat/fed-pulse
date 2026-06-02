@@ -510,12 +510,14 @@ def query(  # noqa: PLR0912, C901 — guard clauses on the optional filters keep
     k_effective = min(int(k), candidate_idx.size)
     # ``argpartition`` is cheaper than a full sort for the typical
     # 250-row index, but we still need the partition slice sorted so
-    # the API output is descending by similarity.
+    # the API output is descending by similarity. ``kind="stable"``
+    # mirrors the eval-path ranking in ``recall_at_k.py`` so tied
+    # cosine similarities break deterministically on the lower index.
     if k_effective < scores.size:
         partition = np.argpartition(-scores, k_effective - 1)[:k_effective]
     else:
         partition = np.arange(scores.size)
-    partition = partition[np.argsort(-scores[partition])]
+    partition = partition[np.argsort(-scores[partition], kind="stable")]
     top_idx = candidate_idx[partition]
 
     hits: list[AnalogHit] = []

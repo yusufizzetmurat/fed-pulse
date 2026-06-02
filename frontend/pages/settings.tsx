@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchSettingsCheckpoints, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { errorMessage } from "@/lib/analyze/errors";
 import type { Horizon, SettingsCheckpoint } from "@/lib/analyze/types";
 import {
   DEFAULT_HORIZON,
@@ -238,7 +239,7 @@ function ModelsSection() {
       })
       .catch((err) => {
         if (controller.signal.aborted) return;
-        setError((err as Error).message || "Could not load checkpoints.");
+        setError(errorMessage(err, "Could not load checkpoints."));
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);

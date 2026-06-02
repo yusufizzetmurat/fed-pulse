@@ -74,7 +74,9 @@ services:
         condition: service_healthy
 
   caddy:
-    image: caddy:2
+    # Pinned by digest so a silent upstream change to the floating
+    # ``caddy:2`` tag cannot ship into prod without an explicit bump.
+    image: caddy:2@sha256:ec18ee54aab3315c22e25f3b2babda73ff8007d39b13b3bd1bfffa2f0444c7d9
     container_name: fed-pulse-caddy
     restart: always
     ports:

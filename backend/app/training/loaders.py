@@ -873,7 +873,7 @@ def _compute_sep_features_for_event(
 
 def _read_mp_surprise_lookup(
     package_dir: Path,
-) -> dict[str, dict[str, float]]:
+) -> dict[str, dict[str, float | None]]:
     """Return ``event_date -> {mp_surprise_level, ..., is_intermeeting}``.
 
     Looks first inside the training package and then under the canonical
@@ -907,7 +907,7 @@ def _read_mp_surprise_lookup(
     frame = pd.read_parquet(parquet_path)
     if "event_date" not in frame.columns:
         return {}
-    lookup: dict[str, dict[str, float]] = {}
+    lookup: dict[str, dict[str, float | None]] = {}
     for record in frame.to_dict("records"):
         event_date_raw = record.get("event_date")
         if event_date_raw is None:
@@ -927,7 +927,10 @@ def _read_mp_surprise_lookup(
         # the row via its ``v != v`` check rather than misread a
         # placeholder zero as a real zero-rate observation.
         target_prior_raw = _coerce_finite_float(record.get("ff_target_prior"))
-        target_prior = float("nan") if target_prior_raw is None else target_prior_raw
+        # Use ``None`` for the missing sentinel so downstream consumers
+        # (e.g. ``regime_features.compute_policy_cycle_phase_score``) can
+        # apply a single ``is None`` check rather than a NaN guard.
+        target_prior = None if target_prior_raw is None else target_prior_raw
         is_intermeeting_raw = record.get("is_intermeeting")
         if isinstance(is_intermeeting_raw, bool):
             is_intermeeting = 1.0 if is_intermeeting_raw else 0.0

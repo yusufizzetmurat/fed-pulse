@@ -30,6 +30,7 @@ from app.models.config import (
     MULTI_TASK_STANCE_LABELS as SL,
 )
 from app.services import multi_axis_classifier as mac  # noqa: E402
+from app.determinism import enable_deterministic_mode  # noqa: E402
 
 SEEDS = (11, 22, 33, 44, 55)
 HORIZONS = (1, 5, 22)
@@ -102,6 +103,11 @@ def _boot_ci(pred: np.ndarray, base: np.ndarray, true: np.ndarray, *, block: int
 
 
 def run_experiment(device: str = "cpu") -> dict[str, Any]:
+    enable_deterministic_mode(SEEDS[0])
+    if not Path(DXY).exists():
+        raise FileNotFoundError(f"Required DXY cache {DXY} not found")
+    if not Path(EVENTS).exists():
+        raise FileNotFoundError(f"Required events table {EVENTS} not found")
     px = pd.read_parquet(DXY)[["date", "close"]].copy()
     px["date"] = pd.to_datetime(px["date"])
     px = px.sort_values("date").reset_index(drop=True)

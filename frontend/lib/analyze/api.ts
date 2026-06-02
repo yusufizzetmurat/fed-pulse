@@ -65,7 +65,15 @@ export async function postAnalyze(
   request: AnalyzeRequest
 ): Promise<AnalyzeResult> {
   const response = await axios.post(`${baseUrl}/analyze`, request);
-  return (response.data || {}) as AnalyzeResult;
+  if (!response.data) {
+    // Silent empty-body fallbacks were the hardest class of "panel is
+    // blank" bug to debug; log here so the network tab plus console
+    // tell the same story.
+    // eslint-disable-next-line no-console
+    console.warn("postAnalyze: empty response body, returning {} fallback");
+    return {} as AnalyzeResult;
+  }
+  return response.data as AnalyzeResult;
 }
 
 export async function postAnalyzeMarket(

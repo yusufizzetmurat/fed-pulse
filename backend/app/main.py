@@ -259,9 +259,17 @@ async def _lifespan(app: FastAPI):
 app = FastAPI(title="FOMC Sentiment API", version="0.1.0", lifespan=_lifespan)
 
 app.add_middleware(RunIdMiddleware)
+_cors_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000",
+    ).split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -660,12 +668,22 @@ def get_document_detail(type: str, date: str) -> DocumentDetailResponse:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to read {filename}: {exc}") from exc
+        logger.warning("document_detail_read_failed file=%s", filename, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "document_unavailable",
+                "message": "Document store is temporarily unavailable",
+            },
+        ) from exc
 
     if not isinstance(payload, list):
         raise HTTPException(
-            status_code=500,
-            detail=f"Unexpected payload shape in {filename}: expected a JSON list.",
+            status_code=503,
+            detail={
+                "error": "document_malformed",
+                "message": "Document metadata is malformed",
+            },
         )
 
     for item in payload:
@@ -869,12 +887,29 @@ def _build_analyze_response(
         document_date=payload.date,
         text_embedding=pooled_text_embedding,
     )
-    forecast = forecast_quantitative_series(
-        vectors=history_vectors,
-        forecast_mode=mode,
-        horizon=payload.horizon,
-        forecast_dates=forecast_dates,
-    )
+    forecast: dict[str, Any] | None
+    try:
+        forecast = forecast_quantitative_series(
+            vectors=history_vectors,
+            forecast_mode=mode,
+            horizon=payload.horizon,
+            forecast_dates=forecast_dates,
+        )
+    except Exception:  # noqa: BLE001 -- defensive: degrade gracefully
+        logger.warning("forecast_quantitative_series_failed", exc_info=True)
+        forecast = None
+
+    if forecast is None:
+        forecast = {
+            "prediction": None,
+            "model": {"status": "unavailable"},
+            "series": {},
+            "status": {
+                "status": "unavailable",
+                "code": "forecast_unavailable",
+                "message": "Quantitative forecast is temporarily unavailable",
+            },
+        }
 
     if payload.include_realized:
         realized = fetch_realized_forward(
@@ -883,6 +918,7 @@ def _build_analyze_response(
             steps=horizon_steps,
         )
         if realized:
+            forecast.setdefault("series", {})
             forecast["series"]["realized_timestamps"] = [str(point["date"]) for point in realized]
             forecast["series"]["realized_close"] = [float(point["close"]) for point in realized]
             forecast["series"]["realized_volatility"] = [
@@ -1927,18 +1963,41 @@ async def parse_document(
             raise HTTPException(status_code=502, detail=f"URL fetch failed: {exc}") from exc
         return DocumentParseResponse(**parsed.to_dict())
 
-    assert file is not None
+    if file is None:
+        raise HTTPException(status_code=422, detail="File upload required")
     content_type = (file.content_type or "").lower()
     payload = await file.read()
     if not payload:
         raise HTTPException(status_code=422, detail="Empty upload")
+    if len(payload) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large; max 10 MB")
     stream = io.BytesIO(payload)
-    if content_type == "application/pdf" or (file.filename or "").lower().endswith(".pdf"):
-        parsed = parse_pdf_stream(stream, filename=file.filename)
-    elif content_type in {
+    filename_lower = (file.filename or "").lower()
+    pdf_by_type = content_type == "application/pdf"
+    pdf_by_name = filename_lower.endswith(".pdf")
+    docx_types = {
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/msword",
-    } or (file.filename or "").lower().endswith(".docx"):
+    }
+    docx_by_type = content_type in docx_types
+    docx_by_name = filename_lower.endswith(".docx")
+    # Prefer content_type when present, fall back to filename extension.
+    # Warn on disagreement so misconfigured clients are surfaced.
+    if content_type and (pdf_by_type ^ pdf_by_name) and (pdf_by_type or pdf_by_name):
+        logger.warning(
+            "document_parse_content_type_mismatch type=%s filename=%s",
+            content_type,
+            file.filename,
+        )
+    if content_type and (docx_by_type ^ docx_by_name) and (docx_by_type or docx_by_name):
+        logger.warning(
+            "document_parse_content_type_mismatch type=%s filename=%s",
+            content_type,
+            file.filename,
+        )
+    if pdf_by_type or (not content_type and pdf_by_name):
+        parsed = parse_pdf_stream(stream, filename=file.filename)
+    elif docx_by_type or (not content_type and docx_by_name):
         parsed = parse_docx_stream(stream, filename=file.filename)
     else:
         raise HTTPException(
@@ -2553,14 +2612,14 @@ async def analyze_market(payload: AnalyzeRequest) -> MarketReactionPanel:
     # contract tests + the frontend toast layer keep their existing
     # validation semantics; only true server-side failures collapse to
     # the structured 503 below.
-    sentiment = analyze_text(payload.text)
+    sentiment = await run_in_threadpool(analyze_text, payload.text)
     market_history = await run_in_threadpool(
         fetch_market_history,
         target_date=payload.date,
         symbol=payload.symbol,
         history_length=30,
     )
-    pooled_text_embedding = encode_text_pooled(payload.text)
+    pooled_text_embedding = await run_in_threadpool(encode_text_pooled, payload.text)
     history_vectors = build_feature_vectors(
         market_history,
         sentiment_score=float(sentiment["score"]),

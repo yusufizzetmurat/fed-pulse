@@ -22,6 +22,7 @@ import {
   fetchNextFomcForecast,
   resolveApiBaseUrl,
 } from "@/lib/analyze/api";
+import { errorMessage } from "@/lib/analyze/errors";
 import type {
   FomcCalendarResponse,
   FomcMeeting,
@@ -374,7 +375,7 @@ export default function CalendarPage() {
         if (!cancelled) setData(result);
       })
       .catch((err) => {
-        if (!cancelled) toast.error((err as Error).message || "Calendar fetch failed");
+        if (!cancelled) toast.error(errorMessage(err, "Calendar fetch failed"));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -385,8 +386,14 @@ export default function CalendarPage() {
       .then((result) => {
         if (!cancelled) setDecisions(result);
       })
-      .catch(() => {
-        // Silent.
+      .catch((err) => {
+        // Silent at the UI layer (artifact absence is expected) but log
+        // at debug so a missing/decoded-wrong artifact is still
+        // discoverable via the console.
+        if (process.env.NODE_ENV === "development") {
+          // eslint-disable-next-line no-console
+          console.debug("calendar decisions fetch failed silently", err);
+        }
       });
     return () => {
       cancelled = true;

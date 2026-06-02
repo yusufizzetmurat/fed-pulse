@@ -265,6 +265,11 @@ def fetch_market_snapshot(
             f"Nearest trading day is {lag_days} days before requested date; increase lookback window."
         )
 
+    assert_fomc_day_market_cutoff(
+        latest_idx.to_pydatetime() if hasattr(latest_idx, "to_pydatetime") else latest_idx,
+        feature_name="market_snapshot_close",
+    )
+
     returns = close_series.pct_change().dropna()
     rolling = returns.rolling(volatility_window).std()
     vol = (
@@ -311,6 +316,10 @@ def fetch_market_sequence(
 
     points: list[dict[str, float | str]] = []
     for idx, close_value in valid.tail(sequence_length).items():
+        assert_fomc_day_market_cutoff(
+            idx.to_pydatetime() if hasattr(idx, "to_pydatetime") else idx,
+            feature_name="market_sequence_close",
+        )
         vol = rolling.loc[:idx].iloc[-1] if not rolling.loc[:idx].dropna().empty else 0.0
         points.append(
             {

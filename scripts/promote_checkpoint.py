@@ -95,6 +95,19 @@ def promote_research_checkpoint_to_serving(
         serving, payload["model_state_dict"], str(research_path)
     )
 
+    # Carry encoder_alias / inference_features from the research-side
+    # sidecar (when present) into the promoted payload so the round-trip
+    # is lossless across promotion. The sidecar write below remains the
+    # authoritative source of truth, but mirroring the values inline
+    # keeps the payload self-describing for legacy readers.
+    source_contract = None
+    try:
+        from app.training.inference_contract import read_sidecar
+
+        source_contract = read_sidecar(research_path)
+    except Exception:  # pragma: no cover -- best-effort enrichment only
+        source_contract = None
+
     promoted_payload: dict[str, Any] = dict(payload)
     promoted_payload["model_state_dict"] = serving.state_dict()
     promoted_payload["model_version"] = _bump_model_version(
@@ -102,6 +115,9 @@ def promote_research_checkpoint_to_serving(
     )
     promoted_payload["promoted_from"] = str(research_path)
     promoted_payload["serving_class"] = "ForecasterServingModel"
+    if source_contract is not None:
+        promoted_payload["encoder_alias"] = source_contract.encoder_alias
+        promoted_payload["inference_features"] = tuple(source_contract.inference_features)
 
     serving_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(promoted_payload, serving_path)
@@ -113,13 +129,8 @@ def promote_research_checkpoint_to_serving(
     # the encoder_alias / inference_features the trainer wired in);
     # otherwise the promoted-side derivation is the floor.
     try:
-        from app.training.inference_contract import (
-            derive_contract,
-            read_sidecar,
-            write_sidecar,
-        )
+        from app.training.inference_contract import derive_contract, write_sidecar
 
-        source_contract = read_sidecar(research_path)
         if source_contract is not None:
             promoted_contract = source_contract
         else:

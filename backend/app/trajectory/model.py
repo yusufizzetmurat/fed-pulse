@@ -324,7 +324,21 @@ def _LSTMTrajectoryModel(config: TrajectoryConfig, torch_mod: Any) -> Any:
         def forward(self, inputs: Any, mask: Any | None = None) -> tuple[Any, Any]:
             projected = self.input_proj(inputs)
             outputs, _ = self.lstm(projected)
-            pooled = _final_real_position(outputs, mask, torch_mod)
+            effective_mask = mask
+            if mask is not None:
+                # Mirror the Transformer path: when a row is entirely
+                # padding the final-position pooler would otherwise
+                # clamp counts and silently fall back to position zero.
+                # Force the last absolute slot to be marked real so the
+                # pooler returns the same deterministic vector both
+                # architectures share.
+                mask_bool = mask.bool()
+                all_pad = (~mask_bool).all(dim=1)
+                if bool(all_pad.any().item()):
+                    mask_bool = mask_bool.clone()
+                    mask_bool[all_pad, -1] = True
+                    effective_mask = mask_bool
+            pooled = _final_real_position(outputs, effective_mask, torch_mod)
             pooled = self.dropout(pooled)
             logits = self.head(pooled)
             return logits, pooled

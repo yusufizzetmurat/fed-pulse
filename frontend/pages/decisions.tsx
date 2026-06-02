@@ -41,11 +41,11 @@ const ORDINAL_BPS: Record<string, number> = {
 
 const PRIMARY_MODEL_PREFERENCE = ["ordinal_logit", "hist_gbt", "ois_baseline", "naive_carry"];
 
-function pickPrimaryModel(modelNames: string[]): string {
+function pickPrimaryModel(modelNames: string[]): string | null {
   for (const candidate of PRIMARY_MODEL_PREFERENCE) {
     if (modelNames.includes(candidate)) return candidate;
   }
-  return modelNames[0] ?? "";
+  return modelNames[0] ?? null;
 }
 
 function formatPercent(value: number | null | undefined, digits: number = 1): string {
@@ -476,7 +476,10 @@ export default function DecisionsPage() {
     };
   }, [apiBaseUrl]);
 
-  const primaryModel = data ? pickPrimaryModel(data.model_names) : "";
+  // ``pickPrimaryModel`` returns ``null`` when the response carries no
+  // model names; fall back to the OIS baseline rather than threading an
+  // empty string into ORDINAL_LABELS, which would render "undefined".
+  const primaryModel = data ? pickPrimaryModel(data.model_names) ?? "ois_baseline" : "ois_baseline";
 
   return (
     <>

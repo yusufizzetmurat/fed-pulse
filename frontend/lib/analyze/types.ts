@@ -38,6 +38,12 @@ export interface MarketResponse {
   symbol?: string;
   requested_date?: string;
   date_used?: string;
+  lookback_days?: number;
+  // Backend echoes ``close`` and ``volatility_5d`` on the market block
+  // even though they semantically belong to the prediction surface --
+  // legacy consumers (LegacyForecastCard, pdf export) still read them
+  // off the market block, so keep the fields here until those callers
+  // migrate to PredictionResponse.
   close?: number | null;
   volatility_5d?: number | null;
 }
@@ -790,7 +796,10 @@ export interface HarTercileHorizon {
 export interface HarTercileBaselineResponse {
   symbol: string;
   horizons: HarTercileHorizon[];
-  source_wiki_section: string;
+  cutoffs_q33: number;
+  cutoffs_q67: number;
+  model_revision: string;
+  generated_at: string;
 }
 
 // HAR-tercile backtest served from

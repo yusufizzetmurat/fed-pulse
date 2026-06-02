@@ -125,6 +125,9 @@ ARTEFACT_SOURCES: dict[str, dict[str, str]] = {
     },
     "rates_heads_canonical": {
         "local_path": "backend/models/forecaster_best.pt",
+        "companion_files": [
+            "backend/models/forecaster_best.pt.inference_contract.json",
+        ],
         "license": "mit",
         "kind": "rates_heads",
     },

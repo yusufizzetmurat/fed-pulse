@@ -136,7 +136,13 @@ def _hydrate_one(  # noqa: PLR0913 - six injected params is the natural shape he
             logger.info("eager-pull: %s already present; not overwriting", dst_relpath)
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+        # Copy to a temp sibling and rename atomically so a mid-copy
+        # crash leaves the target either fully intact or absent, never
+        # half-written. Matters most for the forecaster checkpoint where
+        # a torn write surfaces as a cryptic state_dict load error.
+        dst_tmp = Path(str(dst) + ".tmp")
+        shutil.copy2(src, dst_tmp)
+        os.replace(dst_tmp, dst)
         logger.info(
             "eager-pull: hydrated %s <- %s @ %s",
             dst_relpath,
@@ -162,10 +168,11 @@ def hydrate() -> None:
         )
         return
 
-    token = os.environ.get("HF_TOKEN")
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
     if not token:
         logger.info(
-            "eager-pull: HF_TOKEN absent; skipping (cold-start will bootstrap on first /analyze)"
+            "eager-pull: HF_TOKEN/HUGGINGFACE_HUB_TOKEN absent; "
+            "skipping (cold-start will bootstrap on first /analyze)"
         )
         return
 

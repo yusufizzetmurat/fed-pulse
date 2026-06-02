@@ -204,6 +204,10 @@ def _validate_contract(checkpoint_path: Path) -> tuple[bool, str]:
                 "treating as pre-#393 legacy artefact"
             ),
         )
+        _logger.warning(
+            "multi_axis_inference_contract_sidecar_absent path=%s",
+            checkpoint_path,
+        )
         return True, "sidecar_absent"
 
     serving_kwargs = collect_serving_forward_kwargs(TextMultiAxisClassifier)
