@@ -970,6 +970,19 @@ export default function WorkspacePage() {
                   <MultiAxisInterpretation
                     multiAxis={result.multi_axis}
                     stanceContext={stanceContext}
+                    history={
+                      stanceContext?.history.length
+                        ? {
+                            // ``recent-stance-scores`` returns the trailing
+                            // window newest-first; KpiTile sparklines render
+                            // oldest-first, so reverse before threading.
+                            stance: stanceContext.history
+                              .slice()
+                              .reverse()
+                              .map((p) => p.stance_score),
+                          }
+                        : undefined
+                    }
                   />
                 ) : (
                   <EmptyState
