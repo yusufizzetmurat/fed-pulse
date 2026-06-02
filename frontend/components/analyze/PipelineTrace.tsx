@@ -216,7 +216,7 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
     key: "multi-axis",
     title: "Sentiment breakdown",
     blurb:
-      "Three predictions from the same shared model — stance, hawkish / dovish score, and certainty — calibrated against the labelled FOMC corpus.",
+      "Three predictions from the same shared model: stance, hawkish / dovish score, and certainty. Calibrated against the labelled FOMC corpus.",
     icon: <Workflow className="h-3.5 w-3.5" />,
     state: multiAxis ? "ok" : "absent",
     summary: multiAxis ? multiAxisSummary(multiAxis) : "Sentiment model not loaded",
@@ -275,7 +275,7 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
     ) : (
       <p className="text-sm text-muted-foreground">
         Sentiment breakdown model isn't loaded. The stance card falls back to the
-        legacy sentiment classifier — load a sentiment model from the Settings page.
+        legacy sentiment classifier.
       </p>
     ),
   };
@@ -284,7 +284,7 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
     key: "regime",
     title: "Volatility Regime prediction",
     blurb:
-      "Predicts the 10-day forward volatility regime — calm / normal / high — together with a calibrated prediction set so the UI can hedge across more than one class when the model is unsure.",
+      "Predicts the 10-day forward volatility regime (calm / normal / high) together with a calibrated prediction set so the UI can hedge across more than one class when the model is unsure.",
     icon: <Cpu className="h-3.5 w-3.5" />,
     state: regime ? "ok" : "absent",
     summary: regime

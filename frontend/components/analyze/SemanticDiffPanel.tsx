@@ -304,7 +304,7 @@ export function SemanticDiffPanel({
         storageKey={storageKey}
       >
         <StatusBanner
-          title="Non-Latin text — diff not run"
+          title="Non-Latin text. Diff not run."
           summary={data.summary}
           testId="semantic-diff-non-english"
         />

@@ -279,7 +279,7 @@ export function HistoricalAnalogPanel({
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         Past FOMC statements most similar to the current text, ranked by a
         retrieval model. The post-event volatility marker shows a coarse
-        calm / normal / high band only — raw values are hidden so the
+        calm / normal / high band only. Raw values are hidden so the
         analog does not give away the answer. Index size:{" "}
         <span className="numeric">{analogs.index_size.toLocaleString()}</span>
         {" "}past statements · model variant{" "}

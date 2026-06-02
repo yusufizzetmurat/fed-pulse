@@ -104,7 +104,7 @@ export function RegimeHeadline({
     ).toFixed(1)}% vs ${(marketOnlyArgmaxProb * 100).toFixed(1)}%.`;
   } else if (argmaxProb - uniformProb < 0.02) {
     textContribLabel = "text channel: weak";
-    textContribTitle = "Top-pick probability is within 2pp of uniform — the text barely moved the prediction.";
+    textContribTitle = "Top-pick probability is within 2pp of uniform. The text barely moved the prediction.";
   }
 
   // #338 reframe: when the dual-head regression branch is mounted on
@@ -252,7 +252,7 @@ export function RegimeHeadline({
             />
           ) : (
             <p className="text-xs text-muted-foreground">
-              No prior runs for this symbol yet — run history will appear here.
+              No prior runs for this symbol yet. Run history will appear here.
             </p>
           )}
           <div className="grid grid-cols-3 gap-1 text-center text-[10px] text-muted-foreground">

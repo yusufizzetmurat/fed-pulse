@@ -164,7 +164,7 @@ function SentenceChip({
         {sentence.topTokens?.length ? <TokenTable tokens={sentence.topTokens.slice(0, 5)} /> : null}
         {interactive ? (
           <p className="text-[10px] text-muted-foreground">
-            Click to {struck ? "restore" : "strike out"} — the panel re-runs /analyze without this sentence.
+            Click to {struck ? "restore" : "strike out"}. The panel re-runs /analyze without this sentence.
           </p>
         ) : null}
       </TooltipContent>
@@ -318,7 +318,7 @@ export function SentenceStrikeXaiPanel({
         </div>
         <CardDescription>
           {interactive
-            ? "Click a sentence to strike it out — the dashboard re-runs the model without it and shows the change above. "
+            ? "Click a sentence to strike it out. The dashboard re-runs the model without it and shows the change above. "
             : "Hover any sentence to see the five words that mattered most. "}
           {xai.method ? `Method: ${xai.method}.` : null}
         </CardDescription>
@@ -353,8 +353,8 @@ export function SentenceStrikeXaiPanel({
       <CardContent>
         {isEmpty ? (
           <p className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-4 text-sm text-muted-foreground">
-            No salient sentences detected. The attribution method found no tokens above the salience floor — common for
-            very short inputs or text that lies outside the FOMC vocabulary the model was trained on.
+            No salient sentences detected. The attribution method found no tokens above the salience floor. This is
+            common for very short inputs or text outside the FOMC vocabulary the model was trained on.
           </p>
         ) : (
           <p className="space-x-1.5 text-sm leading-7">

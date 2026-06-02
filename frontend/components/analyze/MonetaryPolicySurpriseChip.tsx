@@ -75,7 +75,7 @@ const METHODOLOGY_TOOLTIP = (
       daily-window proxy.
     </p>
     <p className="text-muted-foreground">
-      Descriptive only — never feeds the forecast cards.
+      Descriptive only. Never feeds the forecast cards.
     </p>
   </div>
 );

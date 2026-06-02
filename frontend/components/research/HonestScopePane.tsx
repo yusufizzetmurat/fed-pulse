@@ -50,7 +50,7 @@ export function HonestScopePane() {
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>What this model predicts &mdash; and what it doesn&apos;t</CardTitle>
+          <CardTitle>What this model predicts, and what it doesn&apos;t</CardTitle>
           <CardDescription>
             Forecast cards on the dashboard are driven by market data only. Text panels are
             descriptive: they show what the Fed said and how it changed, never what the price
@@ -102,14 +102,14 @@ export function HonestScopePane() {
           <CardContent className="space-y-3">
             <DoesNotPredict
               title="Price direction or magnitude from FOMC text"
-              detail="Across four encoders (finbert_fed_adjacent, bge-large, e5-large, gte-large), adding FOMC text to the next-day vol forecaster produced no gain — and in the un-regularized fusion a small but consistent loss. Correctly gating the fusion (below) removes the drag without adding any signal."
+              detail="Across four encoders (finbert_fed_adjacent, bge-large, e5-large, gte-large), adding FOMC text to the next-day vol forecaster produced no gain. The un-regularized fusion took a small but consistent loss; correctly gating the fusion (below) removes the drag without adding any signal."
               metric="Text-vs-market 95% block CI  [−0.022, −0.009] at 1-day"
               source="Block-bootstrap incremental CI, four-encoder mean, daily n=1999 (un-regularized fusion)"
             />
             <DoesNotPredict
               title="Volatility regime FROM text"
-              detail="The late-fusion classifier is rendered on the Workspace as a second opinion. With output-level residual fusion the learned gate collapses to ≈0.01 — the model is free to use FOMC text and learns to ignore it, landing at its own market-only level. HAR-tercile is still the headline because it&apos;s the better predictor."
-              metric="Late-fusion macro-F1  0.629 (1d) — text-neutral, ~0.06 below HAR-tercile"
+              detail="The late-fusion classifier is rendered on the Workspace as a second opinion. With output-level residual fusion the learned gate collapses to ≈0.01: the model is free to use FOMC text and learns to ignore it, landing at its own market-only level. HAR-tercile is still the headline because it&apos;s the better predictor."
+              metric="Late-fusion macro-F1  0.629 (1d). Text-neutral, ~0.06 below HAR-tercile"
               source="Pooled walk-forward eval; fused 0.629 vs gate-off market-only 0.631 (gate≈0.01)"
             />
             <DoesNotPredict
@@ -128,8 +128,8 @@ export function HonestScopePane() {
         </CardHeader>
         <CardContent className="space-y-2 text-sm text-muted-foreground">
           <p>
-            The dashboard&apos;s text surfaces &mdash; hawkish/dovish stance, sentiment breakdown,
-            sentence-level XAI, semantic diff against the previous statement, historical analogs &mdash;
+            The dashboard&apos;s text surfaces (hawkish/dovish stance, sentiment breakdown,
+            sentence-level XAI, semantic diff against the previous statement, historical analogs)
             do not forecast the market. They answer a different, honest question:{" "}
             <span className="text-foreground">
               what did the Fed say, how did the wording change, and how does it compare to past

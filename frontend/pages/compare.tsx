@@ -644,7 +644,7 @@ export default function ComparePage() {
               <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Compare runs</h1>
               <p className="max-w-2xl text-muted-foreground">
                 Pick two past analyses and see the stance, prediction, and confidence deltas side by
-                side. Selections are sticky in the URL — share the link to send a paired view.
+                side. Selections are sticky in the URL; share the link to send a paired view.
               </p>
             </div>
             <Button

@@ -114,7 +114,7 @@ export function SecondOpinionRegime({
           with output-level residual fusion the learned gate collapses to ≈0.01, so the
           fused forecast matches its own market-only path (0.629 vs 0.631; the fused−market
           95% block CI includes 0). The model is free to use FOMC text and learns to ignore
-          it — the text adds no forecasting signal and no longer drags the model down.
+          it; the text adds no forecasting signal and no longer drags the model down.
           Surfaced for transparency.
         </p>
       </div>

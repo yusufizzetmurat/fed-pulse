@@ -395,7 +395,7 @@ export default function PerformancePage() {
                   <CardTitle className="text-base">Per-class metrics</CardTitle>
                   <CardDescription>
                     {breakdownAvailable
-                      ? "From training-time evaluation — precision, recall, F1, ROC-AUC, PR-AUC."
+                      ? "From training-time evaluation: precision, recall, F1, ROC-AUC, PR-AUC."
                       : "Computed from your resolved history runs. Will switch to the training evaluation when one is published."}
                   </CardDescription>
                 </CardHeader>
@@ -491,8 +491,8 @@ export default function PerformancePage() {
                   <CardTitle className="text-base">Confusion matrix</CardTitle>
                   <CardDescription>
                     {breakdownAvailable
-                      ? "From training-time evaluation — rows are the actual class, columns are the predicted top pick."
-                      : "Computed from your resolved runs — rows are the realised regime, columns are the predicted top pick."}
+                      ? "From training-time evaluation. Rows are the actual class, columns are the predicted top pick."
+                      : "Computed from your resolved runs. Rows are the realised regime, columns are the predicted top pick."}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
