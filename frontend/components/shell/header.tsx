@@ -12,7 +12,6 @@ import {
   LineChart,
   Menu,
   Settings as SettingsIcon,
-  Terminal,
   X,
 } from "lucide-react";
 
@@ -24,7 +23,6 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS: Array<{ href: string; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { href: "/", label: "Workspace", icon: Activity },
-  { href: "/console", label: "Terminal", icon: Terminal },
   { href: "/decisions", label: "Predictions", icon: LineChart },
   { href: "/history", label: "History", icon: HistoryIcon },
   { href: "/compare", label: "Compare", icon: GitCompare },
