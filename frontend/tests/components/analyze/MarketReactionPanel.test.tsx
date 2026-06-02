@@ -53,12 +53,16 @@ function fixture(): MarketReactionPanelResponse {
 }
 
 describe("MarketReactionPanel", () => {
-  it("renders one card per rates head plus the Volatility Regime card", () => {
+  it("renders one card per rates head and never the duplicate Volatility Regime tile", () => {
+    // The Volatility Regime tile used to render here alongside the
+    // rates cards; it was a duplicate of the SecondOpinionRegime card
+    // at workspace slot 3. The rates surfaces are still the panel's
+    // load-bearing content.
     render(<MarketReactionPanel panel={fixture()} />);
     expect(screen.getByText(/2y yield/i)).toBeInTheDocument();
     expect(screen.getByText(/5y yield/i)).toBeInTheDocument();
     expect(screen.getByText(/Terminal rate/i)).toBeInTheDocument();
-    expect(screen.getByText(/Volatility Regime/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Volatility Regime/i)).not.toBeInTheDocument();
   });
 
   it("shows the directional bucket badge", () => {
@@ -67,7 +71,7 @@ describe("MarketReactionPanel", () => {
     expect(tightenings.length).toBeGreaterThan(0);
   });
 
-  it("returns null when the panel has no rates or vol regime card", () => {
+  it("returns null when the panel has no rates", () => {
     const empty: MarketReactionPanelResponse = {
       rates: [],
       vol_regime: null,
@@ -75,6 +79,17 @@ describe("MarketReactionPanel", () => {
       checkpoint_path: null,
     };
     const { container } = render(<MarketReactionPanel panel={empty} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("returns null when only vol_regime is set — the duplicate tile is gone", () => {
+    const vol_only: MarketReactionPanelResponse = {
+      rates: [],
+      vol_regime: fixture().vol_regime,
+      encoder_alias: null,
+      checkpoint_path: null,
+    };
+    const { container } = render(<MarketReactionPanel panel={vol_only} />);
     expect(container).toBeEmptyDOMElement();
   });
 

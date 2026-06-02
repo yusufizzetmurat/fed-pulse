@@ -4,7 +4,7 @@ Walks the published FOMC meeting calendar (most recent first), replays
 ``services.har_tercile.predict_har_regime`` against the rolling-window
 RV history that the model would have seen at each historical event
 date, and compares the predicted tercile to the realized tercile from
-the forward 10-trading-day window.
+the single forward-day bar (h=1).
 
 This is the on-demand variant of the panel. The earlier service read a
 ``har_baselines`` block off ``analysis_runs.payload``, but the
@@ -17,10 +17,9 @@ realized columns in the same cutoff space.
 
 All bucketing is done in daily **realized-variance** space so the
 comparison reproduces what ``services.har_tercile.predict_har_regime``
-sees at prediction time. The realized forward window scalar is the
-mean of squared log-returns over the post-event bars — a one-period
-daily variance averaged across the 10-bar forward window, in the same
-variance space as the per-bar RV series the cutoffs were quantiled on.
+sees at prediction time. With ``_FORWARD_STEPS = 1`` the realized stat
+is simply ``r * r`` for the post-event bar — the same daily variance
+space the per-bar RV cutoffs were quantiled on.
 """
 
 from __future__ import annotations
@@ -40,8 +39,8 @@ from sqlalchemy.orm import Session  # kept for signature compatibility
 # the same ``(event_date, symbol)`` pairs across consecutive
 # dashboard hits, so a short staleness window amortises the network
 # hop without leaking yesterday's realisation into today's chart.
-# Six hours is a safe upper bound: FOMC forward 10-bar windows
-# resolve within a couple of trading days, well past the TTL.
+# Six hours is a safe upper bound: the h=1 forward bar resolves the
+# next trading day, well within the TTL.
 _BACKTEST_CACHE_TTL_SECONDS = 6 * 60 * 60
 _realized_rv_cache: dict[tuple[str, str], tuple[float, float | None]] = {}
 _rv_history_cache: dict[tuple[str, str], tuple[float, list[float]]] = {}
@@ -121,12 +120,13 @@ def _realized_variance_from_log_returns(log_returns: list[float]) -> float | Non
 
     The HAR-tercile cutoffs are quantiles of a per-bar variance series
     (``r * r``). To stay in the same space, the forward-window realized
-    stat is the mean of squared log-returns over the post-event bars —
-    a one-period daily variance averaged across the 10-bar forward
-    window. Returns None when the series is too short to be meaningful.
+    stat is the mean of squared log-returns over the post-event bars.
+    With ``_FORWARD_STEPS = 1`` the post-event window is a single bar
+    (the day after the meeting); the mean is then just ``r * r`` for
+    that bar. Returns None only when the series is empty.
     """
 
-    if len(log_returns) < 2:
+    if not log_returns:
         return None
     sq = [float(r) * float(r) for r in log_returns]
     if not sq:
@@ -140,7 +140,7 @@ _realized_vol_from_log_returns = _realized_variance_from_log_returns
 
 
 def _fetch_realized_rv_yf_uncached(event_date: str, symbol: str) -> float | None:
-    """Pull forward-10d realized **variance** off yfinance.
+    """Pull h=1 forward-day realized **variance** off yfinance.
 
     Wrapped behind a try / except so a yfinance flake on one row never
     nukes the whole backtest — the offending row just lands unresolved.
@@ -276,9 +276,10 @@ def _predict_for_meeting(
     """Run ``predict_har_regime`` on ``rv_history`` and read off the panel row.
 
     Returns ``(predicted_tercile, predicted_prob, q33, q67)``. Picks the
-    h=22 row from the per-horizon output (closest to the 10-day forward
-    window the realized stat covers). Any failure inside the predict
-    call collapses to a no-op tuple so the caller can skip the row.
+    h=1 row from the per-horizon output, matching the single forward-day
+    realized stat the panel buckets against. Any failure inside the
+    predict call collapses to a no-op tuple so the caller can skip the
+    row.
     """
 
     if not rv_history or len(rv_history) < _MIN_RV_HISTORY:
@@ -354,7 +355,7 @@ def build_har_tercile_backtest(
     Walks the published FOMC meeting calendar (most recent first) up to
     ``limit`` events, predicts the HAR-tercile regime against the
     rolling RV history strictly before each event, and resolves the
-    realized tercile from the forward 10-bar window. Deduplicates by
+    realized tercile from the single h=1 forward bar. Deduplicates by
     meeting date so the panel never carries two rows for the same
     event. Returns the dict-shape the endpoint wraps in
     ``HarTercileBacktestResponse``. ``session`` is accepted for API

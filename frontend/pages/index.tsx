@@ -908,8 +908,8 @@ export default function WorkspacePage() {
                   description={
                     <div className="space-y-2">
                       <p>
-                        The active checkpoint runs in regression mode. Switch to a
-                        classification-capable model in Settings to populate the calibrated{" "}
+                        The active checkpoint runs in regression mode. Re-run with a
+                        classification-capable checkpoint to populate the calibrated{" "}
                         <span className="numeric">calm / normal / high</span> prediction set.
                       </p>
                       <p className="text-muted-foreground">
@@ -926,7 +926,7 @@ export default function WorkspacePage() {
                 <PolicyActionCard action={result.policy_action} />
               ) : null}
 
-              {marketPanel && (marketPanel.rates.length > 0 || marketPanel.vol_regime) ? (
+              {marketPanel && marketPanel.rates.length > 0 ? (
                 <MarketReactionPanel panel={marketPanel} />
               ) : null}
 
@@ -938,7 +938,7 @@ export default function WorkspacePage() {
                   <EmptyState
                     variant="inline"
                     title="Sentiment breakdown unavailable."
-                    description="Load a sentiment model from the Settings page to populate stance, factor, and certainty."
+                    description="The active checkpoint did not return stance or certainty for this passage."
                   />
                 )}
                 {result.credibility ? (
@@ -947,7 +947,7 @@ export default function WorkspacePage() {
                   <EmptyState
                     variant="inline"
                     title="Credibility signals unavailable."
-                    description="Load the embedding model and the historical rate cache from the Settings page."
+                    description="The credibility checks need the embedding cache and the FRED rate history to be warm-loaded; this passage produced no signals."
                   />
                 )}
               </div>
