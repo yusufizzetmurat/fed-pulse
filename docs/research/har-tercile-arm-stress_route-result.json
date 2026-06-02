@@ -1,0 +1,383 @@
+{
+  "arm_key": "stress_route",
+  "vix_threshold": 22.0,
+  "training_package_id": "canonical_vix",
+  "dual_head_source": "/app/artifacts/experiments/jobB_vixon_bootstrap_20260531T171043Z/vixon_bge.json",
+  "seeds": [
+    11,
+    29,
+    47,
+    71,
+    97
+  ],
+  "folds": [
+    "wf_fold_1",
+    "wf_fold_2",
+    "wf_fold_3",
+    "wf_fold_4",
+    "wf_fold_5"
+  ],
+  "per_fold_q33_q67": {
+    "wf_fold_1": {
+      "q33": 0.005758984076344063,
+      "q67": 0.009169467022693919
+    },
+    "wf_fold_2": {
+      "q33": 0.005787017739818774,
+      "q67": 0.009635289241713012
+    },
+    "wf_fold_3": {
+      "q33": 0.005837633004819972,
+      "q67": 0.009673451629457772
+    },
+    "wf_fold_4": {
+      "q33": 0.005922674151580698,
+      "q67": 0.010218964606414662
+    },
+    "wf_fold_5": {
+      "q33": 0.006068963081270213,
+      "q67": 0.009995156571786089
+    }
+  },
+  "horizons": [
+    "h10_only"
+  ],
+  "per_seed": {
+    "11": {
+      "wf_fold_1": {
+        "n_test": 120,
+        "n_stress": 61,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.3414793235493505,
+        "f1_har_pooled": 0.3341943069541635,
+        "f1_dl_pooled": 0.4036887019438819,
+        "f1_routed_stress": 0.24305555555555555,
+        "f1_har_stress": 0.3592767295597484,
+        "f1_dl_stress": 0.24305555555555555
+      },
+      "wf_fold_2": {
+        "n_test": 118,
+        "n_stress": 78,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.49378345988515476,
+        "f1_har_pooled": 0.46480243161094226,
+        "f1_dl_pooled": 0.620292712664371,
+        "f1_routed_stress": 0.319634703196347,
+        "f1_har_stress": 0.3055555555555555,
+        "f1_dl_stress": 0.319634703196347
+      },
+      "wf_fold_3": {
+        "n_test": 110,
+        "n_stress": 4,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.3751803751803752,
+        "f1_har_pooled": 0.35663214990138065,
+        "f1_dl_pooled": 0.3578387329774677,
+        "f1_routed_stress": null,
+        "f1_har_stress": null,
+        "f1_dl_stress": null
+      },
+      "wf_fold_4": {
+        "n_test": 111,
+        "n_stress": 2,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.38992362177846046,
+        "f1_har_pooled": 0.3913375169189122,
+        "f1_dl_pooled": 0.5581104060387375,
+        "f1_routed_stress": null,
+        "f1_har_stress": null,
+        "f1_dl_stress": null
+      },
+      "wf_fold_5": {
+        "n_test": 104,
+        "n_stress": 27,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.617956952896101,
+        "f1_har_pooled": 0.5714573268921095,
+        "f1_dl_pooled": 0.37947379865188086,
+        "f1_routed_stress": 0.2753623188405797,
+        "f1_har_stress": 0.35353535353535354,
+        "f1_dl_stress": 0.2753623188405797
+      }
+    },
+    "29": {
+      "wf_fold_1": {
+        "n_test": 120,
+        "n_stress": 61,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.3414793235493505,
+        "f1_har_pooled": 0.3341943069541635,
+        "f1_dl_pooled": 0.31334982915046544,
+        "f1_routed_stress": 0.24305555555555555,
+        "f1_har_stress": 0.3592767295597484,
+        "f1_dl_stress": 0.24305555555555555
+      },
+      "wf_fold_2": {
+        "n_test": 118,
+        "n_stress": 78,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.44641355280547873,
+        "f1_har_pooled": 0.46480243161094226,
+        "f1_dl_pooled": 0.5249524558987475,
+        "f1_routed_stress": 0.3436853002070393,
+        "f1_har_stress": 0.3055555555555555,
+        "f1_dl_stress": 0.3436853002070393
+      },
+      "wf_fold_3": {
+        "n_test": 110,
+        "n_stress": 4,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.3751803751803752,
+        "f1_har_pooled": 0.35663214990138065,
+        "f1_dl_pooled": 0.29356826962862653,
+        "f1_routed_stress": null,
+        "f1_har_stress": null,
+        "f1_dl_stress": null
+      },
+      "wf_fold_4": {
+        "n_test": 111,
+        "n_stress": 2,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.38992362177846046,
+        "f1_har_pooled": 0.3913375169189122,
+        "f1_dl_pooled": 0.4961105305932892,
+        "f1_routed_stress": null,
+        "f1_har_stress": null,
+        "f1_dl_stress": null
+      },
+      "wf_fold_5": {
+        "n_test": 104,
+        "n_stress": 27,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.617956952896101,
+        "f1_har_pooled": 0.5714573268921095,
+        "f1_dl_pooled": 0.4446921147952076,
+        "f1_routed_stress": 0.2753623188405797,
+        "f1_har_stress": 0.35353535353535354,
+        "f1_dl_stress": 0.2753623188405797
+      }
+    },
+    "47": {
+      "wf_fold_1": {
+        "n_test": 120,
+        "n_stress": 61,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.3414793235493505,
+        "f1_har_pooled": 0.3341943069541635,
+        "f1_dl_pooled": 0.35172631031129736,
+        "f1_routed_stress": 0.24305555555555555,
+        "f1_har_stress": 0.3592767295597484,
+        "f1_dl_stress": 0.24305555555555555
+      },
+      "wf_fold_2": {
+        "n_test": 118,
+        "n_stress": 78,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.505407152465976,
+        "f1_har_pooled": 0.46480243161094226,
+        "f1_dl_pooled": 0.6794751273012144,
+        "f1_routed_stress": 0.3222958057395144,
+        "f1_har_stress": 0.3055555555555555,
+        "f1_dl_stress": 0.3222958057395144
+      },
+      "wf_fold_3": {
+        "n_test": 110,
+        "n_stress": 4,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.3751803751803752,
+        "f1_har_pooled": 0.35663214990138065,
+        "f1_dl_pooled": 0.34889558521069497,
+        "f1_routed_stress": null,
+        "f1_har_stress": null,
+        "f1_dl_stress": null
+      },
+      "wf_fold_4": {
+        "n_test": 111,
+        "n_stress": 2,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.38992362177846046,
+        "f1_har_pooled": 0.3913375169189122,
+        "f1_dl_pooled": 0.5730337078651685,
+        "f1_routed_stress": null,
+        "f1_har_stress": null,
+        "f1_dl_stress": null
+      },
+      "wf_fold_5": {
+        "n_test": 104,
+        "n_stress": 27,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.617956952896101,
+        "f1_har_pooled": 0.5714573268921095,
+        "f1_dl_pooled": 0.29200346063527377,
+        "f1_routed_stress": 0.2753623188405797,
+        "f1_har_stress": 0.35353535353535354,
+        "f1_dl_stress": 0.2753623188405797
+      }
+    },
+    "71": {
+      "wf_fold_1": {
+        "n_test": 120,
+        "n_stress": 61,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.3414793235493505,
+        "f1_har_pooled": 0.3341943069541635,
+        "f1_dl_pooled": 0.32292141662866697,
+        "f1_routed_stress": 0.24305555555555555,
+        "f1_har_stress": 0.3592767295597484,
+        "f1_dl_stress": 0.24305555555555555
+      },
+      "wf_fold_2": {
+        "n_test": 118,
+        "n_stress": 78,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.5196911196911197,
+        "f1_har_pooled": 0.46480243161094226,
+        "f1_dl_pooled": 0.6965148378191857,
+        "f1_routed_stress": 0.329004329004329,
+        "f1_har_stress": 0.3055555555555555,
+        "f1_dl_stress": 0.329004329004329
+      },
+      "wf_fold_3": {
+        "n_test": 110,
+        "n_stress": 4,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.3751803751803752,
+        "f1_har_pooled": 0.35663214990138065,
+        "f1_dl_pooled": 0.30360541098246013,
+        "f1_routed_stress": null,
+        "f1_har_stress": null,
+        "f1_dl_stress": null
+      },
+      "wf_fold_4": {
+        "n_test": 111,
+        "n_stress": 2,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.38992362177846046,
+        "f1_har_pooled": 0.3913375169189122,
+        "f1_dl_pooled": 0.36221701795472283,
+        "f1_routed_stress": null,
+        "f1_har_stress": null,
+        "f1_dl_stress": null
+      },
+      "wf_fold_5": {
+        "n_test": 104,
+        "n_stress": 27,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.617956952896101,
+        "f1_har_pooled": 0.5714573268921095,
+        "f1_dl_pooled": 0.41913087360307344,
+        "f1_routed_stress": 0.2753623188405797,
+        "f1_har_stress": 0.35353535353535354,
+        "f1_dl_stress": 0.2753623188405797
+      }
+    },
+    "97": {
+      "wf_fold_1": {
+        "n_test": 120,
+        "n_stress": 61,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.33612391193036356,
+        "f1_har_pooled": 0.3341943069541635,
+        "f1_dl_pooled": 0.4179238270147361,
+        "f1_routed_stress": 0.23859649122807017,
+        "f1_har_stress": 0.3592767295597484,
+        "f1_dl_stress": 0.23859649122807017
+      },
+      "wf_fold_2": {
+        "n_test": 118,
+        "n_stress": 78,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.4647525676937441,
+        "f1_har_pooled": 0.46480243161094226,
+        "f1_dl_pooled": 0.5209080047789726,
+        "f1_routed_stress": 0.38017031630170317,
+        "f1_har_stress": 0.3055555555555555,
+        "f1_dl_stress": 0.38017031630170317
+      },
+      "wf_fold_3": {
+        "n_test": 110,
+        "n_stress": 4,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.3751803751803752,
+        "f1_har_pooled": 0.35663214990138065,
+        "f1_dl_pooled": 0.38819889964300397,
+        "f1_routed_stress": null,
+        "f1_har_stress": null,
+        "f1_dl_stress": null
+      },
+      "wf_fold_4": {
+        "n_test": 111,
+        "n_stress": 2,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.38992362177846046,
+        "f1_har_pooled": 0.3913375169189122,
+        "f1_dl_pooled": 0.4618359839878827,
+        "f1_routed_stress": null,
+        "f1_har_stress": null,
+        "f1_dl_stress": null
+      },
+      "wf_fold_5": {
+        "n_test": 104,
+        "n_stress": 27,
+        "tercile_target_agreement": 1.0,
+        "f1_routed_pooled": 0.628052503052503,
+        "f1_har_pooled": 0.5714573268921095,
+        "f1_dl_pooled": 0.4911556603773585,
+        "f1_routed_stress": 0.38311688311688313,
+        "f1_har_stress": 0.35353535353535354,
+        "f1_dl_stress": 0.38311688311688313
+      }
+    }
+  },
+  "summary": {
+    "pooled_macro_f1_routed": {
+      "mean": 0.442299574324013,
+      "std": 0.10183185723100519,
+      "n": 25
+    },
+    "pooled_macro_f1_har_only": {
+      "mean": 0.42368474645550164,
+      "std": 0.08611426396006744,
+      "n": 25
+    },
+    "pooled_macro_f1_dl_only": {
+      "mean": 0.4408649470582555,
+      "std": 0.11601510196129594,
+      "n": 25
+    },
+    "stress_slice_macro_f1_routed": {
+      "mean": 0.2926783550918951,
+      "std": 0.0485338444966888,
+      "n": 15
+    },
+    "stress_slice_macro_f1_har_only": {
+      "mean": 0.33945587955021916,
+      "std": 0.02408547037629047,
+      "n": 15
+    },
+    "stress_slice_macro_f1_dl_only": {
+      "mean": 0.2926783550918951,
+      "std": 0.0485338444966888,
+      "n": 15
+    },
+    "n_stress_per_cell_avg": 34.4,
+    "n_stress_per_cell_total_avg_across_seeds": 34.4,
+    "har_tercile_baseline_h1_h5_h22": [
+      0.687,
+      0.685,
+      0.654
+    ],
+    "har_tercile_baseline_note": "wiki \u00a721 pooled 5-fold daily-fusion baseline; not directly comparable to canonical_vix statement-level evaluation. This arm runs HAR-tercile on canonical_vix test rows for an honest like-for-like comparison.",
+    "horizon_note": "Dual-head DL classifier targets forward_realized_vol_10d (single horizon); h=1/5/22 not separately reproduced here.",
+    "stress_routed_minus_har_ci90": {
+      "p5": -0.07564408893121395,
+      "mean": -0.0461078426789598,
+      "p95": -0.017291032411973738
+    },
+    "stress_dl_minus_har_ci90": {
+      "p5": -0.07564408893121395,
+      "mean": -0.0461078426789598,
+      "p95": -0.017291032411973738
+    }
+  }
+}

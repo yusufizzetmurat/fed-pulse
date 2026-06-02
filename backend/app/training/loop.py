@@ -107,6 +107,13 @@ class _RegimeFocalLoss(nn.Module):
 
     Mirrors :class:`_RegimeOrdinalCELoss` so the single-task dispatch
     only needs to flip the constructor when ``regime_loss_mode='focal'``.
+
+    Optional asymmetric underprediction penalty: when
+    ``FED_PULSE_REGIME_UNDER_PENALTY`` is set to a float != 1.0, rows
+    whose true class is the highest-index (``high``, index 2) and whose
+    predicted argmax is not the highest-index see their per-row focal
+    loss multiplied by that scalar. Defaults to 1.0 (no-op) so existing
+    runs stay byte-identical.
     """
 
     def __init__(self, *, weight: torch.Tensor | None = None, gamma: float = 2.0) -> None:
@@ -116,6 +123,14 @@ class _RegimeFocalLoss(nn.Module):
             weight if weight is not None else torch.empty(0),
         )
         self.gamma = float(gamma)
+        import os as _os
+
+        try:
+            self._under_penalty = float(
+                _os.environ.get("FED_PULSE_REGIME_UNDER_PENALTY", "1.0")
+            )
+        except (TypeError, ValueError):
+            self._under_penalty = 1.0
 
     @property
     def weight(self) -> torch.Tensor | None:
@@ -133,7 +148,28 @@ class _RegimeFocalLoss(nn.Module):
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         from app.training.loss import focal_cross_entropy
 
-        return focal_cross_entropy(logits, target, gamma=self.gamma, weight=self.weight)
+        if abs(self._under_penalty - 1.0) < 1e-9:
+            return focal_cross_entropy(
+                logits, target, gamma=self.gamma, weight=self.weight
+            )
+        per_row = focal_cross_entropy(
+            logits,
+            target,
+            gamma=self.gamma,
+            weight=self.weight,
+            reduction="none",
+        )
+        n_classes = int(logits.shape[-1])
+        high_idx = n_classes - 1
+        with torch.no_grad():
+            pred = logits.argmax(dim=-1)
+            mask = (target == high_idx) & (pred != high_idx)
+        scale = torch.where(
+            mask,
+            torch.full_like(per_row, float(self._under_penalty)),
+            torch.ones_like(per_row),
+        )
+        return (per_row * scale).mean()
 
 
 def _resolve_device(device: str | torch.device | None = None) -> torch.device:
