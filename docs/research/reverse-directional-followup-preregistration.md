@@ -1,7 +1,30 @@
 # Pre-registration — powered confirmation of the market→Fed *directional* lead
 
-**Date:** 2026-06-02 · **Status:** pre-registered before looking at the extended-
-sample relationship. Confirmatory follow-up to the lead in
+**Date:** 2026-06-02 · **Status:** COMPLETE — NULL. The directional lead did not survive powering; reverse direction closed.
+
+## Result (2026-06-02)
+
+Usable meetings: **117** (2010-03-16 → 2026-04-29, OOS = 87) — ~3× the discovery's 36.
+
+| test | discovery (n=36) | powered (n=86) | bar | verdict |
+|---|---|---|---|---|
+| **PRIMARY** directional acc `sign(predΔs)==sign(Δs)` | 0.667 | **0.477** (binom p 0.705) | p<0.05 & >0.5 | **fails (below chance)** |
+| **Replication** pre-2016 OOS slice (fresh data) | — | **0.364** (n=11) | ≥ 0.55 | **fails** |
+| Secondary Δs MSE: M1 vs mean-drift | — | 0.4355 vs 0.3615 (DM p 0.989) | M1 lower | **M1 worse** |
+
+**Verdict: NULL — the lead was a small-sample artifact.** On the full powered
+sample the directional accuracy falls to below chance (0.477), the genuinely
+independent pre-2016 slice is 0.364, and the market-feature model predicts the
+stance shift *worse* than a constant drift. Both decision-rule conditions fail
+decisively. The discovery's 0.667 (36 meetings, 2019+) does not generalise.
+
+**This closes the reverse direction.** FOMC text ↔ markets is null in **both**
+directions: text does not predict markets (corners A–E, intraday, late-fusion),
+and markets do not predict the statement's stance/shift beyond the Fed's own
+inertia. The pre-registration + independent-slice replication caught the false
+positive, mirroring Corner C→E. The one surviving forecasting edge remains the
+QLIKE-DLq RV ensemble (no text). Artifact:
+`data/artifacts/reverse_directional_followup/result.json`.
 `reverse-market-predicts-fed-preregistration.md` (directional acc 0.667, p=0.033,
 secondary, n=36 OOS, 2016+ only — failed Bonferroni, flagged as underpowered).
 
