@@ -1,7 +1,37 @@
 # Pre-registration — does the stance instrument track what the Fed actually did?
 
-**Date:** 2026-06-02 · **Status:** pre-registered before measuring the
-stance↔action relationship. (Anchor distribution checked for availability only.)
+**Date:** 2026-06-02 · **Status:** COMPLETE — VALID but weak & asymmetric (a "hike detector"). See Result.
+
+## Result (2026-06-02)
+
+n=130 meetings 2010–2026 (cut 9 / hold 101 / hike 20).
+
+| test | value | read |
+|---|---|---|
+| **PRIMARY** Spearman ρ(s, Δff) | **+0.283**, perm-p **0.0006**, CI95 **[0.081, 0.459]** | significant → **VALID**, but *weak* (0.2–0.4) |
+| (a) AUC hike-vs-cut | **0.800**, CI95 [0.62, 0.94] | **strong** discrimination at the extremes |
+| (b) ordinal ρ(s, {cut<hold<hike}) | +0.276 | monotone but weak |
+| (c) leading ρ(sₜ, Δff₊₁) | +0.212, p 0.008 | weak forward alignment (survives Bonferroni) |
+| diagnostic: within-holds ρ(sₜ, Δff₊₁) | +0.047 | **no** signalling inside the hold regime |
+| mean s by action | cut **−0.84** / hold **−0.82** / hike **+0.03** | the tell ↓ |
+
+**Verdict: the stance instrument is a VALID measure of policy hawkishness
+(primary significant, both decision-rule conditions met) — but weak and
+asymmetric.** It is essentially a **hike detector**: it separates hikes from cuts
+well (AUC 0.80), but **cannot distinguish a hold from a cut** (mean s −0.82 vs
+−0.84, nearly identical) and is **dovish-skewed in absolute scale** (even hikes
+barely clear neutral). Its validity is carried by the hawkish extreme; the dovish
+end is undifferentiated, and it carries no forward guidance within the long hold
+regime (within-holds lead ≈ 0).
+
+**What this sharpens (honest descriptive scope):** the dashboard's stance surface
+can credibly flag *hiking-hawkish* statements, but should NOT be read as a
+fine-grained hawk–dove thermometer on the dovish side, nor imply "more dovish
+than the last hold." Concrete instrument-improvement leads: (1) the dovish-end
+resolution (hold vs cut) is where the head is blind — a targeted re-label/training
+focus there would add the most; (2) the absolute scale is mis-centred (dovish
+bias) and would benefit from recalibration. Artifact:
+`data/artifacts/stance_instrument_validity/result.json`.
 
 ## Motivation (adventure 1 — text as measurement)
 
