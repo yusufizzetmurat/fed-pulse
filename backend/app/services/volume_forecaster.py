@@ -34,8 +34,10 @@ caches the parsed spec for the process lifetime.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
+import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,6 +46,8 @@ from typing import Any, cast
 import numpy as np
 
 from app.config import BACKEND_ROOT
+
+logger = logging.getLogger(__name__)
 
 
 # No exact match for an existing volume artifact in code (rv_forecaster
@@ -111,17 +115,100 @@ def _download_artifact(target_dir: Path) -> dict[str, Any]:
     return cast(dict[str, Any], spec)
 
 
+# Cold-start fit defaults. Mirrors ``_VOLUME_HISTORY_DAYS`` in main.py:
+# 180 calendar days yields ~126 trading bars, which clears the
+# ``walk_forward_splits`` floor of ``n_folds * embargo = 5 * 22 = 110``.
+_COLD_START_PERIOD = "180d"
+_COLD_START_SYMBOL = "^GSPC"
+
+
+def _cold_start_fit(model_dir: Path) -> dict[str, Any]:
+    """Fit a serving artifact from live yfinance volume on first boot.
+
+    Pulls ~180 calendar days of daily volume for ``^GSPC``, writes a
+    temporary parquet, and calls
+    :func:`app.data.late_fusion_volume.fit_production_artifact` to build
+    the per-horizon HAR + seasonality + conformal-quantile spec. The
+    output is written to ``model_dir / ARTIFACT_FILENAME`` so subsequent
+    process restarts skip the fit. Re-raises
+    :class:`VolumeForecasterUnavailable` on any failure so the existing
+    503 path is preserved when yfinance is also unreachable.
+    """
+
+    import pandas as pd
+    import yfinance as yf
+
+    from app.data.late_fusion_volume import fit_production_artifact
+
+    try:
+        ticker = yf.Ticker(_COLD_START_SYMBOL)
+        frame = ticker.history(period=_COLD_START_PERIOD, auto_adjust=True)
+        if frame is None or frame.empty:
+            raise RuntimeError(f"no market history available for {_COLD_START_SYMBOL}")
+        vol = frame["Volume"].astype(float).dropna()
+        if hasattr(vol, "columns"):
+            vol = vol.iloc[:, 0].dropna()
+        vol = vol[vol > 0]
+        if vol.empty:
+            raise RuntimeError(f"no positive volume rows for {_COLD_START_SYMBOL}")
+        dates = pd.to_datetime(vol.index).tz_localize(None)
+        bars = pd.DataFrame({"date": dates, "volume": vol.to_numpy(dtype=float)}).reset_index(
+            drop=True
+        )
+
+        out_path = model_dir / ARTIFACT_FILENAME
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            vol_path = Path(tmp) / "volume_cold_start.parquet"
+            bars.to_parquet(vol_path)
+            spec = fit_production_artifact(vol_path, out_path)
+        logger.info(
+            "volume_har_cold_start_fit symbol=%s rows=%d artifact=%s",
+            _COLD_START_SYMBOL,
+            len(bars),
+            out_path,
+        )
+        return cast(dict[str, Any], spec)
+    except VolumeForecasterUnavailable:
+        raise
+    except Exception as exc:
+        raise VolumeForecasterUnavailable(
+            f"cold-start fit failed for {_COLD_START_SYMBOL!r}: {exc}"
+        ) from exc
+
+
 def _load_spec(model_dir: Path) -> dict[str, Any]:
-    """Return the cached spec; fetch from HF Hub on a miss."""
+    """Return the cached spec; fetch from HF Hub on a miss.
+
+    Falls back to an in-process cold-start fit off live yfinance volume
+    when the HF Hub repo is missing or unreachable, so a fresh checkout
+    without a pre-trained artifact still serves the Expected Volume
+    card. The cold-start fit is the genuine fallback — the HF download
+    stays the primary path when an artifact is published.
+    """
 
     spec_path = model_dir / ARTIFACT_FILENAME
     if not spec_path.exists():
-        return _download_artifact(model_dir)
+        try:
+            return _download_artifact(model_dir)
+        except VolumeForecasterUnavailable as exc:
+            logger.info(
+                "volume_har_hf_unavailable falling_back_to_cold_start error=%s",
+                exc,
+            )
+            return _cold_start_fit(model_dir)
     try:
         return cast(dict[str, Any], json.loads(spec_path.read_text(encoding="utf-8")))
     except (json.JSONDecodeError, OSError):
         # Corrupt local cache; force a clean re-download.
-        return _download_artifact(model_dir)
+        try:
+            return _download_artifact(model_dir)
+        except VolumeForecasterUnavailable as exc:
+            logger.info(
+                "volume_har_hf_unavailable falling_back_to_cold_start error=%s",
+                exc,
+            )
+            return _cold_start_fit(model_dir)
 
 
 class _VolumePredictor:
