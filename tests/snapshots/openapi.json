@@ -2010,6 +2010,17 @@
             "title": "Stance",
             "type": "string"
           },
+          "stance_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stance Score"
+          },
           "symbol": {
             "title": "Symbol",
             "type": "string"
@@ -2141,6 +2152,17 @@
           "stance": {
             "title": "Stance",
             "type": "string"
+          },
+          "stance_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stance Score"
           },
           "symbol": {
             "title": "Symbol",
