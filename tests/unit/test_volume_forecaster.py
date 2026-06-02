@@ -301,3 +301,32 @@ def test_safe_float_handles_none_and_garbage() -> None:
     assert volume_forecaster._safe_float(float("nan")) is None
     assert volume_forecaster._safe_float(1) == 1.0
     assert volume_forecaster._safe_float("3.5") == 3.5
+
+
+def test_load_spec_falls_back_to_cold_start_fit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """HF download failure must trigger the in-process cold-start fit.
+
+    Monkeypatches ``_download_artifact`` to raise
+    ``VolumeForecasterUnavailable`` and ``_cold_start_fit`` to return a
+    minimal valid spec, then asserts ``_load_spec`` returns it from the
+    cold-start branch (no HF hit succeeded, no on-disk artifact existed).
+    """
+
+    def _raise(_target_dir: Any) -> dict[str, Any]:
+        raise volume_forecaster.VolumeForecasterUnavailable("hf repo missing")
+
+    fake_spec: dict[str, Any] = _make_spec()
+    cold_start_calls: list[Any] = []
+
+    def _stub_cold_start(target_dir: Any) -> dict[str, Any]:
+        cold_start_calls.append(target_dir)
+        return fake_spec
+
+    monkeypatch.setattr(volume_forecaster, "_download_artifact", _raise)
+    monkeypatch.setattr(volume_forecaster, "_cold_start_fit", _stub_cold_start)
+
+    spec = volume_forecaster._load_spec(tmp_path)
+    assert spec is fake_spec
+    assert cold_start_calls == [tmp_path]
