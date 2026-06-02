@@ -48,7 +48,7 @@ import {
   postAnalyzeAnalogs,
   postAnalyzeMarket,
 } from "@/lib/analyze/api";
-import { DEFAULT_TEXT } from "@/lib/analyze/constants";
+import { DEFAULT_TEXT, HAR_TERCILE_SUPPORTED_SYMBOLS } from "@/lib/analyze/constants";
 import { errorMessage } from "@/lib/analyze/errors";
 import { toStance } from "@/lib/analyze/format";
 import {
@@ -1046,7 +1046,7 @@ export default function WorkspacePage() {
           >
             Forecast accuracy (backtest)
           </p>
-          {request.symbol === "^GSPC" ? (
+          {HAR_TERCILE_SUPPORTED_SYMBOLS.includes(request.symbol) ? (
             <HarAccuracyPanel
               data={harBacktest}
               loading={harBacktestLoading}
@@ -1056,6 +1056,9 @@ export default function WorkspacePage() {
               storageKey="workspace-card:har-accuracy"
             />
           ) : null}
+          {/* RV / QLIKE-DLq backtest remains SPX-only because the
+              QLIKE-DLq artifact pins per-fold coefficients on SPX RV
+              and is not yet refit per asset. */}
           {request.symbol === "^GSPC" ? (
             <RvAccuracyPanel
               data={rvBacktest}
