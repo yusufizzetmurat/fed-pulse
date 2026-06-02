@@ -35,9 +35,12 @@ def _extract_stance_score(payload: Any) -> float | None:
     """``P(hawkish) - P(dovish)`` from a persisted /analyze response.
 
     Returns ``None`` when the payload is missing the multi-axis block,
-    when the distribution is empty, or when both class probabilities
-    are absent. A neutral-only distribution (hawkish + dovish = 0)
-    correctly returns 0.0, not None — that IS the score in that case.
+    when the distribution is empty, or when EITHER class probability
+    is absent. The classifier's softmax always populates both keys —
+    a missing key signals a truncated / pre-#338 payload rather than a
+    genuine ``P(class) = 0``. Treating the missing key as 0 would
+    fabricate a score and pollute the trailing-window mean/std, so
+    the trailing-window builder filters the row out entirely.
     """
 
     if not isinstance(payload, dict):
@@ -53,11 +56,9 @@ def _extract_stance_score(payload: Any) -> float | None:
         return None
     hawk = distribution.get("hawkish")
     dove = distribution.get("dovish")
-    if not isinstance(hawk, int | float) and not isinstance(dove, int | float):
+    if not isinstance(hawk, int | float) or not isinstance(dove, int | float):
         return None
-    h = float(hawk) if isinstance(hawk, int | float) else 0.0
-    d = float(dove) if isinstance(dove, int | float) else 0.0
-    return h - d
+    return float(hawk) - float(dove)
 
 
 @dataclass(frozen=True)
@@ -78,13 +79,14 @@ class StanceContext:
     history: list[StanceContextPoint]
 
 
-def build_stance_context(
+def build_stance_context(  # noqa: PLR0913 - five flags is the natural shape here
     session: Session,
     *,
     symbol: str,
     horizon: str | None = None,
     n: int = 12,
     exclude_run_id: str | None = None,
+    leave_one_out: bool = True,
 ) -> StanceContext:
     """Read the trailing ``n`` stance scores for ``symbol`` and summarize.
 
@@ -93,6 +95,13 @@ def build_stance_context(
     Returns mean=None / std=None when fewer than two usable rows are
     found — the caller renders ``insufficient history`` rather than
     surfacing a misleading z-score off a one-sample baseline.
+
+    ``leave_one_out`` defaults to True so the contract is safe-by-default
+    even when the caller forgets to pass ``exclude_run_id``: the most-
+    recent persisted row (which IS the run that triggered the fetch)
+    is dropped from the trailing window so the z-score is computed
+    against history, not against itself. Pass False only for diagnostic
+    endpoints that genuinely want the full window.
     """
 
     stmt = select(AnalysisRun).where(AnalysisRun.symbol == symbol)
@@ -100,9 +109,18 @@ def build_stance_context(
         stmt = stmt.where(AnalysisRun.horizon == horizon)
     if exclude_run_id:
         stmt = stmt.where(AnalysisRun.id != exclude_run_id)
-    stmt = stmt.order_by(AnalysisRun.created_at.desc()).limit(max(n * 2, n))
+    # Pull one extra row over the target n so the implicit
+    # leave-one-out below can drop the newest without shrinking the
+    # window. ``n * 2`` keeps the budget for any rows we'll filter out
+    # for missing distributions.
+    stmt = stmt.order_by(AnalysisRun.created_at.desc()).limit(max(n * 2 + 1, n + 1))
 
     rows = list(session.execute(stmt).scalars().all())
+    if leave_one_out and exclude_run_id is None and rows:
+        # Drop the most-recent row implicitly — it IS the just-persisted
+        # run that the caller is about to z-score, so including it
+        # would deflate the magnitude.
+        rows = rows[1:]
     scored: list[StanceContextPoint] = []
     for row in rows:
         if len(scored) >= n:
@@ -119,8 +137,11 @@ def build_stance_context(
     mean = statistics.fmean(scores)
     # Use the unbiased (sample) standard deviation. statistics.stdev
     # requires at least two points; the < 2 guard above ensures we get
-    # there. A degenerate constant series produces std=0.0; the
-    # frontend treats that as "no meaningful spread" and falls back to
-    # the raw value rendering.
-    std = statistics.stdev(scores)
-    return StanceContext(n=len(scored), mean=float(mean), std=float(std), history=scored)
+    # there. A degenerate constant series (or a series that rounds to
+    # zero spread under float arithmetic) cannot produce a meaningful
+    # z-score, so std is collapsed to None — the frontend reads None
+    # as "fall back to raw rendering" and a future consumer cannot
+    # accidentally divide a finite value into the near-zero residue.
+    std_value = float(statistics.stdev(scores))
+    std: float | None = std_value if std_value > 0.0 else None
+    return StanceContext(n=len(scored), mean=float(mean), std=std, history=scored)

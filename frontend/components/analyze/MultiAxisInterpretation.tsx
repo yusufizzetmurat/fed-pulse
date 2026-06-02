@@ -52,10 +52,16 @@ function StanceTile({ stance, history, context }: StanceTileProps) {
       : "neutral";
 
   const score = currentStanceScore(stance);
+  // ``std == null`` is the backend's signal for "degenerate trailing
+  // window" (constant series or float-precision residue). Combining
+  // it with ``> 0`` guards both the null and the exact-zero edges
+  // under a single check; ``Number.isFinite`` also rejects ±Infinity
+  // that would otherwise render as ``+Infσ``.
   const hasUsableContext =
     context != null &&
     context.mean != null &&
     context.std != null &&
+    Number.isFinite(context.std) &&
     context.std > 0 &&
     context.n >= 2 &&
     score != null;
