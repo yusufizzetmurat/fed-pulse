@@ -28,18 +28,21 @@ LOGGER = logging.getLogger(__name__)
 
 SECTIONS: tuple[str, ...] = ("phase3", "cross_bank", "cross_asset", "next_fomc")
 
-# Path to a bundled copy of the rerun JSON inside the backend tree so the
-# loader keeps working when the host ``docs/`` mount is missing (the bind
-# mount only takes effect after ``docker compose down`` + ``up``; a plain
-# restart silently drops it).
+# Bundled copy of the rerun JSON inside the backend tree. Resolved
+# relative to this file so it is reachable in every environment that
+# ships the backend package, including bare ``docker run`` images, CI
+# jobs without the ``./docs:/docs:ro`` bind mount, and local invocations
+# outside Compose. The bundled snapshot is always preferred over any
+# repo-relative copy.
 BUNDLED_RERUN_PATH = (
     Path(__file__).resolve().parent / "manifests" / "nlp-baseline-bakeoff-2026-06-02-rerun.json"
 )
 
-# Priority-ordered list of rerun JSON paths (relative to repo root). The
-# zero-shot NLP baseline rerun JSON lives outside ``data/artifacts/``, so
-# the bake-off loader checks these locations first and only falls back
-# to the legacy ``phase3/**aggregate.json`` walk when none exist.
+# Secondary rerun JSON locations (relative to repo root) that may be
+# newer than the bundled snapshot when ``docs/`` is mounted into the
+# container. Checked only when :data:`BUNDLED_RERUN_PATH` is missing.
+# When none of these exist either, the loader falls back to the legacy
+# ``phase3/**/aggregate.json`` walk.
 RERUN_BAKEOFF_CANDIDATES: tuple[str, ...] = (
     "docs/research/nlp-baseline-bakeoff-2026-06-02-rerun.json",
 )
@@ -247,10 +250,9 @@ def load_encoder_bakeoff_rerun(path: Path) -> dict[str, Any]:
         "available": bool(rows),
         "coverage": 0.95,
         "rows": rows,
-        # Return just the basename so frontend consumers see a stable key
-        # regardless of whether the host repo is mounted at /docs (backend)
-        # or absent (backend-gpu falls back to phase3 walk under different
-        # paths).
+        # Return just the basename so the badge in the frontend shows a
+        # stable short label regardless of where the JSON was resolved
+        # from (bundled snapshot vs. docs mount).
         "source_files": [path.name],
     }
 
