@@ -80,7 +80,11 @@ describe("ComparePage", () => {
     render(<ComparePage />);
     await waitFor(() => expect(screen.getAllByText(/Run A/).length).toBeGreaterThan(0));
     expect(screen.getAllByText(/Run B/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Pick a run/).length).toBeGreaterThan(0);
+    // Both slot triggers should advertise themselves to AT and render the
+    // "Pick a run…" placeholder copy (U+2026 ellipsis) until a run is chosen.
+    expect(screen.getByLabelText(/Select Run A/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Select Run B/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Pick a run…/).length).toBeGreaterThan(0);
   });
 
   it("fetches and renders both runs when ?a and ?b query params are set", async () => {
