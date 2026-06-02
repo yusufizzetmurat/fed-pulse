@@ -1204,6 +1204,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Disable the exploratory pooled-panel ridge model.",
     )
     parser.add_argument("--seed", type=int, default=11)
+    parser.add_argument(
+        "--ablate-credibility",
+        action="store_true",
+        help=(
+            "Zero the credibility feature block before training. Pair with "
+            "an unablated baseline run to report the credibility-on vs "
+            "credibility-off delta and bound the same-day FOMC confound."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1226,8 +1235,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     macro_path = fred_dir / args.macro_state_name
     macro = _load_parquet_safely(macro_path) if macro_path.exists() else pd.DataFrame()
 
+    if args.ablate_credibility:
+        # Mirrors next_fomc_decision: zero the four credibility columns
+        # so the model trains without the (now-leak-free) credibility
+        # signal. Pair with the unablated arm to surface the delta.
+        for col in (
+            "credibility_drift_score",
+            "credibility_realized_vs_stated_gap",
+            "credibility_market_implied_gap",
+            "credibility_months_since_reversal",
+        ):
+            if col in events.columns:
+                events[col] = 0.0
+
+    default_subdir = "cross_asset_no_credibility" if args.ablate_credibility else "cross_asset"
     output_dir = (
-        Path(args.output_dir) if args.output_dir else data_dir / "artifacts" / "cross_asset"
+        Path(args.output_dir) if args.output_dir else data_dir / "artifacts" / default_subdir
     )
 
     artifacts = run(

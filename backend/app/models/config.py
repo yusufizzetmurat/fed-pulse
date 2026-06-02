@@ -938,10 +938,9 @@ class RichFeatureScalerParams:
 
     The scaler is a robust z-score ``(x - median) / iqr``. Constant
     columns (IQR < ``epsilon`` on the train slice) get their IQR coerced
-    to ``1.0`` so the transform reduces to a pure centering step --
-    safe against the placeholder ``credibility_market_implied_gap``
-    (always 0.0 by contract today) and against any per-family ablation
-    that zeros a slot before the scaler sees it.
+    to ``1.0`` so the transform reduces to a pure centering step -- safe
+    against any per-family ablation that zeros a slot before the scaler
+    sees it (e.g. ``--ablate-credibility``).
     """
 
     medians: tuple[float, ...]

@@ -1506,6 +1506,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Force a specific ordinal backend. Default: auto-detect.",
     )
     parser.add_argument("--seed", type=int, default=11)
+    parser.add_argument(
+        "--ablate-credibility",
+        action="store_true",
+        help=(
+            "Zero the credibility feature block before training. Pair with "
+            "an unablated baseline run to report the credibility-on vs "
+            "credibility-off delta and bound the same-day FOMC confound "
+            "documented in the credibility loader."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1522,7 +1532,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     macro_path = fred_dir / args.macro_state_name
     macro = _load_parquet_safely(macro_path) if macro_path.exists() else pd.DataFrame()
 
-    output_dir = Path(args.output_dir) if args.output_dir else data_dir / "artifacts" / "next_fomc"
+    if args.ablate_credibility:
+        # Bound the credibility same-day confound by also reporting the
+        # zero-credibility arm. Setting every credibility column to 0.0
+        # before training removes the signal without changing the column
+        # layout downstream consumers expect.
+        for col in (
+            "credibility_drift_score",
+            "credibility_realized_vs_stated_gap",
+            "credibility_market_implied_gap",
+            "credibility_months_since_reversal",
+        ):
+            if col in events.columns:
+                events[col] = 0.0
+
+    default_subdir = "next_fomc_no_credibility" if args.ablate_credibility else "next_fomc"
+    output_dir = (
+        Path(args.output_dir) if args.output_dir else data_dir / "artifacts" / default_subdir
+    )
 
     artifacts = run(
         events=events,

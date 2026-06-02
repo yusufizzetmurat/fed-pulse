@@ -461,7 +461,18 @@ def prepare_recurrent_input(
     if regime_gate is not None:
         regime_dim_total = RICH_MACRO_REGIME_DIM + 1  # block + missing flag
         if x.shape[-1] >= RICH_FEATURE_SIZE + regime_dim_total:
-            regime_input = x[..., -regime_dim_total:-1]
+            # Index the regime block at its known absolute position rather
+            # than via negative offsets from the end. The negative-slice
+            # form ``x[..., -regime_dim_total:-1]`` was correct only when
+            # the regime block sat at the tail of the per-bar payload; once
+            # any additional block (e.g. SEP, retrieval analogs) lands past
+            # it, the negative offsets read the wrong window without
+            # erroring. RICH_FEATURE_SIZE-relative indexing pins the
+            # regime values to where ``as_rich_list`` writes them.
+            regime_start = RICH_FEATURE_SIZE
+            regime_input = x[
+                ..., regime_start : regime_start + RICH_MACRO_REGIME_DIM
+            ]
             # Broadcast the per-bar regime block through the linear +
             # sigmoid path. The bars within a sequence carry identical
             # regime values (the loader broadcasts per event), so the

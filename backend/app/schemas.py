@@ -1552,12 +1552,14 @@ class HarTercileHorizon(BaseModel):
         default_factory=dict,
         description="Per-class probability over (low, medium, high). Sums to 1.0.",
     )
-    macro_f1: float = Field(
-        ...,
+    macro_f1: float | None = Field(
+        default=None,
         description=(
             "Pooled macro-F1 for the HAR-tercile baseline at this horizon, "
             "read off wiki section 20 (Gated_Fusion_InfoNCE_Comprehensive_Null, "
-            "Result 2). Not recomputed on the serving path."
+            "Result 2) for ^GSPC. Null for non-canonical symbols (^NDX / ^DJI) "
+            "where the baseline macro-F1 is not pinned and the response carries "
+            "a per-call OLS HAR fit only."
         ),
     )
     macro_f1_source: str = Field(

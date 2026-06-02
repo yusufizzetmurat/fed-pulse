@@ -107,6 +107,13 @@ class _RegimeFocalLoss(nn.Module):
 
     Mirrors :class:`_RegimeOrdinalCELoss` so the single-task dispatch
     only needs to flip the constructor when ``regime_loss_mode='focal'``.
+
+    Optional asymmetric underprediction penalty: when
+    ``FED_PULSE_REGIME_UNDER_PENALTY`` is set to a float != 1.0, rows
+    whose true class is the highest-index (``high``, index 2) and whose
+    predicted argmax is not the highest-index see their per-row focal
+    loss multiplied by that scalar. Defaults to 1.0 (no-op) so existing
+    runs stay byte-identical.
     """
 
     def __init__(self, *, weight: torch.Tensor | None = None, gamma: float = 2.0) -> None:
@@ -116,6 +123,12 @@ class _RegimeFocalLoss(nn.Module):
             weight if weight is not None else torch.empty(0),
         )
         self.gamma = float(gamma)
+        import os as _os
+
+        try:
+            self._under_penalty = float(_os.environ.get("FED_PULSE_REGIME_UNDER_PENALTY", "1.0"))
+        except (TypeError, ValueError):
+            self._under_penalty = 1.0
 
     @property
     def weight(self) -> torch.Tensor | None:
@@ -133,7 +146,26 @@ class _RegimeFocalLoss(nn.Module):
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         from app.training.loss import focal_cross_entropy
 
-        return focal_cross_entropy(logits, target, gamma=self.gamma, weight=self.weight)
+        if abs(self._under_penalty - 1.0) < 1e-9:
+            return focal_cross_entropy(logits, target, gamma=self.gamma, weight=self.weight)
+        per_row = focal_cross_entropy(
+            logits,
+            target,
+            gamma=self.gamma,
+            weight=self.weight,
+            reduction="none",
+        )
+        n_classes = int(logits.shape[-1])
+        high_idx = n_classes - 1
+        with torch.no_grad():
+            pred = logits.argmax(dim=-1)
+            mask = (target == high_idx) & (pred != high_idx)
+        scale = torch.where(
+            mask,
+            torch.full_like(per_row, float(self._under_penalty)),
+            torch.ones_like(per_row),
+        )
+        return (per_row * scale).mean()
 
 
 def _resolve_device(device: str | torch.device | None = None) -> torch.device:
@@ -417,7 +449,7 @@ def _resolve_compile_amp_flags(
     effective_amp = use_amp and architecture not in _AMP_INCOMPATIBLE_ARCHITECTURES
     if use_amp and not effective_amp:
         _logger.warning(
-            "autocast disabled for architecture=%r (incompatible); " "running fp32 forward instead",
+            "autocast disabled for architecture=%r (incompatible); running fp32 forward instead",
             architecture,
         )
     return effective_compile, effective_amp
@@ -993,7 +1025,7 @@ def _unpack_batch(
             trailing_rates_index,
         )
     raise ValueError(
-        f"unexpected batch arity from DataLoader: {arity} " "(want 2, 3, 4, 5, 6, 7, 8, or 9)"
+        f"unexpected batch arity from DataLoader: {arity} (want 2, 3, 4, 5, 6, 7, 8, or 9)"
     )
 
 
@@ -1899,8 +1931,7 @@ def _build_partition_log_rv_target(
     mode = str(vol_target_mode).lower()
     if mode not in VOL_TARGET_MODES:
         raise ValueError(
-            f"unsupported vol_target_mode={vol_target_mode!r}; "
-            f"expected one of {VOL_TARGET_MODES}"
+            f"unsupported vol_target_mode={vol_target_mode!r}; expected one of {VOL_TARGET_MODES}"
         )
     residual_mode = mode == "garch_residual"
 
@@ -4486,7 +4517,7 @@ def train_model(
         if not val_partition_is_real:
             if rates_heads_active:
                 _logger.warning(
-                    "rates conformal calibration skipped: " "no validation partition available"
+                    "rates conformal calibration skipped: no validation partition available"
                 )
         else:
             _maybe_write_rates_conformal_manifest(
@@ -4542,7 +4573,13 @@ def bootstrap_checkpoint(
     validation_split: float | None = None,
     early_stopping_patience: int = 10,
     checkpoint_path: str | Path = BEST_MODEL_PATH,
+    seed: int = 11,
 ) -> TrainingResult:
+    # Cold-start production fits run with the official seed 11 so two boots
+    # against the same vector history produce byte-identical first
+    # predictions. train_model only enables deterministic mode when ``seed``
+    # is non-None; an unseeded bootstrap means the live forecaster diverges
+    # from the seed-11 walk-forward artifact the QLIKE-beats-HAR claim rests on.
     resolved_fraction = _resolve_validation_fraction(validation_fraction, validation_split)
     return train_model(
         vectors=vectors,
@@ -4553,4 +4590,5 @@ def bootstrap_checkpoint(
         early_stopping_patience=early_stopping_patience,
         checkpoint_path=checkpoint_path,
         save_checkpoint=True,
+        seed=seed,
     )

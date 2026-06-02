@@ -1930,9 +1930,16 @@
             "type": "integer"
           },
           "macro_f1": {
-            "description": "Pooled macro-F1 for the HAR-tercile baseline at this horizon, read off wiki section 20 (Gated_Fusion_InfoNCE_Comprehensive_Null, Result 2). Not recomputed on the serving path.",
-            "title": "Macro F1",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pooled macro-F1 for the HAR-tercile baseline at this horizon, read off wiki section 20 (Gated_Fusion_InfoNCE_Comprehensive_Null, Result 2) for ^GSPC. Null for non-canonical symbols (^NDX / ^DJI) where the baseline macro-F1 is not pinned and the response carries a per-call OLS HAR fit only.",
+            "title": "Macro F1"
           },
           "macro_f1_source": {
             "description": "Citation for the macro_f1 number (wiki section + result block).",
@@ -1989,7 +1996,6 @@
           "h",
           "predicted_rv",
           "tercile",
-          "macro_f1",
           "macro_f1_source"
         ],
         "title": "HarTercileHorizon",
@@ -5821,17 +5827,17 @@
     },
     "/forecast/har-tercile-backtest": {
       "get": {
-        "description": "Backtest the last N HAR-tercile predictions for ``symbol``.\n\nWalks the published FOMC meeting calendar (most-recent first),\nruns the HAR-tercile prediction on the rolling RV history strictly\nbefore each event, and lines it up against the realized tercile\nfrom the forward 10-trading-day window. Returns the rows +\naggregate accuracy metrics. Mirrors the ``^GSPC``-only constraint\non the upstream HAR-tercile baseline endpoint (the cutoffs are\nSPX-trained).",
+        "description": "Backtest the last N HAR-tercile predictions for ``symbol``.\n\nWalks the published FOMC meeting calendar (most-recent first),\nruns the HAR-tercile prediction on the rolling RV history strictly\nbefore each event, and lines it up against the realized tercile\nfrom the forward 10-trading-day window. Returns the rows +\naggregate accuracy metrics. Supports the equity-index family\n(^GSPC / ^NDX / ^DJI) \u2014 non-canonical symbols use the per-call OLS\nHAR fit on the symbol's own RV history.",
         "operationId": "forecast_har_tercile_backtest_forecast_har_tercile_backtest_get",
         "parameters": [
           {
-            "description": "Market ticker; only ^GSPC is supported (HAR-tercile is SPX-trained).",
+            "description": "Market ticker; ^GSPC serves from the pinned QLIKE-DLq artifact, ^NDX / ^DJI use a per-call OLS HAR fit off the symbol's own history.",
             "in": "query",
             "name": "symbol",
             "required": false,
             "schema": {
               "default": "^GSPC",
-              "description": "Market ticker; only ^GSPC is supported (HAR-tercile is SPX-trained).",
+              "description": "Market ticker; ^GSPC serves from the pinned QLIKE-DLq artifact, ^NDX / ^DJI use a per-call OLS HAR fit off the symbol's own history.",
               "maxLength": 32,
               "minLength": 1,
               "pattern": "^[A-Za-z0-9._=^/-]+$",
@@ -5927,17 +5933,17 @@
     },
     "/forecast/regime/baselines": {
       "get": {
-        "description": "HAR-tercile regime baseline (wiki section 20 headline).\n\nBucketing HAR's predicted realized variance through the per-series\ntercile cutoffs beats the text+market fused regime classifier at\nh=1 and h=22 and ties it at h=5 on the canonical fold protocol.\nThe frontend renders this response as the primary regime card and\ndemotes the late-fusion classifier to a \"second opinion\" surface.\nReturns 422 on a non-SPX symbol (the artifact is SPX-trained) and a\nstructured 503 on artifact-load failure.",
+        "description": "HAR-tercile regime baseline (wiki section 20 headline).\n\nBucketing HAR's predicted realized variance through the per-series\ntercile cutoffs beats the text+market fused regime classifier at\nh=1 and h=22 and ties it at h=5 on the canonical fold protocol.\nThe frontend renders this response as the primary regime card and\ndemotes the late-fusion classifier to a \"second opinion\" surface.\nReturns 422 on a symbol outside the supported equity-index set\n(HAR-tercile is meaningful only for equity-index RV), and a\nstructured 503 on artifact-load failure.",
         "operationId": "forecast_regime_baselines_forecast_regime_baselines_get",
         "parameters": [
           {
-            "description": "Market ticker; only ^GSPC is supported (artifact is SPX-trained).",
+            "description": "Market ticker; ^GSPC serves from the pinned QLIKE-DLq artifact, ^NDX / ^DJI use a per-call OLS HAR fit off the symbol's own history.",
             "in": "query",
             "name": "symbol",
             "required": false,
             "schema": {
               "default": "^GSPC",
-              "description": "Market ticker; only ^GSPC is supported (artifact is SPX-trained).",
+              "description": "Market ticker; ^GSPC serves from the pinned QLIKE-DLq artifact, ^NDX / ^DJI use a per-call OLS HAR fit off the symbol's own history.",
               "maxLength": 32,
               "minLength": 1,
               "pattern": "^[A-Za-z0-9._=^/-]+$",

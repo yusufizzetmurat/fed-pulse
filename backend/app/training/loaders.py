@@ -1210,7 +1210,7 @@ def _attach_rich_features(
     *,
     event_row: dict[str, Any],
     linguistic_lookup: dict[str, list[float]],
-    mp_surprise_lookup: dict[str, dict[str, float]],
+    mp_surprise_lookup: dict[str, dict[str, float | None]],
     text_hash: str,
     event_date_str: str,
     use_credibility: bool,
@@ -1255,13 +1255,21 @@ def _attach_rich_features(
         linguistic_features = [0.0] * RICH_LINGUISTIC_DIM
 
     # MP-surprise 4-vector. Joined on event_date. Missing parquet or
-    # missing date both emit zeros.
+    # missing date both emit zeros. The lookup may carry None for the
+    # ff_target_prior slot (not consumed here), so each field is coerced
+    # through the float-or-zero helper to satisfy mypy on the widened
+    # dict[str, float | None] signature.
     if use_mp_surprise:
         mp_row = mp_surprise_lookup.get(event_date_str, {})
-        mp_level = float(mp_row.get("mp_surprise_level", 0.0))
-        mp_path = float(mp_row.get("mp_surprise_path_factor", 0.0))
-        fed_info = float(mp_row.get("fed_info_factor", 0.0))
-        mp_intermeeting = float(mp_row.get("mp_is_intermeeting", 0.0))
+
+        def _f(key: str) -> float:
+            v = mp_row.get(key, 0.0)
+            return 0.0 if v is None else float(v)
+
+        mp_level = _f("mp_surprise_level")
+        mp_path = _f("mp_surprise_path_factor")
+        fed_info = _f("fed_info_factor")
+        mp_intermeeting = _f("mp_is_intermeeting")
     else:
         mp_level = mp_path = fed_info = mp_intermeeting = 0.0
 
@@ -1880,7 +1888,7 @@ def _load_package_sequences_with_metadata(
     # Loading it unconditionally costs one cheap parquet read and
     # prevents the silent all-None projection that would otherwise
     # fire under ``--no-rich-features --rates-target-mode=fomc_attributable``.
-    mp_surprise_lookup: dict[str, dict[str, float]] = _read_mp_surprise_lookup(package_dir)
+    mp_surprise_lookup: dict[str, dict[str, float | None]] = _read_mp_surprise_lookup(package_dir)
     # #215 SEP dot-plot lookup. Loaded only when the opt-in flag fires so
     # the legacy / opt-out path stays byte-identical to pre-#215 (a
     # parquet on disk doesn't change behaviour unless --use-sep is set).
@@ -2783,7 +2791,7 @@ def load_training_sequences_from_package(
     # (gated) and the fomc-attributable rates-target projection (always
     # computed). Load unconditionally so `--no-rich-features` does not
     # silently null every projection.
-    mp_surprise_lookup: dict[str, dict[str, float]] = _read_mp_surprise_lookup(package_dir)
+    mp_surprise_lookup: dict[str, dict[str, float | None]] = _read_mp_surprise_lookup(package_dir)
     # #215 SEP lookup (legacy loader path mirror -- see the matched site
     # in ``_load_package_sequences_with_metadata``).
     sep_lookup: dict[str, dict[str, Any]] = (
@@ -3262,9 +3270,8 @@ def fit_rich_feature_scaler_tensor(
 
     Constant columns (IQR < ``epsilon`` on the train slice) get their
     IQR coerced to ``1.0`` so the transform reduces to a pure
-    centering step. Catches the placeholder
-    ``credibility_market_implied_gap`` (always 0.0 by contract today)
-    and any per-family ablation that zeros a slot before fit time.
+    centering step. Catches any per-family ablation that zeros a slot
+    before fit time (e.g. ``--ablate-credibility``).
     """
 
     import numpy as np

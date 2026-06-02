@@ -1,0 +1,253 @@
+{
+  "arm_key": "specialist_fusion",
+  "arm_name": "Per-horizon specialist on fusion TP",
+  "approach": "2-layer LSTM (hidden=64, dropout=0.2) over a 20-step sequence window of fusion HAR + cross-feature inputs, trained per-horizon with class-balanced focal loss (beta=0.999, gamma=2.0). Ensemble of 5 seeds (11, 29, 47, 71, 97), averaged logits. Tercile thresholds taken from the train slice (q33/q67). Early stopping on a 15% tail-of-train validation split.",
+  "protocol": {
+    "source_parquet": "/home/yusuf/SWE599/fed-pulse/data/processed/tp_intraday_fomc_text_volatility/fusion/daily_fusion.parquet",
+    "feature_cols": [
+      "rv_daily",
+      "rv_weekly",
+      "rv_monthly",
+      "volume_daily",
+      "volume_weekly",
+      "volume_monthly",
+      "downside_daily",
+      "downside_weekly",
+      "downside_monthly",
+      "jump_daily",
+      "jump_weekly",
+      "jump_monthly",
+      "days_since_stmt",
+      "days_to_stmt",
+      "surprise_level",
+      "surprise_path",
+      "surprise_info",
+      "doc_age_days"
+    ],
+    "har_lags": "rv_daily / rv_weekly / rv_monthly (log-space)",
+    "forward_targets": "rv_fwd_1 / rv_fwd_5 / rv_fwd_22",
+    "folds": "walk_forward_splits n_folds=5 embargo=23",
+    "valid_mask": "finite HAR lags + finite forward targets",
+    "tercile_thresholds": "q33/q67 of train-slice forward targets",
+    "macro_f1": "pooled across folds (canonical); also per-fold mean+/-std",
+    "horizons": [
+      1,
+      5,
+      22
+    ],
+    "seeds": [
+      11,
+      29,
+      47,
+      71,
+      97
+    ],
+    "seq_len": 20,
+    "epochs": 40,
+    "patience": 6,
+    "batch_size": 128,
+    "lr": 0.001,
+    "hidden": 64,
+    "dropout": 0.2,
+    "focal_gamma": 2.0,
+    "class_balanced_beta": 0.999
+  },
+  "n_rows_total": 5385,
+  "n_rows_valid": 5363,
+  "by_horizon": {
+    "h1": {
+      "per_fold": [
+        {
+          "fold": 1,
+          "n_train": 875,
+          "n_test": 893,
+          "macro_f1": 0.4583653749113686,
+          "q33": -10.688105693129453,
+          "q67": -9.978295230581907
+        },
+        {
+          "fold": 2,
+          "n_train": 1768,
+          "n_test": 893,
+          "macro_f1": 0.4980012894906512,
+          "q33": -10.414402060944703,
+          "q67": -9.433897612863428
+        },
+        {
+          "fold": 3,
+          "n_train": 2661,
+          "n_test": 893,
+          "macro_f1": 0.6230352033375791,
+          "q33": -10.631781447639085,
+          "q67": -9.756909447691037
+        },
+        {
+          "fold": 4,
+          "n_train": 3554,
+          "n_test": 893,
+          "macro_f1": 0.658548222883195,
+          "q33": -10.751948745692578,
+          "q67": -9.876675810603562
+        },
+        {
+          "fold": 5,
+          "n_train": 4447,
+          "n_test": 893,
+          "macro_f1": 0.5927262161608108,
+          "q33": -10.734044769345639,
+          "q67": -9.815299260515703
+        }
+      ],
+      "fold_macro_f1_mean": 0.566135261356721,
+      "fold_macro_f1_std": 0.07581744427188546,
+      "pooled_macro_f1": 0.6497265288761379,
+      "n_pooled": 4465
+    },
+    "h5": {
+      "per_fold": [
+        {
+          "fold": 1,
+          "n_train": 875,
+          "n_test": 893,
+          "macro_f1": 0.5386274505542116,
+          "q33": -10.579808659085828,
+          "q67": -9.934339960230936
+        },
+        {
+          "fold": 2,
+          "n_train": 1768,
+          "n_test": 893,
+          "macro_f1": 0.4992456483377159,
+          "q33": -10.327796432055774,
+          "q67": -9.425154405967433
+        },
+        {
+          "fold": 3,
+          "n_train": 2661,
+          "n_test": 893,
+          "macro_f1": 0.6066440264716126,
+          "q33": -10.512455463219943,
+          "q67": -9.752586563476624
+        },
+        {
+          "fold": 4,
+          "n_train": 3554,
+          "n_test": 893,
+          "macro_f1": 0.5830793765888886,
+          "q33": -10.636147152239268,
+          "q67": -9.850280508241681
+        },
+        {
+          "fold": 5,
+          "n_train": 4447,
+          "n_test": 893,
+          "macro_f1": 0.5450695138195139,
+          "q33": -10.608399713012467,
+          "q67": -9.772993016951316
+        }
+      ],
+      "fold_macro_f1_mean": 0.5545332031543885,
+      "fold_macro_f1_std": 0.0372281883087618,
+      "pooled_macro_f1": 0.6334429518480726,
+      "n_pooled": 4465
+    },
+    "h22": {
+      "per_fold": [
+        {
+          "fold": 1,
+          "n_train": 875,
+          "n_test": 893,
+          "macro_f1": 0.3263312393647977,
+          "q33": -10.566357063766446,
+          "q67": -9.861237608599584
+        },
+        {
+          "fold": 2,
+          "n_train": 1768,
+          "n_test": 893,
+          "macro_f1": 0.3950307243422928,
+          "q33": -10.213515426609565,
+          "q67": -9.37066710248749
+        },
+        {
+          "fold": 3,
+          "n_train": 2661,
+          "n_test": 893,
+          "macro_f1": 0.5029539394361974,
+          "q33": -10.47325357854548,
+          "q67": -9.747726632096079
+        },
+        {
+          "fold": 4,
+          "n_train": 3554,
+          "n_test": 893,
+          "macro_f1": 0.421941526232046,
+          "q33": -10.55991704089768,
+          "q67": -9.81515029761729
+        },
+        {
+          "fold": 5,
+          "n_train": 4447,
+          "n_test": 893,
+          "macro_f1": 0.44851600501409167,
+          "q33": -10.527313225301569,
+          "q67": -9.717055795174751
+        }
+      ],
+      "fold_macro_f1_mean": 0.4189546868778852,
+      "fold_macro_f1_std": 0.05846387975878233,
+      "pooled_macro_f1": 0.5461119069556643,
+      "n_pooled": 4465
+    }
+  },
+  "recovered_baseline": {
+    "h1": {
+      "pooled": 0.6872512285221816,
+      "fold_mean": 0.6292101379398904,
+      "fold_std": 0.04248175764239546
+    },
+    "h5": {
+      "pooled": 0.6850235551635501,
+      "fold_mean": 0.6178191494707697,
+      "fold_std": 0.03422667311197767
+    },
+    "h22": {
+      "pooled": 0.6541869390643578,
+      "fold_mean": 0.5541906851615217,
+      "fold_std": 0.04649472175893584
+    }
+  },
+  "delta_vs_recovered_baseline": {
+    "h1": {
+      "specialist_pooled": 0.6497265288761379,
+      "baseline_pooled": 0.6872512285221816,
+      "delta_pooled": -0.03752469964604366,
+      "specialist_fold_mean": 0.566135261356721,
+      "baseline_fold_mean": 0.6292101379398904,
+      "baseline_fold_std": 0.04248175764239546,
+      "delta_fold_mean": -0.06307487658316946,
+      "beats_baseline_by_more_than_1sigma": false
+    },
+    "h5": {
+      "specialist_pooled": 0.6334429518480726,
+      "baseline_pooled": 0.6850235551635501,
+      "delta_pooled": -0.051580603315477425,
+      "specialist_fold_mean": 0.5545332031543885,
+      "baseline_fold_mean": 0.6178191494707697,
+      "baseline_fold_std": 0.03422667311197767,
+      "delta_fold_mean": -0.06328594631638118,
+      "beats_baseline_by_more_than_1sigma": false
+    },
+    "h22": {
+      "specialist_pooled": 0.5461119069556643,
+      "baseline_pooled": 0.6541869390643578,
+      "delta_pooled": -0.10807503210869351,
+      "specialist_fold_mean": 0.4189546868778852,
+      "baseline_fold_mean": 0.5541906851615217,
+      "baseline_fold_std": 0.04649472175893584,
+      "delta_fold_mean": -0.13523599828363653,
+      "beats_baseline_by_more_than_1sigma": false
+    }
+  },
+  "beats_baseline_outside_1sigma": false
+}
