@@ -72,9 +72,7 @@ def _is_fomc_day_after_cutoff(timestamp: datetime) -> bool:
 
     if not is_fomc_day(timestamp.date()):
         return False
-    anchored = (
-        timestamp.replace(tzinfo=timezone.utc) if timestamp.tzinfo is None else timestamp
-    )
+    anchored = timestamp.replace(tzinfo=timezone.utc) if timestamp.tzinfo is None else timestamp
     local = anchored.astimezone(FOMC_ZONE)
     cutoff = datetime.combine(local.date(), FOMC_LOCAL_CUTOFF_TIME, tzinfo=FOMC_ZONE)
     return local > cutoff
@@ -196,8 +194,7 @@ def _snapshot_frame_to_series(frame: Any) -> Any:
 
     if "date" not in frame.columns or "close" not in frame.columns:
         raise RuntimeError(
-            "Snapshot parquet must contain 'date' and 'close' columns; got "
-            f"{list(frame.columns)}"
+            f"Snapshot parquet must contain 'date' and 'close' columns; got {list(frame.columns)}"
         )
     index = pd.to_datetime(frame["date"]).dt.tz_localize(None)
     series = pd.Series(frame["close"].astype(float).to_numpy(), index=index, name="Close")
