@@ -33,6 +33,7 @@ services:
       - ./tests:/app/tests:ro
       - ./scripts:/app/scripts:ro
       - ./data:/data
+      - ./docs:/docs:ro
     env_file:
       - path: .env
         required: false

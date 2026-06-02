@@ -180,7 +180,11 @@ def load_encoder_bakeoff_rerun(path: Path) -> dict[str, Any]:
         "available": bool(rows),
         "coverage": 0.95,
         "rows": rows,
-        "source_files": [str(path)],
+        # Return just the basename so frontend consumers see a stable key
+        # regardless of whether the host repo is mounted at /docs (backend)
+        # or absent (backend-gpu falls back to phase3 walk under different
+        # paths).
+        "source_files": [path.name],
     }
 
 
