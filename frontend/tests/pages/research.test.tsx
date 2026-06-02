@@ -249,25 +249,86 @@ describe("ResearchPage", () => {
     }
   });
 
-  it("renders source-file badges with a friendly encoder label, not the raw path", async () => {
-    const rawPath =
-      "data/artifacts/continued_pretraining/finbert_fed_adjacent_20260515T104824Z_s11/checkpoint";
+  it("collapses repeated phase3 aggregate.json paths into a single count badge", async () => {
+    const aggregatePaths = [
+      "phase3/run-a/aggregate.json",
+      "phase3/run-b/aggregate.json",
+      "phase3/run-c/aggregate.json",
+    ];
     const response = {
       ...POPULATED_RESPONSE,
       encoder_bakeoff: {
         ...POPULATED_RESPONSE.encoder_bakeoff,
-        source_files: [rawPath],
+        source_files: aggregatePaths,
       },
     };
     fetchResearchArtifactsMock.mockResolvedValue(response);
     const { default: ResearchPage } = await import("@/pages/research");
     render(<ResearchPage />);
     await openBakeoffTab();
-    const badge = await screen.findByTitle(rawPath);
-    expect(badge.textContent).toBe("FinBERT (Fed-adjacent)");
-    expect(badge.textContent).not.toContain("/");
-    expect(badge.textContent).not.toContain("checkpoint");
-    // The raw path must not surface anywhere in the rendered DOM text.
-    expect(screen.queryByText(rawPath)).toBeNull();
+    // The previous renderer mapped every aggregate.json path through the
+    // friendly-name helper and rendered N badges all reading "aggregate".
+    // The new renderer emits a single summary badge with the batch count.
+    await waitFor(() =>
+      expect(screen.getByText(/3 seed-batch aggregates/)).toBeInTheDocument()
+    );
+    expect(screen.queryAllByText(/^aggregate$/).length).toBe(0);
+  });
+
+  it("renders the bundled rerun-JSON filename as a single badge", async () => {
+    const rerun = "nlp-baseline-bakeoff-2026-06-02-rerun.json";
+    const response = {
+      ...POPULATED_RESPONSE,
+      encoder_bakeoff: {
+        ...POPULATED_RESPONSE.encoder_bakeoff,
+        source_files: [rerun],
+      },
+    };
+    fetchResearchArtifactsMock.mockResolvedValue(response);
+    const { default: ResearchPage } = await import("@/pages/research");
+    render(<ResearchPage />);
+    await openBakeoffTab();
+    await waitFor(() => expect(screen.getByText(rerun)).toBeInTheDocument());
+  });
+
+  it("surfaces the encoder-axis stance matrix on the bake-off tab", async () => {
+    const response = {
+      ...POPULATED_RESPONSE,
+      encoder_axis_stance: {
+        available: true,
+        source_doc: "docs/research/encoder-axis-stance-results.md",
+        rows: [
+          {
+            encoder_alias: "finbert",
+            encoder_display: "ProsusAI/FinBERT (no DAPT)",
+            held_out_f1: 0.526,
+            spearman_rho: 0.499,
+            auc_hike_vs_cut: 0.967,
+            is_validity_winner: true,
+            is_held_out_winner: false,
+          },
+          {
+            encoder_alias: "finbert_fed_adjacent_xbank",
+            encoder_display: "FinBERT (Fed-adjacent, cross-bank)",
+            held_out_f1: 0.720,
+            spearman_rho: 0.335,
+            auc_hike_vs_cut: 0.800,
+            is_validity_winner: false,
+            is_held_out_winner: true,
+          },
+        ],
+      },
+    };
+    fetchResearchArtifactsMock.mockResolvedValue(response);
+    const { default: ResearchPage } = await import("@/pages/research");
+    render(<ResearchPage />);
+    await openBakeoffTab();
+    await waitFor(() =>
+      expect(screen.getByText(/Encoder backbone for the stance head/)).toBeInTheDocument()
+    );
+    expect(screen.getByText(/ProsusAI\/FinBERT \(no DAPT\)/)).toBeInTheDocument();
+    expect(screen.getByText("0.720")).toBeInTheDocument();
+    expect(screen.getByText(/held-out F1 winner/)).toBeInTheDocument();
+    expect(screen.getByText(/validity-anchor winner/)).toBeInTheDocument();
   });
 });

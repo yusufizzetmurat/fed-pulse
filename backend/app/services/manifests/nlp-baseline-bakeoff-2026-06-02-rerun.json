@@ -1,0 +1,1991 @@
+{
+  "mode": "full",
+  "owner": "lead1-rerun",
+  "training_package_id": "canonical",
+  "started_at_utc": "20260602T091722Z",
+  "official_seeds": [
+    11,
+    29,
+    47,
+    71,
+    97
+  ],
+  "results": [
+    {
+      "run_id": "run_20260602_epv1_mv_bert_base_uncased_fast_v1.0.0_s11",
+      "model_key": "bert",
+      "model_version": "mv_bert_base_uncased_fast_v1.0.0",
+      "checkpoint": "bert-base-uncased",
+      "checkpoint_fallback_used": false,
+      "seed": 11,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.19026416354877074,
+        "weighted_f1": 0.22264228005387182,
+        "accuracy": 0.3923766816143498,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 276
+          },
+          "dovish": {
+            "precision": 0.5,
+            "recall": 0.003745318352059925,
+            "f1": 0.007434944237918215,
+            "support": 267
+          },
+          "neutral": {
+            "precision": 0.3921348314606742,
+            "recall": 1.0,
+            "f1": 0.563357546408394,
+            "support": 349
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 0.7816562844915927,
+        "mape": 60.87443946188341
+      },
+      "latency": {
+        "p50_ms": 4.684752499997558,
+        "p95_ms": 6.707456250069299
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_bert_base_uncased_fast_v1.0.0_s29",
+      "model_key": "bert",
+      "model_version": "mv_bert_base_uncased_fast_v1.0.0",
+      "checkpoint": "bert-base-uncased",
+      "checkpoint_fallback_used": false,
+      "seed": 29,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.19590856439292686,
+        "weighted_f1": 0.23485821059549575,
+        "accuracy": 0.4024663677130045,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 273
+          },
+          "dovish": {
+            "precision": 0.5,
+            "recall": 0.007692307692307693,
+            "f1": 0.015151515151515154,
+            "support": 260
+          },
+          "neutral": {
+            "precision": 0.40202702702702703,
+            "recall": 0.9944289693593314,
+            "f1": 0.5725741780272654,
+            "support": 359
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 0.7730029962988472,
+        "mape": 59.753363228699556
+      },
+      "latency": {
+        "p50_ms": 4.8621004998494755,
+        "p95_ms": 5.2746793126061675
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_bert_base_uncased_fast_v1.0.0_s47",
+      "model_key": "bert",
+      "model_version": "mv_bert_base_uncased_fast_v1.0.0",
+      "checkpoint": "bert-base-uncased",
+      "checkpoint_fallback_used": false,
+      "seed": 47,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.14319248826291078,
+        "weighted_f1": 0.11750773700498958,
+        "accuracy": 0.273542600896861,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 305
+          },
+          "dovish": {
+            "precision": 0.273542600896861,
+            "recall": 1.0,
+            "f1": 0.4295774647887324,
+            "support": 244
+          },
+          "neutral": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 343
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 1.3237228382355453,
+        "mape": 106.83856502242153
+      },
+      "latency": {
+        "p50_ms": 4.763932749938249,
+        "p95_ms": 5.245996062512859
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_bert_base_uncased_fast_v1.0.0_s71",
+      "model_key": "bert",
+      "model_version": "mv_bert_base_uncased_fast_v1.0.0",
+      "checkpoint": "bert-base-uncased",
+      "checkpoint_fallback_used": false,
+      "seed": 71,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.19461790258250436,
+        "weighted_f1": 0.2292213432734882,
+        "accuracy": 0.39798206278026904,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 289
+          },
+          "dovish": {
+            "precision": 1.0,
+            "recall": 0.008,
+            "f1": 0.015873015873015872,
+            "support": 250
+          },
+          "neutral": {
+            "precision": 0.39662921348314606,
+            "recall": 1.0,
+            "f1": 0.5679806918744972,
+            "support": 353
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 0.7758981487410129,
+        "mape": 60.2017937219731
+      },
+      "latency": {
+        "p50_ms": 4.923160499856749,
+        "p95_ms": 6.280759687570026
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_bert_base_uncased_fast_v1.0.0_s97",
+      "model_key": "bert",
+      "model_version": "mv_bert_base_uncased_fast_v1.0.0",
+      "checkpoint": "bert-base-uncased",
+      "checkpoint_fallback_used": false,
+      "seed": 97,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.19541395506060505,
+        "weighted_f1": 0.21204048943258236,
+        "accuracy": 0.3195067264573991,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 297
+          },
+          "dovish": {
+            "precision": 0.14925373134328357,
+            "recall": 0.07722007722007722,
+            "f1": 0.10178117048346055,
+            "support": 259
+          },
+          "neutral": {
+            "precision": 0.3496042216358839,
+            "recall": 0.7886904761904762,
+            "f1": 0.4844606946983546,
+            "support": 336
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 0.9083568173484021,
+        "mape": 72.86995515695067
+      },
+      "latency": {
+        "p50_ms": 4.879602062374033,
+        "p95_ms": 5.401559187475868
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_finbert_fast_v1.0.0_s11",
+      "model_key": "finbert",
+      "model_version": "mv_finbert_fast_v1.0.0",
+      "checkpoint": "ProsusAI/finbert",
+      "checkpoint_fallback_used": false,
+      "seed": 11,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.491753019255154,
+        "weighted_f1": 0.4906352622225101,
+        "accuracy": 0.492152466367713,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.42296918767507,
+            "recall": 0.5471014492753623,
+            "f1": 0.47709320695102686,
+            "support": 276
+          },
+          "dovish": {
+            "precision": 0.45454545454545453,
+            "recall": 0.599250936329588,
+            "f1": 0.5169628432956382,
+            "support": 267
+          },
+          "neutral": {
+            "precision": 0.6994535519125683,
+            "recall": 0.3667621776504298,
+            "f1": 0.48120300751879697,
+            "support": 349
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 1.0503042480409734,
+        "mape": 70.62780269058297
+      },
+      "latency": {
+        "p50_ms": 6.0562809374005155,
+        "p95_ms": 7.088949312674231
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_finbert_fast_v1.0.0_s29",
+      "model_key": "finbert",
+      "model_version": "mv_finbert_fast_v1.0.0",
+      "checkpoint": "ProsusAI/finbert",
+      "checkpoint_fallback_used": false,
+      "seed": 29,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.4992130702367379,
+        "weighted_f1": 0.4973482314547214,
+        "accuracy": 0.5,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.44352617079889806,
+            "recall": 0.5897435897435898,
+            "f1": 0.5062893081761005,
+            "support": 273
+          },
+          "dovish": {
+            "precision": 0.4454022988505747,
+            "recall": 0.5961538461538461,
+            "f1": 0.5098684210526316,
+            "support": 260
+          },
+          "neutral": {
+            "precision": 0.7182320441988951,
+            "recall": 0.362116991643454,
+            "f1": 0.48148148148148145,
+            "support": 359
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 1.0287351282645891,
+        "mape": 68.60986547085201
+      },
+      "latency": {
+        "p50_ms": 6.028791375001674,
+        "p95_ms": 6.891280937452393
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_finbert_fast_v1.0.0_s47",
+      "model_key": "finbert",
+      "model_version": "mv_finbert_fast_v1.0.0",
+      "checkpoint": "ProsusAI/finbert",
+      "checkpoint_fallback_used": false,
+      "seed": 47,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.49897411147411147,
+        "weighted_f1": 0.49806122817613846,
+        "accuracy": 0.5,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.4659400544959128,
+            "recall": 0.5606557377049181,
+            "f1": 0.5089285714285714,
+            "support": 305
+          },
+          "dovish": {
+            "precision": 0.4281609195402299,
+            "recall": 0.610655737704918,
+            "f1": 0.5033783783783784,
+            "support": 244
+          },
+          "neutral": {
+            "precision": 0.711864406779661,
+            "recall": 0.3673469387755102,
+            "f1": 0.4846153846153846,
+            "support": 343
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 1.0481673094120898,
+        "mape": 69.95515695067265
+      },
+      "latency": {
+        "p50_ms": 6.1711513126283535,
+        "p95_ms": 7.022139687478557
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_finbert_fast_v1.0.0_s71",
+      "model_key": "finbert",
+      "model_version": "mv_finbert_fast_v1.0.0",
+      "checkpoint": "ProsusAI/finbert",
+      "checkpoint_fallback_used": false,
+      "seed": 71,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.48789579269780536,
+        "weighted_f1": 0.4853438787765206,
+        "accuracy": 0.48878923766816146,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.4423076923076923,
+            "recall": 0.5570934256055363,
+            "f1": 0.4931087289433384,
+            "support": 289
+          },
+          "dovish": {
+            "precision": 0.43859649122807015,
+            "recall": 0.6,
+            "f1": 0.5067567567567568,
+            "support": 250
+          },
+          "neutral": {
+            "precision": 0.6720430107526881,
+            "recall": 0.35410764872521244,
+            "f1": 0.46382189239332094,
+            "support": 353
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 1.0357943594927281,
+        "mape": 69.84304932735425
+      },
+      "latency": {
+        "p50_ms": 6.159013187470919,
+        "p95_ms": 7.516025812719818
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_finbert_fast_v1.0.0_s97",
+      "model_key": "finbert",
+      "model_version": "mv_finbert_fast_v1.0.0",
+      "checkpoint": "ProsusAI/finbert",
+      "checkpoint_fallback_used": false,
+      "seed": 97,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.5055107013639709,
+        "weighted_f1": 0.5046521403248934,
+        "accuracy": 0.5056053811659192,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.44986449864498645,
+            "recall": 0.5589225589225589,
+            "f1": 0.4984984984984986,
+            "support": 297
+          },
+          "dovish": {
+            "precision": 0.45375722543352603,
+            "recall": 0.6061776061776062,
+            "f1": 0.51900826446281,
+            "support": 259
+          },
+          "neutral": {
+            "precision": 0.7231638418079096,
+            "recall": 0.38095238095238093,
+            "f1": 0.49902534113060426,
+            "support": 336
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 1.0550965356551834,
+        "mape": 70.06726457399103
+      },
+      "latency": {
+        "p50_ms": 6.040639500042744,
+        "p95_ms": 7.019680312396304
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_fomc_roberta_fast_v1.0.0_s11",
+      "model_key": "fomc_roberta",
+      "model_version": "mv_fomc_roberta_fast_v1.0.0",
+      "checkpoint": "ZiweiChen/FinBERT-FOMC",
+      "checkpoint_fallback_used": false,
+      "seed": 11,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.5014832712507131,
+        "weighted_f1": 0.5063467045347325,
+        "accuracy": 0.5145739910313901,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.4838709677419355,
+            "recall": 0.32608695652173914,
+            "f1": 0.38961038961038963,
+            "support": 276
+          },
+          "dovish": {
+            "precision": 0.4925373134328358,
+            "recall": 0.6179775280898876,
+            "f1": 0.5481727574750831,
+            "support": 267
+          },
+          "neutral": {
+            "precision": 0.5498652291105122,
+            "recall": 0.5845272206303725,
+            "f1": 0.5666666666666668,
+            "support": 349
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 0.9446569121190771,
+        "mape": 62.10762331838565
+      },
+      "latency": {
+        "p50_ms": 5.847645187486705,
+        "p95_ms": 6.485887749931862
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_fomc_roberta_fast_v1.0.0_s29",
+      "model_key": "fomc_roberta",
+      "model_version": "mv_fomc_roberta_fast_v1.0.0",
+      "checkpoint": "ZiweiChen/FinBERT-FOMC",
+      "checkpoint_fallback_used": false,
+      "seed": 29,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.5046047269968927,
+        "weighted_f1": 0.5122062610842316,
+        "accuracy": 0.5190582959641256,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.5,
+            "recall": 0.336996336996337,
+            "f1": 0.4026258205689278,
+            "support": 273
+          },
+          "dovish": {
+            "precision": 0.4709480122324159,
+            "recall": 0.5923076923076923,
+            "f1": 0.524701873935264,
+            "support": 260
+          },
+          "neutral": {
+            "precision": 0.5695538057742782,
+            "recall": 0.6044568245125348,
+            "f1": 0.5864864864864865,
+            "support": 359
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 0.9458429225197583,
+        "mape": 61.88340807174888
+      },
+      "latency": {
+        "p50_ms": 6.081346687551559,
+        "p95_ms": 7.3241504373982025
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_fomc_roberta_fast_v1.0.0_s47",
+      "model_key": "fomc_roberta",
+      "model_version": "mv_fomc_roberta_fast_v1.0.0",
+      "checkpoint": "ZiweiChen/FinBERT-FOMC",
+      "checkpoint_fallback_used": false,
+      "seed": 47,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.5113436176538548,
+        "weighted_f1": 0.513510211932549,
+        "accuracy": 0.5201793721973094,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.5625,
+            "recall": 0.3540983606557377,
+            "f1": 0.43460764587525147,
+            "support": 305
+          },
+          "dovish": {
+            "precision": 0.459375,
+            "recall": 0.6024590163934426,
+            "f1": 0.5212765957446808,
+            "support": 244
+          },
+          "neutral": {
+            "precision": 0.55,
+            "recall": 0.60932944606414,
+            "f1": 0.5781466113416323,
+            "support": 343
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 0.9452501033311415,
+        "mape": 61.77130044843049
+      },
+      "latency": {
+        "p50_ms": 6.080056124801558,
+        "p95_ms": 6.666100999836999
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_fomc_roberta_fast_v1.0.0_s71",
+      "model_key": "fomc_roberta",
+      "model_version": "mv_fomc_roberta_fast_v1.0.0",
+      "checkpoint": "ZiweiChen/FinBERT-FOMC",
+      "checkpoint_fallback_used": false,
+      "seed": 71,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.5047286130402704,
+        "weighted_f1": 0.5083601479278975,
+        "accuracy": 0.5145739910313901,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.5260416666666666,
+            "recall": 0.3494809688581315,
+            "f1": 0.41995841995842,
+            "support": 289
+          },
+          "dovish": {
+            "precision": 0.4634146341463415,
+            "recall": 0.608,
+            "f1": 0.5259515570934257,
+            "support": 250
+          },
+          "neutral": {
+            "precision": 0.553763440860215,
+            "recall": 0.5835694050991501,
+            "f1": 0.5682758620689655,
+            "support": 353
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 0.9428750993184613,
+        "mape": 61.99551569506726
+      },
+      "latency": {
+        "p50_ms": 5.874822812529601,
+        "p95_ms": 6.851753624914636
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_fomc_roberta_fast_v1.0.0_s97",
+      "model_key": "fomc_roberta",
+      "model_version": "mv_fomc_roberta_fast_v1.0.0",
+      "checkpoint": "ZiweiChen/FinBERT-FOMC",
+      "checkpoint_fallback_used": false,
+      "seed": 97,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.5188230451180758,
+        "weighted_f1": 0.5202678332721309,
+        "accuracy": 0.5291479820627802,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.520618556701031,
+            "recall": 0.3400673400673401,
+            "f1": 0.41140529531568226,
+            "support": 297
+          },
+          "dovish": {
+            "precision": 0.4940119760479042,
+            "recall": 0.637065637065637,
+            "f1": 0.5564924114671164,
+            "support": 259
+          },
+          "neutral": {
+            "precision": 0.5659340659340659,
+            "recall": 0.6130952380952381,
+            "f1": 0.5885714285714286,
+            "support": 336
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 0.9564508384010267,
+        "mape": 61.88340807174888
+      },
+      "latency": {
+        "p50_ms": 5.8050493748851295,
+        "p95_ms": 6.586449750102474
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_sanity_majority_v1.0.0_s11",
+      "model_key": "majority",
+      "model_version": "mv_sanity_majority_v1.0.0",
+      "checkpoint": "sanity:majority",
+      "checkpoint_fallback_used": false,
+      "seed": 11,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.18748321246306743,
+        "weighted_f1": 0.22006157337312962,
+        "accuracy": 0.39125560538116594,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 276
+          },
+          "dovish": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 267
+          },
+          "neutral": {
+            "precision": 0.39125560538116594,
+            "recall": 1.0,
+            "f1": 0.5624496373892023,
+            "support": 349
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 0.7802207345481368,
+        "mape": 60.87443946188341
+      },
+      "latency": {
+        "p50_ms": 1.6066648337679605e-06,
+        "p95_ms": 3.3133255783468485e-06
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_sanity_majority_v1.0.0_s29",
+      "model_key": "majority",
+      "model_version": "mv_sanity_majority_v1.0.0",
+      "checkpoint": "sanity:majority",
+      "checkpoint_fallback_used": false,
+      "seed": 29,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.1913136157740474,
+        "weighted_f1": 0.23099188810386664,
+        "accuracy": 0.4024663677130045,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 273
+          },
+          "dovish": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 260
+          },
+          "neutral": {
+            "precision": 0.4024663677130045,
+            "recall": 1.0,
+            "f1": 0.5739408473221422,
+            "support": 359
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 0.7730029962988472,
+        "mape": 59.753363228699556
+      },
+      "latency": {
+        "p50_ms": 2.7566663144777217e-06,
+        "p95_ms": 4.085612165173899e-06
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_sanity_majority_v1.0.0_s47",
+      "model_key": "majority",
+      "model_version": "mv_sanity_majority_v1.0.0",
+      "checkpoint": "sanity:majority",
+      "checkpoint_fallback_used": false,
+      "seed": 47,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.18515519568151148,
+        "weighted_f1": 0.21359270891959115,
+        "accuracy": 0.3845291479820628,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 305
+          },
+          "dovish": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 244
+          },
+          "neutral": {
+            "precision": 0.3845291479820628,
+            "recall": 1.0,
+            "f1": 0.5554655870445344,
+            "support": 343
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 0.7845195039117493,
+        "mape": 61.54708520179371
+      },
+      "latency": {
+        "p50_ms": 2.976028629010926e-06,
+        "p95_ms": 4.2233295971527696e-06
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_sanity_majority_v1.0.0_s71",
+      "model_key": "majority",
+      "model_version": "mv_sanity_majority_v1.0.0",
+      "checkpoint": "sanity:majority",
+      "checkpoint_fallback_used": false,
+      "seed": 71,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.18902275769745647,
+        "weighted_f1": 0.22441154753543316,
+        "accuracy": 0.3957399103139013,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 289
+          },
+          "dovish": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 250
+          },
+          "neutral": {
+            "precision": 0.3957399103139013,
+            "recall": 1.0,
+            "f1": 0.5670682730923694,
+            "support": 353
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 0.7773416814285071,
+        "mape": 60.42600896860987
+      },
+      "latency": {
+        "p50_ms": 1.219996192958206e-06,
+        "p95_ms": 1.8500092361743252e-06
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_sanity_majority_v1.0.0_s97",
+      "model_key": "majority",
+      "model_version": "mv_sanity_majority_v1.0.0",
+      "checkpoint": "sanity:majority",
+      "checkpoint_fallback_used": false,
+      "seed": 97,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.18241042345276873,
+        "weighted_f1": 0.20613195834124537,
+        "accuracy": 0.37668161434977576,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 297
+          },
+          "dovish": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 259
+          },
+          "neutral": {
+            "precision": 0.37668161434977576,
+            "recall": 1.0,
+            "f1": 0.5472312703583062,
+            "support": 336
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 0.7895051523899158,
+        "mape": 62.33183856502242
+      },
+      "latency": {
+        "p50_ms": 2.439992385916412e-06,
+        "p95_ms": 4.3013617507985805e-06
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_sanity_random_v1.0.0_s11",
+      "model_key": "random_class",
+      "model_version": "mv_sanity_random_v1.0.0",
+      "checkpoint": "sanity:random",
+      "checkpoint_fallback_used": false,
+      "seed": 11,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.3308957777688428,
+        "weighted_f1": 0.33498359697473945,
+        "accuracy": 0.3329596412556054,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.2916666666666667,
+            "recall": 0.32971014492753625,
+            "f1": 0.3095238095238096,
+            "support": 276
+          },
+          "dovish": {
+            "precision": 0.2968197879858657,
+            "recall": 0.3146067415730337,
+            "f1": 0.3054545454545455,
+            "support": 267
+          },
+          "neutral": {
+            "precision": 0.4107744107744108,
+            "recall": 0.3495702005730659,
+            "f1": 0.37770897832817335,
+            "support": 349
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 1.147232974490294,
+        "mape": 88.34080717488789
+      },
+      "latency": {
+        "p50_ms": 0.00016207999578909948,
+        "p95_ms": 0.0001750933370203711
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_sanity_random_v1.0.0_s29",
+      "model_key": "random_class",
+      "model_version": "mv_sanity_random_v1.0.0",
+      "checkpoint": "sanity:random",
+      "checkpoint_fallback_used": false,
+      "seed": 29,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.3298380963173267,
+        "weighted_f1": 0.33166391615673324,
+        "accuracy": 0.3307174887892377,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.31596091205211724,
+            "recall": 0.3553113553113553,
+            "f1": 0.33448275862068966,
+            "support": 273
+          },
+          "dovish": {
+            "precision": 0.2905405405405405,
+            "recall": 0.33076923076923076,
+            "f1": 0.3093525179856115,
+            "support": 260
+          },
+          "neutral": {
+            "precision": 0.3875432525951557,
+            "recall": 0.31197771587743733,
+            "f1": 0.345679012345679,
+            "support": 359
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 1.118535236920672,
+        "mape": 86.32286995515696
+      },
+      "latency": {
+        "p50_ms": 0.00020090999896638095,
+        "p95_ms": 0.00031613014209441433
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_sanity_random_v1.0.0_s47",
+      "model_key": "random_class",
+      "model_version": "mv_sanity_random_v1.0.0",
+      "checkpoint": "sanity:random",
+      "checkpoint_fallback_used": false,
+      "seed": 47,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.3363850544259269,
+        "weighted_f1": 0.33933208427021366,
+        "accuracy": 0.33856502242152464,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.336996336996337,
+            "recall": 0.3016393442622951,
+            "f1": 0.31833910034602075,
+            "support": 305
+          },
+          "dovish": {
+            "precision": 0.28762541806020064,
+            "recall": 0.3524590163934426,
+            "f1": 0.31675874769797424,
+            "support": 244
+          },
+          "neutral": {
+            "precision": 0.3875,
+            "recall": 0.36151603498542273,
+            "f1": 0.3740573152337858,
+            "support": 343
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 1.118033988749895,
+        "mape": 85.76233183856502
+      },
+      "latency": {
+        "p50_ms": 0.0001664066682375657,
+        "p95_ms": 0.0002020787714210288
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_sanity_random_v1.0.0_s71",
+      "model_key": "random_class",
+      "model_version": "mv_sanity_random_v1.0.0",
+      "checkpoint": "sanity:random",
+      "checkpoint_fallback_used": false,
+      "seed": 71,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.32616136572342125,
+        "weighted_f1": 0.3283601728322369,
+        "accuracy": 0.3273542600896861,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.32142857142857145,
+            "recall": 0.34256055363321797,
+            "f1": 0.3316582914572864,
+            "support": 289
+          },
+          "dovish": {
+            "precision": 0.2827586206896552,
+            "recall": 0.328,
+            "f1": 0.30370370370370375,
+            "support": 250
+          },
+          "neutral": {
+            "precision": 0.37755102040816324,
+            "recall": 0.31444759206798867,
+            "f1": 0.34312210200927357,
+            "support": 353
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 1.1230364029415247,
+        "mape": 86.88340807174887
+      },
+      "latency": {
+        "p50_ms": 0.00016581666083463156,
+        "p95_ms": 0.00019560999741467336
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    },
+    {
+      "run_id": "run_20260602_epv1_mv_sanity_random_v1.0.0_s97",
+      "model_key": "random_class",
+      "model_version": "mv_sanity_random_v1.0.0",
+      "checkpoint": "sanity:random",
+      "checkpoint_fallback_used": false,
+      "seed": 97,
+      "evaluated_rows": 892,
+      "classification": {
+        "macro_f1": 0.34230971591451126,
+        "weighted_f1": 0.34547791334920785,
+        "accuracy": 0.3452914798206278,
+        "per_class": {
+          "hawkish": {
+            "precision": 0.3490566037735849,
+            "recall": 0.37373737373737376,
+            "f1": 0.36097560975609755,
+            "support": 297
+          },
+          "dovish": {
+            "precision": 0.2950191570881226,
+            "recall": 0.2972972972972973,
+            "f1": 0.29615384615384616,
+            "support": 259
+          },
+          "neutral": {
+            "precision": 0.38338658146964855,
+            "recall": 0.35714285714285715,
+            "f1": 0.3697996918335901,
+            "support": 336
+          }
+        }
+      },
+      "error_proxy": {
+        "rmse": 1.1150217677699825,
+        "mape": 85.08968609865471
+      },
+      "latency": {
+        "p50_ms": 0.00029831507200556997,
+        "p95_ms": 0.00031547665760930005
+      },
+      "folds": [
+        {
+          "fold_id": "wf_fold_1",
+          "test_start": "2020-07-14",
+          "test_end": "2021-09-09",
+          "test_rows_total": 475,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_2",
+          "test_start": "2021-09-22",
+          "test_end": "2023-01-10",
+          "test_rows_total": 835,
+          "test_rows_evaluated": 300
+        },
+        {
+          "fold_id": "wf_fold_3",
+          "test_start": "2023-01-20",
+          "test_end": "2024-03-01",
+          "test_rows_total": 292,
+          "test_rows_evaluated": 292
+        },
+        {
+          "fold_id": "wf_fold_4",
+          "test_start": "2024-03-05",
+          "test_end": "2025-04-02",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        },
+        {
+          "fold_id": "wf_fold_5",
+          "test_start": "2025-04-03",
+          "test_end": "2026-05-27",
+          "test_rows_total": 0,
+          "test_rows_evaluated": 0
+        }
+      ]
+    }
+  ],
+  "failures": []
+}

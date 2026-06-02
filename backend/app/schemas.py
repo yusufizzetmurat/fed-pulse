@@ -970,12 +970,35 @@ class CrossBankTransferSection(BaseModel):
     source_files: list[str] = Field(default_factory=list)
 
 
+class EncoderAxisStanceRow(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    encoder_alias: str
+    encoder_display: str
+    held_out_f1: float
+    spearman_rho: float
+    auc_hike_vs_cut: float
+    is_validity_winner: bool = False
+    is_held_out_winner: bool = False
+
+
+class EncoderAxisStanceSection(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    available: bool
+    rows: list[EncoderAxisStanceRow] = Field(default_factory=list)
+    source_doc: str = ""
+
+
 class ResearchArtifactsResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     artifacts_root: str
     sections: dict[str, list[ArtifactFile]]
     encoder_bakeoff: EncoderBakeoffSection
+    encoder_axis_stance: EncoderAxisStanceSection = Field(
+        default_factory=lambda: EncoderAxisStanceSection(available=False, rows=[])
+    )
     cross_bank_transfer: CrossBankTransferSection
 
 
