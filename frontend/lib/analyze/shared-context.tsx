@@ -71,6 +71,7 @@ interface SharedContextValue {
   harBaselinesMap: Record<string, HarBaselinesState>;
   ensureCoverage: (symbol: string | undefined) => void;
   ensureRecentHistory: (symbol: string | undefined, limit: number) => void;
+  refreshRecentHistory: (symbol: string | undefined, limit: number) => void;
   ensureHarBaselines: (symbol: string | undefined) => void;
 }
 
@@ -259,6 +260,10 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
             ...prev,
             [mapKey]: { data, loading: false, error: null },
           }));
+          // Clear the in-flight guard on success so a follow-up
+          // refresh (e.g., after /analyze persists a new row) can
+          // re-fetch instead of short-circuiting at the dedupe gate.
+          inFlight.current.delete(key);
         })
         .catch((err) => {
           setRecentHistoryMap((prev) => ({
@@ -274,6 +279,17 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
     [apiBaseUrl],
   );
 
+  const refreshRecentHistory = React.useCallback(
+    (symbol: string | undefined, limit: number) => {
+      const symKey = symbol ?? "";
+      const mapKey = `${symKey}|${limit}`;
+      const key = `history:${apiBaseUrl}:${mapKey}`;
+      inFlight.current.delete(key);
+      ensureRecentHistory(symbol, limit);
+    },
+    [apiBaseUrl, ensureRecentHistory],
+  );
+
   const value = React.useMemo<SharedContextValue>(
     () => ({
       apiBaseUrl,
@@ -284,6 +300,7 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
       harBaselinesMap,
       ensureCoverage,
       ensureRecentHistory,
+      refreshRecentHistory,
       ensureHarBaselines,
     }),
     [
@@ -295,6 +312,7 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
       harBaselinesMap,
       ensureCoverage,
       ensureRecentHistory,
+      refreshRecentHistory,
       ensureHarBaselines,
     ],
   );

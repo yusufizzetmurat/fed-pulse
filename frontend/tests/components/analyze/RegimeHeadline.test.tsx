@@ -94,3 +94,48 @@ describe("RegimeHeadline regression-canonical surface (#338)", () => {
   });
 
 });
+
+describe("RegimeHeadline past-runs sparkline", () => {
+  const allNormalHistory = [
+    { documentDate: "2024-08-01", argmax: "normal", realized: null },
+    { documentDate: "2024-08-15", argmax: "normal", realized: null },
+    { documentDate: "2024-09-01", argmax: "normal", realized: null },
+    { documentDate: "2024-09-18", argmax: "normal", realized: null },
+  ];
+
+  it("renders the sparkline (not the empty-state copy) when all recent runs land on normal", () => {
+    const { container } = render(
+      <RegimeHeadline
+        regime={REGIME}
+        symbol="^GSPC"
+        documentDate="2024-09-18"
+        history={allNormalHistory}
+      />,
+    );
+    // Empty-state and single-run fallbacks must not appear when N >= 2.
+    expect(screen.queryByText(/No prior runs for this symbol/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Insufficient history/i)).not.toBeInTheDocument();
+    // Sparkline mounts a Recharts ResponsiveContainer — the container
+    // becomes evidence the chart rendered instead of the "no data"
+    // text-only fallback path.
+    const responsive = container.querySelector(".recharts-responsive-container");
+    expect(responsive).not.toBeNull();
+  });
+
+  it("shows the insufficient-history copy when only one prior run is available", () => {
+    render(
+      <RegimeHeadline
+        regime={REGIME}
+        symbol="^GSPC"
+        documentDate="2024-09-18"
+        history={[{ documentDate: "2024-09-18", argmax: "normal", realized: null }]}
+      />,
+    );
+    expect(screen.getByText(/Insufficient history \(1 run\)/i)).toBeInTheDocument();
+  });
+
+  it("shows the empty-state copy when no history is provided", () => {
+    render(<RegimeHeadline regime={REGIME} symbol="^GSPC" documentDate="2024-09-18" />);
+    expect(screen.getByText(/No prior runs for this symbol/i)).toBeInTheDocument();
+  });
+});

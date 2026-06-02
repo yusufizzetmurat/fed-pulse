@@ -138,7 +138,7 @@ export default function WorkspacePage() {
   const [struck, setStruck] = React.useState<Set<number>>(() => new Set());
   const [counterfactualLoading, setCounterfactualLoading] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
-  const { apiBaseUrl } = useSharedContext();
+  const { apiBaseUrl, refreshRecentHistory } = useSharedContext();
   const [historyEntries, setHistoryEntries] = React.useState<RegimeHistoryEntry[]>([]);
   const [volForecast, setVolForecast] = React.useState<RealizedVolForecastResponse | null>(null);
   const [volForecastLoading, setVolForecastLoading] = React.useState(false);
@@ -624,6 +624,9 @@ export default function WorkspacePage() {
       if (analyzeRes.status === "fulfilled") {
         setResult(analyzeRes.value);
         setBaselineResult(analyzeRes.value);
+        // Force the history strip to re-fetch so the row just
+        // persisted by /analyze shows up in the Past 12 runs card.
+        refreshRecentHistory(request.symbol, 12);
         toast.success("Analysis complete");
       } else {
         setResult(null);
