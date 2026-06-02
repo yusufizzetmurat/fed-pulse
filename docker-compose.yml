@@ -17,7 +17,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: sh -c "python -m app.boot.eager_pull && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   backend-gpu:
     profiles: ["gpu"]
@@ -45,7 +45,7 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: sh -c "python -m app.boot.eager_pull && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   frontend:
     build:

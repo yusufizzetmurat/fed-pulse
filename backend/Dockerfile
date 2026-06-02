@@ -33,7 +33,11 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# The eager-pull shim hydrates ``MODELS_DIR`` from HF (eager: true
+# artefacts) when files are missing on disk. It never raises out, so a
+# fresh container without HF_TOKEN still boots and the cold-start
+# bootstrap in main.py picks up the gap on first /analyze.
+CMD ["sh", "-c", "python -m app.boot.eager_pull && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
 
 
 FROM base AS dev
@@ -47,4 +51,4 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["sh", "-c", "python -m app.boot.eager_pull && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"]
