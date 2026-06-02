@@ -322,8 +322,9 @@ export function HarAccuracyPanel({
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-[11px] text-muted-foreground">
-            Resolved tercile is bucketed off the forward 10 trading days
-            of realized vol against the same cutoffs the prediction used.
+            Resolved tercile is bucketed off the single forward-day
+            realized variance against the same cutoffs the h=1 prediction
+            used.
           </p>
           {symbolBadge ? (
             <Badge

@@ -19,7 +19,9 @@ describe("Inline 'awaiting checkpoint' reasons", () => {
     expect(
       screen.getByText(/sentiment breakdown returned no labels/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/active model file is missing/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/paste a longer fomc excerpt and re-run/i),
+    ).toBeInTheDocument();
   });
 
   it("MultiAxisInterpretation renders the tile grid when at least one axis is present", () => {
