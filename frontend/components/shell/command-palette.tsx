@@ -4,6 +4,7 @@ import {
   Activity,
   Calendar,
   FlaskConical,
+  Gavel,
   GitCompare,
   History as HistoryIcon,
   LineChart,
@@ -52,7 +53,7 @@ interface CommandPaletteProps {
 
 const PAGE_ENTRIES = [
   { id: "page-workspace", label: "Workspace", hint: "/", icon: Activity, href: "/" },
-  { id: "page-predictions", label: "Predictions", hint: "/decisions", icon: LineChart, href: "/decisions" },
+  { id: "page-decisions", label: "Decisions", hint: "/decisions", icon: Gavel, href: "/decisions" },
   { id: "page-history", label: "History", hint: "/history", icon: HistoryIcon, href: "/history" },
   { id: "page-compare", label: "Compare", hint: "/compare", icon: GitCompare, href: "/compare" },
   { id: "page-calendar", label: "Calendar", hint: "/calendar", icon: Calendar, href: "/calendar" },
