@@ -1,4 +1,4 @@
-"""Gated text↔market fusion forecaster with an InfoNCE alignment objective.
+"""Gated text↔market fusion forecaster.
 
 The model fuses a (precomputed) Fed-communication text embedding with a market
 feature vector through a learned scalar **gate**, then forecasts forward
@@ -8,12 +8,21 @@ pure market path — it can never do worse than market-only by leaning on absent
 text. The gate value is itself an interpretable readout of "how much did text
 matter here."
 
-Alongside the supervised forecast loss, an **InfoNCE** term aligns each
-communication's text embedding with an encoder of its realized forward-RV
-outcome (CLIP-style symmetric contrastive loss with in-batch negatives),
-computed only over rows that carry text. Text encoding is done upstream and
-cached; this module consumes embeddings so training stays fast and the encoder
-choice is swappable.
+The **canonical** fusion is the text-neutral one (``residual_logits=True``):
+text proposes a *gated additive correction* to the market head's logits, the
+market head is supervised directly, and an L1 penalty + closed gate init keep
+the gate near zero. As gate→0 the fused output collapses to ``market_logits``
+exactly, so a fusion that finds no signal in the text can do no worse than
+market-only — it learns to ignore uninformative text rather than overfit it.
+
+Two contrastive objectives are retained as optional research arms (they are
+*not* part of the canonical text-neutral config): an **InfoNCE** term that
+aligns each communication's text embedding with an encoder of its realized
+forward-RV outcome (CLIP-style, in-batch negatives), and a label-aware
+**SupCon** term for the regime classifier. On this corpus both make the text
+*look* label-useful on the train fold and open the gate, which hurts OOS;
+``supcon_weight=0`` / ``info_nce_weight=0`` disables them. Text encoding is done
+upstream and cached so training stays fast and the encoder choice is swappable.
 """
 
 from __future__ import annotations
