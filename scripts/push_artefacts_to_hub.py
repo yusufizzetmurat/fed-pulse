@@ -128,6 +128,11 @@ ARTEFACT_SOURCES: dict[str, dict[str, str]] = {
         "license": "mit",
         "kind": "rates_heads",
     },
+    "volume_har_canonical": {
+        "local_path": "backend/models/volume_har/volume_har_artifact.json",
+        "license": "mit",
+        "kind": "volume_har",
+    },
     "retrieval_bundle": {
         "local_path": "data/artifacts/retrieval",
         "license": "mit",
@@ -249,6 +254,13 @@ ATTRIBUTION_BLURBS: dict[str, str] = {
         "- Encoders: `yusufizzetmurat/fed-pulse-encoder` family (see those "
         "cards for upstream attribution)."
     ),
+    "volume_har": (
+        "- Daily share-volume series: [Yahoo Finance](https://finance.yahoo.com) "
+        "via `yfinance` (`^GSPC` reference symbol).\n"
+        "- Fit recipe: per-horizon HAR Corsi regression on log-volume with a "
+        "weekday + month-end / quarter-end seasonality block; conformal "
+        "residual quantiles at the 80% / 90% bands."
+    ),
 }
 
 
@@ -290,6 +302,11 @@ CORPUS_BLURBS: dict[str, str] = {
         "revision). Each parquet carries `record_id`, `doc_id`, "
         "`event_date`, `chunk_index`, `chunk_preview`, and `embedding`."
     ),
+    "volume_har": (
+        "HAR Corsi log-volume regression coefficients + weekday / month-end / "
+        "quarter-end seasonality block + conformal residual quantiles for "
+        "horizons h=1, 5, 22. Fit on 180 calendar days of daily ^GSPC volume."
+    ),
 }
 
 
@@ -328,6 +345,7 @@ TRAIN_CMDS: dict[str, str] = {
     "trajectory": "python -m app.trajectory.train --architecture lstm",
     "training_package": "python -m app.data.pipeline_data_prep --all-sources",
     "embedding_caches": "python scripts/cache_embeddings.py --encoder <alias> --training-package-id <tp-id> --allow-network",
+    "volume_har": "python -m app.data.late_fusion_volume fit-production-artifact --symbol ^GSPC --period 180d",
 }
 
 

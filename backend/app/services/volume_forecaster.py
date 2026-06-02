@@ -78,7 +78,14 @@ def _hf_token() -> str | None:
 
 
 def _download_artifact(target_dir: Path) -> dict[str, Any]:
-    """Download the HAR-volume spec JSON into ``target_dir``."""
+    """Download the HAR-volume spec JSON into ``target_dir``.
+
+    Reads the pinned revision from ``registry.yaml`` when present so a
+    corrupt-cache or cold-start fallback through this path stays bound
+    to the same sha the boot-time eager-pull resolves. Falls back to
+    HEAD (``main``) only when the registry entry is missing or unpinned,
+    matching the conservative behaviour of the legacy implementation.
+    """
 
     from huggingface_hub import hf_hub_download
     from huggingface_hub.errors import (
@@ -86,6 +93,8 @@ def _download_artifact(target_dir: Path) -> dict[str, Any]:
         HfHubHTTPError,
         RepositoryNotFoundError,
     )
+
+    from app.models.registry import artefact_ref
 
     target_dir.mkdir(parents=True, exist_ok=True)
     token = _hf_token()
@@ -96,6 +105,12 @@ def _download_artifact(target_dir: Path) -> dict[str, Any]:
     }
     if token:
         kwargs["token"] = token
+    try:
+        ref = artefact_ref("volume_har_canonical")
+    except Exception:
+        ref = None
+    if ref is not None and ref.revision:
+        kwargs["revision"] = ref.revision
 
     try:
         spec_path = Path(hf_hub_download(**kwargs))

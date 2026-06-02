@@ -176,3 +176,73 @@ def test_main_returns_zero_even_on_unexpected_error(
 
     monkeypatch.setattr(eager_pull, "hydrate", _explode)
     assert eager_pull.main() == 0
+
+
+def test_split_entry_plain_string_collapses_to_pair() -> None:
+    """A flat filename maps to ``(name, name)`` — both sides identical."""
+
+    assert eager_pull._split_entry("forecaster_best.pt") == (
+        "forecaster_best.pt",
+        "forecaster_best.pt",
+    )
+
+
+def test_split_entry_tuple_form_returns_src_and_dst() -> None:
+    """A ``(snapshot_name, dst_relpath)`` pair is preserved as-is."""
+
+    entry = ("volume_har_artifact.json", "volume_har/volume_har_artifact.json")
+    assert eager_pull._split_entry(entry) == entry
+
+
+def test_hydrate_tuple_entry_lands_in_subdirectory(
+    monkeypatch: pytest.MonkeyPatch, models_dir: Path, tmp_path: Path
+) -> None:
+    """The tuple-form mapping copies into ``MODELS_DIR / dst_relpath``.
+
+    Exercises the ``volume_har_canonical`` path end-to-end: the file in
+    the snapshot is named flat (``volume_har_artifact.json``), but the
+    destination must land under ``models/volume_har/``. Guards against
+    regressions in ``dst.parent.mkdir`` and the ``snapshot_names`` list
+    using the wrong side of the tuple.
+    """
+
+    monkeypatch.setenv("HF_TOKEN", "stub")
+    snapshot = tmp_path / "snap"
+    snapshot.mkdir()
+    (snapshot / "volume_har_artifact.json").write_bytes(b"FROM_HF_volume")
+
+    captured: dict[str, Any] = {}
+
+    def _fake_snapshot_download(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return str(snapshot)
+
+    monkeypatch.setattr(
+        "app.boot.eager_pull.snapshot_download",
+        _fake_snapshot_download,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.models.registry.eager_artefacts",
+        lambda: [
+            ArtefactRef(
+                name="volume_har_canonical",
+                hf_uri="hf://yusufizzetmurat/fomc-volume-har",
+                revision="540b25a8d66c6f0110dd02b89f10e507139c80b8",
+                eager=True,
+                description="",
+                inference_features=(),
+            )
+        ],
+    )
+
+    eager_pull.hydrate()
+
+    # The destination sits under the sub-directory carved out of the
+    # tuple's right-hand side; the snapshot path itself was flat.
+    dst = models_dir / "volume_har" / "volume_har_artifact.json"
+    assert dst.exists()
+    assert dst.read_bytes() == b"FROM_HF_volume"
+    # ``allow_patterns`` must use the snapshot-side (flat) name, not the
+    # destination relpath, or HF would 404 on the prefix scan.
+    assert captured.get("allow_patterns") == ["volume_har_artifact.json"]

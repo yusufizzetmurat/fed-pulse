@@ -11,9 +11,14 @@ cold-start bootstrap in :mod:`app.main` still runs on first
 ``/analyze``.
 
 Mapping policy: only artefacts whose files are read directly out of
-``MODELS_DIR`` appear in :data:`_ARTEFACT_FILES`. ``encoder_canonical``,
-``retrieval``, ``trajectory`` lazy-load via their own caches and are
-intentionally absent so they do not trip the copy step.
+``MODELS_DIR`` appear in :data:`_ARTEFACT_FILES`. Each entry is either
+a flat filename (snapshot path == destination path relative to
+``MODELS_DIR``) or a ``(snapshot_name, dst_relpath)`` pair when the
+file must land in a sub-directory of ``MODELS_DIR``; the tuple form
+is what ``volume_har_canonical`` uses to drop its JSON spec under
+``models/volume_har/``. ``encoder_canonical``, ``retrieval``,
+``trajectory`` lazy-load via their own caches and are intentionally
+absent so they do not trip the copy step.
 ``rates_heads_canonical`` historically pointed at the same
 ``forecaster_best.pt`` file as ``forecaster_canonical``; with the LSTM
 canonical revision (``7ab0a873``) rates heads are absent, so we leave
@@ -46,7 +51,14 @@ except Exception:  # pragma: no cover - import-time defensive
 
 # Artefact-name -> tuple of filenames to extract from the snapshot and
 # copy into MODELS_DIR. Anything not listed is left in the HF cache.
-_ARTEFACT_FILES: dict[str, tuple[str, ...]] = {
+#
+# Each entry is either a flat filename (snapshot path == destination
+# path relative to ``MODELS_DIR``) or a ``(snapshot_name, dst_relpath)``
+# pair when the destination needs to land in a sub-directory under
+# ``MODELS_DIR``. The ``volume_har_canonical`` artefact uses the pair
+# form so the JSON spec sits in ``models/volume_har/`` where
+# :mod:`app.services.volume_forecaster` reads it.
+_ARTEFACT_FILES: dict[str, tuple[str | tuple[str, str], ...]] = {
     "forecaster_canonical": (
         "forecaster_best.pt",
         "forecaster_best.pt.inference_contract.json",
@@ -54,12 +66,25 @@ _ARTEFACT_FILES: dict[str, tuple[str, ...]] = {
         "forecaster_best.pt.lora_adapter.pt",
         "forecaster_calibration_fresh.pt",
     ),
+    "volume_har_canonical": (("volume_har_artifact.json", "volume_har/volume_har_artifact.json"),),
 }
+
+
+def _split_entry(entry: str | tuple[str, str]) -> tuple[str, str]:
+    """Return ``(snapshot_relpath, dst_relpath)`` for one mapping entry.
+
+    Plain strings collapse to ``(entry, entry)`` so the legacy flat-file
+    mapping is byte-identical.
+    """
+
+    if isinstance(entry, tuple):
+        return entry[0], entry[1]
+    return entry, entry
 
 
 def _hydrate_one(  # noqa: PLR0913 - six injected params is the natural shape here
     artefact: Any,
-    files: tuple[str, ...],
+    files: tuple[str | tuple[str, str], ...],
     models_dir: Path,
     token: str,
     parse_hf_uri: Callable[[str], Any],
@@ -75,13 +100,16 @@ def _hydrate_one(  # noqa: PLR0913 - six injected params is the natural shape he
         )
         return
 
+    pairs = [_split_entry(entry) for entry in files]
+    snapshot_names = [src_name for src_name, _ in pairs]
+
     revision = artefact.revision or None
     try:
         snapshot_dir = download_snapshot(
             repo_id=ref.repo_id,
             repo_type=ref.repo_type,
             revision=revision,
-            allow_patterns=list(files),
+            allow_patterns=snapshot_names,
             token=token,
         )
     except Exception as exc:
@@ -94,23 +122,24 @@ def _hydrate_one(  # noqa: PLR0913 - six injected params is the natural shape he
         )
         return
 
-    for fname in files:
-        src = Path(snapshot_dir) / fname
-        dst = models_dir / fname
+    for src_name, dst_relpath in pairs:
+        src = Path(snapshot_dir) / src_name
+        dst = models_dir / dst_relpath
         if not src.exists():
             logger.warning(
                 "eager-pull: %r missing from snapshot of %s; skip",
-                fname,
+                src_name,
                 artefact.hf_uri,
             )
             continue
         if dst.exists():
-            logger.info("eager-pull: %s already present; not overwriting", dst.name)
+            logger.info("eager-pull: %s already present; not overwriting", dst_relpath)
             continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
         logger.info(
             "eager-pull: hydrated %s <- %s @ %s",
-            dst.name,
+            dst_relpath,
             artefact.hf_uri,
             revision or "main",
         )
