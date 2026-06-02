@@ -483,7 +483,7 @@ artefacts:
 
   volume_har_canonical:
     hf_uri: hf://yusufizzetmurat/fomc-volume-har
-    revision: "540b25a8d66c6f0110dd02b89f10e507139c80b8"
+    revision: "c63ca9c7d15649f5e54719a6d263ffa5311dac6f"
     eager: true
     description: |
       HAR Corsi log-volume artifact for the Expected Volume card. JSON
@@ -492,6 +492,11 @@ artefacts:
       residual quantiles. Eager-pulled into
       ``backend/models/volume_har/volume_har_artifact.json`` so cold
       starts skip the in-process fit against live yfinance volume.
+      Fitted on 3121 daily bars of ^GSPC volume (2014-01-02 to
+      2026-06-02) with 5-fold expanding walk-forward; pooled OOS R^2
+      h1 0.4676, h5 0.5479, h22 0.5053. Replaces the earlier
+      180-bar cold-start spec which surfaced negative R^2 on the
+      Expected Volume card.
     inference_features: []
 
   retrieval_bundle:
