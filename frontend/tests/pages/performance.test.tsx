@@ -208,6 +208,10 @@ describe("PerformancePage", () => {
     // The phrase appears in both the per-class table and the confusion matrix
     // descriptions when the artifact is loaded — assert presence, not uniqueness.
     expect(screen.getAllByText(/training-time evaluation/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/tp_fixture/)).toBeInTheDocument();
+    expect(screen.getByText(/regime_baseline_tiers\/tp_fixture\/forecaster_sweep_results\.json/)).toBeInTheDocument();
+    expect(screen.queryByText(/tier 7/i)).not.toBeInTheDocument();
+    // Subtitle no longer hardcodes the macro-F1 figure and now references the KPI tile.
+    expect(document.body.textContent ?? "").not.toMatch(/0\.48/);
+    expect(screen.getAllByText(/Overall F1\s+score/).length).toBeGreaterThan(0);
   });
 });

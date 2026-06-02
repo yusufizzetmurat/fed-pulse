@@ -313,11 +313,12 @@ export default function PerformancePage() {
               symbol.
             </p>
             <p className="max-w-2xl text-xs text-muted-foreground">
-              Training-time macro-F1 ({"~"}0.48 pooled walk-forward) is the model's
-              measured generalisation; the live top-pick accuracy below is on the
-              resolved subset of dashboard runs and reflects how often the calibrated
-              argmax matched the realised regime under the active text-neutral
-              residual-fusion checkpoint. The two numbers are not directly comparable.
+              Training-time macro-F1 (shown in the tile below as &quot;Overall F1
+              score&quot;) is the model's measured generalisation; the live top-pick
+              accuracy below is on the resolved subset of dashboard runs and reflects
+              how often the calibrated argmax matched the realised regime under the
+              active text-neutral residual-fusion checkpoint. The two numbers are not
+              directly comparable.
             </p>
           </div>
 
@@ -480,10 +481,7 @@ export default function PerformancePage() {
                 </CardContent>
                 {breakdownAvailable && breakdown?.source ? (
                   <div className="border-t border-border bg-muted/20 px-4 py-2 text-[10px] text-muted-foreground">
-                    Source: tier 7 (market + rich + NLP + xBank + LLM), 5 seeds x 4 folds, pooled walk-forward
-                    {breakdown.source.training_package_id
-                      ? ` · ${breakdown.source.training_package_id}`
-                      : ""}
+                    Source: {breakdown.source.relative_path}
                     {" · "}
                     {new Date(breakdown.source.modified_at).toLocaleString(undefined, {
                       dateStyle: "short",
