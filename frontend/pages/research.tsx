@@ -36,6 +36,7 @@ import { errorMessage } from "@/lib/analyze/errors";
 import type {
   ArtifactFile,
   CrossBankTransferSection,
+  EncoderAxisStanceSection,
   EncoderBakeoffSection,
   ResearchArtifactsResponse,
   TransferMatrixCell,
@@ -300,6 +301,100 @@ function EncoderBakeoffPane({ section }: { section: EncoderBakeoffSection }) {
                 <td className="px-4 py-2 text-right font-mono">{formatNumberOrDash(row.cohen_kappa)}</td>
               </tr>
             ))}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
+  );
+}
+
+// Badge row under the bake-off card. Replaces the previous row that mapped
+// every aggregate.json path through `friendlyEncoderName`, which collapsed
+// all of them to the literal string "aggregate" and rendered ~11 identical
+// buttons. The rerun loader exposes a single JSON filename; the legacy
+// phase3 walk exposes a directory of seed-batch aggregates that we now
+// summarise as a single seed-batch count badge.
+function BakeoffSourceBadges({ files }: { files: string[] }) {
+  if (!files || files.length === 0) return null;
+  const aggregateBatches = files.filter((f) => /(^|\/)aggregate\.json$/i.test(f));
+  const otherFiles = files.filter((f) => !/(^|\/)aggregate\.json$/i.test(f));
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {otherFiles.map((f) => {
+        const basename = f.split("/").pop() ?? f;
+        return (
+          <Badge
+            key={f}
+            variant="outline"
+            className="font-mono text-[10px]"
+            title={f}
+          >
+            {basename}
+          </Badge>
+        );
+      })}
+      {aggregateBatches.length > 0 ? (
+        <Badge
+          variant="outline"
+          className="font-mono text-[10px]"
+          title={aggregateBatches.join("\n")}
+        >
+          {aggregateBatches.length} seed-batch aggregates
+        </Badge>
+      ) : null}
+    </div>
+  );
+}
+
+function EncoderAxisStancePane({ section }: { section: EncoderAxisStanceSection }) {
+  if (!section.available || section.rows.length === 0) {
+    return null;
+  }
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Encoder backbone for the stance head</CardTitle>
+        <CardDescription>
+          Held-out macro-F1 and validity Spearman of the stance-head retrain across four
+          backbones on the gtfintechlab + op_fed test set. xbank wins held-out F1; plain
+          FinBERT wins the policy-anchor correlation.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <table className="w-full text-sm">
+          <thead className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+            <tr>
+              <th className="px-4 py-2 text-left">Encoder</th>
+              <th className="px-4 py-2 text-right">Held-out F1</th>
+              <th className="px-4 py-2 text-right">Spearman ρ</th>
+              <th className="px-4 py-2 text-right">AUC hike-vs-cut</th>
+              <th className="px-4 py-2 text-left">Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {section.rows.map((row) => {
+              const note: string[] = [];
+              if (row.is_held_out_winner) note.push("held-out F1 winner");
+              if (row.is_validity_winner) note.push("validity-anchor winner");
+              return (
+                <tr key={row.encoder_alias} className="border-b border-border last:border-0">
+                  <td className="px-4 py-2 font-medium">{row.encoder_display}</td>
+                  <td
+                    className={`px-4 py-2 text-right font-mono ${row.is_held_out_winner ? "font-semibold text-foreground" : ""}`}
+                  >
+                    {row.held_out_f1.toFixed(3)}
+                  </td>
+                  <td
+                    className={`px-4 py-2 text-right font-mono ${row.is_validity_winner ? "font-semibold text-foreground" : ""}`}
+                  >
+                    {row.spearman_rho >= 0 ? "+" : ""}
+                    {row.spearman_rho.toFixed(3)}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">{row.auc_hike_vs_cut.toFixed(3)}</td>
+                  <td className="px-4 py-2 text-xs text-muted-foreground">{note.join(", ") || "—"}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </CardContent>
@@ -605,19 +700,9 @@ export default function ResearchPage() {
               </TabsContent>
               <TabsContent value="bakeoff" className="space-y-3">
                 <EncoderBakeoffPane section={data.encoder_bakeoff} />
-                {data.encoder_bakeoff.source_files.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {data.encoder_bakeoff.source_files.map((f) => (
-                      <Badge
-                        key={f}
-                        variant="outline"
-                        className="font-mono text-[10px]"
-                        title={f}
-                      >
-                        {friendlyEncoderName(f)}
-                      </Badge>
-                    ))}
-                  </div>
+                <BakeoffSourceBadges files={data.encoder_bakeoff.source_files} />
+                {data.encoder_axis_stance ? (
+                  <EncoderAxisStancePane section={data.encoder_axis_stance} />
                 ) : null}
               </TabsContent>
               <TabsContent value="transfer" className="space-y-3">

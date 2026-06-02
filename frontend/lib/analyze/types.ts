@@ -544,6 +544,22 @@ export interface EncoderBakeoffSection {
   source_files: string[];
 }
 
+export interface EncoderAxisStanceRow {
+  encoder_alias: string;
+  encoder_display: string;
+  held_out_f1: number;
+  spearman_rho: number;
+  auc_hike_vs_cut: number;
+  is_validity_winner: boolean;
+  is_held_out_winner: boolean;
+}
+
+export interface EncoderAxisStanceSection {
+  available: boolean;
+  rows: EncoderAxisStanceRow[];
+  source_doc: string;
+}
+
 export interface TransferMatrixCell {
   source: string;
   target: string;
@@ -563,6 +579,7 @@ export interface ResearchArtifactsResponse {
   artifacts_root: string;
   sections: Record<string, ArtifactFile[]>;
   encoder_bakeoff: EncoderBakeoffSection;
+  encoder_axis_stance?: EncoderAxisStanceSection;
   cross_bank_transfer: CrossBankTransferSection;
 }
 

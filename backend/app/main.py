@@ -103,6 +103,7 @@ from app.services.research_artifacts import (
     SECTIONS as RESEARCH_SECTIONS,
     list_section_files,
     load_cross_bank_transfer,
+    load_encoder_axis_stance,
     load_encoder_bakeoff,
     load_research_registry,
 )
@@ -1820,11 +1821,13 @@ def research_artifacts() -> ResearchArtifactsResponse:
             for info in infos
         ]
     bakeoff = load_encoder_bakeoff(artifacts_root, repo_root=REPO_ROOT)
+    encoder_axis = load_encoder_axis_stance()
     transfer = load_cross_bank_transfer(artifacts_root)
     return ResearchArtifactsResponse(
         artifacts_root=str(artifacts_root),
         sections=sections,
         encoder_bakeoff=bakeoff,  # type: ignore[arg-type]
+        encoder_axis_stance=encoder_axis,  # type: ignore[arg-type]
         cross_bank_transfer=transfer,  # type: ignore[arg-type]
     )
 

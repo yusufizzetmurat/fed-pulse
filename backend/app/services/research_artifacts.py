@@ -28,12 +28,66 @@ LOGGER = logging.getLogger(__name__)
 
 SECTIONS: tuple[str, ...] = ("phase3", "cross_bank", "cross_asset", "next_fomc")
 
+# Path to a bundled copy of the rerun JSON inside the backend tree so the
+# loader keeps working when the host ``docs/`` mount is missing (the bind
+# mount only takes effect after ``docker compose down`` + ``up``; a plain
+# restart silently drops it).
+BUNDLED_RERUN_PATH = (
+    Path(__file__).resolve().parent / "manifests" / "nlp-baseline-bakeoff-2026-06-02-rerun.json"
+)
+
 # Priority-ordered list of rerun JSON paths (relative to repo root). The
 # zero-shot NLP baseline rerun JSON lives outside ``data/artifacts/``, so
 # the bake-off loader checks these locations first and only falls back
 # to the legacy ``phase3/**aggregate.json`` walk when none exist.
 RERUN_BAKEOFF_CANDIDATES: tuple[str, ...] = (
     "docs/research/nlp-baseline-bakeoff-2026-06-02-rerun.json",
+)
+
+# Static encoder-backbone matrix sourced from
+# ``docs/research/encoder-axis-stance-results.md``. Surfaced alongside
+# the zero-shot bake-off so the Research tab shows both the held-out
+# classification F1 winner (xbank) and the validity-anchor winner
+# (plain ProsusAI/FinBERT). Numbers come from the four
+# ``stance-instrument-validity-result-*-retrain.json`` files pinned in
+# that writeup.
+ENCODER_AXIS_STANCE_ROWS: tuple[dict[str, Any], ...] = (
+    {
+        "encoder_alias": "finbert",
+        "encoder_display": "ProsusAI/FinBERT (no DAPT)",
+        "held_out_f1": 0.526,
+        "spearman_rho": 0.499,
+        "auc_hike_vs_cut": 0.967,
+        "is_validity_winner": True,
+        "is_held_out_winner": False,
+    },
+    {
+        "encoder_alias": "finbert_fed_adjacent",
+        "encoder_display": "FinBERT (Fed-adjacent, Lead-1 CE)",
+        "held_out_f1": 0.547,
+        "spearman_rho": 0.385,
+        "auc_hike_vs_cut": 0.900,
+        "is_validity_winner": False,
+        "is_held_out_winner": False,
+    },
+    {
+        "encoder_alias": "finbert_fed_adjacent_xbank",
+        "encoder_display": "FinBERT (Fed-adjacent, cross-bank)",
+        "held_out_f1": 0.720,
+        "spearman_rho": 0.335,
+        "auc_hike_vs_cut": 0.800,
+        "is_validity_winner": False,
+        "is_held_out_winner": True,
+    },
+    {
+        "encoder_alias": "finbert_fed_adjacent_xbank_dapt",
+        "encoder_display": "FinBERT (Fed-adjacent + cross-bank DAPT)",
+        "held_out_f1": 0.535,
+        "spearman_rho": 0.325,
+        "auc_hike_vs_cut": 0.811,
+        "is_validity_winner": False,
+        "is_held_out_winner": False,
+    },
 )
 
 
@@ -89,9 +143,22 @@ def _resolve_rerun_bakeoff_path(repo_root: Path | None) -> Path | None:
 
     The rerun JSON is the source of truth for the Bake-off tab when it
     exists; the legacy ``phase3/**aggregate.json`` walk is only a
-    fallback for environments without the ``docs/`` tree.
+    fallback for environments without the ``docs/`` tree or the
+    bundled snapshot.
+
+    Resolution order:
+
+    1. Bundled snapshot at ``backend/app/services/manifests/``. This
+       ships with the backend image and survives a missing ``/docs``
+       bind mount (which is what currently makes the legacy walk leak
+       through after a plain ``docker compose restart``).
+    2. ``docs/research/...`` paths under ``repo_root`` for hosts where
+       the docs tree is mounted and may be newer than the bundled
+       snapshot.
     """
 
+    if BUNDLED_RERUN_PATH.is_file():
+        return BUNDLED_RERUN_PATH
     if repo_root is None:
         return None
     for relative in RERUN_BAKEOFF_CANDIDATES:
@@ -382,6 +449,23 @@ def load_cross_bank_transfer(artifacts_root: Path) -> dict[str, Any]:
         "targets": targets,
         "cells": cells,
         "source_files": source_files,
+    }
+
+
+def load_encoder_axis_stance() -> dict[str, Any]:
+    """Return the encoder-backbone stance-head retrain matrix.
+
+    Mirrors the four-row table in
+    ``docs/research/encoder-axis-stance-results.md``. The Research tab
+    shows this alongside the zero-shot bake-off so the held-out F1
+    winner (xbank) and the validity-anchor winner (plain FinBERT) are
+    both visible -- the two disagree, which is the actual finding.
+    """
+
+    return {
+        "available": True,
+        "rows": [dict(row) for row in ENCODER_AXIS_STANCE_ROWS],
+        "source_doc": "docs/research/encoder-axis-stance-results.md",
     }
 
 
