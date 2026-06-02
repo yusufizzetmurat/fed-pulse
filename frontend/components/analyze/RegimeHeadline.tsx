@@ -239,17 +239,22 @@ export function RegimeHeadline({
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
             Past {trendValues.length || 0} runs · top-pick regime
           </p>
-          {trendValues.length ? (
+          {trendValues.length >= 2 ? (
             <Sparkline
               values={trendValues}
               tone="neutral"
               height={56}
+              yDomain={[-1.5, 1.5]}
               formatTooltip={(value, label) => {
                 const regimeLabel = value > 0 ? "high" : value < 0 ? "calm" : "normal";
                 return `${label ?? ""} → ${regimeLabel}`;
               }}
               labels={history?.map((h) => h.documentDate)}
             />
+          ) : trendValues.length === 1 ? (
+            <p className="text-xs text-muted-foreground">
+              Insufficient history (1 run). Sparkline appears with two or more runs.
+            </p>
           ) : (
             <p className="text-xs text-muted-foreground">
               No prior runs for this symbol yet. Run history will appear here.

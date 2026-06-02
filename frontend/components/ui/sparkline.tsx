@@ -4,6 +4,7 @@ import {
   AreaChart,
   ResponsiveContainer,
   Tooltip,
+  YAxis,
 } from "recharts";
 
 import { cn } from "@/lib/utils";
@@ -17,6 +18,10 @@ interface SparklineProps {
   height?: number;
   labels?: string[];
   formatTooltip?: (value: number, label?: string) => string;
+  // When provided, pins the chart's Y range to a fixed span so a series
+  // sitting flat at zero (or any single value) still renders inside the
+  // container instead of collapsing to the baseline.
+  yDomain?: [number, number];
 }
 
 const TONE_VARS: Record<SparklineTone, string> = {
@@ -44,6 +49,7 @@ export function Sparkline({
   height = 28,
   labels,
   formatTooltip,
+  yDomain,
 }: SparklineProps) {
   const effectiveTone = inferTone(values, tone);
   const stroke = `hsl(${TONE_VARS[effectiveTone]})`;
@@ -102,6 +108,7 @@ export function Sparkline({
               }}
             />
           ) : null}
+          {yDomain ? <YAxis domain={yDomain} hide /> : null}
           <Area
             type="monotone"
             dataKey="value"
