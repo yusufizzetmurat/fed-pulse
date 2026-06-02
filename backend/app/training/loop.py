@@ -126,9 +126,7 @@ class _RegimeFocalLoss(nn.Module):
         import os as _os
 
         try:
-            self._under_penalty = float(
-                _os.environ.get("FED_PULSE_REGIME_UNDER_PENALTY", "1.0")
-            )
+            self._under_penalty = float(_os.environ.get("FED_PULSE_REGIME_UNDER_PENALTY", "1.0"))
         except (TypeError, ValueError):
             self._under_penalty = 1.0
 
@@ -149,9 +147,7 @@ class _RegimeFocalLoss(nn.Module):
         from app.training.loss import focal_cross_entropy
 
         if abs(self._under_penalty - 1.0) < 1e-9:
-            return focal_cross_entropy(
-                logits, target, gamma=self.gamma, weight=self.weight
-            )
+            return focal_cross_entropy(logits, target, gamma=self.gamma, weight=self.weight)
         per_row = focal_cross_entropy(
             logits,
             target,
@@ -453,7 +449,7 @@ def _resolve_compile_amp_flags(
     effective_amp = use_amp and architecture not in _AMP_INCOMPATIBLE_ARCHITECTURES
     if use_amp and not effective_amp:
         _logger.warning(
-            "autocast disabled for architecture=%r (incompatible); " "running fp32 forward instead",
+            "autocast disabled for architecture=%r (incompatible); running fp32 forward instead",
             architecture,
         )
     return effective_compile, effective_amp
@@ -1029,7 +1025,7 @@ def _unpack_batch(
             trailing_rates_index,
         )
     raise ValueError(
-        f"unexpected batch arity from DataLoader: {arity} " "(want 2, 3, 4, 5, 6, 7, 8, or 9)"
+        f"unexpected batch arity from DataLoader: {arity} (want 2, 3, 4, 5, 6, 7, 8, or 9)"
     )
 
 
@@ -1935,8 +1931,7 @@ def _build_partition_log_rv_target(
     mode = str(vol_target_mode).lower()
     if mode not in VOL_TARGET_MODES:
         raise ValueError(
-            f"unsupported vol_target_mode={vol_target_mode!r}; "
-            f"expected one of {VOL_TARGET_MODES}"
+            f"unsupported vol_target_mode={vol_target_mode!r}; expected one of {VOL_TARGET_MODES}"
         )
     residual_mode = mode == "garch_residual"
 
@@ -4522,7 +4517,7 @@ def train_model(
         if not val_partition_is_real:
             if rates_heads_active:
                 _logger.warning(
-                    "rates conformal calibration skipped: " "no validation partition available"
+                    "rates conformal calibration skipped: no validation partition available"
                 )
         else:
             _maybe_write_rates_conformal_manifest(

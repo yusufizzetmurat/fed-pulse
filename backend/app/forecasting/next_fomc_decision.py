@@ -1547,7 +1547,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 events[col] = 0.0
 
     default_subdir = "next_fomc_no_credibility" if args.ablate_credibility else "next_fomc"
-    output_dir = Path(args.output_dir) if args.output_dir else data_dir / "artifacts" / default_subdir
+    output_dir = (
+        Path(args.output_dir) if args.output_dir else data_dir / "artifacts" / default_subdir
+    )
 
     artifacts = run(
         events=events,

@@ -329,10 +329,18 @@ def load_credibility_for_run(
     sep_terminal: float | None = None
     ois_terminal: float | None = None
     if as_of is not None and fred_cache_dir is not None:
-        sep_path = Path(sep_projections_path) if sep_projections_path else Path(fred_cache_dir) / DEFAULT_SEP_FILENAME
+        sep_path = (
+            Path(sep_projections_path)
+            if sep_projections_path
+            else Path(fred_cache_dir) / DEFAULT_SEP_FILENAME
+        )
         if sep_path.exists():
             sep_terminal = _sep_terminal_at(as_of, sep_path=sep_path)
-        ois_path = Path(ois_series_path) if ois_series_path else Path(fred_cache_dir) / DEFAULT_OIS_FILENAME
+        ois_path = (
+            Path(ois_series_path)
+            if ois_series_path
+            else Path(fred_cache_dir) / DEFAULT_OIS_FILENAME
+        )
         if ois_path.exists():
             ois_terminal = _ois_terminal_at(as_of, ois_path=ois_path)
 
