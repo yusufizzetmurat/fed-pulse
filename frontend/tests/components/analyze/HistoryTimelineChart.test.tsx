@@ -23,13 +23,14 @@ vi.mock("recharts", () => {
             smoke test can count them and reason about the right-axis
             vol line covering only the rows that carry the metric. */}
         {(data ?? []).map((row, idx) => {
-          const r = row as { vol?: number | null; date?: string };
+          const r = row as { vol?: number | null; date?: string; stance?: number };
           return (
             <div
               key={idx}
               data-testid="rc-row"
               data-has-vol={r.vol != null ? "true" : "false"}
               data-date={r.date}
+              data-stance={typeof r.stance === "number" ? String(r.stance) : ""}
             />
           );
         })}
@@ -67,6 +68,7 @@ function makeRow(overrides: Partial<HistoryTimelineRow> = {}): HistoryTimelineRo
     forecast_mode: "fast",
     stance: overrides.stance ?? "neutral",
     sentiment_score: overrides.sentiment_score ?? 0,
+    stance_score: overrides.stance_score,
     predicted_close: null,
     current_close: null,
     predicted_volatility: null,
@@ -116,6 +118,45 @@ describe("HistoryTimelineChart", () => {
     expect(screen.queryByTestId("rc-line-vol")).toBeNull();
     // Card copy mirrors the axis state so the user sees a matching note.
     expect(screen.getByText(/No forward vol data on these rows\./i)).toBeInTheDocument();
+  });
+
+  it("uses the signed stance_score when present and falls back to the stance label otherwise", () => {
+    // sentiment_score is the winning-class confidence (always in [0, 1])
+    // so a dovish row used to render above the zero line. Surface stance_score
+    // from the multi-axis distribution instead. The row without stance_score
+    // falls back to stanceToScore("dovish") = -1.
+    const rows = [
+      makeRow({
+        id: "dove",
+        document_date: "2026-03-01",
+        stance: "dovish",
+        sentiment_score: 0.85,
+        stance_score: -0.45,
+      }),
+      makeRow({
+        id: "hawk",
+        document_date: "2026-03-08",
+        stance: "hawkish",
+        sentiment_score: 0.70,
+        stance_score: 0.30,
+      }),
+      makeRow({
+        id: "legacy",
+        document_date: "2026-03-15",
+        stance: "dovish",
+        sentiment_score: 0.62,
+        // No stance_score: pre-multi-axis row.
+      }),
+    ];
+    render(<HistoryTimelineChart rows={rows} />);
+    const dots = screen.getAllByTestId("rc-row");
+    const byDate = Object.fromEntries(
+      dots.map((d) => [d.getAttribute("data-date") ?? "", d.getAttribute("data-stance")]),
+    );
+    expect(byDate["2026-03-01"]).toBe("-0.45");
+    expect(byDate["2026-03-08"]).toBe("0.3");
+    // Legacy row drops to the categorical fallback: dovish → -1.
+    expect(byDate["2026-03-15"]).toBe("-1");
   });
 
   it("shows the right axis and the vol line, with vol present only on the rows that carry it", () => {

@@ -23,42 +23,11 @@ from __future__ import annotations
 import math
 import statistics
 from dataclasses import dataclass
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db import AnalysisRun
-
-
-def _extract_stance_score(payload: Any) -> float | None:
-    """``P(hawkish) - P(dovish)`` from a persisted /analyze response.
-
-    Returns ``None`` when the payload is missing the multi-axis block,
-    when the distribution is empty, or when EITHER class probability
-    is absent. The classifier's softmax always populates both keys —
-    a missing key signals a truncated / pre-#338 payload rather than a
-    genuine ``P(class) = 0``. Treating the missing key as 0 would
-    fabricate a score and pollute the trailing-window mean/std, so
-    the trailing-window builder filters the row out entirely.
-    """
-
-    if not isinstance(payload, dict):
-        return None
-    multi_axis = payload.get("multi_axis")
-    if not isinstance(multi_axis, dict):
-        return None
-    stance = multi_axis.get("stance")
-    if not isinstance(stance, dict):
-        return None
-    distribution = stance.get("distribution")
-    if not isinstance(distribution, dict):
-        return None
-    hawk = distribution.get("hawkish")
-    dove = distribution.get("dovish")
-    if not isinstance(hawk, int | float) or not isinstance(dove, int | float):
-        return None
-    return float(hawk) - float(dove)
+from app.db import AnalysisRun, _extract_stance_score
 
 
 @dataclass(frozen=True)
