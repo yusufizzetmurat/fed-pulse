@@ -78,11 +78,12 @@ class AnalysisRun(Base):
 def _extract_stance_score(payload: Any) -> float | None:
     """``P(hawkish) - P(dovish)`` from a persisted /analyze response.
 
-    Inlined here (rather than imported from ``app.services.stance_context``)
-    because that module imports :class:`AnalysisRun` from this one. Returns
-    ``None`` when the payload lacks the multi-axis block or either class
-    probability so pre-#338 / regression-mode rows degrade to ``null``
-    rather than fabricating a zero.
+    Defined here rather than in ``app.services.stance_context`` because
+    ``db.py`` is the persistence boundary; co-locating the extractor
+    with the model keeps the schema-aware logic next to the column it
+    reads. Returns ``None`` when the payload lacks the multi-axis block
+    or either class probability so pre-#338 / regression-mode rows
+    degrade to ``null`` rather than fabricating a zero.
     """
 
     if not isinstance(payload, dict):

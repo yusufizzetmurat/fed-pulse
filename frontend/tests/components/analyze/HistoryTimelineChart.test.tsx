@@ -159,6 +159,59 @@ describe("HistoryTimelineChart", () => {
     expect(byDate["2026-03-15"]).toBe("-1");
   });
 
+  it("renders a line that crosses zero when the fixture mixes negative and positive stance_score", () => {
+    // Regression guard for the bug this PR fixes: before the fix, the
+    // chart fed `sentiment_score` (winning-class confidence, always in
+    // [0, 1]) into the stance line, so a series of dovish + hawkish
+    // runs sat entirely above the zero baseline. With the signed
+    // `stance_score`, the same fixture must straddle zero.
+    const rows = [
+      makeRow({
+        id: "dove-1",
+        document_date: "2026-02-01",
+        stance: "dovish",
+        sentiment_score: 0.80,
+        stance_score: -0.60,
+      }),
+      makeRow({
+        id: "dove-2",
+        document_date: "2026-02-08",
+        stance: "dovish",
+        sentiment_score: 0.55,
+        stance_score: -0.20,
+      }),
+      makeRow({
+        id: "hawk-1",
+        document_date: "2026-02-15",
+        stance: "hawkish",
+        sentiment_score: 0.65,
+        stance_score: 0.25,
+      }),
+      makeRow({
+        id: "hawk-2",
+        document_date: "2026-02-22",
+        stance: "hawkish",
+        sentiment_score: 0.90,
+        stance_score: 0.70,
+      }),
+    ];
+    render(<HistoryTimelineChart rows={rows} />);
+    const dots = screen.getAllByTestId("rc-row");
+    const stances = dots
+      .map((d) => d.getAttribute("data-stance"))
+      .filter((v): v is string => v != null && v !== "")
+      .map((v) => Number(v));
+    // Every emitted dot has a finite numeric stance; the fixture
+    // contains both signs, proving the rendered series crosses the
+    // zero line rather than staying in the [0, 1] confidence band.
+    expect(stances).toHaveLength(4);
+    expect(stances.every((v) => Number.isFinite(v))).toBe(true);
+    expect(stances.some((v) => v < 0)).toBe(true);
+    expect(stances.some((v) => v > 0)).toBe(true);
+    expect(Math.min(...stances)).toBeLessThan(0);
+    expect(Math.max(...stances)).toBeGreaterThan(0);
+  });
+
   it("shows the right axis and the vol line, with vol present only on the rows that carry it", () => {
     const rows = [
       makeRow({ id: "a", document_date: "2026-03-01", forward_realized_vol_10d: 0.12 }),
