@@ -867,7 +867,7 @@ export default function WorkspacePage() {
               Descriptive context
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Text- and realized-rate panels. Descriptive only — these signals
+              Text- and realized-rate panels. Descriptive only; these signals
               never feed the forecast cards above.
             </p>
           </div>

@@ -482,7 +482,7 @@ function BacktestPanel({ baseUrl }: { baseUrl: string }): JSX.Element {
             HitRate / MaxDD vs buy-and-hold on real ^GSPC 5d forward
             returns. <strong>Note:</strong> the 2022&ndash;2024 window
             covers the Fed hiking cycle&apos;s sharp equity sell-off, so
-            short-SPX bets dominate the sample &mdash; Sharpe and hit-rate
+            short-SPX bets dominate the sample, so Sharpe and hit-rate
             reflect a directionally favourable period, not out-of-sample
             model skill.
           </p>

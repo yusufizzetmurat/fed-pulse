@@ -214,7 +214,7 @@ export function HarRegimeHeadline({
         <p className="text-[11px] text-muted-foreground">
           HAR-tercile baseline. 3-class forward-vol classifier (Low / Med / High).
           Macro-F1 from the pooled walk-forward eval (n=1999). Beats both market-only
-          and fused text+market models — see Second opinion below.
+          and fused text+market models. See Second opinion below.
         </p>
       </CardContent>
     </Card>
