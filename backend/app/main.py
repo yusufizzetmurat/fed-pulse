@@ -701,9 +701,10 @@ def _build_credibility_block(
     Reads the encoder embedding parquet for the canonical DAPT encoder
     plus the cached DFF FRED series, pulls prior-run stance scores out
     of the local history table, and falls back per-axis to the loader's
-    zero defaults when any input is missing. Returns ``None`` only when
-    the underlying loader raises something other than a benign
-    ``ValueError`` / ``FileNotFoundError`` so the route still serialises.
+    zero defaults when any input is missing. Returns ``None`` on any
+    loader exception — both benign ``ValueError`` / ``FileNotFoundError``
+    (missing inputs) and unexpected errors — so the route always
+    serialises.
     """
 
     from app.db import _extract_stance_score
@@ -777,8 +778,14 @@ def _build_credibility_block(
     # series and the realized DFF window carry > 1 point. The loader
     # returns 0.0 when either side is degenerate; treat that as
     # unavailable so the UI renders N/A instead of an unearned reading.
+    # ``fetch_fred_series`` creates the cache directory on first call even
+    # when no API key is set, so check for the series file itself rather
+    # than the directory to detect an actually-populated cache.
     realized_gap: float | None
-    if fred_cache_dir is not None and len(stance_by_date) >= 2:
+    _dff_cached = (
+        fred_cache_dir is not None and (Path(fred_cache_dir) / "DFF.json").exists()
+    )
+    if _dff_cached and len(stance_by_date) >= 2:
         realized_gap = float(vector.realized_vs_stated_gap)
     else:
         realized_gap = None

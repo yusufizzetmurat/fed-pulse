@@ -68,6 +68,35 @@ def test_build_credibility_block_returns_none_axes_when_no_inputs(monkeypatch, t
     assert block["drift_trend"] == []
 
 
+def test_build_credibility_block_empty_fred_dir_leaves_realized_none(monkeypatch, tmp_path):
+    """An existing-but-empty FRED cache directory (no ``DFF.json``) must
+    still suppress the realized-vs-stated axis.
+
+    ``fetch_fred_series`` creates ``data/external/fred/`` on the first
+    call even without an API key, so the previous directory-existence
+    guard let a degenerate 0.0 reading leak through on subsequent runs.
+    """
+
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    import app.services.fred_client as fred_mod
+
+    empty_fred_dir = tmp_path / "fred"
+    empty_fred_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(fred_mod, "DEFAULT_CACHE_DIR", empty_fred_dir)
+    import app.data.embedding_cache as embedding_cache_mod
+
+    monkeypatch.setattr(
+        embedding_cache_mod, "DEFAULT_CACHE_DIR", tmp_path / "raw" / "embeddings"
+    )
+
+    payload = _make_payload()
+    block = main_mod._build_credibility_block(
+        payload, sentiment={"label": "neutral", "score": 0.0}
+    )
+    assert block is not None
+    assert block["realized_vs_stated_gap"] is None
+
+
 def test_build_credibility_block_populates_from_embedding_parquet(monkeypatch, tmp_path):
     """A real parquet under the canonical encoder slug must drive the
     drift score above zero and seed a non-empty drift_trend."""
