@@ -4,7 +4,11 @@ import { Compass, Gauge, Target } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { KpiTile } from "@/components/ui/kpi-tile";
 import { stanceLabel } from "@/lib/analyze/format";
-import type { MultiAxisResponse, MultiAxisStance } from "@/lib/analyze/types";
+import type {
+  MultiAxisResponse,
+  MultiAxisStance,
+  StanceContextResponse,
+} from "@/lib/analyze/types";
 
 interface MultiAxisInterpretationProps {
   multiAxis: MultiAxisResponse;
@@ -14,15 +18,59 @@ interface MultiAxisInterpretationProps {
     factor?: Array<number | null>;
     certainty?: Array<number | null>;
   };
+  // Trailing stance-score baseline. When provided with at least two
+  // usable history rows, the StanceTile renders the current run as a
+  // z-score against this baseline instead of the raw confidence number.
+  // The validity study showed relative ordering carries signal but the
+  // absolute level is mis-centred (dovish bias) — the z-score makes
+  // the dashboard claim what the instrument is actually validated for.
+  stanceContext?: StanceContextResponse | null;
 }
 
-function StanceTile({ stance, history }: { stance: MultiAxisStance; history?: Array<number | null> }) {
+function currentStanceScore(stance: MultiAxisStance): number | null {
+  // s = P(hawkish) - P(dovish); matches the validity study's anchor.
+  const dist = stance.distribution;
+  if (!dist) return null;
+  const hawk = dist.hawkish;
+  const dove = dist.dovish;
+  if (typeof hawk !== "number" && typeof dove !== "number") return null;
+  return (hawk ?? 0) - (dove ?? 0);
+}
+
+interface StanceTileProps {
+  stance: MultiAxisStance;
+  history?: Array<number | null>;
+  context?: StanceContextResponse | null;
+}
+
+function StanceTile({ stance, history, context }: StanceTileProps) {
   const variant: "hawkish" | "dovish" | "neutral" =
     stance.label === "hawkish"
       ? "hawkish"
       : stance.label === "dovish"
       ? "dovish"
       : "neutral";
+
+  const score = currentStanceScore(stance);
+  const hasUsableContext =
+    context != null &&
+    context.mean != null &&
+    context.std != null &&
+    context.std > 0 &&
+    context.n >= 2 &&
+    score != null;
+  const z = hasUsableContext
+    ? (score! - context!.mean!) / context!.std!
+    : null;
+
+  const zTone = z == null ? "neutral" : z > 0.5 ? "hawkish" : z < -0.5 ? "dovish" : "neutral";
+  const zLabel = z == null ? null : `${z >= 0 ? "+" : ""}${z.toFixed(2)}σ`;
+  const zTitle = z == null
+    ? undefined
+    : `Rolling z-score against the last ${context!.n} runs` +
+      ` (mean ${context!.mean!.toFixed(2)}, std ${context!.std!.toFixed(2)}).` +
+      ` Relative ordering — the instrument is validated for this; the raw absolute level is dovish-skewed.`;
+
   return (
     <KpiTile
       label="Stance"
@@ -30,13 +78,28 @@ function StanceTile({ stance, history }: { stance: MultiAxisStance; history?: Ar
       value={
         <span className="flex items-center gap-2">
           <span className="capitalize">{stanceLabel(stance.label)}</span>
-          <Badge variant={variant} className="text-[10px]">
-            {stance.confidence.toFixed(2)}
-          </Badge>
+          {zLabel != null ? (
+            <Badge
+              variant={zTone}
+              className="text-[10px]"
+              title={zTitle}
+              data-testid="stance-zscore"
+            >
+              {zLabel}
+            </Badge>
+          ) : (
+            <Badge variant={variant} className="text-[10px]">
+              {stance.confidence.toFixed(2)}
+            </Badge>
+          )}
         </span>
       }
       sparkline={history}
-      caption="Hawkish (+) favours tighter policy; Dovish (−) favours easier policy"
+      caption={
+        zLabel != null
+          ? "Rolling z-score vs recent meetings. Hawkish (+) favours tighter policy."
+          : "Hawkish (+) favours tighter policy; Dovish (−) favours easier policy"
+      }
     />
   );
 }
@@ -98,6 +161,7 @@ function CertaintyTile({
 export function MultiAxisInterpretation({
   multiAxis,
   history,
+  stanceContext,
 }: MultiAxisInterpretationProps) {
   const stanceHistory = history?.stance;
   const factorHistory = history?.factor;
@@ -130,7 +194,13 @@ export function MultiAxisInterpretation({
         Sentiment breakdown
       </Badge>
       <div className="grid gap-3 sm:grid-cols-2">
-        {multiAxis.stance ? <StanceTile stance={multiAxis.stance} history={stanceHistory} /> : null}
+        {multiAxis.stance ? (
+          <StanceTile
+            stance={multiAxis.stance}
+            history={stanceHistory}
+            context={stanceContext}
+          />
+        ) : null}
         {multiAxis.factor ? <FactorTile factor={multiAxis.factor} history={factorHistory} /> : null}
         {multiAxis.certainty ? (
           <CertaintyTile certainty={multiAxis.certainty} history={certaintyHistory} />
