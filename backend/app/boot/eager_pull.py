@@ -11,9 +11,14 @@ cold-start bootstrap in :mod:`app.main` still runs on first
 ``/analyze``.
 
 Mapping policy: only artefacts whose files are read directly out of
-``MODELS_DIR`` appear in :data:`_ARTEFACT_FILES`. ``encoder_canonical``,
-``retrieval``, ``trajectory`` lazy-load via their own caches and are
-intentionally absent so they do not trip the copy step.
+``MODELS_DIR`` appear in :data:`_ARTEFACT_FILES`. Each entry is either
+a flat filename (snapshot path == destination path relative to
+``MODELS_DIR``) or a ``(snapshot_name, dst_relpath)`` pair when the
+file must land in a sub-directory of ``MODELS_DIR``; the tuple form
+is what ``volume_har_canonical`` uses to drop its JSON spec under
+``models/volume_har/``. ``encoder_canonical``, ``retrieval``,
+``trajectory`` lazy-load via their own caches and are intentionally
+absent so they do not trip the copy step.
 ``rates_heads_canonical`` historically pointed at the same
 ``forecaster_best.pt`` file as ``forecaster_canonical``; with the LSTM
 canonical revision (``7ab0a873``) rates heads are absent, so we leave
