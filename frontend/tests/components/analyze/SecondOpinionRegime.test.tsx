@@ -45,16 +45,16 @@ describe("SecondOpinionRegime", () => {
     render(<SecondOpinionRegime regime={regimeFixture()} symbol="^GSPC" />);
     expect(screen.getAllByText(/second opinion/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/Late-fusion text\+market classifier/i)).toBeInTheDocument();
-    expect(screen.getByText(/macro-F1 0\.592 \(1-day\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/macro-F1 0\.629 \(1-day\)/i)).toBeInTheDocument();
   });
 
   it("renders the disclosure paragraph and 95% CI", () => {
     render(<SecondOpinionRegime regime={regimeFixture()} symbol="^GSPC" />);
     expect(
-      screen.getByText(/Weaker than the HAR baseline above/i),
+      screen.getByText(/Still below the HAR baseline above/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/95% CI \[-0\.022, -0\.009\] at 1-day/i),
+      screen.getByText(/95% block CI includes 0/i),
     ).toBeInTheDocument();
   });
 
