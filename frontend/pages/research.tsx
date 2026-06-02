@@ -110,11 +110,13 @@ const BAKEOFF_TOOLTIP_STYLE: React.CSSProperties = {
 };
 
 function bakeoffBarColor(value: number, min: number, max: number): string {
-  if (max <= min) return "hsl(var(--primary))";
+  // Recharts sets this as an SVG fill attribute; CSS var() does not resolve there,
+  // so use a literal hsl() ramp anchored to the chart-1 hue (199).
+  if (max <= min) return "hsl(199 89% 48%)";
   const t = Math.max(0, Math.min(1, (value - min) / (max - min)));
-  // Sequential primary-tinted ramp; lighter at low scores.
-  const alpha = 0.35 + 0.6 * t;
-  return `hsla(var(--primary) / ${alpha.toFixed(3)})`;
+  // Lighter at low scores, saturated at high scores.
+  const lightness = 65 - 25 * t;
+  return `hsl(199 89% ${lightness.toFixed(1)}%)`;
 }
 
 interface BakeoffBarDatum {
@@ -387,7 +389,7 @@ function CrossBankTransferPane({ section }: { section: CrossBankTransferSection 
                         style={cell ? { backgroundColor: heatmapColor(cell.metric, min, max) } : undefined}
                         title={renderCellTooltip(src, tgt, cell)}
                       >
-                        {cell ? "" : "—"}
+                        {cell ? cell.metric.toFixed(3) : "—"}
                       </td>
                     );
                   })}
@@ -466,7 +468,7 @@ function ArtifactsExplorer({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Downloads</CardTitle>
+        <CardTitle>Files</CardTitle>
         <CardDescription>
           {totalFiles} files across {sectionEntries.length} sections. Each file lists its size, last update, and a short note on what it is.
         </CardDescription>
@@ -570,7 +572,7 @@ export default function ResearchPage() {
                 <TabsTrigger value="bakeoff">Bake-off</TabsTrigger>
                 <TabsTrigger value="transfer">Transfer</TabsTrigger>
                 <TabsTrigger value="decisions">Decisions</TabsTrigger>
-                <TabsTrigger value="files">Downloads</TabsTrigger>
+                <TabsTrigger value="files">Files</TabsTrigger>
               </TabsList>
               <TabsContent value="scope">
                 <HonestScopePane />
