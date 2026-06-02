@@ -1,5 +1,6 @@
 import * as React from "react";
 import Head from "next/head";
+import { useRouter } from "next/router";
 import { FlaskConical } from "lucide-react";
 import {
   Bar,
@@ -16,6 +17,7 @@ import { toast } from "sonner";
 
 import { DecisionsLink } from "@/components/research/DecisionsLink";
 import { HonestScopePane } from "@/components/research/HonestScopePane";
+import { TerminalTab } from "@/components/research/TerminalTab";
 import { Header } from "@/components/shell/header";
 import { StatusBar } from "@/components/shell/status-bar";
 import { Badge } from "@/components/ui/badge";
@@ -516,10 +518,30 @@ function ArtifactsExplorer({
   );
 }
 
+const TAB_VALUES = new Set([
+  "scope",
+  "terminal",
+  "bakeoff",
+  "transfer",
+  "decisions",
+  "files",
+]);
+
 export default function ResearchPage() {
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
+  const router = useRouter();
   const [data, setData] = React.useState<ResearchArtifactsResponse | null>(null);
   const [loading, setLoading] = React.useState(true);
+  const [activeTab, setActiveTab] = React.useState<string>("scope");
+
+  React.useEffect(() => {
+    if (!router.isReady) return;
+    const raw = router.query.tab;
+    const candidate = Array.isArray(raw) ? raw[0] : raw;
+    if (candidate && TAB_VALUES.has(candidate)) {
+      setActiveTab(candidate);
+    }
+  }, [router.isReady, router.query.tab]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -566,9 +588,10 @@ export default function ResearchPage() {
               <Skeleton className="h-48 w-full" />
             </div>
           ) : data ? (
-            <Tabs defaultValue="scope" className="w-full">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
               <TabsList className="flex w-full flex-wrap justify-start">
                 <TabsTrigger value="scope">What it predicts</TabsTrigger>
+                <TabsTrigger value="terminal">Terminal</TabsTrigger>
                 <TabsTrigger value="bakeoff">Bake-off</TabsTrigger>
                 <TabsTrigger value="transfer">Transfer</TabsTrigger>
                 <TabsTrigger value="decisions">Decisions</TabsTrigger>
@@ -576,6 +599,9 @@ export default function ResearchPage() {
               </TabsList>
               <TabsContent value="scope">
                 <HonestScopePane />
+              </TabsContent>
+              <TabsContent value="terminal">
+                <TerminalTab />
               </TabsContent>
               <TabsContent value="bakeoff" className="space-y-3">
                 <EncoderBakeoffPane section={data.encoder_bakeoff} />
