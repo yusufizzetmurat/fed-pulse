@@ -50,9 +50,7 @@ OUTPUT_FILENAME = "press_conferences.json"
 # (/monetarypolicy/fomchistorical{year}.htm) to back-fill pre-2021
 # events; the calendar by itself covers 2021 forward only.
 ARCHIVE_LISTING_URL = ARCHIVE_BASE_URL + "/monetarypolicy/fomccalendars.htm"
-HISTORICAL_YEAR_URL_TEMPLATE = (
-    ARCHIVE_BASE_URL + "/monetarypolicy/fomchistorical{year}.htm"
-)
+HISTORICAL_YEAR_URL_TEMPLATE = ARCHIVE_BASE_URL + "/monetarypolicy/fomchistorical{year}.htm"
 # Press conferences started in April 2011. The default historical
 # window walks calendar + 2011-2020 historical pages so the cache
 # covers the full press-conf era.
@@ -64,10 +62,7 @@ _DEFAULT_HISTORICAL_YEARS_UPPER = 2020
 # the project in the UA keeps the traffic auditable on the upstream's
 # side and matches the convention the other federalreserve.gov
 # scrapers in this package use.
-_USER_AGENT = (
-    "fed-pulse-data-ingester/1.0 "
-    "(+https://github.com/yusufizzetmurat/fed-pulse)"
-)
+_USER_AGENT = "fed-pulse-data-ingester/1.0 " "(+https://github.com/yusufizzetmurat/fed-pulse)"
 
 # Page-header noise stamped on every page of the Federal Reserve press
 # conference PDFs ("January 29, 2025   Chair Powell's Press Conference
@@ -360,9 +355,7 @@ def parse_press_conference_page(
     )
 
 
-def write_press_conferences_json(
-    parsed: Iterable[ParsedPressConference], output_path: Path
-) -> int:
+def write_press_conferences_json(parsed: Iterable[ParsedPressConference], output_path: Path) -> int:
     """Write parsed press conferences to output_path as a JSON list.
 
     Skips rows with empty text or missing date. Tags every row with
@@ -433,9 +426,7 @@ def _http_get_text(url: str, *, timeout: float) -> str:
     """
 
     try:
-        response = requests.get(
-            url, timeout=timeout, headers={"User-Agent": _USER_AGENT}
-        )
+        response = requests.get(url, timeout=timeout, headers={"User-Agent": _USER_AGENT})
         response.raise_for_status()
     except requests.HTTPError as exc:
         code = exc.response.status_code if exc.response is not None else "?"
@@ -451,9 +442,7 @@ def _default_historical_years() -> list[int]:
     ``fomccalendars.htm`` listing already.
     """
 
-    return list(
-        range(_DEFAULT_HISTORICAL_YEARS_LOWER, _DEFAULT_HISTORICAL_YEARS_UPPER + 1)
-    )
+    return list(range(_DEFAULT_HISTORICAL_YEARS_LOWER, _DEFAULT_HISTORICAL_YEARS_UPPER + 1))
 
 
 def pull_press_conferences_archive(  # noqa: PLR0913
@@ -503,14 +492,8 @@ def pull_press_conferences_archive(  # noqa: PLR0913
         if isinstance(cached, list) and len(cached) > 0:
             return len(cached)
 
-    year_list = (
-        historical_years
-        if historical_years is not None
-        else _default_historical_years()
-    )
-    listing_urls = [archive_url] + [
-        HISTORICAL_YEAR_URL_TEMPLATE.format(year=y) for y in year_list
-    ]
+    year_list = historical_years if historical_years is not None else _default_historical_years()
+    listing_urls = [archive_url] + [HISTORICAL_YEAR_URL_TEMPLATE.format(year=y) for y in year_list]
 
     entries: list[PressConferenceListingEntry] = []
     seen_urls: set[str] = set()

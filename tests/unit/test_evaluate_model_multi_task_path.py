@@ -3,7 +3,7 @@
 The single-task path delegated val loss to ``loss_fn(predictions, y)`` —
 the CrossEntropy term over the stance axis. The train side, when
 ``model_config.multi_task_loss=True``, optimises a lambda-weighted sum
-across stance + factor + certainty + topic, so the pre-fix eval ranked
+across stance + certainty + time, so the pre-fix eval ranked
 checkpoints against a different objective than the train side. These
 tests pin the eval-side path:
 
@@ -32,7 +32,7 @@ from app.models.config import (
     FeatureVector,
     ModelConfig,
     MULTI_TASK_CERTAINTY_CLASSES,
-    MULTI_TASK_TOPIC_CLASSES,
+    MULTI_TASK_TIME_CLASSES,
 )
 from app.training.loop import (
     _evaluate_model,
@@ -47,9 +47,8 @@ def _dummy_feature_vector(
     vol: float,
     day: int,
     stance: int,
-    factor: float,
+    time: int,
     certainty: int,
-    topic: int,
 ) -> FeatureVector:
     return FeatureVector(
         date=_dt.date(2025, 1, 1) + _dt.timedelta(days=day - 1),
@@ -62,17 +61,15 @@ def _dummy_feature_vector(
         forward_realized_vol_10d=vol,
         target_stance_idx=stance,
         target_stance_present=True,
-        target_factor=factor,
-        target_factor_present=True,
+        target_time_idx=time,
+        target_time_present=True,
         target_certainty_idx=certainty,
         target_certainty_present=True,
-        target_topic_idx=topic,
-        target_topic_present=True,
     )
 
 
 def _build_classification_groups(n: int = 40) -> list[list[FeatureVector]]:
-    """Synthetic walk-forward fold with all 4 axes populated per row."""
+    """Synthetic walk-forward fold with all 3 axes populated per row."""
 
     return [
         [
@@ -80,9 +77,8 @@ def _build_classification_groups(n: int = 40) -> list[list[FeatureVector]]:
                 day=i + 1,
                 vol=0.01 + 0.001 * i,
                 stance=i % 3,
-                factor=((i % 5) - 2) / 5.0,
+                time=i % 2,
                 certainty=i % 3,
-                topic=i % 4,
             )
             for i in range(n)
         ]
@@ -104,17 +100,15 @@ class _ToyMultiTaskModel(nn.Module):
         self,
         n_classes: int = 3,
         *,
-        factor_classes: int = 1,
         certainty_classes: int = MULTI_TASK_CERTAINTY_CLASSES,
-        topic_classes: int = MULTI_TASK_TOPIC_CLASSES,
+        time_classes: int = MULTI_TASK_TIME_CLASSES,
     ) -> None:
         super().__init__()
         self.n_classes = int(n_classes)
         self.proj = nn.Linear(6, 16, bias=False)
         self.stance = nn.Linear(16, n_classes)
-        self.factor = nn.Linear(16, factor_classes)
         self.certainty = nn.Linear(16, certainty_classes)
-        self.topic = nn.Linear(16, topic_classes)
+        self.time = nn.Linear(16, time_classes)
         self._text_path_active = False
 
     def _pool(self, x: torch.Tensor) -> torch.Tensor:
@@ -130,9 +124,8 @@ class _ToyMultiTaskModel(nn.Module):
         pooled = self._pool(x)
         return {
             "stance": self.stance(pooled),
-            "factor": torch.tanh(self.factor(pooled).squeeze(-1)),
             "certainty": self.certainty(pooled),
-            "topic": self.topic(pooled),
+            "time": self.time(pooled),
         }
 
 
@@ -156,12 +149,10 @@ def _make_eval_loader(
     mt_aux: dict[str, torch.Tensor] | None = None
     if with_mt_aux:
         mt_aux = {
-            "factor": torch.randn(n).clamp(-1.0, 1.0),
-            "factor_mask": torch.tensor([i % 2 == 0 for i in range(n)], dtype=torch.bool),
             "certainty": torch.tensor([i % MULTI_TASK_CERTAINTY_CLASSES for i in range(n)], dtype=torch.long),
             "certainty_mask": torch.tensor([i % 3 != 0 for i in range(n)], dtype=torch.bool),
-            "topic": torch.tensor([i % MULTI_TASK_TOPIC_CLASSES for i in range(n)], dtype=torch.long),
-            "topic_mask": torch.tensor([i > 2 for i in range(n)], dtype=torch.bool),
+            "time": torch.tensor([i % MULTI_TASK_TIME_CLASSES for i in range(n)], dtype=torch.long),
+            "time_mask": torch.tensor([i % 2 == 0 for i in range(n)], dtype=torch.bool),
         }
     dataset = _make_partition_dataset(x, y, None, None, mt_aux)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
@@ -191,9 +182,8 @@ def test_evaluate_model_multi_task_dispatches_to_forward_multi_task() -> None:
     loss_fn = nn.CrossEntropyLoss()
     mt_loss_fn = MultiTaskLoss(
         lambda_stance=1.0,
-        lambda_factor=0.3,
+        lambda_time=0.3,
         lambda_certainty=0.3,
-        lambda_topic=0.3,
     )
 
     metrics = _evaluate_model(
@@ -220,7 +210,7 @@ def test_evaluate_model_multi_task_loss_differs_from_single_task_ce() -> None:
     Same model + same batch but two eval calls: one with
     ``multi_task_loss_fn=None`` (single-task CE), one with the
     MultiTaskLoss configured. The lambda-weighted multi-task total
-    rolls in factor + certainty + topic terms with non-trivial lambdas,
+    rolls in certainty + time terms with non-trivial lambdas,
     so the headline ``loss`` value must diverge from the single-task CE.
     """
 
@@ -236,16 +226,15 @@ def test_evaluate_model_multi_task_loss_differs_from_single_task_ce() -> None:
     loader2, _ = _make_eval_loader(batch_size=4, with_mt_aux=True)
     mt_loss_fn = MultiTaskLoss(
         lambda_stance=1.0,
-        lambda_factor=0.5,
+        lambda_time=0.5,
         lambda_certainty=0.5,
-        lambda_topic=0.5,
     )
     multi_task_metrics = _evaluate_model(
         model, loader2, torch.device("cpu"), loss_fn, multi_task_loss_fn=mt_loss_fn
     )
 
     # Single-task CE eval reports just the stance CE; multi-task eval
-    # adds factor + certainty + topic terms, so the values must differ.
+    # adds certainty + time terms, so the values must differ.
     assert single_task_metrics.loss != pytest.approx(multi_task_metrics.loss, abs=1e-6), (
         "multi-task eval emitted the same loss as single-task CE; the "
         "eval branch did not dispatch to MultiTaskLoss"
@@ -268,9 +257,8 @@ def test_evaluate_model_multi_task_attaches_per_axis_breakdown() -> None:
     loss_fn = nn.CrossEntropyLoss()
     mt_loss_fn = MultiTaskLoss(
         lambda_stance=1.0,
-        lambda_factor=0.3,
+        lambda_time=0.3,
         lambda_certainty=0.3,
-        lambda_topic=0.3,
     )
 
     metrics = _evaluate_model(
@@ -287,7 +275,7 @@ def test_evaluate_model_multi_task_attaches_per_axis_breakdown() -> None:
         "expected classification_breakdown[multi_task_axis_losses] dict; "
         f"got {type(axis_losses).__name__}"
     )
-    for axis in ("stance", "factor", "certainty", "topic"):
+    for axis in ("stance", "certainty", "time"):
         assert axis in axis_losses
         assert isinstance(axis_losses[axis], float)
 
@@ -330,7 +318,7 @@ def test_evaluate_model_raises_when_aux_missing_under_multi_task() -> None:
 def test_evaluate_model_multi_task_mask_collapse_zeroes_axis_contribution() -> None:
     """A batch where every axis-mask is False contributes only stance loss.
 
-    Per-row masks must be honoured -- if all factor / certainty / topic
+    Per-row masks must be honoured -- if all certainty / time
     masks are False, the multi-task total collapses to
     ``lambda_stance * stance_loss``. This pins the mask-honouring contract
     on the eval side (the train side already had this guarantee via
@@ -346,12 +334,10 @@ def test_evaluate_model_multi_task_mask_collapse_zeroes_axis_contribution() -> N
     x = torch.randn(n, 5, 6)
     y = torch.tensor([i % 3 for i in range(n)], dtype=torch.long)
     mt_aux = {
-        "factor": torch.zeros(n, dtype=torch.float32),
-        "factor_mask": torch.zeros(n, dtype=torch.bool),
         "certainty": torch.zeros(n, dtype=torch.long),
         "certainty_mask": torch.zeros(n, dtype=torch.bool),
-        "topic": torch.zeros(n, dtype=torch.long),
-        "topic_mask": torch.zeros(n, dtype=torch.bool),
+        "time": torch.zeros(n, dtype=torch.long),
+        "time_mask": torch.zeros(n, dtype=torch.bool),
     }
     dataset = _make_partition_dataset(x, y, None, None, mt_aux)
     loader = DataLoader(dataset, batch_size=n, shuffle=False)
@@ -360,9 +346,8 @@ def test_evaluate_model_multi_task_mask_collapse_zeroes_axis_contribution() -> N
     lambda_stance = 0.7
     mt_loss_fn = MultiTaskLoss(
         lambda_stance=lambda_stance,
-        lambda_factor=5.0,
+        lambda_time=5.0,
         lambda_certainty=5.0,
-        lambda_topic=5.0,
     )
     metrics = _evaluate_model(
         model,
@@ -436,4 +421,4 @@ def test_train_model_multi_task_path_writes_per_axis_breakdown_into_val_metrics(
     assert val_metrics.classification_breakdown is not None
     assert "multi_task_axis_losses" in val_metrics.classification_breakdown
     axis_losses = val_metrics.classification_breakdown["multi_task_axis_losses"]
-    assert set(axis_losses.keys()) == {"stance", "factor", "certainty", "topic"}
+    assert set(axis_losses.keys()) == {"stance", "certainty", "time"}

@@ -377,3 +377,155 @@ def test_train_model_smoke_vol_target_mode_raw_default() -> None:
     assert result.summary.epochs_completed == 1
     persisted_config = ModelConfig.from_model(result.model)
     assert persisted_config.vol_target_mode == "raw"
+
+
+# ---------------------------------------------------------------------------
+# vol_target_horizon: ModelConfig field + loader column resolver
+# ---------------------------------------------------------------------------
+
+
+def test_model_config_default_vol_target_horizon_is_ten() -> None:
+    """Pre-flag default persists; explicit opt-in only flips the field."""
+
+    from app.models.config import DEFAULT_VOL_TARGET_HORIZON
+
+    config = ModelConfig()
+    assert config.vol_target_horizon == 10
+    assert DEFAULT_VOL_TARGET_HORIZON == 10
+
+
+def test_model_config_vol_target_horizon_round_trip_through_coerce() -> None:
+    from app.training.loop import _coerce_model_config
+
+    rebuilt = _coerce_model_config(
+        {
+            "vol_target_horizon": 5,
+            "output_mode": "classification",
+            "head_mode": "dual",
+        }
+    )
+    assert rebuilt.vol_target_horizon == 5
+
+
+def test_supported_vol_target_horizons_cover_events_parquet_columns() -> None:
+    from app.models.config import SUPPORTED_VOL_TARGET_HORIZONS
+
+    assert SUPPORTED_VOL_TARGET_HORIZONS == (1, 3, 5, 10, 20, 30)
+
+
+def test_resolve_forward_vol_column_returns_canonical_for_default() -> None:
+    from app.training.loaders import _resolve_forward_vol_column
+
+    assert _resolve_forward_vol_column(10) == "forward_realized_vol_10d"
+
+
+def test_resolve_forward_vol_column_returns_per_horizon_column() -> None:
+    from app.training.loaders import _resolve_forward_vol_column
+
+    assert _resolve_forward_vol_column(5) == "forward_realized_vol_5d"
+    assert _resolve_forward_vol_column(30) == "forward_realized_vol_30d"
+
+
+def test_resolve_forward_vol_column_rejects_unsupported_horizon() -> None:
+    from app.training.loaders import _resolve_forward_vol_column
+
+    with pytest.raises(ValueError, match="vol_target_horizon"):
+        _resolve_forward_vol_column(7)
+
+
+# --------------------------------------------------------------------------- #
+# Loader integration: vol_target_horizon routes to the per-horizon column
+# --------------------------------------------------------------------------- #
+
+
+def test_load_training_sequences_routes_per_horizon_column(
+    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Confirm horizon=5 reads forward_realized_vol_5d, not 10d.
+
+    Builds a one-row events.parquet where the 5d and 10d columns hold
+    DIFFERENT values, then asserts the loader writes the chosen
+    horizon's value into ``FeatureVector.forward_realized_vol_10d``
+    (the canonical slot every downstream consumer reads).
+    """
+    import json
+    from pathlib import Path
+
+    import pandas as pd
+
+    from app.training import loaders
+
+    pkg_id = "horizon_route_pkg"
+    pkg_dir = tmp_path / "processed" / pkg_id  # type: ignore[operator]
+    pkg_dir.mkdir(parents=True)
+    monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+
+    prior_bars = json.dumps(
+        [
+            {
+                "date": f"2024-01-{i + 1:02d}",
+                "close": 4500.0 + i,
+                "vol_5d": 0.012,
+            }
+            for i in range(loaders.SEQUENCE_LENGTH + 1)
+        ]
+    )
+    row = {
+        "event_date": "2024-02-15",
+        "event_kind": "statement",
+        "document_id": "doc_a",
+        "text_hash": "hash_a",
+        "source": "scraped_fed",
+        "source_record_id": "src:hash_a",
+        "as_of_ts": "2024-02-15T19:00:00Z",
+        "text": "FOMC body",
+        "token_count": 2,
+        "axis_stance": "hawkish",
+        "axis_time": None,
+        "axis_certainty": None,
+        "axis_factor": None,
+        "axis_time_label": None,
+        "axis_certain_label": None,
+        "credibility_drift_score": 0.0,
+        "credibility_realized_vs_stated_gap": 0.0,
+        "credibility_market_implied_gap": 0.0,
+        "credibility_months_since_reversal": 0,
+        "prior_window_sha256": "0" * 64,
+        "prior_bars_json": prior_bars,
+        "asset_symbol": "^GSPC",
+        "horizon": 1,
+        "realized_return": 0.01,
+        "abnormal_return": 0.01,
+        "alpha": 0.0,
+        "beta": 1.0,
+        "direction_t1d": 1,
+        "volatility_shift": 0.0,
+        "concurrent_macro_release": False,
+        "intra_meeting_stance_shift": 0.0,
+        "intra_meeting_certainty_shift": 0.0,
+        "intra_meeting_factor_shift": 0.0,
+        "realized_date": "2024-02-16",
+        "forward_realized_vol_5d": 0.0075,
+        "forward_realized_vol_10d": 0.0150,
+        "forward_realized_vol_20d": 0.0250,
+    }
+    pd.DataFrame([row]).to_parquet(pkg_dir / "events.parquet", index=False)
+    pd.DataFrame(
+        [{"text_hash": "hash_a", "split_tag": "train"}]
+    ).to_parquet(pkg_dir / "splits_train_val_test.parquet", index=False)
+
+    sequences_10d = loaders.load_training_sequences_from_package(pkg_id)
+    sequences_5d = loaders.load_training_sequences_from_package(
+        pkg_id, vol_target_horizon=5
+    )
+    sequences_20d = loaders.load_training_sequences_from_package(
+        pkg_id, vol_target_horizon=20
+    )
+
+    def _target_vol(seqs: list[list]) -> float:
+        # Target row is the last bar of the sequence
+        return seqs[0][-1].forward_realized_vol_10d
+
+    assert _target_vol(sequences_10d) == pytest.approx(0.0150)
+    assert _target_vol(sequences_5d) == pytest.approx(0.0075)
+    assert _target_vol(sequences_20d) == pytest.approx(0.0250)

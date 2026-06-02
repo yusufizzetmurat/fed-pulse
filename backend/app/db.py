@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     create_engine,
     delete,
+    func,
     select,
 )
 from sqlalchemy.engine import Engine
@@ -59,6 +60,7 @@ class AnalysisRun(Base):
             "forecast_mode": self.forecast_mode,
             "stance": self.stance,
             "sentiment_score": self.sentiment_score,
+            "stance_score": _extract_stance_score(self.payload),
             "predicted_close": self.predicted_close,
             "current_close": self.current_close,
             "predicted_volatility": self.predicted_volatility,
@@ -72,6 +74,35 @@ class AnalysisRun(Base):
         summary = self.to_summary()
         summary["payload"] = self.payload
         return summary
+
+
+def _extract_stance_score(payload: Any) -> float | None:
+    """``P(hawkish) - P(dovish)`` from a persisted /analyze response.
+
+    Defined here rather than in ``app.services.stance_context`` because
+    ``db.py`` is the persistence boundary; co-locating the extractor
+    with the model keeps the schema-aware logic next to the column it
+    reads. Returns ``None`` when the payload lacks the multi-axis block
+    or either class probability so pre-#338 / regression-mode rows
+    degrade to ``null`` rather than fabricating a zero.
+    """
+
+    if not isinstance(payload, dict):
+        return None
+    multi_axis = payload.get("multi_axis")
+    if not isinstance(multi_axis, dict):
+        return None
+    stance = multi_axis.get("stance")
+    if not isinstance(stance, dict):
+        return None
+    distribution = stance.get("distribution")
+    if not isinstance(distribution, dict):
+        return None
+    hawk = distribution.get("hawkish")
+    dove = distribution.get("dovish")
+    if not isinstance(hawk, int | float) or not isinstance(dove, int | float):
+        return None
+    return float(hawk) - float(dove)
 
 
 def _extract_regime_summary(payload: Any) -> dict[str, Any]:
@@ -233,9 +264,8 @@ def list_runs(
     if document_date:
         stmt = stmt.where(AnalysisRun.document_date == document_date)
 
-    count_stmt = stmt.with_only_columns(AnalysisRun.id).order_by(None)
-    total = session.execute(count_stmt).scalars().all()
-    total_count = len(total)
+    count_stmt = select(func.count()).select_from(stmt.order_by(None).subquery())
+    total_count = int(session.execute(count_stmt).scalar() or 0)
 
     stmt = stmt.order_by(AnalysisRun.created_at.desc()).limit(limit).offset(offset)
     rows = list(session.execute(stmt).scalars().all())

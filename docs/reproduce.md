@@ -39,7 +39,7 @@ Expected wall time on the 8 GB / 4 vCPU droplet: ~15 minutes (~10 min cold artef
 
 What this does **not** validate:
 
-- Full-epoch training quality (use `make train-batch` for that — see `CLAUDE.md`).
+- Full-epoch training quality (use `make train-batch` for that — see the Makefile and `docs/`).
 - The bake-off comparisons (those need the per-encoder embedding caches, which lazy-fetch separately via `app.data.embedding_cache.ensure_local`).
 - The frontend dashboard (that runs against the deployed container; see `docs/deploy.md`).
 

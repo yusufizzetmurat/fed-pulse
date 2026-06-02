@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import warnings
 from pathlib import Path
 
 import pandas as pd
@@ -10,6 +11,7 @@ import pytest
 
 from app.features.linguistic import (
     HEDGE_TOKENS,
+    LinguisticLdaSlotWarning,
     LinguisticVector,
     MIN_SEED_OVERLAP,
     NAMED_TOPIC_KEYS,
@@ -445,8 +447,8 @@ def _seed_overlap_corpus() -> list[str]:
 def test_seed_overlap_floor_drops_employment_to_misc_when_no_labor_topic():
     """``employment`` falls to misc when no fitted topic contains labor seeds.
 
-    Mirrors the Sprint 1 mislabel: top-15 of the topic that would have
-    been pinned to ``employment`` is pure policy boilerplate
+    Mirrors the early-fit mislabel: top-15 of the topic that would
+    have been pinned to ``employment`` is pure policy boilerplate
     (``committee``, ``federal``, ``policy``, ``securities``, ``rate``,
     ...). The seed-overlap floor must reject the assignment and emit
     ``topic_share_employment == 0.0``.
@@ -949,3 +951,93 @@ def test_pivot_distance_prefer_source_default_is_off(tmp_path):
                 assert isinstance(vb, float) and math.isnan(vb)
             else:
                 assert va == vb
+
+
+# ---------------------------------------------------------------------------
+# Structured warning when an LDA named slot drops to the misc bucket
+# ---------------------------------------------------------------------------
+
+
+def test_fit_lda_emits_warning_when_named_slot_drops_to_misc():
+    """The Sprint-1 mislabel corpus drops ``employment`` to misc; the fit
+    must surface a ``LinguisticLdaSlotWarning`` naming the dropped slot
+    with the structured category prefix.
+    """
+
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always", LinguisticLdaSlotWarning)
+        artifact = fit_lda(_seed_overlap_corpus(), min_df=2)
+    drop_warnings = [
+        w for w in captured if issubclass(w.category, LinguisticLdaSlotWarning)
+    ]
+    # ``employment`` drops on this corpus.
+    assert "employment" not in artifact.topic_assignments
+    matching = [w for w in drop_warnings if "'employment'" in str(w.message)]
+    assert matching, (
+        "expected a LinguisticLdaSlotWarning naming the unassigned "
+        f"'employment' slot; got: {[str(w.message) for w in drop_warnings]}"
+    )
+    message = str(matching[0].message)
+    assert "[linguistic.lda]" in message
+    assert "misc bucket" in message
+
+
+def test_fit_lda_silent_when_all_named_slots_assigned():
+    """The topic-pure toy corpus assigns every named slot cleanly; no
+    ``LinguisticLdaSlotWarning`` should fire.
+    """
+
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always", LinguisticLdaSlotWarning)
+        artifact = fit_lda(_toy_corpus())
+    drop_warnings = [
+        w for w in captured if issubclass(w.category, LinguisticLdaSlotWarning)
+    ]
+    # Every named slot is assigned on this corpus.
+    assert set(artifact.topic_assignments.keys()) == set(NAMED_TOPIC_KEYS)
+    assert not drop_warnings, (
+        "expected no LinguisticLdaSlotWarning when every named slot "
+        f"resolves; got: {[str(w.message) for w in drop_warnings]}"
+    )
+
+
+def test_fit_lda_drop_warning_carries_seed_overlap_floor_reading(tmp_path):
+    """When the drop path is the seed-overlap floor, the warning must
+    cite the overlap count, threshold, and top-N window so the reader
+    can read off "score = N below threshold M of top-K".
+    """
+
+    # The default toy corpus path drops ``financial_stability`` via
+    # the below-floor branch on the byte-deterministic builder fit
+    # (observed empirically: best topic 2 only contained 0 of the
+    # slot's seed words). Re-running the builder reproduces the
+    # warning and lets us assert against the structured payload.
+    package = tmp_path / "tp_floor"
+    docs = [
+        ("hash_inf", _INFLATION_DOC),
+        ("hash_emp", _EMPLOYMENT_DOC),
+        ("hash_fin", _FINANCIAL_DOC),
+        ("hash_gro", _GROWTH_DOC),
+        ("hash_bal", _BALANCE_SHEET_DOC),
+        ("hash_inf2", _INFLATION_DOC),
+        ("hash_emp2", _EMPLOYMENT_DOC),
+        ("hash_fin2", _FINANCIAL_DOC),
+        ("hash_gro2", _GROWTH_DOC),
+        ("hash_bal2", _BALANCE_SHEET_DOC),
+    ]
+    _seed_training_package(package, docs)
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always", LinguisticLdaSlotWarning)
+        build_linguistic_feature_frame(package_dir=package)
+    drop_warnings = [
+        w for w in captured if issubclass(w.category, LinguisticLdaSlotWarning)
+    ]
+    below_floor = [w for w in drop_warnings if "contained" in str(w.message)]
+    assert below_floor, (
+        "expected at least one below-floor LinguisticLdaSlotWarning; "
+        f"got: {[str(w.message) for w in drop_warnings]}"
+    )
+    message = str(below_floor[0].message)
+    assert "[linguistic.lda]" in message
+    assert f"threshold {MIN_SEED_OVERLAP}" in message
+    assert f"top-{SEED_OVERLAP_TOP_N}" in message

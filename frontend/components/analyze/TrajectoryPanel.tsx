@@ -9,7 +9,7 @@ import {
   YAxis,
   ZAxis,
 } from "recharts";
-import { Compass, Sparkles } from "lucide-react";
+import { AlertTriangle, Compass, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -23,7 +23,6 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { EvidenceLink } from "@/components/analyze/EvidenceLink";
 
 export type TrajectoryStance = "hawkish" | "dovish" | "neutral";
 
@@ -55,6 +54,10 @@ export interface TrajectoryResponse {
   lift_vs_baseline?: boolean;
   delta_dir_acc?: number | null;
   baseline_used?: string | null;
+  // Non-fatal advisory from the backend — populated when the requested
+  // as_of_date sits beyond the bundle's train_end so the caller can
+  // flag that the projection extrapolates past the fold boundary.
+  warning?: string | null;
 }
 
 interface TrajectoryPanelProps {
@@ -116,6 +119,14 @@ export function TrajectoryPanel({
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
+  // Stabilise the request body across renders so the effect below
+  // depends on a single object identity, not three primitives that
+  // recompose on every parent re-render.
+  const requestBody = React.useMemo(
+    () => JSON.stringify({ as_of_date: asOfDate, history_length: historyLength }),
+    [asOfDate, historyLength],
+  );
+
   React.useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
@@ -125,10 +136,7 @@ export function TrajectoryPanel({
         const response = await fetch(`${apiBaseUrl}/analyze/trajectory`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            as_of_date: asOfDate,
-            history_length: historyLength,
-          }),
+          body: requestBody,
           signal: controller.signal,
         });
         if (!response.ok) {
@@ -146,7 +154,7 @@ export function TrajectoryPanel({
       }
     })();
     return () => controller.abort();
-  }, [apiBaseUrl, asOfDate, historyLength]);
+  }, [apiBaseUrl, requestBody]);
 
   if (loading) {
     return (
@@ -288,14 +296,14 @@ export function TrajectoryPanel({
             {hasLiftSignal && !liftEstablished ? (
               <Badge
                 variant="outline"
-                className="text-[10px] uppercase tracking-wide"
+                className="text-muted-foreground text-[10px] uppercase tracking-wide"
                 title={
                   data.delta_dir_acc != null && data.baseline_used
-                    ? `Improvement vs ${data.baseline_used}: ${(data.delta_dir_acc * 100).toFixed(1)}pp; needs at least 5pp.`
-                    : "No measurable improvement over simple baselines yet."
+                    ? `Directional accuracy vs ${data.baseline_used}: ${(data.delta_dir_acc * 100).toFixed(1)}pp; needs at least 5pp to claim a lift.`
+                    : "Directional accuracy matches the simple baseline within the lift threshold."
                 }
               >
-                no improvement over baseline
+                matches simple-baseline accuracy
               </Badge>
             ) : null}
             {liftEstablished ? (
@@ -303,12 +311,21 @@ export function TrajectoryPanel({
                 +{((data.delta_dir_acc ?? 0) * 100).toFixed(1)}pp vs baseline
               </Badge>
             ) : null}
-            <EvidenceLink section="6.17" label="Method notes · trajectory baselines" />
           </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="h-72 w-full">
+        {data.warning ? (
+          <div
+            role="alert"
+            data-testid="trajectory-warning"
+            className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200"
+          >
+            <AlertTriangle className="mt-[1px] h-3.5 w-3.5 shrink-0" />
+            <span>{data.warning}</span>
+          </div>
+        ) : null}
+        <div className="h-72 min-h-[270px] w-full">
           <ResponsiveContainer width="100%" height="100%">
             <ScatterChart margin={{ top: 12, right: 16, bottom: 12, left: 12 }}>
               <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="2 3" />

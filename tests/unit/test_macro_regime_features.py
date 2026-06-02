@@ -386,7 +386,6 @@ def _make_event_row(
         "axis_time": None,
         "axis_certainty": None,
         "axis_factor": None,
-        "axis_topic": None,
         "axis_time_label": None,
         "axis_certain_label": None,
         "credibility_drift_score": 0.0,
@@ -968,3 +967,47 @@ def test_train_model_forward_does_not_raise_on_regime_tail() -> None:
         use_amp=False,
     )
     assert result.summary.epochs_completed == 1
+
+
+def test_regime_gate_slice_uses_absolute_position() -> None:
+    """The regime-gate slice indexes by absolute position, not negative
+    offset from the tail.
+
+    The previous ``x[..., -regime_dim_total:-1]`` form picked the correct
+    three regime values only as long as the regime + missing-flag block
+    sat at the very end of the per-bar payload. The moment any other
+    block (SEP, retrieval analogs, future features) lands past it, the
+    negative-offset form silently reads the wrong window — the model
+    keeps running because the slice still has the expected width.
+
+    The fix is to slice ``[RICH_FEATURE_SIZE : RICH_FEATURE_SIZE +
+    RICH_MACRO_REGIME_DIM]``. This test pins that contract.
+    """
+
+    import torch
+
+    from app.models.config import (
+        RICH_FEATURE_SIZE,
+        RICH_MACRO_REGIME_DIM,
+    )
+
+    regime_values = [0.42, -0.13, 0.71]
+    missing_flag = 0.0
+    trailing_block = [9.9, 8.8, 7.7, 6.6]  # simulates a future block appended
+
+    rich = [0.0] * RICH_FEATURE_SIZE
+    payload = rich + regime_values + [missing_flag] + trailing_block
+
+    x = torch.tensor([[payload]], dtype=torch.float32)
+    regime_start = RICH_FEATURE_SIZE
+    regime_input = x[..., regime_start : regime_start + RICH_MACRO_REGIME_DIM]
+
+    assert regime_input.shape[-1] == RICH_MACRO_REGIME_DIM
+    extracted = regime_input.squeeze().tolist()
+    assert extracted == pytest.approx(regime_values)
+
+    # And demonstrate that the negative-offset form would have read the
+    # trailing block instead, not the regime values.
+    regime_dim_total = RICH_MACRO_REGIME_DIM + 1
+    wrong_slice = x[..., -regime_dim_total:-1].squeeze().tolist()
+    assert wrong_slice != pytest.approx(regime_values)

@@ -32,7 +32,7 @@ JUDGE_REQUEST_INTERVAL ?= 0.0
 PSEUDO_SERVICE ?= backend-gpu
 PSEUDO_PROFILE_FLAG ?= --profile gpu
 
-.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep audit-training-package pre-sweep-column-audit build-events-parquet pull-op-fed pull-swanson-three-factor pull-beige-book pull-press-conferences pull-speeches pull-testimonies pull-regional-research train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation finetune-pilot-b2 finetune-pilot-b2-phrasebank cross-source-transfer reproduce-all reproduce-smoke push-artefacts deploy-prod-build
+.PHONY: help dev dev-cpu dev-gpu down logs lock verify openapi-snapshot data-prep audit-training-package pre-sweep-column-audit build-events-parquet pull-op-fed pull-swanson-three-factor pull-beige-book pull-press-conferences pull-speeches pull-testimonies pull-regional-research train-smoke train-batch changelog audit-python audit-npm pseudo-labels pseudo-labels-audit-sample pseudo-labels-audit-metrics pseudo-labels-judge-pass pseudo-labels-audit-metrics-judge macro-state build-macro-state build-mp-surprises build-rates-panel rebuild-linguistic-features cache-voyage-embeddings next-fomc cross-asset forecaster-sweep forecaster-sweep-exhaustive forecaster-sweep-baseline forecaster-sweep-aggregate forecaster-sweep-shuffled-control forecaster-credibility-train regime-baseline-tiers regime-arch-sweep regime-pooled-aggregate regime-ensemble-aggregate regime-capacity-push train-text-multi-axis-classifier dual-head-comparison derived-features-ablation rates-heads-sweep canonical-comparison canonical-comparison-fomc-attributable canonical-comparison-retrieval-analogs canonical-comparison-regime-conditioning text-path-ab per-family-ablation confounder-ablation hawk-dove-jackknife finetune-pilot-b2 finetune-pilot-b2-phrasebank cross-source-transfer reproduce-all reproduce-smoke push-artefacts deploy-prod-build per-fold-baselines paired-stats ordinal-confusion discretize-at-eval
 
 help:
 	@echo "Targets:"
@@ -84,6 +84,10 @@ help:
 	@echo "                         - Canonical dual-head comparison (5 seeds x 40 epochs, regression-alpha=0.5, canonical output JSON)"
 	@echo "  make per-family-ablation TRAINING_PACKAGE_ID=<id>"
 	@echo "                         - Per-family rich-feature ablation (#334; backs the §6 substitution-finding table)"
+	@echo "  make confounder-ablation TRAINING_PACKAGE_ID=<id>"
+	@echo "                         - Confounder-control ablation (#495; year-FE / meeting-type-FE / doc-length controls + all-three)"
+	@echo "  make hawk-dove-jackknife TRAINING_PACKAGE_ID=<id> [SMOKE=1]"
+	@echo "                         - Leave-one-out per token on the in-house hawk/dove lexicon (#506; ~3-4 GPU-hours full, ~30 min smoke)"
 	@echo "  make finetune-pilot-b2 TRAINING_PACKAGE_ID=<id> [ENCODER_ALIAS=<alias>]"
 	@echo "                         - B2 end-to-end fine-tune on vol-regime (#213; AutoModelForSequenceClassification, 5 seeds x 4 folds x 5 epochs)"
 	@echo "  make finetune-pilot-b2-phrasebank TRAINING_PACKAGE_ID=<id> [PHRASEBANK_AUX_LAMBDA=0.3] [PHRASEBANK_SUBSET=sentences_allagree]"
@@ -181,6 +185,54 @@ build-events-parquet:
 pull-op-fed:
 	docker compose run --rm backend \
 		python -m app.data.sources.op_fed $(if $(FORCE),--force,)
+
+# Intraday pivot (Round 6 / Path 2): backfill SPY 1-min bars for the
+# 13:30-15:00 ET window of every FOMC day in a training package's
+# events.parquet. Lands at data/external/polygon/spx_intraday_fomc_days.parquet.
+# Requires POLYGON_API_KEY in .env.
+pull-intraday-spx:
+	@test -n "$(EVENTS_PARQUET)" || (echo "EVENTS_PARQUET=<path to events.parquet> is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.polygon_spx --events-parquet "$(EVENTS_PARQUET)"
+
+# Intraday pivot: full-history raw-bar backfill via Alpha Vantage (deep
+# 1-min history back to 2000). Writes the same schema as pull-intraday-spx
+# to data/external/alphavantage_bars/, so build-intraday-events reads it via
+# --bars-cache-dir. Requires ALPHA_VANTAGE_API_KEY. SINCE floors the dates.
+pull-intraday-spx-av:
+	@test -n "$(EVENTS_PARQUET)" || (echo "EVENTS_PARQUET=<path to events.parquet> is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.alphavantage_spx \
+			--events-parquet "$(EVENTS_PARQUET)" --raw-bars \
+			$(if $(SINCE),--since $(SINCE),)
+
+# Intraday pivot: build intraday_events.parquet (pre-announcement bar
+# sequence + immediate/delayed reaction targets) from the cached bars and
+# a training package's FOMC statements.
+build-intraday-events:
+	@test -n "$(EVENTS_PARQUET)" || (echo "EVENTS_PARQUET=<path> is required"; exit 1)
+	@test -n "$(OUT)" || (echo "OUT=<path to intraday_events.parquet> is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.intraday_event_builder \
+			--events-parquet "$(EVENTS_PARQUET)" --out "$(OUT)"
+
+# Intraday pivot: train + walk-forward-evaluate the direction model on the
+# intraday_events dataset (both target windows, full + market-only baselines).
+train-intraday-direction:
+	@test -n "$(EVENTS)" || (echo "EVENTS=<path to intraday_events.parquet> is required"; exit 1)
+	@test -n "$(OUT_DIR)" || (echo "OUT_DIR=<artifacts dir> is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.intraday_direction_train \
+			--events "$(EVENTS)" --out-dir "$(OUT_DIR)" --seed $(SEED)
+
+# Intraday pivot: train + walk-forward-evaluate the reaction-MAGNITUDE
+# regressor (out-of-sample R2 / RMSE / Spearman, both windows).
+train-intraday-magnitude:
+	@test -n "$(EVENTS)" || (echo "EVENTS=<path to intraday_events.parquet> is required"; exit 1)
+	@test -n "$(OUT_DIR)" || (echo "OUT_DIR=<artifacts dir> is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.intraday_magnitude_train \
+			--events "$(EVENTS)" --out-dir "$(OUT_DIR)" --seed $(SEED)
 
 # Swanson 2021 three-factor xlsx pulled from UCI mirror (#420).
 # Lands at data/external/swanson/pre-and-post-ZLB-factors-extended.xlsx
@@ -964,6 +1016,36 @@ per-family-ablation:
 		--head-mode dual \
 		--regression-alpha 0.5
 
+# #495 confounder-control ablation runner. Appends year-FE / meeting-
+# type-FE / doc-length control blocks to the rich-feature input and
+# re-trains the dual-head classifier so the encoder's edge can be read
+# off after each control is admitted (plus the all-three combination).
+confounder-ablation:
+	@if [ -z "$$TRAINING_PACKAGE_ID" ]; then echo "TRAINING_PACKAGE_ID required" >&2; exit 1; fi
+	docker compose run --rm backend python -m scripts.run_confounder_ablation \
+		--training-package-id $$TRAINING_PACKAGE_ID \
+		--output artifacts/experiments/confounder_ablation.json \
+		--seeds 11 29 47 71 97 \
+		--epochs 40 \
+		--head-mode dual \
+		--regression-alpha 0.5
+
+# #506 hawk/dove lexicon jackknife. Leave-one-out per single-token entry
+# in HAWK_TOKENS / DOVE_TOKENS, rebuilds the per-document linguistic
+# features parquet under the patched lexicon, and runs a baseline-only
+# per-family ablation smoke per cell to read off macro-F1. Writes the
+# artefact to ``backend/artifacts/experiments/hawk_dove_jackknife.json``
+# with a fragile-tokens list keyed off ``|delta| > 0.005``. GPU-bound:
+# ~3-4 hours for the full sweep at the default epochs=40; ``SMOKE=1``
+# drops the per-cell budget to 5 epochs (~30 min total).
+hawk-dove-jackknife:
+	@if [ -z "$$TRAINING_PACKAGE_ID" ]; then echo "TRAINING_PACKAGE_ID required" >&2; exit 1; fi
+	docker compose run --rm backend python -m scripts.run_hawk_dove_jackknife \
+		--training-package-id $$TRAINING_PACKAGE_ID \
+		--output artifacts/experiments/hawk_dove_jackknife.json \
+		--seeds 11 \
+		$(if $(SMOKE),--smoke,)
+
 # #213 B2 end-to-end fine-tune harness. Fine-tunes
 # AutoModelForSequenceClassification directly on FOMC document text
 # against the per-fold vol_regime_10d 3-class label. The encoder
@@ -1011,3 +1093,52 @@ cross-source-transfer:
 		--encoder-checkpoints "$$ENCODER_CHECKPOINTS" \
 		$(if $(SOURCE_TYPES),--source-types "$(SOURCE_TYPES)",) \
 		$(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
+
+# Per-fold class-distribution + dual baselines table (#500).
+per-fold-baselines:
+	docker compose run --rm backend \
+		python -m app.eval.per_fold_baselines \
+			--training-package-id canonical \
+			--sweep-artefact artifacts/experiments/dual_head_comparison_canonical.json \
+			--output artifacts/experiments/per_fold_baselines.json
+
+# Paired Wilcoxon + Holm-Bonferroni on head-mode comparisons (#497).
+paired-stats:
+	docker compose run --rm backend \
+		python -m app.eval.paired_comparisons \
+			--sweep-artefacts artifacts/experiments/dual_head_comparison_canonical.json \
+			--comparisons classification,dual classification,regression regression,dual \
+			--metric regime_f1_macro \
+			--output artifacts/experiments/paired_comparisons.json
+
+# Ordinal confusion-matrix decomposition (#496).
+ordinal-confusion:
+	docker compose run --rm backend \
+		python -m app.eval.ordinal_confusion \
+			--sweep-artefact artifacts/experiments/dual_head_comparison_canonical.json \
+			--output artifacts/experiments/ordinal_confusion.json
+
+# Discretize-at-eval companion metric for the dual-head defense (#498).
+discretize-at-eval:
+	docker compose run --rm backend \
+		python -m app.eval.discretize_at_eval \
+			--sweep-artefact artifacts/experiments/dual_head_comparison_canonical.json \
+			--output artifacts/experiments/discretize_at_eval.json
+
+# Dense daily vol/volume backbone: model vs HAR/AR baselines, walk-forward.
+train-dense-forecast:
+	@test -n "$(CACHE_DIR)" || (echo "CACHE_DIR=<_market_cache dir> is required"; exit 1)
+	@test -n "$(OUT_DIR)" || (echo "OUT_DIR=<artifacts dir> is required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.dense_forecast_train \
+			--cache-dir "$(CACHE_DIR)" --out-dir "$(OUT_DIR)" --seed $(SEED)
+
+# Dense Phase 2: FOMC text marginal test over the backbone (FOMC-day eval).
+train-dense-text:
+	@test -n "$(CACHE_DIR)" || (echo "CACHE_DIR=<_market_cache> required"; exit 1)
+	@test -n "$(EVENTS_PARQUET)" || (echo "EVENTS_PARQUET required"; exit 1)
+	@test -n "$(OUT_DIR)" || (echo "OUT_DIR required"; exit 1)
+	docker compose run --rm backend \
+		python -m app.data.dense_fomc_text \
+			--cache-dir "$(CACHE_DIR)" --events-parquet "$(EVENTS_PARQUET)" \
+			--embeddings-parquet "$(OUT_DIR)/fomc_embeddings.parquet" --out-dir "$(OUT_DIR)"

@@ -1,0 +1,66 @@
+{
+  "$schema_version": "1",
+  "source_wiki_section": "06_Deep_Learning_Roadmap.md#641",
+  "training_package_id": "canonical",
+  "head": "dual_lstm",
+  "fold": "walk_forward_fold_3",
+  "seeds": [11, 29, 47, 71, 97],
+  "baseline": {
+    "label": "no_text_channel",
+    "dual_f1": 0.3773,
+    "cls_f1": 0.3934,
+    "regression_f1": null
+  },
+  "rows": [
+    {
+      "encoder_alias": "bge_large_en_v15",
+      "encoder_display": "BGE Large EN v1.5",
+      "dual_f1": 0.4347,
+      "cls_f1": 0.3949,
+      "regression_f1": null,
+      "checkpoint_relpath": "backend/models/text_multi_axis_seed11.pt",
+      "cache_uri": "hf://datasets/yusufizzetmurat/fed-pulse-embedding-caches/bge_large_en_v15/",
+      "notes": "best dual lift; generic open-source encoder beats project-specific DAPT"
+    },
+    {
+      "encoder_alias": "finbert_fed_adjacent",
+      "encoder_display": "FinBERT Fed-Adjacent (DAPT)",
+      "dual_f1": 0.4201,
+      "cls_f1": 0.4160,
+      "regression_f1": null,
+      "checkpoint_relpath": "backend/models/text_multi_axis_seed47.pt",
+      "cache_uri": "hf://datasets/yusufizzetmurat/fed-pulse-embedding-caches/finbert_fed_adjacent/",
+      "notes": "only encoder that lifts BOTH surfaces simultaneously"
+    },
+    {
+      "encoder_alias": "nomic_embed_text_v15",
+      "encoder_display": "Nomic Embed Text v1.5",
+      "dual_f1": 0.3998,
+      "cls_f1": 0.4097,
+      "regression_f1": null,
+      "checkpoint_relpath": "backend/models/text_multi_axis_seed97.pt",
+      "cache_uri": "hf://datasets/yusufizzetmurat/fed-pulse-embedding-caches/nomic_embed_text_v15/",
+      "notes": "modest positive on both surfaces"
+    },
+    {
+      "encoder_alias": "finbert_fed_adjacent_xbank",
+      "encoder_display": "FinBERT Fed-Adjacent xBank (DAPT)",
+      "dual_f1": 0.3872,
+      "cls_f1": 0.3716,
+      "regression_f1": null,
+      "checkpoint_relpath": null,
+      "cache_uri": "hf://datasets/yusufizzetmurat/fed-pulse-embedding-caches/finbert_fed_adjacent_xbank/",
+      "notes": "cross-bank DAPT null; confirms #231 with clean re-run"
+    },
+    {
+      "encoder_alias": "voyage_finance_2",
+      "encoder_display": "Voyage Finance v2 (API)",
+      "dual_f1": 0.3641,
+      "cls_f1": 0.3702,
+      "regression_f1": null,
+      "checkpoint_relpath": null,
+      "cache_uri": "hf://datasets/yusufizzetmurat/fed-pulse-embedding-caches/voyage_finance_2/",
+      "notes": "negative on both surfaces; finance-specialised commercial encoder underperforms open-source generalists"
+    }
+  ]
+}

@@ -1,12 +1,15 @@
 // Curated excerpts of real FOMC statements. The text is a faithful
 // excerpt of the released statement; truncated for the sample picker
 // to keep the workspace input from being overwhelmed. Dates correspond
-// to the meeting (statement release date).
+// to the meeting (statement release date). ``symbol`` is the asset the
+// loader should pre-select alongside the text and date — defaults to
+// ^GSPC, the broadest equity index that maps naturally to FOMC events.
 export interface SampleStatement {
   id: string;
   label: string;
   date: string;
   text: string;
+  symbol: string;
 }
 
 export const SAMPLE_STATEMENTS: SampleStatement[] = [
@@ -14,6 +17,7 @@ export const SAMPLE_STATEMENTS: SampleStatement[] = [
     id: "2024-09-18",
     label: "2024-09-18 (50bp cut)",
     date: "2024-09-18",
+    symbol: "^GSPC",
     text:
       "Recent indicators suggest that economic activity has continued to expand at a solid pace. " +
       "Job gains have slowed, and the unemployment rate has moved up but remains low. Inflation " +
@@ -28,6 +32,7 @@ export const SAMPLE_STATEMENTS: SampleStatement[] = [
     id: "2023-07-26",
     label: "2023-07-26 (25bp hike)",
     date: "2023-07-26",
+    symbol: "^GSPC",
     text:
       "Recent indicators suggest that economic activity has been expanding at a moderate pace. " +
       "Job gains have been robust in recent months, and the unemployment rate has remained low. " +
@@ -41,6 +46,7 @@ export const SAMPLE_STATEMENTS: SampleStatement[] = [
     id: "2022-06-15",
     label: "2022-06-15 (75bp hike)",
     date: "2022-06-15",
+    symbol: "^GSPC",
     text:
       "Overall economic activity appears to have picked up after edging down in the first quarter. " +
       "Job gains have been robust in recent months, and the unemployment rate has remained low. " +
@@ -55,6 +61,7 @@ export const SAMPLE_STATEMENTS: SampleStatement[] = [
     id: "2020-03-15",
     label: "2020-03-15 (emergency 100bp cut)",
     date: "2020-03-15",
+    symbol: "^GSPC",
     text:
       "The coronavirus outbreak has harmed communities and disrupted economic activity in many " +
       "countries, including the United States. Global financial conditions have also been " +
@@ -70,6 +77,7 @@ export const SAMPLE_STATEMENTS: SampleStatement[] = [
     id: "2019-07-31",
     label: "2019-07-31 (25bp cut)",
     date: "2019-07-31",
+    symbol: "^GSPC",
     text:
       "Information received since the Federal Open Market Committee met in June indicates that the " +
       "labor market remains strong and that economic activity has been rising at a moderate rate. " +

@@ -1,5 +1,52 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+
+async function openBakeoffTab() {
+  // The default tab is "What it predicts"; the bake-off table renders
+  // under the "Bake-off" tab via radix Tabs (only the active tab's
+  // content is mounted), so click in before asserting on bake-off DOM.
+  // userEvent dispatches pointer events the way radix-ui expects.
+  const user = userEvent.setup();
+  const trigger = await screen.findByRole("tab", { name: /bake-off/i });
+  await user.click(trigger);
+}
+
+async function openTransferTab() {
+  const user = userEvent.setup();
+  const trigger = await screen.findByRole("tab", { name: /transfer/i });
+  await user.click(trigger);
+}
+
+async function openFilesTab() {
+  const user = userEvent.setup();
+  const trigger = await screen.findByRole("tab", { name: /^files$/i });
+  await user.click(trigger);
+}
+
+// Recharts renders its <Bar> children into SVG inside a sized
+// ResponsiveContainer; in jsdom the container collapses to 0×0 and the
+// nested Cell elements never reach the DOM. Mock the chart primitives so
+// the rendered Cell surfaces its `fill` prop as a data attribute we can
+// assert on.
+vi.mock("recharts", () => {
+  const passthrough = ({ children }: { children?: React.ReactNode }) => (
+    <div>{children}</div>
+  );
+  return {
+    Bar: passthrough,
+    BarChart: passthrough,
+    CartesianGrid: () => <div data-testid="rc-grid" />,
+    Cell: ({ fill }: { fill?: string }) => (
+      <div data-testid="rc-bar-cell" data-fill={fill ?? ""} />
+    ),
+    ErrorBar: () => <div data-testid="rc-error-bar" />,
+    ResponsiveContainer: passthrough,
+    Tooltip: () => <div data-testid="rc-tooltip" />,
+    XAxis: () => <div data-testid="rc-x-axis" />,
+    YAxis: () => <div data-testid="rc-y-axis" />,
+  };
+});
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
@@ -109,6 +156,7 @@ describe("ResearchPage", () => {
     fetchResearchArtifactsMock.mockResolvedValue(EMPTY_RESPONSE);
     const { default: ResearchPage } = await import("@/pages/research");
     render(<ResearchPage />);
+    await openBakeoffTab();
     await waitFor(() =>
       expect(screen.getByText(/No bake-off artefacts/i)).toBeInTheDocument()
     );
@@ -118,6 +166,7 @@ describe("ResearchPage", () => {
     fetchResearchArtifactsMock.mockResolvedValue(POPULATED_RESPONSE);
     const { default: ResearchPage } = await import("@/pages/research");
     render(<ResearchPage />);
+    await openBakeoffTab();
     // Two cells per encoder (encoder column + checkpoint column).
     await waitFor(() =>
       expect(screen.getAllByText(/bert-base-uncased/i).length).toBeGreaterThanOrEqual(2)
@@ -126,5 +175,160 @@ describe("ResearchPage", () => {
     // Macro-F1 mean appears in the row body.
     expect(screen.getByText("0.530")).toBeInTheDocument();
     expect(screen.getByText("0.604")).toBeInTheDocument();
+  });
+
+  it("renders heatmap cells with the numeric metric and bank labels", async () => {
+    const response = {
+      ...POPULATED_RESPONSE,
+      cross_bank_transfer: {
+        available: true,
+        metric_name: "macro_f1",
+        sources: ["FED", "ECB"],
+        targets: ["FED", "ECB"],
+        cells: [
+          { source: "FED", target: "FED", metric: 0.612 },
+          { source: "FED", target: "ECB", metric: 0.481 },
+          { source: "ECB", target: "FED", metric: 0.395 },
+          { source: "ECB", target: "ECB", metric: 0.557 },
+        ],
+        source_files: ["cross_bank/transfer.json"],
+      },
+    };
+    fetchResearchArtifactsMock.mockResolvedValue(response);
+    const { default: ResearchPage } = await import("@/pages/research");
+    render(<ResearchPage />);
+    await openTransferTab();
+
+    // Numeric metric renders inside each populated cell (3-decimal format).
+    // Both heatmap + values tables carry the same tooltip title; the heatmap
+    // cell is the one keyed `heat-…` and tinted via an inline background.
+    const titledCells = await screen.findAllByTitle(/Trained on FED, evaluated on ECB/);
+    const heatmapCell = titledCells.find(
+      (el) => el.getAttribute("style")?.includes("background-color") ?? false,
+    );
+    expect(heatmapCell).toBeDefined();
+    expect(heatmapCell!.textContent).toContain("0.481");
+
+    // Source + target bank labels are present as row + column headers.
+    expect(screen.getAllByText("FED").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("ECB").length).toBeGreaterThan(0);
+  });
+
+  it("renders the Files tab with at least one artefact row under the new label", async () => {
+    fetchResearchArtifactsMock.mockResolvedValue(POPULATED_RESPONSE);
+    const { default: ResearchPage } = await import("@/pages/research");
+    render(<ResearchPage />);
+    await openFilesTab();
+
+    // Tab + card title both read "Files" (the rename) rather than the old
+    // "Downloads" label that had no matching download endpoint.
+    expect(await screen.findByRole("tab", { name: /^files$/i })).toBeInTheDocument();
+    expect(screen.queryByText(/^Downloads$/)).toBeNull();
+
+    // The populated phase3 artefact row surfaces its relative path.
+    expect(
+      screen.getByText("phase3/run-a/aggregate.json"),
+    ).toBeInTheDocument();
+  });
+
+  it("paints bake-off bars with a non-default colour ramp", async () => {
+    fetchResearchArtifactsMock.mockResolvedValue(POPULATED_RESPONSE);
+    const { default: ResearchPage } = await import("@/pages/research");
+    render(<ResearchPage />);
+    await openBakeoffTab();
+
+    const cells = await screen.findAllByTestId("rc-bar-cell");
+    expect(cells.length).toBeGreaterThan(0);
+    // The new ramp emits literal hsl() so Recharts can write it directly
+    // onto the SVG fill attribute; the old `hsla(var(--primary) / α)` form
+    // never resolved inside SVG and rendered as black.
+    for (const cell of cells) {
+      const fill = cell.getAttribute("data-fill") ?? "";
+      expect(fill).toMatch(/^hsl\(/);
+      expect(fill).not.toContain("var(");
+    }
+  });
+
+  it("collapses repeated phase3 aggregate.json paths into a single count badge", async () => {
+    const aggregatePaths = [
+      "phase3/run-a/aggregate.json",
+      "phase3/run-b/aggregate.json",
+      "phase3/run-c/aggregate.json",
+    ];
+    const response = {
+      ...POPULATED_RESPONSE,
+      encoder_bakeoff: {
+        ...POPULATED_RESPONSE.encoder_bakeoff,
+        source_files: aggregatePaths,
+      },
+    };
+    fetchResearchArtifactsMock.mockResolvedValue(response);
+    const { default: ResearchPage } = await import("@/pages/research");
+    render(<ResearchPage />);
+    await openBakeoffTab();
+    // The previous renderer mapped every aggregate.json path through the
+    // friendly-name helper and rendered N badges all reading "aggregate".
+    // The new renderer emits a single summary badge with the batch count.
+    await waitFor(() =>
+      expect(screen.getByText(/3 seed-batch aggregates/)).toBeInTheDocument()
+    );
+    expect(screen.queryAllByText(/^aggregate$/).length).toBe(0);
+  });
+
+  it("renders the bundled rerun-JSON filename as a single badge", async () => {
+    const rerun = "nlp-baseline-bakeoff-2026-06-02-rerun.json";
+    const response = {
+      ...POPULATED_RESPONSE,
+      encoder_bakeoff: {
+        ...POPULATED_RESPONSE.encoder_bakeoff,
+        source_files: [rerun],
+      },
+    };
+    fetchResearchArtifactsMock.mockResolvedValue(response);
+    const { default: ResearchPage } = await import("@/pages/research");
+    render(<ResearchPage />);
+    await openBakeoffTab();
+    await waitFor(() => expect(screen.getByText(rerun)).toBeInTheDocument());
+  });
+
+  it("surfaces the encoder-axis stance matrix on the bake-off tab", async () => {
+    const response = {
+      ...POPULATED_RESPONSE,
+      encoder_axis_stance: {
+        available: true,
+        source_doc: "docs/research/encoder-axis-stance-results.md",
+        rows: [
+          {
+            encoder_alias: "finbert",
+            encoder_display: "ProsusAI/FinBERT (no DAPT)",
+            held_out_f1: 0.526,
+            spearman_rho: 0.499,
+            auc_hike_vs_cut: 0.967,
+            is_validity_winner: true,
+            is_held_out_winner: false,
+          },
+          {
+            encoder_alias: "finbert_fed_adjacent_xbank",
+            encoder_display: "FinBERT (Fed-adjacent, cross-bank)",
+            held_out_f1: 0.720,
+            spearman_rho: 0.335,
+            auc_hike_vs_cut: 0.800,
+            is_validity_winner: false,
+            is_held_out_winner: true,
+          },
+        ],
+      },
+    };
+    fetchResearchArtifactsMock.mockResolvedValue(response);
+    const { default: ResearchPage } = await import("@/pages/research");
+    render(<ResearchPage />);
+    await openBakeoffTab();
+    await waitFor(() =>
+      expect(screen.getByText(/Encoder backbone for the stance head/)).toBeInTheDocument()
+    );
+    expect(screen.getByText(/ProsusAI\/FinBERT \(no DAPT\)/)).toBeInTheDocument();
+    expect(screen.getByText("0.720")).toBeInTheDocument();
+    expect(screen.getByText(/held-out F1 winner/)).toBeInTheDocument();
+    expect(screen.getByText(/validity-anchor winner/)).toBeInTheDocument();
   });
 });

@@ -7,7 +7,6 @@ import { Progress } from "@/components/ui/progress";
 import { Sparkline } from "@/components/ui/sparkline";
 import { cn } from "@/lib/utils";
 import type { RegimeClassificationResponse, SentimentResponse } from "@/lib/analyze/types";
-import { EvidenceLink } from "@/components/analyze/EvidenceLink";
 
 const REGIME_ORDER = ["calm", "normal", "high"] as const;
 type Regime = (typeof REGIME_ORDER)[number] | string;
@@ -25,21 +24,14 @@ interface RegimeHeadlineProps {
   // asserted. Null/undefined hides the chip.
   empiricalCoverage?: number | null;
   empiricalCoverageSampleSize?: number | null;
+  // Optional text-channel attribution. ``marketOnlyArgmaxProb`` is the
+  // top-pick probability under a market-only baseline (no text input or
+  // text masked out); when provided the headline renders a "text
+  // contribution ±X.Xpp" chip. When the live argmax probability sits
+  // below uniform + 2pp the surface instead shows "text channel: weak"
+  // to telegraph that the text barely moved the prediction.
+  marketOnlyArgmaxProb?: number | null;
 }
-
-// Fold-4 with/without numbers, computed from
-// backend/artifacts/experiments/dual_head_comparison_canonical.json
-// (dual head, 5 seeds × 5 folds, alpha=0.5). Hard-coded here because
-// the canonical artefact is not exposed on /analyze and a dedicated
-// endpoint just for one footnote is not worth its keep — the
-// evidence chip points the reader to §6.7 / §6.15 / row 10b for the
-// load-bearing context.
-const FOLD4_DUAL_F1_WITH = 0.419;
-const FOLD4_DUAL_F1_WITHOUT = 0.414;
-const FOLD4_DUAL_F1_STD_WITH = 0.070;
-const FOLD4_DUAL_F1_STD_WITHOUT = 0.079;
-const FOLD4_DUAL_RMSE_WITH = 1.004;
-const FOLD4_DUAL_RMSE_WITHOUT = 1.043;
 
 function regimeBarClass(label: Regime): string {
   if (label === "calm") return "bg-dovish";
@@ -75,6 +67,7 @@ export function RegimeHeadline({
   documentDate,
   empiricalCoverage,
   empiricalCoverageSampleSize,
+  marketOnlyArgmaxProb,
 }: RegimeHeadlineProps) {
   const distribution = regime.distribution ?? {};
   const coveragePct = Math.round(regime.coverage * 100);
@@ -93,6 +86,30 @@ export function RegimeHeadline({
   const argmaxProb = distribution[regime.argmax_class] ?? 0;
   const oodFlag = sentiment?.is_in_distribution === false;
   const trendValues = history ? regimeFromIndex(history) : [];
+
+  // Text-channel contribution badge. Prefer the explicit delta vs a
+  // market-only baseline when the caller threads one in; otherwise fall
+  // back to a "weak" tag whenever argmax sits within 2pp of uniform.
+  const classCount = Math.max(1, Object.keys(distribution).length);
+  const uniformProb = 1 / classCount;
+  let textContribLabel: string | null = null;
+  let textContribTitle: string | null = null;
+  if (
+    typeof marketOnlyArgmaxProb === "number"
+    && Number.isFinite(marketOnlyArgmaxProb)
+    && Number.isFinite(argmaxProb)
+  ) {
+    const deltaPp = (argmaxProb - marketOnlyArgmaxProb) * 100;
+    const rounded = Math.round(deltaPp * 10) / 10;
+    const sign = rounded > 0 ? "+" : rounded < 0 ? "−" : "±";
+    textContribLabel = `text contribution ${sign}${Math.abs(rounded).toFixed(1)}pp`;
+    textContribTitle = `Top-pick probability under text vs market-only: ${(
+      argmaxProb * 100
+    ).toFixed(1)}% vs ${(marketOnlyArgmaxProb * 100).toFixed(1)}%.`;
+  } else if (Number.isFinite(argmaxProb) && argmaxProb - uniformProb < 0.02) {
+    textContribLabel = "text channel: weak";
+    textContribTitle = "Top-pick probability is within 2pp of uniform. The text barely moved the prediction.";
+  }
 
   // #338 reframe: when the dual-head regression branch is mounted on
   // the active checkpoint we lead with the log(RV) band; per-class
@@ -152,7 +169,6 @@ export function RegimeHeadline({
                 <AlertTriangle className="h-3 w-3" /> Unfamiliar text
               </Badge>
             ) : null}
-            <EvidenceLink section="6.15" label="Method notes · benchmark comparison" />
           </div>
         </div>
         {hasRegressionBand ? (
@@ -176,6 +192,15 @@ export function RegimeHeadline({
             >
               {regime.argmax_class} regime
             </Badge>
+            {textContribLabel ? (
+              <Badge
+                variant="outline"
+                className="text-[10px] uppercase tracking-wide"
+                title={textContribTitle ?? undefined}
+              >
+                {textContribLabel}
+              </Badge>
+            ) : null}
             {regime.bucket_source ? (
               <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
                 regime source · {regime.bucket_source}
@@ -190,6 +215,15 @@ export function RegimeHeadline({
             <span className="numeric text-sm text-muted-foreground sm:text-base">
               top pick · {(argmaxProb * 100).toFixed(1)}%
             </span>
+            {textContribLabel ? (
+              <Badge
+                variant="outline"
+                className="text-[10px] uppercase tracking-wide"
+                title={textContribTitle ?? undefined}
+              >
+                {textContribLabel}
+              </Badge>
+            ) : null}
             <div className="flex flex-wrap items-center gap-1.5">
               {regime.predicted_set.map((label) => (
                 <Badge
@@ -205,55 +239,29 @@ export function RegimeHeadline({
         )}
       </CardHeader>
       <CardContent className="grid gap-6 md:grid-cols-2">
-        <div className="space-y-3 rounded-md border border-border bg-muted/10 p-3">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Cross-validated accuracy · 5 seeds × 5 folds
-          </p>
-          <div className="grid grid-cols-2 gap-3 text-xs">
-            <div className="space-y-1">
-              <p className="text-muted-foreground">Including fold 4 (headline)</p>
-              <p className="numeric font-medium text-foreground">
-                F1 score {FOLD4_DUAL_F1_WITH.toFixed(3)} ± {FOLD4_DUAL_F1_STD_WITH.toFixed(3)}
-              </p>
-              <p className="numeric text-muted-foreground">
-                Root-mean-square error (log volatility) {FOLD4_DUAL_RMSE_WITH.toFixed(3)}
-              </p>
-            </div>
-            <div className="space-y-1">
-              <p className="text-muted-foreground">Excluding fold 4</p>
-              <p className="numeric font-medium text-foreground">
-                F1 score {FOLD4_DUAL_F1_WITHOUT.toFixed(3)} ± {FOLD4_DUAL_F1_STD_WITHOUT.toFixed(3)}
-              </p>
-              <p className="numeric text-muted-foreground">
-                Root-mean-square error (log volatility) {FOLD4_DUAL_RMSE_WITHOUT.toFixed(3)}
-              </p>
-            </div>
-          </div>
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Fold 4 covers a stretch with very few <span className="numeric">calm</span>{" "}
-            examples. The difference between including and excluding it is small (F1 +0.005,
-            error −0.039), so the headline score is not driven by that one slice.
-          </p>
-          <EvidenceLink section="6.7" label="Method notes · full four-variant table" />
-        </div>
         <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
             Past {trendValues.length || 0} runs · top-pick regime
           </p>
-          {trendValues.length ? (
+          {trendValues.length >= 2 ? (
             <Sparkline
               values={trendValues}
               tone="neutral"
               height={56}
+              yDomain={[-1.5, 1.5]}
               formatTooltip={(value, label) => {
                 const regimeLabel = value > 0 ? "high" : value < 0 ? "calm" : "normal";
                 return `${label ?? ""} → ${regimeLabel}`;
               }}
               labels={history?.map((h) => h.documentDate)}
             />
+          ) : trendValues.length === 1 ? (
+            <p className="text-xs text-muted-foreground">
+              Insufficient history (1 run). Sparkline appears with two or more runs.
+            </p>
           ) : (
             <p className="text-xs text-muted-foreground">
-              No prior runs for this symbol yet — run history will appear here.
+              No prior runs for this symbol yet. Run history will appear here.
             </p>
           )}
           <div className="grid grid-cols-3 gap-1 text-center text-[10px] text-muted-foreground">
@@ -315,12 +323,9 @@ export function RegimeHeadline({
               </p>
               <p>
                 Top pick: <span className="text-foreground capitalize">{regime.argmax_class}</span>{" "}
-                ({(argmaxProb * 100).toFixed(1)}%). Per-class precision, recall, and F1 score
-                live in the baselines table; the classifier scores 0.418 ± 0.052 F1 on this
-                model. Numeric forecast above is the headline, with the classifier shown as
-                supporting detail.
+                ({(argmaxProb * 100).toFixed(1)}%). Numeric forecast above is the headline,
+                with the classifier shown as supporting detail.
               </p>
-              <EvidenceLink section="6.10" label="Baselines table · per-class detail" />
             </div>
           </div>
         </details>

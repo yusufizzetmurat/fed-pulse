@@ -19,7 +19,13 @@ from app.models.registry import revision_for
 # sentiment model. Override via the FED_PULSE_SENTIMENT_MODEL env var on any
 # deployment where the local checkpoint is not present.
 DEFAULT_LOCAL_CHECKPOINT = "/data/artifacts/phase3/pilot_finetune_20260505T142652Z/hf_checkpoints"
-PRIMARY_HF_MODEL_ID = "gtfintechlab/fomc-roberta-any-exp"
+PRIMARY_HF_MODEL_ID = "gtfintechlab/FOMC-RoBERTa"
+# gtfintechlab/FOMC-RoBERTa (Trillion Dollar Words) ships generic LABEL_0/1/2 in
+# its config. Empirically verified mapping (probs ~1.0 on hawkish/dovish/neutral
+# probe sentences): LABEL_0 = dovish, LABEL_1 = hawkish, LABEL_2 = neutral. The
+# repo is gated; a token with gate access is required (else the strict guard /
+# loud-fallback path engages instead of silently using distilbert).
+_FOMC_ROBERTA_ID2LABEL = {0: "dovish", 1: "hawkish", 2: "neutral"}
 # Last-resort fallback ONLY. Returns POSITIVE / NEGATIVE labels, NOT
 # hawkish/dovish/neutral, so the frontend should refuse to map the output
 # (see frontend/lib/analyze/format.ts::toStance).
@@ -32,9 +38,65 @@ MODEL_ID = _OVERRIDE or (
     DEFAULT_LOCAL_CHECKPOINT if Path(DEFAULT_LOCAL_CHECKPOINT).exists() else PRIMARY_HF_MODEL_ID
 )
 
+# Fallback policy. The silent fallback to the generic distilbert-sst-2 classifier
+# can contaminate cached embeddings undetected (the primary HF repo 404s and the
+# run proceeds on the wrong encoder with no error). We therefore FAIL CLOSED:
+# refuse the fallback by default for both build and serving. Degraded serving is
+# opt-in and explicit via FED_PULSE_ALLOW_SENTIMENT_FALLBACK, so it can never
+# happen silently. FED_PULSE_REQUIRE_PRIMARY_SENTIMENT is still honoured (now the
+# default behaviour) for backward compatibility.
+_TRUTHY = {"1", "true", "yes"}
+
+
+def _fallback_allowed() -> bool:
+    """True only when an operator has explicitly opted into the degraded fallback."""
+    require = (os.environ.get("FED_PULSE_REQUIRE_PRIMARY_SENTIMENT") or "").strip().lower()
+    if require in _TRUTHY:
+        return False
+    allow = (os.environ.get("FED_PULSE_ALLOW_SENTIMENT_FALLBACK") or "").strip().lower()
+    return allow in _TRUTHY
+
+
+# The model id the singleton actually loaded; differs from MODEL_ID on fallback.
+_loaded_model_id: str | None = None
+
 DEFAULT_MAX_TOKENS = 480
 DEFAULT_STRIDE = 400
 DEFAULT_CLASSIFIER_MAX_LENGTH = 512
+
+# Stance edge-case gates. The stance classifier was trained on English
+# FOMC text and reports stale class probabilities on degenerate input;
+# the gates below let :func:`analyze_text` short-circuit with a
+# ``status`` flag instead of feeding the model rubbish. Thresholds
+# match :mod:`app.services.semantic_diff` so the wire surface stays
+# consistent across descriptive panels.
+STANCE_MIN_INPUT_TOKENS: int = 5
+STANCE_LATIN_RATIO_THRESHOLD: float = 0.5
+
+
+def _classify_stance_input(text: str) -> str | None:
+    """Bucket ``text`` for the silent-null stance edge cases.
+
+    Returns ``"no_input"`` / ``"non_english"`` when the stance head
+    should short-circuit, or ``None`` when the input is healthy
+    enough to run through the classifier. Order matches
+    :func:`app.services.semantic_diff._classify_input` so a long
+    block of CJK reports as ``non_english`` rather than
+    ``no_input``.
+    """
+
+    if not text or not text.strip():
+        return "no_input"
+    stripped = "".join(text.split())
+    if stripped:
+        latin = sum(1 for ch in stripped if ord(ch) < 256)
+        if (latin / len(stripped)) < STANCE_LATIN_RATIO_THRESHOLD:
+            return "non_english"
+    tokens = text.split()
+    if len(tokens) < STANCE_MIN_INPUT_TOKENS:
+        return "no_input"
+    return None
+
 
 _classifier = None
 _classifier_lock = threading.Lock()
@@ -62,7 +124,15 @@ def _build_pipeline(model_id: str, device: int) -> Any:
     revision = revision_for(model_id)
     if revision is not None:
         kwargs["revision"] = revision
-    return pipeline("text-classification", **kwargs)
+    clf = pipeline("text-classification", **kwargs)
+    # FOMC-RoBERTa exposes only generic LABEL_0/1/2; remap to stance names so the
+    # pipeline emits hawkish/dovish/neutral (the labels the rest of the stack and
+    # the frontend's toStance() expect). The local fine-tune checkpoint already
+    # carries proper labels, so this only touches the FOMC-RoBERTa fallback.
+    if model_id == PRIMARY_HF_MODEL_ID:
+        clf.model.config.id2label = dict(_FOMC_ROBERTA_ID2LABEL)
+        clf.model.config.label2id = {v: k for k, v in _FOMC_ROBERTA_ID2LABEL.items()}
+    return clf
 
 
 def get_classifier() -> Any:
@@ -109,25 +179,79 @@ def get_classifier() -> Any:
                 )
         if _classifier is None and last_error is not None:
             raise last_error
+        global _loaded_model_id
+        _loaded_model_id = loaded_model_id
         if loaded_model_id != MODEL_ID:
-            # We picked a fallback. The fallback's label space (e.g.
-            # POSITIVE / NEGATIVE for distilbert-sst-2) is NOT
-            # hawkish/dovish/neutral; the frontend's toStance() refuses to
-            # silently relabel POSITIVE -> hawkish, so the dashboard will
-            # surface "Sentiment unavailable" until the primary model loads.
-            _logger.error(
+            # We picked a fallback. Its label space (e.g. POSITIVE / NEGATIVE for
+            # distilbert-sst-2) is NOT hawkish/dovish/neutral and its embeddings
+            # are generic, not FOMC-specific. Fail closed by default; only the
+            # explicit FED_PULSE_ALLOW_SENTIMENT_FALLBACK opt-out lets serving
+            # degrade (frontend toStance() then reports "Sentiment unavailable").
+            if not _fallback_allowed():
+                raise RuntimeError(
+                    f"refusing to use fallback sentiment model {loaded_model_id!r} "
+                    f"instead of the primary {MODEL_ID!r}: the fallback's labels are "
+                    "not hawkish/dovish/neutral and its embeddings are not "
+                    "FOMC-specific, so it can silently contaminate cached vectors. "
+                    "The primary model failed to load — see the preceding "
+                    "classifier_load_failed warnings. Set "
+                    "FED_PULSE_ALLOW_SENTIMENT_FALLBACK=1 to allow degraded serving."
+                )
+            _logger.warning(
                 "sentiment.classifier_using_fallback",
                 extra={
                     "primary_model_id": MODEL_ID,
                     "loaded_model_id": loaded_model_id,
                     "note": (
-                        "Primary sentiment model failed to load. The active model's labels "
-                        "are NOT hawkish/dovish/neutral; the dashboard will report stance "
-                        "as unknown. Inspect the preceding classifier_load_failed warnings."
+                        "FED_PULSE_ALLOW_SENTIMENT_FALLBACK is set: serving on the generic "
+                        "fallback. Stance reports as unknown and any embeddings built now "
+                        "are NOT FOMC-specific."
                     ),
                 },
             )
     return _classifier
+
+
+def get_loaded_model_id() -> str | None:
+    """The model id the singleton actually loaded (differs from MODEL_ID on fallback)."""
+    return _loaded_model_id
+
+
+def assert_primary_model_loaded() -> None:
+    """Raise unless the active classifier is the primary model, not the fallback.
+
+    Build/training pipelines call this before producing cached embeddings so a
+    silent fallback (e.g. the primary HF repo 404ing -> distilbert) can never
+    contaminate the artifacts undetected.
+    """
+    get_classifier()
+    if _loaded_model_id != MODEL_ID:
+        raise RuntimeError(
+            f"primary sentiment model {MODEL_ID!r} is not loaded "
+            f"(active model: {_loaded_model_id!r}); refusing to build embeddings with "
+            "a fallback encoder. Set FED_PULSE_SENTIMENT_MODEL to a valid model."
+        )
+
+
+def loaded_encoder_provenance() -> dict[str, Any]:
+    """Provenance of the loaded sentiment encoder, for stamping built artifacts.
+
+    Returns the active model id, its pinned revision, and hidden size so a
+    ``<artifact>.encoder.json`` sidecar can record exactly which encoder produced
+    a cached embedding file.
+    """
+    classifier = get_classifier()
+    model = getattr(classifier, "model", None)
+    hidden = getattr(getattr(model, "config", None), "hidden_size", None)
+    try:
+        revision = revision_for(MODEL_ID)
+    except Exception:
+        revision = None
+    return {
+        "model_id": get_loaded_model_id(),
+        "revision": revision,
+        "hidden_size": int(hidden) if hidden is not None else None,
+    }
 
 
 def classifier_load_count() -> int:
@@ -238,6 +362,11 @@ def encode_chunks(text: str, classifier: Any = None) -> list[ChunkEncoding]:
     if not text:
         return []
     if classifier is None:
+        # Boundary guard: refuse to build encodings on a fallback encoder, so the
+        # silent-fallback contamination cannot occur for ANY caller of the global
+        # singleton — not just the build scripts that call this guard explicitly.
+        # Callers that inject their own classifier own that choice.
+        assert_primary_model_loaded()
         classifier = get_classifier()
     chunks = split_into_chunks(text, classifier=classifier)
     if not chunks:
@@ -271,12 +400,23 @@ def analyze_text(text: str) -> dict[str, Any]:
     classifier remains the fallback. Returned shape stays
     ``{label, score, raw[]}`` so the /analyze + prepare_training_data
     + attention_ablation surfaces stay drop-in.
+
+    Edge-case contract: empty / whitespace-only / majority-non-Latin
+    inputs never reach the classifier. The function returns the
+    standard ``{label: "UNKNOWN", score: 0.0, raw: []}`` block with
+    an extra ``status`` key so callers can surface a parseable
+    informational banner instead of a misleading stance label. The
+    classifier path otherwise returns ``status="ok"``.
     """
 
     text_value = text or ""
+    edge_status = _classify_stance_input(text_value)
+    if edge_status is not None:
+        return {"label": "UNKNOWN", "score": 0.0, "raw": [], "status": edge_status}
     response = _stance_from_multi_axis(text_value)
     if response is None:
         response = aggregate_label(encode_chunks(text_value))
+    response.setdefault("status", "ok")
 
     manifest_path = resolve_ood_manifest_path()
     if manifest_path is None:
@@ -291,9 +431,7 @@ def analyze_text(text: str) -> dict[str, Any]:
 
     classifier = get_classifier()
     chunks = split_into_chunks(text_value, classifier=classifier)
-    ood = score_text_ood(
-        text_value, classifier=classifier, manifest=manifest, chunks=chunks
-    )
+    ood = score_text_ood(text_value, classifier=classifier, manifest=manifest, chunks=chunks)
     response["ood_energy"] = ood.get("ood_energy")
     response["ood_threshold"] = ood.get("ood_threshold")
     response["is_in_distribution"] = ood.get("is_in_distribution")
@@ -332,10 +470,7 @@ def _stance_from_multi_axis(text: str) -> dict[str, Any] | None:
     if not stance:
         return None
     distribution = stance.get("distribution") or {}
-    raw = [
-        {"label": str(name), "score": float(score)}
-        for name, score in distribution.items()
-    ]
+    raw = [{"label": str(name), "score": float(score)} for name, score in distribution.items()]
     return {
         "label": str(stance.get("label", "")),
         "score": float(stance.get("confidence", 0.0) or 0.0),
@@ -361,16 +496,12 @@ def aggregate_label(encodings: list[ChunkEncoding]) -> dict[str, Any]:
         return {"label": "UNKNOWN", "score": 0.0, "raw": []}
 
     averaged: list[dict[str, float | str]] = [
-        {"label": label, "score": score / score_count}
-        for label, score in aggregate.items()
+        {"label": label, "score": score / score_count} for label, score in aggregate.items()
     ]
     best = max(averaged, key=lambda item: float(item["score"]))
 
     return {
         "label": str(best["label"]),
         "score": float(best["score"]),
-        "raw": [
-            {"label": str(item["label"]), "score": float(item["score"])}
-            for item in averaged
-        ],
+        "raw": [{"label": str(item["label"]), "score": float(item["score"])} for item in averaged],
     }

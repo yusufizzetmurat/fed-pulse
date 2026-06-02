@@ -6,9 +6,15 @@ export function toNumericOrNull(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+// Strip the ISO 8601 timezone suffix so a downstream ``new Date`` call
+// renders the wall-clock date instead of shifting by offset. The naive
+// ``.split("+")`` only handled positive offsets and missed ``Z`` and
+// negative offsets entirely.
+const ISO_TZ_SUFFIX = /(?:[+-]\d{2}:?\d{2}|Z)$/;
+
 export function normalizeTimestamp(value: unknown): string {
   if (!value) return "";
-  return String(value).split("+")[0];
+  return String(value).replace(ISO_TZ_SUFFIX, "");
 }
 
 // Strict mapping. The dashboard refuses to silently relabel a non-stance
@@ -71,7 +77,7 @@ export function formatVol(value: number | null | undefined): string {
 
 export function formatDateTick(value: unknown): string {
   if (!value) return "";
-  const clean = String(value).split("+")[0];
+  const clean = String(value).replace(ISO_TZ_SUFFIX, "");
   const dateValue = new Date(clean);
   if (Number.isNaN(dateValue.getTime())) return String(value);
   return dateValue.toLocaleDateString("en-US", { month: "short", day: "numeric" });

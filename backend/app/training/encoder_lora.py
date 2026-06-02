@@ -111,8 +111,7 @@ def build_lora_encoder(
     ref = encoder_ref(encoder_alias)
     if ref is None:
         raise ValueError(
-            f"encoder alias {encoder_alias!r} is not registered in "
-            "models/registry.yaml"
+            f"encoder alias {encoder_alias!r} is not registered in " "models/registry.yaml"
         )
     if not ref.revision:
         raise ValueError(
@@ -122,8 +121,13 @@ def build_lora_encoder(
             "encoder build"
         )
 
-    tokenizer = AutoTokenizer.from_pretrained(ref.repo, revision=ref.revision)  # type: ignore[no-untyped-call]
-    base_encoder = AutoModel.from_pretrained(ref.repo, revision=ref.revision)
+    trust = bool(getattr(ref, "trust_remote_code", False))
+    tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
+        ref.repo, revision=ref.revision, trust_remote_code=trust
+    )
+    base_encoder = AutoModel.from_pretrained(
+        ref.repo, revision=ref.revision, trust_remote_code=trust
+    )
     base_encoder.requires_grad_(False)
 
     lora_config = LoraConfig(

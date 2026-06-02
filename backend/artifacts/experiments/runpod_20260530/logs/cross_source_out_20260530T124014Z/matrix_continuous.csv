@@ -1,0 +1,3 @@
+encoder_alias,checkpoint,source_type,status,support,target_key,paired_support,pearson_r,spearman_r,zscore_rmse,latency_ms_p50,latency_ms_p95
+finbert_fed_adjacent,yusufizzetmurat/finbert-fed-adjacent,gss_factor_decomposition,ok,138,gss_target_factor,138,-0.011364,-0.035579,1.422226,0.066580,0.240429
+finbert_fed_adjacent,yusufizzetmurat/finbert-fed-adjacent,gss_factor_decomposition,ok,138,gss_path_factor,138,0.335710,0.346268,1.152641,0.066580,0.240429

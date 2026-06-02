@@ -101,10 +101,7 @@ class LoughranMcDonaldLexicon:
 
     def words(self, category: str) -> frozenset[str]:
         if category not in LM_CATEGORIES:
-            raise KeyError(
-                f"Unknown L-M category: {category!r}. "
-                f"Known: {LM_CATEGORIES}"
-            )
+            raise KeyError(f"Unknown L-M category: {category!r}. " f"Known: {LM_CATEGORIES}")
         return self.categories.get(category, frozenset())
 
     @property
@@ -196,9 +193,7 @@ def load_loughran_mcdonald(
     with csv_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         if reader.fieldnames is None:
-            raise ValueError(
-                f"Loughran-McDonald CSV at {csv_path} is empty or has no header."
-            )
+            raise ValueError(f"Loughran-McDonald CSV at {csv_path} is empty or has no header.")
         word_column = _resolve_word_column(reader.fieldnames)
         for row in reader:
             token = _normalise_token(str(row.get(word_column, "")))
@@ -228,8 +223,7 @@ def _resolve_word_column(fieldnames: Iterable[str]) -> str:
         if candidate in field_list:
             return candidate
     raise ValueError(
-        f"Loughran-McDonald CSV header missing the Word column; "
-        f"saw {field_list[:8]}..."
+        f"Loughran-McDonald CSV header missing the Word column; " f"saw {field_list[:8]}..."
     )
 
 
@@ -275,9 +269,7 @@ def compute_lm_features(
                 counts[category] += 1
 
     denom = float(len(tokens))
-    return {
-        f"lm_{cat}_pct": 100.0 * counts[cat] / denom for cat in LM_CATEGORIES
-    }
+    return {f"lm_{cat}_pct": 100.0 * counts[cat] / denom for cat in LM_CATEGORIES}
 
 
 def compute_lm_feature_vector(

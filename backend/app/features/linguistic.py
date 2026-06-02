@@ -73,6 +73,7 @@ import math
 import pickle
 import re
 import sys
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -505,6 +506,16 @@ def _build_vectorizer(
     )
 
 
+class LinguisticLdaSlotWarning(UserWarning):
+    """Emitted when a named LDA slot falls into the misc bucket.
+
+    Downstream consumers that need to filter the misc-bucket signal out
+    of their pytest warning capture (or surface it explicitly in a CI
+    log) can target this category directly rather than parsing the
+    message string.
+    """
+
+
 #: Minimum number of slot seed words that must appear in the winning
 #: topic's top-N vocabulary for the slot to be assigned. If a slot's
 #: best topic clears posterior mass but only via incidental seed hits
@@ -518,10 +529,45 @@ MIN_SEED_OVERLAP: int = 2
 SEED_OVERLAP_TOP_N: int = 10
 
 
+@dataclass(frozen=True)
+class _NamedSlotDiagnostic:
+    """Per-slot trace from the named-topic assignment pass.
+
+    ``status`` is one of ``"assigned"``, ``"unassigned_below_floor"`` (a
+    candidate topic exists but its top-N vocabulary contains fewer than
+    ``MIN_SEED_OVERLAP`` seed words), ``"unassigned_no_seed_in_vocab"``
+    (none of the slot's seeds appear in the fitted vectoriser's
+    vocabulary), or ``"unassigned_no_candidate"`` (every topic is
+    already used by a higher-priority slot).
+    """
+
+    slot: str
+    status: str
+    best_topic: int | None
+    overlap_count: int
+    overlap_threshold: int
+    overlap_top_n: int
+
+
 def _assign_named_topics(
     lda: LatentDirichletAllocation, vocab: Sequence[str]
 ) -> tuple[dict[str, int], tuple[int, ...]]:
     """Pin each named topic slot to its best-matching LDA topic.
+
+    Thin wrapper over :func:`_assign_named_topics_with_diagnostics` that
+    discards the per-slot trace, preserving the original two-tuple
+    return shape that the public surface and the existing unit tests
+    consume.
+    """
+
+    assignments, misc, _ = _assign_named_topics_with_diagnostics(lda, vocab)
+    return assignments, misc
+
+
+def _assign_named_topics_with_diagnostics(
+    lda: LatentDirichletAllocation, vocab: Sequence[str]
+) -> tuple[dict[str, int], tuple[int, ...], list[_NamedSlotDiagnostic]]:
+    """Same as :func:`_assign_named_topics` plus a per-slot trace.
 
     Iterate the named slots in declaration order; for each slot pick
     the unassigned topic whose seed words receive the most cumulative
@@ -535,12 +581,15 @@ def _assign_named_topics(
     (``SEED_OVERLAP_TOP_N``) vocabulary, otherwise the slot is left
     unassigned. Downstream callers emit ``0.0`` for the slot and the
     topic that would have been pinned falls through to the misc pool.
-    This blocks the silent-mislabel failure mode observed on the
-    Sprint 1 fit where ``employment`` inherited a QE / balance-sheet
-    topic with zero labor vocabulary.
+    This blocks the silent-mislabel failure mode observed on an
+    early training-package fit where ``employment`` inherited a
+    QE / balance-sheet topic with zero labor vocabulary.
 
-    Returns the slot->index map plus the remaining topic indices in
-    ascending order.
+    Returns the slot->index map, the remaining topic indices in
+    ascending order, and a list of :class:`_NamedSlotDiagnostic` rows
+    (one per slot in declaration order) carrying the structured outcome
+    so callers can surface the misc-bucket drop reason without parsing
+    the human-readable coherence note.
     """
 
     word_to_idx = {w: i for i, w in enumerate(vocab)}
@@ -560,11 +609,22 @@ def _assign_named_topics(
 
     assignments: dict[str, int] = {}
     used: set[int] = set()
+    diagnostics: list[_NamedSlotDiagnostic] = []
     for slot in NAMED_TOPIC_KEYS:
         seeds = TOPIC_SEED_WORDS[slot]
         seed_set = set(seeds)
         seed_indices = [word_to_idx[w] for w in seeds if w in word_to_idx]
         if not seed_indices:
+            diagnostics.append(
+                _NamedSlotDiagnostic(
+                    slot=slot,
+                    status="unassigned_no_seed_in_vocab",
+                    best_topic=None,
+                    overlap_count=0,
+                    overlap_threshold=MIN_SEED_OVERLAP,
+                    overlap_top_n=SEED_OVERLAP_TOP_N,
+                )
+            )
             continue
         # Walk topic indices in ascending order with a strict ``>``
         # comparison so ties go to the lower index (deterministic and
@@ -579,6 +639,16 @@ def _assign_named_topics(
                 best_score = score
                 best_topic = topic_idx
         if best_topic < 0:
+            diagnostics.append(
+                _NamedSlotDiagnostic(
+                    slot=slot,
+                    status="unassigned_no_candidate",
+                    best_topic=None,
+                    overlap_count=0,
+                    overlap_threshold=MIN_SEED_OVERLAP,
+                    overlap_top_n=SEED_OVERLAP_TOP_N,
+                )
+            )
             continue
         # Seed-overlap floor: reject the assignment if the winning
         # topic's top-N vocabulary does not contain at least
@@ -587,12 +657,32 @@ def _assign_named_topics(
         # (if any) and otherwise falls to the misc pool.
         overlap = top_n_per_topic[best_topic] & seed_set
         if len(overlap) < MIN_SEED_OVERLAP:
+            diagnostics.append(
+                _NamedSlotDiagnostic(
+                    slot=slot,
+                    status="unassigned_below_floor",
+                    best_topic=best_topic,
+                    overlap_count=len(overlap),
+                    overlap_threshold=MIN_SEED_OVERLAP,
+                    overlap_top_n=SEED_OVERLAP_TOP_N,
+                )
+            )
             continue
         assignments[slot] = best_topic
         used.add(best_topic)
+        diagnostics.append(
+            _NamedSlotDiagnostic(
+                slot=slot,
+                status="assigned",
+                best_topic=best_topic,
+                overlap_count=len(overlap),
+                overlap_threshold=MIN_SEED_OVERLAP,
+                overlap_top_n=SEED_OVERLAP_TOP_N,
+            )
+        )
 
     misc = tuple(sorted(i for i in range(normalised.shape[0]) if i not in used))
-    return assignments, misc
+    return assignments, misc, diagnostics
 
 
 def _top_words_for_topic(
@@ -642,7 +732,7 @@ def fit_lda(
         evaluate_every=-1,
     )
     lda.fit(dtm)
-    assignments, misc = _assign_named_topics(lda, vocab)
+    assignments, misc, diagnostics = _assign_named_topics_with_diagnostics(lda, vocab)
     top_words = [
         _top_words_for_topic(lda, vocab, t, TOP_WORDS_PER_TOPIC) for t in range(num_topics)
     ]
@@ -650,9 +740,7 @@ def fit_lda(
     for slot, topic_idx in assignments.items():
         seeds = TOPIC_SEED_WORDS[slot]
         overlap = set(top_words[topic_idx][:SEED_OVERLAP_TOP_N]) & set(seeds)
-        coherence[slot] = (
-            f"clean (overlap with seeds: {sorted(overlap)})"
-        )
+        coherence[slot] = f"clean (overlap with seeds: {sorted(overlap)})"
     # Slots that did NOT clear the seed-overlap floor are recorded so
     # the audit JSON makes the drop-to-misc explicit. Downstream
     # readers can see at a glance which named slot was emitted as 0.0.
@@ -664,6 +752,35 @@ def fit_lda(
             f"seed-overlap floor (MIN_SEED_OVERLAP={MIN_SEED_OVERLAP} of top-"
             f"{SEED_OVERLAP_TOP_N}); slot emitted as 0.0 and the topic falls "
             "to misc"
+        )
+    # One ``LinguisticLdaSlotWarning`` per dropped slot. Downstream
+    # consumers (per-fold training-package builds, the official seed
+    # sweep) see the misc-bucket drop in CI logs instead of having to
+    # diff the LDA audit JSON against a clean reference run. The
+    # ``[linguistic.lda]`` category prefix is also written into the
+    # message body so log scrapers without warning-class metadata can
+    # still filter for the event.
+    for diag in diagnostics:
+        if diag.status == "assigned":
+            continue
+        if diag.status == "unassigned_below_floor":
+            reason = (
+                f"best candidate topic {diag.best_topic} cleared posterior "
+                f"weight but only contained {diag.overlap_count} of the "
+                f"slot's seed words in its top-{diag.overlap_top_n} "
+                f"vocabulary (threshold {diag.overlap_threshold})"
+            )
+        elif diag.status == "unassigned_no_seed_in_vocab":
+            reason = "no slot seed word survived the vectoriser's vocabulary " "cutoffs"
+        else:
+            reason = "every fitted topic was already claimed by a " "higher-priority slot"
+        warnings.warn(
+            f"[linguistic.lda] named slot {diag.slot!r} fell into the misc "
+            f"bucket -- {reason}. The slot emits 0.0 for every document in "
+            "this fit; the LDA topic that would have been pinned falls "
+            "through into the next misc_* slot.",
+            LinguisticLdaSlotWarning,
+            stacklevel=2,
         )
     return LdaArtifact(
         vectorizer=vectorizer,
@@ -774,8 +891,7 @@ def compute_linguistic_features(
     else:
         shares = _topic_shares(text, lda_artifact)
         topic_named = {
-            slot: float(shares[idx])
-            for slot, idx in lda_artifact.topic_assignments.items()
+            slot: float(shares[idx]) for slot, idx in lda_artifact.topic_assignments.items()
         }
         for slot in NAMED_TOPIC_KEYS:
             topic_named.setdefault(slot, 0.0)
@@ -992,9 +1108,7 @@ def build_linguistic_feature_frame(
     rows: list[dict[str, Any]] = []
     for doc in docs:
         prior_tokens = prior_tokens_by_hash.get(doc.text_hash)
-        vec = compute_linguistic_features(
-            doc.text, artifact, prior_statement_tokens=prior_tokens
-        )
+        vec = compute_linguistic_features(doc.text, artifact, prior_statement_tokens=prior_tokens)
         row = {"text_hash": doc.text_hash}
         row.update(vec.as_dict())
         rows.append(row)
@@ -1015,9 +1129,7 @@ def _empty_frame() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def save_lda_artifact(
-    artifact: LdaArtifact, *, model_path: Path, topics_path: Path
-) -> None:
+def save_lda_artifact(artifact: LdaArtifact, *, model_path: Path, topics_path: Path) -> None:
     """Persist the fitted LDA bundle + top-words JSON.
 
     Top-words are written sorted by topic index; the JSON is dumped
@@ -1039,7 +1151,9 @@ def save_lda_artifact(
 
     # Invert ``topic_assignments`` so the JSON makes per-topic narration
     # natural: every topic index lists its top words and its label.
-    label_for_topic: dict[int, str] = {idx: slot for slot, idx in artifact.topic_assignments.items()}
+    label_for_topic: dict[int, str] = {
+        idx: slot for slot, idx in artifact.topic_assignments.items()
+    }
     for offset, idx in enumerate(artifact.misc_topic_indices, start=1):
         label_for_topic[idx] = f"misc_{offset}"
     payload = {
@@ -1060,9 +1174,7 @@ def save_lda_artifact(
         ],
     }
     topics_path.parent.mkdir(parents=True, exist_ok=True)
-    topics_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    topics_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def load_lda_artifact(model_path: Path) -> LdaArtifact:
@@ -1072,8 +1184,7 @@ def load_lda_artifact(model_path: Path) -> LdaArtifact:
     lda: LatentDirichletAllocation = bundle["lda"]
     vocab = vectorizer.get_feature_names_out().tolist()
     top_words = [
-        _top_words_for_topic(lda, vocab, t, TOP_WORDS_PER_TOPIC)
-        for t in range(lda.n_components)
+        _top_words_for_topic(lda, vocab, t, TOP_WORDS_PER_TOPIC) for t in range(lda.n_components)
     ]
     return LdaArtifact(
         vectorizer=vectorizer,
@@ -1140,9 +1251,7 @@ def update_sources_lock_for_linguistic_features(
         "feature_column_count": len(feature_columns),
         "retrieved_at_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(),
     }
-    lock_path.write_text(
-        _json.dumps(existing, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    lock_path.write_text(_json.dumps(existing, indent=2, sort_keys=True), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

@@ -10,13 +10,13 @@ import type {
 function regimeLine(regime: RegimeClassificationResponse | null | undefined): string | null {
   if (!regime?.argmax_class) return null;
   if (regime.argmax_class === "high") {
-    return "Expect tighter markets and elevated volatility over the next 10 days.";
+    return "Predicts elevated realised volatility over the next 10 days.";
   }
   if (regime.argmax_class === "calm") {
-    return "Expect easier conditions and calmer volatility.";
+    return "Predicts low realised volatility over the next 10 days.";
   }
   if (regime.argmax_class === "normal") {
-    return "The model expects market volatility in line with the recent baseline.";
+    return "Predicts realised volatility in line with the recent baseline.";
   }
   return null;
 }

@@ -116,11 +116,7 @@ def fomc_only_macro_f1(  # noqa: PLR0913 — kw-only stratification config; coll
     """
 
     allowed = {str(s).lower() for s in fomc_source_types}
-    subset = [
-        r
-        for r in records
-        if str(r.get(source_type_field, "")).lower() in allowed
-    ]
+    subset = [r for r in records if str(r.get(source_type_field, "")).lower() in allowed]
     return _report_cell(
         subset,
         n_classes=n_classes,
@@ -154,9 +150,7 @@ def with_without_fold(  # noqa: PLR0913 — kw-only stratification config; colla
 
     target_fold = str(drop_fold_id)
     with_records = list(records)
-    without_records = [
-        r for r in records if str(r.get(fold_field, "")) != target_fold
-    ]
+    without_records = [r for r in records if str(r.get(fold_field, "")) != target_fold]
     with_cell = _report_cell(
         with_records,
         n_classes=n_classes,
@@ -177,9 +171,7 @@ def with_without_fold(  # noqa: PLR0913 — kw-only stratification config; colla
         fold_field=fold_field,
         label="without_fold",
     )
-    delta = with_cell["macro_f1"]["row_pooled"] - without_cell["macro_f1"][
-        "row_pooled"
-    ]
+    delta = with_cell["macro_f1"]["row_pooled"] - without_cell["macro_f1"]["row_pooled"]
     return {
         "with": with_cell,
         "without": without_cell,
@@ -217,9 +209,7 @@ def with_without_macro_release(  # noqa: PLR0913 — kw-only ablation surface; c
         fold_field=fold_field,
         label="with_macro_release",
     )
-    without_records = [
-        r for r in records if not bool(r.get(is_macro_release_field, False))
-    ]
+    without_records = [r for r in records if not bool(r.get(is_macro_release_field, False))]
     without_cell = _report_cell(
         without_records,
         n_classes=n_classes,
@@ -230,9 +220,7 @@ def with_without_macro_release(  # noqa: PLR0913 — kw-only ablation surface; c
         fold_field=fold_field,
         label="without_macro_release",
     )
-    delta = with_cell["macro_f1"]["row_pooled"] - without_cell["macro_f1"][
-        "row_pooled"
-    ]
+    delta = with_cell["macro_f1"]["row_pooled"] - without_cell["macro_f1"]["row_pooled"]
     return {
         "with": with_cell,
         "without": without_cell,
@@ -356,9 +344,7 @@ def _report_cell(  # noqa: PLR0913
         targets=targets,
         n_classes=n_classes,
     )
-    mean_of_fold_means = _mean_of_fold_means(
-        preds, targets, fold_ids, n_classes=n_classes
-    )
+    mean_of_fold_means = _mean_of_fold_means(preds, targets, fold_ids, n_classes=n_classes)
     ci = _bootstrap_macro_f1_ci(
         preds,
         targets,

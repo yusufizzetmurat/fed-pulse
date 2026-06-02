@@ -41,11 +41,11 @@ const ORDINAL_BPS: Record<string, number> = {
 
 const PRIMARY_MODEL_PREFERENCE = ["ordinal_logit", "hist_gbt", "ois_baseline", "naive_carry"];
 
-function pickPrimaryModel(modelNames: string[]): string {
+function pickPrimaryModel(modelNames: string[]): string | null {
   for (const candidate of PRIMARY_MODEL_PREFERENCE) {
     if (modelNames.includes(candidate)) return candidate;
   }
-  return modelNames[0] ?? "";
+  return modelNames[0] ?? null;
 }
 
 function formatPercent(value: number | null | undefined, digits: number = 1): string {
@@ -82,7 +82,11 @@ function ProbabilityBar({
               ? `rgba(56, 189, 248, ${0.2 + Math.abs(bp) / 90})`
               : bp > 0
               ? `rgba(244, 114, 182, ${0.2 + bp / 90})`
-              : "rgba(148, 163, 184, 0.45)";
+              : // Hold (bp=0) was rgba(148,163,184,0.45) — too close to the
+                // container background to read when one class carries 100%
+                // of the mass. Use the same slate but at full opacity so
+                // the segment is visibly distinct from the bar border.
+                "rgba(100, 116, 139, 0.85)";
           return (
             <div
               key={cls}
@@ -476,7 +480,10 @@ export default function DecisionsPage() {
     };
   }, [apiBaseUrl]);
 
-  const primaryModel = data ? pickPrimaryModel(data.model_names) : "";
+  // ``pickPrimaryModel`` returns ``null`` when the response carries no
+  // model names; fall back to the OIS baseline rather than threading an
+  // empty string into ORDINAL_LABELS, which would render "undefined".
+  const primaryModel = data ? pickPrimaryModel(data.model_names) ?? "ois_baseline" : "ois_baseline";
 
   return (
     <>
@@ -493,7 +500,6 @@ export default function DecisionsPage() {
             </h1>
             <p className="max-w-2xl text-muted-foreground">
               Next-FOMC rate-decision forecast as an ordinal class with the OIS-implied baseline alongside.
-              Reads <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">data/artifacts/next_fomc/</code>.
             </p>
           </div>
 
@@ -533,23 +539,13 @@ export default function DecisionsPage() {
           ) : (
             <Card>
               <CardHeader>
-                <CardTitle>No forecast available.</CardTitle>
+                <CardTitle>No forecast available yet.</CardTitle>
                 <CardDescription>
-                  Train a checkpoint to populate this page. The forecaster reads from{" "}
-                  <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-                    data/artifacts/next_fomc/
-                  </code>
-                  .
+                  A rate-decision forecast for the next FOMC meeting will appear here once the
+                  decision model has been trained against the current data window.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-2 text-sm text-muted-foreground">
-                <p>
-                  Run{" "}
-                  <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-                    make next-fomc TRAINING_PACKAGE_ID=&lt;id&gt;
-                  </code>{" "}
-                  to publish a forecast.
-                </p>
                 {data?.upcoming_meeting ? (
                   <p>
                     Next scheduled meeting:{" "}

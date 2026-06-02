@@ -15,6 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { friendlyEncoderName } from "@/lib/analyze/encoders";
 import { cn } from "@/lib/utils";
 import type {
   AnalyzeResult,
@@ -106,22 +107,14 @@ function multiAxisSummary(multiAxis: MultiAxisResponse): string {
   if (multiAxis.stance) parts.push(`stance ${multiAxis.stance.label}`);
   if (multiAxis.factor) parts.push(`factor ${multiAxis.factor.value.toFixed(2)}`);
   if (multiAxis.certainty) parts.push(`certainty ${multiAxis.certainty.label}`);
-  if (multiAxis.topic)
-    parts.push(
-      `topic ${(multiAxis.topic.label ?? multiAxis.topic.primary ?? "—").toString()}`,
-    );
   return parts.join(" · ") || "no sentiment labels";
 }
 
 function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
-  const sentiment = result.sentiment;
   const multiAxis = result.multi_axis;
   const regime = result.regime_classification;
   const encoderKey = (result.model as { encoder_key?: string } | undefined)?.encoder_key;
   const xaiSentences = result.xai?.sentences?.length ?? 0;
-  const ood = sentiment?.is_in_distribution;
-  const oodEnergy = sentiment?.ood_energy;
-  const oodThreshold = sentiment?.ood_threshold;
 
   const ingestStep: Step = {
     key: "ingest",
@@ -153,65 +146,17 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
     key: "encode",
     title: "Encode",
     blurb:
-      "Runs the text through the language model. Flags inputs that look unlike anything the model was trained on, so the workspace can warn before trusting the result.",
+      "Runs the text through the language model and emits the encoder embedding the downstream heads consume.",
     icon: <Layers className="h-3.5 w-3.5" />,
-    state: ood === false ? "warn" : "ok",
+    state: "ok",
     summary: encoderKey
-      ? `Model variant: ${encoderKey}${ood === false ? " · unfamiliar text flag set" : ""}`
+      ? `Model variant: ${friendlyEncoderName(encoderKey)}`
       : "Model variant: default",
     body: (
-      <div className="space-y-3">
-        <dl className="grid gap-x-4 gap-y-1.5 text-sm sm:grid-cols-2">
-          <dt className="text-muted-foreground">Model variant</dt>
-          <dd className="numeric text-right">{encoderKey ?? "default"}</dd>
-          <dt className="text-muted-foreground">Unfamiliarity score</dt>
-          <dd className="numeric text-right">{oodEnergy != null ? oodEnergy.toFixed(3) : "—"}</dd>
-          <dt className="text-muted-foreground">Unfamiliarity threshold</dt>
-          <dd className="numeric text-right">
-            {oodThreshold != null ? oodThreshold.toFixed(3) : "—"}
-          </dd>
-          <dt className="text-muted-foreground">Familiar to model</dt>
-          <dd className="text-right">
-            {ood == null ? (
-              "—"
-            ) : ood ? (
-              <Badge variant="dovish" className="text-[10px]">
-                yes
-              </Badge>
-            ) : (
-              <Badge variant="hawkish" className="text-[10px]">
-                <AlertTriangle className="h-3 w-3" /> no
-              </Badge>
-            )}
-          </dd>
-        </dl>
-        {oodEnergy != null && oodThreshold != null && oodThreshold !== 0 ? (
-          <div className="space-y-1">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">Score vs threshold</span>
-              <span className="numeric text-foreground">
-                {oodEnergy.toFixed(3)} / {oodThreshold.toFixed(3)}
-              </span>
-            </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-              <div
-                className={cn("h-full", ood === false ? "bg-hawkish" : "bg-up")}
-                style={{
-                  width: `${Math.min(
-                    100,
-                    Math.max(2, Math.abs(oodEnergy / oodThreshold) * 100),
-                  ).toFixed(1)}%`,
-                }}
-                aria-hidden="true"
-              />
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              A score below the threshold means the text looks familiar to the model; above
-              means it does not.
-            </p>
-          </div>
-        ) : null}
-      </div>
+      <p className="text-sm text-muted-foreground">
+        Model variant: <span className="numeric text-foreground">{encoderKey ?? "default"}</span>. No
+        OOD signal available.
+      </p>
     ),
   };
 
@@ -219,7 +164,7 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
     key: "multi-axis",
     title: "Sentiment breakdown",
     blurb:
-      "Four predictions from the same shared model — stance, hawkish / dovish score, certainty, and topic — calibrated against the labelled FOMC corpus.",
+      "Three predictions from the same shared model: stance, hawkish / dovish score, and certainty. Calibrated against the labelled FOMC corpus.",
     icon: <Workflow className="h-3.5 w-3.5" />,
     state: multiAxis ? "ok" : "absent",
     summary: multiAxis ? multiAxisSummary(multiAxis) : "Sentiment model not loaded",
@@ -248,15 +193,6 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
               {multiAxis.certainty ? `· ${multiAxis.certainty.confidence.toFixed(2)}` : ""}
             </span>
           </li>
-          <li className="flex items-center justify-between">
-            <span className="text-muted-foreground">topic</span>
-            <span className="numeric capitalize">
-              {(multiAxis.topic?.label ?? multiAxis.topic?.primary ?? "—")
-                .toString()
-                .replace(/_/g, " ")}{" "}
-              {multiAxis.topic ? `· ${multiAxis.topic.confidence.toFixed(2)}` : ""}
-            </span>
-          </li>
         </ul>
         <div className="grid gap-2 sm:grid-cols-2">
           {multiAxis.stance ? (
@@ -282,15 +218,12 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
           {multiAxis.certainty ? (
             <MiniBar label="certainty confidence" value={multiAxis.certainty.confidence} />
           ) : null}
-          {multiAxis.topic ? (
-            <MiniBar label="topic confidence" value={multiAxis.topic.confidence} />
-          ) : null}
         </div>
       </div>
     ) : (
       <p className="text-sm text-muted-foreground">
         Sentiment breakdown model isn't loaded. The stance card falls back to the
-        legacy sentiment classifier — load a sentiment model from the Settings page.
+        legacy sentiment classifier.
       </p>
     ),
   };
@@ -299,7 +232,7 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
     key: "regime",
     title: "Volatility Regime prediction",
     blurb:
-      "Predicts the 10-day forward volatility regime — calm / normal / high — together with a calibrated prediction set so the UI can hedge across more than one class when the model is unsure.",
+      "Predicts the 10-day forward volatility regime (calm / normal / high) together with a calibrated prediction set so the UI can hedge across more than one class when the model is unsure.",
     icon: <Cpu className="h-3.5 w-3.5" />,
     state: regime ? "ok" : "absent",
     summary: regime

@@ -131,7 +131,7 @@ def _score_with_hf(test_rows, args) -> tuple[list[str], list[str], list[float], 
         elapsed_ms = (time.perf_counter() - t0) * 1000
         latencies_ms.append(elapsed_ms)
         generated = tokenizer.decode(
-            output[0, inputs["input_ids"].shape[-1]:],
+            output[0, inputs["input_ids"].shape[-1] :],
             skip_special_tokens=True,
         )
         pred_label = _parse_label(generated)
@@ -188,7 +188,9 @@ def main() -> int:
     _, test_rows = _split_by_fold(rows, fold)
     if not test_rows:
         raise SystemExit(f"No test rows for fold {args.fold_id}")
-    print(f"[llm_zs] backend={args.llm_backend} checkpoint={args.llm_checkpoint} test_rows={len(test_rows)}")
+    print(
+        f"[llm_zs] backend={args.llm_backend} checkpoint={args.llm_checkpoint} test_rows={len(test_rows)}"
+    )
 
     if args.llm_backend == "gemini":
         y_true, y_pred, latencies_ms, device_label = _score_with_gemini(test_rows, args)

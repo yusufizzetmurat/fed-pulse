@@ -4,17 +4,16 @@ import { render, screen } from "@testing-library/react";
 import { MultiAxisCards } from "@/components/analyze/MultiAxisCards";
 import { SAMPLE_MULTI_AXIS } from "@/lib/analyze/fixtures";
 
-const EMPTY_AXIS = { stance: null, factor: null, certainty: null, topic: null };
+const EMPTY_AXIS = { stance: null, factor: null, certainty: null };
 
 describe("MultiAxisCards", () => {
-  it("renders four cards from the canonical fixture", () => {
+  it("renders three cards from the canonical fixture (topic retired in ADR 0044)", () => {
     render(<MultiAxisCards multiAxis={SAMPLE_MULTI_AXIS} />);
     expect(screen.getAllByText(/^stance$/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/^factor$/i)).toBeInTheDocument();
     expect(screen.getByText(/^certainty$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^topic$/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^topic$/i)).not.toBeInTheDocument();
     expect(screen.getAllByText(/hawkish/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/^macro$/i)).toBeInTheDocument();
   });
 
   it("returns null when every axis is null", () => {
@@ -22,20 +21,18 @@ describe("MultiAxisCards", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("hides factor / certainty / topic when only stance is available", () => {
+  it("hides factor / certainty when only stance is available", () => {
     render(
       <MultiAxisCards
         multiAxis={{
           stance: SAMPLE_MULTI_AXIS.stance,
           factor: null,
           certainty: null,
-          topic: null,
         }}
       />,
     );
     expect(screen.queryByText(/^factor$/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^certainty$/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/^topic$/i)).not.toBeInTheDocument();
     expect(screen.getAllByText(/^stance$/i).length).toBeGreaterThan(0);
   });
 });

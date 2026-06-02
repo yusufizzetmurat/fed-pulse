@@ -19,9 +19,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR), help="Base data directory.")
     parser.add_argument("--dataset-version", required=True, help="Dataset version id.")
     parser.add_argument("--feature-version", required=True, help="Feature version id.")
-    parser.add_argument("--training-package-id", default="", help="Optional explicit training package id.")
+    parser.add_argument(
+        "--training-package-id", default="", help="Optional explicit training package id."
+    )
     parser.add_argument("--owner", default="unknown", help="Owner for generated run specs.")
-    parser.add_argument("--near-threshold", type=float, default=0.97, help="Near-duplicate threshold.")
+    parser.add_argument(
+        "--near-threshold", type=float, default=0.97, help="Near-duplicate threshold."
+    )
     parser.add_argument("--include-hf", action="store_true", help="Include Hugging Face ingestion.")
     parser.add_argument("--include-kaggle", action="store_true", help="Include Kaggle ingestion.")
     parser.add_argument("--include-scraped", action="store_true", help="Include scraped ingestion.")
@@ -60,7 +64,9 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Include all sources (overrides source-specific flags).",
     )
-    parser.add_argument("--skip-generate-specs", action="store_true", help="Skip baseline spec generation.")
+    parser.add_argument(
+        "--skip-generate-specs", action="store_true", help="Skip baseline spec generation."
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print commands only.")
     return parser.parse_args()
 

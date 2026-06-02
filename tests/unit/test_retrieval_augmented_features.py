@@ -309,7 +309,6 @@ def _make_event_row(
         "axis_time": None,
         "axis_certainty": None,
         "axis_factor": None,
-        "axis_topic": None,
         "axis_time_label": None,
         "axis_certain_label": None,
         "credibility_drift_score": 0.0,
@@ -352,6 +351,12 @@ def loader_package(tmp_path: Path, monkeypatch) -> Path:
     package_dir.mkdir(parents=True)
 
     monkeypatch.setattr(loaders, "DATA_DIR", tmp_path)
+    # ``app.services.analogs._default_retrieval_dir`` reads
+    # ``app.config.DATA_DIR`` lazily so the fixture's tmp_path is honoured
+    # at call time. Patch the source attribute so the retrieval-bundle
+    # resolver does not pick up the real on-disk bundle from production.
+    from app import config as _app_config
+    monkeypatch.setattr(_app_config, "DATA_DIR", tmp_path)
 
     rows = [
         _make_event_row(

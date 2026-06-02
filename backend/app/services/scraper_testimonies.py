@@ -30,12 +30,8 @@ TESTIMONY_URL_PATTERN = re.compile(r"^/newsevents/testimony/[a-z]+(\d{8})[a-z]\.
 DATE_FROM_URL_PATTERN = re.compile(r"/testimony/[a-z]+(\d{8})[a-z]\.htm$")
 
 OUTPUT_FILENAME = "congressional_testimonies.json"
-ARCHIVE_LISTING_URL_TEMPLATE = (
-    ARCHIVE_BASE_URL + "/newsevents/testimony/{year}-testimony.htm"
-)
-ARCHIVE_LISTING_URL = ARCHIVE_LISTING_URL_TEMPLATE.format(
-    year=datetime.now(timezone.utc).year
-)
+ARCHIVE_LISTING_URL_TEMPLATE = ARCHIVE_BASE_URL + "/newsevents/testimony/{year}-testimony.htm"
+ARCHIVE_LISTING_URL = ARCHIVE_LISTING_URL_TEMPLATE.format(year=datetime.now(timezone.utc).year)
 # Default historical window when ``--years`` is not specified on the CLI.
 # The Fed's annual testimony archives go back to ~1996 but the pre-2006
 # pages have looser HTML; the canonical FOMC corpus this project trains
@@ -268,10 +264,7 @@ def write_testimonies_json(parsed: Iterable[ParsedTestimony], output_path: Path)
 # federalreserve.gov 403s the stdlib default ``Python-urllib/x.y`` UA,
 # so every request needs a real-browser-ish header. Identifying the
 # project in the UA keeps the traffic auditable on the upstream's side.
-_USER_AGENT = (
-    "fed-pulse-data-ingester/1.0 "
-    "(+https://github.com/yusufizzetmurat/fed-pulse)"
-)
+_USER_AGENT = "fed-pulse-data-ingester/1.0 " "(+https://github.com/yusufizzetmurat/fed-pulse)"
 
 
 def _http_get_text(url: str, *, timeout: float) -> str:
@@ -355,9 +348,7 @@ def pull_testimonies_archive(  # noqa: PLR0913
         listing_urls = [archive_url]
     else:
         year_list = years if years is not None else _default_years()
-        listing_urls = [
-            ARCHIVE_LISTING_URL_TEMPLATE.format(year=y) for y in year_list
-        ]
+        listing_urls = [ARCHIVE_LISTING_URL_TEMPLATE.format(year=y) for y in year_list]
 
     entries: list[TestimonyListingEntry] = []
     seen_urls: set[str] = set()
@@ -402,8 +393,7 @@ def pull_testimonies_archive(  # noqa: PLR0913
         written = write_testimonies_json(parsed, tmp_path)
         if written == 0:
             raise RuntimeError(
-                f"Testimonies pull produced zero rows (listings tried: "
-                f"{len(listing_urls)})"
+                f"Testimonies pull produced zero rows (listings tried: " f"{len(listing_urls)})"
             )
         tmp_path.replace(target_path)
         return written

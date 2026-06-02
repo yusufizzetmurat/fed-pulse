@@ -11,13 +11,13 @@ import {
 } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
+import { friendlyEncoderName } from "@/lib/analyze/encoders";
 import { cn } from "@/lib/utils";
 import type {
   AnalogCard,
   AnalogVolRegime,
   AnalogsResponse,
 } from "@/lib/analyze/types";
-import { EvidenceLink } from "@/components/analyze/EvidenceLink";
 
 const VOL_REGIME_ORDER: AnalogVolRegime[] = ["calm", "normal", "high"];
 
@@ -187,7 +187,6 @@ export function HistoricalAnalogPanel({
       <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
         Historical analogs
       </Badge>
-      <EvidenceLink section="6.16" label="Method notes · retrieval quality" />
     </div>
   );
 
@@ -280,11 +279,13 @@ export function HistoricalAnalogPanel({
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         Past FOMC statements most similar to the current text, ranked by a
         retrieval model. The post-event volatility marker shows a coarse
-        calm / normal / high band only — raw values are hidden so the
+        calm / normal / high band only. Raw values are hidden so the
         analog does not give away the answer. Index size:{" "}
         <span className="numeric">{analogs.index_size.toLocaleString()}</span>
         {" "}past statements · model variant{" "}
-        <code className="rounded bg-muted px-1">{analogs.encoder_alias}</code>.
+        <code className="rounded bg-muted px-1" title={analogs.encoder_alias}>
+          {friendlyEncoderName(analogs.encoder_alias)}
+        </code>.
       </p>
     </div>
   );

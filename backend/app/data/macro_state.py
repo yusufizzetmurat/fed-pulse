@@ -508,9 +508,7 @@ def build_macro_state(
     for series_id in RATES_PANEL_COLUMN_BY_SERIES:
         delay = RATES_PANEL_PUBLICATION_DELAYS_DAYS[series_id]
         observations = _level_observations(fred_responses[series_id])
-        rates_panel_indices[series_id] = _shifted_publication_index(
-            observations, delay_days=delay
-        )
+        rates_panel_indices[series_id] = _shifted_publication_index(observations, delay_days=delay)
 
     # As-of date set.
     if as_of_dates is None:
@@ -605,9 +603,7 @@ def _data_version_hash(
     # Rates-panel per-series delays land in the hash so the lock changes
     # whenever the publication-delay contract for a panel series moves.
     for series_id in sorted(RATES_PANEL_PUBLICATION_DELAYS_DAYS):
-        parts.append(
-            f"rates_delay|{series_id}={RATES_PANEL_PUBLICATION_DELAYS_DAYS[series_id]}"
-        )
+        parts.append(f"rates_delay|{series_id}={RATES_PANEL_PUBLICATION_DELAYS_DAYS[series_id]}")
     for series_id in sorted(series_responses):
         resp = series_responses[series_id]
         parts.append(f"{series_id}|{resp.observation_end}|{resp.count}")
@@ -700,9 +696,7 @@ def update_sources_lock(
         "fred_series": list(artifacts.fred_series_used),
         "rows": int(artifacts.rows_written),
         "publication_delay_days": int(artifacts.publication_delay_days),
-        "rates_panel_publication_delays_days": dict(
-            RATES_PANEL_PUBLICATION_DELAYS_DAYS
-        ),
+        "rates_panel_publication_delays_days": dict(RATES_PANEL_PUBLICATION_DELAYS_DAYS),
         "rates_panel_columns": dict(RATES_PANEL_COLUMN_BY_SERIES),
         "data_version": artifacts.data_version,
         "value_hash": artifacts.value_hash,

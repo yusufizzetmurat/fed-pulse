@@ -94,16 +94,14 @@ def _load_run_specs(path: Path) -> tuple[list[RunSpec], dict[str, Any]]:
                 options[key] = raw[key]
     else:
         raise ValueError(
-            f"run spec file {path!s} must be a YAML list or mapping; got "
-            f"{type(raw).__name__}"
+            f"run spec file {path!s} must be a YAML list or mapping; got " f"{type(raw).__name__}"
         )
 
     specs: list[RunSpec] = []
     for i, entry in enumerate(run_entries):
         if not isinstance(entry, Mapping):
             raise ValueError(
-                f"run spec entry {i} in {path!s} must be a mapping; got "
-                f"{type(entry).__name__}"
+                f"run spec entry {i} in {path!s} must be a mapping; got " f"{type(entry).__name__}"
             )
         try:
             run_id = str(entry["run_id"])
@@ -129,9 +127,7 @@ def _load_run_specs(path: Path) -> tuple[list[RunSpec], dict[str, Any]]:
     return specs, options
 
 
-def _render_markdown(
-    specs: Sequence[RunSpec], result: MultiRunEnsembleResult
-) -> str:
+def _render_markdown(specs: Sequence[RunSpec], result: MultiRunEnsembleResult) -> str:
     lines: list[str] = []
     lines.append("# Phase 5 multi-run logit-average ensemble")
     lines.append("")
@@ -237,17 +233,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     redundancy_threshold = (
         args.redundancy_kappa_threshold
         if args.redundancy_kappa_threshold is not None
-        else float(
-            options.get(
-                "redundancy_kappa_threshold", DEFAULT_REDUNDANCY_KAPPA_THRESHOLD
-            )
-        )
+        else float(options.get("redundancy_kappa_threshold", DEFAULT_REDUNDANCY_KAPPA_THRESHOLD))
     )
-    n_classes = (
-        args.n_classes
-        if args.n_classes is not None
-        else int(options.get("n_classes", 3))
-    )
+    n_classes = args.n_classes if args.n_classes is not None else int(options.get("n_classes", 3))
 
     result = aggregate_multi_run_ensemble(
         specs,

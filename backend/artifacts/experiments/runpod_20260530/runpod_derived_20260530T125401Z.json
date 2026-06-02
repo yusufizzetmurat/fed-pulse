@@ -1,0 +1,806 @@
+{
+  "configurations": [
+    "baseline",
+    "derived_ablation",
+    "derived_replacement"
+  ],
+  "arm_choices": [
+    "baseline",
+    "derived_ablation",
+    "derived_replacement"
+  ],
+  "arm_aliases": {
+    "ablation": "derived_ablation",
+    "replacement": "derived_replacement"
+  },
+  "arm": null,
+  "five_derived_columns": [
+    "sentiment_score",
+    "stance_label",
+    "factor_labels",
+    "certainty_score",
+    "topic_label"
+  ],
+  "five_derived_fv_attrs": [
+    "sentiment_score",
+    "stance_hawk",
+    "stance_dove",
+    "stance_neutral",
+    "certain_label_certain"
+  ],
+  "five_derived_mt_aux_axes": [
+    "factor",
+    "topic"
+  ],
+  "skipped": {},
+  "seeds": [
+    11,
+    29,
+    47,
+    71,
+    97
+  ],
+  "fold_ids": [
+    "wf_fold_1",
+    "wf_fold_2",
+    "wf_fold_3",
+    "wf_fold_4",
+    "wf_fold_5"
+  ],
+  "epochs": 40,
+  "bootstrap_samples": 500,
+  "bootstrap_seed": 11,
+  "training_package_id": "canonical",
+  "trials": {
+    "baseline": [
+      {
+        "configuration": "baseline",
+        "seed": 11,
+        "use_derived_text_features": true,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.38361086170426567,
+              "regime_accuracy": 0.40833333134651184,
+              "regime_loss": 1.0965324048019345
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.46434108527131784,
+              "regime_accuracy": 0.6355932354927063,
+              "regime_loss": 0.644370133088807
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.3676516011577839,
+              "regime_accuracy": 0.37272727489471436,
+              "regime_loss": 1.0686483014713635
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.38340851027418194,
+              "regime_accuracy": 0.44144144654273987,
+              "regime_loss": 1.045460862073056
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.29239060489060487,
+              "regime_accuracy": 0.29807692766189575,
+              "regime_loss": 1.0844683280357947
+            }
+          }
+        ]
+      },
+      {
+        "configuration": "baseline",
+        "seed": 29,
+        "use_derived_text_features": true,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.2949100015603541,
+              "regime_accuracy": 0.3499999940395355,
+              "regime_loss": 1.1535907150267437
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.48837695997939407,
+              "regime_accuracy": 0.7033898234367371,
+              "regime_loss": 0.5808135220559977
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.4479809061167243,
+              "regime_accuracy": 0.5272727012634277,
+              "regime_loss": 1.039546368338845
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.3000949667616334,
+              "regime_accuracy": 0.30630630254745483,
+              "regime_loss": 1.3029215825307798
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.3588588588588588,
+              "regime_accuracy": 0.4711538553237915,
+              "regime_loss": 1.0694444454633272
+            }
+          }
+        ]
+      },
+      {
+        "configuration": "baseline",
+        "seed": 47,
+        "use_derived_text_features": true,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.39158730158730154,
+              "regime_accuracy": 0.4166666567325592,
+              "regime_loss": 1.2419893689987502
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.4342228464419476,
+              "regime_accuracy": 0.7118644118309021,
+              "regime_loss": 0.6073085049451408
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.21891806390382793,
+              "regime_accuracy": 0.20000000298023224,
+              "regime_loss": 2.1235778916965833
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.39271566011803705,
+              "regime_accuracy": 0.3963963985443115,
+              "regime_loss": 1.0716231450615248
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.5080446046240815,
+              "regime_accuracy": 0.557692289352417,
+              "regime_loss": 1.0501814576295705
+            }
+          }
+        ]
+      },
+      {
+        "configuration": "baseline",
+        "seed": 71,
+        "use_derived_text_features": true,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.34457829450125294,
+              "regime_accuracy": 0.4000000059604645,
+              "regime_loss": 1.2738524331985954
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.4437849162011173,
+              "regime_accuracy": 0.7372881174087524,
+              "regime_loss": 0.5474764735011731
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.31161541149746635,
+              "regime_accuracy": 0.30909091234207153,
+              "regime_loss": 1.0832756822759455
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.3962962962962963,
+              "regime_accuracy": 0.4144144058227539,
+              "regime_loss": 1.1660935258055736
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.36461102250575933,
+              "regime_accuracy": 0.4134615361690521,
+              "regime_loss": 1.111283696614779
+            }
+          }
+        ]
+      },
+      {
+        "configuration": "baseline",
+        "seed": 97,
+        "use_derived_text_features": true,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.3727346096096096,
+              "regime_accuracy": 0.4583333432674408,
+              "regime_loss": 1.152744539246389
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.3910515934807433,
+              "regime_accuracy": 0.6355932354927063,
+              "regime_loss": 0.6637399247137167
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.41221370941505625,
+              "regime_accuracy": 0.4272727370262146,
+              "regime_loss": 1.019977376677773
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.30854676489269656,
+              "regime_accuracy": 0.315315306186676,
+              "regime_loss": 1.118956965707632
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.3599033816425121,
+              "regime_accuracy": 0.4038461446762085,
+              "regime_loss": 1.0740910676809459
+            }
+          }
+        ]
+      }
+    ],
+    "derived_ablation": [
+      {
+        "configuration": "derived_ablation",
+        "seed": 11,
+        "use_derived_text_features": false,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.4861811391223156,
+              "regime_accuracy": 0.4833333194255829,
+              "regime_loss": 1.0557075786985275
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.6582970066841035,
+              "regime_accuracy": 0.8474576473236084,
+              "regime_loss": 0.5057715884709763
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.4165483302076531,
+              "regime_accuracy": 0.4000000059604645,
+              "regime_loss": 1.0241876721382142
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.46230936819172114,
+              "regime_accuracy": 0.46846845746040344,
+              "regime_loss": 1.1158474356160435
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.5541617548482537,
+              "regime_accuracy": 0.5865384340286255,
+              "regime_loss": 1.0480782343791082
+            }
+          }
+        ]
+      },
+      {
+        "configuration": "derived_ablation",
+        "seed": 29,
+        "use_derived_text_features": false,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.46455026455026455,
+              "regime_accuracy": 0.4749999940395355,
+              "regime_loss": 1.0877336653600065
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.7309941520467836,
+              "regime_accuracy": 0.8898305296897888,
+              "regime_loss": 0.5214682625511945
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.49447216063069727,
+              "regime_accuracy": 0.5545454621315002,
+              "regime_loss": 0.9305824875831604
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.29929325460726425,
+              "regime_accuracy": 0.29729729890823364,
+              "regime_loss": 1.1438873230353848
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.3646723646723647,
+              "regime_accuracy": 0.5,
+              "regime_loss": 1.0387747929646418
+            }
+          }
+        ]
+      },
+      {
+        "configuration": "derived_ablation",
+        "seed": 47,
+        "use_derived_text_features": false,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.4261631248735074,
+              "regime_accuracy": 0.46666666865348816,
+              "regime_loss": 1.1371087941922593
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.5683760683760684,
+              "regime_accuracy": 0.7796609997749329,
+              "regime_loss": 0.5340805149684518
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.24111793971319873,
+              "regime_accuracy": 0.22727273404598236,
+              "regime_loss": 1.3277138926766134
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.3524795833618666,
+              "regime_accuracy": 0.36936935782432556,
+              "regime_loss": 1.0847058188781642
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.4736002966258806,
+              "regime_accuracy": 0.567307710647583,
+              "regime_loss": 1.0141640534767737
+            }
+          }
+        ]
+      },
+      {
+        "configuration": "derived_ablation",
+        "seed": 71,
+        "use_derived_text_features": false,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.45775953792369656,
+              "regime_accuracy": 0.5083333253860474,
+              "regime_loss": 1.12871497832648
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.5823080369451338,
+              "regime_accuracy": 0.8644067645072937,
+              "regime_loss": 0.44867544356039013
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.3973055692189977,
+              "regime_accuracy": 0.4000000059604645,
+              "regime_loss": 1.058294770934365
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.3234360410830999,
+              "regime_accuracy": 0.3333333432674408,
+              "regime_loss": 1.13994837394434
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.37023985631872863,
+              "regime_accuracy": 0.375,
+              "regime_loss": 1.0882562674008882
+            }
+          }
+        ]
+      },
+      {
+        "configuration": "derived_ablation",
+        "seed": 97,
+        "use_derived_text_features": false,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.2636622409389561,
+              "regime_accuracy": 0.38333332538604736,
+              "regime_loss": 1.2571061835395998
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.5161563276746522,
+              "regime_accuracy": 0.8474576473236084,
+              "regime_loss": 0.4436723599999638
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.35340693654510985,
+              "regime_accuracy": 0.34545454382896423,
+              "regime_loss": 1.0103444814682008
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.3392814028407249,
+              "regime_accuracy": 0.342342346906662,
+              "regime_loss": 1.104686117008108
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.5238792418567699,
+              "regime_accuracy": 0.5480769276618958,
+              "regime_loss": 1.0682159112049983
+            }
+          }
+        ]
+      }
+    ],
+    "derived_replacement": [
+      {
+        "configuration": "derived_replacement",
+        "seed": 11,
+        "use_derived_text_features": false,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.4861811391223156,
+              "regime_accuracy": 0.4833333194255829,
+              "regime_loss": 1.0557075786985275
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.6582970066841035,
+              "regime_accuracy": 0.8474576473236084,
+              "regime_loss": 0.5057715884709763
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.4165483302076531,
+              "regime_accuracy": 0.4000000059604645,
+              "regime_loss": 1.0241876721382142
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.46230936819172114,
+              "regime_accuracy": 0.46846845746040344,
+              "regime_loss": 1.1158474356160435
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.5541617548482537,
+              "regime_accuracy": 0.5865384340286255,
+              "regime_loss": 1.0480782343791082
+            }
+          }
+        ]
+      },
+      {
+        "configuration": "derived_replacement",
+        "seed": 29,
+        "use_derived_text_features": false,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.46455026455026455,
+              "regime_accuracy": 0.4749999940395355,
+              "regime_loss": 1.0877336653600065
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.7309941520467836,
+              "regime_accuracy": 0.8898305296897888,
+              "regime_loss": 0.5214682625511945
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.49447216063069727,
+              "regime_accuracy": 0.5545454621315002,
+              "regime_loss": 0.9305824875831604
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.29929325460726425,
+              "regime_accuracy": 0.29729729890823364,
+              "regime_loss": 1.1438873230353848
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.3646723646723647,
+              "regime_accuracy": 0.5,
+              "regime_loss": 1.0387747929646418
+            }
+          }
+        ]
+      },
+      {
+        "configuration": "derived_replacement",
+        "seed": 47,
+        "use_derived_text_features": false,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.4261631248735074,
+              "regime_accuracy": 0.46666666865348816,
+              "regime_loss": 1.1371087941922593
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.5683760683760684,
+              "regime_accuracy": 0.7796609997749329,
+              "regime_loss": 0.5340805149684518
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.24111793971319873,
+              "regime_accuracy": 0.22727273404598236,
+              "regime_loss": 1.3277138926766134
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.3524795833618666,
+              "regime_accuracy": 0.36936935782432556,
+              "regime_loss": 1.0847058188781642
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.4736002966258806,
+              "regime_accuracy": 0.567307710647583,
+              "regime_loss": 1.0141640534767737
+            }
+          }
+        ]
+      },
+      {
+        "configuration": "derived_replacement",
+        "seed": 71,
+        "use_derived_text_features": false,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.45775953792369656,
+              "regime_accuracy": 0.5083333253860474,
+              "regime_loss": 1.12871497832648
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.5823080369451338,
+              "regime_accuracy": 0.8644067645072937,
+              "regime_loss": 0.44867544356039013
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.3973055692189977,
+              "regime_accuracy": 0.4000000059604645,
+              "regime_loss": 1.058294770934365
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.3234360410830999,
+              "regime_accuracy": 0.3333333432674408,
+              "regime_loss": 1.13994837394434
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.37023985631872863,
+              "regime_accuracy": 0.375,
+              "regime_loss": 1.0882562674008882
+            }
+          }
+        ]
+      },
+      {
+        "configuration": "derived_replacement",
+        "seed": 97,
+        "use_derived_text_features": false,
+        "training_package_id": "canonical",
+        "folds": [
+          {
+            "fold_id": "wf_fold_1",
+            "metrics": {
+              "regime_f1_macro": 0.2636622409389561,
+              "regime_accuracy": 0.38333332538604736,
+              "regime_loss": 1.2571061835395998
+            }
+          },
+          {
+            "fold_id": "wf_fold_2",
+            "metrics": {
+              "regime_f1_macro": 0.5161563276746522,
+              "regime_accuracy": 0.8474576473236084,
+              "regime_loss": 0.4436723599999638
+            }
+          },
+          {
+            "fold_id": "wf_fold_3",
+            "metrics": {
+              "regime_f1_macro": 0.35340693654510985,
+              "regime_accuracy": 0.34545454382896423,
+              "regime_loss": 1.0103444814682008
+            }
+          },
+          {
+            "fold_id": "wf_fold_4",
+            "metrics": {
+              "regime_f1_macro": 0.3392814028407249,
+              "regime_accuracy": 0.342342346906662,
+              "regime_loss": 1.104686117008108
+            }
+          },
+          {
+            "fold_id": "wf_fold_5",
+            "metrics": {
+              "regime_f1_macro": 0.5238792418567699,
+              "regime_accuracy": 0.5480769276618958,
+              "regime_loss": 1.0682159112049983
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "baseline": {
+      "mean": 0.37729795333171295,
+      "std": 0.06708995776355044,
+      "lo": 0.3511161340481329,
+      "hi": 0.39970592561459667,
+      "n": 25
+    },
+    "derived_ablation": {
+      "mean": 0.4448260799943125,
+      "std": 0.11979775669435842,
+      "lo": 0.4008102678900452,
+      "hi": 0.4907007081203508,
+      "n": 25
+    },
+    "derived_replacement": {
+      "mean": 0.4448260799943125,
+      "std": 0.11979775669435842,
+      "lo": 0.4008102678900452,
+      "hi": 0.4907007081203508,
+      "n": 25
+    }
+  },
+  "replacement_arm": "deferred: pre-meeting wiring tracked in #315"
+}

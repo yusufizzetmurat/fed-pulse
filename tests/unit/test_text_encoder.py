@@ -143,3 +143,165 @@ def test_aggregate_label_averages_scores_across_chunks():
 def test_aggregate_label_handles_empty_input():
     result = aggregate_label([])
     assert result == {"label": "UNKNOWN", "score": 0.0, "raw": []}
+
+
+def test_assert_primary_model_loaded_raises_on_fallback(monkeypatch):
+    # The silent-fallback guard: if the active model is the fallback (e.g. the
+    # primary HF repo 404'd -> distilbert), embedding builds must fail loudly.
+    import app.services.text_encoder as te
+
+    monkeypatch.setattr(te, "get_classifier", lambda: None)
+    monkeypatch.setattr(te, "MODEL_ID", "primary/stance-model")
+    monkeypatch.setattr(te, "_loaded_model_id", te.FALLBACK_MODEL_ID)
+    with pytest.raises(RuntimeError, match="refusing to build embeddings"):
+        te.assert_primary_model_loaded()
+
+
+def test_assert_primary_model_loaded_passes_when_primary(monkeypatch):
+    import app.services.text_encoder as te
+
+    monkeypatch.setattr(te, "get_classifier", lambda: None)
+    monkeypatch.setattr(te, "MODEL_ID", "primary/stance-model")
+    monkeypatch.setattr(te, "_loaded_model_id", "primary/stance-model")
+    te.assert_primary_model_loaded()  # must not raise
+
+
+def test_get_loaded_model_id_accessor(monkeypatch):
+    import app.services.text_encoder as te
+
+    monkeypatch.setattr(te, "_loaded_model_id", "some/model")
+    assert te.get_loaded_model_id() == "some/model"
+
+
+class _StanceCfg:
+    pass
+
+
+class _StanceModel:
+    def __init__(self):
+        self.config = _StanceCfg()
+
+
+class _StanceClf:
+    def __init__(self):
+        self.model = _StanceModel()
+
+
+def test_fomc_roberta_generic_labels_remapped_to_stance(monkeypatch):
+    # FOMC-RoBERTa ships LABEL_0/1/2; _build_pipeline must remap to stance names.
+    import app.services.text_encoder as te
+
+    monkeypatch.setattr(te, "pipeline", lambda *a, **k: _StanceClf())
+    monkeypatch.setattr(te, "revision_for", lambda _m: None)
+    clf = te._build_pipeline(te.PRIMARY_HF_MODEL_ID, -1)
+    assert clf.model.config.id2label == {0: "dovish", 1: "hawkish", 2: "neutral"}
+    assert clf.model.config.label2id["hawkish"] == 1
+
+
+def test_other_model_labels_not_remapped(monkeypatch):
+    # A non-FOMC-RoBERTa model id must NOT get the stance remap.
+    import app.services.text_encoder as te
+
+    monkeypatch.setattr(te, "pipeline", lambda *a, **k: _StanceClf())
+    monkeypatch.setattr(te, "revision_for", lambda _m: None)
+    clf = te._build_pipeline("some/other-classifier", -1)
+    assert not hasattr(clf.model.config, "id2label")
+
+
+def _fail_if_called(*_args, **_kwargs):
+    """Tripwire used by the stance edge-case tests — the classifier and
+    multi-axis routes must never be touched once an edge bucket fires."""
+
+    raise AssertionError(
+        "edge-case short-circuit failed — classifier path was invoked"
+    )
+
+
+@pytest.mark.parametrize("text", ["", "   ", "\n\t  "])
+def test_analyze_text_empty_or_whitespace_reports_no_input(monkeypatch, text):
+    """Empty / whitespace-only inputs must short-circuit before the
+    classifier and report ``status=no_input`` with the standard
+    ``UNKNOWN`` block."""
+
+    import app.services.text_encoder as te
+
+    monkeypatch.setattr(te, "_stance_from_multi_axis", _fail_if_called)
+    monkeypatch.setattr(te, "encode_chunks", _fail_if_called)
+    monkeypatch.setattr(te, "resolve_ood_manifest_path", _fail_if_called)
+
+    out = te.analyze_text(text)
+
+    assert out == {"label": "UNKNOWN", "score": 0.0, "raw": [], "status": "no_input"}
+
+
+def test_analyze_text_majority_non_latin_reports_non_english(monkeypatch):
+    """A long block of CJK must report ``status=non_english`` rather than
+    falling through the token-count gate to ``no_input`` — order matches
+    :func:`app.services.semantic_diff._classify_input`."""
+
+    import app.services.text_encoder as te
+
+    monkeypatch.setattr(te, "_stance_from_multi_axis", _fail_if_called)
+    monkeypatch.setattr(te, "encode_chunks", _fail_if_called)
+    monkeypatch.setattr(te, "resolve_ood_manifest_path", _fail_if_called)
+
+    # 20-token CJK body — comfortably past STANCE_MIN_INPUT_TOKENS, so a
+    # token-count-first ordering would (incorrectly) fall through to the
+    # classifier instead of bucketing as non_english.
+    cjk_body = " ".join(["美联储继续保持鹰派立场"] * 20)
+
+    out = te.analyze_text(cjk_body)
+
+    assert out == {
+        "label": "UNKNOWN",
+        "score": 0.0,
+        "raw": [],
+        "status": "non_english",
+    }
+
+
+def test_analyze_text_below_min_tokens_reports_no_input(monkeypatch):
+    """Healthy Latin input with fewer than ``STANCE_MIN_INPUT_TOKENS``
+    tokens must short-circuit with ``status=no_input`` rather than
+    emitting stale class probabilities from a 2-token body."""
+
+    import app.services.text_encoder as te
+
+    monkeypatch.setattr(te, "_stance_from_multi_axis", _fail_if_called)
+    monkeypatch.setattr(te, "encode_chunks", _fail_if_called)
+    monkeypatch.setattr(te, "resolve_ood_manifest_path", _fail_if_called)
+
+    out = te.analyze_text("Fed hawkish")
+
+    assert out == {"label": "UNKNOWN", "score": 0.0, "raw": [], "status": "no_input"}
+
+
+def test_analyze_text_healthy_input_sets_status_ok(monkeypatch):
+    """The happy-path must default ``status=ok`` so callers can branch
+    on it uniformly with the edge buckets."""
+
+    import app.services.text_encoder as te
+
+    monkeypatch.setattr(te, "_stance_from_multi_axis", lambda _t: None)
+    monkeypatch.setattr(
+        te,
+        "encode_chunks",
+        lambda _t: [
+            ChunkEncoding(
+                text="x",
+                embedding=[],
+                scores=[
+                    {"label": "hawkish", "score": 0.6},
+                    {"label": "dovish", "score": 0.3},
+                    {"label": "neutral", "score": 0.1},
+                ],
+            )
+        ],
+    )
+    monkeypatch.setattr(te, "resolve_ood_manifest_path", lambda: None)
+
+    healthy = "The committee is prepared to adjust the stance of monetary policy."
+    out = te.analyze_text(healthy)
+
+    assert out["status"] == "ok"
+    assert out["label"] == "hawkish"

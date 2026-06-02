@@ -38,14 +38,10 @@ from app.data.sources.registry import register
 # ``--include-swanson-three-factor`` ingest path picks the pull up
 # without extra wiring.
 SWANSON_THREE_FACTOR_UPSTREAM_URL = (
-    "https://sites.socsci.uci.edu/~swanson2/papers/"
-    "pre-and-post-ZLB-factors-extended.xlsx"
+    "https://sites.socsci.uci.edu/~swanson2/papers/" "pre-and-post-ZLB-factors-extended.xlsx"
 )
 
-_USER_AGENT = (
-    "fed-pulse-data-ingester/1.0 "
-    "(+https://github.com/yusufizzetmurat/fed-pulse)"
-)
+_USER_AGENT = "fed-pulse-data-ingester/1.0 " "(+https://github.com/yusufizzetmurat/fed-pulse)"
 
 
 def pull_swanson_three_factor_xlsx(
@@ -69,9 +65,7 @@ def pull_swanson_three_factor_xlsx(
 
     if target_path.exists() and not force:
         try:
-            cached = pd.read_excel(
-                target_path, engine="openpyxl", sheet_name="Data", header=1
-            )
+            cached = pd.read_excel(target_path, engine="openpyxl", sheet_name="Data", header=1)
             if len(cached) > 0:
                 return int(len(cached))
         except Exception:
@@ -80,27 +74,20 @@ def pull_swanson_three_factor_xlsx(
     target_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = target_path.with_suffix(target_path.suffix + ".tmp")
     try:
-        request = urllib.request.Request(
-            url, headers={"User-Agent": _USER_AGENT}
-        )
+        request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
         try:
             response = urllib.request.urlopen(request, timeout=timeout)
         except urllib.error.HTTPError as exc:
             raise RuntimeError(
-                f"Swanson three-factor upstream returned HTTP {exc.code} "
-                f"from {url}"
+                f"Swanson three-factor upstream returned HTTP {exc.code} " f"from {url}"
             ) from exc
         with response:
             body: bytes = response.read()
         tmp_path.write_bytes(body)
-        parsed = pd.read_excel(
-            tmp_path, engine="openpyxl", sheet_name="Data", header=1
-        )
+        parsed = pd.read_excel(tmp_path, engine="openpyxl", sheet_name="Data", header=1)
         row_count = int(len(parsed))
         if row_count == 0:
-            raise RuntimeError(
-                f"Swanson three-factor download from {url} produced zero rows"
-            )
+            raise RuntimeError(f"Swanson three-factor download from {url} produced zero rows")
         tmp_path.replace(target_path)
         return row_count
     except Exception:
@@ -140,26 +127,20 @@ class SwansonThreeFactorScraper:
             return []
         import pandas as pd
 
-        df = pd.read_excel(
-            html, engine="openpyxl", sheet_name="Data", header=1
-        )
+        df = pd.read_excel(html, engine="openpyxl", sheet_name="Data", header=1)
         rows: list[dict[str, Any]] = []
         for _, row in df.iterrows():
             rows.append(
                 {
                     "meeting_date": row.iloc[1],
                     "target_factor": row.get("Federal Funds Rate factor"),
-                    "forward_guidance_factor": row.get(
-                        "Forward Guidance factor"
-                    ),
+                    "forward_guidance_factor": row.get("Forward Guidance factor"),
                     "lsap_factor": row.get("LSAP factor"),
                 }
             )
         return rows
 
-    def parse_entry(
-        self, raw_html: str, *, source_url: str
-    ) -> dict[str, Any] | None:
+    def parse_entry(self, raw_html: str, *, source_url: str) -> dict[str, Any] | None:
         try:
             row = json.loads(raw_html)
         except json.JSONDecodeError:
@@ -172,9 +153,7 @@ class SwansonThreeFactorScraper:
         parsed["source_url"] = source_url
         return parsed
 
-    def write(
-        self, parsed: Iterable[dict[str, Any]], output_path: Path
-    ) -> int:
+    def write(self, parsed: Iterable[dict[str, Any]], output_path: Path) -> int:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         count = 0
         with output_path.open("w", encoding="utf-8") as handle:
@@ -295,7 +274,5 @@ if __name__ == "__main__":
     )
     ns = parser.parse_args()
     target = Path(ns.data_dir) / SWANSON_THREE_FACTOR_DEFAULT_RELATIVE
-    rows = pull_swanson_three_factor_xlsx(
-        target, force=ns.force, url=ns.url
-    )
+    rows = pull_swanson_three_factor_xlsx(target, force=ns.force, url=ns.url)
     print(f"Swanson three-factor cache at {target} (rows: {rows})")

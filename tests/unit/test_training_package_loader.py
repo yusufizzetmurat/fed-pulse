@@ -82,7 +82,6 @@ def _event_row(
         "axis_time": None,
         "axis_certainty": None,
         "axis_factor": None,
-        "axis_topic": None,
         "axis_time_label": axis_time_label,
         "axis_certain_label": axis_certain_label,
         "credibility_drift_score": 0.0,

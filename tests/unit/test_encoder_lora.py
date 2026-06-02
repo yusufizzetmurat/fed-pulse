@@ -13,6 +13,7 @@ the boundary-policy and source-wiring tests run unconditionally.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -294,9 +295,12 @@ def test_train_forecaster_threads_freeze_epoch_into_all_config_sites() -> None:
     epoch is honoured regardless of which dispatch path the sweep takes."""
 
     source = _read("backend/app/train_forecaster.py")
-    occurrences = source.count(
-        "lora_curriculum_freeze_epoch=getattr(args, \"lora_freeze_epoch\", None)"
+    # Whitespace-tolerant match so ruff format wrapping the kwarg across
+    # multiple lines does not break this guard.
+    pattern = re.compile(
+        r"lora_curriculum_freeze_epoch=getattr\(\s*args,\s*\"lora_freeze_epoch\",\s*None\s*\)"
     )
+    occurrences = len(pattern.findall(source))
     assert occurrences >= 3, (
         "lora_curriculum_freeze_epoch is not threaded into every "
         f"ModelConfig construction site (found {occurrences}, expected >= 3)"

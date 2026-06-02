@@ -222,9 +222,7 @@ def evaluate_cross_bank(
     """
 
     if bank_source not in CROSS_BANK_SOURCES:
-        raise ValueError(
-            f"Unknown bank_source {bank_source!r}. Allowed: {CROSS_BANK_SOURCES}"
-        )
+        raise ValueError(f"Unknown bank_source {bank_source!r}. Allowed: {CROSS_BANK_SOURCES}")
     rows = load_cross_bank_rows(package_dir, bank_source)
     if not rows:
         raise ValueError(

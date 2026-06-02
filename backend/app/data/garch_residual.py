@@ -241,9 +241,7 @@ def compute_for_event(
     """
 
     if len(dates) != len(closes):
-        raise ValueError(
-            f"dates ({len(dates)}) and closes ({len(closes)}) length mismatch"
-        )
+        raise ValueError(f"dates ({len(dates)}) and closes ({len(closes)}) length mismatch")
     # Binary-search-style slice: dates are sorted ascending by contract.
     # A linear scan is fine because the asset series in practice carries
     # at most ~4000 daily bars and the slice is O(n) anyway in numpy land.

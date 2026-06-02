@@ -68,9 +68,7 @@ def ensure_compile_safe() -> None:
 
     os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
-    resolved = getattr(
-        sys.modules.get(triton_module_name), "__file__", triton_module_name
-    )
+    resolved = getattr(sys.modules.get(triton_module_name), "__file__", triton_module_name)
     print(
         f"WARNING compile_fallback_to_eager reason=triton_api_mismatch "
         f"triton_module={resolved}",

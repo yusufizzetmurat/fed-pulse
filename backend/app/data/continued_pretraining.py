@@ -89,9 +89,9 @@ _GTFINTECHLAB_XBANK_REVISIONS: dict[str, str] = {
 # ``_GTFINTECHLAB_XBANK_REVISIONS`` would otherwise silently fall back
 # to fetching HF Hub HEAD, breaking the reproducibility invariant the
 # DAPT manifest relies on.
-assert {
-    dataset_id for _, dataset_id in _GTFINTECHLAB_XBANK_DATASETS
-} == set(_GTFINTECHLAB_XBANK_REVISIONS.keys()), (
+assert {dataset_id for _, dataset_id in _GTFINTECHLAB_XBANK_DATASETS} == set(
+    _GTFINTECHLAB_XBANK_REVISIONS.keys()
+), (
     "_GTFINTECHLAB_XBANK_DATASETS and _GTFINTECHLAB_XBANK_REVISIONS must "
     "list the same dataset ids; missing pin or stale entry detected."
 )
@@ -160,7 +160,11 @@ def _bis_pair_stream(
         b = (row.get("sequenceB") or "").strip()
         if not a:
             continue
-        yield {"sequenceA": a, "sequenceB": b, "next_sentence_label": int(row.get("next_sentence_label") or 0)}
+        yield {
+            "sequenceA": a,
+            "sequenceB": b,
+            "next_sentence_label": int(row.get("next_sentence_label") or 0),
+        }
         seen += 1
 
 
@@ -312,7 +316,9 @@ def run_mlm(
         model = AutoModelForMaskedLM.from_pretrained(base_checkpoint, **model_kwargs)
 
     class _PairDataset(Dataset):
-        def __init__(self, pairs: list[dict[str, Any]], tokenizer, block_size: int, use_nsp: bool) -> None:
+        def __init__(
+            self, pairs: list[dict[str, Any]], tokenizer, block_size: int, use_nsp: bool
+        ) -> None:
             seq_a = [p["sequenceA"] for p in pairs]
             seq_b = [p.get("sequenceB") or "" for p in pairs] if use_nsp else None
             if use_nsp:
@@ -382,7 +388,9 @@ def run_mlm(
         seed=seed,
         report_to=[],
     )
-    trainer = Trainer(model=model, args=training_args, train_dataset=dataset, data_collator=collator)
+    trainer = Trainer(
+        model=model, args=training_args, train_dataset=dataset, data_collator=collator
+    )
     train_result = trainer.train()
     model.save_pretrained(output_dir / "checkpoint")
     tokenizer.save_pretrained(output_dir / "checkpoint")
@@ -488,7 +496,9 @@ def _collect_pairs(args: argparse.Namespace) -> list[dict[str, Any]]:
         # ``fomc_statements.json`` + ``fomc_minutes.json``; bypasses BIS
         # and the broader local corpus entirely. ``--max-rows`` clamps
         # the resulting pool (same as the legacy local branch).
-        fomc_dir = Path(args.auxiliary_local_dir) if args.auxiliary_local_dir else Path(args.data_dir)
+        fomc_dir = (
+            Path(args.auxiliary_local_dir) if args.auxiliary_local_dir else Path(args.data_dir)
+        )
         fomc_pairs = _iter_fomc_pairs(fomc_dir)
         if args.max_rows and len(fomc_pairs) > args.max_rows:
             fomc_pairs = fomc_pairs[: args.max_rows]
@@ -537,7 +547,9 @@ def _collect_pairs(args: argparse.Namespace) -> list[dict[str, Any]]:
         return pairs
 
     if args.substrate in {"local", "both"}:
-        local_dir = Path(args.auxiliary_local_dir) if args.auxiliary_local_dir else Path(args.data_dir)
+        local_dir = (
+            Path(args.auxiliary_local_dir) if args.auxiliary_local_dir else Path(args.data_dir)
+        )
         local_pairs = _iter_local_pairs(local_dir, args.corpus_files)
         if args.substrate == "local" and args.max_rows and len(local_pairs) > args.max_rows:
             local_pairs = local_pairs[: args.max_rows]

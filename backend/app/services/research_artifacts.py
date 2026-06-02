@@ -28,6 +28,71 @@ LOGGER = logging.getLogger(__name__)
 
 SECTIONS: tuple[str, ...] = ("phase3", "cross_bank", "cross_asset", "next_fomc")
 
+# Bundled copy of the rerun JSON inside the backend tree. Resolved
+# relative to this file so it is reachable in every environment that
+# ships the backend package, including bare ``docker run`` images, CI
+# jobs without the ``./docs:/docs:ro`` bind mount, and local invocations
+# outside Compose. The bundled snapshot is always preferred over any
+# repo-relative copy.
+BUNDLED_RERUN_PATH = (
+    Path(__file__).resolve().parent / "manifests" / "nlp-baseline-bakeoff-2026-06-02-rerun.json"
+)
+
+# Secondary rerun JSON locations (relative to repo root) that may be
+# newer than the bundled snapshot when ``docs/`` is mounted into the
+# container. Checked only when :data:`BUNDLED_RERUN_PATH` is missing.
+# When none of these exist either, the loader falls back to the legacy
+# ``phase3/**/aggregate.json`` walk.
+RERUN_BAKEOFF_CANDIDATES: tuple[str, ...] = (
+    "docs/research/nlp-baseline-bakeoff-2026-06-02-rerun.json",
+)
+
+# Static encoder-backbone matrix sourced from
+# ``docs/research/encoder-axis-stance-results.md``. Surfaced alongside
+# the zero-shot bake-off so the Research tab shows both the held-out
+# classification F1 winner (xbank) and the validity-anchor winner
+# (plain ProsusAI/FinBERT). Numbers come from the four
+# ``stance-instrument-validity-result-*-retrain.json`` files pinned in
+# that writeup.
+ENCODER_AXIS_STANCE_ROWS: tuple[dict[str, Any], ...] = (
+    {
+        "encoder_alias": "finbert",
+        "encoder_display": "ProsusAI/FinBERT (no DAPT)",
+        "held_out_f1": 0.526,
+        "spearman_rho": 0.499,
+        "auc_hike_vs_cut": 0.967,
+        "is_validity_winner": True,
+        "is_held_out_winner": False,
+    },
+    {
+        "encoder_alias": "finbert_fed_adjacent",
+        "encoder_display": "FinBERT (Fed-adjacent, Lead-1 CE)",
+        "held_out_f1": 0.547,
+        "spearman_rho": 0.385,
+        "auc_hike_vs_cut": 0.900,
+        "is_validity_winner": False,
+        "is_held_out_winner": False,
+    },
+    {
+        "encoder_alias": "finbert_fed_adjacent_xbank",
+        "encoder_display": "FinBERT (Fed-adjacent, cross-bank)",
+        "held_out_f1": 0.720,
+        "spearman_rho": 0.335,
+        "auc_hike_vs_cut": 0.800,
+        "is_validity_winner": False,
+        "is_held_out_winner": True,
+    },
+    {
+        "encoder_alias": "finbert_fed_adjacent_xbank_dapt",
+        "encoder_display": "FinBERT (Fed-adjacent + cross-bank DAPT)",
+        "held_out_f1": 0.535,
+        "spearman_rho": 0.325,
+        "auc_hike_vs_cut": 0.811,
+        "is_validity_winner": False,
+        "is_held_out_winner": False,
+    },
+)
+
 
 @dataclass(frozen=True)
 class ArtifactFileInfo:
@@ -76,14 +141,141 @@ def _iter_aggregate_files(artifacts_root: Path) -> Iterable[Path]:
     yield from sorted(section_dir.rglob("aggregate.json"))
 
 
-def load_encoder_bakeoff(artifacts_root: Path) -> dict[str, Any]:
-    """Aggregate per-encoder macro-F1 across phase3/**/aggregate.json files.
+def _resolve_rerun_bakeoff_path(repo_root: Path | None) -> Path | None:
+    """Return the first existing rerun JSON path, or ``None``.
+
+    The rerun JSON is the source of truth for the Bake-off tab when it
+    exists; the legacy ``phase3/**aggregate.json`` walk is only a
+    fallback for environments without the ``docs/`` tree or the
+    bundled snapshot.
+
+    Resolution order:
+
+    1. Bundled snapshot at ``backend/app/services/manifests/``. This
+       ships with the backend image and survives a missing ``/docs``
+       bind mount (which is what currently makes the legacy walk leak
+       through after a plain ``docker compose restart``).
+    2. ``docs/research/...`` paths under ``repo_root`` for hosts where
+       the docs tree is mounted and may be newer than the bundled
+       snapshot.
+    """
+
+    if BUNDLED_RERUN_PATH.is_file():
+        return BUNDLED_RERUN_PATH
+    if repo_root is None:
+        return None
+    for relative in RERUN_BAKEOFF_CANDIDATES:
+        candidate = repo_root / relative
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def load_encoder_bakeoff_rerun(path: Path) -> dict[str, Any]:
+    """Read the rerun-JSON schema and aggregate per ``model_key``.
+
+    The rerun file has a flat ``results[]`` array, one entry per
+    (model_key, seed). This function groups by ``model_key``, collects
+    per-seed macro-F1 / weighted-F1 / accuracy, and returns the same
+    output shape as :func:`load_encoder_bakeoff` so the API response
+    stays unchanged.
+    """
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        LOGGER.warning("research_artifacts: failed to parse %s: %s", path, exc)
+        return {
+            "available": False,
+            "coverage": None,
+            "rows": [],
+            "source_files": [],
+        }
+
+    results = payload.get("results") or []
+    by_encoder: dict[str, dict[str, Any]] = {}
+    for entry in results:
+        model_key = entry.get("model_key")
+        if not isinstance(model_key, str) or not model_key:
+            continue
+        seed_value = entry.get("seed")
+        try:
+            seed_int = int(seed_value)
+        except (TypeError, ValueError):
+            continue
+        bucket = by_encoder.setdefault(
+            model_key,
+            {
+                "encoder_key": model_key,
+                "checkpoint": str(entry.get("checkpoint", "")),
+                "seeds": [],
+                "macro_f1_values": [],
+                "weighted_f1_values": [],
+                "accuracy_values": [],
+            },
+        )
+        if seed_int in bucket["seeds"]:
+            continue
+        if not bucket["checkpoint"] and entry.get("checkpoint"):
+            bucket["checkpoint"] = str(entry["checkpoint"])
+        classification = entry.get("classification") or {}
+        bucket["seeds"].append(seed_int)
+        bucket["macro_f1_values"].append(_safe_float(classification.get("macro_f1")))
+        bucket["weighted_f1_values"].append(_safe_float(classification.get("weighted_f1")))
+        bucket["accuracy_values"].append(_safe_float(classification.get("accuracy")))
+
+    rows: list[dict[str, Any]] = []
+    for encoder_key in sorted(by_encoder):
+        bucket = by_encoder[encoder_key]
+        # Keep seeds sorted so the UI renders a stable order.
+        paired = sorted(zip(bucket["seeds"], bucket["macro_f1_values"], strict=False))
+        seeds_sorted = [s for s, _ in paired]
+        macro_sorted = [m for _, m in paired]
+        rows.append(
+            {
+                "encoder_key": encoder_key,
+                "checkpoint": bucket["checkpoint"],
+                "seeds": seeds_sorted,
+                "macro_f1_values": macro_sorted,
+                "macro_f1_mean": _mean_or_zero(macro_sorted),
+                "macro_f1_ci_low": None,
+                "macro_f1_ci_high": None,
+                "weighted_f1_mean": _mean_or_zero(bucket["weighted_f1_values"]),
+                "accuracy_mean": _mean_or_zero(bucket["accuracy_values"]),
+                "cohen_kappa": None,
+            }
+        )
+
+    return {
+        "available": bool(rows),
+        "coverage": 0.95,
+        "rows": rows,
+        # Return just the basename so the badge in the frontend shows a
+        # stable short label regardless of where the JSON was resolved
+        # from (bundled snapshot vs. docs mount).
+        "source_files": [path.name],
+    }
+
+
+def load_encoder_bakeoff(
+    artifacts_root: Path,
+    repo_root: Path | None = None,
+) -> dict[str, Any]:
+    """Aggregate per-encoder macro-F1 for the Bake-off dashboard tab.
 
     Returns a dict with ``available``, ``coverage``, ``rows``, and
     ``source_files``. ``rows`` is a list of dicts shaped like
-    :class:`EncoderBakeoffRow` (see ``app.schemas``). When no aggregate
-    files exist, ``available`` is False and ``rows`` is empty.
+    :class:`EncoderBakeoffRow` (see ``app.schemas``).
+
+    When a rerun JSON listed in :data:`RERUN_BAKEOFF_CANDIDATES` exists
+    under ``repo_root``, it is the source of truth. Otherwise the loader
+    falls back to the legacy ``phase3/**/aggregate.json`` walk so local
+    dev environments without the ``docs/`` tree still work.
     """
+
+    rerun_path = _resolve_rerun_bakeoff_path(repo_root)
+    if rerun_path is not None:
+        return load_encoder_bakeoff_rerun(rerun_path)
 
     files = list(_iter_aggregate_files(artifacts_root))
     if not files:
@@ -259,6 +451,124 @@ def load_cross_bank_transfer(artifacts_root: Path) -> dict[str, Any]:
         "targets": targets,
         "cells": cells,
         "source_files": source_files,
+    }
+
+
+def load_encoder_axis_stance() -> dict[str, Any]:
+    """Return the encoder-backbone stance-head retrain matrix.
+
+    Mirrors the four-row table in
+    ``docs/research/encoder-axis-stance-results.md``. The Research tab
+    shows this alongside the zero-shot bake-off so the held-out F1
+    winner (xbank) and the validity-anchor winner (plain FinBERT) are
+    both visible -- the two disagree, which is the actual finding.
+    """
+
+    return {
+        "available": True,
+        "rows": [dict(row) for row in ENCODER_AXIS_STANCE_ROWS],
+        "source_doc": "docs/research/encoder-axis-stance-results.md",
+    }
+
+
+REGISTRY_MANIFEST_PATH = Path(__file__).resolve().parent / "manifests" / "encoder_registry.json"
+
+
+def load_research_registry(
+    surface: str = "dual",
+    include_rejected: bool = False,
+) -> dict[str, Any]:
+    """Quant-facing encoder bake-off registry filtered by Δ surface.
+
+    The manifest at ``manifests/encoder_registry.json`` is the canonical
+    machine-readable source for the §6.41 results table. Each row is
+    annotated with ``delta_dual`` / ``delta_cls`` vs the baseline; by
+    default the response includes only rows with ``Δ >= 0`` on the
+    active surface so the dashboard does not surface negative-lift
+    encoders. Pass ``include_rejected=True`` to see the full table.
+    """
+
+    if surface not in {"dual", "cls"}:
+        raise ValueError(f"unsupported surface {surface!r}; expected dual|cls")
+
+    try:
+        payload = json.loads(REGISTRY_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        LOGGER.warning("research_registry: failed to load manifest: %s", exc)
+        return {
+            "available": False,
+            "surface": surface,
+            "baseline": None,
+            "rows": [],
+            "rejected_count": 0,
+            "training_package_id": "",
+            "head": "",
+            "seeds": [],
+            "source_wiki_section": "",
+        }
+
+    baseline = payload.get("baseline") or {}
+    baseline_dual = _safe_float_or_none(baseline.get("dual_f1"))
+    baseline_cls = _safe_float_or_none(baseline.get("cls_f1"))
+
+    rows: list[dict[str, Any]] = []
+    rejected = 0
+    for row in payload.get("rows") or []:
+        row_dual = _safe_float_or_none(row.get("dual_f1"))
+        row_cls = _safe_float_or_none(row.get("cls_f1"))
+        delta_dual = (
+            None
+            if row_dual is None or baseline_dual is None
+            else round(row_dual - baseline_dual, 4)
+        )
+        delta_cls = (
+            None if row_cls is None or baseline_cls is None else round(row_cls - baseline_cls, 4)
+        )
+        active_delta = delta_dual if surface == "dual" else delta_cls
+        is_winner = active_delta is not None and active_delta >= 0
+
+        if not is_winner and not include_rejected:
+            rejected += 1
+            continue
+
+        rows.append(
+            {
+                "encoder_alias": str(row.get("encoder_alias", "")),
+                "encoder_display": str(row.get("encoder_display", row.get("encoder_alias", ""))),
+                "dual_f1": row_dual,
+                "cls_f1": row_cls,
+                "regression_f1": _safe_float_or_none(row.get("regression_f1")),
+                "delta_dual": delta_dual,
+                "delta_cls": delta_cls,
+                "is_winner": is_winner,
+                "checkpoint_relpath": row.get("checkpoint_relpath"),
+                "cache_uri": row.get("cache_uri"),
+                "notes": str(row.get("notes", "")),
+            }
+        )
+
+    baseline_out = (
+        {
+            "label": str(baseline.get("label", "baseline")),
+            "dual_f1": baseline_dual,
+            "cls_f1": baseline_cls,
+            "regression_f1": _safe_float_or_none(baseline.get("regression_f1")),
+        }
+        if baseline
+        else None
+    )
+
+    seeds = payload.get("seeds") or []
+    return {
+        "available": bool(rows) or include_rejected,
+        "surface": surface,
+        "baseline": baseline_out,
+        "rows": rows,
+        "rejected_count": rejected,
+        "training_package_id": str(payload.get("training_package_id", "")),
+        "head": str(payload.get("head", "")),
+        "seeds": [int(s) for s in seeds if isinstance(s, int | float)],
+        "source_wiki_section": str(payload.get("source_wiki_section", "")),
     }
 
 

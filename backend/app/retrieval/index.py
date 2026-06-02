@@ -211,9 +211,7 @@ def _ensure_metadata_columns(df: pd.DataFrame) -> pd.DataFrame:
     out["event_date"] = df["event_date"].astype(str)
     out["text_hash"] = df["text_hash"].astype(str)
     out["axis_stance"] = df.get("axis_stance", pd.Series([None] * len(df)))
-    out["subsequent_vol_regime"] = df.get(
-        "subsequent_vol_regime", pd.Series([None] * len(df))
-    )
+    out["subsequent_vol_regime"] = df.get("subsequent_vol_regime", pd.Series([None] * len(df)))
     excerpts = df.get("excerpt", pd.Series([""] * len(df))).astype(str)
     out["excerpt"] = excerpts.str.slice(0, EXCERPT_CHARS)
     return out
@@ -234,8 +232,7 @@ def _filter_statement_events(events: pd.DataFrame) -> pd.DataFrame:
 
     if "event_kind" not in events.columns:
         raise KeyError(
-            "events.parquet must carry an 'event_kind' column; "
-            f"got {list(events.columns)!r}"
+            "events.parquet must carry an 'event_kind' column; " f"got {list(events.columns)!r}"
         )
     mask = events["event_kind"].astype(str).str.lower() == "statement"
     df = events.loc[mask].copy()
@@ -337,9 +334,7 @@ def build_index_from_events(  # noqa: PLR0913 — keyword-only builder args mirr
                 "event_date": str(raw_row.get("event_date", "")),
                 "text_hash": str(raw_row.get("text_hash", "")),
                 "axis_stance": raw_row.get("axis_stance"),
-                "subsequent_vol_regime": _bucket_vol(
-                    raw_row.get("forward_realized_vol_10d")
-                ),
+                "subsequent_vol_regime": _bucket_vol(raw_row.get("forward_realized_vol_10d")),
                 "excerpt": text[:EXCERPT_CHARS],
             }
         )
@@ -377,9 +372,7 @@ def build_index_from_events(  # noqa: PLR0913 — keyword-only builder args mirr
         "built_at_utc": built_at_utc,
         "train_end": train_end,
     }
-    _atomic_write_text(
-        paths.manifest, json.dumps(manifest, indent=2, sort_keys=True)
-    )
+    _atomic_write_text(paths.manifest, json.dumps(manifest, indent=2, sort_keys=True))
 
     return LoadedIndex(
         embeddings=embeddings,
@@ -405,8 +398,7 @@ def load_index(directory: Path) -> LoadedIndex:
     for required in (paths.parquet, paths.embeddings, paths.manifest):
         if not required.exists():
             raise FileNotFoundError(
-                f"retrieval index incomplete at {paths.directory}: "
-                f"missing {required.name}"
+                f"retrieval index incomplete at {paths.directory}: " f"missing {required.name}"
             )
     metadata = _ensure_metadata_columns(pd.read_parquet(paths.parquet))
     # allow_pickle=False guards against a tampered .npy attempting to
@@ -518,12 +510,14 @@ def query(  # noqa: PLR0912, C901 — guard clauses on the optional filters keep
     k_effective = min(int(k), candidate_idx.size)
     # ``argpartition`` is cheaper than a full sort for the typical
     # 250-row index, but we still need the partition slice sorted so
-    # the API output is descending by similarity.
+    # the API output is descending by similarity. ``kind="stable"``
+    # mirrors the eval-path ranking in ``recall_at_k.py`` so tied
+    # cosine similarities break deterministically on the lower index.
     if k_effective < scores.size:
         partition = np.argpartition(-scores, k_effective - 1)[:k_effective]
     else:
         partition = np.arange(scores.size)
-    partition = partition[np.argsort(-scores[partition])]
+    partition = partition[np.argsort(-scores[partition], kind="stable")]
     top_idx = candidate_idx[partition]
 
     hits: list[AnalogHit] = []

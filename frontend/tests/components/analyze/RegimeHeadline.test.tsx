@@ -86,14 +86,6 @@ describe("RegimeHeadline regression-canonical surface (#338)", () => {
     expect(screen.getByText(/top pick · 45\.0%/i)).toBeInTheDocument();
   });
 
-  it("ships the fold-4 with/without callout on every render", () => {
-    render(<RegimeHeadline regime={REGIME_WITH_BAND} symbol="^GSPC" documentDate="2024-09-18" />);
-    expect(screen.getByText(/Including fold 4/i)).toBeInTheDocument();
-    expect(screen.getByText(/Excluding fold 4/i)).toBeInTheDocument();
-    // Numbers from dual_head_comparison_canonical.json.
-    expect(screen.getByText(/F1 score 0\.419 ± 0\.070/)).toBeInTheDocument();
-    expect(screen.getByText(/F1 score 0\.414 ± 0\.079/)).toBeInTheDocument();
-  });
 
   it("demotes per-class probabilities + predicted set to a foldable section", () => {
     render(<RegimeHeadline regime={REGIME_WITH_BAND} symbol="^GSPC" documentDate="2024-09-18" />);
@@ -101,15 +93,49 @@ describe("RegimeHeadline regression-canonical surface (#338)", () => {
     expect(summary.tagName.toLowerCase()).toBe("summary");
   });
 
-  it("renders evidence links to the §6 backing sections", () => {
-    render(<RegimeHeadline regime={REGIME_WITH_BAND} symbol="^GSPC" documentDate="2024-09-18" />);
-    const headlineEvidence = screen.getAllByRole("link", { name: /evidence · §6\.15/i });
-    expect(headlineEvidence.length).toBeGreaterThan(0);
-    expect(headlineEvidence[0]).toHaveAttribute(
-      "href",
-      expect.stringContaining("06_Deep_Learning_Roadmap"),
+});
+
+describe("RegimeHeadline past-runs sparkline", () => {
+  const allNormalHistory = [
+    { documentDate: "2024-08-01", argmax: "normal", realized: null },
+    { documentDate: "2024-08-15", argmax: "normal", realized: null },
+    { documentDate: "2024-09-01", argmax: "normal", realized: null },
+    { documentDate: "2024-09-18", argmax: "normal", realized: null },
+  ];
+
+  it("renders the sparkline (not the empty-state copy) when all recent runs land on normal", () => {
+    const { container } = render(
+      <RegimeHeadline
+        regime={REGIME}
+        symbol="^GSPC"
+        documentDate="2024-09-18"
+        history={allNormalHistory}
+      />,
     );
-    expect(screen.getByRole("link", { name: /evidence · §6\.7/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /evidence · §6\.10/i })).toBeInTheDocument();
+    // Empty-state and single-run fallbacks must not appear when N >= 2.
+    expect(screen.queryByText(/No prior runs for this symbol/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Insufficient history/i)).not.toBeInTheDocument();
+    // Sparkline mounts a Recharts ResponsiveContainer — the container
+    // becomes evidence the chart rendered instead of the "no data"
+    // text-only fallback path.
+    const responsive = container.querySelector(".recharts-responsive-container");
+    expect(responsive).not.toBeNull();
+  });
+
+  it("shows the insufficient-history copy when only one prior run is available", () => {
+    render(
+      <RegimeHeadline
+        regime={REGIME}
+        symbol="^GSPC"
+        documentDate="2024-09-18"
+        history={[{ documentDate: "2024-09-18", argmax: "normal", realized: null }]}
+      />,
+    );
+    expect(screen.getByText(/Insufficient history \(1 run\)/i)).toBeInTheDocument();
+  });
+
+  it("shows the empty-state copy when no history is provided", () => {
+    render(<RegimeHeadline regime={REGIME} symbol="^GSPC" documentDate="2024-09-18" />);
+    expect(screen.getByText(/No prior runs for this symbol/i)).toBeInTheDocument();
   });
 });

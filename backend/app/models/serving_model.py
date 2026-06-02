@@ -86,6 +86,10 @@ class ForecasterServingModel(ForecasterBase):
         use_regime_conditioning: bool = False,
         use_sep: bool = False,
         use_press_conf: bool = False,
+        use_statement_delta: bool = False,
+        use_vote_features: bool = False,
+        use_vix_features: bool = False,
+        use_doc_length: bool = False,
     ):
         if output_mode not in {"regression", "classification"}:
             raise ValueError(
@@ -117,6 +121,10 @@ class ForecasterServingModel(ForecasterBase):
             use_regime_conditioning=use_regime_conditioning,
             use_sep=use_sep,
             use_press_conf=use_press_conf,
+            use_statement_delta=use_statement_delta,
+            use_vote_features=use_vote_features,
+            use_vix_features=use_vix_features,
+            use_doc_length=use_doc_length,
         )
         self.output_mode = output_mode
         self.n_classes = int(n_classes)
@@ -215,18 +223,19 @@ class ForecasterServingModel(ForecasterBase):
         pooled_step = self._encode(x)
         if self.output_mode == "classification":
             multi_task = self.head(pooled_step)
-            stashed: dict[str, torch.Tensor] = {
-                key: tensor.detach() for key, tensor in multi_task.items()
-            }
+            # Symmetric with the regression branch below: do not detach
+            # here. Callers that need a grad-free snapshot wrap the whole
+            # forward in ``torch.no_grad()`` (see the inference paths).
+            stashed: dict[str, torch.Tensor] = dict(multi_task)
             if self.regression_head is not None:
                 log_rv_pred = self.regression_head(pooled_step).squeeze(-1)
-                stashed["log_rv"] = log_rv_pred.detach()
+                stashed["log_rv"] = log_rv_pred
             for name in self.rates_heads_active:
                 bps_pred = self.rates_regression_heads[name](pooled_step).squeeze(-1)
-                stashed[f"rates_{name}_bps"] = bps_pred.detach()
+                stashed[f"rates_{name}_bps"] = bps_pred
                 if name in self.rates_classification_heads:
                     cls_logits = self.rates_classification_heads[name](pooled_step)
-                    stashed[f"rates_{name}_cls_logits"] = cls_logits.detach()
+                    stashed[f"rates_{name}_cls_logits"] = cls_logits
             self._last_multi_task = stashed
             return multi_task["stance"]  # type: ignore[no-any-return]
         raw = self.head(pooled_step)

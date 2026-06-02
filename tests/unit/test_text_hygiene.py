@@ -1,0 +1,677 @@
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+import pytest
+
+from app.services import text_hygiene
+from app.services.text_hygiene import (
+    _collapse_whitespace,
+    _strip_board_footer,
+    _strip_implementation_note,
+    _strip_last_update,
+    _strip_nav_chrome,
+    _strip_return_to_text,
+    _strip_top_banner,
+    _strip_voting_roster,
+    clean_fomc_text,
+)
+
+
+# A verbatim head sampled from the 2007-2011 minutes layout (e.g. doc 72
+# in /data/fomc_minutes.json, 2011-01-26). The page-title line "FRB: FOMC
+# Minutes, <calendar date>" appears AHEAD of the chrome banner, so any
+# anchor that accepts a bare calendar date matches inside the title and
+# leaves the entire nav chrome ("skip to main navigation ... Site Map ...
+# A-Z Index ... Advanced Search ...") in the cleaned body. The legitimate
+# body anchor is "Minutes of the Federal Open Market Committee" further
+# downstream of the chrome.
+REAL_OLD_BANNER_HEAD = (
+    "FRB: FOMC Minutes, January 25-26, 2011 skip to main navigation skip "
+    "to secondary navigation skip to content What's New · What's Next "
+    "· Site Map · A-Z Index · Careers · RSS · All "
+    "Videos · Current FAQs Search Advanced Search About the Fed News "
+    "& Events Monetary Policy Banking Information & Regulation Payment "
+    "Systems Economic Research & Data Consumer Information Community "
+    "Development Reporting Forms Publications skip to content Menu Home > "
+    "Monetary Policy > Federal Open Market Committee Print Minutes of the "
+    "Federal Open Market Committee January 25-26, 2011 FOMC Minutes "
+    "Summary of Economic Projections A meeting of the Federal Open Market "
+    "Committee was held in the offices of the Board of Governors in "
+    "Washington, D.C., on Tuesday, January 25, 2011, at 1:00 p.m."
+)
+
+
+# A verbatim head sampled from /data/fomc_minutes.json (doc 0, dated
+# 2020-01-29). The BOM at the start is the literal mojibake form the
+# scraper persisted ('ï»¿' = 0xEF 0xBB 0xBF interpreted as Latin-1).
+REAL_BANNER_HEAD = (
+    "ï»¿ The Fed - Monetary Policy: Skip to main content An official "
+    "website of the United States Government Here's how you know Official "
+    "websites use .gov A .gov website belongs to an official government "
+    "organization in the United States. Secure .gov websites use HTTPS A "
+    "lock ( Lock Locked padlock icon ) or https:// means you've safely "
+    "connected to the .gov website. Share sensitive information only on "
+    "official, secure websites. Back to Home Board of Governors of the "
+    "Federal Reserve System Stay Connected Federal Reserve Facebook Page "
+    "Federal Reserve YouTube Page Subscribe to RSS Subscribe to Email "
+    "About the Fed News & Events Monetary Policy Supervision Economic "
+    "Research Data Consumers & Communities Financial Stability Payment "
+    "Systems FOMC Minutes Minutes of the Federal Open Market Committee "
+    "January 28-29, 2020 A joint meeting of the Federal Open Market "
+    "Committee and the Board of Governors was held in the offices of the "
+    "Board of Governors of the Federal Reserve System in Washington, "
+    "D.C., on Tuesday, January 28, 2020, at 10:00 a.m."
+)
+
+
+# ---------------------------------------------------------------------------
+# Per-transform isolation tests
+# ---------------------------------------------------------------------------
+
+
+def test_strip_return_to_text_removes_bracketed_and_bare_markers():
+    raw = (
+        "1. The Federal Open Market Committee is referenced as the FOMC. "
+        "Return to text 2. Attended Tuesday's session only. [Return to text]"
+    )
+    cleaned = _strip_return_to_text(raw)
+    assert "Return to text" not in cleaned
+    assert "[Return to text]" not in cleaned
+    # Body text survives.
+    assert "Federal Open Market Committee" in cleaned
+    assert "Attended Tuesday" in cleaned
+
+
+def test_strip_last_update_drops_trailer_line():
+    raw = "policy text. Back to Top Last Update: February 19, 2020 Board of Governors"
+    cleaned = _strip_last_update(raw)
+    assert "Last Update" not in cleaned
+    assert "policy text." in cleaned
+
+
+def test_strip_board_footer_removes_address_and_everything_after():
+    raw = (
+        "policy text that should survive. "
+        "Board of Governors of the Federal Reserve System 20th Street and "
+        "Constitution Avenue N.W., Washington, DC 20551"
+    )
+    cleaned = _strip_board_footer(raw)
+    assert "Board of Governors" not in cleaned
+    assert "Constitution Avenue" not in cleaned
+    assert "20551" not in cleaned
+    assert "policy text that should survive." in cleaned
+
+
+def test_strip_nav_chrome_removes_share_print_rss():
+    raw = (
+        "For release at 2:00 p.m. EST Share. The Committee judges that the "
+        "current stance of monetary policy is appropriate. Subscribe to RSS "
+        "Federal Reserve Facebook Page Federal Reserve YouTube Page Stay Connected"
+    )
+    cleaned = _strip_nav_chrome(raw)
+    assert "Subscribe to RSS" not in cleaned
+    assert "Facebook Page" not in cleaned
+    assert "YouTube Page" not in cleaned
+    assert "Stay Connected" not in cleaned
+    # The release-time chrome ("For release at ... Share") is removed too.
+    assert "For release at" not in cleaned
+    # Policy sentence survives intact.
+    assert "current stance of monetary policy is appropriate" in cleaned
+
+
+def test_strip_implementation_note_kills_trailer_to_end_of_text():
+    raw = (
+        "Voting against this action was Loretta J. Mester, who preferred to "
+        "reduce the target range. Implementation Note issued March 15, 2020 "
+        "Federal Reserve actions to support the flow of credit"
+    )
+    cleaned = _strip_implementation_note(raw)
+    assert "Implementation Note" not in cleaned
+    assert "actions to support the flow of credit" not in cleaned
+    # The dissent sentence above the trailer survives — this is signal we
+    # want to keep, not chrome.
+    assert "Voting against this action" in cleaned
+    assert "Mester" in cleaned
+
+
+def test_strip_voting_roster_removes_names_keeps_dissent_signal():
+    raw = (
+        "The Committee decided to maintain the target range. "
+        "Voting for the monetary policy action were Jerome H. Powell, Chair; "
+        "John C. Williams, Vice Chair; Michelle W. Bowman; Lael Brainard; "
+        "Richard H. Clarida; and Randal K. Quarles. Voting against this "
+        "action was Loretta J. Mester, who preferred to reduce the target "
+        "range for the federal funds rate to 1/2 to 3/4 percent at this "
+        "meeting."
+    )
+    cleaned = _strip_voting_roster(raw)
+    # Member roster is gone.
+    assert "Jerome H. Powell" not in cleaned
+    assert "John C. Williams" not in cleaned
+    assert "Vice Chair" not in cleaned
+    # Dissent sentence is preserved — that is the signal the corpus needs.
+    assert "Voting against this action was Loretta J. Mester" in cleaned
+    assert "preferred to reduce the target range" in cleaned
+    # Lead-in policy sentence survives.
+    assert "Committee decided to maintain the target range" in cleaned
+
+
+def test_strip_voting_roster_handles_fomc_variant_and_alternate_member():
+    raw = (
+        "Voting for the FOMC monetary policy action were: Jerome H. Powell, "
+        "Chairman; John C. Williams, Vice Chairman; and Loretta J. Mester. "
+        "Ms. Daly voted as an alternate member at this meeting."
+    )
+    cleaned = _strip_voting_roster(raw)
+    assert "Jerome H. Powell" not in cleaned
+    assert "voted as an alternate member" not in cleaned
+
+
+def test_strip_voting_roster_handles_by_notation_variant():
+    """Inter-meeting written votes carry a 'Voting (by notation) for ...'
+    header — the same roster must be scrubbed."""
+
+    raw = (
+        "Voting (by notation) for the monetary policy action were Jerome H. "
+        "Powell, Chairman; John C. Williams, Vice Chairman; and Lael "
+        "Brainard. "
+        "Implementation Note issued March 15, 2020."
+    )
+    cleaned = _strip_voting_roster(raw)
+    assert "Jerome H. Powell" not in cleaned
+    assert "Lael Brainard" not in cleaned
+    # The trailing Implementation Note line must remain intact for the
+    # downstream _strip_implementation_note pass to find it.
+    assert "Implementation Note issued March 15, 2020." in cleaned
+
+
+def test_collapse_whitespace_normalises_nbsp_and_runs():
+    raw = "policy\xa0statement     with    runs\n\n\n\nand blank lines"
+    cleaned = _collapse_whitespace(raw)
+    assert "\xa0" not in cleaned
+    assert "    " not in cleaned
+    assert "\n\n\n" not in cleaned
+    assert cleaned.startswith("policy statement with runs")
+
+
+# ---------------------------------------------------------------------------
+# End-to-end realistic-document tests
+# ---------------------------------------------------------------------------
+
+
+REALISTIC_STATEMENT = (
+    "January 29, 2020\n"
+    "For release at 2:00 p.m. EST Share\n"
+    "Information received since the Federal Open Market Committee met in "
+    "December indicates that the labor market remains strong and that "
+    "economic activity has been rising at a moderate rate.\n"
+    "Consistent with its statutory mandate, the Committee seeks to foster "
+    "maximum employment and price stability. The Committee decided to "
+    "maintain the target range for the federal funds rate at 1-1/2 to 1-3/4 "
+    "percent.\n"
+    "Voting for the monetary policy action were Jerome H. Powell, Chair; "
+    "John C. Williams, Vice Chair; Michelle W. Bowman; Lael Brainard; "
+    "Richard H. Clarida; Patrick Harker; Robert S. Kaplan; Neel Kashkari; "
+    "Loretta J. Mester; and Randal K. Quarles.\n"
+    "Implementation Note issued January 29, 2020"
+)
+
+
+REALISTIC_DISSENT_STATEMENT = (
+    "March 15, 2020\n"
+    "For release at 5:00 p.m. EST Share\n"
+    "The Committee decided to lower the target range for the federal funds "
+    "rate to 0 to 1/4 percent.\n"
+    "Voting for the monetary policy action were Jerome H. Powell, Chair; "
+    "and Randal K. Quarles. Voting against this action was Loretta J. "
+    "Mester, who was fully supportive of all of the actions taken to "
+    "promote the smooth functioning of markets and the flow of credit to "
+    "households and businesses but preferred to reduce the target range "
+    "for the federal funds rate to 1/2 to 3/4 percent at this meeting.\n"
+    "Implementation Note issued March 15, 2020"
+)
+
+
+REALISTIC_MINUTES_TAIL = (
+    "The meeting adjourned at 9:50 a.m. on January 29, 2020. Notation Vote "
+    "By notation vote completed on January 2, 2020, the Committee "
+    "unanimously approved the minutes of the Committee meeting held on "
+    "December 10-11, 2019. _______________________ James A. Clouse "
+    "Secretary 1. The Federal Open Market Committee is referenced as the "
+    'FOMC and the Committee in these minutes. Return to text 2. Attended '
+    "Tuesday's session only. Return to text Back to Top Last Update: "
+    "February 19, 2020 Board of Governors of the Federal Reserve System "
+    "About the Fed News & Events Monetary Policy Federal Reserve Facebook "
+    "Page Federal Reserve YouTube Page Subscribe to RSS Subscribe to Email "
+    "Board of Governors of the Federal Reserve System 20th Street and "
+    "Constitution Avenue N.W., Washington, DC 20551"
+)
+
+
+def test_clean_statement_end_to_end_removes_all_chrome_keeps_policy():
+    cleaned = clean_fomc_text(REALISTIC_STATEMENT, kind="statement")
+
+    # Chrome is gone.
+    assert "Implementation Note" not in cleaned
+    assert "Jerome H. Powell" not in cleaned
+    assert "Vice Chair" not in cleaned
+    assert "Loretta J. Mester" not in cleaned
+    assert "Subscribe to RSS" not in cleaned
+    assert "For release at" not in cleaned
+
+    # Policy-relevant content survives.
+    assert "labor market remains strong" in cleaned
+    assert "maximum employment and price stability" in cleaned
+    assert "target range for the federal funds rate" in cleaned
+
+
+def test_clean_statement_preserves_dissent_drops_member_list():
+    cleaned = clean_fomc_text(REALISTIC_DISSENT_STATEMENT, kind="statement")
+
+    # The dissent half is the signal we keep.
+    assert "Voting against this action was Loretta J. Mester" in cleaned
+    assert "preferred to reduce the target range" in cleaned
+    # The dissent sentence keeps the dissenter's name by design — that name
+    # IS part of the signal (which member dissented, in which direction).
+    # The pre-dissent roster is what we drop.
+    assert "Jerome H. Powell, Chair" not in cleaned
+    assert "Randal K. Quarles" not in cleaned
+    assert "Voting for the monetary policy action" not in cleaned
+    # Policy sentence survives.
+    assert "lower the target range for the federal funds rate" in cleaned
+    # Implementation Note trailer gone.
+    assert "Implementation Note" not in cleaned
+
+
+def test_clean_minutes_end_to_end_strips_footer_and_return_markers():
+    cleaned = clean_fomc_text(REALISTIC_MINUTES_TAIL, kind="minutes")
+
+    assert "Return to text" not in cleaned
+    assert "Last Update" not in cleaned
+    assert "Board of Governors" not in cleaned
+    assert "20551" not in cleaned
+    assert "Facebook Page" not in cleaned
+    assert "Subscribe to RSS" not in cleaned
+    # Substantive content is preserved.
+    assert "meeting adjourned" in cleaned
+    assert "Notation Vote" in cleaned
+    assert "James A. Clouse" in cleaned
+
+
+def test_clean_empty_text_is_noop():
+    assert clean_fomc_text("", kind="statement") == ""
+    assert clean_fomc_text("", kind="minutes") == ""
+
+
+def test_clean_press_conference_kind_accepted():
+    # Press-conference kind is plumbed through but currently uses the same
+    # pipeline. This test pins the contract so a future per-kind branch
+    # has to deliberately change the assertion.
+    raw = "Chair Powell: The Committee remains data-dependent. Subscribe to RSS"
+    cleaned = clean_fomc_text(raw, kind="press_conference")
+    assert "Subscribe to RSS" not in cleaned
+    assert "data-dependent" in cleaned
+
+
+def test_clean_is_idempotent():
+    once = clean_fomc_text(REALISTIC_STATEMENT, kind="statement")
+    twice = clean_fomc_text(once, kind="statement")
+    assert once == twice
+
+
+def test_clean_collapses_whitespace_no_double_spaces():
+    cleaned = clean_fomc_text(REALISTIC_STATEMENT, kind="statement")
+    # No runs of >1 internal space, no leading/trailing whitespace.
+    assert "  " not in cleaned
+    assert cleaned == cleaned.strip()
+    assert not re.search(r"\n{3,}", cleaned)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for over-cut / over-strip bugs caught in review
+# ---------------------------------------------------------------------------
+
+
+def test_implementation_note_inline_reference_is_preserved():
+    """Minutes legitimately reference prior Implementation Notes mid-body.
+
+    The on-disk 2026-01-28 minutes carry
+    "...operations in the Implementation Note issued following the December
+    2025 meeting. All participants indicated support for ..." 42k characters
+    before the real footer. A DOTALL ``.*$`` cut anchored on the bare phrase
+    truncates ~80% of the document. The trailer form always carries an
+    explicit date (Month <day>, <year>); the inline reference does not.
+    """
+
+    raw = (
+        "The Desk continues to conduct standing repurchase agreement "
+        "operations in the Implementation Note issued following the "
+        "December 2025 meeting. All participants indicated support for, "
+        "and agreed to abide by, the FOMC Policy on Investment and "
+        "Trading for Committee Participants."
+    )
+    cleaned = _strip_implementation_note(raw)
+    assert "Implementation Note issued following" in cleaned
+    assert "All participants indicated support" in cleaned
+    assert "Trading for Committee Participants" in cleaned
+
+
+def test_implementation_note_trailer_with_date_is_still_stripped():
+    """The dated trailer form is the only thing we want to cut."""
+
+    raw = (
+        "Voting against this action was Loretta J. Mester. "
+        "Implementation Note issued March 15, 2020 Federal Reserve actions "
+        "to support the flow of credit to households and businesses."
+    )
+    cleaned = _strip_implementation_note(raw)
+    assert "Implementation Note" not in cleaned
+    assert "Federal Reserve actions" not in cleaned
+    assert "Voting against this action" in cleaned
+
+
+def test_share_as_ordinary_noun_is_preserved():
+    """'share' is a common noun in FOMC prose. Only chrome-adjacent
+    occurrences (Share + Print [+ PDF], or "For release at ... Share")
+    should be stripped — never bare 'share'.
+    """
+
+    raw = (
+        "The average share of workers employed part time for economic "
+        "reasons declined in the quarter. Market share among the largest "
+        "banks remained stable. The Structure and Share Data report was "
+        "discussed. Share sensitive information only on official, secure "
+        "websites."
+    )
+    cleaned = _strip_nav_chrome(raw)
+    assert "average share of workers" in cleaned
+    assert "Market share among the largest" in cleaned
+    assert "Structure and Share Data" in cleaned
+    assert "Share sensitive information" in cleaned
+
+
+def test_share_print_pdf_chrome_is_still_stripped():
+    raw = "policy text. Share Print PDF after the headline."
+    cleaned = _strip_nav_chrome(raw)
+    assert "Share Print PDF" not in cleaned
+    assert "policy text." in cleaned
+    assert "after the headline." in cleaned
+
+
+def test_voting_roster_does_not_swallow_post_roster_sentence():
+    """Without a recognized trailing anchor, the roster cut must NOT match.
+
+    A single-newline-separated continuation sentence after the roster is
+    real FOMC text (the HTML normalises to plain text with no blank
+    lines). The previous '.*?$' fallback amputated the tail; the new
+    behaviour is to leave the entire string alone if no anchor is found,
+    which is a safer failure mode than silently deleting policy prose.
+    """
+
+    raw = (
+        "Voting for the monetary policy action were Jerome H. Powell, "
+        "Chair; John C. Williams, Vice Chair; and Loretta J. Mester. "
+        "The Committee judges that the current stance of monetary policy "
+        "is appropriate to return inflation to 2 percent over time."
+    )
+    cleaned = _strip_voting_roster(raw)
+    # The post-roster sentence MUST be preserved. We accept that the
+    # roster names may still be present in this anchor-less variant —
+    # the alternative (greedy '.*$' eating policy text) is worse.
+    assert "The Committee judges that the current stance" in cleaned
+    assert "return inflation to 2 percent" in cleaned
+
+
+def test_voting_roster_minutes_form_is_stripped():
+    """Minutes write the voting block as 'Voting for this action: ...
+    Voting against this action: <None|name>'. The statement-only regex
+    never matched this form. The minutes-form regex below covers it.
+    """
+
+    raw = (
+        "The Committee decided to maintain the target range. "
+        "Voting for this action: Jerome H. Powell, John C. Williams, "
+        "Michelle W. Bowman, Lael Brainard, Richard H. Clarida, Patrick "
+        "Harker, Robert S. Kaplan, Neel Kashkari, Loretta J. Mester, and "
+        "Randal K. Quarles. Voting against this action: None. Consistent "
+        "with the Committee's decision, the Board of Governors voted "
+        "unanimously to raise the interest rate."
+    )
+    cleaned = _strip_voting_roster(raw)
+    # Member roster is gone.
+    assert "Jerome H. Powell" not in cleaned
+    assert "Randal K. Quarles" not in cleaned
+    # The "None" dissent line is dropped too — no signal to keep.
+    assert "Voting against this action: None" not in cleaned
+    # The lead-in policy sentence and the post-roster continuation both
+    # survive intact.
+    assert "Committee decided to maintain the target range" in cleaned
+    assert "Board of Governors voted unanimously to raise" in cleaned
+
+
+def test_voting_roster_minutes_form_preserves_dissent():
+    raw = (
+        "Voting for this action: Jerome H. Powell, John C. Williams, and "
+        "Randal K. Quarles. Voting against this action: Loretta J. Mester "
+        "President Mester was fully supportive of all of the actions taken "
+        "to promote the smooth functioning of markets and the flow of "
+        "credit to households and businesses but preferred to reduce the "
+        "target range for the federal funds rate to 1/2 to 3/4 percent."
+    )
+    cleaned = _strip_voting_roster(raw)
+    assert "Jerome H. Powell" not in cleaned
+    assert "Randal K. Quarles" not in cleaned
+    # Dissent half is kept verbatim.
+    assert "Voting against this action: Loretta J. Mester" in cleaned
+    assert "preferred to reduce the target range" in cleaned
+
+
+def test_stay_connected_as_verb_phrase_is_preserved():
+    """'stay connected' is ordinary prose when not adjacent to the
+    social-media footer chrome.
+    """
+
+    raw = (
+        "Regional Reserve Bank presidents continue to stay connected with "
+        "community banks and small business owners across their districts."
+    )
+    cleaned = _strip_nav_chrome(raw)
+    assert "stay connected with" in cleaned
+    assert "community banks" in cleaned
+
+
+def test_stay_connected_footer_banner_is_still_stripped():
+    raw = (
+        "Board of Governors of the Federal Reserve System Stay Connected "
+        "Federal Reserve Facebook Page Federal Reserve YouTube Page"
+    )
+    cleaned = _strip_nav_chrome(raw)
+    assert "Stay Connected" not in cleaned
+    assert "Facebook Page" not in cleaned
+    assert "YouTube Page" not in cleaned
+
+
+# ---------------------------------------------------------------------------
+# Top-of-page banner scrub (BOM + Fed site-wide nav chrome)
+# ---------------------------------------------------------------------------
+
+
+def test_strip_top_banner_drops_bom_and_skip_to_main_content():
+    """Verbatim banner fixture from the scraped minutes corpus. The cut
+    must drop the BOM, ".gov" boilerplate, and "Skip to main content"
+    chrome but leave the article body intact starting at the first
+    real Fed body marker.
+    """
+
+    cleaned = _strip_top_banner(REAL_BANNER_HEAD)
+
+    # BOM mojibake and chrome are gone.
+    assert "ï»¿" not in cleaned
+    assert "Skip to main content" not in cleaned
+    assert "An official website of the United States" not in cleaned
+    assert "Secure .gov websites use HTTPS" not in cleaned
+    assert "Share sensitive information only on official" not in cleaned
+    assert "Subscribe to RSS" not in cleaned
+    # Body anchor survives and the cut starts there.
+    assert cleaned.startswith("Minutes of the Federal Open Market Committee")
+    # The full first sentence of the body survives intact.
+    assert "A joint meeting of the Federal Open Market Committee" in cleaned
+    assert "Washington, D.C., on Tuesday, January 28, 2020" in cleaned
+
+
+def test_strip_top_banner_leaves_clean_statement_untouched():
+    """Statements scraped from the press-release endpoint do not carry
+    the global site-wide chrome. The cut MUST be a no-op for them so
+    we don't accidentally amputate a real document.
+    """
+
+    raw = (
+        "January 29, 2020\n"
+        "For release at 2:00 p.m. EST Share\n"
+        "Information received since the Federal Open Market Committee met "
+        "in December indicates that the labor market remains strong."
+    )
+    cleaned = _strip_top_banner(raw)
+    assert cleaned == raw
+
+
+def test_strip_top_banner_strips_real_bom_codepoint():
+    """The proper U+FEFF BOM (not the mojibake form) is also dropped."""
+
+    raw = "﻿" + "Skip to main content For release at 2:00 p.m. body"
+    cleaned = _strip_top_banner(raw)
+    assert "﻿" not in cleaned
+    assert "Skip to main content" not in cleaned
+    assert cleaned.startswith("For release at")
+
+
+def test_strip_top_banner_handles_empty_string():
+    assert _strip_top_banner("") == ""
+
+
+def test_strip_top_banner_drops_nav_chrome_on_2007_2011_layout():
+    """The 2007-2011 minutes page-title line leads with "FRB: FOMC
+    Minutes, <date>" BEFORE the chrome banner. An anchor that admitted
+    a bare calendar date would match inside the title and leave the
+    "skip to main navigation ... Site Map ... A-Z Index ... Advanced
+    Search ..." chrome in the cleaned body. The cut must skip past the
+    chrome and start at "Minutes of the Federal Open Market Committee".
+    """
+
+    cleaned = _strip_top_banner(REAL_OLD_BANNER_HEAD)
+
+    # Nav chrome unique to this older layout is gone.
+    assert "skip to main navigation" not in cleaned.lower()
+    assert "Site Map" not in cleaned
+    assert "A-Z Index" not in cleaned
+    assert "Advanced Search" not in cleaned
+    # The cut starts at the real body anchor.
+    assert cleaned.startswith("Minutes of the Federal Open Market Committee")
+    # The first body sentence survives intact.
+    assert "A meeting of the Federal Open Market Committee" in cleaned
+    assert "Washington, D.C., on Tuesday, January 25, 2011" in cleaned
+
+
+# ---------------------------------------------------------------------------
+# End-to-end clean_fomc_text with the top-banner scrub
+# ---------------------------------------------------------------------------
+
+
+def test_clean_minutes_strips_top_banner_and_preserves_first_body_sentence():
+    """End-to-end clean over the real-banner fixture: top chrome is
+    gone, the first body sentence survives.
+    """
+
+    cleaned = clean_fomc_text(REAL_BANNER_HEAD, kind="minutes")
+
+    # Top banner is gone in its entirety.
+    assert "Skip to main content" not in cleaned
+    assert "An official website of the United States" not in cleaned
+    assert ".gov website" not in cleaned
+    assert "Subscribe to RSS" not in cleaned
+    assert "Facebook Page" not in cleaned
+    # The body's first sentence survives.
+    assert "Minutes of the Federal Open Market Committee" in cleaned
+    assert "A joint meeting of the Federal Open Market Committee" in cleaned
+    assert "Washington, D.C." in cleaned
+
+
+def test_clean_respects_per_kind_flag_excluding_press_conference(monkeypatch):
+    """When a kind is removed from _TOP_BANNER_KINDS, clean_fomc_text
+    leaves the top banner alone — this exercises the dial-back per
+    kind escape hatch.
+    """
+
+    monkeypatch.setattr(
+        text_hygiene,
+        "_TOP_BANNER_KINDS",
+        frozenset({"statement", "minutes"}),
+    )
+
+    cleaned = clean_fomc_text(REAL_BANNER_HEAD, kind="press_conference")
+
+    # With the flag excluded, the chrome is still present.
+    assert "Skip to main content" in cleaned
+    assert "An official website of the United States" in cleaned
+
+
+def test_clean_with_per_kind_flag_still_strips_when_kind_included(monkeypatch):
+    """Counter-test: the same fixture under a kind that IS in the
+    flagged set still gets the banner cut.
+    """
+
+    monkeypatch.setattr(
+        text_hygiene,
+        "_TOP_BANNER_KINDS",
+        frozenset({"statement", "minutes"}),
+    )
+
+    cleaned = clean_fomc_text(REAL_BANNER_HEAD, kind="minutes")
+    assert "Skip to main content" not in cleaned
+    assert "Minutes of the Federal Open Market Committee" in cleaned
+
+
+# ---------------------------------------------------------------------------
+# Real-corpus regression: sampled statement keeps its article-body anchors
+# ---------------------------------------------------------------------------
+
+
+# Docker mounts the host ``./data`` at ``/data`` in the backend container
+# and at ``<repo>/data`` on the host. Probe both so this test runs in
+# either environment.
+_CANDIDATE_DATA_DIRS = (
+    Path("/data"),
+    Path(__file__).resolve().parents[2] / "data",
+)
+_STATEMENTS_PATH = next(
+    (d / "fomc_statements.json" for d in _CANDIDATE_DATA_DIRS if (d / "fomc_statements.json").exists()),
+    _CANDIDATE_DATA_DIRS[0] / "fomc_statements.json",
+)
+
+
+@pytest.mark.skipif(
+    not _STATEMENTS_PATH.exists(),
+    reason="fomc_statements.json not present in the test environment",
+)
+def test_clean_statement_real_corpus_keeps_anchors():
+    """Load a real statement from disk and assert the cleaner does not
+    erase the "Federal Open Market Committee" / "Information received"
+    anchors that downstream models tokenise. This is the safety net
+    against an over-aggressive banner cut on a clean document.
+    """
+
+    with _STATEMENTS_PATH.open("r", encoding="utf-8") as fh:
+        statements = json.load(fh)
+
+    sample = statements[0]
+    raw = sample["text"]
+    cleaned = clean_fomc_text(raw, kind="statement")
+
+    assert "Federal Open Market Committee" in cleaned
+    assert "Information received" in cleaned
+    # The cleaned text must not be empty or a tiny stub — the cleaner
+    # should preserve the bulk of the article body.
+    assert len(cleaned) > 0.5 * len(raw)

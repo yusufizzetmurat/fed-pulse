@@ -16,6 +16,22 @@ import pytest
 from app.services import multi_axis_classifier as svc
 
 
+@pytest.fixture(autouse=True)
+def _reset_classifier_state():
+    """Reset the singleton both before and after each test.
+
+    A test that crashes mid-run leaves module-level ``_state`` in a
+    stale shape (either a real classifier from a fixture or the
+    sticky sentinel from #551). Without the after-yield reset the
+    next test inherits the pollution; matches the analogs.py test
+    isolation pattern surfaced in the #551 review.
+    """
+
+    svc.reset_classifier()
+    yield
+    svc.reset_classifier()
+
+
 def test_score_text_returns_none_when_checkpoint_missing(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -23,7 +39,6 @@ def test_score_text_returns_none_when_checkpoint_missing(
     /analyze handler relies on a graceful ``None`` so it can route
     around an absent classifier."""
 
-    svc.reset_classifier()
     missing = tmp_path / "no_such_checkpoint.pt"
     monkeypatch.setenv("FED_PULSE_TEXT_MULTI_AXIS_CHECKPOINT", str(missing))
     assert svc.checkpoint_exists() is False
@@ -36,7 +51,6 @@ def test_checkpoint_exists_returns_true_when_file_present(
     """The path probe is a stat-only check; it does NOT validate the
     checkpoint contents."""
 
-    svc.reset_classifier()
     present = tmp_path / "present.pt"
     present.write_bytes(b"\x00" * 4)
     monkeypatch.setenv("FED_PULSE_TEXT_MULTI_AXIS_CHECKPOINT", str(present))
@@ -50,7 +64,6 @@ def test_score_text_returns_none_on_malformed_checkpoint(
     must degrade gracefully to ``None`` rather than crashing the
     /analyze handler."""
 
-    svc.reset_classifier()
     corrupt = tmp_path / "corrupt.pt"
     corrupt.write_bytes(b"not a torch checkpoint")
     monkeypatch.setenv("FED_PULSE_TEXT_MULTI_AXIS_CHECKPOINT", str(corrupt))
@@ -62,7 +75,6 @@ def test_reset_classifier_clears_singleton(monkeypatch, tmp_path: Path) -> None:
     to force the next /analyze request to rebuild the singleton from
     a fresh checkpoint."""
 
-    svc.reset_classifier()
     missing = tmp_path / "still_missing.pt"
     monkeypatch.setenv("FED_PULSE_TEXT_MULTI_AXIS_CHECKPOINT", str(missing))
     # Prime the singleton with a None result.
@@ -79,8 +91,111 @@ def test_score_text_skips_empty_input(monkeypatch, tmp_path: Path) -> None:
     cards stay empty rather than the classifier hallucinating a
     label from an empty input window."""
 
-    svc.reset_classifier()
     missing = tmp_path / "no_checkpoint.pt"
     monkeypatch.setenv("FED_PULSE_TEXT_MULTI_AXIS_CHECKPOINT", str(missing))
     assert svc.score_text("") is None
     assert svc.score_text("   ") is None
+
+
+def test_load_failure_is_sticky_after_first_call(
+    monkeypatch, tmp_path: Path, caplog
+) -> None:
+    """#454: once ``_load_state`` fails, subsequent ``get_classifier``
+    calls must NOT re-attempt the load. Pre-fix the singleton cached
+    ``None`` (indistinguishable from the initial unset state), so
+    every request fell through to the load path again — flooding logs
+    with a per-request warning and obscuring the "uninitialised"
+    /health status. The sticky ``_LoadFailure`` sentinel breaks the
+    cycle: first failure logs once, every later call returns ``None``
+    without touching the load path.
+    """
+
+    missing = tmp_path / "absent.pt"
+    monkeypatch.setenv("FED_PULSE_TEXT_MULTI_AXIS_CHECKPOINT", str(missing))
+
+    call_count = {"n": 0}
+    real_load = svc._load_state
+
+    def _tracking_load() -> "svc._ClassifierState | svc._LoadFailure":
+        call_count["n"] += 1
+        return real_load()
+
+    monkeypatch.setattr(svc, "_load_state", _tracking_load)
+
+    with caplog.at_level("WARNING"):
+        assert svc.get_classifier() is None
+        first_warning_count = sum(
+            1
+            for r in caplog.records
+            if "multi_axis_classifier_load_failed" in r.getMessage()
+        )
+        # Subsequent calls return None without re-loading or re-logging.
+        for _ in range(5):
+            assert svc.get_classifier() is None
+
+    assert call_count["n"] == 1, (
+        "Expected exactly one _load_state call across six get_classifier "
+        f"calls; got {call_count['n']}. The sticky-cache contract is broken."
+    )
+    final_warning_count = sum(
+        1
+        for r in caplog.records
+        if "multi_axis_classifier_load_failed" in r.getMessage()
+    )
+    assert final_warning_count == first_warning_count == 1, (
+        "Expected exactly one warning across six get_classifier calls; "
+        f"got {final_warning_count}."
+    )
+
+
+def test_reset_classifier_clears_sticky_load_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """``reset_classifier`` must clear the sticky ``_LoadFailure`` so an
+    operator who fixes the underlying breakage can recover without a
+    process restart. Pre-#454 fix this worked accidentally because the
+    failure was cached as ``None`` (which the initial state also was);
+    post-fix the reset must explicitly drop the sentinel."""
+
+    missing = tmp_path / "absent.pt"
+    monkeypatch.setenv("FED_PULSE_TEXT_MULTI_AXIS_CHECKPOINT", str(missing))
+    assert svc.get_classifier() is None
+    # Internal state: cached as _LoadFailure, not _UNSET.
+    assert isinstance(svc._state, svc._LoadFailure)
+    svc.reset_classifier()
+    assert svc._state is svc._UNSET
+
+
+def test_resolve_checkpoint_prefers_env_override(monkeypatch):
+    monkeypatch.setenv("FED_PULSE_TEXT_MULTI_AXIS_CHECKPOINT", "/tmp/override.pt")
+    assert svc._resolve_checkpoint_path() == Path("/tmp/override.pt")
+
+
+def test_resolve_checkpoint_pulls_from_hf_when_no_local(monkeypatch, tmp_path):
+    import huggingface_hub
+
+    monkeypatch.delenv("FED_PULSE_TEXT_MULTI_AXIS_CHECKPOINT", raising=False)
+    monkeypatch.setattr(svc, "DEFAULT_CHECKPOINT_PATH", tmp_path / "absent.pt")
+    monkeypatch.setattr(svc, "_hf_checkpoint_cache", None)
+    monkeypatch.setattr(svc, "_hf_checkpoint_failed", False)
+    fake = tmp_path / "hf.pt"
+    fake.write_text("x")
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda *a, **k: str(fake))
+    assert svc._resolve_checkpoint_path() == fake
+
+
+def test_resolve_checkpoint_falls_back_when_hf_unavailable(monkeypatch, tmp_path):
+    import huggingface_hub
+
+    monkeypatch.delenv("FED_PULSE_TEXT_MULTI_AXIS_CHECKPOINT", raising=False)
+    absent = tmp_path / "absent.pt"
+    monkeypatch.setattr(svc, "DEFAULT_CHECKPOINT_PATH", absent)
+    monkeypatch.setattr(svc, "_hf_checkpoint_cache", None)
+    monkeypatch.setattr(svc, "_hf_checkpoint_failed", False)
+
+    def _boom(*a, **k):
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", _boom)
+    assert svc._resolve_checkpoint_path() == absent
+    assert svc._hf_checkpoint_failed is True

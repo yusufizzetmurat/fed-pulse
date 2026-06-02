@@ -12,7 +12,10 @@ DEFAULT_SEEDS = [11, 29, 47, 71, 97]
 DEFAULT_PROTOCOL = "evaluation_protocol_v1"
 
 MODEL_SPECS = {
-    "bert": {"model_version": "mv_bert_base_uncased_fast_v1.0.0", "checkpoint": "bert-base-uncased"},
+    "bert": {
+        "model_version": "mv_bert_base_uncased_fast_v1.0.0",
+        "checkpoint": "bert-base-uncased",
+    },
     "finbert": {"model_version": "mv_finbert_fast_v1.0.0", "checkpoint": "ProsusAI/finbert"},
     "fomc_roberta": {
         "model_version": "mv_fomc_roberta_fast_v1.0.0",
@@ -30,7 +33,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--training-package-id", required=True, help="Training package id.")
     parser.add_argument("--owner", default="unknown", help="Run owner.")
     parser.add_argument("--protocol", default=DEFAULT_PROTOCOL, help="Evaluation protocol.")
-    parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT), help="Run docs output root.")
+    parser.add_argument(
+        "--output-root", default=str(DEFAULT_OUTPUT_ROOT), help="Run docs output root."
+    )
     parser.add_argument(
         "--date-token",
         default=datetime.now(timezone.utc).strftime("%Y%m%d"),
@@ -144,4 +149,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

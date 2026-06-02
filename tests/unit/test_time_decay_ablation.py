@@ -15,23 +15,17 @@ from pathlib import Path
 import pytest
 
 
-_TRAIN_FORECASTER_PATH = (
-    Path(__file__).resolve().parents[2] / "backend" / "app" / "train_forecaster.py"
-)
-_CONFIG_PATH = (
-    Path(__file__).resolve().parents[2] / "backend" / "app" / "models" / "config.py"
-)
+import app.train_forecaster as _train_forecaster_mod
+from app.models import config as _config_mod
+from app.models import forecaster_base as _forecaster_base_mod
+
+_TRAIN_FORECASTER_PATH = Path(_train_forecaster_mod.__file__)
+_CONFIG_PATH = Path(_config_mod.__file__)
 # Post-#336 the input-prep + the time-decay kwarg live on the shared
 # backbone (``forecaster_base.py``). The lstm.py module survives as a
 # back-compat shim; the canonical owner of ``use_time_decay`` is the
 # base class.
-_LSTM_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "backend"
-    / "app"
-    / "models"
-    / "forecaster_base.py"
-)
+_LSTM_PATH = Path(_forecaster_base_mod.__file__)
 
 
 def _read(path: Path) -> str:

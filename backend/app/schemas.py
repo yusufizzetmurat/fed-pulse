@@ -8,6 +8,44 @@ _STRICT_REQUEST_CONFIG = ConfigDict(extra="forbid", strict=True, frozen=True)
 # Response models stay open to extras so the OpenAPI snapshot does not churn;
 # `frozen` still blocks mutation after construction.
 _FORBID_FROZEN_CONFIG = ConfigDict(frozen=True)
+# #99 strict response config: enables Pydantic v2 strict mode so the
+# numeric fields refuse cross-type coercion at construction time.
+# Concretely it rejects:
+#   - float -> int field   (a numpy.float64 leak into lookback_days)
+#   - str   -> any numeric (string concat artefacts)
+#   - bool  -> any numeric (True/False misuse)
+# Pydantic v2 strict_float still accepts a bare ``int`` (treated as a
+# lossless promotion), so a numpy.int64 leak into close/volatility
+# is NOT caught here -- the guard is asymmetric across the numeric
+# directions. It also accepts numpy.float64 against a float field
+# because numpy.float64 is a subclass of Python float. Decimal and
+# Fraction are likewise silently coerced for float fields in practice
+# (pydantic/pydantic#11131) despite the docs implying otherwise. The
+# value-add is the directional rejections above; the asymmetry is
+# documented so the next audit pass knows what gap remains.
+# Applied to the two leaf-level numeric response models whose
+# service-layer builders have been audited end-to-end
+# (MarketDataResponse and PredictionResponse).
+#
+# Scope caveat (Pydantic v2 semantics): strict=True is model-local.
+# When a model with strict=True is populated as a nested field of a
+# non-strict outer model (e.g. AnalyzeResponse), the outer model's
+# non-strict coercion governs the validation pass and the nested
+# strict guard does NOT re-fire on field values coming from the
+# outer dict. Strict therefore catches numpy at direct-construction
+# sites (services that build the model by name, tests that
+# round-trip it, fixture factories) but not at FastAPI's
+# response-serialisation boundary when the outer AnalyzeResponse is
+# still _FORBID_FROZEN_CONFIG. The follow-up #99 PR that flips
+# AnalyzeResponse to strict will close that hole; the leaf-level
+# strict here still adds value for the direct-construction path,
+# which is where the service builders actually live.
+#
+# Remaining response models (SentimentResponse, ChunkAttentionDiagnostics,
+# ModelDiagnostics, XaiResponse, HistoryEntry, AnalyzeResponse) wait
+# on matching audit passes -- this PR is the first half of the #99
+# rollout.
+_STRICT_RESPONSE_CONFIG = ConfigDict(strict=True, frozen=True)
 
 
 class AnalyzeRequest(BaseModel):
@@ -52,7 +90,7 @@ class SentimentResponse(BaseModel):
 
 
 class MarketDataResponse(BaseModel):
-    model_config = _FORBID_FROZEN_CONFIG
+    model_config = _STRICT_RESPONSE_CONFIG
 
     symbol: str
     requested_date: str
@@ -63,7 +101,7 @@ class MarketDataResponse(BaseModel):
 
 
 class PredictionResponse(BaseModel):
-    model_config = _FORBID_FROZEN_CONFIG
+    model_config = _STRICT_RESPONSE_CONFIG
 
     close: float
     volatility: float
@@ -207,9 +245,15 @@ class CredibilityResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     drift_score: float
-    realized_vs_stated_gap: float
-    market_implied_gap: float
-    months_since_reversal: int
+    realized_vs_stated_gap: float | None = None
+    market_implied_gap: float | None = None
+    months_since_reversal: int | None = None
+    # Per-meeting drift sparkline newest-last. Each entry is the cosine
+    # distance of one prior statement embedding to the mean of the
+    # remaining priors, giving the workspace a short trend curve next
+    # to the headline shift score. Empty when the embedding cache is
+    # absent or only one prior statement is available.
+    drift_trend: list[float] = Field(default_factory=list)
 
 
 class MultiAxisStanceCard(BaseModel):
@@ -225,19 +269,20 @@ class MultiAxisStanceCard(BaseModel):
     )
 
 
-class MultiAxisFactorCard(BaseModel):
-    """Forward-guidance factor regression in [-1, 1].
+class MultiAxisTimeCard(BaseModel):
+    """Forward-looking horizon classification from the multi-task head.
 
-    Positive values lean hawkish, negative values lean dovish. Sourced
-    from the multi-task head's tanh-bounded regression branch.
-    Confidence reflects training-time coverage and is left to the
-    caller to calibrate; absent supervision, the field is None.
+    Two classes: ``forward looking`` (the statement references future
+    actions or expectations) vs ``not forward looking`` (backward-looking
+    or current-state only). Sourced from the gtfintechlab ``time_label``
+    column; trained on ~5 992 labelled sentences.
     """
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    value: float = Field(..., ge=-1.0, le=1.0)
+    label: str = Field(..., description="forward looking | not forward looking")
     confidence: float = Field(..., ge=0.0, le=1.0)
+    distribution: dict[str, float] = Field(default_factory=dict)
 
 
 class MultiAxisCertaintyCard(BaseModel):
@@ -250,33 +295,19 @@ class MultiAxisCertaintyCard(BaseModel):
     distribution: dict[str, float] = Field(default_factory=dict)
 
 
-class MultiAxisTopicCard(BaseModel):
-    """Topic prediction from the multi-task head."""
-
-    model_config = _FORBID_FROZEN_CONFIG
-
-    label: str = Field(..., description="macro | forward_guidance | market_reaction | other")
-    confidence: float = Field(..., ge=0.0, le=1.0)
-    distribution: dict[str, float] = Field(default_factory=dict)
-
-
 class MultiAxisBlock(BaseModel):
     """Multi-task head per-axis predictions surfaced on /analyze (#78).
 
-    The four axes mirror the multi-task head's four output branches.
-    Stance reuses the canonical 3-class classifier (also exposed on
-    the legacy ``sentiment`` field for back-compat); the other three
-    branches are populated for the first time with this block. Axes
-    whose checkpoint was trained on very few labels are flagged as
-    low-confidence; the frontend renders a muted card in that case.
+    Active axes: stance / certainty / time. The factor axis (GSS
+    market-derived regression target) was retired — text cannot predict it
+    and the training pool had 0% coverage. Topic was retired in ADR 0044.
     """
 
     model_config = _FORBID_FROZEN_CONFIG
 
     stance: MultiAxisStanceCard
-    factor: MultiAxisFactorCard | None = None
     certainty: MultiAxisCertaintyCard | None = None
-    topic: MultiAxisTopicCard | None = None
+    time: MultiAxisTimeCard | None = None
 
 
 class RatesReactionCard(BaseModel):
@@ -360,7 +391,8 @@ class VolRegimeReactionCard(BaseModel):
     log_rv_lower: float | None = None
     log_rv_upper: float | None = None
     regime_label: str = Field(
-        ..., description="Argmax regime label: calm | normal | high.",
+        ...,
+        description="Argmax regime label: calm | normal | high.",
     )
     regime_probabilities: dict[str, float] = Field(
         default_factory=dict,
@@ -621,6 +653,12 @@ class HistoryEntry(BaseModel):
     forecast_mode: str
     stance: str
     sentiment_score: float | None = None
+    # Signed stance value ``P(hawkish) - P(dovish)`` derived from the persisted
+    # multi-axis distribution. ``None`` when the row pre-dates multi-axis or
+    # when the payload is regression-mode (no stance head). The History chart
+    # uses this for the Y-axis; ``sentiment_score`` is unsigned confidence and
+    # should not drive a signed axis.
+    stance_score: float | None = None
     predicted_close: float | None = None
     current_close: float | None = None
     predicted_volatility: float | None = None
@@ -641,6 +679,29 @@ class HistoryList(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class StanceContextPoint(BaseModel):
+    """One historical (date, score) pair for the rolling z-score baseline."""
+
+    document_date: str
+    stance_score: float
+
+
+class StanceContextResponse(BaseModel):
+    """Trailing stance-score summary for the dashboard tile.
+
+    ``stance_score = P(hawkish) - P(dovish)`` per the validity study;
+    the tile renders the current run as a z-score against this trailing
+    mean/std rather than as a raw absolute number. ``mean`` and ``std``
+    are ``null`` when fewer than two usable historical rows are found,
+    in which case the tile falls back to the raw-value rendering.
+    """
+
+    n: int
+    mean: float | None
+    std: float | None
+    history: list[StanceContextPoint]
 
 
 class HistoryRealizedResponse(BaseModel):
@@ -665,6 +726,24 @@ class HistoryRealizedBatchResponse(BaseModel):
 
     items: dict[str, HistoryRealizedResponse]
     missing: list[str]
+
+
+class HistoryEventStudyResponse(BaseModel):
+    """Forward 10-trading-day price path anchored on the event date.
+
+    Backs the event-study chart on /history/[id]: the realised close path
+    plus the bucketed realised regime label so the headline can read
+    "predicted X, realized Y".
+    """
+
+    event_date: str
+    symbol: str
+    forward_dates: list[str]
+    forward_close: list[float]
+    forward_log_returns: list[float]
+    realized_vol_10d: float | None = None
+    predicted_regime: str | None = None
+    realized_regime: str | None = None
 
 
 class EvaluationCoverageResponse(BaseModel):
@@ -796,6 +875,9 @@ class FomcMeetingResponse(BaseModel):
     statement_release_date: str | None = None
     minutes_release_date: str | None = None
     notes: str | None = None
+    statement_available: bool = False
+    minutes_available: bool = False
+    press_conference_available: bool = False
 
 
 class FomcCalendarResponse(BaseModel):
@@ -812,6 +894,27 @@ class DocumentParseResponse(BaseModel):
     char_count: int
     source_kind: str
     source_metadata: dict[str, str]
+
+
+class DocumentDetailResponse(BaseModel):
+    """Single FOMC document body served to the path-based
+    ``/documents/{type}/{date}`` viewer. The text payload is the
+    hygiene-cleaned body — boilerplate (Implementation Note, voting
+    roster, navigation chrome) is stripped before it lands here so the
+    frontend can render it as prose without further pre-processing."""
+
+    type: str = Field(..., description="One of statement / minutes / press_conference.")
+    date: str = Field(..., description="Event ISO date the document indexes against.")
+    title: str = Field(..., description="Source title; empty when the JSON row omits it.")
+    cleaned_text: str = Field(..., description="Body after text_hygiene.clean_fomc_text().")
+    source_url: str | None = Field(
+        default=None,
+        description="Federal Reserve permalink when the row carries one.",
+    )
+    scraped_at: str | None = Field(
+        default=None,
+        description="ISO-8601 UTC timestamp the source row was scraped at.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -873,12 +976,35 @@ class CrossBankTransferSection(BaseModel):
     source_files: list[str] = Field(default_factory=list)
 
 
+class EncoderAxisStanceRow(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    encoder_alias: str
+    encoder_display: str
+    held_out_f1: float
+    spearman_rho: float
+    auc_hike_vs_cut: float
+    is_validity_winner: bool = False
+    is_held_out_winner: bool = False
+
+
+class EncoderAxisStanceSection(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    available: bool
+    rows: list[EncoderAxisStanceRow] = Field(default_factory=list)
+    source_doc: str = ""
+
+
 class ResearchArtifactsResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     artifacts_root: str
     sections: dict[str, list[ArtifactFile]]
     encoder_bakeoff: EncoderBakeoffSection
+    encoder_axis_stance: EncoderAxisStanceSection = Field(
+        default_factory=lambda: EncoderAxisStanceSection(available=False, rows=[])
+    )
     cross_bank_transfer: CrossBankTransferSection
 
 
@@ -959,7 +1085,9 @@ class AnalogsRequest(BaseModel):
 
     model_config = _STRICT_REQUEST_CONFIG
 
-    text: str = Field(..., min_length=1, description="Statement text to match against past FOMC statements.")
+    text: str = Field(
+        ..., min_length=1, description="Statement text to match against past FOMC statements."
+    )
     k: int = Field(default=5, ge=1, le=20, description="Number of analogs to return (1-20).")
     as_of_date: date | None = Field(
         default=None,
@@ -989,9 +1117,7 @@ class AnalogsRequest(BaseModel):
             try:
                 return date.fromisoformat(value)
             except ValueError as exc:
-                raise ValueError(
-                    f"as_of_date must be ISO YYYY-MM-DD, got {value!r}"
-                ) from exc
+                raise ValueError(f"as_of_date must be ISO YYYY-MM-DD, got {value!r}") from exc
         return value
 
 
@@ -1013,7 +1139,9 @@ class AnalogCard(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     event_date: str = Field(..., description="ISO date of the historical FOMC statement.")
-    similarity: float = Field(..., description="Cosine similarity in [-1, 1] vs. the query embedding.")
+    similarity: float = Field(
+        ..., description="Cosine similarity in [-1, 1] vs. the query embedding."
+    )
     axis_stance: str | None = Field(
         default=None,
         description="Stored stance label for the analog statement (hawkish / dovish / neutral). None when absent.",
@@ -1025,6 +1153,22 @@ class AnalogCard(BaseModel):
             "NOT a model feature. Do not feed back into a downstream model."
         ),
     )
+    # #299 — realized S&P forward returns measured from the event-day
+    # close (Bloomberg / FactSet convention). The denominator is the
+    # close on ``event_date`` (or the nearest prior trading day) and
+    # the numerator is the close ``N`` trading days forward of that
+    # anchor. These are MARKET DATA OVERLAYS (yfinance ^GSPC), not
+    # training labels — safe to surface even when the supervised
+    # ``subsequent_vol_regime`` bucket is intentionally suppressed.
+    # None when the historical market data is unavailable.
+    subsequent_close_pct_5d: float | None = Field(
+        default=None,
+        description="S&P 500 close-to-close % return over the 5 trading days following the event-day close.",
+    )
+    subsequent_close_pct_20d: float | None = Field(
+        default=None,
+        description="S&P 500 close-to-close % return over the 20 trading days following the event-day close.",
+    )
     excerpt: str = Field(..., description="First ~280 characters of the analog statement.")
 
 
@@ -1034,8 +1178,12 @@ class AnalogsResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     analogs: list[AnalogCard] = Field(default_factory=list)
-    index_size: int = Field(..., description="Total number of past statements in the loaded retrieval index.")
-    encoder_alias: str = Field(..., description="Registry alias of the encoder used to embed the query.")
+    index_size: int = Field(
+        ..., description="Total number of past statements in the loaded retrieval index."
+    )
+    encoder_alias: str = Field(
+        ..., description="Registry alias of the encoder used to embed the query."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1074,9 +1222,7 @@ class TrajectoryRequest(BaseModel):
             try:
                 return date.fromisoformat(value)
             except ValueError as exc:
-                raise ValueError(
-                    f"as_of_date must be ISO YYYY-MM-DD, got {value!r}"
-                ) from exc
+                raise ValueError(f"as_of_date must be ISO YYYY-MM-DD, got {value!r}") from exc
         return value
 
 
@@ -1202,3 +1348,570 @@ class TrajectoryResponse(BaseModel):
             "available."
         ),
     )
+
+
+class ResearchRegistryBaseline(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    label: str
+    dual_f1: float | None = None
+    cls_f1: float | None = None
+    regression_f1: float | None = None
+
+
+class ResearchRegistryRow(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    encoder_alias: str
+    encoder_display: str
+    dual_f1: float | None = None
+    cls_f1: float | None = None
+    regression_f1: float | None = None
+    delta_dual: float | None = Field(
+        default=None,
+        description="Δ macro-F1 on the dual-head surface vs no-text baseline.",
+    )
+    delta_cls: float | None = Field(
+        default=None,
+        description="Δ macro-F1 on the classification-only surface vs no-text baseline.",
+    )
+    is_winner: bool = Field(
+        default=False,
+        description="True iff the active surfaces Δ is >= 0 (non-negative lift).",
+    )
+    checkpoint_relpath: str | None = None
+    cache_uri: str | None = Field(
+        default=None,
+        description="hf:// URI of the shareable embedding cache parquet, if published.",
+    )
+    notes: str = ""
+
+
+class ResearchRegistryResponse(BaseModel):
+    """Quant-facing encoder registry response (§6.41 manifest).
+
+    Filtered by default to non-negative Δ on the requested surface so
+    the dashboard does not surface negative-lift encoders. Use
+    ?include_rejected=true to see the full table including nulls and
+    negatives.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    available: bool
+    surface: Literal["dual", "cls"]
+    baseline: ResearchRegistryBaseline | None = None
+    rows: list[ResearchRegistryRow] = Field(default_factory=list)
+    rejected_count: int = 0
+    training_package_id: str = ""
+    head: str = ""
+    seeds: list[int] = Field(default_factory=list)
+    source_wiki_section: str = ""
+
+
+# #299 PR-B — stance-directional backtest engine
+
+
+class BacktestPositionEntry(BaseModel):
+    """One {date, position} signal in the backtest request."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    date: str = Field(..., description="ISO date YYYY-MM-DD of the signal.")
+    position: int = Field(
+        ..., description="Position in {-1, 0, 1}. Hawkish=-1, neutral=0, dovish=+1."
+    )
+
+
+class BacktestRequest(BaseModel):
+    """Request body for POST /research/backtest."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    positions: list[BacktestPositionEntry] = Field(
+        ..., min_length=1, description="At least one signal entry."
+    )
+    symbol: str = Field("^GSPC", description="Market ticker for the strategy backtest.")
+    horizon_days: int = Field(
+        5,
+        ge=1,
+        le=60,
+        description="Forward holding period in trading days.",
+    )
+
+
+class BacktestTradeRow(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    date: str
+    position: int
+    forward_return_pct: float | None = None
+    strategy_return_pct: float | None = None
+
+
+class BacktestResponse(BaseModel):
+    """Aggregate backtest metrics for the quant terminal."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    trades: list[BacktestTradeRow] = Field(default_factory=list)
+    n_trades: int
+    sharpe: float | None = None
+    hit_rate: float | None = None
+    max_dd_pct: float | None = None
+    cum_return_pct: float | None = None
+    benchmark_cum_pct: float | None = None
+    alpha_cum_pct: float | None = None
+    horizon_days: int
+    symbol: str
+
+
+class RealizedVolHorizonForecast(BaseModel):
+    """Banded RV forecast for one horizon (1, 5, or 22 trading days).
+
+    ``point`` and the four ``band_*`` numbers are RV (variance) units, not
+    log-RV. ``qlike_model`` / ``qlike_har`` are the pooled walk-forward
+    QLIKE losses (lower is better); the card surfaces the gain as a
+    beat-HAR badge. ``coverage_empirical_90`` is the prospective empirical
+    coverage of the 90% conformal band, for the calibration chip.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    h: int
+    point: float
+    band_lo_80: float
+    band_hi_80: float
+    band_lo_90: float
+    band_hi_90: float
+    qlike_model: float | None = None
+    qlike_har: float | None = None
+    coverage_empirical_90: float | None = None
+
+
+class RealizedVolHistoricalBand(BaseModel):
+    """Single walk-forward h=1 conformal band aligned to a realized day.
+
+    Renders behind the realized sparkline so the card shows the band
+    actually covered each day's outcome.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    date: str
+    band_lo_80: float
+    band_hi_80: float
+    realized_rv: float | None = None
+
+
+class RealizedVolForecastResponse(BaseModel):
+    """Multi-horizon QLIKE-DLq forecast plus last-60d realized history."""
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbol: str
+    horizons: list[RealizedVolHorizonForecast]
+    history: list[float] = Field(default_factory=list)
+    history_dates: list[str] = Field(default_factory=list)
+    model_revision: str
+    historical_bands: list[RealizedVolHistoricalBand] | None = None
+    # "live" when the QLIKE head was filled with intraday-derived
+    # realized measures (full QLIKE edge); "training_means" when the
+    # head fell back to feat_mean (HAR-grade forecast). The dashboard
+    # surfaces this so the displayed point + bands are not misread as
+    # the full edge when intraday isn't reachable.
+    realized_features_source: str = "training_means"
+    # ISO date of the most-recent full intraday session the live
+    # measures were reduced from. ``None`` when the head fell back to
+    # training_means. The dashboard renders this in the badge tooltip
+    # so the reader can tell a Friday measure feeding a Tuesday forecast
+    # from one off the previous full session.
+    realized_features_date: str | None = None
+
+
+class HarTercileHorizon(BaseModel):
+    """HAR-tercile baseline classification for one forecast horizon.
+
+    ``predicted_rv`` is HAR's OLS point in realized-variance units.
+    ``tercile`` is the argmax bucket against the q33 / q67 cutoffs the
+    response also returns; ``tercile_probs`` is the Gaussian-CDF mass
+    triple in log-RV space (sums to 1.0). ``macro_f1`` is wired through
+    from wiki section 20 — the published HAR-tercile pooled macro-F1 on
+    the canonical 5-fold expanding walk-forward (0.687 / 0.685 / 0.654
+    at h=1 / 5 / 22). The serving path does not recompute this number;
+    it surfaces the offline-measured one so the frontend can render an
+    honest chip alongside the live point forecast.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    h: int
+    predicted_rv: float
+    tercile: Literal["low", "medium", "high"]
+    tercile_probs: dict[str, float] = Field(
+        default_factory=dict,
+        description="Per-class probability over (low, medium, high). Sums to 1.0.",
+    )
+    macro_f1: float | None = Field(
+        default=None,
+        description=(
+            "Pooled macro-F1 for the HAR-tercile baseline at this horizon, "
+            "read off wiki section 20 (Gated_Fusion_InfoNCE_Comprehensive_Null, "
+            "Result 2) for ^GSPC. Null for non-canonical symbols (^NDX / ^DJI) "
+            "where the baseline macro-F1 is not pinned and the response carries "
+            "a per-call OLS HAR fit only."
+        ),
+    )
+    macro_f1_source: str = Field(
+        ...,
+        description="Citation for the macro_f1 number (wiki section + result block).",
+    )
+    qlike_model: float | None = Field(
+        default=None,
+        description=(
+            "Pooled walk-forward QLIKE loss for the QLIKE-DLq ensemble at "
+            "this horizon (lower is better). None when the eval sidecar is "
+            "missing."
+        ),
+    )
+    qlike_har: float | None = Field(
+        default=None,
+        description="Pooled walk-forward QLIKE loss for HAR-OLS at this horizon.",
+    )
+
+
+class HarTercileBaselineResponse(BaseModel):
+    """Multi-horizon HAR-tercile regime baseline for the headline regime card.
+
+    Per wiki section 20, HAR-tercile is the strongest forward-vol-regime
+    classifier on the canonical fold protocol (beats market-only and the
+    text+market fused arm at h=1 and h=22; null at h=5). The frontend
+    renders this response as the headline regime card and demotes the
+    text+market fused card to a "second opinion" with explicit
+    weaker-baseline disclosure.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbol: str
+    horizons: list[HarTercileHorizon]
+    cutoffs_q33: float = Field(
+        ...,
+        description=(
+            "Lower tercile cutoff on realized variance used to bucket the "
+            "HAR point forecast. Derived from the supplied RV history when "
+            "the artifact does not pin a per-horizon train-slice cutoff."
+        ),
+    )
+    cutoffs_q67: float = Field(
+        ...,
+        description="Upper tercile cutoff on realized variance.",
+    )
+    model_revision: str
+    generated_at: str
+
+
+# Workspace-spine bundle: shared response models for the four
+# feature steps that build on top of this foundation. The feature
+# steps fill the service-layer builders that populate these
+# numbers; this module only owns the wire shape so the frontend
+# types and the OpenAPI snapshot can settle ahead of the wiring.
+#
+# SPINE separation: ExpectedVolumeHorizonForecast /
+# ExpectedVolumeForecastResponse are the only forecast surface in
+# this bundle (market data only). MonetaryPolicySurpriseResponse,
+# FuturesConsensusResponse and SemanticDiffResponse are descriptive
+# panels (text- or realized-derived) and never feed forecasts.
+class ExpectedVolumeHorizonForecast(BaseModel):
+    """HAR-based forecast of expected log-residual trading volume for
+    one horizon. ``point_log_residual`` is the model's point estimate
+    in log-volume residual space (after calendar adjustment when the
+    flag is set); ``point_pct_vs_baseline`` is the same number
+    expressed as a % deviation from the rolling calendar-adjusted
+    baseline so the card can render a human-readable headline.
+    ``r2_har`` is the offline pooled walk-forward R^2 of the HAR
+    volume head at this horizon, surfaced for the calibration chip.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    h: int
+    point_log_residual: float
+    point_pct_vs_baseline: float
+    band_lo_80: float
+    band_hi_80: float
+    band_lo_90: float
+    band_hi_90: float
+    r2_har: float | None = None
+    calendar_adjusted: bool
+
+
+class ExpectedVolumeForecastResponse(BaseModel):
+    """Multi-horizon HAR-volume forecast for the Expected Volume card.
+    Market-data-only forecast; never wired to text features.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbol: str
+    horizons: list[ExpectedVolumeHorizonForecast]
+    model_revision: str
+    generated_at: str
+
+
+class MonetaryPolicySurpriseResponse(BaseModel):
+    """Monetary-policy surprise (descriptive panel, not a forecast input).
+
+    ``mp_surprise_level_bps`` is the realized rate-path surprise in
+    basis points relative to the pre-meeting fed-funds futures
+    consensus. ``direction`` is the discrete sign bucket the panel
+    renders; ``no_surprise`` covers the inside-the-band cases.
+    ``is_intermeeting`` flags off-cycle actions where the consensus
+    baseline is constructed differently.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    event_date: str
+    mp_surprise_level_bps: float
+    direction: Literal["hawkish", "dovish", "no_surprise"]
+    magnitude_bps: float
+    is_intermeeting: bool
+    ff_target_prior_bps: float | None = None
+
+
+class FuturesConsensusHorizon(BaseModel):
+    """One horizon of the fed-funds futures implied-path consensus.
+
+    Probabilities are derived from the implied-rate distribution and
+    bucketed against the current target band; they sum to 1.0 across
+    hike / cut / pause.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    horizon_label: str
+    implied_rate_bps: float
+    change_vs_current_bps: float
+    probability_hike: float
+    probability_cut: float
+    probability_pause: float
+
+
+class FuturesConsensusResponse(BaseModel):
+    """FRED / CME-derived futures consensus panel.
+
+    Descriptive only — the rate-path expectations chart reads off
+    realized futures prices and never feeds the forecast cards.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    meeting_date: str
+    generated_at: str
+    current_target_lo_bps: float
+    current_target_hi_bps: float
+    horizons: list[FuturesConsensusHorizon]
+    methodology: str
+    data_source: str
+
+
+class SemanticDiffSpan(BaseModel):
+    """One token-aligned span of the current-vs-prior statement diff.
+
+    ``kind`` is the alignment bucket; ``paired_text`` carries the
+    matched span on the opposite side for ``substituted`` (and
+    optionally for ``added`` / ``removed`` if the aligner emitted a
+    near-match neighbour).
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    kind: Literal["unchanged", "added", "removed", "substituted"]
+    text: str
+    paired_text: str | None = None
+
+
+class SemanticDiffTopic(BaseModel):
+    """Topic-level emphasis delta across the two statements.
+
+    ``prior_emphasis`` and ``current_emphasis`` are the topic-share
+    masses in [0, 1]; ``delta`` = current - prior. ``sample_phrases``
+    are the highest-loading n-grams the panel surfaces alongside the
+    bar.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    topic: str
+    prior_emphasis: float
+    current_emphasis: float
+    delta: float
+    sample_phrases: list[str] = Field(default_factory=list)
+
+
+class SemanticDiffRequest(BaseModel):
+    """Inbound body for ``POST /fomc/semantic-diff``.
+
+    ``current_date`` selects the strict-prior FOMC statement off disk;
+    ``current_text`` is the pasted body the panel diffs against that
+    prior. Both fields are required — the cold-start case is still a
+    valid call, the service just returns an empty span list when no
+    strict-prior is on file for the supplied date.
+    """
+
+    model_config = _STRICT_REQUEST_CONFIG
+
+    current_date: str = Field(..., description="Document date in ISO format: YYYY-MM-DD")
+    # No ``min_length`` guard: empty / whitespace-only / non-Latin bodies
+    # must still reach :func:`app.services.semantic_diff.build_response`,
+    # which returns a parseable degraded response with a ``status`` field
+    # instead of raising. See SemanticDiffResponse.status.
+    current_text: str = Field(..., description="FOMC statement text to diff")
+
+
+class SemanticDiffResponse(BaseModel):
+    """Semantic diff between the current statement and its prior.
+
+    Descriptive panel — the spans and topic deltas are post-hoc
+    explanations of the realized text change and never feed the
+    forecast surface.
+
+    ``status`` carries a parseable signal for the panel to surface
+    an informational banner when the service could not produce a
+    meaningful diff (empty / near-empty / non-Latin input, or no
+    strict-prior on file). The field is optional and defaults to
+    ``None`` for backward compatibility — older clients that ignore
+    it still see the same empty-list cold-start shape they used to.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    current_date: str
+    prior_date: str
+    token_spans: list[SemanticDiffSpan]
+    topic_deltas: list[SemanticDiffTopic]
+    summary: str
+    status: Literal["ok", "no_input", "no_prior", "non_english"] | None = None
+
+
+class HarTercileBacktestRow(BaseModel):
+    """One resolved (or pending) row in the HAR-tercile backtest table.
+
+    A row carries the HAR-tercile prediction computed on the rolling
+    RV history available at the FOMC event date plus, when the forward
+    window has elapsed, the realized tercile bucketed off the same
+    cutoffs that produced the prediction. ``correct`` is None for rows
+    whose forward window has not yet closed.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    event_date: str
+    predicted_tercile: str | None = None
+    predicted_prob: float | None = None
+    realized_tercile: str | None = None
+    realized_rv: float | None = None
+    correct: bool | None = None
+
+
+class HarAccuracyMetrics(BaseModel):
+    """Aggregate accuracy KPIs across the HAR-tercile backtest rows.
+
+    ``total_runs`` is the number of rows in the window, regardless of
+    whether their forward window has resolved. ``resolved_runs`` counts
+    rows whose realized tercile could be derived. ``accuracy_overall``
+    is the hit rate across resolved rows only; ``per_tercile_hit_rate``
+    keys are the predicted-tercile labels and values are per-label hit
+    rates (denominator = resolved rows whose prediction was that label).
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    total_runs: int
+    resolved_runs: int
+    accuracy_overall: float | None = None
+    per_tercile_hit_rate: dict[str, float] = Field(default_factory=dict)
+
+
+class HarTercileBacktestResponse(BaseModel):
+    """Response wire shape for ``GET /forecast/har-tercile-backtest``.
+
+    Surfaces the last N FOMC meetings with their on-demand HAR-tercile
+    prediction and the realized tercile derived from forward market
+    history. Drives the HarAccuracyPanel card.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbol: str
+    horizon: int
+    rows: list[HarTercileBacktestRow]
+    metrics: HarAccuracyMetrics
+    generated_at: str
+
+
+class RvBacktestRow(BaseModel):
+    """One resolved (or pending) row in the QLIKE-RV backtest table.
+
+    Carries the h=1 point forecast + 80% / 90% conformal bands for the
+    persisted FOMC event date, the realized RV on the predicted bar, and
+    per-band hit flags. The forecast columns are None on pending rows
+    whose event sits inside HAR's monthly-lag warmup window or beyond
+    the right edge of the available RV history; ``in_band_*`` are None
+    whenever the realized RV is unresolved.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    event_date: str
+    point_forecast_rv: float | None = None
+    band_lo_80: float | None = None
+    band_hi_80: float | None = None
+    band_lo_90: float | None = None
+    band_hi_90: float | None = None
+    realized_rv: float | None = None
+    in_band_80: bool | None = None
+    in_band_90: bool | None = None
+
+
+class RvBacktestCoverage(BaseModel):
+    """Aggregate empirical band coverage across the backtest rows.
+
+    ``empirical_coverage_80`` / ``empirical_coverage_90`` are the fraction
+    of resolved rows whose realized RV landed inside the corresponding
+    conformal band. ``pending_runs`` reports rows we could not score
+    (event date in the HAR warmup window or outside the available RV
+    history); keeping it separate from ``resolved_runs`` keeps the
+    coverage denominator honest. ``nominal_coverage_*`` are pinned at the
+    calibration targets (0.80 / 0.90) so the frontend can render a
+    nominal-vs-empirical gap chip without re-deriving the constants.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    total_runs: int
+    resolved_runs: int
+    pending_runs: int = 0
+    empirical_coverage_80: float | None = None
+    empirical_coverage_90: float | None = None
+    nominal_coverage_80: float = 0.80
+    nominal_coverage_90: float = 0.90
+
+
+class RvBacktestResponse(BaseModel):
+    """Response wire shape for ``GET /forecast/rv-backtest``.
+
+    Walks the last N persisted ^GSPC analyze runs and reports the
+    QLIKE-RV h=1 point forecast + 80% / 90% bands against the realized
+    RV on the same bar. Drives the RvAccuracyPanel card alongside the
+    HAR-tercile accuracy surface.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    symbol: str
+    horizon: int
+    rows: list[RvBacktestRow]
+    coverage: RvBacktestCoverage
+    generated_at: str

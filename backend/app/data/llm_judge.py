@@ -24,6 +24,7 @@ from app.services.gemini_client import score_passage
 
 
 from app.config import DATA_DIR as DEFAULT_DATA_DIR
+
 DEFAULT_INPUT = DEFAULT_DATA_DIR / "interim" / "phase2" / "registry_pseudo.jsonl"
 DEFAULT_OUTPUT = DEFAULT_DATA_DIR / "interim" / "phase2" / "registry_pseudo_judged.jsonl"
 DEFAULT_AUDIT_DIR = DEFAULT_DATA_DIR / "artifacts" / "pseudo_label_audits"
@@ -33,16 +34,24 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Score the teacher's pseudo set with an LLM judge and emit gated output + audit set."
     )
-    parser.add_argument("--input", required=True, help="Pseudo-set JSONL produced by pseudo_labeling.")
-    parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="Judged pseudo-set JSONL output.")
+    parser.add_argument(
+        "--input", required=True, help="Pseudo-set JSONL produced by pseudo_labeling."
+    )
+    parser.add_argument(
+        "--output", default=str(DEFAULT_OUTPUT), help="Judged pseudo-set JSONL output."
+    )
     parser.add_argument("--judge-model", default="gemini-2.5-pro", help="Gemini model name.")
     parser.add_argument(
         "--judge-model-version",
         default="20260505_v1",
         help="Provenance version string for the judge.",
     )
-    parser.add_argument("--audit-dir", default=str(DEFAULT_AUDIT_DIR), help="Audit artefact directory.")
-    parser.add_argument("--max-rows", type=int, default=0, help="Score at most N rows; 0 = no limit.")
+    parser.add_argument(
+        "--audit-dir", default=str(DEFAULT_AUDIT_DIR), help="Audit artefact directory."
+    )
+    parser.add_argument(
+        "--max-rows", type=int, default=0, help="Score at most N rows; 0 = no limit."
+    )
     parser.add_argument(
         "--request-interval-seconds",
         type=float,
@@ -136,7 +145,7 @@ def _score_with_retry(
             last_exc = exc
             if not _is_transient_error(exc) or attempt == max_attempts - 1:
                 return None, exc
-            delay = min(base_delay * (4 ** attempt), max_delay)
+            delay = min(base_delay * (4**attempt), max_delay)
             if on_retry is not None:
                 on_retry(attempt + 1, exc, delay)
             sleep_fn(delay)
@@ -185,6 +194,7 @@ def run_judge(
     """
 
     if progress_writer is None:
+
         def progress_writer(line: str) -> None:
             print(line, flush=True)
 
@@ -268,8 +278,7 @@ def run_judge(
                 error_kind = type(exc).__name__ if exc is not None else "Unknown"
                 msg = str(exc)[:160] if exc is not None else ""
                 progress_writer(
-                    f"[judge] {index + 1}/{total}  ERROR     {short_id}  "
-                    f"({error_kind}): {msg}"
+                    f"[judge] {index + 1}/{total}  ERROR     {short_id}  " f"({error_kind}): {msg}"
                 )
 
             out = dict(row)
@@ -285,9 +294,7 @@ def run_judge(
             written += 1
 
             if not error_kind:
-                progress_writer(
-                    f"[judge] {index + 1}/{total}  {label or 'blank':<8}  {short_id}"
-                )
+                progress_writer(f"[judge] {index + 1}/{total}  {label or 'blank':<8}  {short_id}")
 
             if request_interval_seconds > 0 and index < total - 1:
                 time.sleep(request_interval_seconds)
@@ -335,9 +342,7 @@ import random
 from collections import defaultdict
 
 
-def sample_audit_set(
-    rows: list[dict[str, Any]], *, n: int, seed: int = 11
-) -> list[dict[str, Any]]:
+def sample_audit_set(rows: list[dict[str, Any]], *, n: int, seed: int = 11) -> list[dict[str, Any]]:
     """Stratified sample of size n from rows by teacher label.
 
     The sample is proportional to each class's count, with at least one
@@ -572,9 +577,7 @@ def write_audit_csv(sample: list[dict[str, Any]], output_path: Path) -> None:
             )
 
 
-def summarise_gating_policies(
-    rows: list[dict[str, Any]], *, tau: float
-) -> dict[str, Any]:
+def summarise_gating_policies(rows: list[dict[str, Any]], *, tau: float) -> dict[str, Any]:
     """Summarize kept rows and label distribution for each gating policy."""
     summary: dict[str, Any] = {}
     for policy in GATING_POLICIES:
@@ -614,9 +617,7 @@ def main() -> int:
     sweep: dict[str, Any] = {}
     for tau in (0.75, 0.85, 0.95):
         sweep[f"{tau}"] = summarise_gating_policies(judged_rows, tau=tau)
-    (audit_dir / "policy_sweep.json").write_text(
-        json.dumps(sweep, indent=2), encoding="utf-8"
-    )
+    (audit_dir / "policy_sweep.json").write_text(json.dumps(sweep, indent=2), encoding="utf-8")
     print(f"Policy sweep written to {audit_dir / 'policy_sweep.json'}")
 
     audit_sample = sample_audit_set(judged_rows, n=100, seed=11)

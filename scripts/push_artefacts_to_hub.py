@@ -39,6 +39,13 @@ Requirements
 - ``huggingface_hub>=0.24`` installed in the current Python env.
 - Local checkpoints / parquet bundles present under ``/data/`` or
   ``data/`` per the registry.
+- **Run from the repo root on the host** (or via ``docker run --rm -v
+  $PWD:/repo -w /repo``). ``REPO_ROOT`` resolves to
+  ``Path(__file__).resolve().parent.parent``; inside the dev backend
+  container that points at ``/app`` (which holds the backend source,
+  not the repo root), so companion-file paths like
+  ``backend/models/forecaster_best.pt`` fall through to ``[skip
+  companion missing]`` and you ship a partial push without realising.
 
 Post-run actions
 ----------------
@@ -102,13 +109,32 @@ ARTEFACT_SOURCES: dict[str, dict[str, str]] = {
     },
     "forecaster_canonical": {
         "local_path": "backend/models/forecaster_best.pt",
+        # Sidecars the runtime reads next to the .pt — inference-contract
+        # check (#393), conformal manifest for prediction-set sizing, and
+        # the FinBERT encoder LoRA adapter. Each is uploaded separately;
+        # the HF Hub LFS layer dedupes against the local sha so unchanged
+        # sidecars no-op without re-uploading.
+        "companion_files": [
+            "backend/models/forecaster_best.pt.inference_contract.json",
+            "backend/models/forecaster_best.conformal.json",
+            "backend/models/forecaster_best.pt.lora_adapter.pt",
+            "backend/models/forecaster_calibration_fresh.pt",
+        ],
         "license": "mit",
         "kind": "forecaster",
     },
     "rates_heads_canonical": {
         "local_path": "backend/models/forecaster_best.pt",
+        "companion_files": [
+            "backend/models/forecaster_best.pt.inference_contract.json",
+        ],
         "license": "mit",
         "kind": "rates_heads",
+    },
+    "volume_har_canonical": {
+        "local_path": "backend/models/volume_har/volume_har_artifact.json",
+        "license": "mit",
+        "kind": "volume_har",
     },
     "retrieval_bundle": {
         "local_path": "data/artifacts/retrieval",
@@ -231,6 +257,13 @@ ATTRIBUTION_BLURBS: dict[str, str] = {
         "- Encoders: `yusufizzetmurat/fed-pulse-encoder` family (see those "
         "cards for upstream attribution)."
     ),
+    "volume_har": (
+        "- Daily share-volume series: [Yahoo Finance](https://finance.yahoo.com) "
+        "via `yfinance` (`^GSPC` reference symbol).\n"
+        "- Fit recipe: per-horizon HAR Corsi regression on log-volume with a "
+        "weekday + month-end / quarter-end seasonality block; conformal "
+        "residual quantiles at the 80% / 90% bands."
+    ),
 }
 
 
@@ -272,6 +305,11 @@ CORPUS_BLURBS: dict[str, str] = {
         "revision). Each parquet carries `record_id`, `doc_id`, "
         "`event_date`, `chunk_index`, `chunk_preview`, and `embedding`."
     ),
+    "volume_har": (
+        "HAR Corsi log-volume regression coefficients + weekday / month-end / "
+        "quarter-end seasonality block + conformal residual quantiles for "
+        "horizons h=1, 5, 22. Fit on 180 calendar days of daily ^GSPC volume."
+    ),
 }
 
 
@@ -310,6 +348,7 @@ TRAIN_CMDS: dict[str, str] = {
     "trajectory": "python -m app.trajectory.train --architecture lstm",
     "training_package": "python -m app.data.pipeline_data_prep --all-sources",
     "embedding_caches": "python scripts/cache_embeddings.py --encoder <alias> --training-package-id <tp-id> --allow-network",
+    "volume_har": "python -m app.data.late_fusion_volume fit-production-artifact --symbol ^GSPC --period 180d",
 }
 
 
@@ -321,6 +360,10 @@ class PushPlan:
     local_path: Path
     license: str
     kind: str
+    # Optional sibling files uploaded alongside ``local_path`` for the
+    # single-file artefact path. Empty for folder-artefacts (which copy
+    # the whole tree via ``upload_folder``).
+    companion_files: tuple[Path, ...] = ()
 
 
 def _resolve_local_path(meta: dict[str, str]) -> Path | None:
@@ -390,6 +433,9 @@ def _build_plans(kinds: set[str] | None) -> list[PushPlan]:
                 "set ARTEFACT_SOURCES['<key>']['local_path'] to push a fresh checkpoint."
             )
             continue
+        companions: tuple[Path, ...] = ()
+        if meta.get("companion_files"):
+            companions = tuple(REPO_ROOT / rel for rel in meta["companion_files"])
         plans.append(
             PushPlan(
                 artefact_key=key,
@@ -398,6 +444,7 @@ def _build_plans(kinds: set[str] | None) -> list[PushPlan]:
                 local_path=local_path,
                 license=meta["license"],
                 kind=meta["kind"],
+                companion_files=companions,
             )
         )
     return plans
@@ -504,7 +551,20 @@ def _push_one(
         print("    [dry-run] would create repo and upload folder")
         print(f"    [dry-run] model card length: {len(card)} chars")
         if plan.local_path.is_file():
-            print(f"    [dry-run] file sha256: {_file_sha256(plan.local_path)}")
+            print(
+                f"    [dry-run] main : {plan.local_path.name:55s} "
+                f"size={plan.local_path.stat().st_size}  "
+                f"sha256={_file_sha256(plan.local_path)[:16]}"
+            )
+            for companion in plan.companion_files:
+                if not companion.exists():
+                    print(f"    [dry-run] [skip companion missing] {companion}")
+                    continue
+                print(
+                    f"    [dry-run] side: {companion.name:55s} "
+                    f"size={companion.stat().st_size}  "
+                    f"sha256={_file_sha256(companion)[:16]}"
+                )
         else:
             plan_files = _list_upload_plan(plan.local_path)
             print(f"    [dry-run] folder contains {len(plan_files)} files (post ignore-patterns)")
@@ -527,8 +587,9 @@ def _push_one(
 
     if plan.local_path.is_file():
         # Single-file artefact (e.g. forecaster_best.pt). Upload the
-        # checkpoint + the rendered card side-by-side. No source dir
-        # mutation involved.
+        # checkpoint + each declared companion sidecar + the rendered
+        # card. Each upload is a separate commit; the HF Hub LFS layer
+        # dedupes against the local sha so unchanged sidecars no-op.
         api.upload_file(
             path_or_fileobj=str(plan.local_path),
             path_in_repo=plan.local_path.name,
@@ -537,6 +598,18 @@ def _push_one(
             token=token,
             commit_message=f"fed-pulse push: {plan.artefact_key}",
         )
+        for companion in plan.companion_files:
+            if not companion.exists():
+                print(f"    [skip companion missing] {companion}")
+                continue
+            api.upload_file(
+                path_or_fileobj=str(companion),
+                path_in_repo=companion.name,
+                repo_id=plan.repo_id,
+                repo_type=plan.repo_type,
+                token=token,
+                commit_message=f"fed-pulse push: {plan.artefact_key} sidecar {companion.name}",
+            )
         api.upload_file(
             path_or_fileobj=card.encode("utf-8"),
             path_in_repo="README.md",

@@ -74,8 +74,13 @@ export function HistoryTimelineChart({ rows }: HistoryTimelineChartProps) {
       .map((row) => {
         const ts = new Date(row.document_date).getTime();
         if (!Number.isFinite(ts)) return null;
-        const stance = typeof row.sentiment_score === "number"
-          ? Math.max(-1, Math.min(1, row.sentiment_score))
+        // ``sentiment_score`` is the winning-class confidence (always
+        // in [0, 1]) and cannot drive a signed axis. Prefer the signed
+        // ``stance_score = P(hawk) - P(dove)`` surfaced by the backend
+        // and fall back to the ternary categorical mapping for rows
+        // that pre-date the multi-axis block.
+        const stance = typeof row.stance_score === "number" && Number.isFinite(row.stance_score)
+          ? Math.max(-1, Math.min(1, row.stance_score))
           : stanceToScore(row.stance);
         return {
           date: row.document_date,

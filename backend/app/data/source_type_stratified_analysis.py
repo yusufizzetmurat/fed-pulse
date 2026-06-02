@@ -60,11 +60,7 @@ def compute_stratified_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         pred = [str(r.get("predicted_label", "")).lower() for r in group]
         accuracy = sum(g == p for g, p in zip(gold, pred)) / len(group)
         per_class = _per_class_prf(pred, gold)
-        macro_f1 = (
-            sum(c["f1"] for c in per_class.values()) / len(per_class)
-            if per_class
-            else 0.0
-        )
+        macro_f1 = sum(c["f1"] for c in per_class.values()) / len(per_class) if per_class else 0.0
         output[source_type] = {
             "support": len(group),
             "accuracy": accuracy,
@@ -85,11 +81,7 @@ def _per_class_prf(pred: Sequence[str], gold: Sequence[str]) -> dict[str, dict[s
         fn = sum(1 for p, g in zip(pred, gold) if p != label and g == label)
         precision = tp / (tp + fp) if (tp + fp) else 0.0
         recall = tp / (tp + fn) if (tp + fn) else 0.0
-        f1 = (
-            2 * precision * recall / (precision + recall)
-            if (precision + recall)
-            else 0.0
-        )
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
         support = sum(1 for g in gold if g == label)
         out[label] = {"precision": precision, "recall": recall, "f1": f1, "support": support}
     return out
@@ -122,7 +114,9 @@ def main() -> int:
         default=str(DEFAULT_DATA_DIR / "raw" / "phase2" / "source_registry.jsonl"),
         help="Source registry JSONL (provides source_type per record_id).",
     )
-    parser.add_argument("--output", required=True, help="Output JSON path for the stratified table.")
+    parser.add_argument(
+        "--output", required=True, help="Output JSON path for the stratified table."
+    )
     args = parser.parse_args()
 
     predictions = _read_jsonl(Path(args.predictions))

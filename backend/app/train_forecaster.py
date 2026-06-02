@@ -124,14 +124,13 @@ def _resolve_rates_heads_from_args(args: argparse.Namespace) -> tuple[str, ...]:
         for tok in cleaned:
             if tok not in valid_tokens:
                 raise ValueError(
-                    f"unknown target {tok!r} in --targets; choose from "
-                    f"{sorted(valid_tokens)}"
+                    f"unknown target {tok!r} in --targets; choose from " f"{sorted(valid_tokens)}"
                 )
             if tok == "regime":
                 # The regime head is always mounted on a classification
                 # output; the rates tuple stays untouched.
                 continue
-            short = tok[len("rates_"):]
+            short = tok[len("rates_") :]
             if short not in active:
                 active.append(short)
         return tuple(active)
@@ -162,7 +161,9 @@ def _parse_args() -> argparse.Namespace:
         default=str(BEST_MODEL_PATH),
         help="Where to save the best-performing checkpoint.",
     )
-    parser.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS, help="Maximum training epochs.")
+    parser.add_argument(
+        "--epochs", type=int, default=DEFAULT_EPOCHS, help="Maximum training epochs."
+    )
     parser.add_argument(
         "--batch-size",
         type=int,
@@ -326,6 +327,18 @@ def _parse_args() -> argparse.Namespace:
             "input. Default on. Ignored when --no-rich-features is set."
         ),
     )
+    parser.add_argument(
+        "--use-vix-features",
+        dest="use_vix_features",
+        action="store_true",
+        help=(
+            "Append the #478 VIX term-structure + VRP 6-vector "
+            "(vix_t-1, vix1m/3m/6m_t-1, vix_3m_over_1m_slope, vrp_t-1) "
+            "to the per-bar input. Default off so the canonical no-vol "
+            "baseline stays unchanged."
+        ),
+    )
+    parser.set_defaults(use_vix_features=False)
     # B1 (#212) LLM-as-features. Default off so the existing
     # Tier 1/2/3 sweep baselines stay byte-identical with cached
     # extractions present on disk; --use-llm-features flips the per-event
@@ -723,8 +736,8 @@ def _parse_args() -> argparse.Namespace:
         dest="multi_task_loss",
         action="store_true",
         help=(
-            "Train classification with MultiTaskLoss over stance / factor / "
-            "certainty / topic instead of single-axis CrossEntropy. "
+            "Train classification with MultiTaskLoss over stance / certainty / "
+            "time instead of single-axis CrossEntropy. "
             "Per-axis class weights fit on the train slice; per-row mask "
             "drops axes whose label is absent on a given row."
         ),
@@ -737,22 +750,16 @@ def _parse_args() -> argparse.Namespace:
         help="Loss weight on the stance branch when --multi-task-loss is on.",
     )
     parser.add_argument(
-        "--multi-task-lambda-factor",
+        "--multi-task-lambda-time",
         type=float,
         default=0.3,
-        help="Loss weight on the factor regression branch.",
+        help="Loss weight on the time (forward-looking) classification branch.",
     )
     parser.add_argument(
         "--multi-task-lambda-certainty",
         type=float,
         default=0.3,
         help="Loss weight on the certainty branch.",
-    )
-    parser.add_argument(
-        "--multi-task-lambda-topic",
-        type=float,
-        default=0.3,
-        help="Loss weight on the topic branch.",
     )
     parser.add_argument(
         "--class-weight-power",
@@ -926,7 +933,7 @@ def _parse_args() -> argparse.Namespace:
             "forecaster head (#309). ``on`` (default) leaves the "
             "FeatureVector slots populated as in the pre-#309 baseline. "
             "``off`` zeros ``sentiment_score`` + the multi-axis stance / "
-            "certainty / topic slots so only the document-level encoder "
+            "certainty slots so only the document-level encoder "
             "path drives the forecaster. Used by "
             "``scripts/run_derived_features_ablation.py`` for the three-way "
             "comparison (baseline / ablation / replacement)."
@@ -1231,7 +1238,9 @@ def _parse_args() -> argparse.Namespace:
     # Emit DeprecationWarning when the legacy --validation-split alias is
     # used. argparse silently maps it onto validation_fraction, so callers
     # would otherwise have no signal that the name is on its way out.
-    if any(arg == "--validation-split" or arg.startswith("--validation-split=") for arg in sys.argv[1:]):
+    if any(
+        arg == "--validation-split" or arg.startswith("--validation-split=") for arg in sys.argv[1:]
+    ):
         warnings.warn(
             "--validation-split is deprecated; use --validation-fraction. "
             "The walk-forward validation slice is a chronological prefix, "
@@ -1367,7 +1376,15 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         output_mode=output_mode,
         n_classes=n_classes,
         lr_schedule=str(getattr(args, "lr_schedule", "plateau") or "plateau"),
-        sequence_length=int(getattr(args, "sequence_length", 0) or 0),
+        # Persist the resolved length (post 0-sentinel coercion) so the
+        # run-summary value matches what actually trained and stays
+        # comparable across runners. ``run_dual_head_comparison`` stores
+        # the resolved int the same way.
+        sequence_length=(
+            int(getattr(args, "sequence_length", 0))
+            if int(getattr(args, "sequence_length", 0) or 0) > 0
+            else SEQUENCE_LENGTH
+        ),
         use_time_decay=bool(getattr(args, "use_time_decay", True)),
         encoder_lora=bool(getattr(args, "encoder_lora", False)),
         lora_curriculum_freeze_epoch=getattr(args, "lora_freeze_epoch", None),
@@ -1377,9 +1394,8 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         infonce_latent_dim=int(getattr(args, "infonce_latent_dim", 64)),
         multi_task_loss=bool(getattr(args, "multi_task_loss", False)),
         multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
-        multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
+        multi_task_lambda_time=float(getattr(args, "multi_task_lambda_time", 0.3)),
         multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
-        multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
         class_weight_power=float(getattr(args, "class_weight_power", 1.0)),
         head_mode=str(getattr(args, "head_mode", "classification") or "classification"),
         regression_alpha=float(getattr(args, "regression_alpha", 0.5)),
@@ -1390,15 +1406,12 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         rates_head_mode=str(getattr(args, "rates_head_mode", "regression") or "regression"),
         rates_aux_classification=bool(getattr(args, "rates_aux_classification", False)),
         rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
-        rates_target_mode=str(
-            getattr(args, "rates_target_mode", "raw") or "raw"
-        ),
-        vol_target_mode=str(
-            getattr(args, "vol_target_mode", "raw") or "raw"
-        ),
+        rates_target_mode=str(getattr(args, "rates_target_mode", "raw") or "raw"),
+        vol_target_mode=str(getattr(args, "vol_target_mode", "raw") or "raw"),
         use_regime_conditioning=bool(getattr(args, "use_regime_conditioning", False)),
         use_sep=bool(getattr(args, "use_sep", False)),
         use_press_conf=bool(getattr(args, "use_press_conf", False)),
+        use_vix_features=bool(getattr(args, "use_vix_features", False)),
         symbol_embedding_dim=int(getattr(args, "symbol_embedding_dim", 0) or 0),
     )
 
@@ -1423,7 +1436,11 @@ def _print_data_inventory(
     if summaries:
         print("Discovered data sources:")
         for summary in summaries:
-            relative_path = summary.path.relative_to(data_dir) if summary.path.is_relative_to(data_dir) else summary.path
+            relative_path = (
+                summary.path.relative_to(data_dir)
+                if summary.path.is_relative_to(data_dir)
+                else summary.path
+            )
             print(
                 f"  - {relative_path} [{summary.status}] "
                 f"groups={summary.record_groups}, records={summary.records}, "
@@ -1466,32 +1483,24 @@ def _build_hp_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
     # ``test_build_sweep_candidates_creates_cartesian_product`` namespace
     # (which predates the weight-decay / text-adapter axes) intact while
     # the production CLI runs always pass the new flags through.
-    weight_decays = (
-        getattr(args, "weight_decays", None)
-        or [getattr(args, "weight_decay", 1e-4)]
-    )
+    weight_decays = getattr(args, "weight_decays", None) or [getattr(args, "weight_decay", 1e-4)]
     # Text-adapter-dim axis. Iterated only when the text-embedding path
     # is wired; on the no-text path the iteration collapses to a single
     # dummy value so the loop product stays one-deep.
     if _text_path_active(args):
-        text_adapter_dims = (
-            getattr(args, "text_adapter_dims", None)
-            or [getattr(args, "text_adapter_dim", DEFAULT_TEXT_ADAPTER_DIM)]
-        )
+        text_adapter_dims = getattr(args, "text_adapter_dims", None) or [
+            getattr(args, "text_adapter_dim", DEFAULT_TEXT_ADAPTER_DIM)
+        ]
     else:
         text_adapter_dims = [0]
     # Phase B (#227): new sweep axes for LR-schedule and sequence-length.
     # Defaults collapse to a single value so legacy callers that do not
     # pass --lr-schedules / --sequence-lengths reproduce the pre-PR grid
     # byte-identical.
-    lr_schedules = (
-        getattr(args, "lr_schedules", None)
-        or [getattr(args, "lr_schedule", "plateau")]
-    )
-    sequence_lengths = (
-        getattr(args, "sequence_lengths", None)
-        or [getattr(args, "sequence_length", 0)]
-    )
+    lr_schedules = getattr(args, "lr_schedules", None) or [getattr(args, "lr_schedule", "plateau")]
+    sequence_lengths = getattr(args, "sequence_lengths", None) or [
+        getattr(args, "sequence_length", 0)
+    ]
     hp_grid: list[dict[str, Any]] = []
     for (
         hidden_size,
@@ -1628,31 +1637,53 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                                 head_hidden_size=args.head_hidden_size,
                                 architecture=str(architecture),
                                 credibility_features=bool(args.credibility_features),
-                                text_embedding_dim=int(text_embedding_dim) if text_adapter_dim > 0 else 0,
+                                text_embedding_dim=int(text_embedding_dim)
+                                if text_adapter_dim > 0
+                                else 0,
                                 text_adapter_dim=text_adapter_dim,
-                                output_mode=str(getattr(args, "output_mode", "regression") or "regression"),
+                                output_mode=str(
+                                    getattr(args, "output_mode", "regression") or "regression"
+                                ),
                                 n_classes=int(getattr(args, "vol_regime_classes", 3) or 3),
                                 use_time_decay=bool(getattr(args, "use_time_decay", True)),
                                 encoder_lora=bool(getattr(args, "encoder_lora", False)),
-                                lora_curriculum_freeze_epoch=getattr(args, "lora_freeze_epoch", None),
+                                lora_curriculum_freeze_epoch=getattr(
+                                    args, "lora_freeze_epoch", None
+                                ),
                                 fusion_mode=str(getattr(args, "fusion_mode", "concat") or "concat"),
                                 infonce_lambda=float(getattr(args, "infonce_lambda", 0.1)),
-                                infonce_temperature=float(getattr(args, "infonce_temperature", 0.07)),
+                                infonce_temperature=float(
+                                    getattr(args, "infonce_temperature", 0.07)
+                                ),
                                 infonce_latent_dim=int(getattr(args, "infonce_latent_dim", 64)),
                                 multi_task_loss=bool(getattr(args, "multi_task_loss", False)),
-                                multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
-                                multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
-                                multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
-                                multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
+                                multi_task_lambda_stance=float(
+                                    getattr(args, "multi_task_lambda_stance", 1.0)
+                                ),
+                                multi_task_lambda_time=float(
+                                    getattr(args, "multi_task_lambda_time", 0.3)
+                                ),
+                                multi_task_lambda_certainty=float(
+                                    getattr(args, "multi_task_lambda_certainty", 0.3)
+                                ),
                                 class_weight_power=float(getattr(args, "class_weight_power", 1.0)),
-                                head_mode=str(getattr(args, "head_mode", "classification") or "classification"),
+                                head_mode=str(
+                                    getattr(args, "head_mode", "classification") or "classification"
+                                ),
                                 regression_alpha=float(getattr(args, "regression_alpha", 0.5)),
                                 use_derived_text_features=(
-                                    str(getattr(args, "use_derived_text_features", "on") or "on").lower() != "off"
+                                    str(
+                                        getattr(args, "use_derived_text_features", "on") or "on"
+                                    ).lower()
+                                    != "off"
                                 ),
                                 rates_heads=_resolve_rates_heads_from_args(args),
-                                rates_head_mode=str(getattr(args, "rates_head_mode", "regression") or "regression"),
-                                rates_aux_classification=bool(getattr(args, "rates_aux_classification", False)),
+                                rates_head_mode=str(
+                                    getattr(args, "rates_head_mode", "regression") or "regression"
+                                ),
+                                rates_aux_classification=bool(
+                                    getattr(args, "rates_aux_classification", False)
+                                ),
                                 rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
                                 rates_target_mode=str(
                                     getattr(args, "rates_target_mode", "raw") or "raw"
@@ -1664,9 +1695,8 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                                     getattr(args, "use_regime_conditioning", False)
                                 ),
                                 use_sep=bool(getattr(args, "use_sep", False)),
-                                use_press_conf=bool(
-                                    getattr(args, "use_press_conf", False)
-                                ),
+                                use_press_conf=bool(getattr(args, "use_press_conf", False)),
+                                use_vix_features=bool(getattr(args, "use_vix_features", False)),
                             ),
                             "learning_rate": float(hp["learning_rate"]),
                             "epochs": int(hp["epochs"]),
@@ -1689,29 +1719,21 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
     dropouts = args.dropouts or [args.dropout]
     learning_rates = args.learning_rates or [args.learning_rate]
     epochs_options = args.epochs_grid or [args.epochs]
-    weight_decays = (
-        getattr(args, "weight_decays", None)
-        or [getattr(args, "weight_decay", 1e-4)]
-    )
+    weight_decays = getattr(args, "weight_decays", None) or [getattr(args, "weight_decay", 1e-4)]
     if _text_path_active(args):
-        text_adapter_dims = (
-            getattr(args, "text_adapter_dims", None)
-            or [getattr(args, "text_adapter_dim", DEFAULT_TEXT_ADAPTER_DIM)]
-        )
+        text_adapter_dims = getattr(args, "text_adapter_dims", None) or [
+            getattr(args, "text_adapter_dim", DEFAULT_TEXT_ADAPTER_DIM)
+        ]
     else:
         text_adapter_dims = [0]
     # Phase B (#227): cross the LR-schedule + sequence-length grids
     # alongside the existing axes. Both default to a single value so
     # legacy callers that don't pass the new grids reproduce the
     # pre-PR cartesian product byte-identical.
-    lr_schedules = (
-        getattr(args, "lr_schedules", None)
-        or [getattr(args, "lr_schedule", "plateau")]
-    )
-    sequence_lengths = (
-        getattr(args, "sequence_lengths", None)
-        or [getattr(args, "sequence_length", 0)]
-    )
+    lr_schedules = getattr(args, "lr_schedules", None) or [getattr(args, "lr_schedule", "plateau")]
+    sequence_lengths = getattr(args, "sequence_lengths", None) or [
+        getattr(args, "sequence_length", 0)
+    ]
     candidates = []
     for (
         architecture,
@@ -1749,7 +1771,9 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                         head_hidden_size=args.head_hidden_size,
                         architecture=str(architecture),
                         credibility_features=bool(args.credibility_features),
-                        text_embedding_dim=int(text_embedding_dim) if int(text_adapter_dim) > 0 else 0,
+                        text_embedding_dim=int(text_embedding_dim)
+                        if int(text_adapter_dim) > 0
+                        else 0,
                         text_adapter_dim=int(text_adapter_dim),
                         output_mode=str(getattr(args, "output_mode", "regression") or "regression"),
                         n_classes=int(getattr(args, "vol_regime_classes", 3) or 3),
@@ -1763,33 +1787,38 @@ def build_sweep_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
                         infonce_temperature=float(getattr(args, "infonce_temperature", 0.07)),
                         infonce_latent_dim=int(getattr(args, "infonce_latent_dim", 64)),
                         multi_task_loss=bool(getattr(args, "multi_task_loss", False)),
-                        multi_task_lambda_stance=float(getattr(args, "multi_task_lambda_stance", 1.0)),
-                        multi_task_lambda_factor=float(getattr(args, "multi_task_lambda_factor", 0.3)),
-                        multi_task_lambda_certainty=float(getattr(args, "multi_task_lambda_certainty", 0.3)),
-                        multi_task_lambda_topic=float(getattr(args, "multi_task_lambda_topic", 0.3)),
+                        multi_task_lambda_stance=float(
+                            getattr(args, "multi_task_lambda_stance", 1.0)
+                        ),
+                        multi_task_lambda_time=float(getattr(args, "multi_task_lambda_time", 0.3)),
+                        multi_task_lambda_certainty=float(
+                            getattr(args, "multi_task_lambda_certainty", 0.3)
+                        ),
                         class_weight_power=float(getattr(args, "class_weight_power", 1.0)),
-                        head_mode=str(getattr(args, "head_mode", "classification") or "classification"),
+                        head_mode=str(
+                            getattr(args, "head_mode", "classification") or "classification"
+                        ),
                         regression_alpha=float(getattr(args, "regression_alpha", 0.5)),
                         use_derived_text_features=(
-                            str(getattr(args, "use_derived_text_features", "on") or "on").lower() != "off"
+                            str(getattr(args, "use_derived_text_features", "on") or "on").lower()
+                            != "off"
                         ),
                         rates_heads=_resolve_rates_heads_from_args(args),
-                        rates_head_mode=str(getattr(args, "rates_head_mode", "regression") or "regression"),
-                        rates_aux_classification=bool(getattr(args, "rates_aux_classification", False)),
+                        rates_head_mode=str(
+                            getattr(args, "rates_head_mode", "regression") or "regression"
+                        ),
+                        rates_aux_classification=bool(
+                            getattr(args, "rates_aux_classification", False)
+                        ),
                         rates_alpha=float(getattr(args, "rates_alpha", 0.5)),
-                        rates_target_mode=str(
-                            getattr(args, "rates_target_mode", "raw") or "raw"
-                        ),
-                        vol_target_mode=str(
-                            getattr(args, "vol_target_mode", "raw") or "raw"
-                        ),
+                        rates_target_mode=str(getattr(args, "rates_target_mode", "raw") or "raw"),
+                        vol_target_mode=str(getattr(args, "vol_target_mode", "raw") or "raw"),
                         use_regime_conditioning=bool(
                             getattr(args, "use_regime_conditioning", False)
                         ),
                         use_sep=bool(getattr(args, "use_sep", False)),
-                        use_press_conf=bool(
-                            getattr(args, "use_press_conf", False)
-                        ),
+                        use_press_conf=bool(getattr(args, "use_press_conf", False)),
+                        use_vix_features=bool(getattr(args, "use_vix_features", False)),
                     ),
                     "learning_rate": float(learning_rate),
                     "epochs": int(epochs),
@@ -2234,9 +2263,7 @@ def _run_sweep(
     parallel_workers = max(1, int(getattr(args, "parallel_workers", 1)))
     batching_mode = str(getattr(args, "batching_mode", "off") or "off")
     if batching_mode not in BATCHING_MODES:
-        raise ValueError(
-            f"--batching-mode={batching_mode!r} is not one of {BATCHING_MODES}"
-        )
+        raise ValueError(f"--batching-mode={batching_mode!r} is not one of {BATCHING_MODES}")
     max_bucket_size_override = getattr(args, "max_bucket_size", None)
     # When the bucketed runner is active the legacy
     # ProcessPoolExecutor path is bypassed; parallel_workers becomes
@@ -2339,11 +2366,7 @@ def _run_sweep(
             if walk_forward_splits is not None:
                 wf_split = _split_for_candidate(candidate)
                 cell_sequence_groups = None
-            ctx = (
-                torch.cuda.stream(stream)
-                if stream is not None
-                else _NullCudaStreamContext()
-            )
+            ctx = torch.cuda.stream(stream) if stream is not None else _NullCudaStreamContext()
             with ctx:
                 summary = _run_single_training(
                     data_dir=data_dir,
@@ -2383,11 +2406,7 @@ def _run_sweep(
 
         for bucket_key, bucket_cells in buckets:
             routed = route_bucket(bucket_key.architecture, mode=batching_mode)
-            print(
-                format_bucket_log_line(
-                    bucket_key, bucket_cells, routed_mode=routed
-                )
-            )
+            print(format_bucket_log_line(bucket_key, bucket_cells, routed_mode=routed))
             # ``stacked`` and ``streams`` share the same per-cell entry
             # point for now -- the stacked path inside StackedDLinear
             # is reserved for the dlinear forward audit in a follow-up;
@@ -2443,6 +2462,7 @@ def _run_sweep(
             max_workers=parallel_workers,
             mp_context=spawn_ctx,
         ) as pool:
+
             def _split_for_candidate(c: dict[str, Any]) -> WalkForwardSplit | None:
                 if walk_forward_splits is None:
                     return None
@@ -2464,7 +2484,9 @@ def _run_sweep(
                         data_dir=data_dir,
                         checkpoint_path=checkpoint_path,
                         device=device,
-                        sequence_groups=None if walk_forward_splits is not None else sequence_groups,
+                        sequence_groups=None
+                        if walk_forward_splits is not None
+                        else sequence_groups,
                         walk_forward_split=_split_for_candidate(candidate),
                         text_encoder_arg=_candidate_text_encoder(candidate),
                         text_pool_lambda=text_pool_lambda,
@@ -2516,8 +2538,10 @@ def _run_sweep(
                 # picks up the embedding stream for its assigned arm.
                 if multi_encoder_mode:
                     encoder_key = cell_text_encoder
-                    fold_key = fold_id if fold_id is not None else _default_fold_key(
-                        walk_forward_splits, encoder=encoder_key
+                    fold_key = (
+                        fold_id
+                        if fold_id is not None
+                        else _default_fold_key(walk_forward_splits, encoder=encoder_key)
                     )
                     wf_split = walk_forward_splits[(encoder_key, fold_key)]
                 else:
@@ -2594,9 +2618,7 @@ def _run_sweep(
     # the original candidate's 1-based index, which is the key into
     # the ``candidates`` list regardless of completion order.
     best_summary_position = next(
-        index
-        for index, summary in enumerate(summaries, start=1)
-        if summary == best_summary
+        index for index, summary in enumerate(summaries, start=1) if summary == best_summary
     )
     best_record = trial_records[best_summary_position - 1]
     best_trial_index = int(best_record["trial_index"])
@@ -2617,8 +2639,10 @@ def _run_sweep(
     final_sequence_groups: Sequence[Sequence[FeatureVector]] | None = sequence_groups
     if walk_forward_splits is not None:
         if multi_encoder_mode:
-            fold_key = best_fold_id if best_fold_id is not None else _default_fold_key(
-                walk_forward_splits, encoder=best_text_encoder
+            fold_key = (
+                best_fold_id
+                if best_fold_id is not None
+                else _default_fold_key(walk_forward_splits, encoder=best_text_encoder)
             )
             best_wf_split = walk_forward_splits[(best_text_encoder, fold_key)]
         else:
@@ -2686,10 +2710,10 @@ def _run_sweep(
             "pool_lambda_inv_days": text_pool_lambda,
         },
         "shuffle_targets_control": bool(args.shuffle_targets_control),
-        "protocol": (
-            "walk-forward" if walk_forward_splits is not None else "single-fold"
+        "protocol": ("walk-forward" if walk_forward_splits is not None else "single-fold"),
+        "folds": sorted(
+            {str(trial.get("fold_id")) for trial in trial_records if trial.get("fold_id")}
         ),
-        "folds": sorted({str(trial.get("fold_id")) for trial in trial_records if trial.get("fold_id")}),
         "architectures": sorted({trial["architecture"] for trial in trial_records}),
         "seeds": sorted({trial["seed"] for trial in trial_records if trial["seed"] is not None}),
         "trial_count": len(trial_records),
@@ -2729,7 +2753,11 @@ def main() -> int:
     data_dir = Path(args.data_dir)
     checkpoint_path = Path(args.checkpoint_path)
     report_path = Path(args.report_path)
-    device = torch.device(args.device) if args.device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = (
+        torch.device(args.device)
+        if args.device
+        else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    )
 
     # ``--training-package-id`` takes precedence over ``--data-dir`` so an
     # exported DATA_DIR override never silently falls back to the legacy
@@ -2744,6 +2772,12 @@ def main() -> int:
 
     package_sequences: list[list[FeatureVector]] | None = None
     walk_forward_splits: dict[str, WalkForwardSplit] | None = None
+    # ``args.sequence_length=0`` is the "fall back to the module default"
+    # sentinel; resolve it once so the package + legacy branches and the
+    # window-count arithmetic in either branch see the same int.
+    resolved_sequence_length = (
+        int(args.sequence_length) if int(args.sequence_length) > 0 else SEQUENCE_LENGTH
+    )
     if use_package_path:
         print(f"Training-package id: {args.training_package_id}")
         print(f"Target mode: {args.target_mode}")
@@ -2783,7 +2817,9 @@ def main() -> int:
                 "--protocol walk-forward requires --folds <fold_id> [<fold_id> ...]; "
                 "got an empty fold list"
             )
-        if str(getattr(args, "validation_fraction", 0.0)) and (cli_folds or resolved_protocol != "single-fold"):
+        if str(getattr(args, "validation_fraction", 0.0)) and (
+            cli_folds or resolved_protocol != "single-fold"
+        ):
             # The walk-forward and single-fold paths both honour the
             # package's pre-built partitions; the random/chronological
             # validation_fraction knob is inert on those paths.
@@ -2814,11 +2850,13 @@ def main() -> int:
                         use_regime_conditioning=bool(args.use_regime_conditioning),
                         use_sep=bool(args.use_sep),
                         use_press_conf=bool(getattr(args, "use_press_conf", False)),
+                        use_vix_features=bool(getattr(args, "use_vix_features", False)),
                         text_encoder=encoder_arg,
                         text_adapter_dim=int(args.text_adapter_dim),
                         text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
                         use_text_embeddings=bool(args.use_text_embeddings),
                         embargo_days=int(args.embargo_days),
+                        sequence_length=resolved_sequence_length,
                     )
                     if multi_encoder_mode_main:
                         # Key by (encoder, fold) so the sweep can route
@@ -2843,7 +2881,10 @@ def main() -> int:
                 for s in walk_forward_splits.values()
             )
             window_count = sum(
-                sum(max(0, len(seq) - SEQUENCE_LENGTH) for seq in (s.train + s.val + s.test))
+                sum(
+                    max(0, len(seq) - resolved_sequence_length)
+                    for seq in (s.train + s.val + s.test)
+                )
                 for s in walk_forward_splits.values()
             )
         else:
@@ -2866,6 +2907,7 @@ def main() -> int:
                     use_retrieval_analogs=bool(args.use_retrieval_analogs),
                     use_regime_conditioning=bool(args.use_regime_conditioning),
                     use_sep=bool(args.use_sep),
+                    use_vix_features=bool(getattr(args, "use_vix_features", False)),
                     text_encoder=encoder_arg,
                     text_adapter_dim=int(args.text_adapter_dim),
                     text_pool_lambda_inv_days=float(args.text_pool_lambda_inv_days),
@@ -2873,6 +2915,7 @@ def main() -> int:
                     # Single-fold uses split_tag, not manifest dates -- embargo
                     # passes through but the loader will no-op on this path.
                     embargo_days=int(args.embargo_days),
+                    sequence_length=resolved_sequence_length,
                 )
                 if multi_encoder_mode_main:
                     walk_forward_splits[(encoder_arg, "_single_fold")] = split
@@ -2888,12 +2931,14 @@ def main() -> int:
                         f"test={len(split.test)}"
                     )
             example_split = next(iter(walk_forward_splits.values()))
-            sequence_count = len(example_split.train) + len(example_split.val) + len(example_split.test)
+            sequence_count = (
+                len(example_split.train) + len(example_split.val) + len(example_split.test)
+            )
             observation_count = sum(
                 len(seq) for seq in (example_split.train + example_split.val + example_split.test)
             )
             window_count = sum(
-                max(0, len(seq) - SEQUENCE_LENGTH)
+                max(0, len(seq) - resolved_sequence_length)
                 for seq in (example_split.train + example_split.val + example_split.test)
             )
         print(f"Device: {device}")
@@ -2912,10 +2957,14 @@ def main() -> int:
             )
             return 1
     else:
-        sequences, summaries = inspect_training_data_sources(data_dir)
+        sequences, summaries = inspect_training_data_sources(
+            data_dir, sequence_length=resolved_sequence_length
+        )
         sequence_count = len(sequences)
         observation_count = sum(len(sequence) for sequence in sequences)
-        window_count = sum(max(0, len(sequence) - SEQUENCE_LENGTH) for sequence in sequences)
+        window_count = sum(
+            max(0, len(sequence) - resolved_sequence_length) for sequence in sequences
+        )
 
         _print_data_inventory(
             data_dir,

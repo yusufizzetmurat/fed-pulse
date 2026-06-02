@@ -164,3 +164,34 @@ def test_resolve_by_role_dedups_alias_fanout() -> None:
     # contract is what keeps role-uniqueness debuggable when a future
     # registry edit introduces an accidental second tagged row.
     assert resolve_by_role("classifier") != resolve_by_role("retrieval")
+
+
+def test_registry_propagates_trust_remote_code_field() -> None:
+    """``trust_remote_code: true`` round-trips off the YAML row.
+
+    Default False keeps every existing alias on the standard transformers
+    load path; the opt-in is per-row only after a security review.
+    Pins the #548 contract: a registry edit that drops the field on the
+    nomic row would silently flip its load back to the failing path.
+    """
+
+    _reset_registry_cache()
+    from app.models.registry import load_registry
+
+    registry = load_registry()
+    # nomic opts in (custom modeling code).
+    nomic = registry.get("nomic_embed_text_v15")
+    assert nomic is not None
+    assert nomic.trust_remote_code is True
+    # Every other alias defaults to False.
+    for alias, ref in registry.items():
+        if alias == "nomic_embed_text_v15":
+            continue
+        if alias != ref.alias:
+            # Skip repo / repo_alias keys — same ref, already checked.
+            continue
+        assert ref.trust_remote_code is False, (
+            f"alias {alias!r} unexpectedly opts into trust_remote_code; "
+            "only registry rows that ship custom modeling code should "
+            "flip this — review the entry before landing it."
+        )

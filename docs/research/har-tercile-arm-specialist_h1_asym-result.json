@@ -1,0 +1,133 @@
+{
+  "arm_key": "specialist_h1_asym",
+  "arm_name": "Per-horizon specialist LSTM with 60-bar lookback and asymmetric underprediction loss",
+  "protocol": {
+    "training_package_id": "tp_v3_full_rebuild_2026_05_30",
+    "seeds": [
+      11,
+      29,
+      47,
+      71,
+      97
+    ],
+    "n_folds": 5,
+    "epochs": 40,
+    "sequence_length": 20,
+    "sequence_length_intended": 60,
+    "sequence_length_fallback_reason": "training_package prior_bars_json carries 20-bar windows only; regenerating the 60-bar window requires running the data pipeline which is out of scope per the arm spec fallback clause.",
+    "regime_loss": "focal",
+    "focal_gamma": 3.0,
+    "underprediction_penalty": 1.5,
+    "underprediction_target_class": "high (index 2)",
+    "use_vix_features": true,
+    "use_mp_surprise": true,
+    "head_mode": "classification",
+    "horizon_h22_proxy": "h=20 (closest supported choice; --target-horizon choices=(1,3,5,10,20,30))"
+  },
+  "baselines_har_tercile": {
+    "h1": 0.687,
+    "h5": 0.685,
+    "h22": 0.654
+  },
+  "per_horizon": {
+    "h1": {
+      "target_horizon_used": 1,
+      "macro_f1_per_seed_mean_across_folds": [
+        0.34750736186228026,
+        0.31422674097209935,
+        0.35728674796400656,
+        0.3727456467412448,
+        0.32782816372954543
+      ],
+      "macro_f1_mean": 0.3439189322538353,
+      "macro_f1_std": 0.023254536368566687,
+      "per_class_f1_pooled_25_cells": {
+        "class_0_calm": 0.2911689002253798,
+        "class_1_normal": 0.2479710807826215,
+        "class_2_high": 0.4926168157535045
+      },
+      "class2_f1_per_seed_mean": [
+        0.49133405951165504,
+        0.47840181465975684,
+        0.5265360415081962,
+        0.46197390179914705,
+        0.5048382612887675
+      ],
+      "class2_f1_5seed_mean": 0.4926168157535045,
+      "har_tercile_baseline": 0.687,
+      "delta_vs_har_tercile": -0.34308106774616476,
+      "beats_har": false
+    },
+    "h5": {
+      "target_horizon_used": 5,
+      "macro_f1_per_seed_mean_across_folds": [
+        0.4308517917876645,
+        0.41447833288417296,
+        0.42088233942907993,
+        0.38996708885231335,
+        0.4595300393637204
+      ],
+      "macro_f1_mean": 0.4231419184633902,
+      "macro_f1_std": 0.025319311905925186,
+      "per_class_f1_pooled_25_cells": {
+        "class_0_calm": 0.4318625999331291,
+        "class_1_normal": 0.2665408461654385,
+        "class_2_high": 0.5710223092916031
+      },
+      "class2_f1_per_seed_mean": [
+        0.530317649668046,
+        0.5936207665744118,
+        0.5908273444547505,
+        0.5402686202686202,
+        0.6000771654921871
+      ],
+      "class2_f1_5seed_mean": 0.5710223092916031,
+      "har_tercile_baseline": 0.685,
+      "delta_vs_har_tercile": -0.26185808153660983,
+      "beats_har": false
+    },
+    "h22": {
+      "target_horizon_used": 20,
+      "macro_f1_per_seed_mean_across_folds": [
+        0.4304763403450067,
+        0.4707060773335975,
+        0.4390667095857909,
+        0.42486809545706417,
+        0.4030555878697932
+      ],
+      "macro_f1_mean": 0.43363456211825047,
+      "macro_f1_std": 0.024625720471944102,
+      "per_class_f1_pooled_25_cells": {
+        "class_0_calm": 0.3124110462354736,
+        "class_1_normal": 0.4078585612703123,
+        "class_2_high": 0.5806340788489656
+      },
+      "class2_f1_per_seed_mean": [
+        0.5767936507936507,
+        0.5838867642345903,
+        0.5418602123156203,
+        0.649509178272839,
+        0.5511205886281276
+      ],
+      "class2_f1_5seed_mean": 0.5806340788489656,
+      "har_tercile_baseline": 0.654,
+      "delta_vs_har_tercile": -0.22036543788174956,
+      "beats_har": false
+    }
+  },
+  "headline": {
+    "h1": {
+      "macro_f1": 0.3439189322538353,
+      "delta": -0.34308106774616476
+    },
+    "h5": {
+      "macro_f1": 0.4231419184633902,
+      "delta": -0.26185808153660983
+    },
+    "h22": {
+      "macro_f1": 0.43363456211825047,
+      "delta": -0.22036543788174956
+    },
+    "beats_har_at_any_horizon": false
+  }
+}

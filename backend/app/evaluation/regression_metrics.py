@@ -113,9 +113,7 @@ def mae_bps(predicted: Sequence[float], observed: Sequence[float]) -> float:
     return sum(abs(p - o) for p, o in pairs) / len(pairs)
 
 
-def directional_accuracy(
-    predicted: Sequence[float], observed: Sequence[float]
-) -> float:
+def directional_accuracy(predicted: Sequence[float], observed: Sequence[float]) -> float:
     """Share of rows where the predicted sign matches the observed sign.
 
     Uses the three-way sign with a :data:`ZERO_TOLERANCE_BPS` no-move
@@ -230,17 +228,14 @@ def with_block_bootstrap_ci(  # noqa: PLR0913 — keyword-only args mirror the b
             n_observations=0,
         )
 
-    point_fns: dict[
-        str, Callable[[Sequence[float], Sequence[float]], float]
-    ] = {
+    point_fns: dict[str, Callable[[Sequence[float], Sequence[float]], float]] = {
         "mae_bps": mae_bps,
         "directional_accuracy": directional_accuracy,
         "r_squared": r_squared,
     }
     if statistic not in point_fns:
         raise ValueError(
-            f"unsupported statistic={statistic!r}; "
-            f"expected one of {sorted(point_fns)}"
+            f"unsupported statistic={statistic!r}; " f"expected one of {sorted(point_fns)}"
         )
 
     point_fn = point_fns[statistic]

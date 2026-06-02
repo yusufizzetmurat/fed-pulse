@@ -23,6 +23,7 @@ missing checkpoint never crashes the worker.
 from __future__ import annotations
 
 import dataclasses
+from functools import lru_cache
 import logging
 import os
 import threading
@@ -46,9 +47,27 @@ from app.retrieval.index import (
 
 _logger = logging.getLogger(__name__)
 
-DEFAULT_RETRIEVAL_DIR = DATA_DIR / "artifacts" / "retrieval" / "finbert_fed_adjacent_xbank_dapt_retrieval"
+DEFAULT_RETRIEVAL_BUNDLE_NAME = "finbert_fed_adjacent_xbank_dapt_retrieval"
 DEFAULT_CHECKPOINT_SUBDIR = "checkpoint"
 DEFAULT_MAX_LENGTH = 256
+
+
+def _default_retrieval_dir() -> Path:
+    """Lazy-resolve the default bundle dir from the current DATA_DIR.
+
+    Importing ``DATA_DIR`` at module-load time freezes the path even when
+    a test fixture later monkeypatches ``app.config.DATA_DIR``
+    (or ``loaders.DATA_DIR``). The fail-open contract for "retrieval
+    bundle missing -> emit zeros + missing flag" requires the resolver
+    to follow whatever ``DATA_DIR`` is in force at call time, not at
+    module-load time.
+    """
+
+    # Re-import inside the function so monkeypatching ``app.config.DATA_DIR``
+    # in tests takes effect on each call.
+    from app import config as _app_config
+
+    return _app_config.DATA_DIR / "artifacts" / "retrieval" / DEFAULT_RETRIEVAL_BUNDLE_NAME
 
 
 @dataclass(frozen=True)
@@ -97,7 +116,7 @@ def _resolve_bundle_dir() -> Path:
     override = (os.environ.get("FED_PULSE_RETRIEVAL_DIR") or "").strip()
     if override:
         return Path(override)
-    return DEFAULT_RETRIEVAL_DIR
+    return _default_retrieval_dir()
 
 
 def _resolve_checkpoint_dir(bundle_dir: Path) -> Path:
@@ -124,8 +143,7 @@ def bundle_available() -> bool:
     # The bundle must carry the index triple; the checkpoint dir is a
     # secondary concern caught at load time.
     return all(
-        (bundle / name).exists()
-        for name in ("index.parquet", "embeddings.npy", "manifest.json")
+        (bundle / name).exists() for name in ("index.parquet", "embeddings.npy", "manifest.json")
     )
 
 
@@ -145,7 +163,9 @@ def _load_state() -> _AnalogsState | _LoadFailure:
         loaded_index = load_index(bundle_dir)
     except FileNotFoundError:
         return _LoadFailure(reason=f"bundle_missing path={bundle_dir}")
-    except Exception as exc:  # pragma: no cover — guarded so a malformed parquet does not 500 the worker
+    except (
+        Exception
+    ) as exc:  # pragma: no cover — guarded so a malformed parquet does not 500 the worker
         return _LoadFailure(
             reason=f"index_load_failed path={bundle_dir} error={type(exc).__name__}: {exc}"
         )
@@ -257,9 +277,7 @@ def build_state_from_index(
             return np.asarray(self._fn(texts), dtype=np.float32)
 
     bound_index = (
-        dataclasses.replace(index, encoder_alias=encoder_alias)
-        if encoder_alias
-        else index
+        dataclasses.replace(index, encoder_alias=encoder_alias) if encoder_alias else index
     )
     return _AnalogsState(
         tokenizer=None,
@@ -377,7 +395,14 @@ def find_analogs(
 
 
 def render_analog_cards(hits: list[AnalogHit]) -> list[dict[str, Any]]:
-    """Adapt :class:`AnalogHit` rows to the ``AnalogCard`` schema shape."""
+    """Adapt :class:`AnalogHit` rows to the ``AnalogCard`` schema shape.
+
+    Augments each card with realized 5d/20d S&P close-to-close returns
+    starting the trading day after ``event_date`` (#299 quant-facing
+    overlay). Returns ``None`` for either field when the historical
+    market data is unavailable so the dashboard can render a graceful
+    empty state.
+    """
 
     return [
         {
@@ -385,10 +410,54 @@ def render_analog_cards(hits: list[AnalogHit]) -> list[dict[str, Any]]:
             "similarity": hit.similarity,
             "axis_stance": hit.axis_stance,
             "subsequent_vol_regime": hit.subsequent_vol_regime,
+            "subsequent_close_pct_5d": _subsequent_close_pct(hit.event_date, horizon=5),
+            "subsequent_close_pct_20d": _subsequent_close_pct(hit.event_date, horizon=20),
             "excerpt": hit.excerpt,
         }
         for hit in hits
     ]
+
+
+@lru_cache(maxsize=512)
+def _subsequent_close_pct(event_date: str, *, horizon: int) -> float | None:
+    """S&P 500 close-to-close % return over ``horizon`` trading days
+    from the event-day close.
+
+    The denominator is the close ON ``event_date`` (or the nearest
+    prior trading day when event_date itself is non-trading), matching
+    the standard event-study convention quoted by Bloomberg / FactSet.
+    The numerator is the close ``horizon`` trading days *forward* of
+    that anchor.
+
+    ``None`` when historical data is sparse (e.g. early history), when
+    yfinance is unavailable, when fewer than ``horizon`` forward
+    trading days are present, or when the event-day close lookup
+    fails. LRU-cached per (date, horizon) so the same analog row is
+    not refetched on every query.
+    """
+
+    from app.services.market_data import fetch_market_snapshot, fetch_realized_forward
+
+    try:
+        snapshot = fetch_market_snapshot(target_date=event_date, symbol="^GSPC")
+        forward = fetch_realized_forward(
+            target_date=event_date,
+            symbol="^GSPC",
+            steps=horizon,
+            lookback_days=45,
+        )
+    except Exception:
+        return None
+    if len(forward) < horizon:
+        return None
+    try:
+        start = float(snapshot["close"])
+        end = float(forward[horizon - 1]["close"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if start <= 0:
+        return None
+    return round((end / start - 1.0) * 100.0, 4)
 
 
 __all__ = [

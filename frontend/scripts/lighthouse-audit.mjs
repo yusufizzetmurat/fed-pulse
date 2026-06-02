@@ -34,7 +34,6 @@ const ROUTES = [
   { path: "/research", label: "Research" },
   { path: "/settings", label: "Settings" },
   { path: "/decisions", label: "Decisions" },
-  { path: "/training", label: "Training" },
 ];
 
 const CATEGORIES = ["performance", "accessibility", "best-practices", "seo"];

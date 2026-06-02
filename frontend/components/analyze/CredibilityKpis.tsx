@@ -23,7 +23,11 @@ export function CredibilityKpis({ credibility }: CredibilityKpisProps) {
   const marketGap = credibility.market_implied_gap;
   const monthsSince = credibility.months_since_reversal;
   const marketGapReady = isMarketGapAvailable(marketGap);
-  const driftReady = Math.abs(drift) > 1e-6 || (credibility.drift_trend?.length ?? 0) > 1;
+  // Backend now reports ``null`` (not zero) when the drift score is
+  // unavailable, so the magnitude check is no longer the right gate.
+  // Treat any non-null reading as a real value and let the trend list
+  // (more than one point) keep gating the chart panel.
+  const driftReady = drift != null && (credibility.drift_trend?.length ?? 0) > 1;
   const allFlat =
     !driftReady &&
     realizedGap == null &&
@@ -52,11 +56,19 @@ export function CredibilityKpis({ credibility }: CredibilityKpisProps) {
       <KpiTile
         label="Shift score"
         icon={<GitBranch className="h-3.5 w-3.5" />}
-        value={<span className="numeric">{drift.toFixed(2)}</span>}
+        value={
+          drift == null ? (
+            <span className="text-xs text-muted-foreground">not available</span>
+          ) : (
+            <span className="numeric">{drift.toFixed(2)}</span>
+          )
+        }
         sparkline={credibility.drift_trend}
-        tone={drift > 0.6 ? "warn" : drift < 0.3 ? "neutral" : "neutral"}
+        tone={drift != null && drift > 0.6 ? "warn" : "neutral"}
         caption={
-          drift > 0.6
+          drift == null
+            ? "Drift signal unavailable for this statement"
+            : drift > 0.6
             ? "Diverging from the last 4 statements"
             : drift < 0.3
             ? "Stable vs the last 4 statements"

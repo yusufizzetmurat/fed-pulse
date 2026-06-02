@@ -46,7 +46,9 @@ import torch
 
 OOD_MANIFEST_NAME = "forecaster_best.ood.json"
 DEFAULT_TEMPERATURE = 1.0
-DEFAULT_THRESHOLD_PERCENTILE = 95.0  # the 95th-percentile of training energies; anything above is OOD
+DEFAULT_THRESHOLD_PERCENTILE = (
+    95.0  # the 95th-percentile of training energies; anything above is OOD
+)
 DEFAULT_AGGREGATION: "EnergyAggregation" = "mean"
 
 EnergyAggregation = Literal["mean", "max", "median"]
@@ -167,9 +169,7 @@ def calibrate_threshold(
     energies: list[float] = []
     for text in training_texts:
         try:
-            energies.append(
-                logit_energy(model, tokenizer, text, temperature=temperature)
-            )
+            energies.append(logit_energy(model, tokenizer, text, temperature=temperature))
         except Exception:
             continue
 

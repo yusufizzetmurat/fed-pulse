@@ -159,6 +159,9 @@ _SNAPSHOT_COLUMNS: tuple[str, ...] = (
     # #444 vote-tally missing flag. The 4-scalar signed block rides on
     # `vote_features` (`list[float] | None`) and is exempt below.
     "vote_features_missing",
+    # #478 VIX term-structure missing flag. The 6-scalar block rides on
+    # `vix_features` (`list[float] | None`) and is exempt below.
+    "vix_features_missing",
 )
 
 
@@ -223,7 +226,6 @@ def _event_row(
         "axis_time": None,
         "axis_certainty": None,
         "axis_factor": None,
-        "axis_topic": None,
         "axis_time_label": None,
         "axis_certain_label": None,
         "credibility_drift_score": 0.0,
@@ -344,6 +346,20 @@ def _audit_inventory_covers_every_field() -> set[str]:
         "statement_delta_embedding",
         # #444 vote-tally features (ADR 0038).
         "vote_features",
+        # #478 VIX term-structure + VRP block. Six strict-prior scalars
+        # read off the ^VIX family at T-1 plus the asset's own close
+        # history for the realised baseline; the per-feature row in
+        # ``docs/feature-provenance-audit.md`` pins the contract.
+        "vix_features",
+        # #543 doc_length scalar. ``log(1 + token_count)`` per supervised
+        # event, broadcast onto every bar by the loader when
+        # ``--use-doc-length`` is on. Single observable at T from the
+        # released document itself; no leak surface.
+        "doc_length",
+        # #495 confounder controls — year FE / meeting-kind FE / log token_count
+        # appended past the vote-tally tail by ``FeatureVector.as_rich_list``
+        # only when ``scripts/run_confounder_ablation`` writes the slot.
+        "confounder_features",
         "rich_payload",
         "text_embedding_pooled",
         "text_embedding_missing",
@@ -351,12 +367,10 @@ def _audit_inventory_covers_every_field() -> set[str]:
         "raw_text",
         "target_stance_idx",
         "target_stance_present",
-        "target_factor",
-        "target_factor_present",
+        "target_time_idx",
+        "target_time_present",
         "target_certainty_idx",
         "target_certainty_present",
-        "target_topic_idx",
-        "target_topic_present",
     }
     declared = (
         set(_TRAINING_DELTA_COLUMNS)

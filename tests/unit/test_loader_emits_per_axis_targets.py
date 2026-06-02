@@ -1,15 +1,13 @@
 """Per-axis target tensor builder + FeatureVector population (#78).
 
 The loader extracts axis labels off events.parquet, populates the
-target fields on every FeatureVector, then materialises 4 target
-tensors + 4 mask tensors aligned 1:1 with the classification rows
+target fields on every FeatureVector, then materialises 3 target
+tensors + 3 mask tensors aligned 1:1 with the classification rows
 ``_build_training_tensors`` emits. This covers both halves: the
 FeatureVector population and the tensor-builder output.
 """
 
 from __future__ import annotations
-
-import math
 
 import torch
 
@@ -17,7 +15,7 @@ from app.models.config import (
     FeatureVector,
     MULTI_TASK_CERTAINTY_LABELS,
     MULTI_TASK_STANCE_LABELS,
-    MULTI_TASK_TOPIC_LABELS,
+    MULTI_TASK_TIME_LABELS,
     SEQUENCE_LENGTH,
 )
 from app.training.loaders import (
@@ -47,9 +45,8 @@ def test_attach_rich_features_populates_target_fields_from_event_row() -> None:
     vectors = _make_group()
     event_row = {
         "axis_stance": "hawkish",
-        "axis_factor": 0.42,
+        "axis_time_label": "forward looking",
         "axis_certain_label": "uncertain",
-        "axis_topic": "macro outlook",
     }
     _attach_rich_features(
         vectors,
@@ -66,14 +63,12 @@ def test_attach_rich_features_populates_target_fields_from_event_row() -> None:
     target = vectors[-1]
     assert target.target_stance_present is True
     assert target.target_stance_idx == MULTI_TASK_STANCE_LABELS.index("hawkish")
-    assert target.target_factor_present is True
-    assert math.isclose(target.target_factor, 0.42, rel_tol=1e-6)
+    assert target.target_time_present is True
+    assert target.target_time_idx == MULTI_TASK_TIME_LABELS.index("forward looking")
     assert target.target_certainty_present is True
     assert (
         target.target_certainty_idx == MULTI_TASK_CERTAINTY_LABELS.index("uncertain")
     )
-    assert target.target_topic_present is True
-    assert target.target_topic_idx == MULTI_TASK_TOPIC_LABELS.index("macro")
 
 
 def test_attach_rich_features_leaves_masks_false_when_row_has_no_labels() -> None:
@@ -92,9 +87,8 @@ def test_attach_rich_features_leaves_masks_false_when_row_has_no_labels() -> Non
     )
     target = vectors[-1]
     assert target.target_stance_present is False
-    assert target.target_factor_present is False
+    assert target.target_time_present is False
     assert target.target_certainty_present is False
-    assert target.target_topic_present is False
 
 
 def test_certainty_float_falls_back_to_binned_class_label() -> None:
@@ -145,12 +139,12 @@ def test_target_tensor_builder_aligns_rows_with_classification_filter() -> None:
     # vol so vol_regime_class_for returns -1 and the row is dropped).
     assert out["stance"].shape == (1,)
     assert int(out["stance"][0]) == MULTI_TASK_STANCE_LABELS.index("dovish")
-    # Mask types: stance/cert/topic are bool, dtypes match the
-    # CrossEntropyLoss + SmoothL1 contract.
+    # Mask types: all axes are classification (CrossEntropy) heads, so
+    # targets are long and masks are bool.
     assert out["stance"].dtype == torch.long
     assert out["stance_mask"].dtype == torch.bool
-    assert out["factor"].dtype == torch.float32
-    assert out["factor_mask"].dtype == torch.bool
+    assert out["time"].dtype == torch.long
+    assert out["time_mask"].dtype == torch.bool
 
 
 def test_target_tensor_builder_returns_none_on_empty_input() -> None:

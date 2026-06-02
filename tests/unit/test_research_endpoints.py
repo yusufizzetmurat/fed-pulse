@@ -42,8 +42,24 @@ def _write_cross_bank_matrix(root: Path, *, payload: dict, name: str = "transfer
     return target
 
 
+def _disable_bundled_rerun(monkeypatch, tmp_path: Path) -> None:
+    """Point the bundled-snapshot path at a non-existent file so tests
+    exercise the phase3 fallback / rerun-JSON resolution under
+    ``tmp_path`` without the in-repo snapshot leaking through."""
+
+    monkeypatch.setattr(
+        research_artifacts,
+        "BUNDLED_RERUN_PATH",
+        tmp_path / "no-bundled-rerun.json",
+    )
+
+
 def test_research_artifacts_empty_state(client, monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    # Point REPO_ROOT at a temp dir so the rerun-JSON loader sees nothing
+    # and falls back to the phase3 walk (empty in tmp_path).
+    monkeypatch.setattr(main_mod, "REPO_ROOT", tmp_path)
+    _disable_bundled_rerun(monkeypatch, tmp_path)
     response = client.get("/research/artifacts")
     assert response.status_code == 200
     body = response.json()
@@ -53,6 +69,15 @@ def test_research_artifacts_empty_state(client, monkeypatch, tmp_path):
     assert body["cross_bank_transfer"]["available"] is False
     for section in ("phase3", "cross_bank", "cross_asset", "next_fomc"):
         assert body["sections"][section] == []
+    assert body["encoder_axis_stance"]["available"] is True
+    axis_rows = body["encoder_axis_stance"]["rows"]
+    assert len(axis_rows) == 4
+    aliases = {row["encoder_alias"] for row in axis_rows}
+    assert "finbert_fed_adjacent_xbank" in aliases
+    held_out_winner = next(r for r in axis_rows if r["is_held_out_winner"])
+    assert held_out_winner["encoder_alias"] == "finbert_fed_adjacent_xbank"
+    validity_winner = next(r for r in axis_rows if r["is_validity_winner"])
+    assert validity_winner["encoder_alias"] == "finbert"
 
 
 def test_research_artifacts_with_bakeoff_and_transfer(
@@ -94,6 +119,9 @@ def test_research_artifacts_with_bakeoff_and_transfer(
         },
     )
     monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    # No rerun JSON under tmp_path → loader falls back to the phase3 walk.
+    monkeypatch.setattr(main_mod, "REPO_ROOT", tmp_path)
+    _disable_bundled_rerun(monkeypatch, tmp_path)
 
     response = client.get("/research/artifacts")
     assert response.status_code == 200
@@ -133,6 +161,8 @@ def test_research_artifacts_accepts_matrix_shape(client, monkeypatch, tmp_path):
         },
     )
     monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(main_mod, "REPO_ROOT", tmp_path)
+    _disable_bundled_rerun(monkeypatch, tmp_path)
 
     response = client.get("/research/artifacts")
     body = response.json()
@@ -141,6 +171,113 @@ def test_research_artifacts_accepts_matrix_shape(client, monkeypatch, tmp_path):
     cells = {(c["source"], c["target"]): c["metric"] for c in transfer["cells"]}
     assert cells[("fed", "fed")] == 0.63
     assert cells[("ecb", "ecb")] == 0.58
+
+
+def test_research_artifacts_prefers_rerun_json(client, monkeypatch, tmp_path):
+    # Phase3 fixture would yield 0.55/0.57 if the legacy walk fired.
+    artifacts_root = tmp_path / "artifacts"
+    _write_phase3_aggregate(
+        artifacts_root,
+        name="run-old/aggregate.json",
+        by_encoder={
+            "bert-base-uncased": {
+                "checkpoint": "bert-base-uncased",
+                "per_seed": {
+                    "11": {"macro_f1": 0.55, "weighted_f1": 0.58, "accuracy": 0.60},
+                },
+            },
+        },
+    )
+    # Drop a rerun JSON at the first known candidate path under tmp_path.
+    rerun_dir = tmp_path / "docs" / "research"
+    rerun_dir.mkdir(parents=True)
+    rerun_path = rerun_dir / "nlp-baseline-bakeoff-2026-06-02-rerun.json"
+    rerun_path.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "model_key": "fomc_roberta",
+                        "checkpoint": "gtfintechlab/FOMC-RoBERTa",
+                        "seed": 11,
+                        "classification": {
+                            "macro_f1": 0.508,
+                            "weighted_f1": 0.50,
+                            "accuracy": 0.52,
+                        },
+                    },
+                    {
+                        "model_key": "fomc_roberta",
+                        "checkpoint": "gtfintechlab/FOMC-RoBERTa",
+                        "seed": 29,
+                        "classification": {
+                            "macro_f1": 0.508,
+                            "weighted_f1": 0.50,
+                            "accuracy": 0.52,
+                        },
+                    },
+                    {
+                        "model_key": "majority",
+                        "checkpoint": "majority-class",
+                        "seed": 11,
+                        "classification": {
+                            "macro_f1": 0.187,
+                            "weighted_f1": 0.22,
+                            "accuracy": 0.39,
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(main_mod, "REPO_ROOT", tmp_path)
+    _disable_bundled_rerun(monkeypatch, tmp_path)
+
+    response = client.get("/research/artifacts")
+    body = response.json()
+    bakeoff = body["encoder_bakeoff"]
+    assert bakeoff["available"] is True
+    keys = {row["encoder_key"] for row in bakeoff["rows"]}
+    # Legacy phase3 row absent; rerun model_keys present.
+    assert keys == {"fomc_roberta", "majority"}
+    fomc_row = next(r for r in bakeoff["rows"] if r["encoder_key"] == "fomc_roberta")
+    assert fomc_row["seeds"] == [11, 29]
+    assert pytest.approx(fomc_row["macro_f1_mean"], rel=1e-4) == 0.508
+
+
+def test_research_artifacts_uses_bundled_rerun_snapshot(client, monkeypatch, tmp_path):
+    """The in-repo bundled snapshot wins by default so the loader keeps
+    working when the ``/docs`` bind mount is missing (a plain restart
+    after a compose edit silently drops the mount)."""
+
+    artifacts_root = tmp_path / "artifacts"
+    _write_phase3_aggregate(
+        artifacts_root,
+        name="run-stale/aggregate.json",
+        by_encoder={
+            "bert-base-uncased": {
+                "checkpoint": "bert-base-uncased",
+                "per_seed": {
+                    "11": {"macro_f1": 0.55, "weighted_f1": 0.58, "accuracy": 0.60},
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    # No docs/ rerun JSON, no REPO_ROOT override -- the bundled snapshot
+    # under backend/app/services/manifests/ is the only source.
+    monkeypatch.setattr(main_mod, "REPO_ROOT", tmp_path)
+
+    response = client.get("/research/artifacts")
+    body = response.json()
+    bakeoff = body["encoder_bakeoff"]
+    # Bundled rerun JSON ships with the official 5 model_keys -- the
+    # stale phase3 "bert-base-uncased" row must not surface.
+    keys = {row["encoder_key"] for row in bakeoff["rows"]}
+    assert "bert-base-uncased" not in keys
+    assert {"bert", "finbert", "fomc_roberta", "majority", "random_class"} <= keys
 
 
 def test_research_artifacts_section_skips_dotfiles(tmp_path):

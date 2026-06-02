@@ -1,7 +1,7 @@
 """Per-axis class weights + lambdas survive the checkpoint round-trip (#273).
 
 When ``multi_task_loss=True``, the training-loop builds per-axis class
-weights for stance / certainty / topic on the train slice and constructs
+weights for stance / certainty on the train slice and constructs
 a ``MultiTaskLoss`` with those weights plus the four lambda coefficients
 from the ModelConfig. The fitted weights + lambdas must land on the
 serialised checkpoint payload so a resume reads back the same loss
@@ -24,9 +24,8 @@ def _dummy_vec(
     day: int,
     vol: float,
     stance: int,
-    factor: float,
+    time: int,
     certainty: int,
-    topic: int,
 ) -> FeatureVector:
     return FeatureVector(
         date=_dt.date(2025, 1, 1) + _dt.timedelta(days=day - 1),
@@ -39,12 +38,10 @@ def _dummy_vec(
         forward_realized_vol_10d=vol,
         target_stance_idx=stance,
         target_stance_present=True,
-        target_factor=factor,
-        target_factor_present=True,
+        target_time_idx=time,
+        target_time_present=True,
         target_certainty_idx=certainty,
         target_certainty_present=True,
-        target_topic_idx=topic,
-        target_topic_present=True,
     )
 
 
@@ -55,9 +52,8 @@ def _make_groups(n: int = 40) -> list[list[FeatureVector]]:
                 day=i + 1,
                 vol=0.01 + 0.001 * i,
                 stance=i % 3,
-                factor=((i % 5) - 2) / 5.0,
+                time=i % 2,
                 certainty=i % 3,
-                topic=i % 4,
             )
             for i in range(n)
         ]
@@ -73,9 +69,8 @@ def test_checkpoint_carries_per_axis_class_weights_and_lambdas(tmp_path: Path) -
         output_mode="classification",
         multi_task_loss=True,
         multi_task_lambda_stance=1.0,
-        multi_task_lambda_factor=0.25,
         multi_task_lambda_certainty=0.35,
-        multi_task_lambda_topic=0.40,
+        multi_task_lambda_time=0.25,
         n_classes=3,
     )
     groups = _make_groups()
@@ -100,14 +95,12 @@ def test_checkpoint_carries_per_axis_class_weights_and_lambdas(tmp_path: Path) -
     # aggregator can ingest them without re-loading the .pt file.
     mt = result.summary.multi_task_class_weights
     assert mt is not None
-    assert "certainty" in mt and "topic" in mt and "lambdas" in mt
+    assert "certainty" in mt and "lambdas" in mt
     assert isinstance(mt["certainty"], list) and len(mt["certainty"]) >= 2
-    assert isinstance(mt["topic"], list) and len(mt["topic"]) >= 2
     lambdas = mt["lambdas"]
     assert lambdas["stance"] == 1.0
-    assert lambdas["factor"] == 0.25
     assert lambdas["certainty"] == 0.35
-    assert lambdas["topic"] == 0.40
+    assert lambdas["time"] == 0.25
 
     # The on-disk checkpoint must also carry the same payload so a
     # resume reads back the exact loss config the run trained under.
@@ -122,7 +115,6 @@ def test_checkpoint_carries_per_axis_class_weights_and_lambdas(tmp_path: Path) -
     )
     assert persisted["lambdas"] == lambdas
     assert persisted["certainty"] == mt["certainty"]
-    assert persisted["topic"] == mt["topic"]
 
 
 def test_coerce_payload_config_threads_multi_task_fields() -> None:
@@ -142,9 +134,8 @@ def test_coerce_payload_config_threads_multi_task_fields() -> None:
         output_mode="classification",
         multi_task_loss=True,
         multi_task_lambda_stance=1.0,
-        multi_task_lambda_factor=0.25,
         multi_task_lambda_certainty=0.35,
-        multi_task_lambda_topic=0.40,
+        multi_task_lambda_time=0.25,
         n_classes=3,
     )
 
@@ -152,9 +143,8 @@ def test_coerce_payload_config_threads_multi_task_fields() -> None:
 
     assert rebuilt.multi_task_loss is True
     assert rebuilt.multi_task_lambda_stance == 1.0
-    assert rebuilt.multi_task_lambda_factor == 0.25
     assert rebuilt.multi_task_lambda_certainty == 0.35
-    assert rebuilt.multi_task_lambda_topic == 0.40
+    assert rebuilt.multi_task_lambda_time == 0.25
 
 
 def test_coerce_payload_config_defaults_when_multi_task_absent() -> None:
@@ -169,9 +159,8 @@ def test_coerce_payload_config_defaults_when_multi_task_absent() -> None:
 
     assert rebuilt.multi_task_loss is False
     assert rebuilt.multi_task_lambda_stance == 1.0
-    assert rebuilt.multi_task_lambda_factor == 0.3
     assert rebuilt.multi_task_lambda_certainty == 0.3
-    assert rebuilt.multi_task_lambda_topic == 0.3
+    assert rebuilt.multi_task_lambda_time == 0.3
 
 
 def test_coerce_payload_config_threads_vol_target_mode() -> None:

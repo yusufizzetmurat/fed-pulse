@@ -7,9 +7,7 @@ import type {
   MarketReactionPanelResponse,
   RatesDirectionalBucket,
   RatesReactionCard as RatesReactionCardData,
-  VolRegimeReactionCard as VolRegimeReactionCardData,
 } from "@/lib/analyze/types";
-import { EvidenceLink } from "@/components/analyze/EvidenceLink";
 
 const HEAD_LABELS: Record<RatesReactionCardData["head"], string> = {
   "2y": "2y yield",
@@ -125,57 +123,18 @@ export function RatesReactionCard({ card }: RatesReactionCardProps) {
   );
 }
 
-interface VolRegimeReactionCardProps {
-  card: VolRegimeReactionCardData;
-}
-
-function VolRegimeCard({ card }: VolRegimeReactionCardProps) {
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardDescription className="flex items-center gap-1.5">
-          <TrendingUp className="h-3.5 w-3.5" />
-          Volatility Regime
-        </CardDescription>
-        <CardTitle className="flex items-center justify-between text-2xl capitalize">
-          <span>{card.regime_label}</span>
-          <Badge variant="outline">
-            {card.predicted_set.length > 0 ? `{${card.predicted_set.join(", ")}}` : "—"}
-          </Badge>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {Object.entries(card.regime_probabilities).map(([label, value]) => (
-          <div key={label} className="space-y-1">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span className="capitalize">{label}</span>
-              <span className="font-medium text-foreground">{(value * 100).toFixed(0)}%</span>
-            </div>
-            <Progress value={value * 100} />
-          </div>
-        ))}
-        {card.log_rv_point != null ? (
-          <p className="text-xs text-muted-foreground pt-1">
-            Point estimate (log volatility): <span className="font-mono">{card.log_rv_point.toFixed(3)}</span>
-          </p>
-        ) : null}
-        {card.coverage != null ? (
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            {(card.coverage * 100).toFixed(0)}% confidence level
-          </p>
-        ) : null}
-      </CardContent>
-    </Card>
-  );
-}
-
 interface MarketReactionPanelProps {
   panel: MarketReactionPanelResponse;
 }
 
+// The vol_regime sub-card was retired here in PR-after-#600: the
+// SecondOpinionRegime card at workspace slot 3 already owns the
+// {Calm, Normal, High} prediction set, and the duplicate at the bottom
+// of the page was confusing readers. The backend still emits
+// ``vol_regime`` on the response shape for backwards compatibility; the
+// frontend just ignores it.
 export function MarketReactionPanel({ panel }: MarketReactionPanelProps) {
-  const hasContent = panel.rates.length > 0 || panel.vol_regime != null;
-  if (!hasContent) {
+  if (panel.rates.length === 0) {
     return null;
   }
   return (
@@ -184,13 +143,11 @@ export function MarketReactionPanel({ panel }: MarketReactionPanelProps) {
         <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
           Market reaction
         </Badge>
-        <EvidenceLink section="6.15" label="Method notes · rates and volatility cards" />
       </div>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {panel.rates.map((card) => (
           <RatesReactionCard key={card.head} card={card} />
         ))}
-        {panel.vol_regime ? <VolRegimeCard card={panel.vol_regime} /> : null}
       </div>
     </div>
   );

@@ -312,6 +312,14 @@ export default function PerformancePage() {
               predicted vs what actually happened. The per-asset breakdown shows accuracy by
               symbol.
             </p>
+            <p className="max-w-2xl text-xs text-muted-foreground">
+              Training-time macro-F1 (shown in the tile below as &quot;Overall F1
+              score&quot;) is the model's measured generalisation; the live top-pick
+              accuracy below is on the resolved subset of dashboard runs and reflects
+              how often the calibrated argmax matched the realised regime under the
+              active text-neutral residual-fusion checkpoint. The two numbers are not
+              directly comparable.
+            </p>
           </div>
 
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -334,11 +342,7 @@ export default function PerformancePage() {
             <KpiTile
               label="Top-pick accuracy"
               value={<span className="numeric">{formatPercent(aggregate.argmaxAccuracy)}</span>}
-              caption={
-                aggregate.argmaxAccuracy != null && aggregate.argmaxAccuracy >= 1 / REGIME_CLASSES.length
-                  ? "above random-guess baseline"
-                  : "below random-guess baseline"
-              }
+              caption={`chance baseline ${formatPercent(1 / REGIME_CLASSES.length)}`}
               tone={
                 aggregate.argmaxAccuracy != null && aggregate.argmaxAccuracy >= 1 / REGIME_CLASSES.length
                   ? "up"
@@ -399,7 +403,7 @@ export default function PerformancePage() {
                   <CardTitle className="text-base">Per-class metrics</CardTitle>
                   <CardDescription>
                     {breakdownAvailable
-                      ? "From training-time evaluation — precision, recall, F1, ROC-AUC, PR-AUC."
+                      ? "From training-time evaluation: precision, recall, F1, ROC-AUC, PR-AUC."
                       : "Computed from your resolved history runs. Will switch to the training evaluation when one is published."}
                   </CardDescription>
                 </CardHeader>
@@ -478,9 +482,6 @@ export default function PerformancePage() {
                 {breakdownAvailable && breakdown?.source ? (
                   <div className="border-t border-border bg-muted/20 px-4 py-2 text-[10px] text-muted-foreground">
                     Source: {breakdown.source.relative_path}
-                    {breakdown.source.training_package_id
-                      ? ` · ${breakdown.source.training_package_id}`
-                      : ""}
                     {" · "}
                     {new Date(breakdown.source.modified_at).toLocaleString(undefined, {
                       dateStyle: "short",
@@ -495,8 +496,8 @@ export default function PerformancePage() {
                   <CardTitle className="text-base">Confusion matrix</CardTitle>
                   <CardDescription>
                     {breakdownAvailable
-                      ? "From training-time evaluation — rows are the actual class, columns are the predicted top pick."
-                      : "Computed from your resolved runs — rows are the realised regime, columns are the predicted top pick."}
+                      ? "From training-time evaluation. Rows are the actual class, columns are the predicted top pick."
+                      : "Computed from your resolved runs. Rows are the realised regime, columns are the predicted top pick."}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>

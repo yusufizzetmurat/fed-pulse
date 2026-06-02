@@ -5,6 +5,7 @@ import dataclasses
 import datetime
 import json
 import logging
+import math
 import os
 import warnings
 from pathlib import Path
@@ -19,12 +20,18 @@ from app.models.config import (
     DEFAULT_DATA_DIR,
     DEFAULT_TEXT_ADAPTER_DIM,
     DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
+    DEFAULT_VOL_TARGET_HORIZON,
     FEATURE_SIZE,
     MULTI_TASK_CERTAINTY_LABELS,
     MULTI_TASK_STANCE_LABELS,
-    MULTI_TASK_TOPIC_LABELS,
+    MULTI_TASK_TIME_LABELS,
     RICH_FEATURE_SIZE,
     RICH_LINGUISTIC_DIM,
+    RICH_PRESS_CONF_DIM,
+    RICH_STATEMENT_DELTA_DIM,
+    RICH_VIX_FEATURES_DIM,
+    RICH_VOTE_FEATURES_DIM,
+    SUPPORTED_VOL_TARGET_HORIZONS,
     RichFeatureScalerParams,
     SEQUENCE_LENGTH,
     FeatureVector,
@@ -160,6 +167,27 @@ def _extract_required_float(record: dict[str, Any], keys: Sequence[str]) -> floa
     raise ValueError(f"Missing required numeric field from keys: {', '.join(keys)}")
 
 
+def _resolve_forward_vol_column(horizon: int) -> str:
+    """Validate ``horizon`` and return the matching events-parquet column.
+
+    Centralises the column-name lookup so the two loader entry points
+    (:func:`_load_package_sequences_with_metadata` and the legacy
+    :func:`load_training_sequences_from_package`) share one validation
+    contract. Non-supported horizons raise ``ValueError`` with the
+    canonical horizon list so an operator-supplied
+    ``--target-horizon`` typo surfaces at loader entry rather than
+    after the package read.
+    """
+
+    horizon_int = int(horizon)
+    if horizon_int not in SUPPORTED_VOL_TARGET_HORIZONS:
+        raise ValueError(
+            f"unsupported vol_target_horizon={horizon!r}; expected one of "
+            f"{SUPPORTED_VOL_TARGET_HORIZONS}"
+        )
+    return f"forward_realized_vol_{horizon_int}d"
+
+
 def build_feature_vectors(
     records: Sequence[dict[str, Any]],
     sentiment_score: float | None = None,
@@ -174,7 +202,9 @@ def build_feature_vectors(
     if document_date:
         parsed_doc_date = datetime.date.fromisoformat(document_date)
 
-    sorted_records = sorted(records, key=lambda item: str(item.get("date", item.get("timestamp", ""))))
+    sorted_records = sorted(
+        records, key=lambda item: str(item.get("date", item.get("timestamp", "")))
+    )
     for record in sorted_records:
         date_value = str(record.get("date", record.get("timestamp", "")))
         if not date_value:
@@ -190,8 +220,14 @@ def build_feature_vectors(
             record,
             ("volatility_5d", "market_volatility", "volatility"),
         )
-        row_sentiment = float(record.get("sentiment_score", sentiment_score if sentiment_score is not None else 0.0))
-        row_embedding = record.get("text_embedding") if isinstance(record.get("text_embedding"), list) else text_embedding
+        row_sentiment = float(
+            record.get("sentiment_score", sentiment_score if sentiment_score is not None else 0.0)
+        )
+        row_embedding = (
+            record.get("text_embedding")
+            if isinstance(record.get("text_embedding"), list)
+            else text_embedding
+        )
         vectors.append(
             FeatureVector.from_market_state(
                 date=date_value,
@@ -245,7 +281,9 @@ def _is_record_mapping_list(value: Any) -> bool:
 
 def _extract_record_groups(payload: Any) -> list[list[dict[str, Any]]]:
     if _is_record_mapping_list(payload):
-        if payload and any(any(key in item for key in ("records", "rows", "data", "items")) for item in payload):
+        if payload and any(
+            any(key in item for key in ("records", "rows", "data", "items")) for item in payload
+        ):
             nested_groups: list[list[dict[str, Any]]] = []
             for item in payload:
                 if not isinstance(item, dict):
@@ -285,6 +323,8 @@ def _load_record_groups(path: Path) -> tuple[list[list[dict[str, Any]]], str]:
 
 def inspect_training_data_sources(
     data_dir: str | Path | None = None,
+    *,
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> tuple[list[list[FeatureVector]], list[TrainingDataSourceSummary]]:
     root = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
     if not root.exists():
@@ -315,7 +355,11 @@ def inspect_training_data_sources(
 
             record_count = sum(len(group) for group in groups)
             vectors_for_path = [build_feature_vectors(group) for group in groups]
-            usable = [vector_group for vector_group in vectors_for_path if len(vector_group) >= SEQUENCE_LENGTH + 1]
+            usable = [
+                vector_group
+                for vector_group in vectors_for_path
+                if len(vector_group) >= sequence_length + 1
+            ]
             sequences.extend(usable)
             summaries.append(
                 TrainingDataSourceSummary(
@@ -351,7 +395,9 @@ def inspect_training_data_sources(
     return sequences, summaries
 
 
-def load_training_sequences_from_data(data_dir: str | Path | None = None) -> list[list[FeatureVector]]:
+def load_training_sequences_from_data(
+    data_dir: str | Path | None = None,
+) -> list[list[FeatureVector]]:
     sequences, _ = inspect_training_data_sources(data_dir)
     return sequences
 
@@ -479,8 +525,10 @@ def _append_event_day_target(
 
     The Phase 8 ``events.parquet`` carries 20 trading-day prior bars but
     no event-day bar; the downstream training-tensor builder needs a
-    ``SEQUENCE_LENGTH + 1`` row to compute one supervised (window,
-    target) pair per event.
+    ``sequence_length + 1`` row to compute one supervised (window,
+    target) pair per event. The default ``sequence_length`` is the
+    module-level ``SEQUENCE_LENGTH=20`` but the loader threads the
+    chosen value through end-to-end (#476).
 
     Two derivations are supported via ``target_mode``:
 
@@ -600,9 +648,7 @@ def _resolve_training_package_dir(training_package_id: str) -> Path:
     else:
         package_dir = DATA_DIR / "processed" / training_package_id
     if not package_dir.exists():
-        raise FileNotFoundError(
-            f"Training package directory not found: {package_dir}"
-        )
+        raise FileNotFoundError(f"Training package directory not found: {package_dir}")
     from app.data.manifest_sha import verify_manifest_sha
 
     verify_manifest_sha(package_dir)
@@ -704,21 +750,11 @@ def _read_sep_projections_lookup(
             continue
         lookup[meeting_str] = {
             "meeting_date": meeting_str,
-            "ffr_median_current_year": _coerce_finite_float(
-                record.get("ffr_median_current_year")
-            ),
-            "ffr_median_next_year": _coerce_finite_float(
-                record.get("ffr_median_next_year")
-            ),
-            "ffr_median_longer_run": _coerce_finite_float(
-                record.get("ffr_median_longer_run")
-            ),
-            "ffr_range_upper_current": _coerce_finite_float(
-                record.get("ffr_range_upper_current")
-            ),
-            "ffr_range_lower_current": _coerce_finite_float(
-                record.get("ffr_range_lower_current")
-            ),
+            "ffr_median_current_year": _coerce_finite_float(record.get("ffr_median_current_year")),
+            "ffr_median_next_year": _coerce_finite_float(record.get("ffr_median_next_year")),
+            "ffr_median_longer_run": _coerce_finite_float(record.get("ffr_median_longer_run")),
+            "ffr_range_upper_current": _coerce_finite_float(record.get("ffr_range_upper_current")),
+            "ffr_range_lower_current": _coerce_finite_float(record.get("ffr_range_lower_current")),
         }
     return lookup
 
@@ -837,7 +873,7 @@ def _compute_sep_features_for_event(
 
 def _read_mp_surprise_lookup(
     package_dir: Path,
-) -> dict[str, dict[str, float]]:
+) -> dict[str, dict[str, float | None]]:
     """Return ``event_date -> {mp_surprise_level, ..., is_intermeeting}``.
 
     Looks first inside the training package and then under the canonical
@@ -871,7 +907,7 @@ def _read_mp_surprise_lookup(
     frame = pd.read_parquet(parquet_path)
     if "event_date" not in frame.columns:
         return {}
-    lookup: dict[str, dict[str, float]] = {}
+    lookup: dict[str, dict[str, float | None]] = {}
     for record in frame.to_dict("records"):
         event_date_raw = record.get("event_date")
         if event_date_raw is None:
@@ -891,7 +927,10 @@ def _read_mp_surprise_lookup(
         # the row via its ``v != v`` check rather than misread a
         # placeholder zero as a real zero-rate observation.
         target_prior_raw = _coerce_finite_float(record.get("ff_target_prior"))
-        target_prior = float("nan") if target_prior_raw is None else target_prior_raw
+        # Use ``None`` for the missing sentinel so downstream consumers
+        # (e.g. ``regime_features.compute_policy_cycle_phase_score``) can
+        # apply a single ``is None`` check rather than a NaN guard.
+        target_prior = None if target_prior_raw is None else target_prior_raw
         is_intermeeting_raw = record.get("is_intermeeting")
         if isinstance(is_intermeeting_raw, bool):
             is_intermeeting = 1.0 if is_intermeeting_raw else 0.0
@@ -1123,9 +1162,7 @@ def _compute_prior4_pooled_embedding(
     if not embedding_lookup:
         return None
     if lambda_inv_days <= 0:
-        raise ValueError(
-            f"lambda_inv_days must be positive; got {lambda_inv_days}"
-        )
+        raise ValueError(f"lambda_inv_days must be positive; got {lambda_inv_days}")
 
     # Filter to statements strictly before the current event date that
     # actually have a pooled embedding in the lookup, then keep the
@@ -1173,7 +1210,7 @@ def _attach_rich_features(
     *,
     event_row: dict[str, Any],
     linguistic_lookup: dict[str, list[float]],
-    mp_surprise_lookup: dict[str, dict[str, float]],
+    mp_surprise_lookup: dict[str, dict[str, float | None]],
     text_hash: str,
     event_date_str: str,
     use_credibility: bool,
@@ -1193,15 +1230,9 @@ def _attach_rich_features(
     # Credibility 4-vector is sourced directly off the event row.
     if use_credibility:
         cred_drift = _coerce_finite_float(event_row.get("credibility_drift_score"))
-        cred_realized = _coerce_finite_float(
-            event_row.get("credibility_realized_vs_stated_gap")
-        )
-        cred_market = _coerce_finite_float(
-            event_row.get("credibility_market_implied_gap")
-        )
-        cred_months = _coerce_finite_float(
-            event_row.get("credibility_months_since_reversal")
-        )
+        cred_realized = _coerce_finite_float(event_row.get("credibility_realized_vs_stated_gap"))
+        cred_market = _coerce_finite_float(event_row.get("credibility_market_implied_gap"))
+        cred_months = _coerce_finite_float(event_row.get("credibility_months_since_reversal"))
     else:
         cred_drift = cred_realized = cred_market = cred_months = 0.0
     cred_drift = 0.0 if cred_drift is None else cred_drift
@@ -1224,13 +1255,21 @@ def _attach_rich_features(
         linguistic_features = [0.0] * RICH_LINGUISTIC_DIM
 
     # MP-surprise 4-vector. Joined on event_date. Missing parquet or
-    # missing date both emit zeros.
+    # missing date both emit zeros. The lookup may carry None for the
+    # ff_target_prior slot (not consumed here), so each field is coerced
+    # through the float-or-zero helper to satisfy mypy on the widened
+    # dict[str, float | None] signature.
     if use_mp_surprise:
         mp_row = mp_surprise_lookup.get(event_date_str, {})
-        mp_level = float(mp_row.get("mp_surprise_level", 0.0))
-        mp_path = float(mp_row.get("mp_surprise_path_factor", 0.0))
-        fed_info = float(mp_row.get("fed_info_factor", 0.0))
-        mp_intermeeting = float(mp_row.get("mp_is_intermeeting", 0.0))
+
+        def _f(key: str) -> float:
+            v = mp_row.get(key, 0.0)
+            return 0.0 if v is None else float(v)
+
+        mp_level = _f("mp_surprise_level")
+        mp_path = _f("mp_surprise_path_factor")
+        fed_info = _f("fed_info_factor")
+        mp_intermeeting = _f("mp_is_intermeeting")
     else:
         mp_level = mp_path = fed_info = mp_intermeeting = 0.0
 
@@ -1255,16 +1294,14 @@ def _attach_rich_features(
         time_raw = event_row.get("axis_time_label")
         time_label_forward = (
             1.0
-            if isinstance(time_raw, str)
-            and time_raw.strip().lower() == "forward looking"
+            if isinstance(time_raw, str) and time_raw.strip().lower() == "forward looking"
             else 0.0
         )
 
         certain_raw = event_row.get("axis_certain_label")
         certain_label_certain = (
             1.0
-            if isinstance(certain_raw, str)
-            and certain_raw.strip().lower() == "certain"
+            if isinstance(certain_raw, str) and certain_raw.strip().lower() == "certain"
             else 0.0
         )
     else:
@@ -1291,13 +1328,12 @@ def _attach_rich_features(
         target_stance_idx = MULTI_TASK_STANCE_LABELS.index(target_stance_str)
         target_stance_present = True
 
-    target_factor_value = _coerce_finite_float(event_row.get("axis_factor"))
-    if target_factor_value is None:
-        target_factor = 0.0
-        target_factor_present = False
-    else:
-        target_factor = max(min(float(target_factor_value), 1.0), -1.0)
-        target_factor_present = True
+    time_raw = event_row.get("axis_time_label")
+    time_idx = -1
+    time_present = False
+    if isinstance(time_raw, str) and time_raw.strip().lower() in MULTI_TASK_TIME_LABELS:
+        time_idx = MULTI_TASK_TIME_LABELS.index(time_raw.strip().lower())
+        time_present = True
 
     # Certainty: prefer the categorical ``axis_certain_label`` (string)
     # from gtfintechlab rows; fall back to the numeric ``axis_certainty``
@@ -1325,24 +1361,6 @@ def _attach_rich_features(
                 target_certainty_idx = MULTI_TASK_CERTAINTY_LABELS.index("neutral")
             target_certainty_present = True
 
-    target_topic_idx = -1
-    target_topic_present = False
-    topic_raw = event_row.get("axis_topic")
-    topic_str = (
-        str(topic_raw).strip().lower()
-        if isinstance(topic_raw, str) and str(topic_raw).strip()
-        else None
-    )
-    if topic_str is not None:
-        for canonical in MULTI_TASK_TOPIC_LABELS[:-1]:
-            if canonical in topic_str:
-                target_topic_idx = MULTI_TASK_TOPIC_LABELS.index(canonical)
-                target_topic_present = True
-                break
-        if not target_topic_present:
-            target_topic_idx = MULTI_TASK_TOPIC_LABELS.index("other")
-            target_topic_present = True
-
     for vector in vectors:
         vector.credibility_drift_score = cred_drift
         vector.credibility_realized_vs_stated_gap = cred_realized
@@ -1361,12 +1379,10 @@ def _attach_rich_features(
         vector.stance_missing = stance_missing
         vector.target_stance_idx = target_stance_idx
         vector.target_stance_present = target_stance_present
-        vector.target_factor = target_factor
-        vector.target_factor_present = target_factor_present
+        vector.target_time_idx = time_idx
+        vector.target_time_present = time_present
         vector.target_certainty_idx = target_certainty_idx
         vector.target_certainty_present = target_certainty_present
-        vector.target_topic_idx = target_topic_idx
-        vector.target_topic_present = target_topic_present
         vector.rich_payload = True
 
 
@@ -1516,9 +1532,7 @@ def _compute_vote_features_for_event(
     votes_for = _coerce_finite_float(raw_votes_for)
     if votes_for is None:
         return None
-    votes_against = _coerce_finite_float(
-        row.get("votes_against") if hasattr(row, "get") else None
-    )
+    votes_against = _coerce_finite_float(row.get("votes_against") if hasattr(row, "get") else None)
     if votes_against is None:
         votes_against = 0.0
     is_unanimous_raw = row.get("is_unanimous") if hasattr(row, "get") else None
@@ -1529,9 +1543,7 @@ def _compute_vote_features_for_event(
             is_unanimous = 1.0 if bool(is_unanimous_raw) else 0.0
         except (TypeError, ValueError):
             is_unanimous = 1.0 if votes_against == 0.0 else 0.0
-    direction_raw = (
-        row.get("dissent_direction") if hasattr(row, "get") else None
-    )
+    direction_raw = row.get("dissent_direction") if hasattr(row, "get") else None
     direction_sign = 0.0
     if direction_raw is not None:
         key = str(direction_raw).strip().lower()
@@ -1542,6 +1554,49 @@ def _compute_vote_features_for_event(
         is_unanimous,
         direction_sign,
     ]
+
+
+_VIX_FEATURE_COLUMNS: tuple[str, ...] = (
+    "vix_t_minus_1",
+    "vix1m_t_minus_1",
+    "vix3m_t_minus_1",
+    "vix6m_t_minus_1",
+    "vix_3m_over_1m_slope",
+    "vrp_t_minus_1",
+)
+
+
+def _compute_vix_features_for_event(
+    row: Any,
+) -> list[float] | None:
+    """Compose the #478 6-scalar block off the events.parquet VIX columns.
+
+    Returns ``None`` when every column is missing — the events.parquet
+    predates #478 entirely or every per-scalar value collapsed to
+    ``None`` (event sits before ^VIX history, or every ^VIX-family fetch
+    failed). The caller flips the missing flag and zero-fills in that
+    case. Per-column ``None`` on a partially-populated row is coerced to
+    ``0.0`` so the per-bar tensor stays a uniform width across events;
+    the paired missing flag is still ``0.0`` because at least one scalar
+    landed and the model can latch onto whatever did. The per-event
+    coverage gap is documented on the per-feature row of
+    ``docs/feature-provenance-audit.md``.
+    """
+
+    if not hasattr(row, "get"):
+        return None
+    values: list[float] = []
+    any_populated = False
+    for column in _VIX_FEATURE_COLUMNS:
+        coerced = _coerce_finite_float(row.get(column))
+        if coerced is None:
+            values.append(0.0)
+        else:
+            values.append(coerced)
+            any_populated = True
+    if not any_populated:
+        return None
+    return values
 
 
 def _read_statement_delta_embedding(
@@ -1583,9 +1638,7 @@ def _read_events_frame(package_dir: Path) -> "Any":
 
     events_path = package_dir / "events.parquet"
     if not events_path.exists():
-        raise FileNotFoundError(
-            f"events.parquet missing from training package: {package_dir}"
-        )
+        raise FileNotFoundError(f"events.parquet missing from training package: {package_dir}")
     return pd.read_parquet(events_path)
 
 
@@ -1609,7 +1662,9 @@ def _load_llm_feature_lookup(
     candidates = (
         Path(f"/data/raw/llm_features/{MODEL_ID}_{CATALOG_VERSION}/{training_package_id}.parquet"),
         Path(f"data/raw/llm_features/{MODEL_ID}_{CATALOG_VERSION}/{training_package_id}.parquet"),
-        Path(f"backend/data/raw/llm_features/{MODEL_ID}_{CATALOG_VERSION}/{training_package_id}.parquet"),
+        Path(
+            f"backend/data/raw/llm_features/{MODEL_ID}_{CATALOG_VERSION}/{training_package_id}.parquet"
+        ),
     )
     cache_path = next((p for p in candidates if p.exists()), None)
     if cache_path is None:
@@ -1620,9 +1675,7 @@ def _load_llm_feature_lookup(
     frame = pd.read_parquet(cache_path)
     # Pre-build the contiguous one-hot slot offsets so the per-row
     # encoding is a single dict lookup + index write.
-    feature_levels: list[tuple[str, tuple[str, ...]]] = [
-        (f.name, f.levels) for f in CATALOG
-    ]
+    feature_levels: list[tuple[str, tuple[str, ...]]] = [(f.name, f.levels) for f in CATALOG]
     total_dim = sum(len(levels) for _, levels in feature_levels)
 
     out: dict[str, list[float]] = {}
@@ -1784,12 +1837,16 @@ def _load_package_sequences_with_metadata(
     use_press_conf: bool = False,
     use_statement_delta: bool = False,
     use_vote_features: bool = False,
+    use_vix_features: bool = False,
+    use_doc_length: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
     use_text_embeddings: bool = True,
     text_embedding_cache_dir: Path | str | None = None,
     encoder_lora: bool = False,
+    vol_target_horizon: int = DEFAULT_VOL_TARGET_HORIZON,
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> list[tuple[list[FeatureVector], str, str]]:
     """Materialise every event in a training package as a sequence triple.
 
@@ -1811,6 +1868,7 @@ def _load_package_sequences_with_metadata(
             f"Unsupported target_mode: {target_mode!r}. "
             f"Choose one of {sorted(_VALID_TARGET_MODES)}."
         )
+    forward_vol_column = _resolve_forward_vol_column(vol_target_horizon)
 
     package_dir = _resolve_training_package_dir(training_package_id)
     frame = _read_events_frame(package_dir)
@@ -1820,9 +1878,7 @@ def _load_package_sequences_with_metadata(
     required_columns = {"event_date", "text_hash", "prior_bars_json"}
     missing = required_columns - set(frame.columns)
     if missing:
-        raise ValueError(
-            f"events.parquet at {package_dir} missing columns: {sorted(missing)}"
-        )
+        raise ValueError(f"events.parquet at {package_dir} missing columns: {sorted(missing)}")
 
     linguistic_lookup: dict[str, list[float]] = {}
     # The mp_surprise lookup feeds two consumers: rich-feature input
@@ -1832,9 +1888,7 @@ def _load_package_sequences_with_metadata(
     # Loading it unconditionally costs one cheap parquet read and
     # prevents the silent all-None projection that would otherwise
     # fire under ``--no-rich-features --rates-target-mode=fomc_attributable``.
-    mp_surprise_lookup: dict[str, dict[str, float]] = _read_mp_surprise_lookup(
-        package_dir
-    )
+    mp_surprise_lookup: dict[str, dict[str, float | None]] = _read_mp_surprise_lookup(package_dir)
     # #215 SEP dot-plot lookup. Loaded only when the opt-in flag fires so
     # the legacy / opt-out path stays byte-identical to pre-#215 (a
     # parquet on disk doesn't change behaviour unless --use-sep is set).
@@ -1862,14 +1916,8 @@ def _load_package_sequences_with_metadata(
     text_adapter_dim_int = int(text_adapter_dim)
     if use_text_path:
         if text_adapter_dim_int <= 0:
-            raise ValueError(
-                f"text_adapter_dim must be a positive integer; got {text_adapter_dim}"
-            )
-        cache_dir = (
-            Path(text_embedding_cache_dir)
-            if text_embedding_cache_dir is not None
-            else None
-        )
+            raise ValueError(f"text_adapter_dim must be a positive integer; got {text_adapter_dim}")
+        cache_dir = Path(text_embedding_cache_dir) if text_embedding_cache_dir is not None else None
         registry_parquet = package_dir / "registry_normalized.parquet"
         registry_jsonl = package_dir / "registry_normalized.jsonl"
         registry_for_lookup: Path | None
@@ -1879,8 +1927,14 @@ def _load_package_sequences_with_metadata(
             import pandas as pd
 
             reg_frame = pd.read_parquet(registry_parquet)
-            reg_subset = reg_frame[[c for c in ("record_id", "text_hash") if c in reg_frame.columns]]
-            if not reg_subset.empty and "record_id" in reg_subset.columns and "text_hash" in reg_subset.columns:
+            reg_subset = reg_frame[
+                [c for c in ("record_id", "text_hash") if c in reg_frame.columns]
+            ]
+            if (
+                not reg_subset.empty
+                and "record_id" in reg_subset.columns
+                and "text_hash" in reg_subset.columns
+            ):
                 tmp_path = package_dir / "_registry_record_to_text_hash.jsonl"
                 with tmp_path.open("w", encoding="utf-8") as handle:
                     for record in reg_subset.to_dict("records"):
@@ -1905,6 +1959,24 @@ def _load_package_sequences_with_metadata(
             cache_dir=cache_dir,
             registry_path=registry_for_lookup,
         )
+        # #554: fail loud when an encoder is configured but the lookup
+        # came back empty. Pre-fix the loader logged a per-batch WARNING
+        # on cache miss + then proceeded with empty embeddings, so the
+        # arm produced byte-identical output to the no-text baseline
+        # silently -- which is exactly how the wave-4 bake-off cells
+        # all looked the same (see §6.39 retraction). A single ERROR-
+        # level log at the load boundary surfaces the gap in run logs
+        # without raising (the empty-fallback path stays alive for the
+        # existing test surface that relies on it).
+        if not embedding_lookup:
+            _logger.error(
+                "text_encoder=%r is configured but the embedding cache "
+                "lookup returned empty -- every row will hit the no-text "
+                "fallback and the arm's output will be byte-identical to "
+                "the use_text_embeddings=False path. See PR #546 / §6.39 "
+                "for the methodology context.",
+                text_encoder,
+            )
     # ``embedding_event_dates`` is captured for symmetry with the
     # ``_read_chunk_embedding_lookup`` contract; the prior-4 pooler
     # consumes statement dates off ``prior_chronology`` further down,
@@ -1959,7 +2031,7 @@ def _load_package_sequences_with_metadata(
         except ValueError:
             continue
         bars = _parse_prior_bars(row.get("prior_bars_json"))
-        if len(bars) < SEQUENCE_LENGTH:
+        if len(bars) < sequence_length:
             continue
         row_text_hash = str(row.get("text_hash", ""))
         sentiment_score = _stance_to_sentiment(row.get("axis_stance"))
@@ -1968,15 +2040,14 @@ def _load_package_sequences_with_metadata(
             event_date=event_date,
             sentiment_score=sentiment_score,
         )
-        if len(vectors) < SEQUENCE_LENGTH:
+        if len(vectors) < sequence_length:
             continue
         realized_return = _coerce_finite_float(row.get("realized_return"))
         abnormal_return = _coerce_finite_float(row.get("abnormal_return"))
         volatility_shift = _coerce_finite_float(row.get("volatility_shift"))
         realized_date_raw = row.get("realized_date")
-        if (
-            realized_date_raw is None
-            or (isinstance(realized_date_raw, float) and realized_date_raw != realized_date_raw)
+        if realized_date_raw is None or (
+            isinstance(realized_date_raw, float) and realized_date_raw != realized_date_raw
         ):
             realized_date = None
         else:
@@ -1997,20 +2068,38 @@ def _load_package_sequences_with_metadata(
         # axis, not an input feature. Tier 1 (Market-Only) needs it just
         # like tier 3 (Market+Rich+NLP); a missing target would crash the
         # per-fold quantile fit with "0 valid rows for n_classes=3".
-        forward_vol_value = _coerce_finite_float(
-            row.get("forward_realized_vol_10d")
-        )
+        # The ``forward_vol_column`` selector (default
+        # ``forward_realized_vol_10d``) routes the canonical y axis to
+        # the operator-chosen horizon; the per-row slot stays named
+        # ``forward_realized_vol_10d`` on the FeatureVector so downstream
+        # consumers (``vol_regime_class_for``, the dual-head MSE
+        # builder) keep reading the same attribute regardless of which
+        # horizon column was sourced.
+        forward_vol_value = _coerce_finite_float(row.get(forward_vol_column))
         # #236 GARCH(1,1) baseline + residual. Frozen into the events
         # parquet at build time (see ``app.data.garch_residual``);
         # the loader only reads them off the row and broadcasts onto
         # the target slot. Older events.parquet files without these
-        # columns degrade cleanly to ``None`` here.
+        # columns degrade cleanly to ``None`` here. The baseline/residual
+        # pair is currently only computed against the 10d horizon so
+        # the column names stay hard-coded here; non-10d horizons emit
+        # ``None`` on both and the GARCH-residual mode falls back to
+        # the raw target per ADR 0034.
         garch_baseline_value = _coerce_finite_float(
             row.get("forward_realized_vol_10d_garch_baseline")
         )
         garch_residual_value = _coerce_finite_float(
             row.get("forward_realized_vol_10d_garch_residual")
         )
+        # #471 multi-horizon auxiliary vol targets. Each value rides on
+        # the same event row alongside ``forward_realized_vol_10d``; the
+        # per-fold aux-target builder reads them off the target row of
+        # each supervised sequence. Pre-#480 parquets without the column
+        # degrade to ``None`` here and the aux head sees the row masked.
+        forward_vol_aux_values: dict[int, float | None] = {
+            h: _coerce_finite_float(row.get(f"forward_realized_vol_{h}d"))
+            for h in (1, 3, 5, 20, 30)
+        }
         # #292 rates-complex strict-forward 5d yield change targets.
         # Each value rides on the same event row alongside
         # forward_realized_vol_10d; the per-fold target builder
@@ -2018,9 +2107,7 @@ def _load_package_sequences_with_metadata(
         # reads them off the target row of each supervised sequence.
         rates_2y_value = _coerce_finite_float(row.get("yield_2y_change_5d"))
         rates_5y_value = _coerce_finite_float(row.get("yield_5y_change_5d"))
-        rates_terminal_value = _coerce_finite_float(
-            row.get("terminal_rate_change_5d")
-        )
+        rates_terminal_value = _coerce_finite_float(row.get("terminal_rate_change_5d"))
         # #305 FOMC-attributable rates targets. Compute the 1-D
         # projection of each observed bps move onto the strict-prior
         # surprise direction ``sign(mp_surprise_level)``. The level is
@@ -2032,9 +2119,7 @@ def _load_package_sequences_with_metadata(
         from app.training.rates_targets import fomc_attributable_projection
 
         mp_level_lookup = mp_surprise_lookup.get(event_date_str[:10], {})
-        mp_level_for_projection = _coerce_finite_float(
-            mp_level_lookup.get("mp_surprise_level")
-        )
+        mp_level_for_projection = _coerce_finite_float(mp_level_lookup.get("mp_surprise_level"))
         rates_2y_attributable = fomc_attributable_projection(
             rates_2y_value, mp_level_for_projection
         )
@@ -2125,8 +2210,33 @@ def _load_package_sequences_with_metadata(
             vote_features_list = _compute_vote_features_for_event(row)
         else:
             vote_features_list = None
+        # #478 VIX term-structure + VRP block. Gated by
+        # ``use_vix_features``; pre-coverage events or rows where every
+        # ^VIX scalar collapsed to ``None`` → block returns ``None`` and
+        # the missing flag fires.
+        if use_vix_features:
+            vix_features_list = _compute_vix_features_for_event(row)
+        else:
+            vix_features_list = None
+        # #543 doc_length per-event scalar. Computed from ``token_count``
+        # on events.parquet (whitespace-split token count of the row's
+        # text body). Broadcast onto every bar inside the vector loop
+        # so the per-bar input vector stays uniform across the sequence.
+        if use_doc_length:
+            try:
+                _tok = int(row.get("token_count") or 0)
+            except (TypeError, ValueError):
+                _tok = 0
+            doc_length_value: float | None = math.log1p(max(0, _tok))
+        else:
+            doc_length_value = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
+            vector.forward_realized_vol_1d = forward_vol_aux_values[1]
+            vector.forward_realized_vol_3d = forward_vol_aux_values[3]
+            vector.forward_realized_vol_5d = forward_vol_aux_values[5]
+            vector.forward_realized_vol_20d = forward_vol_aux_values[20]
+            vector.forward_realized_vol_30d = forward_vol_aux_values[30]
             vector.forward_realized_vol_10d_garch_baseline = garch_baseline_value
             vector.forward_realized_vol_10d_garch_residual = garch_residual_value
             vector.target_yield_2y_change_5d = rates_2y_value
@@ -2134,9 +2244,7 @@ def _load_package_sequences_with_metadata(
             vector.target_terminal_rate_change_5d = rates_terminal_value
             vector.target_yield_2y_change_5d_fomc_attributable = rates_2y_attributable
             vector.target_yield_5y_change_5d_fomc_attributable = rates_5y_attributable
-            vector.target_terminal_rate_change_5d_fomc_attributable = (
-                rates_terminal_attributable
-            )
+            vector.target_terminal_rate_change_5d_fomc_attributable = rates_terminal_attributable
             if llm_vector is not None:
                 vector.llm_features = list(llm_vector)
                 vector.llm_features_missing = 0.0
@@ -2174,24 +2282,62 @@ def _load_package_sequences_with_metadata(
                 vector.sep_features = None
                 vector.sep_features_missing = 1.0
             # #214 press-conf Q&A block broadcast onto every bar.
+            # When the user opted in via ``use_press_conf`` but this
+            # specific event has no Q&A row, zero-fill instead of leaving
+            # the field at ``None`` -- otherwise ``as_rich_list`` skips
+            # the block and the per-bar tensor goes ragged across events.
             if press_conf_block_list is not None:
                 vector.press_conf_features = list(press_conf_block_list)
+            elif use_press_conf:
+                vector.press_conf_features = [0.0] * RICH_PRESS_CONF_DIM
             else:
                 vector.press_conf_features = None
-            # #443 statement-delta embedding broadcast.
+            # #443 statement-delta embedding broadcast. Same uniform-width
+            # contract as press-conf: when ``use_statement_delta`` is on
+            # but the row carries None (non-statement event or cold-start
+            # statement without a strict-prior), zero-fill the 768-d slot
+            # and flip missing=1.0 so the consumer's per-bar tensor stays
+            # uniform.
             if statement_delta_list is not None:
                 vector.statement_delta_embedding = list(statement_delta_list)
                 vector.statement_delta_embedding_missing = 0.0
+            elif use_statement_delta:
+                vector.statement_delta_embedding = [0.0] * RICH_STATEMENT_DELTA_DIM
+                vector.statement_delta_embedding_missing = 1.0
             else:
                 vector.statement_delta_embedding = None
                 vector.statement_delta_embedding_missing = 1.0
-            # #444 vote-tally feature broadcast.
+            # #444 vote-tally feature broadcast. Same uniform-width
+            # contract: opt-in + missing row -> zero block + missing=1.0.
             if vote_features_list is not None:
                 vector.vote_features = list(vote_features_list)
                 vector.vote_features_missing = 0.0
+            elif use_vote_features:
+                vector.vote_features = [0.0] * RICH_VOTE_FEATURES_DIM
+                vector.vote_features_missing = 1.0
             else:
                 vector.vote_features = None
                 vector.vote_features_missing = 1.0
+            # #478 VIX term-structure broadcast. Same uniform-width
+            # contract: opt-in + pre-coverage row -> zero block +
+            # missing=1.0.
+            if vix_features_list is not None:
+                vector.vix_features = list(vix_features_list)
+                vector.vix_features_missing = 0.0
+            elif use_vix_features:
+                vector.vix_features = [0.0] * RICH_VIX_FEATURES_DIM
+                vector.vix_features_missing = 1.0
+            else:
+                vector.vix_features = None
+                vector.vix_features_missing = 1.0
+            # #543 doc_length scalar broadcast. ``doc_length_value`` is
+            # ``None`` when ``use_doc_length`` is off; the conditional
+            # append in ``FeatureVector.as_rich_list`` then skips the
+            # slot entirely so the default path stays byte-identical.
+            if doc_length_value is not None:
+                vector.doc_length = float(doc_length_value)
+            else:
+                vector.doc_length = None
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -2275,6 +2421,8 @@ def load_walk_forward_split(
     use_press_conf: bool = False,
     use_statement_delta: bool = False,
     use_vote_features: bool = False,
+    use_vix_features: bool = False,
+    use_doc_length: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
@@ -2282,6 +2430,8 @@ def load_walk_forward_split(
     text_embedding_cache_dir: Path | str | None = None,
     embargo_days: int = 0,
     encoder_lora: bool = False,
+    vol_target_horizon: int = DEFAULT_VOL_TARGET_HORIZON,
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> WalkForwardSplit:
     """Return the (train, val, test) sequence partitions for one fold.
 
@@ -2325,6 +2475,14 @@ def load_walk_forward_split(
     are split-tag-driven and have no manifest dates to anchor the
     embargo against).
 
+    ``sequence_length`` gates the minimum prior-bar count an event must
+    carry to survive the loader. Defaults to the module-level
+    ``SEQUENCE_LENGTH`` (20) so existing callers get byte-identical
+    behaviour; override (e.g. 60) to drive the longer-window arm
+    against a TP whose ``prior_bars_json`` carries the matching wider
+    window. Rows whose prior-bar list is shorter than ``sequence_length``
+    are dropped from every partition.
+
     Raises ``ValueError`` when the chosen partition produces an empty
     test list: a sweep that silently runs on no held-out events is the
     research-quality footgun this refactor was written to remove.
@@ -2356,12 +2514,16 @@ def load_walk_forward_split(
         use_press_conf=use_press_conf,
         use_statement_delta=use_statement_delta,
         use_vote_features=use_vote_features,
+        use_vix_features=use_vix_features,
+        use_doc_length=use_doc_length,
         text_encoder=text_encoder,
         text_adapter_dim=text_adapter_dim,
         text_pool_lambda_inv_days=text_pool_lambda_inv_days,
         use_text_embeddings=use_text_embeddings,
         text_embedding_cache_dir=text_embedding_cache_dir,
         encoder_lora=encoder_lora,
+        vol_target_horizon=vol_target_horizon,
+        sequence_length=sequence_length,
     )
 
     train: list[list[FeatureVector]] = []
@@ -2408,12 +2570,8 @@ def load_walk_forward_split(
                 "cannot apply a non-zero embargo without an anchored "
                 "train-boundary date"
             )
-        train_end_dt = (
-            datetime.date.fromisoformat(train_end_str) if embargo_active else None
-        )
-        val_end_dt = (
-            datetime.date.fromisoformat(val_end) if embargo_active else None
-        )
+        train_end_dt = datetime.date.fromisoformat(train_end_str) if embargo_active else None
+        val_end_dt = datetime.date.fromisoformat(val_end) if embargo_active else None
         embargo = datetime.timedelta(days=int(embargo_days))
         for sequence, _text_hash, event_date_str in items:
             # Expanding-window contract: any event chronologically
@@ -2480,11 +2638,15 @@ def load_training_sequences_from_package(
     use_press_conf: bool = False,
     use_statement_delta: bool = False,
     use_vote_features: bool = False,
+    use_vix_features: bool = False,
+    use_doc_length: bool = False,
     text_encoder: str | None = None,
     text_adapter_dim: int = DEFAULT_TEXT_ADAPTER_DIM,
     text_pool_lambda_inv_days: float = DEFAULT_TEXT_POOL_LAMBDA_INV_DAYS,
     use_text_embeddings: bool = True,
     text_embedding_cache_dir: Path | str | None = None,
+    vol_target_horizon: int = DEFAULT_VOL_TARGET_HORIZON,
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> list[list[FeatureVector]]:
     """Load one prior-window sequence per FOMC event in a training package.
 
@@ -2603,9 +2765,7 @@ def load_training_sequences_from_package(
 
     package_dir = _resolve_training_package_dir(training_package_id)
     if not (package_dir / "events.parquet").exists():
-        raise FileNotFoundError(
-            f"events.parquet missing from training package: {package_dir}"
-        )
+        raise FileNotFoundError(f"events.parquet missing from training package: {package_dir}")
     frame = _read_events_frame(package_dir)
     if frame.empty:
         return []
@@ -2613,9 +2773,7 @@ def load_training_sequences_from_package(
     required_columns = {"event_date", "text_hash", "prior_bars_json"}
     missing = required_columns - set(frame.columns)
     if missing:
-        raise ValueError(
-            f"events.parquet at {package_dir} missing columns: {sorted(missing)}"
-        )
+        raise ValueError(f"events.parquet at {package_dir} missing columns: {sorted(missing)}")
 
     excluded_text_hashes = _read_excluded_text_hashes(package_dir)
 
@@ -2633,9 +2791,7 @@ def load_training_sequences_from_package(
     # (gated) and the fomc-attributable rates-target projection (always
     # computed). Load unconditionally so `--no-rich-features` does not
     # silently null every projection.
-    mp_surprise_lookup: dict[str, dict[str, float]] = _read_mp_surprise_lookup(
-        package_dir
-    )
+    mp_surprise_lookup: dict[str, dict[str, float | None]] = _read_mp_surprise_lookup(package_dir)
     # #215 SEP lookup (legacy loader path mirror -- see the matched site
     # in ``_load_package_sequences_with_metadata``).
     sep_lookup: dict[str, dict[str, Any]] = (
@@ -2665,14 +2821,8 @@ def load_training_sequences_from_package(
     text_adapter_dim_int = int(text_adapter_dim)
     if use_text_path:
         if text_adapter_dim_int <= 0:
-            raise ValueError(
-                f"text_adapter_dim must be a positive integer; got {text_adapter_dim}"
-            )
-        cache_dir = (
-            Path(text_embedding_cache_dir)
-            if text_embedding_cache_dir is not None
-            else None
-        )
+            raise ValueError(f"text_adapter_dim must be a positive integer; got {text_adapter_dim}")
+        cache_dir = Path(text_embedding_cache_dir) if text_embedding_cache_dir is not None else None
         # The embedding cache builder keys rows on ``record_id``;
         # events.parquet joins on ``text_hash``. The registry parquet
         # under the training package carries both columns, so the
@@ -2696,8 +2846,14 @@ def load_training_sequences_from_package(
             import pandas as pd
 
             reg_frame = pd.read_parquet(registry_parquet)
-            reg_subset = reg_frame[[c for c in ("record_id", "text_hash") if c in reg_frame.columns]]
-            if not reg_subset.empty and "record_id" in reg_subset.columns and "text_hash" in reg_subset.columns:
+            reg_subset = reg_frame[
+                [c for c in ("record_id", "text_hash") if c in reg_frame.columns]
+            ]
+            if (
+                not reg_subset.empty
+                and "record_id" in reg_subset.columns
+                and "text_hash" in reg_subset.columns
+            ):
                 tmp_path = package_dir / "_registry_record_to_text_hash.jsonl"
                 with tmp_path.open("w", encoding="utf-8") as handle:
                     for record in reg_subset.to_dict("records"):
@@ -2722,6 +2878,18 @@ def load_training_sequences_from_package(
             cache_dir=cache_dir,
             registry_path=registry_for_lookup,
         )
+        # #554 mirror site to the walk-forward loader. Same ERROR-level
+        # fail-loud signal when the cache lookup returns empty so a
+        # silent-fallback bake-off cannot recur on the legacy load path.
+        if not embedding_lookup:
+            _logger.error(
+                "text_encoder=%r is configured but the embedding cache "
+                "lookup returned empty -- every row will hit the no-text "
+                "fallback and the arm's output will be byte-identical to "
+                "the use_text_embeddings=False path. See PR #546 / §6.39 "
+                "for the methodology context.",
+                text_encoder,
+            )
     # Captured for symmetry; the prior-4 pooler reads dates off
     # ``prior_chronology`` so the dict is not consumed here.
     _ = embedding_event_dates
@@ -2786,7 +2954,7 @@ def load_training_sequences_from_package(
         except ValueError:
             continue
         bars = _parse_prior_bars(row.get("prior_bars_json"))
-        if len(bars) < SEQUENCE_LENGTH:
+        if len(bars) < sequence_length:
             continue
         row_text_hash = str(row.get("text_hash", ""))
         sentiment_score = _stance_to_sentiment(row.get("axis_stance"))
@@ -2795,15 +2963,14 @@ def load_training_sequences_from_package(
             event_date=event_date,
             sentiment_score=sentiment_score,
         )
-        if len(vectors) < SEQUENCE_LENGTH:
+        if len(vectors) < sequence_length:
             continue
         realized_return = _coerce_finite_float(row.get("realized_return"))
         abnormal_return = _coerce_finite_float(row.get("abnormal_return"))
         volatility_shift = _coerce_finite_float(row.get("volatility_shift"))
         realized_date_raw = row.get("realized_date")
-        if (
-            realized_date_raw is None
-            or (isinstance(realized_date_raw, float) and realized_date_raw != realized_date_raw)
+        if realized_date_raw is None or (
+            isinstance(realized_date_raw, float) and realized_date_raw != realized_date_raw
         ):
             realized_date = None
         else:
@@ -2825,7 +2992,7 @@ def load_training_sequences_from_package(
         # like tier 3 (Market+Rich+NLP); a missing target would crash the
         # per-fold quantile fit with "0 valid rows for n_classes=3".
         forward_vol_value = _coerce_finite_float(
-            row.get("forward_realized_vol_10d")
+            row.get(_resolve_forward_vol_column(vol_target_horizon))
         )
         # #236 GARCH(1,1) baseline + residual (see matched walk-forward
         # site above for the contract).
@@ -2835,6 +3002,12 @@ def load_training_sequences_from_package(
         garch_residual_value = _coerce_finite_float(
             row.get("forward_realized_vol_10d_garch_residual")
         )
+        # #471 multi-horizon auxiliary vol targets (matched site to the
+        # walk-forward loader above). Pre-#480 parquets degrade to ``None``.
+        forward_vol_aux_values: dict[int, float | None] = {
+            h: _coerce_finite_float(row.get(f"forward_realized_vol_{h}d"))
+            for h in (1, 3, 5, 20, 30)
+        }
         # #292 rates-complex strict-forward 5d yield change targets.
         # Each value rides on the same event row alongside
         # forward_realized_vol_10d; the per-fold target builder
@@ -2842,17 +3015,13 @@ def load_training_sequences_from_package(
         # reads them off the target row of each supervised sequence.
         rates_2y_value = _coerce_finite_float(row.get("yield_2y_change_5d"))
         rates_5y_value = _coerce_finite_float(row.get("yield_5y_change_5d"))
-        rates_terminal_value = _coerce_finite_float(
-            row.get("terminal_rate_change_5d")
-        )
+        rates_terminal_value = _coerce_finite_float(row.get("terminal_rate_change_5d"))
         # #305 FOMC-attributable projections (see ADR 0027 + the matched
         # block above on the walk-forward loader path).
         from app.training.rates_targets import fomc_attributable_projection
 
         mp_level_lookup = mp_surprise_lookup.get(event_date_str[:10], {})
-        mp_level_for_projection = _coerce_finite_float(
-            mp_level_lookup.get("mp_surprise_level")
-        )
+        mp_level_for_projection = _coerce_finite_float(mp_level_lookup.get("mp_surprise_level"))
         rates_2y_attributable = fomc_attributable_projection(
             rates_2y_value, mp_level_for_projection
         )
@@ -2929,8 +3098,30 @@ def load_training_sequences_from_package(
             vote_features_list = _compute_vote_features_for_event(row)
         else:
             vote_features_list = None
+        # #478 VIX term-structure + VRP block (matched site to the
+        # walk-forward loader path).
+        if use_vix_features:
+            vix_features_list = _compute_vix_features_for_event(row)
+        else:
+            vix_features_list = None
+        # #543 doc_length per-event scalar (matched site to the
+        # walk-forward loader path). Computed from ``token_count`` on
+        # events.parquet and broadcast onto every bar in the loop below.
+        if use_doc_length:
+            try:
+                _tok = int(row.get("token_count") or 0)
+            except (TypeError, ValueError):
+                _tok = 0
+            doc_length_value: float | None = math.log1p(max(0, _tok))
+        else:
+            doc_length_value = None
         for vector in vectors:
             vector.forward_realized_vol_10d = forward_vol_value
+            vector.forward_realized_vol_1d = forward_vol_aux_values[1]
+            vector.forward_realized_vol_3d = forward_vol_aux_values[3]
+            vector.forward_realized_vol_5d = forward_vol_aux_values[5]
+            vector.forward_realized_vol_20d = forward_vol_aux_values[20]
+            vector.forward_realized_vol_30d = forward_vol_aux_values[30]
             vector.forward_realized_vol_10d_garch_baseline = garch_baseline_value
             vector.forward_realized_vol_10d_garch_residual = garch_residual_value
             vector.target_yield_2y_change_5d = rates_2y_value
@@ -2938,9 +3129,7 @@ def load_training_sequences_from_package(
             vector.target_terminal_rate_change_5d = rates_terminal_value
             vector.target_yield_2y_change_5d_fomc_attributable = rates_2y_attributable
             vector.target_yield_5y_change_5d_fomc_attributable = rates_5y_attributable
-            vector.target_terminal_rate_change_5d_fomc_attributable = (
-                rates_terminal_attributable
-            )
+            vector.target_terminal_rate_change_5d_fomc_attributable = rates_terminal_attributable
             if llm_vector is not None:
                 vector.llm_features = list(llm_vector)
                 vector.llm_features_missing = 0.0
@@ -2972,24 +3161,53 @@ def load_training_sequences_from_package(
                 vector.sep_features = None
                 vector.sep_features_missing = 1.0
             # #214 press-conf Q&A block broadcast onto every bar.
+            # When the user opted in via ``use_press_conf`` but this
+            # specific event has no Q&A row, zero-fill instead of leaving
+            # the field at ``None`` -- otherwise ``as_rich_list`` skips
+            # the block and the per-bar tensor goes ragged across events.
             if press_conf_block_list is not None:
                 vector.press_conf_features = list(press_conf_block_list)
+            elif use_press_conf:
+                vector.press_conf_features = [0.0] * RICH_PRESS_CONF_DIM
             else:
                 vector.press_conf_features = None
-            # #443 statement-delta embedding broadcast.
+            # #443 statement-delta embedding broadcast. Same uniform-width
+            # contract as press-conf: when ``use_statement_delta`` is on
+            # but the row carries None (non-statement event or cold-start
+            # statement without a strict-prior), zero-fill the 768-d slot
+            # and flip missing=1.0 so the consumer's per-bar tensor stays
+            # uniform.
             if statement_delta_list is not None:
                 vector.statement_delta_embedding = list(statement_delta_list)
                 vector.statement_delta_embedding_missing = 0.0
+            elif use_statement_delta:
+                vector.statement_delta_embedding = [0.0] * RICH_STATEMENT_DELTA_DIM
+                vector.statement_delta_embedding_missing = 1.0
             else:
                 vector.statement_delta_embedding = None
                 vector.statement_delta_embedding_missing = 1.0
-            # #444 vote-tally feature broadcast.
+            # #444 vote-tally feature broadcast. Same uniform-width
+            # contract: opt-in + missing row -> zero block + missing=1.0.
             if vote_features_list is not None:
                 vector.vote_features = list(vote_features_list)
                 vector.vote_features_missing = 0.0
+            elif use_vote_features:
+                vector.vote_features = [0.0] * RICH_VOTE_FEATURES_DIM
+                vector.vote_features_missing = 1.0
             else:
                 vector.vote_features = None
                 vector.vote_features_missing = 1.0
+            # #478 VIX term-structure broadcast (matched site to the
+            # walk-forward loader path).
+            if vix_features_list is not None:
+                vector.vix_features = list(vix_features_list)
+                vector.vix_features_missing = 0.0
+            elif use_vix_features:
+                vector.vix_features = [0.0] * RICH_VIX_FEATURES_DIM
+                vector.vix_features_missing = 1.0
+            else:
+                vector.vix_features = None
+                vector.vix_features_missing = 1.0
         if rich_features:
             _attach_rich_features(
                 vectors,
@@ -3052,9 +3270,8 @@ def fit_rich_feature_scaler_tensor(
 
     Constant columns (IQR < ``epsilon`` on the train slice) get their
     IQR coerced to ``1.0`` so the transform reduces to a pure
-    centering step. Catches the placeholder
-    ``credibility_market_implied_gap`` (always 0.0 by contract today)
-    and any per-family ablation that zeros a slot before fit time.
+    centering step. Catches any per-family ablation that zeros a slot
+    before fit time (e.g. ``--ablate-credibility``).
     """
 
     import numpy as np
@@ -3229,24 +3446,71 @@ def vol_regime_class_for(value: float | None, quantiles: Sequence[float]) -> int
     return len(quantiles)
 
 
+def vol_regime_absolute_class_for(value: float | None, thresholds: tuple[float, float]) -> int:
+    """Map a forward-vol value to a 3-class regime index using absolute cutoffs.
+
+    Alternative to :func:`vol_regime_class_for` (#472): replaces the
+    per-fold quantile bins -- whose cutoffs drift between folds and
+    carry no economic meaning -- with a fixed pair of thresholds
+    ``(calm_max, high_min)`` so every fold's "calm" / "normal" / "high"
+    cell refers to the same vol level. Returns ``0`` (calm) when
+    ``value < calm_max``, ``1`` (normal) when ``calm_max <= value <
+    high_min``, ``2`` (high) when ``value >= high_min``. Returns ``-1``
+    for missing (``None`` / NaN) values so the caller drops the row
+    from the classification training set -- matches the contract of
+    :func:`vol_regime_class_for`.
+
+    The thresholds are expressed in the SAME per-period unit as
+    ``forward_realized_vol_10d`` (per-period standard deviation of log
+    returns over 10 trading days; NOT annualized). Convert from a
+    human-readable annualized vol via
+    ``vol_per_period = vol_annualized / sqrt(252 / 10)`` (equivalently
+    ``vol_annualized = vol_per_period * sqrt(25.2)``). The
+    :class:`app.models.config.ModelConfig` defaults derive
+    ``calm_max`` from 12% annualized and ``high_min`` from 22%
+    annualized; the caller in :mod:`scripts.run_dual_head_comparison`
+    converts user-supplied annualized percentages before passing them
+    through.
+
+    Caveat: when a fold's test slice has zero rows above ``high_min``
+    (e.g. early-2010s windows where realised vol never crossed 22%
+    annualised), the test partition's class-2 cell is empty and
+    macro-F1 reflects that. This is intentional: "calm" / "normal" /
+    "high" become a stable economic definition rather than a per-fold
+    artefact.
+    """
+
+    if value is None or value != value:
+        return -1
+    calm_max, high_min = thresholds
+    if value < calm_max:
+        return 0
+    if value < high_min:
+        return 1
+    return 2
+
+
 def collect_forward_vols(
     sequence_groups: Sequence[Sequence[FeatureVector]],
+    *,
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> list[float]:
     """Pull the forward-vol target off every supervised target row.
 
-    A "target" row is the bar at index ``SEQUENCE_LENGTH`` in a sequence
+    A "target" row is the bar at index ``sequence_length`` in a sequence
     group (the event-day bar appended by ``_append_event_day_target``).
     Non-target bars are skipped because their ``forward_realized_vol_10d``
     is irrelevant to the y axis. Rows whose target column is null /
     NaN are dropped so the caller (per-fold quantile fit) only sees
-    valid floats.
+    valid floats. ``sequence_length`` defaults to ``SEQUENCE_LENGTH`` so
+    pre-existing callers keep their byte-identical row counts.
     """
 
     out: list[float] = []
     for sequence_group in sequence_groups:
-        if len(sequence_group) < SEQUENCE_LENGTH + 1:
+        if len(sequence_group) < sequence_length + 1:
             continue
-        for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
+        for idx in range(sequence_length, len(sequence_group)):
             value = getattr(sequence_group[idx], "forward_realized_vol_10d", None)
             if value is None:
                 continue
@@ -3256,7 +3520,11 @@ def collect_forward_vols(
     return out
 
 
-def fit_close_scale(sequence_groups: Sequence[Sequence[FeatureVector]]) -> float:
+def fit_close_scale(
+    sequence_groups: Sequence[Sequence[FeatureVector]],
+    *,
+    sequence_length: int = SEQUENCE_LENGTH,
+) -> float:
     """Compute the per-fold close-price normaliser from the training rows.
 
     The forecaster normalises the close target by dividing by a positive
@@ -3280,9 +3548,9 @@ def fit_close_scale(sequence_groups: Sequence[Sequence[FeatureVector]]) -> float
 
     target_closes: list[float] = []
     for group in sequence_groups:
-        if len(group) < SEQUENCE_LENGTH + 1:
+        if len(group) < sequence_length + 1:
             continue
-        for idx in range(SEQUENCE_LENGTH, len(group)):
+        for idx in range(sequence_length, len(group)):
             target = group[idx]
             value = float(target.market_close)
             if value > 0.0:
@@ -3298,6 +3566,7 @@ def _build_training_tensors(
     *,
     output_mode: str = "regression",
     vol_regime_quantiles: Sequence[float] = (),
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> tuple[torch.Tensor | None, torch.Tensor | None, float]:
     """Materialise the (x, y, close_scale) triple for the training path.
 
@@ -3319,7 +3588,11 @@ def _build_training_tensors(
     ``FeatureVector`` constructed without the rich-feature loader).
     """
 
-    fitted_scale = float(close_scale) if close_scale is not None else fit_close_scale(sequence_groups)
+    fitted_scale = (
+        float(close_scale)
+        if close_scale is not None
+        else fit_close_scale(sequence_groups, sequence_length=sequence_length)
+    )
 
     use_rich = False
     for sequence_group in sequence_groups:
@@ -3336,10 +3609,10 @@ def _build_training_tensors(
     is_classification = output_mode == "classification"
 
     for sequence_group in sequence_groups:
-        if len(sequence_group) < SEQUENCE_LENGTH + 1:
+        if len(sequence_group) < sequence_length + 1:
             continue
-        for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
-            window = sequence_group[idx - SEQUENCE_LENGTH : idx]
+        for idx in range(sequence_length, len(sequence_group)):
+            window = sequence_group[idx - sequence_length : idx]
             target = sequence_group[idx]
             if is_classification:
                 cls_idx = vol_regime_class_for(
@@ -3381,11 +3654,12 @@ def _build_multi_task_target_tensors(
     sequence_groups: Sequence[Sequence[FeatureVector]],
     *,
     vol_regime_quantiles: Sequence[float],
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> dict[str, torch.Tensor] | None:
     """Materialise per-axis targets aligned with ``_build_training_tensors``.
 
-    Returns a dict of 8 1-D tensors: 4 target tensors (stance / factor /
-    certainty / topic) and 4 corresponding mask tensors. Row alignment
+    Returns a dict of 6 1-D tensors: 3 target tensors (stance /
+    certainty / time) and 3 corresponding mask tensors. Row alignment
     matches the classification rows ``_build_training_tensors`` emits —
     same filter (drop rows whose ``forward_realized_vol_10d`` is missing
     so ``vol_regime_class_for`` returns -1), same iteration order. Mask
@@ -3398,17 +3672,15 @@ def _build_multi_task_target_tensors(
 
     stance_targets: list[int] = []
     stance_masks: list[bool] = []
-    factor_targets: list[float] = []
-    factor_masks: list[bool] = []
     certainty_targets: list[int] = []
     certainty_masks: list[bool] = []
-    topic_targets: list[int] = []
-    topic_masks: list[bool] = []
+    time_targets: list[int] = []
+    time_masks: list[bool] = []
 
     for sequence_group in sequence_groups:
-        if len(sequence_group) < SEQUENCE_LENGTH + 1:
+        if len(sequence_group) < sequence_length + 1:
             continue
-        for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
+        for idx in range(sequence_length, len(sequence_group)):
             target_row = sequence_group[idx]
             cls_idx = vol_regime_class_for(
                 getattr(target_row, "forward_realized_vol_10d", None),
@@ -3421,34 +3693,25 @@ def _build_multi_task_target_tensors(
             stance_targets.append(max(stance_idx, 0))
             stance_masks.append(stance_present)
 
-            factor_val = float(getattr(target_row, "target_factor", 0.0) or 0.0)
-            factor_present = bool(getattr(target_row, "target_factor_present", False))
-            factor_targets.append(factor_val)
-            factor_masks.append(factor_present)
-
             certainty_idx = int(getattr(target_row, "target_certainty_idx", -1) or 0)
-            certainty_present = bool(
-                getattr(target_row, "target_certainty_present", False)
-            )
+            certainty_present = bool(getattr(target_row, "target_certainty_present", False))
             certainty_targets.append(max(certainty_idx, 0))
             certainty_masks.append(certainty_present)
 
-            topic_idx = int(getattr(target_row, "target_topic_idx", -1) or 0)
-            topic_present = bool(getattr(target_row, "target_topic_present", False))
-            topic_targets.append(max(topic_idx, 0))
-            topic_masks.append(topic_present)
+            time_idx_val = int(getattr(target_row, "target_time_idx", -1) or 0)
+            time_present = bool(getattr(target_row, "target_time_present", False))
+            time_targets.append(max(time_idx_val, 0))
+            time_masks.append(time_present)
 
     if not stance_targets:
         return None
     return {
         "stance": torch.tensor(stance_targets, dtype=torch.long),
         "stance_mask": torch.tensor(stance_masks, dtype=torch.bool),
-        "factor": torch.tensor(factor_targets, dtype=torch.float32),
-        "factor_mask": torch.tensor(factor_masks, dtype=torch.bool),
         "certainty": torch.tensor(certainty_targets, dtype=torch.long),
         "certainty_mask": torch.tensor(certainty_masks, dtype=torch.bool),
-        "topic": torch.tensor(topic_targets, dtype=torch.long),
-        "topic_mask": torch.tensor(topic_masks, dtype=torch.bool),
+        "time": torch.tensor(time_targets, dtype=torch.long),
+        "time_mask": torch.tensor(time_masks, dtype=torch.bool),
     }
 
 
@@ -3456,12 +3719,13 @@ def _build_text_embedding_tensors(
     sequence_groups: Sequence[Sequence[FeatureVector]],
     *,
     fallback_in_dim: int = 0,
+    sequence_length: int = SEQUENCE_LENGTH,
 ) -> tuple[torch.Tensor | None, torch.Tensor | None, int]:
     """Materialise the (pooled, missing_flag, in_dim) triple per training window.
 
     For each window the per-event pooled embedding lives on every
     ``FeatureVector`` in the group; the helper reads the embedding
-    off the LAST prior bar (index ``SEQUENCE_LENGTH - 1``) so the
+    off the LAST prior bar (index ``sequence_length - 1``) so the
     chosen vector matches the supervised window the trainer sees.
     Missing rows materialise a zero ``in_dim``-vector + a ``1.0``
     missing flag so the model's adapter projects the same zero slot
@@ -3499,9 +3763,9 @@ def _build_text_embedding_tensors(
     pooled_rows: list[list[float]] = []
     missing_rows: list[list[float]] = []
     for sequence_group in sequence_groups:
-        if len(sequence_group) < SEQUENCE_LENGTH + 1:
+        if len(sequence_group) < sequence_length + 1:
             continue
-        for idx in range(SEQUENCE_LENGTH, len(sequence_group)):
+        for idx in range(sequence_length, len(sequence_group)):
             anchor = sequence_group[idx - 1]
             pooled_payload = list(getattr(anchor, "text_embedding_pooled", []) or [])
             missing_flag = float(getattr(anchor, "text_embedding_missing", 1.0))
@@ -3575,12 +3839,8 @@ def build_per_bar_text_tensor(
             # tile-replicate matches the broadcast-static path the
             # baseline arm consumes.
             anchor = sequence_group[idx - 1]
-            anchor_pooled = list(
-                getattr(anchor, "text_embedding_pooled", []) or []
-            )
-            anchor_missing = float(
-                getattr(anchor, "text_embedding_missing", 1.0)
-            )
+            anchor_pooled = list(getattr(anchor, "text_embedding_pooled", []) or [])
+            anchor_missing = float(getattr(anchor, "text_embedding_missing", 1.0))
             if not anchor_pooled or len(anchor_pooled) != in_dim:
                 anchor_pooled = [0.0] * in_dim
                 anchor_missing = 1.0
@@ -3590,22 +3850,14 @@ def build_per_bar_text_tensor(
                 bar_missing: float | None = None
                 if window_per_bar and bar_idx < len(window_per_bar):
                     candidate = window_per_bar[bar_idx]
-                    if (
-                        isinstance(candidate, list)
-                        and len(candidate) == in_dim
-                    ):
+                    if isinstance(candidate, list) and len(candidate) == in_dim:
                         bar_pooled = [float(v) for v in candidate]
                         bar_missing = 0.0
                 if bar_pooled is None:
                     bar_pooled_attr = getattr(bar, "text_embedding_pooled", None)
-                    if (
-                        isinstance(bar_pooled_attr, list)
-                        and len(bar_pooled_attr) == in_dim
-                    ):
+                    if isinstance(bar_pooled_attr, list) and len(bar_pooled_attr) == in_dim:
                         bar_pooled = [float(v) for v in bar_pooled_attr]
-                        bar_missing = float(
-                            getattr(bar, "text_embedding_missing", 1.0)
-                        )
+                        bar_missing = float(getattr(bar, "text_embedding_missing", 1.0))
                 if bar_pooled is None:
                     bar_pooled = list(anchor_pooled)
                     bar_missing = anchor_missing

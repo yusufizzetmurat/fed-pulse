@@ -38,6 +38,12 @@ export interface MarketResponse {
   symbol?: string;
   requested_date?: string;
   date_used?: string;
+  lookback_days?: number;
+  // Backend echoes ``close`` and ``volatility_5d`` on the market block
+  // even though they semantically belong to the prediction surface --
+  // legacy consumers (LegacyForecastCard, pdf export) still read them
+  // off the market block, so keep the fields here until those callers
+  // migrate to PredictionResponse.
   close?: number | null;
   volatility_5d?: number | null;
 }
@@ -99,6 +105,17 @@ export interface HistoryRealizedBatchResponse {
   missing: string[];
 }
 
+export interface HistoryEventStudyResponse {
+  event_date: string;
+  symbol: string;
+  forward_dates: string[];
+  forward_close: number[];
+  forward_log_returns: number[];
+  realized_vol_10d?: number | null;
+  predicted_regime?: string | null;
+  realized_regime?: string | null;
+}
+
 export interface EvaluationCoverageResponse {
   nominal: number | null;
   empirical: number | null;
@@ -141,12 +158,27 @@ export interface ClassificationBreakdownResponse {
 
 export type StanceAxis = "hawkish" | "dovish" | "neutral";
 export type CertaintyAxis = "certain" | "uncertain" | "neutral";
-export type TopicAxis = "macro" | "forward_guidance" | "market_reaction" | "other";
 
 export interface MultiAxisStance {
   label: StanceAxis;
   confidence: number;
   distribution?: Partial<Record<StanceAxis, number>>;
+}
+
+export interface StanceContextPoint {
+  document_date: string;
+  stance_score: number;
+}
+
+// Trailing stance-score window for the rolling-z dashboard tile.
+// stance_score = P(hawkish) - P(dovish). Mean/std null when fewer than
+// two usable historical rows are present; the tile falls back to the
+// raw-value rendering in that case.
+export interface StanceContextResponse {
+  n: number;
+  mean: number | null;
+  std: number | null;
+  history: StanceContextPoint[];
 }
 
 export interface MultiAxisFactor {
@@ -161,22 +193,10 @@ export interface MultiAxisCertainty {
   distribution?: Partial<Record<CertaintyAxis, number>>;
 }
 
-export interface MultiAxisTopic {
-  label: TopicAxis | string;
-  confidence: number;
-  distribution?: Partial<Record<string, number>>;
-  // Back-compat aliases that older fixtures use. ``primary`` mirrors
-  // ``label`` and ``secondary`` lists alternate topics the model
-  // considered. New code should prefer ``label`` + ``distribution``.
-  primary?: string;
-  secondary?: string[];
-}
-
 export interface MultiAxisResponse {
   stance: MultiAxisStance | null;
   factor: MultiAxisFactor | null;
   certainty: MultiAxisCertainty | null;
-  topic: MultiAxisTopic | null;
 }
 
 export interface XaiTokenAttribution {
@@ -329,6 +349,11 @@ export interface AnalogCard {
   // ``forward_realized_vol_10d`` target so this label is the only
   // post-event signal available. Never feed back into a model.
   subsequent_vol_regime: AnalogVolRegime | null;
+  // #299: realized S&P 500 close-to-close % returns over 5 / 20 trading
+  // days starting the day after event_date. Market-data overlay (NOT a
+  // training label); null when the historical window is sparse.
+  subsequent_close_pct_5d: number | null;
+  subsequent_close_pct_20d: number | null;
   excerpt: string;
 }
 
@@ -397,6 +422,7 @@ export interface HistoryEntry {
   forecast_mode: string;
   stance: string;
   sentiment_score?: number | null;
+  stance_score?: number | null;
   predicted_close?: number | null;
   current_close?: number | null;
   predicted_volatility?: number | null;
@@ -468,11 +494,29 @@ export interface FomcMeeting {
   statement_release_date?: string | null;
   minutes_release_date?: string | null;
   notes?: string | null;
+  statement_available?: boolean;
+  minutes_available?: boolean;
+  press_conference_available?: boolean;
 }
 
 export interface FomcCalendarResponse {
   past: FomcMeeting[];
   upcoming: FomcMeeting[];
+}
+
+// Path-based FOMC document viewer payload. Backend serves the cleaned
+// text body (hygiene already applied), the source permalink and the
+// scrape timestamp; 404s when the row is not on disk fold into a
+// nullable fetch return on the client.
+export type DocumentDetailKind = "statement" | "minutes" | "press_conference";
+
+export interface DocumentDetailResponse {
+  type: DocumentDetailKind | string;
+  date: string;
+  title: string;
+  cleaned_text: string;
+  source_url?: string | null;
+  scraped_at?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -506,6 +550,22 @@ export interface EncoderBakeoffSection {
   source_files: string[];
 }
 
+export interface EncoderAxisStanceRow {
+  encoder_alias: string;
+  encoder_display: string;
+  held_out_f1: number;
+  spearman_rho: number;
+  auc_hike_vs_cut: number;
+  is_validity_winner: boolean;
+  is_held_out_winner: boolean;
+}
+
+export interface EncoderAxisStanceSection {
+  available: boolean;
+  rows: EncoderAxisStanceRow[];
+  source_doc: string;
+}
+
 export interface TransferMatrixCell {
   source: string;
   target: string;
@@ -525,6 +585,7 @@ export interface ResearchArtifactsResponse {
   artifacts_root: string;
   sections: Record<string, ArtifactFile[]>;
   encoder_bakeoff: EncoderBakeoffSection;
+  encoder_axis_stance?: EncoderAxisStanceSection;
   cross_bank_transfer: CrossBankTransferSection;
 }
 
@@ -613,4 +674,301 @@ export interface NextFomcForecastResponse {
   metrics_ex_pandemic: Record<string, NextFomcModelMetrics>;
   feature_attribution: NextFomcAttributionRow[];
   summary: Record<string, number>;
+}
+
+// #299: quant-facing research registry (§6.41 manifest)
+export interface ResearchRegistryBaseline {
+  label: string;
+  dual_f1: number | null;
+  cls_f1: number | null;
+  regression_f1: number | null;
+}
+
+export interface ResearchRegistryRow {
+  encoder_alias: string;
+  encoder_display: string;
+  dual_f1: number | null;
+  cls_f1: number | null;
+  regression_f1: number | null;
+  delta_dual: number | null;
+  delta_cls: number | null;
+  is_winner: boolean;
+  checkpoint_relpath: string | null;
+  cache_uri: string | null;
+  notes: string;
+}
+
+export interface ResearchRegistryResponse {
+  available: boolean;
+  surface: "dual" | "cls";
+  baseline: ResearchRegistryBaseline | null;
+  rows: ResearchRegistryRow[];
+  rejected_count: number;
+  training_package_id: string;
+  head: string;
+  seeds: number[];
+  source_wiki_section: string;
+}
+
+// #299 PR-B — stance-directional backtest engine
+export type BacktestPosition = -1 | 0 | 1;
+
+export interface BacktestPositionEntry {
+  date: string;
+  position: BacktestPosition;
+}
+
+export interface BacktestTradeRow {
+  date: string;
+  position: number;
+  forward_return_pct: number | null;
+  strategy_return_pct: number | null;
+}
+
+export interface RealizedVolHorizonForecast {
+  h: number;
+  point: number;
+  band_lo_80: number;
+  band_hi_80: number;
+  band_lo_90: number;
+  band_hi_90: number;
+  qlike_model: number | null;
+  qlike_har: number | null;
+  coverage_empirical_90: number | null;
+}
+
+export interface RealizedVolHistoricalBand {
+  date: string;
+  band_lo_80: number;
+  band_hi_80: number;
+  realized_rv?: number | null;
+}
+
+export interface RealizedVolForecastResponse {
+  symbol: string;
+  horizons: RealizedVolHorizonForecast[];
+  history: number[];
+  history_dates: string[];
+  model_revision: string;
+  historical_bands?: RealizedVolHistoricalBand[] | null;
+  // "live" when the QLIKE-DLq head was filled with live intraday
+  // realized measures (full edge served). "training_means" when the
+  // head fell back to feat_mean and the forecast collapses to HAR-grade.
+  realized_features_source?: "live" | "training_means";
+  // ISO date of the most-recent full intraday session the live
+  // measures were derived from; null when the head fell back.
+  realized_features_date?: string | null;
+}
+
+export interface BacktestResponse {
+  trades: BacktestTradeRow[];
+  n_trades: number;
+  sharpe: number | null;
+  hit_rate: number | null;
+  max_dd_pct: number | null;
+  cum_return_pct: number | null;
+  benchmark_cum_pct: number | null;
+  alpha_cum_pct: number | null;
+  horizon_days: number;
+  symbol: string;
+}
+
+// HAR-tercile regime baseline served from
+// GET /forecast/regime/baselines?symbol=^GSPC. HAR-tercile is the
+// Workspace's primary regime headline on the 3-class forward-RV
+// classification task; the late-fusion card becomes a "second
+// opinion" alongside it. The numeric ``predicted_rv`` is the
+// model's point estimate of forward realized variance — annualized
+// vol % is derived UI-side.
+export type HarTercileLabel = "low" | "medium" | "high";
+
+export interface HarTercileHorizon {
+  // Trading-day horizon. The product surfaces 1 / 5 / 22 as
+  // "1 day" / "1 week" / "1 month".
+  h: number;
+  tercile: HarTercileLabel;
+  tercile_probs: Record<HarTercileLabel, number>;
+  predicted_rv: number;
+  // Null for non-canonical symbols (^NDX / ^DJI) where the baseline macro-F1
+  // is not pinned and the backend serves a per-call OLS HAR fit.
+  macro_f1: number | null;
+  macro_f1_source: string;
+}
+
+export interface HarTercileBaselineResponse {
+  symbol: string;
+  horizons: HarTercileHorizon[];
+  cutoffs_q33: number;
+  cutoffs_q67: number;
+  model_revision: string;
+  generated_at: string;
+}
+
+// HAR-tercile backtest served from
+// GET /forecast/har-tercile-backtest?symbol=^GSPC. One row per
+// persisted analyze run carrying the predicted tercile + the
+// realized tercile resolved from the forward 10-trading-day market
+// history. ``correct`` is null for rows whose forward window has not
+// yet closed.
+export interface HarTercileBacktestRow {
+  event_date: string;
+  // Both are null on a pending row (insufficient leading history or
+  // predict_har_regime failure) — match the RV-backtest sibling shape.
+  predicted_tercile: HarTercileLabel | null;
+  predicted_prob: number | null;
+  realized_tercile: HarTercileLabel | null;
+  realized_rv: number | null;
+  correct: boolean | null;
+}
+
+export interface HarAccuracyMetrics {
+  total_runs: number;
+  resolved_runs: number;
+  accuracy_overall: number | null;
+  per_tercile_hit_rate: Partial<Record<HarTercileLabel, number>>;
+}
+
+export interface HarTercileBacktestResponse {
+  symbol: string;
+  horizon: number;
+  rows: HarTercileBacktestRow[];
+  metrics: HarAccuracyMetrics;
+  generated_at: string;
+}
+
+// QLIKE-RV backtest served from
+// GET /forecast/rv-backtest?symbol=^GSPC. One row per persisted analyze
+// run carrying the h=1 point forecast + 80% / 90% conformal bands and
+// the realized RV on the predicted bar. ``in_band_*`` is null for rows
+// whose realized RV has not yet resolved.
+export interface RvBacktestRow {
+  event_date: string;
+  point_forecast_rv: number | null;
+  band_lo_80: number | null;
+  band_hi_80: number | null;
+  band_lo_90: number | null;
+  band_hi_90: number | null;
+  realized_rv: number | null;
+  in_band_80: boolean | null;
+  in_band_90: boolean | null;
+}
+
+export interface RvBacktestCoverage {
+  total_runs: number;
+  resolved_runs: number;
+  pending_runs: number;
+  empirical_coverage_80: number | null;
+  empirical_coverage_90: number | null;
+  nominal_coverage_80: number;
+  nominal_coverage_90: number;
+}
+
+export interface RvBacktestResponse {
+  symbol: string;
+  horizon: number;
+  rows: RvBacktestRow[];
+  coverage: RvBacktestCoverage;
+  generated_at: string;
+}
+
+// Workspace-spine bundle: shared response types matching the
+// backend Pydantic models in backend/app/schemas.py.
+//
+// SPINE separation:
+//   - ExpectedVolumeForecastResponse is the only forecast surface
+//     in this bundle (HAR over market data only).
+//   - MonetaryPolicySurpriseResponse, FuturesConsensusResponse and
+//     SemanticDiffResponse are descriptive panels (text- or
+//     realized-derived) and never feed forecasts.
+export interface ExpectedVolumeHorizonForecast {
+  h: number;
+  point_log_residual: number;
+  point_pct_vs_baseline: number;
+  band_lo_80: number;
+  band_hi_80: number;
+  band_lo_90: number;
+  band_hi_90: number;
+  r2_har: number | null;
+  calendar_adjusted: boolean;
+}
+
+export interface ExpectedVolumeForecastResponse {
+  symbol: string;
+  horizons: ExpectedVolumeHorizonForecast[];
+  model_revision: string;
+  generated_at: string;
+}
+
+export type MonetaryPolicySurpriseDirection =
+  | "hawkish"
+  | "dovish"
+  | "no_surprise";
+
+export interface MonetaryPolicySurpriseResponse {
+  event_date: string;
+  mp_surprise_level_bps: number;
+  direction: MonetaryPolicySurpriseDirection;
+  magnitude_bps: number;
+  is_intermeeting: boolean;
+  ff_target_prior_bps?: number | null;
+}
+
+export interface FuturesConsensusHorizon {
+  horizon_label: string;
+  implied_rate_bps: number;
+  change_vs_current_bps: number;
+  probability_hike: number;
+  probability_cut: number;
+  probability_pause: number;
+}
+
+export interface FuturesConsensusResponse {
+  meeting_date: string;
+  generated_at: string;
+  current_target_lo_bps: number;
+  current_target_hi_bps: number;
+  horizons: FuturesConsensusHorizon[];
+  methodology: string;
+  data_source: string;
+}
+
+export type SemanticDiffSpanKind =
+  | "unchanged"
+  | "added"
+  | "removed"
+  | "substituted";
+
+export interface SemanticDiffSpan {
+  kind: SemanticDiffSpanKind;
+  text: string;
+  paired_text?: string | null;
+}
+
+export interface SemanticDiffTopic {
+  topic: string;
+  prior_emphasis: number;
+  current_emphasis: number;
+  delta: number;
+  sample_phrases: string[];
+}
+
+// Edge-case status flag emitted by the backend semantic-diff
+// service. ``ok`` is the populated-diff path; the remaining values
+// signal an empty payload with a parseable informational banner
+// (input too short, non-Latin text, no strict-prior on file).
+// Optional for backward compatibility — older callers default to
+// the cold-start banner when status is undefined.
+export type SemanticDiffStatus =
+  | "ok"
+  | "no_input"
+  | "no_prior"
+  | "non_english";
+
+export interface SemanticDiffResponse {
+  current_date: string;
+  prior_date: string;
+  token_spans: SemanticDiffSpan[];
+  topic_deltas: SemanticDiffTopic[];
+  summary: string;
+  status?: SemanticDiffStatus | null;
 }

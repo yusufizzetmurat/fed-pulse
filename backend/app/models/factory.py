@@ -150,10 +150,16 @@ def build_forecaster(
             "lora_curriculum_freeze_epoch",
             "multi_task_loss",
             "multi_task_lambda_stance",
-            "multi_task_lambda_factor",
             "multi_task_lambda_certainty",
-            "multi_task_lambda_topic",
+            "multi_task_lambda_time",
+            "regime_loss_mode",
             "class_weight_power",
+            # #502 focal + class_balanced loss-side hyperparameters.
+            # The flat_mlp ctor does not consume them; the trainer reads
+            # them off the stashed module attribute when constructing
+            # the loss kernel.
+            "focal_gamma",
+            "class_balanced_beta",
             "regression_alpha",
             "use_derived_text_features",
             "rates_head_mode",
@@ -161,14 +167,32 @@ def build_forecaster(
             "rates_alpha",
             "rates_target_mode",
             "vol_target_mode",
+            "vol_target_horizon",
+            # #472 vol-regime labelling mode + absolute thresholds are
+            # loop / loader-side knobs; the flat_mlp ctor does not
+            # consume them.
+            "vol_regime_label_mode",
+            "absolute_vol_thresholds",
             "use_regime_conditioning",
             "use_sep",
             "use_press_conf",
             "use_statement_delta",
             "use_vote_features",
+            "use_vix_features",
+            # #543 doc_length is a per-event scalar broadcast in the
+            # recurrent path only; the flat_mlp ctor never widens its
+            # input vector with it.
+            "use_doc_length",
             # #480 symbol-conditioned regime head is research-only on the
             # recurrent class. The flat_mlp ctor does not consume it.
             "symbol_embedding_dim",
+            # #471 multi-horizon aux regression heads. The flat_mlp ctor
+            # does not mount the recurrent log-RV head's architecture,
+            # so the aux heads are not wired into it either. Drop both
+            # the head-list and the loss-side alpha so the kwargs
+            # dispatch stays a strict shape contract.
+            "aux_horizons",
+            "aux_horizon_alpha",
         ):
             flat_kwargs.pop(drop, None)
         flat_rates_heads = tuple(
@@ -192,10 +216,12 @@ def build_forecaster(
         flat.lora_curriculum_freeze_epoch = resolved.lora_curriculum_freeze_epoch  # type: ignore[assignment]
         flat.multi_task_loss = bool(resolved.multi_task_loss)  # type: ignore[assignment]
         flat.multi_task_lambda_stance = float(resolved.multi_task_lambda_stance)  # type: ignore[assignment]
-        flat.multi_task_lambda_factor = float(resolved.multi_task_lambda_factor)  # type: ignore[assignment]
         flat.multi_task_lambda_certainty = float(resolved.multi_task_lambda_certainty)  # type: ignore[assignment]
-        flat.multi_task_lambda_topic = float(resolved.multi_task_lambda_topic)  # type: ignore[assignment]
+        flat.multi_task_lambda_time = float(resolved.multi_task_lambda_time)  # type: ignore[assignment]
+        flat.regime_loss_mode = str(resolved.regime_loss_mode or "ce")  # type: ignore[assignment]
         flat.class_weight_power = float(resolved.class_weight_power)  # type: ignore[assignment]
+        flat.focal_gamma = float(resolved.focal_gamma)  # type: ignore[assignment]
+        flat.class_balanced_beta = float(resolved.class_balanced_beta)  # type: ignore[assignment]
         flat.regression_alpha = float(resolved.regression_alpha)  # type: ignore[assignment]
         flat.use_derived_text_features = bool(resolved.use_derived_text_features)  # type: ignore[assignment]
         flat.rates_heads = flat_rates_heads  # type: ignore[assignment]
@@ -214,6 +240,37 @@ def build_forecaster(
         flat.vol_target_mode = str(
             getattr(resolved, "vol_target_mode", "raw") or "raw"
         )  # type: ignore[assignment]
+        # Round-trip the supervised forward-vol horizon so
+        # ``ModelConfig.from_model`` recovers it on resume.
+        flat.vol_target_horizon = int(
+            getattr(resolved, "vol_target_horizon", 10) or 10
+        )  # type: ignore[assignment]
+        # #472 round-trip the vol-regime labelling knobs onto the flat_mlp
+        # module so the persisted run summary records which contract the
+        # classification target trained under.
+        from app.models.config import (
+            DEFAULT_ABSOLUTE_VOL_THRESHOLDS,
+            DEFAULT_VOL_REGIME_LABEL_MODE,
+        )
+
+        flat.vol_regime_label_mode = str(
+            getattr(resolved, "vol_regime_label_mode", DEFAULT_VOL_REGIME_LABEL_MODE)
+            or DEFAULT_VOL_REGIME_LABEL_MODE
+        )  # type: ignore[assignment]
+        _flat_thresholds_raw = getattr(
+            resolved, "absolute_vol_thresholds", DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+        )
+        if _flat_thresholds_raw is None:
+            flat.absolute_vol_thresholds = DEFAULT_ABSOLUTE_VOL_THRESHOLDS  # type: ignore[assignment]
+        else:
+            _flat_seq = tuple(_flat_thresholds_raw)
+            if len(_flat_seq) != 2:
+                flat.absolute_vol_thresholds = DEFAULT_ABSOLUTE_VOL_THRESHOLDS  # type: ignore[assignment]
+            else:
+                flat.absolute_vol_thresholds = (  # type: ignore[assignment]
+                    float(_flat_seq[0]),
+                    float(_flat_seq[1]),
+                )
         return flat
 
     kwargs = resolved.to_dict()
@@ -231,10 +288,20 @@ def build_forecaster(
     # loaded for resume / inference.
     multi_task_loss_flag = bool(kwargs.pop("multi_task_loss", False))
     multi_task_lambda_stance = float(kwargs.pop("multi_task_lambda_stance", 1.0))
-    multi_task_lambda_factor = float(kwargs.pop("multi_task_lambda_factor", 0.3))
     multi_task_lambda_certainty = float(kwargs.pop("multi_task_lambda_certainty", 0.3))
-    multi_task_lambda_topic = float(kwargs.pop("multi_task_lambda_topic", 0.3))
+    multi_task_lambda_time = float(kwargs.pop("multi_task_lambda_time", 0.3))
+    # #470 regime-loss mode is loss-side: the trainer reads it off the
+    # stashed module attribute when constructing the CE / MultiTaskLoss
+    # instance. Pop here so the ForecasterModel ctor does not see the
+    # unrecognised kwarg.
+    regime_loss_mode_value = str(kwargs.pop("regime_loss_mode", "ce") or "ce")
     class_weight_power = float(kwargs.pop("class_weight_power", 1.0))
+    # #502 focal + class_balanced regime-loss hyperparameters. Pure
+    # loss-side knobs the trainer reads off the stashed module
+    # attribute when constructing the loss kernel; pop here so the
+    # ForecasterModel ctor does not see the unrecognised kwargs.
+    focal_gamma_value = float(kwargs.pop("focal_gamma", 2.0))
+    class_balanced_beta_value = float(kwargs.pop("class_balanced_beta", 0.999))
     # #304 dual-head methodology. ``regression_alpha`` is a loss-side
     # knob (the training loop reads it from the model attribute);
     # ``head_mode`` is forwarded to the ForecasterModel constructor so
@@ -271,6 +338,42 @@ def build_forecaster(
     # does not see the unrecognised kwarg.
     vol_target_mode_value = str(
         kwargs.pop("vol_target_mode", "raw") or "raw"
+    )
+    # #472 vol-regime labelling mode + absolute thresholds. Both are
+    # loop / loader-side knobs (the trainer selects between
+    # ``fit_vol_regime_quantiles`` and the fixed thresholds; the loader
+    # uses the resulting cutoffs in ``vol_regime_class_for``). Pop here
+    # so the ForecasterModel ctor never sees the unrecognised kwargs.
+    # Stash back on the built module so ``ModelConfig.from_model``
+    # round-trips both onto the persisted run summary regardless of
+    # whether the run also wires the absolute branch.
+    from app.models.config import (
+        DEFAULT_ABSOLUTE_VOL_THRESHOLDS,
+        DEFAULT_VOL_REGIME_LABEL_MODE,
+    )
+
+    vol_regime_label_mode_value = str(
+        kwargs.pop("vol_regime_label_mode", DEFAULT_VOL_REGIME_LABEL_MODE)
+        or DEFAULT_VOL_REGIME_LABEL_MODE
+    )
+    _absolute_thresholds_raw = kwargs.pop(
+        "absolute_vol_thresholds", DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+    )
+    if _absolute_thresholds_raw is None:
+        absolute_vol_thresholds_value: tuple[float, float] = DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+    else:
+        _seq = tuple(_absolute_thresholds_raw)
+        if len(_seq) != 2:
+            absolute_vol_thresholds_value = DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+        else:
+            absolute_vol_thresholds_value = (float(_seq[0]), float(_seq[1]))
+    # Supervised forward-vol horizon. Loader-side knob (the loader
+    # routes the per-row ``forward_realized_vol_10d`` slot to the
+    # chosen column); the model ctor does not consume it. Stash it back
+    # on the built module so ``ModelConfig.from_model`` round-trips it
+    # onto the persisted run summary.
+    vol_target_horizon_value = int(
+        kwargs.pop("vol_target_horizon", 10) or 10
     )
     # #317 finding #8: fail fast at the factory rather than silently
     # zeroing rates_heads when output_mode='regression'. The operator
@@ -343,6 +446,10 @@ def build_forecaster(
     # #443/#444 statement-delta + vote-features opt-in flags.
     use_statement_delta_flag = bool(kwargs.pop("use_statement_delta", False))
     use_vote_features_flag = bool(kwargs.pop("use_vote_features", False))
+    # #478 VIX term-structure + VRP opt-in flag.
+    use_vix_features_flag = bool(kwargs.pop("use_vix_features", False))
+    # #543 doc_length per-event scalar opt-in flag.
+    use_doc_length_flag = bool(kwargs.pop("use_doc_length", False))
     # #480 symbol-conditioned regime head. Pop here so the serving
     # constructor (which does not accept the kwarg in v1) does not
     # receive it. The research class consumes the kwarg directly to
@@ -351,6 +458,42 @@ def build_forecaster(
     # response-surface picker. Default 0 keeps the legacy path
     # byte-identical (no embedding module, no widening).
     symbol_embedding_dim_value = int(kwargs.pop("symbol_embedding_dim", 0) or 0)
+    # #471 multi-horizon aux regression heads. Pop here so the serving
+    # constructor (which does not accept the kwarg) does not receive
+    # it. The research class consumes ``aux_horizons`` directly to
+    # mount one parallel log-RV head per horizon; ``aux_horizon_alpha``
+    # is a loss-side knob the training loop reads off the stashed
+    # module attribute, so the model ctor never sees it.
+    aux_horizons_value: tuple[int, ...] = tuple(
+        int(v) for v in kwargs.pop("aux_horizons", ()) or ()
+    )
+    aux_horizon_alpha_value = float(kwargs.pop("aux_horizon_alpha", 0.3))
+    # Validate aux horizons are in the supported set and don't include
+    # the canonical primary (10). Reject early instead of mounting heads
+    # that the loss path cannot supervise. The empty-tuple default
+    # short-circuits cleanly.
+    if aux_horizons_value:
+        from app.models.config import SUPPORTED_VOL_TARGET_HORIZONS
+        invalid = [
+            h for h in aux_horizons_value
+            if h not in SUPPORTED_VOL_TARGET_HORIZONS or h == 10
+        ]
+        if invalid:
+            raise ValueError(
+                f"aux_horizons={aux_horizons_value} contains unsupported entries "
+                f"{invalid}. Allowed: any non-empty subset of "
+                f"{tuple(h for h in SUPPORTED_VOL_TARGET_HORIZONS if h != 10)}."
+            )
+        # Aux heads share the architecture of the primary log-RV head
+        # (head_mode in {regression, dual}). Reject classification mode
+        # so the misconfiguration surfaces before training fires.
+        head_mode_value = str(kwargs.get("head_mode", "dual") or "dual")
+        if head_mode_value == "classification":
+            raise ValueError(
+                f"aux_horizons={aux_horizons_value} requires head_mode in "
+                "{'regression', 'dual'} (the aux heads share the architecture "
+                f"of the primary log-RV head). Got head_mode={head_mode_value!r}."
+            )
     model: ForecasterResearchModel | ForecasterServingModel
     if role == "serving":
         # Serving construction trims the loss-side / sweep-side knobs the
@@ -365,6 +508,10 @@ def build_forecaster(
             use_regime_conditioning=use_regime_conditioning_flag,
             use_sep=use_sep_flag,
             use_press_conf=use_press_conf_flag,
+            use_statement_delta=use_statement_delta_flag,
+            use_vote_features=use_vote_features_flag,
+            use_vix_features=use_vix_features_flag,
+            use_doc_length=use_doc_length_flag,
             **kwargs,
         )
     else:
@@ -375,7 +522,12 @@ def build_forecaster(
             use_regime_conditioning=use_regime_conditioning_flag,
             use_sep=use_sep_flag,
             use_press_conf=use_press_conf_flag,
+            use_statement_delta=use_statement_delta_flag,
+            use_vote_features=use_vote_features_flag,
+            use_vix_features=use_vix_features_flag,
+            use_doc_length=use_doc_length_flag,
             symbol_embedding_dim=symbol_embedding_dim_value,
+            aux_horizons=aux_horizons_value,
             **kwargs,
         )
     # mypy reads ``nn.Module`` attribute writes as ``Tensor | Module``;
@@ -385,10 +537,12 @@ def build_forecaster(
     model.lora_curriculum_freeze_epoch = lora_curriculum_freeze_epoch_val
     model.multi_task_loss = multi_task_loss_flag  # type: ignore[assignment]
     model.multi_task_lambda_stance = multi_task_lambda_stance  # type: ignore[assignment]
-    model.multi_task_lambda_factor = multi_task_lambda_factor  # type: ignore[assignment]
     model.multi_task_lambda_certainty = multi_task_lambda_certainty  # type: ignore[assignment]
-    model.multi_task_lambda_topic = multi_task_lambda_topic  # type: ignore[assignment]
+    model.multi_task_lambda_time = multi_task_lambda_time  # type: ignore[assignment]
+    model.regime_loss_mode = regime_loss_mode_value  # type: ignore[assignment]
     model.class_weight_power = class_weight_power  # type: ignore[assignment]
+    model.focal_gamma = focal_gamma_value  # type: ignore[assignment]
+    model.class_balanced_beta = class_balanced_beta_value  # type: ignore[assignment]
     # #304 / #309 -- stash the loss + loader flags so
     # ``ModelConfig.from_model`` round-trips them onto the persisted
     # checkpoint payload. ``head_mode`` itself was already passed to
@@ -408,11 +562,23 @@ def build_forecaster(
     # #435 round-trip the forward-vol target derivation onto the built
     # module so ``ModelConfig.from_model`` recovers it on resume.
     model.vol_target_mode = vol_target_mode_value  # type: ignore[assignment]
+    model.vol_target_horizon = vol_target_horizon_value  # type: ignore[assignment]
+    # #472 round-trip the vol-regime labelling knobs so a resumed
+    # checkpoint reuses the same calm / normal / high contract the
+    # original run trained under.
+    model.vol_regime_label_mode = vol_regime_label_mode_value  # type: ignore[assignment]
+    model.absolute_vol_thresholds = absolute_vol_thresholds_value  # type: ignore[assignment]
     # #443/#444 round-trip the two new opt-in flags. Default-off path
     # behaves byte-identically; flag-on a future sweep that resumes off
-    # this checkpoint rebuilds with the same loader-tail widths.
-    model.use_statement_delta = use_statement_delta_flag  # type: ignore[assignment]
-    model.use_vote_features = use_vote_features_flag  # type: ignore[assignment]
+    # this checkpoint rebuilds with the same loader-tail widths. The
+    # ctor wires these as ``ForecasterBase`` attrs already; the explicit
+    # assignment here covers the flat_mlp path (which doesn't go through
+    # the recurrent base) and serves as the round-trip source the
+    # persisted run summary reads via ``ModelConfig.from_model``.
+    model.use_statement_delta = use_statement_delta_flag
+    model.use_vote_features = use_vote_features_flag
+    model.use_vix_features = use_vix_features_flag
+    model.use_doc_length = use_doc_length_flag
     # #480 round-trip the symbol-embedding dim so
     # ``ModelConfig.from_model`` recovers it on resume. The research
     # class set this in its ctor; stash it on the serving instance too
@@ -420,6 +586,14 @@ def build_forecaster(
     # which role built the module.
     if not hasattr(model, "symbol_embedding_dim"):
         model.symbol_embedding_dim = symbol_embedding_dim_value
+    # #471 round-trip the aux-horizons tuple + alpha so
+    # ``ModelConfig.from_model`` recovers them on resume. The research
+    # class set ``aux_horizons`` in its ctor; the serving class never
+    # mounts the heads, so the tuple stashes empty there. ``aux_horizon_alpha``
+    # is loss-side only -- the model ctor never sees it.
+    if not hasattr(model, "aux_horizons"):
+        model.aux_horizons = aux_horizons_value
+    model.aux_horizon_alpha = aux_horizon_alpha_value  # type: ignore[assignment]
     return model
 
 

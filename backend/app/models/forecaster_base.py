@@ -33,12 +33,19 @@ from app.models.config import (
     DEFAULT_INITIAL_DECAY_RATE,
     DEFAULT_NUM_LAYERS,
     FEATURE_SIZE,
+    RICH_DOC_LENGTH_DIM,
     RICH_FEATURE_SIZE,
     RICH_MACRO_REGIME_DIM,
     RICH_MACRO_REGIME_MISSING_DIM,
     RICH_PRESS_CONF_DIM,
     RICH_SEP_DIM,
     RICH_SEP_MISSING_DIM,
+    RICH_STATEMENT_DELTA_DIM,
+    RICH_STATEMENT_DELTA_MISSING_DIM,
+    RICH_VIX_FEATURES_DIM,
+    RICH_VIX_FEATURES_MISSING_DIM,
+    RICH_VOTE_FEATURES_DIM,
+    RICH_VOTE_FEATURES_MISSING_DIM,
     SEQUENCE_LENGTH,
 )
 from app.models.dlinear import DLinear
@@ -93,6 +100,10 @@ class ForecasterBase(nn.Module):
         use_regime_conditioning: bool = False,
         use_sep: bool = False,
         use_press_conf: bool = False,
+        use_statement_delta: bool = False,
+        use_vote_features: bool = False,
+        use_vix_features: bool = False,
+        use_doc_length: bool = False,
     ):
         super().__init__()
         if model_type not in _ALLOWED_MODEL_TYPES:
@@ -225,6 +236,52 @@ class ForecasterBase(nn.Module):
         else:
             press_conf_tail_dim = 0
         self.press_conf_tail_dim = press_conf_tail_dim
+        # #443 statement-delta tail. The loader appends
+        # ``RICH_STATEMENT_DELTA_DIM + RICH_STATEMENT_DELTA_MISSING_DIM``
+        # extra scalars past the press-conf tail on every per-bar tensor
+        # when the flag is on; the recurrent core has to widen by the
+        # same amount or the LSTM input projection rejects the tensor.
+        self.use_statement_delta = bool(use_statement_delta)
+        if self.use_statement_delta:
+            statement_delta_tail_dim = (
+                RICH_STATEMENT_DELTA_DIM + RICH_STATEMENT_DELTA_MISSING_DIM
+            )
+        else:
+            statement_delta_tail_dim = 0
+        self.statement_delta_tail_dim = statement_delta_tail_dim
+        # #444 vote-tally tail. Same uniform-width contract; appended
+        # after the statement-delta tail in the documented order
+        # (regime, SEP, press-conf, statement-delta, vote).
+        self.use_vote_features = bool(use_vote_features)
+        if self.use_vote_features:
+            vote_features_tail_dim = (
+                RICH_VOTE_FEATURES_DIM + RICH_VOTE_FEATURES_MISSING_DIM
+            )
+        else:
+            vote_features_tail_dim = 0
+        self.vote_features_tail_dim = vote_features_tail_dim
+        # #478 VIX term-structure tail. Same uniform-width contract;
+        # appended after the vote tail in the documented order
+        # (regime, SEP, press-conf, statement-delta, vote, vix).
+        self.use_vix_features = bool(use_vix_features)
+        if self.use_vix_features:
+            vix_features_tail_dim = (
+                RICH_VIX_FEATURES_DIM + RICH_VIX_FEATURES_MISSING_DIM
+            )
+        else:
+            vix_features_tail_dim = 0
+        self.vix_features_tail_dim = vix_features_tail_dim
+        # #543 doc_length tail. Single scalar (log(1 + token_count))
+        # broadcast onto every bar; no missing flag because every
+        # supervised row carries a non-empty text body. Appended after
+        # the vix tail in the documented order (regime, SEP, press-conf,
+        # statement-delta, vote, vix, doc_length).
+        self.use_doc_length = bool(use_doc_length)
+        if self.use_doc_length:
+            doc_length_tail_dim = RICH_DOC_LENGTH_DIM
+        else:
+            doc_length_tail_dim = 0
+        self.doc_length_tail_dim = doc_length_tail_dim
         self.text_embedding_dim = int(text_embedding_dim or 0)
         self.text_adapter_dim = int(text_adapter_dim or 0)
         self._text_path_active = self.text_embedding_dim > 0 and self.text_adapter_dim > 0
@@ -250,6 +307,10 @@ class ForecasterBase(nn.Module):
             + regime_tail_dim
             + sep_tail_dim
             + press_conf_tail_dim
+            + statement_delta_tail_dim
+            + vote_features_tail_dim
+            + vix_features_tail_dim
+            + doc_length_tail_dim
         )
         self.lstm_input_size = lstm_input_size
         lstm_dropout = dropout if num_layers > 1 else 0.0
@@ -400,7 +461,18 @@ def prepare_recurrent_input(
     if regime_gate is not None:
         regime_dim_total = RICH_MACRO_REGIME_DIM + 1  # block + missing flag
         if x.shape[-1] >= RICH_FEATURE_SIZE + regime_dim_total:
-            regime_input = x[..., -regime_dim_total:-1]
+            # Index the regime block at its known absolute position rather
+            # than via negative offsets from the end. The negative-slice
+            # form ``x[..., -regime_dim_total:-1]`` was correct only when
+            # the regime block sat at the tail of the per-bar payload; once
+            # any additional block (e.g. SEP, retrieval analogs) lands past
+            # it, the negative offsets read the wrong window without
+            # erroring. RICH_FEATURE_SIZE-relative indexing pins the
+            # regime values to where ``as_rich_list`` writes them.
+            regime_start = RICH_FEATURE_SIZE
+            regime_input = x[
+                ..., regime_start : regime_start + RICH_MACRO_REGIME_DIM
+            ]
             # Broadcast the per-bar regime block through the linear +
             # sigmoid path. The bars within a sequence carry identical
             # regime values (the loader broadcasts per event), so the

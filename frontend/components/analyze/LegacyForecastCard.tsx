@@ -75,7 +75,7 @@ export function LegacyForecastCard({
         <CardDescription className="flex items-start gap-1.5 text-xs">
           <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
           <span>
-            The active forecaster is in numeric mode — it produces single close and volatility
+            The active forecaster is in numeric mode. It produces single close and volatility
             numbers rather than the calibrated <span className="numeric">calm / normal / high</span>{" "}
             Volatility Regime prediction. This card shows those numbers as a fallback; the
             Volatility Regime card above remains the headline.

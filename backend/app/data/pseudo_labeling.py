@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Iterable, Literal, Sequence
 
 from app.config import DATA_DIR as DEFAULT_DATA_DIR
+
 DEFAULT_INPUT = DEFAULT_DATA_DIR / "raw" / "phase2" / "source_registry.jsonl"
 DEFAULT_OUTPUT = DEFAULT_DATA_DIR / "interim" / "phase2" / "registry_pseudo.jsonl"
 DEFAULT_AUDIT_DIR = DEFAULT_DATA_DIR / "artifacts" / "pseudo_label_audits"
@@ -68,9 +69,7 @@ def threshold_sweep(
         kept, _ = apply_threshold(predictions, threshold=tau)
         key = f"{tau}"
         yield_by_tau[key] = len(kept)
-        label_by_tau[key] = dict(
-            Counter(p["predicted_label"] for p in kept)
-        )
+        label_by_tau[key] = dict(Counter(p["predicted_label"] for p in kept))
     return {
         "thresholds": list(thresholds),
         "total": len(predictions),
@@ -329,7 +328,9 @@ def aggregate_chunk_predictions(
             mean_by_label: dict[str, float] = {}
             for label in tied:
                 votes_for_label = [c for c in kept if c["predicted_label"] == label]
-                mean_by_label[label] = sum(c["max_score"] for c in votes_for_label) / len(votes_for_label)
+                mean_by_label[label] = sum(c["max_score"] for c in votes_for_label) / len(
+                    votes_for_label
+                )
             winning_label = max(mean_by_label, key=mean_by_label.get)
         else:
             winning_label = top[0][0]
@@ -367,6 +368,7 @@ def score_passages_chunked(
     """
 
     if splitter is None:
+
         def splitter(text: str) -> list[str]:
             return split_text_for_teacher(text, max_chunks=max_chunks_per_doc)
 
@@ -375,9 +377,7 @@ def score_passages_chunked(
         chunks = splitter(passage)
         chunk_predictions = score_passages(chunks, pipeline=pipeline) if chunks else []
         predictions.append(
-            aggregate_chunk_predictions(
-                chunk_predictions, strategy=strategy, tau_chunk=tau_chunk
-            )
+            aggregate_chunk_predictions(chunk_predictions, strategy=strategy, tau_chunk=tau_chunk)
         )
     return predictions
 
@@ -407,7 +407,14 @@ def build_pseudo_row(
     row["teacher_scores"] = dict(prediction["scores"])
 
     diagnostics: dict[str, Any] = {}
-    for key in ("strategy", "tau_chunk", "chunk_count", "chunks_above_floor", "vote_counts", "fallback_max_score"):
+    for key in (
+        "strategy",
+        "tau_chunk",
+        "chunk_count",
+        "chunks_above_floor",
+        "vote_counts",
+        "fallback_max_score",
+    ):
         if key in prediction:
             diagnostics[key] = prediction[key]
     if diagnostics:
@@ -470,9 +477,7 @@ def run_pseudo_labeling(
         return 0
 
     if strategy == "doc_truncated":
-        predictions = score_passages(
-            (row["text"] for row in candidates), pipeline=teacher_pipeline
-        )
+        predictions = score_passages((row["text"] for row in candidates), pipeline=teacher_pipeline)
     else:
         predictions = score_passages_chunked(
             (row["text"] for row in candidates),

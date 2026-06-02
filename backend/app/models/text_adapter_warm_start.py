@@ -187,7 +187,7 @@ def pretrain_text_adapter(
     n_samples = pooled_tensor.shape[0]
     indices = torch.arange(n_samples, device=device_obj)
     last_epoch_loss = 0.0
-    for epoch in range(int(epochs)):
+    for _epoch in range(int(epochs)):
         # Deterministic per-epoch shuffle using torch's seeded RNG.
         permutation = torch.randperm(n_samples, device=device_obj)
         epoch_loss = 0.0

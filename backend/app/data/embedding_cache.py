@@ -122,14 +122,43 @@ def _file_sha256(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def _resolve_cache_device() -> str:
+    """Pick the device the cache builder should load the encoder onto.
+
+    Priority: ``FED_PULSE_EMBEDDING_CACHE_DEVICE`` env override (operator
+    knob to force CPU on a GPU pod when the card is busy with a training
+    run) → ``cuda`` when ``torch.cuda.is_available()`` → ``cpu`` fallback.
+    Default-on CUDA closes #553 -- the pre-fix path loaded on CPU even on
+    a pod with an idle 97 GB card, ~10x slower than the GPU pass that the
+    same encoder pays at /analyze time.
+    """
+
+    import torch  # type: ignore[import-not-found]
+
+    override = (os.environ.get("FED_PULSE_EMBEDDING_CACHE_DEVICE") or "").strip().lower()
+    if override:
+        return override
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
 def _load_encoder(ref: EncoderRef):
-    """Lazy-import AutoModel/AutoTokenizer so test code can monkeypatch."""
+    """Lazy-import AutoModel/AutoTokenizer so test code can monkeypatch.
+
+    The encoder is sent to the device returned by :func:`_resolve_cache_device`
+    (CUDA when available, else CPU). The encode loop downstream reads
+    ``next(model.parameters()).device`` to route input tensors, so a single
+    ``.to(device)`` here is enough to flip the whole hot path from CPU to GPU.
+    """
 
     from transformers import AutoModel, AutoTokenizer  # type: ignore[import-not-found]
 
     revision = ref.revision or None
-    tokenizer = AutoTokenizer.from_pretrained(ref.repo, revision=revision)
-    model = AutoModel.from_pretrained(ref.repo, revision=revision)
+    trust = bool(getattr(ref, "trust_remote_code", False))
+    tokenizer = AutoTokenizer.from_pretrained(ref.repo, revision=revision, trust_remote_code=trust)
+    model = AutoModel.from_pretrained(ref.repo, revision=revision, trust_remote_code=trust)
+    device = _resolve_cache_device()
+    model = model.to(device)
+    model.eval()
     return tokenizer, model
 
 
@@ -270,7 +299,9 @@ def build_cache(
     model.eval()
 
     pending_inputs: list[str] = []
-    pending_meta: list[tuple[str, str, str, int, str]] = []  # (record_id, doc_id, event_date, chunk_index, preview)
+    pending_meta: list[
+        tuple[str, str, str, int, str]
+    ] = []  # (record_id, doc_id, event_date, chunk_index, preview)
     rows: list[dict[str, Any]] = []
     docs_processed = 0
     started_at = time.time()
@@ -285,7 +316,9 @@ def build_cache(
             max_length=max_length,
             sentence_embedding=sentence_embedding,
         )
-        for (record_id, doc_id, event_date, chunk_index, preview), embedding in zip(pending_meta, embeddings):
+        for (record_id, doc_id, event_date, chunk_index, preview), embedding in zip(
+            pending_meta, embeddings
+        ):
             rows.append(
                 {
                     "record_id": record_id,
@@ -437,11 +470,7 @@ def ensure_local(
 
     paths.directory.mkdir(parents=True, exist_ok=True)
     filename = paths.parquet.name
-    resolved_token = (
-        token
-        or os.environ.get("HF_TOKEN")
-        or os.environ.get("HUGGINGFACE_HUB_TOKEN")
-    )
+    resolved_token = token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
     kwargs: dict[str, Any] = {
         "repo_id": hf_dataset,
         "filename": filename,
@@ -477,7 +506,9 @@ def ensure_local(
 def _parse_args() -> "object":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Build per-encoder embedding cache for a training package.")
+    parser = argparse.ArgumentParser(
+        description="Build per-encoder embedding cache for a training package."
+    )
     parser.add_argument("--encoder", required=True, help="Encoder alias from models/registry.yaml.")
     parser.add_argument("--training-package-id", required=True)
     parser.add_argument("--data-dir", default=os.environ.get("FED_PULSE_DATA_DIR") or str(DATA_DIR))

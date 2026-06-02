@@ -45,7 +45,7 @@ Schema (one row per event x kind x horizon x asset):
 - ``token_count``               Whitespace-token count of ``text`` (used as
                                  a coarse truncation budget upstream)
 - ``axis_stance``               ``hawkish | dovish | neutral`` or None
-- ``axis_time``, ``axis_certainty``, ``axis_factor``, ``axis_topic``
+- ``axis_time``, ``axis_certainty``, ``axis_factor``
                                 Multi-axis labels (None when unavailable)
 - ``credibility_*``             Four credibility-vector axes
 - ``prior_window_sha256``       sha256 over the concatenated prior bars,
@@ -199,6 +199,14 @@ CROSS_ASSET_SYMBOLS: tuple[tuple[str, str], ...] = (
     # literature consistently uses as a regime predictor.
     ("^VIX3M", "vix3m_close"),
     ("^IRX", "irx_close"),
+    # #478 VIX term-structure + VRP block. ^VIX1M is the 1-month CBOE
+    # volatility index (rolled constant-maturity); ^VIX6M is the 6-month
+    # series. Coverage: ^VIX from 1990, ^VIX3M from 2007-12, ^VIX1M and
+    # ^VIX6M from 2008-01 (CBOE constant-maturity series start).
+    # Pre-coverage events emit ``None`` on the per-event VIX-term
+    # columns and the loader's missing-flag pattern handles them.
+    ("^VIX1M", "vix1m_close"),
+    ("^VIX6M", "vix6m_close"),
 )
 # Per-asset forward realised-vol targets (#481). One column per symbol
 # carries the strict-forward 10-trading-day realised vol of log returns
@@ -209,6 +217,21 @@ CROSS_ASSET_SYMBOLS: tuple[tuple[str, str], ...] = (
 # listing, holiday, or the symbol cache failed to fetch) keeps the
 # column ``None`` so the regime classifier learns to skip rather than
 # treating an absent quote as a zero.
+#
+# Relationship to ``app.models.config.SUPPORTED_SYMBOLS`` (the
+# 5-symbol id table the symbol-conditioned regime head's nn.Embedding
+# is keyed off): SUPPORTED_SYMBOLS is a strict subset of this tuple.
+# The two cannot be merged because SUPPORTED_SYMBOLS is byte-stable by
+# contract -- the embedding ids are pinned forever so a checkpoint
+# trained against id k=2 always sees the same symbol at id 2 on
+# rehydrate (see the docstring on ``SUPPORTED_SYMBOLS``). This tuple
+# is data-only -- per-asset target columns on events.parquet, no id
+# stability requirement -- so it can grow independently as upstream
+# symbol coverage expands. The subset invariant
+# (``SUPPORTED_SYMBOLS <= PER_ASSET_TARGET_SYMBOLS``) is enforced by
+# ``tests/unit/test_per_asset_vol_columns.py`` so a future symbol
+# added to SUPPORTED_SYMBOLS without a matching per-asset target
+# column fails at test time.
 PER_ASSET_TARGET_SYMBOLS: tuple[str, ...] = (
     "^GSPC",
     "^NDX",
@@ -234,6 +257,7 @@ SPEECH_AS_OF_TIME = "T14:00:00Z"
 # 13:00 UTC to stay clear of DST hand-waving; intraday alignment will
 # replace this if the announcement-window target ever lands.
 MACRO_AS_OF_TIME = "T13:00:00Z"
+
 
 def per_asset_target_slug(symbol: str) -> str:
     """Normalise a yfinance symbol to the suffix used for per-asset vol target columns.
@@ -414,6 +438,7 @@ def _encode_axis_factor(value: Any) -> float | None:
         return f if f != 0.0 else 0.0
     return None
 
+
 # When multiple registry sources cover the same (event_date, event_kind),
 # pick the row with the highest preference rank. This avoids near-duplicate
 # event rows while keeping the choice deterministic. Higher-quality / more
@@ -461,8 +486,8 @@ class _EventDoc:
     # gtfintechlab cross-bank corpora carry these labels today; every other
     # source leaves them ``None`` and downstream consumers encode them as
     # 0.0 in the rich-feature slot.
-    time_label: str | None = None       # "forward looking" / "not forward looking"
-    certain_label: str | None = None    # "certain" / "uncertain"
+    time_label: str | None = None  # "forward looking" / "not forward looking"
+    certain_label: str | None = None  # "certain" / "uncertain"
     # Merged ``multi_axis_extras`` payload from every record in the bucket.
     # Carries the GSS / Swanson bp-scale factor decompositions
     # (``gss_target_factor`` / ``gss_path_factor`` /
@@ -593,7 +618,6 @@ def _aggregate_events(rows: Iterable[_RegistryRow]) -> list[_EventDoc]:
             "time": None,
             "certainty": None,
             "factor": None,
-            "topic": None,
         }
         # gtfintechlab cross-bank corpora ship two extra categorical labels
         # ("time_label" forward/not-forward, "certain_label" certain/uncertain)
@@ -623,7 +647,7 @@ def _aggregate_events(rows: Iterable[_RegistryRow]) -> list[_EventDoc]:
         for r in bucket_sorted:
             if multi_axis["stance"] is None and r.mapped_label:
                 multi_axis["stance"] = r.mapped_label
-            for axis_name in ("time", "certainty", "factor", "topic"):
+            for axis_name in ("time", "certainty", "factor"):
                 if multi_axis[axis_name] is None:
                     val = r.axes.get(axis_name)
                     if val is not None:
@@ -684,10 +708,7 @@ def _derive_stance_by_date(
         if score is None or not row.event_date:
             continue
         by_date[row.event_date].append(float(score))
-    return tuple(
-        (date, sum(scores) / len(scores))
-        for date, scores in sorted(by_date.items())
-    )
+    return tuple((date, sum(scores) / len(scores)) for date, scores in sorted(by_date.items()))
 
 
 def _choose_preferred(docs: list[_EventDoc]) -> list[_EventDoc]:
@@ -826,7 +847,12 @@ def _frame_to_series(frame: pd.DataFrame) -> _CloseSeries:
         zip(
             [_date(d) for d in frame["date"].tolist()],
             [float(c) for c in frame["close"].tolist()],
-            [float(v) for v in (frame["volume"].tolist() if "volume" in frame.columns else [0.0] * len(frame))],
+            [
+                float(v)
+                for v in (
+                    frame["volume"].tolist() if "volume" in frame.columns else [0.0] * len(frame)
+                )
+            ],
         ),
         key=lambda t: t[0],
     )
@@ -873,6 +899,100 @@ def _log_returns(closes: Sequence[float]) -> list[float]:
         else:
             out.append(math.log(cur / prev))
     return out
+
+
+def _vix_term_structure_features(
+    *,
+    as_of: _dt.date,
+    series_by_symbol: dict[str, _CloseSeries],
+    asset_series: _CloseSeries,
+) -> dict[str, float | None]:
+    """Compose the #478 VIX term-structure + VRP block for one event.
+
+    Reads the four constant-maturity VIX series (``^VIX`` 1990+,
+    ``^VIX1M`` 2008+, ``^VIX3M`` 2007-12+, ``^VIX6M`` 2008+) and the
+    asset close series strictly before ``as_of``. Emits six nullable
+    scalars:
+
+    - ``vix_t_minus_1`` — 30-day ATM implied vol at T-1.
+    - ``vix1m_t_minus_1`` — 1-month constant-maturity implied vol at T-1.
+    - ``vix3m_t_minus_1`` — 3-month constant-maturity implied vol at T-1.
+    - ``vix6m_t_minus_1`` — 6-month constant-maturity implied vol at T-1.
+    - ``vix_3m_over_1m_slope`` — ``vix3m / vix1m`` ratio at T-1 (>1.0
+      contango, <1.0 backwardation; the textbook stressed-market signal).
+    - ``vrp_t_minus_1`` — volatility risk premium at T-1: the implied
+      30-day vol on a daily scale (``vix/100/sqrt(252)``) minus the
+      trailing 30-trading-day realised vol of asset log returns. Both
+      legs read strictly before ``as_of``.
+
+    Any per-scalar input gap (pre-coverage event, holiday with no quote,
+    asset history too short for the realised baseline) collapses that
+    scalar to ``None``. Downstream the loader's missing-flag pattern
+    fills zeros and flips the paired ``vix_features_missing`` flag.
+    """
+
+    out: dict[str, float | None] = {
+        "vix_t_minus_1": None,
+        "vix1m_t_minus_1": None,
+        "vix3m_t_minus_1": None,
+        "vix6m_t_minus_1": None,
+        "vix_3m_over_1m_slope": None,
+        "vrp_t_minus_1": None,
+    }
+    field_to_symbol = {field: sym for sym, field in CROSS_ASSET_SYMBOLS}
+    column_for_field = {
+        "vix_close": "vix_t_minus_1",
+        "vix1m_close": "vix1m_t_minus_1",
+        "vix3m_close": "vix3m_t_minus_1",
+        "vix6m_close": "vix6m_t_minus_1",
+    }
+    for field_name, column in column_for_field.items():
+        symbol = field_to_symbol.get(field_name)
+        if symbol is None:
+            continue
+        series = series_by_symbol.get(symbol)
+        if series is None or not series.dates:
+            continue
+        idx = series.index_strictly_before(as_of)
+        if idx < 0:
+            continue
+        close = series.close[idx]
+        if close > 0:
+            out[column] = float(close)
+    vix1m = out["vix1m_t_minus_1"]
+    vix3m = out["vix3m_t_minus_1"]
+    if vix1m is not None and vix3m is not None and vix1m > 0:
+        out["vix_3m_over_1m_slope"] = float(vix3m) / float(vix1m)
+    vix = out["vix_t_minus_1"]
+    if vix is not None:
+        implied_daily = float(vix) / 100.0 / (252.0**0.5)
+        realized = _rolling_realized_vol_t_minus_1(asset_series, as_of, window=30)
+        if realized is not None:
+            out["vrp_t_minus_1"] = implied_daily - realized
+    return out
+
+
+def _rolling_realized_vol_t_minus_1(
+    series: _CloseSeries, as_of: _dt.date, *, window: int
+) -> float | None:
+    """Sample std of log returns over the trailing ``window`` bars at T-1.
+
+    Strict-prior: reads ``series.close`` indices ``[base - window .. base]``
+    where ``base = index_strictly_before(as_of)``; the resulting ``window``
+    log returns are all dated strictly before ``as_of``.
+    """
+
+    base = series.index_strictly_before(as_of)
+    if base < window:
+        return None
+    closes = series.close[base - window : base + 1]
+    rets = _log_returns(closes)
+    if len(rets) < 2:
+        return None
+    n = len(rets)
+    mean = sum(rets) / n
+    variance = sum((v - mean) ** 2 for v in rets) / (n - 1)
+    return float(variance**0.5)
 
 
 def _build_cross_asset_lookup(
@@ -966,9 +1086,7 @@ def _build_prior_window(
         # roll gaps) should not block the bar.
         bar_date = series.dates[i]
         cross_asset_row = (
-            cross_asset_lookup.get(bar_date, {})
-            if cross_asset_lookup is not None
-            else {}
+            cross_asset_lookup.get(bar_date, {}) if cross_asset_lookup is not None else {}
         )
         vix_close_val = float(cross_asset_row.get("vix_close", 0.0))
         tnx_close_val = float(cross_asset_row.get("tnx_close", 0.0))
@@ -992,9 +1110,7 @@ def _build_prior_window(
             else 0.0
         )
         yield_curve_slope_val = (
-            tnx_close_val - irx_close_val
-            if tnx_close_val > 0.0 and irx_close_val > 0.0
-            else 0.0
+            tnx_close_val - irx_close_val if tnx_close_val > 0.0 and irx_close_val > 0.0 else 0.0
         )
         bars.append(
             _PriorBar(
@@ -1016,9 +1132,9 @@ def _build_prior_window(
             )
         )
     # Enforce no look-ahead: last prior bar must be < as_of
-    assert bars[-1].date < as_of, (
-        f"prior-window contract violated: last bar {bars[-1].date} not < as_of {as_of}"
-    )
+    assert (
+        bars[-1].date < as_of
+    ), f"prior-window contract violated: last bar {bars[-1].date} not < as_of {as_of}"
     return bars
 
 
@@ -1030,6 +1146,12 @@ def _fit_market_model(
 
     Returns ``(alpha, beta)``. Falls back to ``(0.0, 1.0)`` when input is
     degenerate (empty, single point, or zero benchmark variance).
+
+    Uses the unbiased ``ddof=1`` sample estimator for both covariance and
+    benchmark variance, matching the rest of the volatility math in this
+    file (e.g. the rolling-std blocks) and the documented OLS convention.
+    The ÷n population estimator gives an identical β point estimate (the
+    factor cancels in cov / var_b) but biases any reported variance / SE.
     """
 
     n = min(len(asset_returns), len(bench_returns))
@@ -1039,8 +1161,8 @@ def _fit_market_model(
     b = list(bench_returns[-n:])
     mean_a = sum(a) / n
     mean_b = sum(b) / n
-    cov = sum((ai - mean_a) * (bi - mean_b) for ai, bi in zip(a, b)) / n
-    var_b = sum((bi - mean_b) ** 2 for bi in b) / n
+    cov = sum((ai - mean_a) * (bi - mean_b) for ai, bi in zip(a, b)) / (n - 1)
+    var_b = sum((bi - mean_b) ** 2 for bi in b) / (n - 1)
     if var_b <= 1e-18:
         return (0.0, 1.0)
     beta = cov / var_b
@@ -1474,6 +1596,7 @@ def _build_event_rows(
     concurrent_macro_window_days: int = CONCURRENT_MACRO_TRADING_DAY_RADIUS,
     intra_meeting_shift: dict[str, float] | None = None,
     cross_asset_lookup: dict[_dt.date, dict[str, float]] | None = None,
+    cross_asset_series: dict[str, _CloseSeries] | None = None,
     rates_lookup: RatesPanelLookup | None = None,
     rates_horizon: int = 5,
     prior_statement_text: str | None = None,
@@ -1506,7 +1629,7 @@ def _build_event_rows(
         direction_t1d = 0
     else:
         ret, _ = t1d
-        direction_t1d = (1 if ret > 0 else (-1 if ret < 0 else 0))
+        direction_t1d = 1 if ret > 0 else (-1 if ret < 0 else 0)
 
     if asset == benchmark:
         alpha, beta = 0.0, 1.0
@@ -1523,6 +1646,17 @@ def _build_event_rows(
         bench_targets = _realized_returns(bench_series, as_of_date, horizons) or {}
 
     vol_shift = _volatility_shift(asset_series, as_of_date)
+    # #478 VIX term-structure + VRP at T-1. Reads strictly-prior closes
+    # from the ^VIX family cross-asset series plus the asset series for
+    # the realised baseline. Pre-coverage events (notably ^VIX1M /
+    # ^VIX3M / ^VIX6M before 2008) emit ``None`` on the affected
+    # scalars; the loader's missing-flag pattern handles the per-event
+    # widening.
+    vix_term_block = _vix_term_structure_features(
+        as_of=as_of_date,
+        series_by_symbol=cross_asset_series or {},
+        asset_series=asset_series,
+    )
     # Phase 9 V2 (#195) target: realised volatility over the next 10
     # trading days. Class labels (calm / normal / high) are NOT
     # assigned here -- the per-fold quantile cutoffs are computed at
@@ -1536,8 +1670,7 @@ def _build_event_rows(
     # independently when the post-event window runs off the end of the
     # asset's price series.
     forward_vol_multi_horizon: dict[int, float | None] = {
-        h: _forward_realized_vol(asset_series, as_of_date, window=h)
-        for h in (1, 3, 5, 20, 30)
+        h: _forward_realized_vol(asset_series, as_of_date, window=h) for h in (1, 3, 5, 20, 30)
     }
     # #236 GARCH(1,1)-residual decomposition of the same target. Fits
     # GARCH(1,1) on log returns dated strictly before ``as_of_date`` and
@@ -1689,11 +1822,8 @@ def _build_event_rows(
                 "token_count": token_count,
                 "axis_stance": doc.multi_axis.get("stance"),
                 "axis_time": _encode_axis_time(doc.multi_axis.get("time")),
-                "axis_certainty": _encode_axis_certainty(
-                    doc.multi_axis.get("certainty")
-                ),
+                "axis_certainty": _encode_axis_certainty(doc.multi_axis.get("certainty")),
                 "axis_factor": _encode_axis_factor(doc.multi_axis.get("factor")),
-                "axis_topic": doc.multi_axis.get("topic"),
                 "axis_time_label": doc.time_label,
                 "axis_certain_label": doc.certain_label,
                 "multi_axis_extras": doc.multi_axis_extras or None,
@@ -1749,14 +1879,10 @@ def _build_event_rows(
                 # converge or the strict-prior window is short, and the
                 # residual additionally requires a non-null raw target.
                 "forward_realized_vol_10d_garch_baseline": (
-                    float(garch_result.baseline)
-                    if garch_result.baseline is not None
-                    else None
+                    float(garch_result.baseline) if garch_result.baseline is not None else None
                 ),
                 "forward_realized_vol_10d_garch_residual": (
-                    float(garch_result.residual)
-                    if garch_result.residual is not None
-                    else None
+                    float(garch_result.residual) if garch_result.residual is not None else None
                 ),
                 "concurrent_macro_release": bool(concurrent_macro),
                 "intra_meeting_stance_shift": float(
@@ -1770,12 +1896,8 @@ def _build_event_rows(
                 ),
                 "realized_date": realized_date.isoformat() if realized_date else None,
                 # --- Rates-complex forward targets (#291), raw bps ---
-                "yield_2y_change_5d": _maybe_float(
-                    rates_forward_targets.get("yield_2y_change_5d")
-                ),
-                "yield_5y_change_5d": _maybe_float(
-                    rates_forward_targets.get("yield_5y_change_5d")
-                ),
+                "yield_2y_change_5d": _maybe_float(rates_forward_targets.get("yield_2y_change_5d")),
+                "yield_5y_change_5d": _maybe_float(rates_forward_targets.get("yield_5y_change_5d")),
                 "terminal_rate_change_5d": _maybe_float(
                     rates_forward_targets.get("terminal_rate_change_5d")
                 ),
@@ -1814,28 +1936,16 @@ def _build_event_rows(
                 "statement_delta_substituted_pairs": statement_delta_substituted,
                 "statement_delta_embedding": statement_delta_embedding,
                 # --- #444 vote tally + dissent structural columns ---
-                "votes_for": (
-                    int(vote_tally.votes_for) if vote_tally is not None else None
-                ),
+                "votes_for": (int(vote_tally.votes_for) if vote_tally is not None else None),
                 "votes_against": (
-                    int(vote_tally.votes_against)
-                    if vote_tally is not None
-                    else None
+                    int(vote_tally.votes_against) if vote_tally is not None else None
                 ),
                 "dissent_count": (
-                    int(vote_tally.dissent_count)
-                    if vote_tally is not None
-                    else None
+                    int(vote_tally.dissent_count) if vote_tally is not None else None
                 ),
-                "is_unanimous": (
-                    bool(vote_tally.is_unanimous)
-                    if vote_tally is not None
-                    else None
-                ),
+                "is_unanimous": (bool(vote_tally.is_unanimous) if vote_tally is not None else None),
                 "dissent_direction": (
-                    vote_tally.dissent_direction
-                    if vote_tally is not None
-                    else None
+                    vote_tally.dissent_direction if vote_tally is not None else None
                 ),
                 # --- #481 per-asset 10d forward realised-vol targets ---
                 # One nullable float per workspace asset-picker symbol.
@@ -1844,6 +1954,12 @@ def _build_event_rows(
                 # series is absent or the event sits within the forward
                 # window of the series tail.
                 **per_asset_target_values,
+                # --- #478 VIX term-structure + VRP at T-1 ---
+                # Strict-prior scalars read off the ^VIX family
+                # cross-asset series plus the asset's own close history
+                # for the realised baseline. Per-scalar ``None`` when
+                # the underlying series is missing or pre-coverage.
+                **{k: _maybe_float(v) for k, v in vix_term_block.items()},
             }
         )
     return rows
@@ -1855,17 +1971,13 @@ def _maybe_float(value: float | None) -> float | None:
     return float(value)
 
 
-def _pre_meeting_field(
-    features: PreMeetingFeatures | None, field_name: str
-) -> float | None:
+def _pre_meeting_field(features: PreMeetingFeatures | None, field_name: str) -> float | None:
     if features is None:
         return None
     value = getattr(features, field_name)
     if value is None:
         return None
     return float(value)
-
-
 
 
 _CREDIBILITY_EMPTY_INPUTS_WARNED = False
@@ -1925,7 +2037,6 @@ COLUMN_ORDER = (
     "axis_time",
     "axis_certainty",
     "axis_factor",
-    "axis_topic",
     "axis_time_label",
     "axis_certain_label",
     # Merged ``multi_axis_extras`` payload from the bucketed source rows.
@@ -1965,6 +2076,16 @@ COLUMN_ORDER = (
     # cover the other indices, dollar index, VIX, and the three major
     # FX pairs. All nullable, required=False so older parquets validate.
     *(per_asset_target_column(sym) for sym in PER_ASSET_TARGET_SYMBOLS),
+    # #478 VIX term-structure + VRP at T-1. Six nullable scalars read
+    # strictly before event_date. ``None`` per scalar on pre-coverage
+    # events (^VIX1M / ^VIX3M / ^VIX6M before 2008) or asset-history
+    # gaps; downstream loader handles the per-event missing flag.
+    "vix_t_minus_1",
+    "vix1m_t_minus_1",
+    "vix3m_t_minus_1",
+    "vix6m_t_minus_1",
+    "vix_3m_over_1m_slope",
+    "vrp_t_minus_1",
     "concurrent_macro_release",
     "intra_meeting_stance_shift",
     "intra_meeting_certainty_shift",
@@ -2031,6 +2152,7 @@ def build_event_rows(
     delta_encoder: Any | None = None,
     per_asset_target_series: dict[str, _CloseSeries] | None = None,
     per_asset_target_cache_dir: Path | None = None,
+    per_asset_target_force_refresh: bool = False,
     prior_window_days: int = PRIOR_WINDOW_DAYS,
 ) -> pd.DataFrame:
     """Build the events DataFrame for one training package.
@@ -2138,9 +2260,7 @@ def build_event_rows(
         # outbound network. Reuse the injected series for ^GSPC /
         # benchmark and leave every other symbol absent (column ->
         # None). The smoke / CLI path leaves both None and fetches.
-        injected_canonical_series = (
-            asset_series_was_injected and bench_series_was_injected
-        )
+        injected_canonical_series = asset_series_was_injected and bench_series_was_injected
         target_cache_dir: Path | None = per_asset_target_cache_dir
         if target_cache_dir is None:
             target_cache_dir = DEFAULT_DATA_DIR / "external" / "yfinance"
@@ -2158,7 +2278,11 @@ def build_event_rows(
                 continue
             try:
                 per_asset_target_series[sym] = _fetch_close_series(
-                    sym, start=earliest, end=latest, cache_dir=target_cache_dir
+                    sym,
+                    start=earliest,
+                    end=latest,
+                    cache_dir=target_cache_dir,
+                    force_refresh=per_asset_target_force_refresh,
                 )
             except Exception as exc:
                 # Broadened from RuntimeError to Exception (#481 review): yfinance
@@ -2200,11 +2324,7 @@ def build_event_rows(
     # selector asserts ``prior.event_date < this.event_date`` so a
     # same-date prior never enters the diff window.
     statement_text_index: list[tuple[str, str]] = sorted(
-        (
-            (str(d.event_date), d.text)
-            for d in docs
-            if d.event_kind == "statement" and d.text
-        ),
+        ((str(d.event_date), d.text) for d in docs if d.event_kind == "statement" and d.text),
         key=lambda pair: pair[0],
     )
 
@@ -2228,6 +2348,7 @@ def build_event_rows(
             concurrent_macro_window_days=concurrent_macro_window_days,
             intra_meeting_shift=intra_meeting_shifts.get(doc.event_date),
             cross_asset_lookup=cross_asset_lookup,
+            cross_asset_series=cross_asset_series,
             rates_lookup=rates_lookup,
             rates_horizon=rates_horizon,
             prior_statement_text=prior_statement_text,
@@ -2241,7 +2362,9 @@ def build_event_rows(
         summary.events_emitted += 1
         for r in rows:
             summary.per_source_rows[r["source"]] = summary.per_source_rows.get(r["source"], 0) + 1
-            summary.per_kind_rows[r["event_kind"]] = summary.per_kind_rows.get(r["event_kind"], 0) + 1
+            summary.per_kind_rows[r["event_kind"]] = (
+                summary.per_kind_rows.get(r["event_kind"], 0) + 1
+            )
             if r["concurrent_macro_release"]:
                 summary.concurrent_macro_release_rows += 1
         out_rows.extend(rows)
@@ -2253,7 +2376,14 @@ def build_event_rows(
     df = pd.DataFrame(out_rows)
     # Deterministic ordering. The full view sorts on source + source_record_id
     # so the parquet bytes don't shift when sources interleave.
-    sort_cols = ["event_date", "event_kind", "source", "source_record_id", "asset_symbol", "horizon"]
+    sort_cols = [
+        "event_date",
+        "event_kind",
+        "source",
+        "source_record_id",
+        "asset_symbol",
+        "horizon",
+    ]
     df = df.sort_values(sort_cols, kind="mergesort").reset_index(drop=True)
     df = df[list(COLUMN_ORDER)]
     return df
@@ -2325,9 +2455,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--embedding-path",
-        default=str(
-            DEFAULT_DATA_DIR / "raw" / "embeddings" / "finbert_4556d1301521.parquet"
-        ),
+        default=str(DEFAULT_DATA_DIR / "raw" / "embeddings" / "finbert_4556d1301521.parquet"),
         help=(
             "Per-encoder embedding parquet for the credibility drift axis. "
             "Defaults to the cached FinBERT parquet so the builder is "
@@ -2375,10 +2503,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--rates-horizon",
         type=int,
         default=5,
-        help=(
-            "Trading-day horizon for the strict-forward yield-change "
-            "targets (default: 5)."
-        ),
+        help=("Trading-day horizon for the strict-forward yield-change " "targets (default: 5)."),
     )
     parser.add_argument(
         "--per-asset-target-cache-dir",
@@ -2387,7 +2512,24 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Where to cache the per-asset forward-vol target price series "
             "(#481). Defaults to <DATA_DIR>/external/yfinance. One parquet "
             "per symbol; a missing/failing symbol collapses its column to "
-            "None across all rows."
+            "None across all rows. The parquet filename uses yfinance's "
+            "raw symbol (e.g. ``DX-Y.NYB.parquet``, ``EURUSD=X.parquet``), "
+            "not the column slug on events.parquet (``dxy``, ``eurusd``) -- "
+            "the slug normalisation lives downstream on the column write, "
+            "not on the cache write, so the cache stays interoperable with "
+            "any yfinance consumer that addresses by raw symbol."
+        ),
+    )
+    parser.add_argument(
+        "--per-asset-target-force-refresh",
+        action="store_true",
+        help=(
+            "Bypass the cache for the per-asset forward-vol target "
+            "series and force a fresh yfinance fetch on every symbol. "
+            "Default off keeps the existing cache-once-pinned-forever "
+            "behaviour. Use when the upstream series has been revised "
+            "or when the cache parquet for one symbol is suspected "
+            "corrupted (delete-the-parquet is the alternative)."
         ),
     )
     parser.add_argument(
@@ -2403,7 +2545,79 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "first usable event moves later in the calendar."
         ),
     )
+    parser.add_argument(
+        "--delta-encoder",
+        default=None,
+        help=(
+            "Registry alias (or owner/repo HF id) of the encoder used to "
+            "embed the #443 statement-delta spans (inserted / deleted / "
+            "substituted) into the 768-d statement_delta_embedding column. "
+            "Resolves through models/registry.yaml when an alias is given "
+            "(picks up the pinned revision); a raw owner/repo id loads "
+            "at HEAD. Without this flag the column stays None on every "
+            "row and the loader collapses to the missing-1.0 slot."
+        ),
+    )
     return parser.parse_args(argv)
+
+
+def _build_delta_encoder_callable(repo_or_alias: str):
+    """Resolve ``repo_or_alias`` and return a ``Callable[[str], list[float]]``.
+
+    Loads the encoder once on import, mean-pools its last-hidden-state
+    over the non-pad tokens, and returns a 768-d list per call. CUDA
+    used opportunistically. The pooled width is asserted against
+    :data:`STATEMENT_DELTA_EMBEDDING_DIM` so a mismatched encoder fails
+    at build time rather than silently writing odd-width rows.
+    """
+
+    import torch
+    from transformers import AutoModel, AutoTokenizer
+
+    from app.models.registry import encoder_ref
+
+    ref = encoder_ref(repo_or_alias)
+    repo = ref.repo if ref is not None else repo_or_alias
+    revision = ref.revision if ref is not None else None
+    trust = bool(getattr(ref, "trust_remote_code", False)) if ref is not None else False
+
+    tokenizer = AutoTokenizer.from_pretrained(repo, revision=revision, trust_remote_code=trust)
+    model = AutoModel.from_pretrained(repo, revision=revision, trust_remote_code=trust)
+    model.eval()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    print(
+        f"[event-rows] delta encoder loaded: alias={repo_or_alias!r} "
+        f"repo={repo!r} revision={revision!r} device={device}"
+    )
+
+    @torch.no_grad()
+    def encode_text(text: str) -> list[float]:
+        inputs = tokenizer(
+            text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=512,
+            padding=False,
+        )
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        outputs = model(**inputs)
+        hidden = outputs.last_hidden_state  # (1, T, H)
+        mask = inputs["attention_mask"].unsqueeze(-1).float()  # (1, T, 1)
+        summed = (hidden * mask).sum(dim=1)  # (1, H)
+        denom = mask.sum(dim=1).clamp(min=1.0)  # (1, 1)
+        pooled = (summed / denom).squeeze(0)  # (H,)
+        vec = pooled.detach().cpu().tolist()
+        if len(vec) != STATEMENT_DELTA_EMBEDDING_DIM:
+            raise SystemExit(
+                f"--delta-encoder produced width {len(vec)} but the "
+                f"statement_delta_embedding column expects "
+                f"{STATEMENT_DELTA_EMBEDDING_DIM}. Pin a BERT-base "
+                "encoder (e.g. finbert_fed_adjacent)."
+            )
+        return vec
+
+    return encode_text
 
 
 def _resolve_embedding_path(raw: str | None) -> Path | None:
@@ -2438,18 +2652,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     horizons = tuple(int(h) for h in args.horizons.split(",") if h.strip())
     market_cache_dir = (
-        Path(args.market_cache_dir)
-        if args.market_cache_dir
-        else (package_dir / "_market_cache")
+        Path(args.market_cache_dir) if args.market_cache_dir else (package_dir / "_market_cache")
     )
 
     macro_csv = Path(args.macro_release_csv) if args.macro_release_csv else None
     macro_calendar = _resolve_macro_calendar(macro_csv)
 
     per_asset_target_cache_dir = (
-        Path(args.per_asset_target_cache_dir)
-        if args.per_asset_target_cache_dir
-        else None
+        Path(args.per_asset_target_cache_dir) if args.per_asset_target_cache_dir else None
+    )
+
+    delta_encoder = (
+        _build_delta_encoder_callable(args.delta_encoder) if args.delta_encoder else None
     )
 
     # Collapsed view
@@ -2467,7 +2681,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         macro_release_calendar=macro_calendar,
         rates_panel_path=args.rates_panel_path,
         rates_horizon=int(args.rates_horizon),
+        delta_encoder=delta_encoder,
         per_asset_target_cache_dir=per_asset_target_cache_dir,
+        per_asset_target_force_refresh=bool(args.per_asset_target_force_refresh),
         prior_window_days=int(args.prior_window),
     )
     output_path = Path(args.output)
@@ -2477,7 +2693,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(f"[event-rows] collapsed view: {summary.rows_written} rows -> {output_path}")
     print(f"[event-rows] unique events: {summary.events_emitted}")
-    print(f"[event-rows] dropped (no prior window or no targets): {summary.dropped_no_prior_window}")
+    print(
+        f"[event-rows] dropped (no prior window or no targets): {summary.dropped_no_prior_window}"
+    )
     print(
         f"[event-rows] concurrent_macro_release rows: {summary.concurrent_macro_release_rows} "
         f"({_pct(summary.concurrent_macro_release_rows, summary.rows_written)})"
@@ -2508,16 +2726,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             keep_all_sources=True,
             rates_panel_path=args.rates_panel_path,
             rates_horizon=int(args.rates_horizon),
+            delta_encoder=delta_encoder,
             per_asset_target_cache_dir=per_asset_target_cache_dir,
+            per_asset_target_force_refresh=bool(args.per_asset_target_force_refresh),
             prior_window_days=int(args.prior_window),
         )
         full_output_path = Path(full_output_arg)
         if not full_output_path.is_absolute():
             full_output_path = package_dir / full_output_path
         write_events_parquet(df_full, full_output_path)
-        print(
-            f"[event-rows] full view: {full_summary.rows_written} rows -> {full_output_path}"
-        )
+        print(f"[event-rows] full view: {full_summary.rows_written} rows -> {full_output_path}")
         print(
             f"[event-rows] full unique (date x kind x source) docs: "
             f"{full_summary.events_emitted}"

@@ -37,7 +37,7 @@ def _gtf_row(
         "sentences": text,
         "stance_label": stance,
         "certain_label": certain,
-        "time_label": "",
+        "time_label": "forward looking",
         "year": 2024,
     }
 
@@ -105,27 +105,23 @@ def test_stance_masked_mode_drops_stance_for_cross_bank_only() -> None:
     assert fomc.masks["certainty"] is True
     assert fomc.stance_sample_weight == 1.0
 
-    # Pin the natural per-row factor / topic masks on a cross-bank
-    # row. The gtfintechlab schema does not carry factor or topic
-    # labels (the trainer maps only stance + certainty + time), so
-    # the natural masks are False here. Any future change that
-    # leaks a cross-bank stance label onto the factor or topic
-    # mask under ``stance_masked`` would flip these — the regression
-    # would show up as the assertion firing.
-    assert cross_bank.masks["factor"] is False
-    assert cross_bank.masks["topic"] is False
-    # FOMC rows under ``stance_masked`` follow the same natural
-    # per-row factor / topic masks the gtfintechlab schema produces;
-    # ``stance_masked`` rewrites are scoped to cross-bank rows only.
-    assert fomc.masks["factor"] is False
-    assert fomc.masks["topic"] is False
+    # The gtfintechlab schema DOES carry a ``time_label`` column, so
+    # the trainer maps it onto the time axis: the cross-bank row's time
+    # mask is True even under ``stance_masked`` (which scopes its
+    # rewrites to the stance axis only). The factor axis was retired —
+    # text cannot predict the GSS market-derived target.
+    assert cross_bank.masks["time"] is True
+    # FOMC rows under ``stance_masked`` likewise keep the natural time
+    # mask the gtfintechlab schema produces; ``stance_masked`` rewrites
+    # are scoped to the stance axis on cross-bank rows only.
+    assert fomc.masks["time"] is True
 
 
 def test_weighted_mode_scales_only_stance_for_cross_bank() -> None:
     """The ``weighted`` arm leaves every mask intact and scales the
     cross-bank rows' stance weight by ``cross_bank_stance_weight``.
-    Other axes (certainty, factor, topic) are NOT scaled — the
-    weight rides on the stance branch alone."""
+    Other axes (certainty, time) are NOT scaled — the weight rides
+    on the stance branch alone."""
 
     cross_bank = _axis_row_from_gtf(
         provenance="peer_reviewed_cross_bank",
@@ -269,38 +265,33 @@ def test_per_axis_provenance_log_splits_by_corpus(
 def _make_two_row_two_class_logits(
     *, target_classes: tuple[int, int], stance_logits: list[list[float]]
 ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], dict[str, torch.Tensor]]:
-    """Tiny 2-row, 2-class fixture with stance + factor + certainty + topic.
+    """Tiny 2-row, 2-class fixture with stance + certainty + time.
 
     Only the stance axis is exercised by the gradient assertions; the
     other axes carry False masks so they contribute graph-attached
     zeros (matching the MultiTaskLoss empty-mask contract). The
-    factor / certainty / topic tensors are still ``requires_grad``
-    so the loss can graph-attach a zero through them — the gradient
-    on those tensors must be zero everywhere when their masks are
-    all-False.
+    certainty / time tensors are still ``requires_grad`` so the loss
+    can graph-attach a zero through them — the gradient on those
+    tensors must be zero everywhere when their masks are all-False.
     """
 
     stance = torch.tensor(stance_logits, dtype=torch.float32, requires_grad=True)
-    factor = torch.zeros(2, dtype=torch.float32, requires_grad=True)
     certainty = torch.zeros(2, 3, dtype=torch.float32, requires_grad=True)
-    topic = torch.zeros(2, 4, dtype=torch.float32, requires_grad=True)
+    time = torch.zeros(2, 2, dtype=torch.float32, requires_grad=True)
     logits = {
         "stance": stance,
-        "factor": factor,
         "certainty": certainty,
-        "topic": topic,
+        "time": time,
     }
     targets = {
         "stance": torch.tensor(list(target_classes), dtype=torch.long),
-        "factor": torch.zeros(2, dtype=torch.float32),
         "certainty": torch.zeros(2, dtype=torch.long),
-        "topic": torch.zeros(2, dtype=torch.long),
+        "time": torch.zeros(2, dtype=torch.long),
     }
     masks = {
         "stance_mask": torch.tensor([True, True], dtype=torch.bool),
-        "factor_mask": torch.tensor([False, False], dtype=torch.bool),
         "certainty_mask": torch.tensor([False, False], dtype=torch.bool),
-        "topic_mask": torch.tensor([False, False], dtype=torch.bool),
+        "time_mask": torch.tensor([False, False], dtype=torch.bool),
     }
     return logits, targets, masks
 
@@ -324,8 +315,8 @@ def test_weighted_stance_gradient_matches_analytical_2row_2class() -> None:
         target_classes=(0, 1),
         stance_logits=[[2.0, 0.0], [0.0, 1.0]],
     )
-    loss_fn = MultiTaskLoss(lambda_stance=1.0, lambda_factor=0.0,
-                            lambda_certainty=0.0, lambda_topic=0.0)
+    loss_fn = MultiTaskLoss(lambda_stance=1.0, lambda_certainty=0.0,
+                            lambda_time=0.0)
     weights = torch.tensor([1.0, 0.25], dtype=torch.float32)
 
     total, _ = _compute_weighted_total_loss(
@@ -362,8 +353,8 @@ def test_all_zero_weight_batch_emits_zero_stance_gradient() -> None:
         target_classes=(0, 1),
         stance_logits=[[2.0, 0.0], [0.0, 1.0]],
     )
-    loss_fn = MultiTaskLoss(lambda_stance=1.0, lambda_factor=0.0,
-                            lambda_certainty=0.0, lambda_topic=0.0)
+    loss_fn = MultiTaskLoss(lambda_stance=1.0, lambda_certainty=0.0,
+                            lambda_time=0.0)
     weights = torch.zeros(2, dtype=torch.float32)
 
     total, _ = _compute_weighted_total_loss(
@@ -400,8 +391,8 @@ def test_fomc_only_batch_byte_identical_to_unweighted_loss() -> None:
         target_classes=(0, 1),
         stance_logits=[[2.0, 0.0], [0.0, 1.0]],
     )
-    loss_fn = MultiTaskLoss(lambda_stance=1.0, lambda_factor=0.3,
-                            lambda_certainty=0.3, lambda_topic=0.3)
+    loss_fn = MultiTaskLoss(lambda_stance=1.0, lambda_certainty=0.3,
+                            lambda_time=0.3)
     weights = torch.ones(2, dtype=torch.float32)
 
     weighted_total, _ = _compute_weighted_total_loss(
@@ -420,11 +411,11 @@ def test_fomc_only_batch_byte_identical_to_unweighted_loss() -> None:
 
 def test_weighted_arm_leaves_other_axis_gradients_unchanged() -> None:
     """The cross-bank ``weighted`` arm scales only the stance branch.
-    Gradients on logits["factor"], logits["certainty"], and
-    logits["topic"] must be identical to the gradients produced by
-    the ``off`` baseline (i.e. ``MultiTaskLoss`` called without any
-    per-row weight). Tested with a populated mask on each non-stance
-    axis so the comparison is non-trivial."""
+    Gradients on logits["certainty"] and logits["time"] must be
+    identical to the gradients produced by the ``off`` baseline (i.e.
+    ``MultiTaskLoss`` called without any per-row weight). Tested with
+    a populated mask on each non-stance axis so the comparison is
+    non-trivial."""
 
     def _seeded_batch(seed: int) -> tuple[
         dict[str, torch.Tensor],
@@ -433,34 +424,30 @@ def test_weighted_arm_leaves_other_axis_gradients_unchanged() -> None:
     ]:
         torch.manual_seed(seed)
         stance = torch.randn(3, 3, requires_grad=True)
-        factor = torch.randn(3, requires_grad=True)
         certainty = torch.randn(3, 3, requires_grad=True)
-        topic = torch.randn(3, 4, requires_grad=True)
+        time = torch.randn(3, 2, requires_grad=True)
         return (
             {
                 "stance": stance,
-                "factor": factor,
                 "certainty": certainty,
-                "topic": topic,
+                "time": time,
             },
             {
                 "stance": torch.tensor([0, 1, 2], dtype=torch.long),
-                "factor": torch.tensor([0.1, -0.4, 0.7], dtype=torch.float32),
                 "certainty": torch.tensor([0, 2, 1], dtype=torch.long),
-                "topic": torch.tensor([1, 3, 0], dtype=torch.long),
+                "time": torch.tensor([0, 1, 0], dtype=torch.long),
             },
             {
                 "stance_mask": torch.tensor([True, True, True], dtype=torch.bool),
-                "factor_mask": torch.tensor([True, True, True], dtype=torch.bool),
                 "certainty_mask": torch.tensor(
                     [True, True, True], dtype=torch.bool
                 ),
-                "topic_mask": torch.tensor([True, True, True], dtype=torch.bool),
+                "time_mask": torch.tensor([True, True, True], dtype=torch.bool),
             },
         )
 
-    loss_fn = MultiTaskLoss(lambda_stance=1.0, lambda_factor=0.3,
-                            lambda_certainty=0.3, lambda_topic=0.3)
+    loss_fn = MultiTaskLoss(lambda_stance=1.0, lambda_certainty=0.3,
+                            lambda_time=0.3)
 
     # Weighted (cross-bank arm with non-unit weights).
     logits_w, targets_w, masks_w = _seeded_batch(seed=17)
@@ -485,7 +472,7 @@ def test_weighted_arm_leaves_other_axis_gradients_unchanged() -> None:
     )
     total_o.backward()
 
-    for axis in ("factor", "certainty", "topic"):
+    for axis in ("certainty", "time"):
         assert logits_w[axis].grad is not None
         assert logits_o[axis].grad is not None
         torch.testing.assert_close(
@@ -536,13 +523,11 @@ def _two_row_batch(weights: list[float]) -> dict[str, "torch.Tensor"]:
         "input_ids": torch.zeros(2, 4, dtype=torch.long),
         "attention_mask": torch.ones(2, 4, dtype=torch.long),
         "target_stance": torch.tensor([0, 1], dtype=torch.long),
-        "target_factor": torch.zeros(2, dtype=torch.float32),
         "target_certainty": torch.zeros(2, dtype=torch.long),
-        "target_topic": torch.zeros(2, dtype=torch.long),
+        "target_time": torch.zeros(2, dtype=torch.long),
         "mask_stance": torch.tensor([True, True], dtype=torch.bool),
-        "mask_factor": torch.tensor([False, False], dtype=torch.bool),
         "mask_certainty": torch.tensor([False, False], dtype=torch.bool),
-        "mask_topic": torch.tensor([False, False], dtype=torch.bool),
+        "mask_time": torch.tensor([False, False], dtype=torch.bool),
         "stance_sample_weight": torch.tensor(weights, dtype=torch.float32),
         "source": ["fomc", "fomc"],
         "provenance": ["peer_reviewed", "peer_reviewed"],
@@ -568,21 +553,18 @@ def test_evaluate_threads_stance_sample_weight_through_loss() -> None:
     stance_logits = torch.tensor(
         [[2.0, 0.0, -1.0], [0.0, 1.0, 0.5]], dtype=torch.float32
     )
-    factor_logits = torch.zeros(2, dtype=torch.float32)
     certainty_logits = torch.zeros(2, 3, dtype=torch.float32)
-    topic_logits = torch.zeros(2, 4, dtype=torch.float32)
+    time_logits = torch.zeros(2, 2, dtype=torch.float32)
     logits = {
         "stance": stance_logits,
-        "factor": factor_logits,
         "certainty": certainty_logits,
-        "topic": topic_logits,
+        "time": time_logits,
     }
     model = _ConstantLogitsModel(logits)
     loss_fn = MultiTaskLoss(
         lambda_stance=1.0,
-        lambda_factor=0.0,
         lambda_certainty=0.0,
-        lambda_topic=0.0,
+        lambda_time=0.0,
     )
 
     batch = _two_row_batch([1.0, 0.25])
@@ -605,15 +587,13 @@ def test_evaluate_threads_stance_sample_weight_through_loss() -> None:
     # actually minimizes. Eval must match.
     targets = {
         "stance": batch["target_stance"],
-        "factor": batch["target_factor"],
         "certainty": batch["target_certainty"],
-        "topic": batch["target_topic"],
+        "time": batch["target_time"],
     }
     masks = {
         "stance_mask": batch["mask_stance"],
-        "factor_mask": batch["mask_factor"],
         "certainty_mask": batch["mask_certainty"],
-        "topic_mask": batch["mask_topic"],
+        "time_mask": batch["mask_time"],
     }
     train_total, _ = _compute_weighted_total_loss(
         loss_fn=loss_fn,
@@ -667,16 +647,14 @@ def test_evaluate_runs_under_no_grad() -> None:
             seen_requires_grad.append(bool(stance.requires_grad))
             return {
                 "stance": stance,
-                "factor": torch.zeros(2) * scale,
                 "certainty": torch.zeros(2, 3) * scale,
-                "topic": torch.zeros(2, 4) * scale,
+                "time": torch.zeros(2, 2) * scale,
             }
 
     loss_fn = MultiTaskLoss(
         lambda_stance=1.0,
-        lambda_factor=0.0,
         lambda_certainty=0.0,
-        lambda_topic=0.0,
+        lambda_time=0.0,
     )
 
     class _OneShotLoader:
@@ -771,7 +749,6 @@ def test_checkpoint_payload_records_effective_cross_bank_under_fed_only(
         metrics={"val_loss": 0.0},
         args=args,
         class_weights={},
-        factor_coverage=0.0,
     )
     payload = torch.load(ckpt_path, weights_only=False)
     ta = payload["training_args"]
@@ -781,9 +758,8 @@ def test_checkpoint_payload_records_effective_cross_bank_under_fed_only(
     # fed_only the cross-bank pool is empty so the arm reduces to off.
     assert ta["effective_cross_bank_supervision"] == "off"
     assert ta["gtfintechlab_fed_only"] is True
-    # The #328 factor-coverage stamp rides on every checkpoint so the
-    # inference service can gate the factor card on it.
-    assert ta["factor_coverage"] == 0.0
+    # The retired factor-coverage stamp must not ride on the payload.
+    assert "factor_coverage" not in ta
 
 
 def test_checkpoint_payload_effective_matches_raw_when_not_fed_only(
@@ -803,13 +779,11 @@ def test_checkpoint_payload_effective_matches_raw_when_not_fed_only(
         metrics={"val_loss": 0.0},
         args=args,
         class_weights={},
-        factor_coverage=0.25,
     )
     payload = torch.load(ckpt_path, weights_only=False)
     ta = payload["training_args"]
     assert ta["cross_bank_supervision"] == "weighted"
     assert ta["effective_cross_bank_supervision"] == "weighted"
     assert ta["gtfintechlab_fed_only"] is False
-    # The trainer rounds-trips whatever coverage the caller computed
-    # onto the payload — the gate decision lives on the inference side.
-    assert ta["factor_coverage"] == 0.25
+    # The retired factor-coverage stamp must not ride on the payload.
+    assert "factor_coverage" not in ta

@@ -13,6 +13,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { HORIZON_OPTIONS } from "@/lib/analyze/constants";
 import { SAMPLE_STATEMENTS } from "@/lib/analyze/sample-statements";
 import type { AnalyzeRequest, Horizon } from "@/lib/analyze/types";
@@ -22,9 +27,30 @@ interface AnalyzeFormProps {
   onChange: (next: AnalyzeRequest) => void;
   onSubmit: () => void;
   loading: boolean;
+  // Fires when the user picks an entry from the sample-loader dropdown.
+  // The parent uses this hook to clear stale analysis cards before the
+  // new sample's request takes effect; falls back to onChange when the
+  // host page does not need that behaviour.
+  onSampleLoad?: (next: AnalyzeRequest) => void;
 }
 
-export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormProps) {
+// Exported so the picker behavior is unit-testable independent of the
+// Radix Select primitive (which is awkward to drive in jsdom).
+export function applySampleStatement(
+  base: AnalyzeRequest,
+  sampleId: string,
+): AnalyzeRequest {
+  const sample = SAMPLE_STATEMENTS.find((entry) => entry.id === sampleId);
+  if (!sample) return base;
+  return {
+    ...base,
+    text: sample.text,
+    date: sample.date,
+    symbol: sample.symbol ?? "^GSPC",
+  };
+}
+
+export function AnalyzeForm({ value, onChange, onSubmit, loading, onSampleLoad }: AnalyzeFormProps) {
   const submitLabel = loading ? "Running analysis…" : "Analyze";
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -62,7 +88,27 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="symbol">Asset</Label>
+              <div className="flex items-center gap-1">
+                <Label htmlFor="symbol">Asset</Label>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label="What does the asset picker affect?"
+                      className="text-muted-foreground hover:text-foreground text-xs leading-none"
+                    >
+                      ⓘ
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    Drives the market-data panel and the autoregressive price /
+                    volatility forecast curve. Statement-level analysis (regime
+                    classification, multi-axis sentiment, policy action,
+                    credibility) is asset-independent and does not change with
+                    this selection.
+                  </TooltipContent>
+                </Tooltip>
+              </div>
               <AssetPicker
                 id="symbol"
                 value={value.symbol}
@@ -71,7 +117,26 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="horizon">Horizon</Label>
+              <div className="flex items-center gap-1">
+                <Label htmlFor="horizon">Horizon</Label>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label="What does the horizon picker affect?"
+                      className="text-muted-foreground hover:text-foreground text-xs leading-none"
+                    >
+                      ⓘ
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    Drives the price / volatility forecast curve (the
+                    autoregressive prediction block). The regime classification
+                    always reports the next 10 trading days, independent of
+                    this selection.
+                  </TooltipContent>
+                </Tooltip>
+              </div>
               <Select
                 value={value.horizon}
                 onValueChange={(next) => patch({ horizon: next as Horizon })}
@@ -101,9 +166,8 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading }: AnalyzeFormP
             <Select
               value=""
               onValueChange={(id) => {
-                const sample = SAMPLE_STATEMENTS.find((entry) => entry.id === id);
-                if (!sample) return;
-                onChange({ ...value, text: sample.text, date: sample.date });
+                const next = applySampleStatement(value, id);
+                (onSampleLoad ?? onChange)(next);
               }}
             >
               <SelectTrigger

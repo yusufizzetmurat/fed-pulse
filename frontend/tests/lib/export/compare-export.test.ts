@@ -33,7 +33,6 @@ describe("buildCompareRows", () => {
           stance: { label: "hawkish", confidence: 0.9 },
           factor: { value: 0.4, confidence: 0.2 },
           certainty: { label: "decisive", confidence: 0.75 },
-          topic: { primary: "inflation", confidence: 0.6 },
         },
         regime_classification: {
           argmax_class: "high",
@@ -60,7 +59,6 @@ describe("buildCompareRows", () => {
           stance: { label: "dovish", confidence: 0.8 },
           factor: { value: -0.1, confidence: 0.25 },
           certainty: { label: "tentative", confidence: 0.55 },
-          topic: { primary: "growth", confidence: 0.62 },
         },
         regime_classification: {
           argmax_class: "normal",
@@ -90,7 +88,6 @@ describe("buildCompareRows", () => {
     expect(asObject["regime.set"]?.[1]).toBe("calm|normal");
     expect(asObject["credibility.drift_score"]?.[2] as number).toBeCloseTo(0.14, 5);
     expect(asObject["multi_axis.stance.label"]).toEqual(["hawkish", "dovish", 2]);
-    expect(asObject["multi_axis.topic.primary"]?.[2]).toBe("changed");
     expect(asObject["stance.shift"]?.[2]).toBe("more_hawkish");
   });
 

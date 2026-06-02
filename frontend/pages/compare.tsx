@@ -10,6 +10,7 @@ import { StatusBar } from "@/components/shell/status-bar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -35,6 +36,36 @@ import type { AnalyzeResult, HistoryDetail, HistoryEntry } from "@/lib/analyze/t
 
 const SLOT_LABELS = { a: "Run A", b: "Run B" } as const;
 type Slot = keyof typeof SLOT_LABELS;
+
+const STANCE_FILTERS = ["all", "hawkish", "neutral", "dovish"] as const;
+type StanceFilter = (typeof STANCE_FILTERS)[number];
+
+interface PickerFilter {
+  stance: StanceFilter;
+  date: string;
+}
+
+const DEFAULT_FILTER: PickerFilter = { stance: "all", date: "" };
+
+function applyPickerFilter(
+  entries: HistoryEntry[],
+  filter: PickerFilter,
+): HistoryEntry[] {
+  return entries.filter((entry) => {
+    if (filter.stance !== "all" && toStance(entry.stance) !== filter.stance) {
+      return false;
+    }
+    if (filter.date && !entry.document_date.startsWith(filter.date)) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function regimeLabel(entry: HistoryEntry | null | undefined): string {
+  if (!entry?.argmax_regime) return "—";
+  return entry.argmax_regime;
+}
 
 function formatDelta(value: number | null, fractionDigits = 2): string {
   if (value == null || !Number.isFinite(value)) return "—";
@@ -81,6 +112,9 @@ function RunSlotCard({
   loading,
   entries,
   selectedId,
+  selectedEntry,
+  filter,
+  onFilterChange,
   onSelect,
 }: {
   slot: Slot;
@@ -88,16 +122,71 @@ function RunSlotCard({
   loading: boolean;
   entries: HistoryEntry[];
   selectedId: string | null;
+  selectedEntry: HistoryEntry | null;
+  filter: PickerFilter;
+  onFilterChange: (next: PickerFilter) => void;
   onSelect: (id: string | null) => void;
 }) {
   const stance = detail ? toStance(detail.stance) : "unknown";
   const stanceVariant: "hawkish" | "dovish" | "neutral" | "outline" =
     stance === "hawkish" ? "hawkish" : stance === "dovish" ? "dovish" : stance === "neutral" ? "neutral" : "outline";
 
+  // Always include the currently selected entry in the dropdown so the
+  // filter never hides the active pick (Radix would otherwise drop the
+  // controlled value and reset the trigger to the placeholder).
+  const filteredEntries = React.useMemo(() => {
+    const list = applyPickerFilter(entries, filter);
+    if (selectedEntry && !list.some((entry) => entry.id === selectedEntry.id)) {
+      return [selectedEntry, ...list];
+    }
+    return list;
+  }, [entries, filter, selectedEntry]);
+
+  const preview = selectedEntry ?? detail;
+  const previewStance = preview ? toStance(preview.stance) : "unknown";
+  const previewStanceVariant =
+    previewStance === "hawkish"
+      ? "hawkish"
+      : previewStance === "dovish"
+      ? "dovish"
+      : previewStance === "neutral"
+      ? "neutral"
+      : "outline";
+
   return (
     <Card>
       <CardHeader className="space-y-3">
         <CardDescription>{SLOT_LABELS[slot]}</CardDescription>
+        <div className="grid grid-cols-2 gap-2">
+          <Select
+            value={filter.stance}
+            onValueChange={(value) =>
+              onFilterChange({ ...filter, stance: value as StanceFilter })
+            }
+          >
+            <SelectTrigger aria-label={`Filter ${SLOT_LABELS[slot]} by stance`} className="h-9 text-xs">
+              <SelectValue placeholder="Stance" />
+            </SelectTrigger>
+            <SelectContent>
+              {STANCE_FILTERS.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {value === "all" ? "Any stance" : stanceLabel(value)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Input
+            type="text"
+            inputMode="numeric"
+            placeholder="YYYY or YYYY-MM"
+            value={filter.date}
+            onChange={(event) =>
+              onFilterChange({ ...filter, date: event.target.value.trim() })
+            }
+            aria-label={`Filter ${SLOT_LABELS[slot]} by date`}
+            className="h-9 text-xs"
+          />
+        </div>
         <Select
           value={selectedId ?? ""}
           onValueChange={(value) => onSelect(value || null)}
@@ -106,13 +195,33 @@ function RunSlotCard({
             <SelectValue placeholder="Pick a run…" />
           </SelectTrigger>
           <SelectContent>
-            {entries.map((entry) => (
-              <SelectItem key={entry.id} value={entry.id}>
-                {entry.document_date} · {entry.symbol} · {stanceLabel(toStance(entry.stance))}
-              </SelectItem>
-            ))}
+            {filteredEntries.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-muted-foreground">
+                No runs match these filters.
+              </div>
+            ) : (
+              filteredEntries.map((entry) => (
+                <SelectItem key={entry.id} value={entry.id}>
+                  {entry.document_date} · {entry.symbol} · {stanceLabel(toStance(entry.stance))}
+                </SelectItem>
+              ))
+            )}
           </SelectContent>
         </Select>
+        {preview ? (
+          <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={previewStanceVariant} className="text-[10px]">
+                {stanceLabel(previewStance)}
+              </Badge>
+              <span className="font-mono text-muted-foreground">{preview.document_date}</span>
+              <span className="text-muted-foreground">·</span>
+              <span className="text-muted-foreground">{preview.symbol}</span>
+              <span className="text-muted-foreground">·</span>
+              <span className="text-muted-foreground">regime {regimeLabel(preview)}</span>
+            </div>
+          </div>
+        ) : null}
       </CardHeader>
       <CardContent className="space-y-4">
         {loading ? (
@@ -159,8 +268,7 @@ function MultiAxisDeltaCard({ delta }: { delta: MultiAxisDelta }) {
   const hasSignal =
     delta.stanceRankDelta != null ||
     delta.factorDelta != null ||
-    delta.certaintyShift !== "unknown" ||
-    delta.topicChanged != null;
+    delta.certaintyShift !== "unknown";
   if (!hasSignal) return null;
   const stanceDir =
     delta.stanceRankDelta == null
@@ -228,16 +336,6 @@ function MultiAxisDeltaCard({ delta }: { delta: MultiAxisDelta }) {
                 {delta.certaintyConfidenceDelta != null
                   ? `${delta.certaintyConfidenceDelta >= 0 ? "+" : ""}${delta.certaintyConfidenceDelta.toFixed(2)}`
                   : "—"}
-              </td>
-            </tr>
-            <tr>
-              <td className="px-4 py-2 font-mono">topic</td>
-              <td className="px-4 py-2 text-right text-xs text-muted-foreground" colSpan={2}>
-                {delta.topicChanged == null
-                  ? "—"
-                  : delta.topicChanged
-                  ? "main topic changed"
-                  : "main topic unchanged"}
               </td>
             </tr>
           </tbody>
@@ -325,18 +423,18 @@ function DeltaSummary({ delta }: { delta: CompareDelta }) {
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <GitCompare className="h-4 w-4 text-primary" />
-          Δ A − B
+          Run A vs. Run B
         </CardTitle>
         <CardDescription>{describeStanceShift(delta.stanceShift)}</CardDescription>
       </CardHeader>
       <CardContent>
-        <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
           <div>
             <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Regime</dt>
             <dd className="mt-1 flex items-center gap-1">{argmaxLine}</dd>
           </div>
           <div>
-            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Set size</dt>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Regime set size</dt>
             <dd className="numeric mt-1">
               {regime.setSizeA ?? "—"} vs {regime.setSizeB ?? "—"}
             </dd>
@@ -356,7 +454,16 @@ function DeltaSummary({ delta }: { delta: CompareDelta }) {
             ) : null}
           </div>
           <div>
-            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Shift score</dt>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Sentiment score Δ</dt>
+            <dd
+              className={`numeric mt-1 flex items-center gap-1 ${deltaColorClass(delta.scoreDelta)}`}
+            >
+              <DeltaIcon value={delta.scoreDelta} />
+              {formatDelta(delta.scoreDelta, 3)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Credibility drift Δ</dt>
             <dd
               className={`numeric mt-1 flex items-center gap-1 ${deltaColorClass(delta.driftDelta)}`}
             >
@@ -365,7 +472,7 @@ function DeltaSummary({ delta }: { delta: CompareDelta }) {
             </dd>
           </div>
           <div>
-            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">What was done vs. said</dt>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Realized vs. stated gap Δ</dt>
             <dd
               className={`numeric mt-1 flex items-center gap-1 ${deltaColorClass(delta.realizedGapDelta)}`}
             >
@@ -397,6 +504,13 @@ export default function ComparePage() {
     const value = router.query.b;
     return typeof value === "string" ? value : null;
   }, [router.query.b]);
+
+  const [filterA, setFilterA] = React.useState<PickerFilter>(DEFAULT_FILTER);
+  const [filterB, setFilterB] = React.useState<PickerFilter>(DEFAULT_FILTER);
+
+  // Tracks whether the auto-populate pass has fired so a user clearing
+  // a slot does not get it forcibly refilled on the next render.
+  const autoPopulatedRef = React.useRef(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -475,6 +589,30 @@ export default function ComparePage() {
     [router],
   );
 
+  // On first load, if the URL carries neither a nor b and history has at
+  // least two entries, prefill Run A / Run B with the two most recent
+  // runs. The router replace lands the IDs in the URL so the share link
+  // and per-slot detail effects pick them up like a manual selection.
+  React.useEffect(() => {
+    if (!router.isReady || autoPopulatedRef.current) return;
+    if (entriesLoading || entries.length < 2) return;
+    if (aId || bId) {
+      autoPopulatedRef.current = true;
+      return;
+    }
+    autoPopulatedRef.current = true;
+    const next = { ...router.query, a: entries[0].id, b: entries[1].id };
+    router.replace({ pathname: "/compare", query: next }, undefined, { shallow: true });
+  }, [router, router.isReady, entries, entriesLoading, aId, bId]);
+
+  const entriesById = React.useMemo(() => {
+    const map = new Map<string, HistoryEntry>();
+    for (const entry of entries) map.set(entry.id, entry);
+    return map;
+  }, [entries]);
+  const entryA = aId ? entriesById.get(aId) ?? null : null;
+  const entryB = bId ? entriesById.get(bId) ?? null : null;
+
   const delta = React.useMemo(() => {
     if (!detailA || !detailB) return null;
     return computeCompareDelta(detailA, detailB);
@@ -514,8 +652,10 @@ export default function ComparePage() {
             <div className="space-y-2">
               <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Compare runs</h1>
               <p className="max-w-2xl text-muted-foreground">
-                Pick two past analyses and see the stance, prediction, and confidence deltas side by
-                side. Selections are sticky in the URL — share the link to send a paired view.
+                Pick two past analyses to compare their monetary-policy stance, credibility signals,
+                and volatility-regime classifications. Each delta is Run A minus Run B: a positive
+                value means Run A is higher on that dimension. Selections are sticky in the URL;
+                share the link to send a paired view.
               </p>
             </div>
             <Button
@@ -558,6 +698,9 @@ export default function ComparePage() {
                 loading={loadingA}
                 entries={entries}
                 selectedId={aId}
+                selectedEntry={entryA}
+                filter={filterA}
+                onFilterChange={setFilterA}
                 onSelect={(id) => handleSelect("a", id)}
               />
               <RunSlotCard
@@ -566,6 +709,9 @@ export default function ComparePage() {
                 loading={loadingB}
                 entries={entries}
                 selectedId={bId}
+                selectedEntry={entryB}
+                filter={filterB}
+                onFilterChange={setFilterB}
                 onSelect={(id) => handleSelect("b", id)}
               />
             </div>

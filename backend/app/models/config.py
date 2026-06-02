@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
 from app.config import DATA_DIR, MODEL_CHECKPOINT_DIR
+
+logger = logging.getLogger(__name__)
 
 # v2 reference: 20-day lookback over daily bars. v1 used 5 (sub-week)
 # which was too short for the recurrent core to learn temporal structure.
@@ -116,6 +120,22 @@ RICH_STATEMENT_DELTA_MISSING_DIM = 1
 # #444 vote tally + dissent block (ADR 0038).
 RICH_VOTE_FEATURES_DIM = 4
 RICH_VOTE_FEATURES_MISSING_DIM = 1
+# #478 VIX term-structure + VRP at T-1. Six strict-prior scalars
+# (vix, vix1m, vix3m, vix6m, vix_3m_over_1m_slope, vrp) plus a paired
+# missing flag. Opt-in via ``--use-vix-features``; appended past the
+# vote-tally tail by ``FeatureVector.as_rich_list`` only when the
+# loader populates the slot, so the legacy default path keeps the
+# byte-identical pre-#478 per-bar feature size.
+RICH_VIX_FEATURES_DIM = 6
+RICH_VIX_FEATURES_MISSING_DIM = 1
+# #543 doc_length feature. ``log(1 + token_count)`` as a single scalar
+# broadcast onto every bar of every supervised event. Appended past
+# the VIX tail by ``FeatureVector.as_rich_list`` only when the loader
+# populates the slot, so the legacy default path keeps the byte-
+# identical pre-#543 per-bar feature size. Promoted out of the
+# confounder ablation cell that produced the largest single dual-head
+# lift (+0.052 macro-F1) observed in §6.38.
+RICH_DOC_LENGTH_DIM = 1
 RICH_EXTRA_FEATURE_SIZE = (
     RICH_CREDIBILITY_DIM
     + RICH_LINGUISTIC_DIM
@@ -129,6 +149,39 @@ RICH_EXTRA_FEATURE_SIZE = (
     + RICH_RETRIEVAL_ANALOG_MISSING_DIM
 )
 RICH_FEATURE_SIZE = FEATURE_SIZE + RICH_EXTRA_FEATURE_SIZE
+
+# Supported supervised forward-vol horizons in trading days. The events
+# parquet ships ``forward_realized_vol_<H>d`` columns for every value
+# here (the data-builder writes them per
+# ``event_dataset_builder._FORWARD_VOL_MULTI_HORIZON_COLUMNS``); ``10``
+# remains the canonical y axis. The loader validates
+# ``ModelConfig.vol_target_horizon`` against this tuple at entry.
+SUPPORTED_VOL_TARGET_HORIZONS: tuple[int, ...] = (1, 3, 5, 10, 20, 30)
+DEFAULT_VOL_TARGET_HORIZON: int = 10
+
+# #472 vol-regime labelling modes. ``per_fold_quantile`` (default,
+# byte-identical) fits per-fold (q33, q67) cutoffs on the train slice;
+# ``absolute`` uses a fixed pair of cutoffs so every fold's
+# calm / normal / high cells refer to the same vol level (no per-fold
+# bin drift). The literal vocabulary is pinned here so the CLI
+# ``choices=`` tuple and the loop dispatch agree.
+VOL_REGIME_LABEL_MODES: tuple[str, ...] = ("per_fold_quantile", "absolute")
+DEFAULT_VOL_REGIME_LABEL_MODE: str = "per_fold_quantile"
+# Annualized-to-per-period conversion for ``forward_realized_vol_10d``
+# (per-period standard deviation of log returns over 10 trading days):
+# ``vol_annualized = vol_per_period * sqrt(252 / 10)``. The defaults
+# below pin ``calm_max`` at 12% annualized and ``high_min`` at 22%
+# annualized -- the economic boundaries documented in the issue --
+# expressed in the SAME per-period unit as
+# ``forward_realized_vol_10d`` so the loader can compare without
+# rescaling. ``vol_regime_absolute_class_for`` consumes this tuple.
+ANNUALIZATION_SQRT_10D: float = math.sqrt(252.0 / 10.0)
+DEFAULT_ABSOLUTE_VOL_CALM_MAX_ANNUALIZED: float = 0.12
+DEFAULT_ABSOLUTE_VOL_HIGH_MIN_ANNUALIZED: float = 0.22
+DEFAULT_ABSOLUTE_VOL_THRESHOLDS: tuple[float, float] = (
+    DEFAULT_ABSOLUTE_VOL_CALM_MAX_ANNUALIZED / ANNUALIZATION_SQRT_10D,
+    DEFAULT_ABSOLUTE_VOL_HIGH_MIN_ANNUALIZED / ANNUALIZATION_SQRT_10D,
+)
 
 # Slice offsets inside the rich vector. Used by the per-family
 # ablation path on the loader to zero an individual family without
@@ -224,24 +277,24 @@ RICH_PRESS_CONF_SLICE = slice(
     RICH_SEP_MISSING_SLICE.stop + RICH_PRESS_CONF_DIM,
 )
 
-# Multi-task head (#78) axis cardinalities and canonical label maps.
-# The multi-task head emits four branches; the cardinalities are pinned
-# here so the loader, the model factory, and the inference path agree on
-# the shape. Adding a topic label would require bumping
-# MULTI_TASK_TOPIC_LABELS in lockstep with the loader's topic-string
-# normaliser; the four buckets below cover the only topic-string
-# families that show up on gtfintechlab + scraped Fed rows.
+# Multi-task head axis cardinalities and canonical label maps.
+# Active axes: stance / certainty / time.
+# The topic axis was retired per ADR 0044 (no upstream source ships
+# topic labels). The factor axis (Gurkaynak-Sack-Swanson market-derived
+# forward-guidance loading, a regression target in [-1, 1]) is retired
+# because (a) it is a market-derived FORECASTING target that text cannot
+# predict, (b) the canonical training pool had 0 % axis_factor coverage
+# so the regression head trained exclusively on the masked-out path and
+# emitted noise, and (c) the inference gate always set factor=None in
+# the /analyze response (ADR 0018). The time axis (forward-looking /
+# not-forward-looking from the gtfintechlab corpus) replaces it and
+# carries ~5 992 real text-description labels.
 MULTI_TASK_STANCE_CLASSES = 3
 MULTI_TASK_CERTAINTY_CLASSES = 3
-MULTI_TASK_TOPIC_CLASSES = 4
+MULTI_TASK_TIME_CLASSES = 2
 MULTI_TASK_STANCE_LABELS: tuple[str, ...] = ("hawkish", "dovish", "neutral")
 MULTI_TASK_CERTAINTY_LABELS: tuple[str, ...] = ("certain", "uncertain", "neutral")
-MULTI_TASK_TOPIC_LABELS: tuple[str, ...] = (
-    "macro",
-    "forward_guidance",
-    "market_reaction",
-    "other",
-)
+MULTI_TASK_TIME_LABELS: tuple[str, ...] = ("forward looking", "not forward looking")
 
 # Text-embedding adapter dim search axis. The forecaster sweep iterates
 # over these values so the diminishing-returns curve across {32, 64, 128}
@@ -314,14 +367,16 @@ def rich_feature_size_with_blocks(
     use_press_conf: bool = False,
     use_statement_delta: bool = False,
     use_vote_features: bool = False,
+    use_vix_features: bool = False,
+    use_doc_length: bool = False,
 ) -> int:
     """Combined helper: the per-bar size with every opt-in tail block.
 
-    All five blocks are independent — any combination can be on. The
+    All seven blocks are independent — any combination can be on. The
     append order on ``as_rich_list`` is fixed: regime, SEP, press-conf,
-    statement-delta, vote-features. A downstream caller iterating
-    slices knows where each block sits without ambiguity given the five
-    flags.
+    statement-delta, vote-features, vix-features, doc-length. A
+    downstream caller iterating slices knows where each block sits
+    without ambiguity given the seven flags.
     """
 
     size = RICH_FEATURE_SIZE
@@ -335,6 +390,10 @@ def rich_feature_size_with_blocks(
         size += RICH_STATEMENT_DELTA_DIM + RICH_STATEMENT_DELTA_MISSING_DIM
     if bool(use_vote_features):
         size += RICH_VOTE_FEATURES_DIM + RICH_VOTE_FEATURES_MISSING_DIM
+    if bool(use_vix_features):
+        size += RICH_VIX_FEATURES_DIM + RICH_VIX_FEATURES_MISSING_DIM
+    if bool(use_doc_length):
+        size += RICH_DOC_LENGTH_DIM
     return size
 
 
@@ -419,6 +478,41 @@ SUPPORTED_SYMBOLS: tuple[str, ...] = (
 SYMBOL_ID_LOOKUP: dict[str, int] = {sym: idx for idx, sym in enumerate(SUPPORTED_SYMBOLS)}
 N_SUPPORTED_SYMBOLS: int = len(SUPPORTED_SYMBOLS)
 
+# Per-symbol display metadata for the frontend asset picker and the
+# ``/symbols`` endpoint fallback. Keyed off the ticker symbols listed in
+# ``SUPPORTED_SYMBOLS`` so the JSON file on disk, the in-process fallback
+# in ``app.main``, and the symbol-id lookup all derive from one source.
+# Row order matches ``SUPPORTED_SYMBOLS`` so the picker renders the five
+# entries in the same order training writes them in.
+SUPPORTED_SYMBOL_METADATA: tuple[dict[str, str], ...] = (
+    {"symbol": "^GSPC", "name": "S&P 500", "category": "Equity index", "default_horizon": "10d"},
+    {"symbol": "^NDX", "name": "Nasdaq 100", "category": "Equity index", "default_horizon": "10d"},
+    {"symbol": "^DJI", "name": "Dow Jones", "category": "Equity index", "default_horizon": "10d"},
+    {"symbol": "DX-Y.NYB", "name": "US Dollar Index", "category": "FX", "default_horizon": "10d"},
+    {"symbol": "EURUSD=X", "name": "EUR / USD", "category": "FX", "default_horizon": "10d"},
+)
+assert tuple(entry["symbol"] for entry in SUPPORTED_SYMBOL_METADATA) == SUPPORTED_SYMBOLS, (
+    "SUPPORTED_SYMBOL_METADATA must mirror SUPPORTED_SYMBOLS row order"
+)
+
+
+def _coerce_absolute_vol_thresholds(value: Any) -> tuple[float, float]:
+    """Round-trip helper for :attr:`ModelConfig.absolute_vol_thresholds`.
+
+    Accepts ``None`` (legacy checkpoint without the field), a length-2
+    sequence, or already-typed tuple and returns the canonical
+    ``(calm_max, high_min)`` float pair. Falls back to
+    :data:`DEFAULT_ABSOLUTE_VOL_THRESHOLDS` when the payload is missing
+    so pre-#472 checkpoints deserialise into the byte-identical default.
+    """
+
+    if value is None:
+        return DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+    seq = tuple(value)
+    if len(seq) != 2:
+        return DEFAULT_ABSOLUTE_VOL_THRESHOLDS
+    return float(seq[0]), float(seq[1])
+
 
 @dataclass(frozen=True)
 class ModelConfig:
@@ -453,6 +547,25 @@ class ModelConfig:
     n_classes: int = 3
     vol_regime_quantiles: tuple[float, ...] = ()
     vol_regime_target: str = "forward_realized_vol_10d"
+    # #472 vol-regime labelling mode. ``per_fold_quantile`` (default,
+    # byte-identical) fits per-fold (q33, q67) cutoffs on the train
+    # slice each fold; ``absolute`` uses the fixed
+    # ``absolute_vol_thresholds`` pair so every fold's calm / normal /
+    # high cells refer to the same economic vol level. On the
+    # ``absolute`` path the per-fold quantile fit is skipped and the
+    # absolute thresholds flow through every downstream consumer
+    # (``vol_regime_class_for`` / ``_build_partition_log_rv_target`` /
+    # the multi-task target builder) so row alignment with ``y`` is
+    # preserved.
+    vol_regime_label_mode: str = DEFAULT_VOL_REGIME_LABEL_MODE
+    # Per-period (calm_max, high_min) cutoffs the absolute labelling
+    # path bins ``forward_realized_vol_10d`` into. The defaults convert
+    # 12% / 22% annualized -- the economic boundaries documented in
+    # the issue -- via ``vol_per_period = vol_annualized /
+    # sqrt(252 / 10)`` so the cutoffs share the same per-period unit as
+    # the target column. Setting custom values is expected via the
+    # canonical-sweep CLI (annualized percent in, per-period out).
+    absolute_vol_thresholds: tuple[float, float] = DEFAULT_ABSOLUTE_VOL_THRESHOLDS
     # Phase B (#227) LR-schedule selector. ``plateau`` is the legacy
     # ReduceLROnPlateau path (locked by the determinism regression).
     # ``cosine_warmup`` builds a OneCycleLR over the configured epoch
@@ -508,15 +621,36 @@ class ModelConfig:
     # #273 follow-up to the multi-task head (#272). When True, the
     # training loop swaps the single-axis CrossEntropy for
     # :class:`app.training.loss.MultiTaskLoss`, which folds per-axis
-    # CE / SmoothL1 terms onto stance / factor / certainty / topic
-    # with per-axis class weights and a per-row availability mask.
-    # Default False keeps the byte-identity regression contract on
-    # every existing classification run (stance-only training).
+    # CE terms onto stance / certainty / time with per-axis
+    # class weights and a per-row availability mask. Default False keeps
+    # the byte-identity regression contract on every existing
+    # classification run (stance-only training). The topic axis was
+    # retired in ADR 0044 (no upstream source ships topic labels).
     multi_task_loss: bool = False
     multi_task_lambda_stance: float = 1.0
-    multi_task_lambda_factor: float = 0.3
     multi_task_lambda_certainty: float = 0.3
-    multi_task_lambda_topic: float = 0.3
+    multi_task_lambda_time: float = 0.3
+    # #470 regime-loss variant. ``"ce"`` (default) keeps the standard
+    # cross-entropy on the 3-class regime stance head byte-identical to
+    # every pre-#470 run. ``"ordinal_ce"`` swaps in the bin-distance-
+    # weighted CE in :func:`app.training.loss.ordinal_cross_entropy` so
+    # a ``calm -> high`` confusion costs 2x a ``calm -> normal``
+    # confusion — encodes the calm < normal < high label ordering into
+    # the gradient without changing the head shape or the checkpoint
+    # contract. The training loop reads this off the stashed module
+    # attribute when constructing the CE / MultiTaskLoss instance.
+    regime_loss_mode: str = "ce"
+    # ``focal`` mode only. Lin et al. 2017's (1 - p_true) ** gamma modulating
+    # factor on the regime-axis CE. Default 2.0 matches the paper. The training
+    # loop reads this off the stashed module attribute when constructing the
+    # focal CE branch (``app.training.loss.focal_cross_entropy``); ignored under
+    # any other ``regime_loss_mode`` so default-on runs stay byte-identical.
+    focal_gamma: float = 2.0
+    # ``class_balanced`` mode only. Cui et al. 2019's effective-number
+    # reweighting hyperparameter. ``beta -> 1`` mimics inverse-frequency
+    # weights; ``beta = 0`` collapses to uniform. Default 0.999 mirrors the
+    # paper's CIFAR-LT recipe. Ignored under any other ``regime_loss_mode``.
+    class_balanced_beta: float = 0.999
     # Steepens inverse-frequency class weights via ``raw[c] = 1 / (n_c + 1) ** power``.
     # ``1.0`` (default) is the legacy formula and preserves byte-identity with
     # pre-2026-05-25 sweep numbers; higher values force the gradient onto the
@@ -610,6 +744,20 @@ class ModelConfig:
     # convergence failure) fall back to the raw target so row alignment
     # with ``y`` is preserved. See #434 for the data side and ADR 0034.
     vol_target_mode: str = "raw"
+    # Supervised forward-vol horizon (in trading days). ``10`` (default,
+    # byte-identical to the pre-flag path) reads
+    # ``forward_realized_vol_10d`` off the events parquet as the y axis
+    # for both the classification quantile-fit and the dual-head MSE
+    # branch. Setting a different value routes the loader to populate
+    # the per-row ``forward_realized_vol_10d`` slot from
+    # ``forward_realized_vol_<H>d`` so downstream consumers
+    # (``vol_regime_class_for``, ``_build_partition_log_rv_target``,
+    # the dual-head finite guard) keep reading the same attribute. The
+    # value is validated against ``SUPPORTED_VOL_TARGET_HORIZONS`` at
+    # loader entry rather than ``__post_init__`` so checkpoint round-trip
+    # via ``_coerce_model_config`` does not fail on legacy payloads
+    # without the field.
+    vol_target_horizon: int = 10
     # #307 macro-regime conditioning toggle. ``False`` (default) keeps
     # the pre-#307 path byte-identical: the loader leaves
     # ``FeatureVector.macro_regime_features`` at ``None`` and
@@ -634,6 +782,12 @@ class ModelConfig:
     use_statement_delta: bool = False
     # #444 vote-tally opt-in (ADR 0038).
     use_vote_features: bool = False
+    # #478 VIX term-structure + VRP at T-1.
+    use_vix_features: bool = False
+    # #543 doc_length feature. ``log(1 + token_count)`` as a single
+    # scalar broadcast onto every bar of every supervised event.
+    # Default-off keeps the canonical run byte-identical pre-#543.
+    use_doc_length: bool = False
     # #480 symbol-conditioned regime head. ``0`` (default) keeps the
     # regime / dual-head wiring byte-identical to the symbol-agnostic
     # canonical: no embedding module, no widened head input, no new
@@ -645,6 +799,21 @@ class ModelConfig:
     # to a follow-up because the response surface still emits one card
     # per statement (no per-symbol picker yet). See ADR + #480.
     symbol_embedding_dim: int = 0
+    # #471 multi-horizon auxiliary regression targets. Empty tuple
+    # (default) keeps the dual-head log-RV path byte-identical: no aux
+    # heads mount, no aux MSE term enters the joint loss, and the
+    # state_dict shape is unchanged. Each value in the tuple must be a
+    # supported forward-vol horizon other than 10 (the canonical primary
+    # target); the model factory mounts one parallel regression head per
+    # entry (same architecture as the canonical log-RV head) and the
+    # training loop adds an auxiliary
+    # ``aux_horizon_alpha * MSE(log(forward_realized_vol_<H>d_pred), target)``
+    # term to the joint loss for each mounted head. Applies to any
+    # ``head_mode`` whose forward emits the primary ``log_rv`` head
+    # (``regression`` and ``dual`` -- ``classification`` has no
+    # regression branch to mount aux heads against). See #471.
+    aux_horizons: tuple[int, ...] = ()
+    aux_horizon_alpha: float = 0.3
 
     @classmethod
     def from_model(cls, model: "Any") -> "ModelConfig":
@@ -673,6 +842,13 @@ class ModelConfig:
                 getattr(model, "vol_regime_target", "forward_realized_vol_10d")
                 or "forward_realized_vol_10d"
             ),
+            vol_regime_label_mode=str(
+                getattr(model, "vol_regime_label_mode", DEFAULT_VOL_REGIME_LABEL_MODE)
+                or DEFAULT_VOL_REGIME_LABEL_MODE
+            ),
+            absolute_vol_thresholds=_coerce_absolute_vol_thresholds(
+                getattr(model, "absolute_vol_thresholds", DEFAULT_ABSOLUTE_VOL_THRESHOLDS)
+            ),
             lr_schedule=str(getattr(model, "lr_schedule", "plateau") or "plateau"),
             sequence_length=int(getattr(model, "sequence_length", 0) or 0),
             use_time_decay=bool(getattr(model, "use_time_decay", True)),
@@ -688,10 +864,12 @@ class ModelConfig:
             infonce_latent_dim=int(getattr(model, "infonce_latent_dim", 64)),
             multi_task_loss=bool(getattr(model, "multi_task_loss", False)),
             multi_task_lambda_stance=float(getattr(model, "multi_task_lambda_stance", 1.0)),
-            multi_task_lambda_factor=float(getattr(model, "multi_task_lambda_factor", 0.3)),
             multi_task_lambda_certainty=float(getattr(model, "multi_task_lambda_certainty", 0.3)),
-            multi_task_lambda_topic=float(getattr(model, "multi_task_lambda_topic", 0.3)),
+            multi_task_lambda_time=float(getattr(model, "multi_task_lambda_time", 0.3)),
+            regime_loss_mode=str(getattr(model, "regime_loss_mode", "ce") or "ce"),
             class_weight_power=float(getattr(model, "class_weight_power", 1.0)),
+            focal_gamma=float(getattr(model, "focal_gamma", 2.0)),
+            class_balanced_beta=float(getattr(model, "class_balanced_beta", 0.999)),
             head_mode=str(getattr(model, "head_mode", "dual") or "dual"),
             regression_alpha=float(getattr(model, "regression_alpha", 0.5)),
             use_derived_text_features=bool(
@@ -713,6 +891,10 @@ class ModelConfig:
             vol_target_mode=str(
                 getattr(model, "vol_target_mode", "raw") or "raw"
             ),
+            vol_target_horizon=int(
+                getattr(model, "vol_target_horizon", DEFAULT_VOL_TARGET_HORIZON)
+                or DEFAULT_VOL_TARGET_HORIZON
+            ),
             use_regime_conditioning=bool(
                 getattr(model, "use_regime_conditioning", False)
             ),
@@ -724,8 +906,20 @@ class ModelConfig:
             use_vote_features=bool(
                 getattr(model, "use_vote_features", False)
             ),
+            use_vix_features=bool(
+                getattr(model, "use_vix_features", False)
+            ),
+            use_doc_length=bool(
+                getattr(model, "use_doc_length", False)
+            ),
             symbol_embedding_dim=int(
                 getattr(model, "symbol_embedding_dim", 0) or 0
+            ),
+            aux_horizons=tuple(
+                int(v) for v in getattr(model, "aux_horizons", ()) or ()
+            ),
+            aux_horizon_alpha=float(
+                getattr(model, "aux_horizon_alpha", 0.3)
             ),
         )
 
@@ -744,10 +938,9 @@ class RichFeatureScalerParams:
 
     The scaler is a robust z-score ``(x - median) / iqr``. Constant
     columns (IQR < ``epsilon`` on the train slice) get their IQR coerced
-    to ``1.0`` so the transform reduces to a pure centering step --
-    safe against the placeholder ``credibility_market_implied_gap``
-    (always 0.0 by contract today) and against any per-family ablation
-    that zeros a slot before the scaler sees it.
+    to ``1.0`` so the transform reduces to a pure centering step -- safe
+    against any per-family ablation that zeros a slot before the scaler
+    sees it (e.g. ``--ablate-credibility``).
     """
 
     medians: tuple[float, ...]
@@ -960,6 +1153,31 @@ class FeatureVector:
     # #444 vote-tally signed feature block. See ADR 0038.
     vote_features: list[float] | None = None
     vote_features_missing: float = 1.0
+    # #478 VIX term-structure + VRP at T-1. Six strict-prior scalars
+    # plus a paired missing flag. The block is appended past the
+    # vote-tally tail by ``as_rich_list`` only when the loader
+    # populates the slot under ``--use-vix-features``; default ``None``
+    # keeps the regression / legacy paths byte-identical.
+    vix_features: list[float] | None = None
+    vix_features_missing: float = 1.0
+    # #543 doc_length feature. ``log(1 + token_count)`` as a single
+    # scalar broadcast onto every bar of every supervised event. The
+    # slot is appended past the VIX tail by ``as_rich_list`` only when
+    # the loader populates it (``--use-doc-length``). Default ``None``
+    # keeps the regression / legacy paths byte-identical. No missing
+    # flag because every supervised row carries a non-empty text body
+    # so ``token_count`` is always defined.
+    doc_length: float | None = None
+    # #495 confounder-ablation block. Optional per-event control vector
+    # (year one-hot, meeting-kind one-hot, log token count, or any
+    # combination thereof) appended past the legacy tail blocks by
+    # ``as_rich_list`` only when populated. The width is determined by
+    # the ablation cell the runner constructs; the in-place adapter at
+    # the runner writes the same length onto every FeatureVector of a
+    # sequence so the per-bar input size stays consistent across the
+    # sequence. Default ``None`` keeps every legacy / non-ablation path
+    # byte-identical (no block appended, no widening).
+    confounder_features: list[float] | None = None
     rich_payload: bool = False
     # Phase 9 V2 (#195) classification target. The forward 10-trading-day
     # realised volatility lives on the target row (the last vector in
@@ -1075,19 +1293,19 @@ class FeatureVector:
     # is the per-axis mask the loss reads to decide whether the row
     # contributes to that axis's loss. Indices use the canonical
     # mappings: stance {hawkish: 0, dovish: 1, neutral: 2}, certainty
-    # {certain: 0, uncertain: 1, neutral: 2}, topic {macro: 0,
-    # forward_guidance: 1, market_reaction: 2, other: 3}. Factor is a
-    # signed scalar in [-1, 1] (no idx). When a label is absent the
-    # target field stays at its default and the mask is False, so the
-    # masked loss contributes zero for that axis on that row.
+    # {certain: 0, uncertain: 1, neutral: 2}, time {forward looking: 0,
+    # not forward looking: 1}. When a label is absent the target field
+    # stays at its default and the mask is False, so the masked loss
+    # contributes zero for that axis on that row. The factor axis was
+    # retired (market-derived GSS target text cannot predict; 0% pool
+    # coverage); the topic axis was retired in ADR 0044 — no upstream
+    # FOMC or cross-bank corpus ships topic labels.
     target_stance_idx: int = -1
     target_stance_present: bool = False
-    target_factor: float = 0.0
-    target_factor_present: bool = False
+    target_time_idx: int = -1
+    target_time_present: bool = False
     target_certainty_idx: int = -1
     target_certainty_present: bool = False
-    target_topic_idx: int = -1
-    target_topic_present: bool = False
 
     @classmethod
     def from_market_state(
@@ -1110,6 +1328,17 @@ class FeatureVector:
         if previous_volatility is not None:
             volatility_change = float(market_volatility) - float(previous_volatility)
 
+        # Route the supplied embedding into BOTH the legacy
+        # ``text_embedding`` field and the rich-feature
+        # ``text_embedding_pooled`` field that the post-#173 forecaster
+        # tensor builder reads. ``text_embedding_missing`` flips to 0.0
+        # when an embedding is supplied so the model uses the channel
+        # instead of the absent-text zero-pad.
+        pooled: list[float] = []
+        missing = 1.0
+        if text_embedding is not None and len(text_embedding) > 0:
+            pooled = [float(v) for v in text_embedding]
+            missing = 0.0
         return cls(
             date=date,
             sentiment_score=float(sentiment_score),
@@ -1119,6 +1348,8 @@ class FeatureVector:
             volatility_change=float(volatility_change),
             elapsed_time=float(elapsed_time),
             text_embedding=list(text_embedding) if text_embedding is not None else None,
+            text_embedding_pooled=pooled,
+            text_embedding_missing=missing,
         )
 
     def as_list(self, close_scale: float = DEFAULT_CLOSE_SCALE) -> list[float]:
@@ -1268,6 +1499,12 @@ class FeatureVector:
             out = out + press_conf_block
         # #443 statement-delta tail.
         if self.statement_delta_embedding is not None:
+            if len(self.statement_delta_embedding) > RICH_STATEMENT_DELTA_DIM:
+                logger.warning(
+                    "statement_delta_embedding truncated from %d to %d",
+                    len(self.statement_delta_embedding),
+                    RICH_STATEMENT_DELTA_DIM,
+                )
             delta_block = [
                 float(v) for v in self.statement_delta_embedding[:RICH_STATEMENT_DELTA_DIM]
             ]
@@ -1286,6 +1523,30 @@ class FeatureVector:
                     RICH_VOTE_FEATURES_DIM - len(vote_block)
                 )
             out = out + vote_block + [float(self.vote_features_missing)]
+        # #478 VIX term-structure + VRP tail. Sits after vote and
+        # before the confounder block so every other tail flag's slice
+        # math stays unchanged.
+        if self.vix_features is not None:
+            vix_block = [
+                float(v) for v in self.vix_features[:RICH_VIX_FEATURES_DIM]
+            ]
+            if len(vix_block) < RICH_VIX_FEATURES_DIM:
+                vix_block = vix_block + [0.0] * (
+                    RICH_VIX_FEATURES_DIM - len(vix_block)
+                )
+            out = out + vix_block + [float(self.vix_features_missing)]
+        # #543 doc_length tail. ``log(1 + token_count)`` as a single
+        # scalar appended after the VIX tail and before the confounder
+        # block so every other tail flag's slice math stays unchanged.
+        if self.doc_length is not None:
+            out = out + [float(self.doc_length)]
+        # #495 confounder-ablation tail. Last block by construction so
+        # every other tail flag's slice math stays unchanged. Width is
+        # caller-determined (year FE / meeting-kind FE / log-token / any
+        # combo), so a downstream caller iterating slices must read it
+        # off the FeatureVector field directly.
+        if self.confounder_features is not None:
+            out = out + [float(v) for v in self.confounder_features]
         return out
 
 

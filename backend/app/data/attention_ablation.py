@@ -379,6 +379,12 @@ def _train_variant(
 
     if best_state is not None:
         model.load_state_dict(best_state)
+        # Putting the model in eval() drops dropout + switches batchnorm
+        # to inference mode; without this the "final" RMSE the ablation
+        # logs still reflects the training-time stochasticity that the
+        # best-state was captured under, which silently shifts the
+        # numbers downstream graders compare against.
+        model.eval()
 
     # Final evaluation: per-target RMSE + directional accuracy on val set.
     close_se: list[float] = []
@@ -407,7 +413,9 @@ def _train_variant(
             pred_close = pred[:, 0].cpu().numpy()
             pred_vol = pred[:, 1].cpu().numpy()
             last_close_norm = x[:, -1, 1].cpu().numpy()  # close index in as_list
-            for c_pred, c_true, v_pred, v_true, c_last in zip(pred_close, y_close, pred_vol, y_vol, last_close_norm):
+            for c_pred, c_true, v_pred, v_true, c_last in zip(
+                pred_close, y_close, pred_vol, y_vol, last_close_norm
+            ):
                 close_se.append((float(c_pred) - float(c_true)) ** 2)
                 vol_se.append((float(v_pred) - float(v_true)) ** 2)
                 pred_dir = 1 if c_pred > c_last else -1 if c_pred < c_last else 0
@@ -416,13 +424,15 @@ def _train_variant(
                     direction_hits += 1
                 direction_total += 1
                 last_history_close.append(float(c_last))
-                per_row_predictions.append({
-                    "predicted_close": float(c_pred),
-                    "actual_close": float(c_true),
-                    "predicted_volatility": float(v_pred),
-                    "actual_volatility": float(v_true),
-                    "last_history_close": float(c_last),
-                })
+                per_row_predictions.append(
+                    {
+                        "predicted_close": float(c_pred),
+                        "actual_close": float(c_true),
+                        "predicted_volatility": float(v_pred),
+                        "actual_volatility": float(v_true),
+                        "last_history_close": float(c_last),
+                    }
+                )
     close_rmse = math.sqrt(statistics.mean(close_se)) if close_se else 0.0
     vol_rmse = math.sqrt(statistics.mean(vol_se)) if vol_se else 0.0
     combined_rmse = math.sqrt((close_rmse**2 + vol_rmse**2) / 2)
@@ -564,7 +574,9 @@ def main() -> int:
 
     chunk_store_path = resolve_store_path(args.data_dir, args.training_package_id)
     if not chunk_store_path.exists():
-        raise SystemExit(f"Chunk store not found: {chunk_store_path}. Run chunk_embedding_store first.")
+        raise SystemExit(
+            f"Chunk store not found: {chunk_store_path}. Run chunk_embedding_store first."
+        )
     chunk_store = load_chunk_store(str(chunk_store_path))
     chunk_embedding_size = int(len(chunk_store.iloc[0]["embedding"]))
     print(f"[ablation] chunk_store rows={len(chunk_store)} embedding_size={chunk_embedding_size}")
@@ -622,11 +634,11 @@ def main() -> int:
     # 6-cell grid: {A on/off} × {B on/off, C on/off} — B and C are mutually exclusive.
     # name, use_a, use_b, use_c
     all_variants: list[tuple[str, bool, bool, bool]] = [
-        ("baseline",       False, False, False),
-        ("variant_a_only", True,  False, False),
-        ("variant_b_only", False, True,  False),
+        ("baseline", False, False, False),
+        ("variant_a_only", True, False, False),
+        ("variant_b_only", False, True, False),
         ("variant_c_only", False, False, True),
-        ("variant_a_plus_b", True, True,  False),
+        ("variant_a_plus_b", True, True, False),
         ("variant_a_plus_c", True, False, True),
     ]
 
@@ -704,7 +716,9 @@ def main() -> int:
         "results": results,
         "heatmaps": heatmaps_by_variant,
     }
-    (artifact_dir / "ablation_table.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (artifact_dir / "ablation_table.json").write_text(
+        json.dumps(summary, indent=2), encoding="utf-8"
+    )
     predictions_path = artifact_dir / "predictions.jsonl"
     with predictions_path.open("w", encoding="utf-8") as handle:
         for variant_name, rows in predictions_by_variant.items():

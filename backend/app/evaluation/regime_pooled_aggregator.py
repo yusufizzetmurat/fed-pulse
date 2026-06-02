@@ -444,9 +444,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     output_markdown = args.output_markdown or (input_dir / "pooled_test_macro_f1.md")
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_markdown.parent.mkdir(parents=True, exist_ok=True)
-    output_json.write_text(
-        json.dumps({"rows": [row.to_dict() for row in rows]}, indent=2)
-    )
+    output_json.write_text(json.dumps({"rows": [row.to_dict() for row in rows]}, indent=2))
     output_markdown.write_text(_render_markdown(rows))
     print(f"[regime_pooled_aggregator] wrote {output_json} + {output_markdown}")
     return 0

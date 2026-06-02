@@ -36,7 +36,9 @@ class _StubEncoder(nn.Module):
         return out
 
 
-def test_classifier_emits_four_axis_dict_from_stub_encoder() -> None:
+def test_classifier_emits_three_axis_dict_from_stub_encoder() -> None:
+    """Active axes: stance / certainty / time. Factor was retired (text
+    cannot predict the GSS target); topic was retired in ADR 0044."""
     torch.manual_seed(0)
     encoder = _StubEncoder(hidden_size=16, vocab_size=30)
     model = TextMultiAxisClassifier(
@@ -50,11 +52,10 @@ def test_classifier_emits_four_axis_dict_from_stub_encoder() -> None:
     input_ids = torch.randint(0, 30, (2, 12))
     attention_mask = torch.ones_like(input_ids)
     out = model(input_ids=input_ids, attention_mask=attention_mask)
-    assert set(out.keys()) == {"stance", "factor", "certainty", "topic"}
+    assert set(out.keys()) == {"stance", "certainty", "time"}
     assert out["stance"].shape == (2, 3)
-    assert out["factor"].shape == (2,)
     assert out["certainty"].shape == (2, 3)
-    assert out["topic"].shape == (2, 4)
+    assert out["time"].shape == (2, 2)
 
 
 def test_metadata_round_trips_encoder_provenance() -> None:
@@ -76,27 +77,66 @@ def test_metadata_round_trips_encoder_provenance() -> None:
     assert meta["hidden_size"] == 8
     assert meta["head_hidden_size"] == 4
     assert meta["stance_classes"] == 3
+    assert meta["certainty_classes"] == 3
+    assert meta["time_classes"] == 2
 
 
-def test_factor_branch_stays_in_minus_one_to_one_range() -> None:
-    """Tanh bound on the factor head — same contract as the shared
-    MultiTaskHead unit test, exercised here through the classifier
-    wrapper so a future refactor that bypasses the head is caught."""
+def test_from_encoder_alias_forwards_trust_remote_code(monkeypatch) -> None:
+    """#557: from_encoder_alias must thread the registry's trust_remote_code.
 
-    torch.manual_seed(1)
-    encoder = _StubEncoder(hidden_size=16, vocab_size=30)
-    model = TextMultiAxisClassifier(
-        encoder,
-        hidden_size=16,
-        head_hidden_size=8,
-        dropout=0.0,
+    Pre-fix the call site loaded the encoder without honoring the
+    registry flag; nomic-style encoders that ship custom modeling
+    code would raise. Monkey-patches AutoModel + encoder_ref so the
+    test runs without hitting the HF Hub.
+    """
+
+    captured = {}
+
+    def _fake_from_pretrained(repo, **kwargs):
+        captured["repo"] = repo
+        captured["kwargs"] = kwargs
+        config = type("FakeConfig", (), {"hidden_size": 16})()
+        encoder = type(
+            "FakeEncoder",
+            (),
+            {"config": config, "__init__": lambda self: None},
+        )()
+        return encoder
+
+    class _FakeRef:
+        repo = "fake/nomic-style-encoder"
+        revision = "deadbeef"
+        trust_remote_code = True
+
+    # from_encoder_alias does an inline ``from transformers import
+    # AutoModel`` so the monkey-patch has to land on the transformers
+    # module symbol that import resolves to, not a non-existent module
+    # attribute on the classifier module itself.
+    import transformers
+
+    monkeypatch.setattr(
+        transformers,
+        "AutoModel",
+        type("FakeAutoModel", (), {"from_pretrained": staticmethod(_fake_from_pretrained)}),
     )
-    # Push activations through with extreme weights to provoke
-    # saturation; without tanh the factor branch could exceed 1.
-    with torch.no_grad():
-        model.head.factor.weight.fill_(10.0)
-        model.head.factor.bias.fill_(10.0)
-    input_ids = torch.randint(0, 30, (4, 8))
-    out = model(input_ids=input_ids, attention_mask=torch.ones_like(input_ids))
-    assert torch.all(out["factor"] >= -1.0)
-    assert torch.all(out["factor"] <= 1.0)
+    import app.models.registry as registry
+    monkeypatch.setattr(registry, "encoder_ref", lambda alias: _FakeRef())
+
+    try:
+        TextMultiAxisClassifier.from_encoder_alias(
+            encoder_alias="fake_nomic",
+            head_hidden_size=8,
+            dropout=0.0,
+        )
+    except Exception:
+        # Construction may fail downstream (the fake encoder doesn't
+        # have a real forward) -- we only care that the from_pretrained
+        # call received trust_remote_code=True from the registry flag.
+        pass
+
+    assert captured.get("kwargs", {}).get("trust_remote_code") is True, (
+        "TextMultiAxisClassifier.from_encoder_alias did not forward "
+        "trust_remote_code from the registry-pinned EncoderRef. The fix "
+        "is to pass trust_remote_code=ref.trust_remote_code on the "
+        "AutoModel.from_pretrained call."
+    )

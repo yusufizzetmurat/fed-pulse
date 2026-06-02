@@ -84,7 +84,9 @@ def _parse_args() -> argparse.Namespace:
         description="Map source labels into deterministic 3-class taxonomy (hawkish/dovish/neutral)."
     )
     parser.add_argument("--input", default=str(DEFAULT_INPUT), help="Source registry JSONL.")
-    parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="Output labeled registry JSONL.")
+    parser.add_argument(
+        "--output", default=str(DEFAULT_OUTPUT), help="Output labeled registry JSONL."
+    )
     parser.add_argument(
         "--exceptions-output",
         default=str(DEFAULT_EXCEPTIONS),
@@ -243,17 +245,18 @@ def main() -> int:
         row["provenance"] = provenance
         row["sample_weight"] = sample_weight_for(provenance) if mapped else 0.0
         # Audit Tier 1.8: ``axes`` was constructed by reading flat
-        # ``axis_factor`` / ``axis_certainty`` / ``axis_topic`` columns
-        # that no upstream source actually emits, so the dict was
-        # ``{stance: <mapped>, factor: None, certainty: None, topic: None}``
-        # on every row even when the upstream had the data. The
-        # gtfintechlab and Op-Fed ingesters park their per-axis labels in
+        # ``axis_factor`` / ``axis_certainty`` columns that no upstream
+        # source actually emits, so the dict was
+        # ``{stance: <mapped>, factor: None, certainty: None}`` on every
+        # row even when the upstream had the data. The gtfintechlab and
+        # Op-Fed ingesters park their per-axis labels in
         # ``multi_axis_extras`` (gtfintechlab_time_label,
         # gtfintechlab_certain_label, op_fed_stance_nli, gss_target_factor,
         # gss_path_factor, ...). Lift those into ``axes`` so the
-        # downstream event-row builder, multi-axis slot, and any future
-        # per-topic stance head actually see them. The flat ``axis_*``
-        # path stays as a fallback for sources that one day emit them.
+        # downstream event-row builder + multi-axis slot actually see
+        # them. The flat ``axis_*`` path stays as a fallback for sources
+        # that one day emit them. The topic axis was retired (ADR 0044)
+        # because no upstream corpus ships topic labels.
         extras = row.get("multi_axis_extras") or {}
         if not isinstance(extras, dict):
             extras = {}
@@ -268,13 +271,11 @@ def main() -> int:
             else extras.get("gtfintechlab_certain_label")
         )
         time_value = _coerce_optional_str(extras.get("gtfintechlab_time_label"))
-        topic_value = _coerce_optional_str(row.get("axis_topic"))
         row["axes"] = {
             "stance": mapped,
             "factor": factor_value,
             "certainty": certainty_value,
             "time": time_value,
-            "topic": topic_value,
         }
 
         if not raw_label:
@@ -317,4 +318,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

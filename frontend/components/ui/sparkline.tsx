@@ -4,6 +4,7 @@ import {
   AreaChart,
   ResponsiveContainer,
   Tooltip,
+  YAxis,
 } from "recharts";
 
 import { cn } from "@/lib/utils";
@@ -17,6 +18,10 @@ interface SparklineProps {
   height?: number;
   labels?: string[];
   formatTooltip?: (value: number, label?: string) => string;
+  // When provided, pins the chart's Y range to a fixed span so a series
+  // sitting flat at zero (or any single value) still renders inside the
+  // container instead of collapsing to the baseline.
+  yDomain?: [number, number];
 }
 
 const TONE_VARS: Record<SparklineTone, string> = {
@@ -44,6 +49,7 @@ export function Sparkline({
   height = 28,
   labels,
   formatTooltip,
+  yDomain,
 }: SparklineProps) {
   const effectiveTone = inferTone(values, tone);
   const stroke = `hsl(${TONE_VARS[effectiveTone]})`;
@@ -62,7 +68,7 @@ export function Sparkline({
     return (
       <div
         className={cn("flex items-center text-[10px] text-muted-foreground", className)}
-        style={{ height }}
+        style={{ height, minHeight: height }}
       >
         no data
       </div>
@@ -72,7 +78,13 @@ export function Sparkline({
   const gradientId = React.useId();
 
   return (
-    <div className={cn("w-full", className)} style={{ height }}>
+    // ``minHeight`` keeps the ResponsiveContainer from rendering at 0px
+    // on first paint, which is what triggers the Recharts width=-1 /
+    // height=-1 warnings when the parent has not yet been measured.
+    <div
+      className={cn("w-full", className)}
+      style={{ height, minHeight: height }}
+    >
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
           <defs>
@@ -96,6 +108,7 @@ export function Sparkline({
               }}
             />
           ) : null}
+          {yDomain ? <YAxis domain={yDomain} hide /> : null}
           <Area
             type="monotone"
             dataKey="value"

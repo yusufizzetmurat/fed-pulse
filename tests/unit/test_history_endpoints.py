@@ -324,14 +324,19 @@ def _write_breakdown_artifact(root, *, package_id="tp_fixture"):
 
 def test_evaluation_classification_breakdown_reads_latest_artifact(client, tmp_path, monkeypatch):
     monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
-    _write_breakdown_artifact(tmp_path, package_id="tp_old")
-    # Newer artifact wins on mtime; touch to ensure mtime ordering.
+    older = _write_breakdown_artifact(tmp_path, package_id="tp_old")
+    # Newer artifact wins on mtime. Avoid ``time.sleep`` for ordering --
+    # filesystems with second-resolution mtimes (or fast CI runners)
+    # will round both writes to the same tick. Anchor both files at
+    # explicit timestamps so the ordering is deterministic regardless
+    # of FS resolution.
     import os
     import time
 
-    time.sleep(0.05)
     newer = _write_breakdown_artifact(tmp_path, package_id="tp_new")
-    os.utime(newer, None)
+    now = time.time()
+    os.utime(older, (now, now))
+    os.utime(newer, (now + 3, now + 3))
 
     response = client.get("/evaluation/classification-breakdown")
     assert response.status_code == 200

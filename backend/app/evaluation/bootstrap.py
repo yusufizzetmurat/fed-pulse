@@ -41,8 +41,14 @@ def block_bootstrap_ci(
     seed: int = 11,
 ) -> BootstrapCI:
     if not values:
-        return BootstrapCI(point=float("nan"), lo=float("nan"), hi=float("nan"),
-                           coverage=coverage, n_resamples=n_resamples, block_size=block_size)
+        return BootstrapCI(
+            point=float("nan"),
+            lo=float("nan"),
+            hi=float("nan"),
+            coverage=coverage,
+            n_resamples=n_resamples,
+            block_size=block_size,
+        )
     if statistic not in {"mean", "median"}:
         raise ValueError(f"unsupported statistic={statistic!r}")
     if not 0 < coverage < 1:

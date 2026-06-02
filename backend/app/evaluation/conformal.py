@@ -81,14 +81,10 @@ class ConformalManifest:
             "notes": self.notes,
             "softmax_quantile": self.softmax_quantile,
             "rates_residual_quantiles": (
-                dict(self.rates_residual_quantiles)
-                if self.rates_residual_quantiles
-                else None
+                dict(self.rates_residual_quantiles) if self.rates_residual_quantiles else None
             ),
             "rates_softmax_quantiles": (
-                dict(self.rates_softmax_quantiles)
-                if self.rates_softmax_quantiles
-                else None
+                dict(self.rates_softmax_quantiles) if self.rates_softmax_quantiles else None
             ),
             "class_conditional_coverage": (
                 # NaN sneaks in when a class is absent from the calibration
@@ -151,12 +147,8 @@ def calibrate_split_conformal(
         raise ValueError("close_predictions and close_actuals must align in length.")
     if len(volatility_predictions) != len(volatility_actuals):
         raise ValueError("volatility_predictions and volatility_actuals must align in length.")
-    close_resid = [
-        actual - pred for pred, actual in zip(close_predictions, close_actuals)
-    ]
-    vol_resid = [
-        actual - pred for pred, actual in zip(volatility_predictions, volatility_actuals)
-    ]
+    close_resid = [actual - pred for pred, actual in zip(close_predictions, close_actuals)]
+    vol_resid = [actual - pred for pred, actual in zip(volatility_predictions, volatility_actuals)]
     return ConformalManifest(
         alpha=float(alpha),
         nominal_coverage=1.0 - float(alpha),
@@ -320,9 +312,7 @@ def empirical_classification_coverage(
         )
     if not predicted_sets:
         return float("nan")
-    inside = sum(
-        1 for s, y in zip(predicted_sets, true_classes) if int(y) in {int(x) for x in s}
-    )
+    inside = sum(1 for s, y in zip(predicted_sets, true_classes) if int(y) in {int(x) for x in s})
     return inside / len(predicted_sets)
 
 
@@ -369,9 +359,7 @@ def compute_class_conditional_coverage(
             row_total += 1
             if int(true_class) in {int(x) for x in predicted_set}:
                 inside += 1
-        coverage[str(label)] = (
-            float(inside) / float(row_total) if row_total > 0 else float("nan")
-        )
+        coverage[str(label)] = float(inside) / float(row_total) if row_total > 0 else float("nan")
     return coverage
 
 
@@ -415,9 +403,7 @@ def compute_set_size_distribution(
                 "rewrites empties to {argmax} (see predict_conformal_set)."
             )
         if size > n_classes:
-            raise ValueError(
-                f"predicted set size {size} exceeds n_classes={n_classes}."
-            )
+            raise ValueError(f"predicted set size {size} exceeds n_classes={n_classes}.")
         counts[size] += 1
     return {k: float(counts.get(k, 0)) / float(total) for k in range(1, n_classes + 1)}
 
@@ -496,14 +482,11 @@ def compute_regression_band_class_coverage(  # noqa: C901 — single-pass valida
         )
     if len(raw_vol_cutoffs) != 2:
         raise ValueError(
-            f"raw_vol_cutoffs must carry exactly two cutoffs; "
-            f"got {len(raw_vol_cutoffs)}."
+            f"raw_vol_cutoffs must carry exactly two cutoffs; " f"got {len(raw_vol_cutoffs)}."
         )
     cutoff_low, cutoff_high = (float(c) for c in raw_vol_cutoffs)
     if cutoff_low <= 0.0 or cutoff_high <= 0.0 or cutoff_low > cutoff_high:
-        raise ValueError(
-            f"raw_vol_cutoffs must be positive and ordered; got {raw_vol_cutoffs!r}."
-        )
+        raise ValueError(f"raw_vol_cutoffs must be positive and ordered; got {raw_vol_cutoffs!r}.")
     q = float(residual_quantile)
     log_cutoff_low = math.log(cutoff_low)
     log_cutoff_high = math.log(cutoff_high)
@@ -555,10 +538,7 @@ def format_class_set_label(
     raising in the response serializer.
     """
 
-    labels = [
-        str(class_names[i]) if 0 <= int(i) < len(class_names) else "?"
-        for i in predicted_set
-    ]
+    labels = [str(class_names[i]) if 0 <= int(i) < len(class_names) else "?" for i in predicted_set]
     return "{" + ", ".join(labels) + "}"
 
 
@@ -602,18 +582,12 @@ def load_manifest(path: Path | str) -> ConformalManifest:  # noqa: C901 — JSON
     rates_softmax: dict[str, float] | None = None
     if isinstance(rates_residuals_raw, Mapping):
         rates_residuals = {
-            str(k): float(v)
-            for k, v in rates_residuals_raw.items()
-            if v is not None
+            str(k): float(v) for k, v in rates_residuals_raw.items() if v is not None
         }
         if not rates_residuals:
             rates_residuals = None
     if isinstance(rates_softmax_raw, Mapping):
-        rates_softmax = {
-            str(k): float(v)
-            for k, v in rates_softmax_raw.items()
-            if v is not None
-        }
+        rates_softmax = {str(k): float(v) for k, v in rates_softmax_raw.items() if v is not None}
         if not rates_softmax:
             rates_softmax = None
     # #326 conditional diagnostics. Pre-#326 manifests on disk simply
@@ -625,11 +599,7 @@ def load_manifest(path: Path | str) -> ConformalManifest:  # noqa: C901 — JSON
     class_cond: dict[str, float] | None = None
     set_size: dict[int, float] | None = None
     if isinstance(class_cond_raw, Mapping):
-        class_cond = {
-            str(k): float(v)
-            for k, v in class_cond_raw.items()
-            if v is not None
-        }
+        class_cond = {str(k): float(v) for k, v in class_cond_raw.items() if v is not None}
         if not class_cond:
             class_cond = None
     if isinstance(set_size_raw, Mapping):
@@ -650,9 +620,7 @@ def load_manifest(path: Path | str) -> ConformalManifest:  # noqa: C901 — JSON
         alpha=float(payload["alpha"]),
         nominal_coverage=float(payload["nominal_coverage"]),
         residual_quantile_close=float(payload.get("residual_quantile_close", 0.0)),
-        residual_quantile_volatility=float(
-            payload.get("residual_quantile_volatility", 0.0)
-        ),
+        residual_quantile_volatility=float(payload.get("residual_quantile_volatility", 0.0)),
         calibration_n=int(payload["calibration_n"]),
         notes=payload.get("notes"),
         softmax_quantile=(
@@ -725,7 +693,9 @@ def bootstrap_ci_columns(
 
     out: list[dict[str, float | int | str | None]] = []
     for row in rows:
-        result: dict[str, float | int | str | None] = {k: v for k, v in row.items() if k != sample_key}
+        result: dict[str, float | int | str | None] = {
+            k: v for k, v in row.items() if k != sample_key
+        }
         samples = row.get(sample_key)
         if isinstance(samples, Sequence) and len(samples) > 1:
             ci = block_bootstrap_ci(

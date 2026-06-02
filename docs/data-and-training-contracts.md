@@ -382,12 +382,13 @@ downstream consumer reads voyage rows with no shape change.
 The B1 (#212) LLM-as-features cache at
 `data/raw/llm_features/claude-sonnet-4-6_2026-05-19.v1/tp_v2_sprint1_2026_05_15_sentiment_market_core_v1.0_epv1_v1.0.parquet`
 is the authoritative artefact for the §6.6 Tier 4 / Tier 5 results.
-The catalogue was extracted with Claude Sonnet 4.6 at temperature 0;
-reproducibility binds to that specific Anthropic model snapshot.
-Anthropic will eventually retire `claude-sonnet-4-6`, after which the
-extraction script cannot reproduce the cache byte-for-byte from a
-future model — a successor model would shift category-level
-agreement on the 10-feature catalogue even at the same temperature.
+The catalogue was extracted with a frontier instruction-following LLM
+at temperature 0; reproducibility binds to that specific model snapshot
+(the specific model and version are pinned in the code). The provider
+will eventually retire that snapshot, after which the extraction script
+cannot reproduce the cache byte-for-byte from a future model — a
+successor model would shift category-level agreement on the 10-feature
+catalogue even at the same temperature.
 
 Rule:
 

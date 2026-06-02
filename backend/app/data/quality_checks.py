@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import DATA_DIR as DEFAULT_DATA_DIR
+
 DEFAULT_INPUT = DEFAULT_DATA_DIR / "interim" / "phase2" / "registry_labeled.jsonl"
 DEFAULT_OUTPUT = DEFAULT_DATA_DIR / "interim" / "phase2" / "registry_quality_passed.jsonl"
 DEFAULT_REPORT_DIR = DEFAULT_DATA_DIR / "interim" / "phase2" / "quality_reports"
@@ -22,7 +23,9 @@ def _parse_args() -> argparse.Namespace:
         description="Run Phase 2 quality and leakage checks with exact and near-duplicate blocking."
     )
     parser.add_argument("--input", default=str(DEFAULT_INPUT), help="Labeled registry JSONL input.")
-    parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="Quality-passed registry JSONL output.")
+    parser.add_argument(
+        "--output", default=str(DEFAULT_OUTPUT), help="Quality-passed registry JSONL output."
+    )
     parser.add_argument(
         "--report-dir",
         default=str(DEFAULT_REPORT_DIR),
@@ -99,7 +102,13 @@ def _exact_dedup(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict
         key = str(row.get("text_hash", ""))
         rid = str(row.get("record_id", ""))
         if key in seen:
-            dropped.append({"record_id": rid, "kept_record_id": seen[key], "reason": "exact_text_hash_duplicate"})
+            dropped.append(
+                {
+                    "record_id": rid,
+                    "kept_record_id": seen[key],
+                    "reason": "exact_text_hash_duplicate",
+                }
+            )
             continue
         seen[key] = rid
         kept.append(row)
@@ -112,7 +121,9 @@ def _exact_dedup(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict
     return kept, report
 
 
-def _near_dedup(rows: list[dict[str, Any]], threshold: float) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _near_dedup(
+    rows: list[dict[str, Any]], threshold: float
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     by_date: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         by_date[str(row.get("event_date", ""))].append(row)
@@ -121,7 +132,9 @@ def _near_dedup(rows: list[dict[str, Any]], threshold: float) -> tuple[list[dict
     blocked: list[dict[str, Any]] = []
 
     for _, group in by_date.items():
-        group_sorted = sorted(group, key=lambda r: (str(r.get("source", "")), str(r.get("record_id", ""))))
+        group_sorted = sorted(
+            group, key=lambda r: (str(r.get("source", "")), str(r.get("record_id", "")))
+        )
         survivors: list[dict[str, Any]] = []
         for row in group_sorted:
             text = str(row.get("text", ""))
@@ -160,14 +173,20 @@ def _near_dedup(rows: list[dict[str, Any]], threshold: float) -> tuple[list[dict
 
 
 def _leakage_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    invalid_dates = [str(r.get("record_id", "")) for r in rows if not _is_valid_date(str(r.get("event_date", "")))]
+    invalid_dates = [
+        str(r.get("record_id", ""))
+        for r in rows
+        if not _is_valid_date(str(r.get("event_date", "")))
+    ]
     source_record_dupes: list[dict[str, str]] = []
     seen: dict[str, str] = {}
     for row in rows:
         key = f"{row.get('source','')}::{row.get('source_record_id','')}"
         rid = str(row.get("record_id", ""))
         if key in seen:
-            source_record_dupes.append({"record_id": rid, "first_seen_record_id": seen[key], "key": key})
+            source_record_dupes.append(
+                {"record_id": rid, "first_seen_record_id": seen[key], "key": key}
+            )
         else:
             seen[key] = rid
     return {
@@ -227,10 +246,16 @@ def main() -> int:
     distribution = _distribution_report(near_kept)
 
     _write_jsonl(output_path, near_kept)
-    (report_dir / "dedup_report.json").write_text(json.dumps(exact_report, indent=2), encoding="utf-8")
-    (report_dir / "near_duplicate_report.json").write_text(json.dumps(near_report, indent=2), encoding="utf-8")
+    (report_dir / "dedup_report.json").write_text(
+        json.dumps(exact_report, indent=2), encoding="utf-8"
+    )
+    (report_dir / "near_duplicate_report.json").write_text(
+        json.dumps(near_report, indent=2), encoding="utf-8"
+    )
     (report_dir / "leakage_report.json").write_text(json.dumps(leakage, indent=2), encoding="utf-8")
-    (report_dir / "distribution_report.json").write_text(json.dumps(distribution, indent=2), encoding="utf-8")
+    (report_dir / "distribution_report.json").write_text(
+        json.dumps(distribution, indent=2), encoding="utf-8"
+    )
 
     print(f"Quality-passed registry written to {output_path}")
     print(f"Reports written to {report_dir}")
@@ -259,4 +284,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

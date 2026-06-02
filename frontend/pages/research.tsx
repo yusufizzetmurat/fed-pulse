@@ -1,5 +1,7 @@
 import * as React from "react";
 import Head from "next/head";
+import Link from "next/link";
+import { useRouter } from "next/router";
 import { FlaskConical } from "lucide-react";
 import {
   Bar,
@@ -15,7 +17,8 @@ import {
 import { toast } from "sonner";
 
 import { DecisionsLink } from "@/components/research/DecisionsLink";
-import { JobsLink } from "@/components/research/JobsLink";
+import { HonestScopePane } from "@/components/research/HonestScopePane";
+import { TerminalTab } from "@/components/research/TerminalTab";
 import { Header } from "@/components/shell/header";
 import { StatusBar } from "@/components/shell/status-bar";
 import { Badge } from "@/components/ui/badge";
@@ -29,14 +32,53 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fetchResearchArtifacts, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { friendlyEncoderName as friendlyEncoderAlias } from "@/lib/analyze/encoders";
 import { errorMessage } from "@/lib/analyze/errors";
 import type {
   ArtifactFile,
   CrossBankTransferSection,
+  EncoderAxisStanceSection,
   EncoderBakeoffSection,
   ResearchArtifactsResponse,
   TransferMatrixCell,
 } from "@/lib/analyze/types";
+
+// Strip an artefact path down to a short label before mapping through the
+// shared encoder-alias lookup. Keeps internal artefact paths out of the UI.
+// Checkpoint paths land here as `<root>/<alias>_<timestamp>_<seed>/checkpoint`;
+// pull the run directory and strip the timestamp+seed tail so the lookup sees
+// the bare alias.
+const RUN_TAIL_RE = /_\d{8}T\d{6}Z_s\d+$/;
+
+function friendlyEncoderName(raw: string): string {
+  if (!raw) return raw;
+  const parts = raw.split("/").filter(Boolean);
+  if (parts.length === 0) return raw;
+  const last = parts[parts.length - 1];
+  let candidate = last;
+  if (parts.length >= 2 && RUN_TAIL_RE.test(parts[parts.length - 2])) {
+    candidate = parts[parts.length - 2].replace(RUN_TAIL_RE, "");
+  } else if (RUN_TAIL_RE.test(last)) {
+    candidate = last.replace(RUN_TAIL_RE, "");
+  } else {
+    candidate = last.replace(/\.(json|csv|parquet|pt|bin|md)$/i, "");
+  }
+  return friendlyEncoderAlias(candidate || last);
+}
+
+// Bake-off table CHECKPOINT column previously rendered the full
+// `/data/artifacts/continued_pretraining/<alias>_<timestamp>_<seed>/checkpoint`
+// path. Trim that to the run-tag (`<alias>_<timestamp>_<seed>`) so the column
+// still uniquely identifies the run without leaking the internal artefact
+// directory. The full path stays accessible via the title attribute.
+function summarizeCheckpoint(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const parts = raw.split("/").filter(Boolean);
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    if (RUN_TAIL_RE.test(parts[i])) return parts[i];
+  }
+  return parts.length > 0 ? parts[parts.length - 1] : raw;
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -72,11 +114,13 @@ const BAKEOFF_TOOLTIP_STYLE: React.CSSProperties = {
 };
 
 function bakeoffBarColor(value: number, min: number, max: number): string {
-  if (max <= min) return "hsl(var(--primary))";
+  // Recharts sets this as an SVG fill attribute; CSS var() does not resolve there,
+  // so use a literal hsl() ramp anchored to the chart-1 hue (199).
+  if (max <= min) return "hsl(199 89% 48%)";
   const t = Math.max(0, Math.min(1, (value - min) / (max - min)));
-  // Sequential primary-tinted ramp; lighter at low scores.
-  const alpha = 0.35 + 0.6 * t;
-  return `hsla(var(--primary) / ${alpha.toFixed(3)})`;
+  // Lighter at low scores, saturated at high scores.
+  const lightness = 65 - 25 * t;
+  return `hsl(199 89% ${lightness.toFixed(1)}%)`;
 }
 
 interface BakeoffBarDatum {
@@ -97,7 +141,8 @@ function buildBakeoffBarData(section: EncoderBakeoffSection): BakeoffBarDatum[] 
       const offsetLow = low != null ? Math.max(0, row.macro_f1_mean - low) : 0;
       const offsetHigh = high != null ? Math.max(0, high - row.macro_f1_mean) : 0;
       return {
-        name: row.encoder_key,
+        name: friendlyEncoderName(row.encoder_key),
+        rawName: row.encoder_key,
         macroF1: row.macro_f1_mean,
         ciLow: low,
         ciHigh: high,
@@ -113,7 +158,7 @@ function bakeoffCallout(section: EncoderBakeoffSection): string | null {
   const runner = sorted[1];
   const gapPoints = (leader.macro_f1_mean - runner.macro_f1_mean) * 100;
   if (!Number.isFinite(gapPoints) || gapPoints <= 0) return null;
-  return `${leader.encoder_key} leads the overall F1 score by ${gapPoints.toFixed(1)} percentage points over ${runner.encoder_key}.`;
+  return `${friendlyEncoderName(leader.encoder_key)} leads the overall F1 score by ${gapPoints.toFixed(1)} percentage points over ${friendlyEncoderName(runner.encoder_key)}.`;
 }
 
 function crossBankCallout(
@@ -240,8 +285,13 @@ function EncoderBakeoffPane({ section }: { section: EncoderBakeoffSection }) {
           <tbody>
             {section.rows.map((row) => (
               <tr key={row.encoder_key} className="border-b border-border last:border-0">
-                <td className="px-4 py-2 font-medium">{row.encoder_key}</td>
-                <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{row.checkpoint || "—"}</td>
+                <td className="px-4 py-2 font-medium">{friendlyEncoderName(row.encoder_key)}</td>
+                <td
+                  className="px-4 py-2 font-mono text-xs text-muted-foreground"
+                  title={row.checkpoint ?? undefined}
+                >
+                  {summarizeCheckpoint(row.checkpoint) || "—"}
+                </td>
                 <td className="px-4 py-2 text-right font-mono text-muted-foreground">{row.seeds.length}</td>
                 <td className="px-4 py-2 text-right font-mono">{formatNumberOrDash(row.macro_f1_mean)}</td>
                 <td className="px-4 py-2 text-right font-mono text-muted-foreground">
@@ -252,6 +302,100 @@ function EncoderBakeoffPane({ section }: { section: EncoderBakeoffSection }) {
                 <td className="px-4 py-2 text-right font-mono">{formatNumberOrDash(row.cohen_kappa)}</td>
               </tr>
             ))}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
+  );
+}
+
+// Badge row under the bake-off card. Replaces the previous row that mapped
+// every aggregate.json path through `friendlyEncoderName`, which collapsed
+// all of them to the literal string "aggregate" and rendered ~11 identical
+// buttons. The rerun loader exposes a single JSON filename; the legacy
+// phase3 walk exposes a directory of seed-batch aggregates that we now
+// summarise as a single seed-batch count badge.
+function BakeoffSourceBadges({ files }: { files: string[] }) {
+  if (!files || files.length === 0) return null;
+  const aggregateBatches = files.filter((f) => /(^|\/)aggregate\.json$/i.test(f));
+  const otherFiles = files.filter((f) => !/(^|\/)aggregate\.json$/i.test(f));
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {otherFiles.map((f) => {
+        const basename = f.split("/").pop() ?? f;
+        return (
+          <Badge
+            key={f}
+            variant="outline"
+            className="font-mono text-[10px]"
+            title={f}
+          >
+            {basename}
+          </Badge>
+        );
+      })}
+      {aggregateBatches.length > 0 ? (
+        <Badge
+          variant="outline"
+          className="font-mono text-[10px]"
+          title={aggregateBatches.join("\n")}
+        >
+          {aggregateBatches.length} seed-batch aggregates
+        </Badge>
+      ) : null}
+    </div>
+  );
+}
+
+function EncoderAxisStancePane({ section }: { section: EncoderAxisStanceSection }) {
+  if (!section.available || section.rows.length === 0) {
+    return null;
+  }
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Encoder backbone for the stance head</CardTitle>
+        <CardDescription>
+          Held-out macro-F1 and validity Spearman of the stance-head retrain across four
+          backbones on the gtfintechlab + op_fed test set. xbank wins held-out F1; plain
+          FinBERT wins the policy-anchor correlation.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <table className="w-full text-sm">
+          <thead className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+            <tr>
+              <th className="px-4 py-2 text-left">Encoder</th>
+              <th className="px-4 py-2 text-right">Held-out F1</th>
+              <th className="px-4 py-2 text-right">Spearman ρ</th>
+              <th className="px-4 py-2 text-right">AUC hike-vs-cut</th>
+              <th className="px-4 py-2 text-left">Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {section.rows.map((row) => {
+              const note: string[] = [];
+              if (row.is_held_out_winner) note.push("held-out F1 winner");
+              if (row.is_validity_winner) note.push("validity-anchor winner");
+              return (
+                <tr key={row.encoder_alias} className="border-b border-border last:border-0">
+                  <td className="px-4 py-2 font-medium">{row.encoder_display}</td>
+                  <td
+                    className={`px-4 py-2 text-right font-mono ${row.is_held_out_winner ? "font-semibold text-foreground" : ""}`}
+                  >
+                    {row.held_out_f1.toFixed(3)}
+                  </td>
+                  <td
+                    className={`px-4 py-2 text-right font-mono ${row.is_validity_winner ? "font-semibold text-foreground" : ""}`}
+                  >
+                    {row.spearman_rho >= 0 ? "+" : ""}
+                    {row.spearman_rho.toFixed(3)}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">{row.auc_hike_vs_cut.toFixed(3)}</td>
+                  <td className="px-4 py-2 text-xs text-muted-foreground">{note.join(", ") || "—"}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </CardContent>
@@ -343,7 +487,7 @@ function CrossBankTransferPane({ section }: { section: CrossBankTransferSection 
                         style={cell ? { backgroundColor: heatmapColor(cell.metric, min, max) } : undefined}
                         title={renderCellTooltip(src, tgt, cell)}
                       >
-                        {cell ? "" : "—"}
+                        {cell ? cell.metric.toFixed(3) : "—"}
                       </td>
                     );
                   })}
@@ -422,7 +566,7 @@ function ArtifactsExplorer({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Downloads</CardTitle>
+        <CardTitle>Files</CardTitle>
         <CardDescription>
           {totalFiles} files across {sectionEntries.length} sections. Each file lists its size, last update, and a short note on what it is.
         </CardDescription>
@@ -470,10 +614,30 @@ function ArtifactsExplorer({
   );
 }
 
+const TAB_VALUES = new Set([
+  "scope",
+  "terminal",
+  "bakeoff",
+  "transfer",
+  "decisions",
+  "files",
+]);
+
 export default function ResearchPage() {
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
+  const router = useRouter();
   const [data, setData] = React.useState<ResearchArtifactsResponse | null>(null);
   const [loading, setLoading] = React.useState(true);
+  const [activeTab, setActiveTab] = React.useState<string>("scope");
+
+  React.useEffect(() => {
+    if (!router.isReady) return;
+    const raw = router.query.tab;
+    const candidate = Array.isArray(raw) ? raw[0] : raw;
+    if (candidate && TAB_VALUES.has(candidate)) {
+      setActiveTab(candidate);
+    }
+  }, [router.isReady, router.query.tab]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -495,22 +659,28 @@ export default function ResearchPage() {
   return (
     <>
       <Head>
-        <title>Research — Fed Pulse</title>
+        <title>Labs — Fed Pulse</title>
       </Head>
       <div className="min-h-screen bg-background text-foreground">
         <Header />
         <StatusBar />
         <main id="main-content" tabIndex={-1} className="container space-y-5 py-6 focus:outline-none">
-          <div className="space-y-1">
+          <div className="space-y-2">
             <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
               <FlaskConical className="h-6 w-6 text-primary" />
-              Research console
+              Labs
             </h1>
             <p className="max-w-2xl text-sm text-muted-foreground">
               Research artefacts the model is built on. The Bake-off compares text encoders.
               The Transfer matrix shows how a model trained on one central bank&apos;s statements
-              performs on another&apos;s. Decisions and Jobs link to training runs. Files lists the
-              raw artefact JSONs you can download.
+              performs on another&apos;s. Files lists the raw artefact JSONs you can download.
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Diff two analyses side-by-side in{" "}
+              <Link href="/compare" className="font-medium text-primary underline-offset-2 hover:underline">
+                Compare runs
+              </Link>
+              .
             </p>
           </div>
 
@@ -521,24 +691,26 @@ export default function ResearchPage() {
               <Skeleton className="h-48 w-full" />
             </div>
           ) : data ? (
-            <Tabs defaultValue="bakeoff" className="w-full">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
               <TabsList className="flex w-full flex-wrap justify-start">
+                <TabsTrigger value="scope">What it predicts</TabsTrigger>
+                <TabsTrigger value="terminal">Terminal</TabsTrigger>
                 <TabsTrigger value="bakeoff">Bake-off</TabsTrigger>
                 <TabsTrigger value="transfer">Transfer</TabsTrigger>
                 <TabsTrigger value="decisions">Decisions</TabsTrigger>
-                <TabsTrigger value="jobs">Jobs</TabsTrigger>
-                <TabsTrigger value="files">Downloads</TabsTrigger>
+                <TabsTrigger value="files">Files</TabsTrigger>
               </TabsList>
+              <TabsContent value="scope">
+                <HonestScopePane />
+              </TabsContent>
+              <TabsContent value="terminal">
+                <TerminalTab />
+              </TabsContent>
               <TabsContent value="bakeoff" className="space-y-3">
                 <EncoderBakeoffPane section={data.encoder_bakeoff} />
-                {data.encoder_bakeoff.source_files.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {data.encoder_bakeoff.source_files.map((f) => (
-                      <Badge key={f} variant="outline" className="font-mono text-[10px]">
-                        {f}
-                      </Badge>
-                    ))}
-                  </div>
+                <BakeoffSourceBadges files={data.encoder_bakeoff.source_files} />
+                {data.encoder_axis_stance ? (
+                  <EncoderAxisStancePane section={data.encoder_axis_stance} />
                 ) : null}
               </TabsContent>
               <TabsContent value="transfer" className="space-y-3">
@@ -546,8 +718,13 @@ export default function ResearchPage() {
                 {data.cross_bank_transfer.source_files.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">
                     {data.cross_bank_transfer.source_files.map((f) => (
-                      <Badge key={f} variant="outline" className="font-mono text-[10px]">
-                        {f}
+                      <Badge
+                        key={f}
+                        variant="outline"
+                        className="font-mono text-[10px]"
+                        title={f}
+                      >
+                        {friendlyEncoderName(f)}
                       </Badge>
                     ))}
                   </div>
@@ -555,9 +732,6 @@ export default function ResearchPage() {
               </TabsContent>
               <TabsContent value="decisions">
                 <DecisionsLink />
-              </TabsContent>
-              <TabsContent value="jobs">
-                <JobsLink />
               </TabsContent>
               <TabsContent value="files">
                 <ArtifactsExplorer sections={data.sections} />

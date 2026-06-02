@@ -289,10 +289,6 @@ def _axes_time_ok(value: Any) -> bool:
     return value is None or isinstance(value, str)
 
 
-def _axes_topic_ok(value: Any) -> bool:
-    return value is None or isinstance(value, str)
-
-
 def _axes_dict_ok(series: pd.Series) -> pd.Series:
     def _ok(value: Any) -> bool:
         if value is None:
@@ -304,7 +300,6 @@ def _axes_dict_ok(series: pd.Series) -> pd.Series:
             and _axes_factor_ok(value.get("factor"))
             and _axes_certainty_ok(value.get("certainty"))
             and _axes_time_ok(value.get("time"))
-            and _axes_topic_ok(value.get("topic"))
         )
 
     return series.map(_ok)
@@ -330,7 +325,7 @@ _NORMALIZED_DOC_COLUMNS: dict[str, Column] = {
         checks=Check(_axes_dict_ok, element_wise=False),
         nullable=True,
         required=True,
-        description="Multi-axis label payload {stance, factor, certainty, topic}.",
+        description="Multi-axis label payload {stance, factor, certainty}.",
     ),
     # Optional flat axis columns surface on emitters that flatten the axes
     # dict (e.g. event_dataset_builder writes flat columns). Marked
@@ -352,11 +347,6 @@ _NORMALIZED_DOC_COLUMNS: dict[str, Column] = {
     ),
     "axis_factor": Column(
         checks=Check(_nullable_finite_in_range(-1.0, 1.0)),
-        nullable=True,
-        required=False,
-    ),
-    "axis_topic": Column(
-        checks=Check(_nullable_str_or_none, element_wise=False),
         nullable=True,
         required=False,
     ),
@@ -495,11 +485,6 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
         nullable=True,
         required=True,
     ),
-    "axis_topic": Column(
-        checks=Check(_nullable_str_or_none, element_wise=False),
-        nullable=True,
-        required=True,
-    ),
     # String indicators lifted off ``multi_axis_extras`` (only the
     # gtfintechlab cross-bank corpora ship them today). Required=False
     # so older events.parquet files validate; the loader treats absent
@@ -530,12 +515,8 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
         required=False,
     ),
     "credibility_drift_score": Column(float, nullable=False, required=True, coerce=True),
-    "credibility_realized_vs_stated_gap": Column(
-        float, nullable=False, required=True, coerce=True
-    ),
-    "credibility_market_implied_gap": Column(
-        float, nullable=False, required=True, coerce=True
-    ),
+    "credibility_realized_vs_stated_gap": Column(float, nullable=False, required=True, coerce=True),
+    "credibility_market_implied_gap": Column(float, nullable=False, required=True, coerce=True),
     "credibility_months_since_reversal": Column(
         int,
         Check.greater_than_or_equal_to(0),
@@ -582,29 +563,17 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
     # log returns. Nullable for events too close to the end of the
     # price series; required=False so older events.parquet files (pre
     # Phase 9 V2) validate without the column present.
-    "forward_realized_vol_10d": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
+    "forward_realized_vol_10d": Column(float, nullable=True, required=False, coerce=True),
     # #480 multi-horizon auxiliary targets. Same generator as the
     # canonical 10d, parametrised window. Nullable per-horizon when the
     # post-event window runs off the end of the asset price series;
     # required=False so pre-#480 events.parquet files validate without
     # the columns present.
-    "forward_realized_vol_1d": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "forward_realized_vol_3d": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "forward_realized_vol_5d": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "forward_realized_vol_20d": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "forward_realized_vol_30d": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
+    "forward_realized_vol_1d": Column(float, nullable=True, required=False, coerce=True),
+    "forward_realized_vol_3d": Column(float, nullable=True, required=False, coerce=True),
+    "forward_realized_vol_5d": Column(float, nullable=True, required=False, coerce=True),
+    "forward_realized_vol_20d": Column(float, nullable=True, required=False, coerce=True),
+    "forward_realized_vol_30d": Column(float, nullable=True, required=False, coerce=True),
     # #236 GARCH(1,1)-residual decomposition. Nullable for events whose
     # strict-prior window is shorter than ``MIN_FIT_RETURNS`` (~252 td)
     # or the QMLE fit failed to converge. required=False so older
@@ -624,37 +593,29 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
     # columns. The pipeline emits None for symbols whose cache fetch
     # failed or for events sitting outside a symbol's listing window;
     # downstream learns to skip on the missing-data path.
-    "forward_realized_vol_10d_gspc": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "forward_realized_vol_10d_ndx": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "forward_realized_vol_10d_dji": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "forward_realized_vol_10d_dxy": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "forward_realized_vol_10d_vix": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "forward_realized_vol_10d_eurusd": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "forward_realized_vol_10d_usdjpy": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "forward_realized_vol_10d_gbpusd": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "concurrent_macro_release": Column(
-        bool, nullable=False, required=True, coerce=True
-    ),
+    "forward_realized_vol_10d_gspc": Column(float, nullable=True, required=False, coerce=True),
+    "forward_realized_vol_10d_ndx": Column(float, nullable=True, required=False, coerce=True),
+    "forward_realized_vol_10d_dji": Column(float, nullable=True, required=False, coerce=True),
+    "forward_realized_vol_10d_dxy": Column(float, nullable=True, required=False, coerce=True),
+    "forward_realized_vol_10d_vix": Column(float, nullable=True, required=False, coerce=True),
+    "forward_realized_vol_10d_eurusd": Column(float, nullable=True, required=False, coerce=True),
+    "forward_realized_vol_10d_usdjpy": Column(float, nullable=True, required=False, coerce=True),
+    "forward_realized_vol_10d_gbpusd": Column(float, nullable=True, required=False, coerce=True),
+    # ----- #478 VIX term-structure + VRP at T-1 -----
+    # Six nullable scalars read strictly before event_date from the
+    # ^VIX family cross-asset series plus the asset's own close history
+    # for the realised baseline. required=False so older events.parquet
+    # files (pre #478) validate. Per-scalar None on pre-coverage events
+    # (^VIX1M / ^VIX3M / ^VIX6M before 2008) or asset-history gaps.
+    "vix_t_minus_1": Column(float, nullable=True, required=False, coerce=True),
+    "vix1m_t_minus_1": Column(float, nullable=True, required=False, coerce=True),
+    "vix3m_t_minus_1": Column(float, nullable=True, required=False, coerce=True),
+    "vix6m_t_minus_1": Column(float, nullable=True, required=False, coerce=True),
+    "vix_3m_over_1m_slope": Column(float, nullable=True, required=False, coerce=True),
+    "vrp_t_minus_1": Column(float, nullable=True, required=False, coerce=True),
+    "concurrent_macro_release": Column(bool, nullable=False, required=True, coerce=True),
     "intra_meeting_stance_shift": Column(float, nullable=True, required=True, coerce=True),
-    "intra_meeting_certainty_shift": Column(
-        float, nullable=True, required=True, coerce=True
-    ),
+    "intra_meeting_certainty_shift": Column(float, nullable=True, required=True, coerce=True),
     "intra_meeting_factor_shift": Column(float, nullable=True, required=True, coerce=True),
     # ----- #291 rates-complex forward targets (raw bps) -----
     # required=False so older events.parquet files (pre #291) validate
@@ -673,18 +634,10 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
     "pre_meeting_trailing_2y_yield_change_5d_bps": Column(
         float, nullable=True, required=False, coerce=True
     ),
-    "pre_meeting_implied_next_move_bps": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "pre_meeting_implied_hike_prob": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "pre_meeting_implied_cut_prob": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "pre_meeting_implied_pause_prob": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
+    "pre_meeting_implied_next_move_bps": Column(float, nullable=True, required=False, coerce=True),
+    "pre_meeting_implied_hike_prob": Column(float, nullable=True, required=False, coerce=True),
+    "pre_meeting_implied_cut_prob": Column(float, nullable=True, required=False, coerce=True),
+    "pre_meeting_implied_pause_prob": Column(float, nullable=True, required=False, coerce=True),
     "pre_meeting_days_since_last_rate_change": Column(
         float,
         nullable=True,
@@ -700,28 +653,14 @@ _EVENT_ROW_COLUMNS: dict[str, Column] = {
     # required=False so pre-#443 events.parquet files validate clean.
     # coerce=True so in-memory ``object``-dtype rows cast to the
     # parquet-roundtripped ``string[pyarrow]`` dtype on validation.
-    "statement_delta_inserted": Column(
-        str, nullable=True, required=False, coerce=True
-    ),
-    "statement_delta_deleted": Column(
-        str, nullable=True, required=False, coerce=True
-    ),
-    "statement_delta_substituted_pairs": Column(
-        str, nullable=True, required=False, coerce=True
-    ),
-    "statement_delta_embedding": Column(
-        object, nullable=True, required=False
-    ),
+    "statement_delta_inserted": Column(str, nullable=True, required=False, coerce=True),
+    "statement_delta_deleted": Column(str, nullable=True, required=False, coerce=True),
+    "statement_delta_substituted_pairs": Column(str, nullable=True, required=False, coerce=True),
+    "statement_delta_embedding": Column(object, nullable=True, required=False),
     # ---- #444 vote tally + dissent ----
-    "votes_for": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "votes_against": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
-    "dissent_count": Column(
-        float, nullable=True, required=False, coerce=True
-    ),
+    "votes_for": Column(float, nullable=True, required=False, coerce=True),
+    "votes_against": Column(float, nullable=True, required=False, coerce=True),
+    "dissent_count": Column(float, nullable=True, required=False, coerce=True),
     "is_unanimous": Column(
         checks=Check(_nullable_in_set({True, False})),
         nullable=True,
@@ -824,9 +763,7 @@ _MP_SURPRISE_COLUMNS: dict[str, Column] = {
     "ff_target_prior": Column(float, nullable=True, required=True, coerce=True),
     "ff_target_after": Column(float, nullable=True, required=True, coerce=True),
     "mp_surprise_level": Column(float, nullable=True, required=True, coerce=True),
-    "mp_surprise_path_factor": Column(
-        float, nullable=True, required=True, coerce=True
-    ),
+    "mp_surprise_path_factor": Column(float, nullable=True, required=True, coerce=True),
     "pre_event_curve": Column(
         str,
         Check(_prior_bars_json_ok, element_wise=False),

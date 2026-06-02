@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 from datetime import date
@@ -24,6 +25,72 @@ from app.forecasting.next_fomc_decision import ORDINAL_CLASSES
 from app.services.fomc_calendar import list_all_meetings
 
 LOGGER = logging.getLogger(__name__)
+
+# Cold-start fallback: like the volume / RV / multi-axis cards, pull the
+# generated artifacts from the HF Hub when they are absent locally so a fresh
+# deploy hydrates without a manual ``make next-fomc`` run. Set the env to "" to
+# disable (e.g. in tests of the genuine empty-state).
+_NEXT_FOMC_HF_REPO = os.environ.get(
+    "FED_PULSE_NEXT_FOMC_HF_REPO", "yusufizzetmurat/fomc-next-decision"
+)
+_ARTIFACT_FILES: tuple[str, ...] = (
+    "results.json",
+    "metrics.json",
+    "feature_attribution.md",
+)
+_hub_hydration_attempted = False
+
+
+def _hf_token() -> str | None:
+    return os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+
+
+def _maybe_hydrate_from_hub(artifacts_dir: Path) -> None:
+    """Best-effort: fetch the next-FOMC artifacts from the Hub into
+    ``artifacts_dir`` when ``results.json`` is missing locally. Mirrors the
+    volume/RV cold-start fallbacks. Fail-safe and attempted once per process:
+    any error (no repo, no network, no access) leaves the directory untouched
+    and the loader returns its documented unavailable shape.
+    """
+
+    global _hub_hydration_attempted
+    if (artifacts_dir / "results.json").exists():
+        return
+    if _hub_hydration_attempted or not _NEXT_FOMC_HF_REPO:
+        return
+    _hub_hydration_attempted = True
+    try:
+        from huggingface_hub import hf_hub_download
+
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        token = _hf_token()
+        for filename in _ARTIFACT_FILES:
+            kwargs: dict[str, Any] = {
+                "repo_id": _NEXT_FOMC_HF_REPO,
+                "filename": filename,
+                "local_dir": str(artifacts_dir),
+            }
+            if token:
+                kwargs["token"] = token
+            try:
+                hf_hub_download(**kwargs)
+            except Exception as exc:  # per-file: a missing optional file is fine
+                LOGGER.info(
+                    "decision_forecast: Hub file %s unavailable on %s: %s",
+                    filename,
+                    _NEXT_FOMC_HF_REPO,
+                    exc,
+                )
+        LOGGER.info(
+            "decision_forecast: hydrated next-FOMC artifacts from Hub %s",
+            _NEXT_FOMC_HF_REPO,
+        )
+    except Exception as exc:  # fail-safe — never break the endpoint on a cold start
+        LOGGER.info(
+            "decision_forecast: could not hydrate from Hub %s: %s",
+            _NEXT_FOMC_HF_REPO,
+            exc,
+        )
 
 
 @dataclass(frozen=True)
@@ -159,6 +226,9 @@ def load_next_fomc_artifacts(
     reference = reference_date or date.today()
     upcoming = _next_scheduled_after(reference)
 
+    # Cold-start: pull artifacts from the Hub if they are not on disk yet.
+    _maybe_hydrate_from_hub(artifacts_dir)
+
     base_response = {
         "available": False,
         "artifacts_dir": str(artifacts_dir),
@@ -190,7 +260,9 @@ def load_next_fomc_artifacts(
         return base_response
 
     predictions_raw: list[dict[str, Any]] = list(results.get("predictions") or [])
-    summary = {k: int(v) for k, v in (results.get("summary") or {}).items() if isinstance(v, int | float)}
+    summary = {
+        k: int(v) for k, v in (results.get("summary") or {}).items() if isinstance(v, int | float)
+    }
 
     # Decode each prediction; tolerate missing fields.
     decoded: list[_PredictedDecision] = []
@@ -203,7 +275,9 @@ def load_next_fomc_artifacts(
                     target_event_date=str(entry["target_event_date"]),
                     target_as_of_ts=str(entry["target_as_of_ts"]),
                     target_class=(
-                        str(entry["target_class"]) if entry.get("target_class") is not None else None
+                        str(entry["target_class"])
+                        if entry.get("target_class") is not None
+                        else None
                     ),
                     n_train_rows=int(entry.get("n_train_rows", 0)),
                     probabilities={
@@ -250,9 +324,7 @@ def load_next_fomc_artifacts(
             metrics_payload = {}
         model_names = list(metrics_payload.get("model_names") or [])
         metrics_full = _coerce_metrics(metrics_payload.get("full_window") or {})
-        metrics_ex_pandemic = _coerce_metrics(
-            metrics_payload.get("ex_pandemic_window") or {}
-        )
+        metrics_ex_pandemic = _coerce_metrics(metrics_payload.get("ex_pandemic_window") or {})
 
     feature_attribution: list[dict[str, Any]] = []
     if attribution_path.exists():
@@ -261,9 +333,7 @@ def load_next_fomc_artifacts(
                 attribution_path.read_text(encoding="utf-8")
             )
         except OSError as exc:
-            LOGGER.warning(
-                "decision_forecast: failed to read %s: %s", attribution_path, exc
-            )
+            LOGGER.warning("decision_forecast: failed to read %s: %s", attribution_path, exc)
 
     return {
         "available": True,
@@ -304,7 +374,6 @@ def _coerce_confusion_matrix(value: Any) -> dict[str, dict[str, int]]:
         if not isinstance(row, dict):
             continue
         out[str(truth_class)] = {
-            str(pred_class): _maybe_int(count) or 0
-            for pred_class, count in row.items()
+            str(pred_class): _maybe_int(count) or 0 for pred_class, count in row.items()
         }
     return out

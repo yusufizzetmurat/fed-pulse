@@ -128,9 +128,7 @@ def load_latest(artifacts_root: Path) -> BreakdownPayload | None:
 
     mtime, path, payload, breakdown = best
     relative = str(path.relative_to(artifacts_root))
-    modified_iso = (
-        datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
-    )
+    modified_iso = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
 
     per_class_raw = breakdown.get("per_class") or []
     per_class: list[dict[str, Any]] = []

@@ -156,9 +156,7 @@ def _validate_train_end(train_end: str | None) -> str | None:
     try:
         return date_type.fromisoformat(text).isoformat()
     except ValueError as exc:
-        raise ValueError(
-            f"train_end {train_end!r} is not a valid ISO date (YYYY-MM-DD)"
-        ) from exc
+        raise ValueError(f"train_end {train_end!r} is not a valid ISO date (YYYY-MM-DD)") from exc
 
 
 def resolve_train_end_from_fold(
@@ -173,23 +171,17 @@ def resolve_train_end_from_fold(
 
     manifest_path = events_parquet.parent / FOLD_MANIFEST_FILENAME
     if not manifest_path.exists():
-        raise ValueError(
-            f"fold manifest not found at {manifest_path}; pass --train-end explicitly"
-        )
+        raise ValueError(f"fold manifest not found at {manifest_path}; pass --train-end explicitly")
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     folds = payload.get("folds") or []
     for fold in folds:
         if fold.get("fold_id") == fold_id:
             train_end = fold.get("train_end")
             if not train_end:
-                raise ValueError(
-                    f"fold {fold_id!r} in {manifest_path} carries no train_end"
-                )
+                raise ValueError(f"fold {fold_id!r} in {manifest_path} carries no train_end")
             return str(train_end)
     available = sorted(str(f.get("fold_id", "")) for f in folds)
-    raise ValueError(
-        f"fold_id {fold_id!r} not found in {manifest_path}; available: {available}"
-    )
+    raise ValueError(f"fold_id {fold_id!r} not found in {manifest_path}; available: {available}")
 
 
 def resolve_test_end_from_fold(
@@ -415,9 +407,7 @@ def apply_standardisation(
         for t in range(seq.inputs.shape[0]):
             if not seq.mask[t]:
                 continue
-            new_inputs[t, :embedding_dim] = (
-                new_inputs[t, :embedding_dim] - mean
-            ) / std
+            new_inputs[t, :embedding_dim] = (new_inputs[t, :embedding_dim] - mean) / std
         rescaled.append(
             TrainingSequence(
                 target_event_date=seq.target_event_date,
@@ -459,9 +449,7 @@ def standardise_inputs(
         )
     fit_source = train_sequences if train_sequences is not None else sequences
     mean, std = fit_standardisation_stats(fit_source, embedding_dim=embedding_dim)
-    rescaled = apply_standardisation(
-        sequences, embedding_dim=embedding_dim, mean=mean, std=std
-    )
+    rescaled = apply_standardisation(sequences, embedding_dim=embedding_dim, mean=mean, std=std)
     return rescaled, mean, std
 
 
@@ -499,9 +487,7 @@ def _history_label_lists(
     return histories
 
 
-def assert_parameter_count_within_cap(
-    model: Any, *, cap: int = DEFAULT_PARAMETER_COUNT_CAP
-) -> int:
+def assert_parameter_count_within_cap(model: Any, *, cap: int = DEFAULT_PARAMETER_COUNT_CAP) -> int:
     """Block oversized trajectory architectures from entering the train loop (#332).
 
     With ~250 historical statements, even the 2x32 Transformer (~50k
@@ -545,12 +531,8 @@ def _to_tensor_batch(sequences: Sequence[TrainingSequence], torch_mod: Any) -> t
     inputs = torch_mod.tensor(
         np.stack([seq.inputs for seq in sequences], axis=0), dtype=torch_mod.float32
     )
-    mask = torch_mod.tensor(
-        np.stack([seq.mask for seq in sequences], axis=0), dtype=torch_mod.bool
-    )
-    labels = torch_mod.tensor(
-        [seq.label_index for seq in sequences], dtype=torch_mod.long
-    )
+    mask = torch_mod.tensor(np.stack([seq.mask for seq in sequences], axis=0), dtype=torch_mod.bool)
+    labels = torch_mod.tensor([seq.label_index for seq in sequences], dtype=torch_mod.long)
     return inputs, mask, labels
 
 
@@ -580,9 +562,7 @@ def train_model(  # noqa: PLR0913 — keyword-only knobs mirror the train_and_pe
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     model.train()
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=learning_rate, weight_decay=weight_decay
-    )
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     loss_fn = torch.nn.CrossEntropyLoss()
 
     indices = list(range(len(sequences)))
@@ -659,9 +639,7 @@ def macro_f1(true_labels: Sequence[int], predicted_labels: Sequence[int]) -> flo
     return float(sum(per_class) / len(per_class))
 
 
-def directional_accuracy(
-    true_labels: Sequence[int], predicted_labels: Sequence[int]
-) -> float:
+def directional_accuracy(true_labels: Sequence[int], predicted_labels: Sequence[int]) -> float:
     """Share of rows where the predicted class matches the truth.
 
     Direct accuracy here — the 3-class stance set has no natural
@@ -779,9 +757,7 @@ def fit_pca_axes(
 
     arr = np.asarray(train_matrix, dtype=np.float32)
     if arr.ndim != 2 or arr.shape[0] == 0 or arr.shape[1] < 2:
-        mean = (
-            np.zeros(arr.shape[1] if arr.ndim == 2 else 0, dtype=np.float32)
-        )
+        mean = np.zeros(arr.shape[1] if arr.ndim == 2 else 0, dtype=np.float32)
         components = np.zeros((2, mean.shape[0]), dtype=np.float32)
         return mean, components
     mean = arr.mean(axis=0).astype(np.float32)
@@ -912,32 +888,24 @@ def persist_bundle(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only pe
 
     cutoff_iso = _validate_train_end(train_end)
     if cutoff_iso is not None:
-        keep_mask = np.array(
-            [row.event_date < cutoff_iso for row in meetings], dtype=bool
-        )
+        keep_mask = np.array([row.event_date < cutoff_iso for row in meetings], dtype=bool)
     else:
         keep_mask = np.ones(len(meetings), dtype=bool)
     kept_meetings = [m for m, keep in zip(meetings, keep_mask) if keep]
-    kept_embeddings = (
-        raw_embeddings[keep_mask] if raw_embeddings.size else raw_embeddings
-    )
+    kept_embeddings = raw_embeddings[keep_mask] if raw_embeddings.size else raw_embeddings
 
     # 2D projection: project the persisted slice onto the caller's
     # pre-fit axes when available (walk-forward path); otherwise fit
     # on the persisted slice itself (legacy / smoke path).
     if pca_mean is not None and pca_components is not None and kept_embeddings.size:
-        projected = project_with_axes(
-            kept_embeddings, mean=pca_mean, components=pca_components
-        )
+        projected = project_with_axes(kept_embeddings, mean=pca_mean, components=pca_components)
     else:
         # Fallback path: re-fit on the persisted slice. Safe because
         # the persisted slice itself is train-side (post-cutoff rows
         # were already dropped above), so the geometry still excludes
         # holdout rows.
         pca_mean, pca_components = fit_pca_axes(kept_embeddings)
-        projected = project_with_axes(
-            kept_embeddings, mean=pca_mean, components=pca_components
-        )
+        projected = project_with_axes(kept_embeddings, mean=pca_mean, components=pca_components)
     if projected.shape[0] != len(kept_meetings):
         projected = np.zeros((len(kept_meetings), 2), dtype=np.float32)
 
@@ -956,11 +924,7 @@ def persist_bundle(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only pe
                     if row.trailing_2y_yield_change_5d_bps is not None
                     else None
                 ),
-                "vix_close": (
-                    float(row.vix_close)
-                    if row.vix_close is not None
-                    else None
-                ),
+                "vix_close": (float(row.vix_close) if row.vix_close is not None else None),
             }
         )
     metadata_df = pd.DataFrame(rows)
@@ -971,7 +935,9 @@ def persist_bundle(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only pe
         "embeddings": (
             kept_embeddings.astype(np.float32)
             if kept_embeddings.size
-            else np.zeros((0, raw_embeddings.shape[1] if raw_embeddings.ndim == 2 else 0), dtype=np.float32)
+            else np.zeros(
+                (0, raw_embeddings.shape[1] if raw_embeddings.ndim == 2 else 0), dtype=np.float32
+            )
         ),
         "feature_mean": feature_mean.astype(np.float32),
         "feature_std": feature_std.astype(np.float32),
@@ -1053,15 +1019,11 @@ def _default_embed_fn() -> Callable[[list[str]], np.ndarray]:
 
         ref = encoder_ref(DEFAULT_BASE_ENCODER_ALIAS)
         if ref is None:
-            raise ValueError(
-                f"Encoder alias {DEFAULT_BASE_ENCODER_ALIAS!r} not in registry"
-            )
+            raise ValueError(f"Encoder alias {DEFAULT_BASE_ENCODER_ALIAS!r} not in registry")
         tokenizer = AutoTokenizer.from_pretrained(
             ref.repo, local_files_only=True, trust_remote_code=False
         )
-        model = AutoModel.from_pretrained(
-            ref.repo, local_files_only=True, trust_remote_code=False
-        )
+        model = AutoModel.from_pretrained(ref.repo, local_files_only=True, trust_remote_code=False)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
         model.eval()
@@ -1121,13 +1083,9 @@ def train_and_persist(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only
     """
 
     if architecture not in ("lstm", "transformer"):
-        raise ValueError(
-            f"architecture must be 'lstm' or 'transformer'; got {architecture!r}"
-        )
+        raise ValueError(f"architecture must be 'lstm' or 'transformer'; got {architecture!r}")
     if train_end is not None and fold_id is not None:
-        raise ValueError(
-            "--train-end and --fold-id are mutually exclusive; pass only one"
-        )
+        raise ValueError("--train-end and --fold-id are mutually exclusive; pass only one")
     resolved_train_end: str | None
     if fold_id is not None:
         resolved_train_end = resolve_train_end_from_fold(
@@ -1139,14 +1097,10 @@ def train_and_persist(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only
     events = pd.read_parquet(events_parquet)
     meetings = distill_meeting_rows(events)
     if not meetings:
-        raise RuntimeError(
-            f"events_parquet {events_parquet} yielded zero statement rows"
-        )
+        raise RuntimeError(f"events_parquet {events_parquet} yielded zero statement rows")
 
     embedder = embed_fn if embed_fn is not None else _default_embed_fn()
-    raw_embeddings = np.asarray(
-        embedder([row.text for row in meetings]), dtype=np.float32
-    )
+    raw_embeddings = np.asarray(embedder([row.text for row in meetings]), dtype=np.float32)
     if raw_embeddings.ndim != 2 or raw_embeddings.shape[0] != len(meetings):
         raise ValueError(
             "embed_fn must return a 2-D array with one row per meeting; "
@@ -1191,7 +1145,9 @@ def train_and_persist(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only
             resolved_test_end = resolve_test_end_from_fold(
                 events_parquet=Path(events_parquet), fold_id=fold_id
             )
-        except Exception:  # pragma: no cover — guarded so a missing manifest never crashes the trainer
+        except (
+            Exception
+        ):  # pragma: no cover — guarded so a missing manifest never crashes the trainer
             resolved_test_end = None
 
     pre_cutoff: list[TrainingSequence] = []
@@ -1203,10 +1159,7 @@ def train_and_persist(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only
             if seq.target_event_date < resolved_train_end:
                 pre_cutoff.append(seq)
             else:
-                if (
-                    resolved_test_end is None
-                    or seq.target_event_date < resolved_test_end
-                ):
+                if resolved_test_end is None or seq.target_event_date < resolved_test_end:
                     post_cutoff.append(seq)
     if not pre_cutoff:
         raise RuntimeError(
@@ -1273,9 +1226,7 @@ def train_and_persist(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only
     else:
         train_embedding_mask = np.ones(len(meetings), dtype=bool)
     train_embeddings_slice = (
-        raw_embeddings[train_embedding_mask]
-        if raw_embeddings.size
-        else raw_embeddings
+        raw_embeddings[train_embedding_mask] if raw_embeddings.size else raw_embeddings
     )
     pca_mean, pca_components = fit_pca_axes(train_embeddings_slice)
 
@@ -1352,7 +1303,9 @@ def train_and_persist(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only
                 seed=seed,
                 fallback_modal=modal,
             )
-        except Exception:  # pragma: no cover — guarded so a torch import / fit failure never crashes the trainer
+        except (
+            Exception
+        ):  # pragma: no cover — guarded so a torch import / fit failure never crashes the trainer
             _logger.warning("trajectory_small_lstm_baseline_failed", exc_info=True)
             lstm_result = None
 
@@ -1400,9 +1353,7 @@ def train_and_persist(  # noqa: PLR0913, C901, PLR0912, PLR0915 — keyword-only
         model_parameter_count = None
 
     resolved_run_name = run_name or (
-        DEFAULT_RUN_NAME_LSTM
-        if architecture == "lstm"
-        else DEFAULT_RUN_NAME_TRANSFORMER
+        DEFAULT_RUN_NAME_LSTM if architecture == "lstm" else DEFAULT_RUN_NAME_TRANSFORMER
     )
     out_dir = Path(output_root) / resolved_run_name
     persist_bundle(
@@ -1448,9 +1399,7 @@ def _parse_args() -> argparse.Namespace:
         description="Train a trajectory model (LSTM or Transformer) (#296)."
     )
     parser.add_argument("--events-parquet", required=True, type=Path)
-    parser.add_argument(
-        "--architecture", required=True, choices=("lstm", "transformer")
-    )
+    parser.add_argument("--architecture", required=True, choices=("lstm", "transformer"))
     parser.add_argument("--base-encoder-alias", default=DEFAULT_BASE_ENCODER_ALIAS)
     parser.add_argument("--encoder-revision", default="")
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT), type=Path)
@@ -1464,9 +1413,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--train-end", default=None)
     parser.add_argument("--fold-id", default=None)
     parser.add_argument("--holdout-share", type=float, default=DEFAULT_HOLDOUT_SHARE)
-    parser.add_argument(
-        "--calibration-share", type=float, default=DEFAULT_CALIBRATION_SHARE
-    )
+    parser.add_argument("--calibration-share", type=float, default=DEFAULT_CALIBRATION_SHARE)
     parser.add_argument("--conformal-alpha", type=float, default=0.2)
     parser.add_argument("--training-package-id", default=None)
     parser.add_argument(
@@ -1490,9 +1437,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = _parse_args()
-    logging.basicConfig(
-        level=logging.INFO, format="%(levelname)s %(name)s %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     out_dir = train_and_persist(
         events_parquet=args.events_parquet,
         architecture=args.architecture,

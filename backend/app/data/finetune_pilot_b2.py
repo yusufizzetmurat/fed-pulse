@@ -51,11 +51,9 @@ import numpy as np
 
 from app.config import BACKEND_ROOT, DATA_DIR as DEFAULT_DATA_DIR
 from app.evaluation.classification_breakdown import compute_classification_breakdown
-from app.models.registry import resolve_by_role, revision_for
+from app.models.registry import encoder_ref, resolve_by_role, revision_for
 
-DEFAULT_OUTPUT_PATH = (
-    BACKEND_ROOT.parent / "artifacts" / "experiments" / "finetune_pilot_b2.json"
-)
+DEFAULT_OUTPUT_PATH = BACKEND_ROOT.parent / "artifacts" / "experiments" / "finetune_pilot_b2.json"
 DEFAULT_ARTIFACT_ROOT = DEFAULT_DATA_DIR / "artifacts" / "finetune_pilot_b2"
 
 # Class order is pinned by the existing vol-regime classifier convention
@@ -316,9 +314,7 @@ def build_partition_classification_targets(
 
     from app.training.loaders import fit_vol_regime_quantiles, vol_regime_class_for
 
-    cutoffs = fit_vol_regime_quantiles(
-        [r.forward_vol for r in train_rows], n_classes=N_CLASSES
-    )
+    cutoffs = fit_vol_regime_quantiles([r.forward_vol for r in train_rows], n_classes=N_CLASSES)
     labels: list[int] = []
     kept: list[int] = []
     for idx, row in enumerate(rows):
@@ -432,27 +428,35 @@ def _train_and_eval_one_cell(  # noqa: PLR0913 — per-cell knobs surface as nam
 
     _set_all_seeds(seed)
 
-    enable_aux = bool(
-        phrasebank_rows
-        and phrasebank_aux_lambda > 0.0
-        and len(phrasebank_rows) > 0
-    )
+    enable_aux = bool(phrasebank_rows and phrasebank_aux_lambda > 0.0 and len(phrasebank_rows) > 0)
 
     hf_token = _hf_token()
     revision = revision_for(encoder_alias)
+    # ``encoder_alias`` is the registry alias (e.g. ``finbert_fed_adjacent``);
+    # ``from_pretrained`` needs the underlying repo id (HF slug like
+    # ``yusufizzetmurat/finbert-fed-adjacent`` after #464, or a local
+    # path for unpinned-local entries). Look it up via ``encoder_ref``.
+    ref = encoder_ref(encoder_alias)
+    encoder_repo = ref.repo if ref is not None else encoder_alias
     tokenizer_kwargs: dict[str, Any] = {"token": hf_token} if hf_token else {}
     if revision:
         tokenizer_kwargs["revision"] = revision
-    tokenizer = AutoTokenizer.from_pretrained(encoder_alias, **tokenizer_kwargs)
+    if ref is not None and getattr(ref, "trust_remote_code", False):
+        tokenizer_kwargs["trust_remote_code"] = True
+    tokenizer = AutoTokenizer.from_pretrained(encoder_repo, **tokenizer_kwargs)
 
+    model_kwargs: dict[str, Any] = {}
+    if ref is not None and getattr(ref, "trust_remote_code", False):
+        model_kwargs["trust_remote_code"] = True
     model = AutoModelForSequenceClassification.from_pretrained(
-        encoder_alias,
+        encoder_repo,
         num_labels=N_CLASSES,
         id2label=ID2LABEL,
         label2id=LABEL2ID,
         ignore_mismatched_sizes=True,
         token=hf_token,
         revision=revision,
+        **model_kwargs,
     )
 
     # Auxiliary 3-class linear head over the encoder's pooled output.
@@ -578,9 +582,7 @@ def _train_and_eval_one_cell(  # noqa: PLR0913 — per-cell knobs surface as nam
                     input_ids=aux_input_ids,
                     attention_mask=aux_attention_mask,
                 )
-                aux_pooled = _pooled_from_base_model_output(
-                    aux_outputs, aux_attention_mask
-                )
+                aux_pooled = _pooled_from_base_model_output(aux_outputs, aux_attention_mask)
                 aux_logits = aux_head(aux_pooled)
                 aux_loss = nn.functional.cross_entropy(aux_logits, aux_labels_t)
                 aux_losses.append(float(aux_loss.detach().item()))
@@ -614,11 +616,7 @@ def _train_and_eval_one_cell(  # noqa: PLR0913 — per-cell knobs surface as nam
         preds, truth, n_classes=N_CLASSES, class_scores=softmaxes
     )
 
-    accuracy = (
-        sum(1 for p, t in zip(preds, truth) if p == t) / len(truth)
-        if truth
-        else 0.0
-    )
+    accuracy = sum(1 for p, t in zip(preds, truth) if p == t) / len(truth) if truth else 0.0
 
     return {
         "train_loss": mean_train_loss,
@@ -629,18 +627,14 @@ def _train_and_eval_one_cell(  # noqa: PLR0913 — per-cell knobs surface as nam
         "train_runtime_s": train_runtime,
         "eval_runtime_s": eval_runtime,
         "phrasebank_aux_train_loss": mean_aux_loss,
-        "phrasebank_aux_lambda": (
-            phrasebank_aux_lambda if aux_head is not None else 0.0
-        ),
+        "phrasebank_aux_lambda": (phrasebank_aux_lambda if aux_head is not None else 0.0),
         "phrasebank_aux_rows": (
             len(phrasebank_rows) if (aux_head is not None and phrasebank_rows) else 0
         ),
     }
 
 
-def _pooled_from_base_model_output(
-    outputs: Any, attention_mask: "Any"
-) -> "Any":
+def _pooled_from_base_model_output(outputs: Any, attention_mask: "Any") -> "Any":
     """Extract a pooled vector from a HF base-model output.
 
     BERT-family backbones expose ``pooler_output`` directly; backbones
@@ -671,9 +665,7 @@ def run_sweep(args: argparse.Namespace) -> dict[str, Any]:
 
     fold_ids = list(args.folds) if args.folds else _all_fold_ids(package_dir)
     if not fold_ids:
-        raise SystemExit(
-            f"No folds resolved from {package_dir}; supply --folds explicitly."
-        )
+        raise SystemExit(f"No folds resolved from {package_dir}; supply --folds explicitly.")
 
     # PhraseBank auxiliary-task rows (#33 Path B). Loaded once and
     # shared across every (seed, fold) cell so the aux pool is constant
@@ -698,10 +690,7 @@ def run_sweep(args: argparse.Namespace) -> dict[str, Any]:
                 load_phrasebank_rows,
             )
 
-            subset = (
-                getattr(args, "phrasebank_subset", None)
-                or "sentences_allagree"
-            )
+            subset = getattr(args, "phrasebank_subset", None) or "sentences_allagree"
             local_jsonl = getattr(args, "phrasebank_jsonl", None)
             cache_root = getattr(args, "phrasebank_cache_root", None)
             phrasebank_rows = load_phrasebank_rows(
@@ -711,8 +700,7 @@ def run_sweep(args: argparse.Namespace) -> dict[str, Any]:
             )
             if not phrasebank_rows:
                 raise SystemExit(
-                    "PhraseBank loader returned no rows; aux flag is on but "
-                    "pool is empty."
+                    "PhraseBank loader returned no rows; aux flag is on but " "pool is empty."
                 )
             phrasebank_meta = {
                 "enabled": True,
@@ -772,9 +760,7 @@ def run_sweep(args: argparse.Namespace) -> dict[str, Any]:
                 weight_decay=args.weight_decay,
                 max_length=args.max_length,
                 phrasebank_rows=phrasebank_rows,
-                phrasebank_aux_lambda=float(
-                    getattr(args, "phrasebank_aux_lambda", 0.0)
-                ),
+                phrasebank_aux_lambda=float(getattr(args, "phrasebank_aux_lambda", 0.0)),
             )
             cell = FoldCell(
                 seed=seed,
@@ -896,10 +882,7 @@ def _parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=None,
-        help=(
-            "Output JSON path. Defaults to "
-            "artifacts/experiments/finetune_pilot_b2.json."
-        ),
+        help=("Output JSON path. Defaults to " "artifacts/experiments/finetune_pilot_b2.json."),
     )
     # PhraseBank auxiliary-task knobs (#33 Path B). Default off so the
     # CLI without these flags reproduces pre-#33 B2 byte-identically.
@@ -920,8 +903,7 @@ def _parse_args() -> argparse.Namespace:
             "Auxiliary-loss weight applied to the PhraseBank CE term "
             "when --enable-phrasebank-aux is on. Default 0.3 mirrors "
             "the multi-task LSTM-stage default lambdas in "
-            "MultiTaskLoss (lambda_factor / lambda_certainty / "
-            "lambda_topic)."
+            "MultiTaskLoss (lambda_factor / lambda_certainty)."
         ),
     )
     parser.add_argument(

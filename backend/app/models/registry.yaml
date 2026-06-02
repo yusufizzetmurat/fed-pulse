@@ -107,7 +107,14 @@ encoders:
     revision: b0753ae76394dd36bcfb912a46018088bca48be0
     gated: false
     task: sentence_embedding
-    description: Nomic embed text v1.5. Sentence-embedding encoder; second bake-off entry alongside BGE.
+    description: |
+      Nomic embed text v1.5. Sentence-embedding encoder; second bake-off
+      entry alongside BGE. Ships custom modeling code (``nomic-bert-2048``)
+      so ``trust_remote_code: true`` is required for ``AutoModel`` /
+      ``AutoConfig`` to consume the repo. Security envelope: only this
+      alias opts in; the registry default keeps every other encoder on
+      the standard transformers path.
+    trust_remote_code: true
     inference_features: []
 
   voyage_finance_2:
@@ -115,6 +122,8 @@ encoders:
     revision: voyage-finance-2
     gated: true
     task: sentence_embedding
+    api_only: true
+    hidden_size: 1024
     description: |
       Voyage AI voyage-finance-2 sentence-embedding encoder (1024-dim,
       finance-tuned). Served by Voyage's hosted REST API, not the
@@ -122,7 +131,13 @@ encoders:
       ``scripts/cache_voyage_embeddings.py`` rather than going through
       ``app.data.embedding_cache``. ``VOYAGE_API_KEY`` must be set;
       Voyage does not publish a checkpoint sha, so the revision field
-      pins the model name itself.
+      pins the model name itself. ``api_only: true`` tells every code
+      path that would otherwise call ``AutoConfig.from_pretrained``
+      / ``AutoModel.from_pretrained`` against ``ref.repo`` to read the
+      cached embeddings off disk instead (the from_pretrained call
+      would 404 against the API-only repo); ``hidden_size: 1024``
+      surfaces the encoder's native pooled-vector dim without needing
+      to instantiate the model.
     inference_features: []
 
   finbert_fed_adjacent:
@@ -255,8 +270,9 @@ encoders:
       - text_embedding_missing
 
   finbert_fed_adjacent_xbank_aux_stance_masked:
-    repo: /data/artifacts/text_multi_axis/text_multi_axis_20260525T105459Z/hf_checkpoints
-    revision: "20260525T105459Z"
+    repo: yusufizzetmurat/finbert-fed-adjacent-xbank-aux-stance-masked
+    hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent-xbank-aux-stance-masked
+    revision: "8cfedd05b73903abd30b646becc2f4660bb36524"
     gated: false
     task: stance_classification
     description: |
@@ -276,8 +292,9 @@ encoders:
       - text_embedding_missing
 
   finbert_fed_adjacent_xbank_aux_weighted:
-    repo: /data/artifacts/text_multi_axis/text_multi_axis_20260525T110428Z/hf_checkpoints
-    revision: "20260525T110428Z"
+    repo: yusufizzetmurat/finbert-fed-adjacent-xbank-aux-weighted
+    hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent-xbank-aux-weighted
+    revision: "9be23ae09e3133ef4bb13fe6b068bfe24fd8b319"
     gated: false
     task: stance_classification
     description: |
@@ -295,8 +312,9 @@ encoders:
       - text_embedding_missing
 
   finbert_fed_adjacent_xbank_dapt_retrieval:
-    repo: /data/artifacts/retrieval/finbert_fed_adjacent_xbank_dapt_retrieval/checkpoint
-    revision: ""
+    repo: yusufizzetmurat/finbert-fed-adjacent-xbank-dapt-retrieval
+    hf_uri: hf://yusufizzetmurat/finbert-fed-adjacent-xbank-dapt-retrieval
+    revision: "766c09d5c65a420eeebc7d4bf74e615509ded03d"
     gated: false
     task: sentence_embedding
     description: |
@@ -318,8 +336,9 @@ encoders:
       - text_embedding_missing
 
   trajectory_lstm:
-    repo: /data/artifacts/trajectory/trajectory_lstm/model.pt
-    revision: ""
+    repo: yusufizzetmurat/fed-pulse-trajectory-lstm
+    hf_uri: hf://yusufizzetmurat/fed-pulse-trajectory-lstm
+    revision: "ac4d45acbe5ba841a7b2e14167f02561d90ed7c4"
     gated: false
     task: trajectory_classification
     description: |
@@ -335,8 +354,9 @@ encoders:
     inference_features: []
 
   trajectory_transformer:
-    repo: /data/artifacts/trajectory/trajectory_transformer/model.pt
-    revision: ""
+    repo: yusufizzetmurat/fed-pulse-trajectory-transformer
+    hf_uri: hf://yusufizzetmurat/fed-pulse-trajectory-transformer
+    revision: "6312ed6a5d679d7a9ac56ec2700207860ba9237f"
     gated: false
     task: trajectory_classification
     description: |
@@ -403,25 +423,81 @@ artefacts:
 
   forecaster_canonical:
     hf_uri: hf://yusufizzetmurat/fed-pulse-forecaster
-    revision: "de318540e2c9def75c0b6068dcebf73fd22dbb1d"
+    revision: "7ab0a87399336b67ca4e2423a40ed8ab6666530b"
     eager: true
     description: |
-      Canonical multi-head forecaster checkpoint (#292). Loaded into
-      ``backend/models/forecaster_best.pt`` on first boot.
+      Canonical forecaster checkpoint loaded into
+      ``backend/models/forecaster_best.pt`` on first boot. The
+      ``7ab0a873`` revision is the LSTM classification-only head
+      (text+market, regime_accuracy 0.838, regime_f1_macro 0.655)
+      and supersedes the earlier ``2a178cb5`` transformer dual-head
+      checkpoint (kept in HF history for any consumer still pinned
+      to it). The bundle ships the inference-contract sidecar
+      (``forecaster_best.pt.inference_contract.json``), the
+      conformal manifest (``forecaster_best.conformal.json``), the
+      FinBERT-side LoRA adapter
+      (``forecaster_best.pt.lora_adapter.pt``), and the calibration
+      sidecar (``forecaster_calibration_fresh.pt``).
     inference_features:
       - text_embedding
       - text_embedding_missing
       - credibility
 
+  multi_axis_text_classifier:
+    hf_uri: hf://yusufizzetmurat/fed-pulse-multi-axis-text-classifier
+    revision: "c863f18753e87f2576b3609112a10efd85671e8f"
+    eager: false
+    description: |
+      Multi-axis text classifier checkpoints. Each
+      ``text_multi_axis_seedNN.pt`` is a single-seed fine-tuned
+      encoder with a multi-task classification head (stance /
+      certainty / time); ``text_multi_axis_best.pt`` is the
+      singleton inference checkpoint the ``/analyze`` multi-axis
+      service loads from ``backend/models/text_multi_axis_best.pt``.
+      Seeds 11, 47, 97 are mirrored. MIT-licensed; backbone encoder
+      pin is ``encoder_canonical`` (``finbert_fed_adjacent_xbank_dapt``)
+      above. Backbone was rotated off ``finbert_fed_adjacent`` after
+      the encoder-axis study showed +0.073 Spearman against DFF and
+      +0.016 AUC hike-vs-cut on the 122-meeting policy-anchor test;
+      see ``docs/research/multi-axis-xbank-dapt-promotion.md`` for
+      the head-to-head numbers.
+    inference_features:
+      - text_embedding
+      - text_embedding_missing
+
   rates_heads_canonical:
     hf_uri: hf://yusufizzetmurat/fed-pulse-rates-heads
     revision: "0a76dabb67006b532e376d9b4dd69b8ad172e7d7"
-    eager: true
+    # eager: false until the rates-heads bundle has a filename distinct
+    # from ``forecaster_best.pt``. Today both this entry and
+    # ``forecaster_canonical`` map to the same MODELS_DIR filename, so
+    # eager-pulling both would race; the boot shim therefore omits this
+    # entry from its copy map. Flip back to true once the rates-heads
+    # checkpoint ships under its own filename.
+    eager: false
     description: Multi-target rates heads checkpoint (#292/#293).
     inference_features:
       - text_embedding
       - text_embedding_missing
       - credibility
+
+  volume_har_canonical:
+    hf_uri: hf://yusufizzetmurat/fomc-volume-har
+    revision: "c63ca9c7d15649f5e54719a6d263ffa5311dac6f"
+    eager: true
+    description: |
+      HAR Corsi log-volume artifact for the Expected Volume card. JSON
+      bundle of per-horizon (h=1, 5, 22) regression coefficients, weekday
+      and month-end / quarter-end seasonality block, and conformal
+      residual quantiles. Eager-pulled into
+      ``backend/models/volume_har/volume_har_artifact.json`` so cold
+      starts skip the in-process fit against live yfinance volume.
+      Fitted on 3121 daily bars of ^GSPC volume (2014-01-02 to
+      2026-06-02) with 5-fold expanding walk-forward; pooled OOS R^2
+      h1 0.4676, h5 0.5479, h22 0.5053. Replaces the earlier
+      180-bar cold-start spec which surfaced negative R^2 on the
+      Expected Volume card.
+    inference_features: []
 
   retrieval_bundle:
     hf_uri: hf://yusufizzetmurat/fed-pulse-retrieval
@@ -443,7 +519,7 @@ artefacts:
 
   training_package:
     hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-training-package
-    revision: "b0320d8731753bc5bf4a05b9dcd57898c3f84fbd"
+    revision: "a045140c88506b7d0b86bd2f8e80101b65c078bf"
     eager: false
     description: |
       Canonical training package for ``make reproduce-all``. Pulled to
@@ -451,14 +527,56 @@ artefacts:
       ``huggingface_hub.snapshot_download(repo_type='dataset')``.
       Rebuilt 2026-05-30 against the fresh source-corpus pulls (#487-#489)
       with every optional family populated (rates panel, GARCH residual,
-      statement delta, vote tally, multi-horizon vol, per-asset vol).
-      Events.parquet carries the merged ``multi_axis_extras`` payload so
-      GSS / Swanson bp-scale factor decompositions reach the trainer
-      without a re-join to ``registry_normalized.parquet``; rates panel
-      extended back to 1990-01-01 so pre-2008 statements (~1.7k rows)
-      carry treas_2y / treas_10y features at 73.8% instead of 0%. The
-      pre-rebuild row at b9a71cc97a is preserved on the Hub for
-      reproducibility but is no longer the resolution target.
+      statement delta, vote tally, multi-horizon vol, per-asset vol) and
+      the #443 ``statement_delta_embedding`` column populated end-to-end
+      via ``--delta-encoder finbert_fed_adjacent`` (1427/7172 rows, every
+      statement event with a strict-prior statement). Events.parquet
+      carries the merged ``multi_axis_extras`` payload so GSS / Swanson
+      bp-scale factor decompositions reach the trainer without a re-join
+      to ``registry_normalized.parquet``; rates panel extended back to
+      1990-01-01 so pre-2008 statements (~1.7k rows) carry treas_2y /
+      treas_10y features at 73.8% instead of 0%. Prior rows at
+      b0320d8731 (pre-delta-encoder) and b9a71cc97a (pre-2026-05-30
+      rebuild) are preserved on the Hub for reproducibility but are no
+      longer the resolution target.
+    inference_features: []
+
+  training_package_60bar:
+    hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-training-package
+    revision: "51cce38ebe58166042933876d8e23bdcb76b8306"
+    eager: false
+    description: |
+      60-bar prior-window variant of the canonical training package
+      (#209/#476). Identical events, labels, splits, and fold manifest
+      to the canonical pin; the only difference is ``prior_bars_json``
+      carries 60 trailing bars instead of 20. Rebuilt 2026-05-30 with
+      the same ``--delta-encoder finbert_fed_adjacent`` pass so
+      statement_delta_embedding stays populated (1427/7172 rows).
+      Pulled to ``data/processed/canonical_60bar/`` via the same
+      ``snapshot_download(repo_type='dataset', revision=...)`` recipe
+      as the canonical TP. Consumed by the ``seq_len_60`` sweep arm
+      once the loader's ``sequence_length`` plumbing lands.
+    inference_features: []
+
+  training_package_vix:
+    hf_uri: hf://datasets/yusufizzetmurat/fed-pulse-training-package
+    revision: "347d3e30465a170b4504358f4ace7a88c1652f84"
+    eager: false
+    description: |
+      VIX-extended variant of the canonical training package (#478).
+      Identical events, labels, splits, and fold manifest to the
+      canonical pin; events.parquet carries the six new strict-prior
+      VIX columns (``vix_t_minus_1``, ``vix1m_t_minus_1``,
+      ``vix3m_t_minus_1``, ``vix6m_t_minus_1``,
+      ``vix_3m_over_1m_slope``, ``vrp_t_minus_1``) plus the
+      ``forward_realized_vol_10d_vix`` realised baseline. Rebuilt
+      laptop-side 2026-05-31 against the post-#478 event_dataset_builder
+      so the ``vix_features`` arm can exercise real values instead of
+      hitting the missing-flag fallback the canonical TP forces on it.
+      Pulled to ``data/processed/canonical_vix/`` via the same
+      ``snapshot_download(repo_type='dataset', revision=...)`` recipe
+      as the canonical TP. Consumed by ``--use-vix-features`` arms
+      against ``--training-package-id canonical_vix``.
     inference_features: []
 
   embedding_caches:

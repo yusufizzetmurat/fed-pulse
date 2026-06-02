@@ -1,7 +1,8 @@
 import * as React from "react";
 import { Calendar, CircleDot, Cpu, GitBranch } from "lucide-react";
 
-import { fetchFomcCalendar, resolveApiBaseUrl } from "@/lib/analyze/api";
+import { useSharedCalendar } from "@/lib/analyze/shared-context";
+import { friendlyEncoderName } from "@/lib/analyze/encoders";
 import { cn } from "@/lib/utils";
 import type { AnalyzeResult } from "@/lib/analyze/types";
 
@@ -32,40 +33,36 @@ export function StatusBar({
   documentDate,
   className,
 }: StatusBarProps) {
-  const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
-  const [upcoming, setUpcoming] = React.useState<UpcomingMeeting | null>(null);
-
-  React.useEffect(() => {
-    const controller = new AbortController();
-    fetchFomcCalendar(apiBaseUrl, { upcoming_limit: 1, past_limit: 0 }, controller.signal)
-      .then((response) => {
-        if (controller.signal.aborted) return;
-        const next = response.upcoming?.[0];
-        if (!next) return;
-        const days = computeDaysUntil(next.meeting_date);
-        if (Number.isNaN(days)) return;
-        setUpcoming({ date: next.meeting_date, daysUntil: days });
-      })
-      .catch(() => {
-        // Calendar is best-effort; the next-FOMC field just stays hidden.
-      });
-    return () => {
-      controller.abort();
-    };
-  }, [apiBaseUrl]);
+  const calendar = useSharedCalendar();
+  const upcoming = React.useMemo<UpcomingMeeting | null>(() => {
+    const next = calendar.data?.upcoming?.[0];
+    if (!next) return null;
+    const days = computeDaysUntil(next.meeting_date);
+    if (Number.isNaN(days)) return null;
+    return { date: next.meeting_date, daysUntil: days };
+  }, [calendar.data]);
 
   const encoderKey = result?.model?.encoder_key ?? null;
   const checkpointLoaded = result?.model?.checkpoint_loaded;
   const runtimeMode = result?.model?.runtime_mode;
 
-  // Tri-state: loading (running) > result present (checkpoint loaded /
-  // no checkpoint based on diagnostics) > no result yet (awaiting).
-  // Before this branch the third case rendered as "no checkpoint",
-  // which read like an error on initial page load.
+  // Browse mode: pages that don't drive an /analyze submit (Calendar,
+  // Settings, Performance, Compare, Research) leave `result` and
+  // `loading` undefined. Suppress the analyze-state chip on those pages
+  // so the status bar does not read "awaiting analysis" forever; it's
+  // misleading copy outside the Workspace flow.
+  const isAnalyzeHost = result !== undefined || loading !== undefined;
+
+  // Tri-state on Workspace: loading (running) > result present
+  // (checkpoint loaded / no checkpoint based on diagnostics) > no result
+  // yet (awaiting).
   const hasResult = Boolean(result);
-  let stateLabel: string;
+  let stateLabel: string | null;
   let stateTone: string;
-  if (loading) {
+  if (!isAnalyzeHost) {
+    stateLabel = null;
+    stateTone = "text-muted-foreground";
+  } else if (loading) {
     stateLabel = "running";
     stateTone = "animate-pulse text-hawkish";
   } else if (!hasResult) {
@@ -88,13 +85,15 @@ export function StatusBar({
         className,
       )}
     >
-      <div className="flex items-center gap-1.5">
-        <CircleDot
-          className={cn("h-2 w-2 fill-current", stateTone)}
-          aria-hidden="true"
-        />
-        <span>{stateLabel}</span>
-      </div>
+      {stateLabel !== null ? (
+        <div className="flex items-center gap-1.5">
+          <CircleDot
+            className={cn("h-2 w-2 fill-current", stateTone)}
+            aria-hidden="true"
+          />
+          <span>{stateLabel}</span>
+        </div>
+      ) : null}
       {symbol ? (
         <div className="flex items-center gap-1.5">
           <span>symbol</span>
@@ -108,9 +107,9 @@ export function StatusBar({
         </div>
       ) : null}
       {encoderKey ? (
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5" title={encoderKey}>
           <Cpu className="h-3 w-3" aria-hidden="true" />
-          <span className="numeric text-foreground">{encoderKey}</span>
+          <span className="numeric text-foreground">{friendlyEncoderName(encoderKey)}</span>
         </div>
       ) : null}
       {runtimeMode ? (

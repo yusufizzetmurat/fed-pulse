@@ -18,7 +18,7 @@ Feature families
 
 * ``ois``        -- 5-tenor pre-event OIS-implied curve + level/path/info
                     factors from :file:`mp_surprises.parquet`.
-* ``text``       -- multi-axis stance / time / certainty / factor / topic
+* ``text``       -- multi-axis stance / certainty / time
                     from :file:`events.parquet`. Multi-source duplicates
                     collapse to one row per meeting; the statement is the
                     preferred document kind when available.
@@ -383,9 +383,7 @@ def _dispatch_ordinal(
     return _build_numpy_handle(classes=classes, alpha=alpha)
 
 
-def _build_numpy_handle(
-    *, classes: Sequence[str], alpha: float
-) -> OrdinalModelHandle:
+def _build_numpy_handle(*, classes: Sequence[str], alpha: float) -> OrdinalModelHandle:
     model = ProportionalOddsLogit(alpha=alpha)
 
     def _fit(X: np.ndarray, y: np.ndarray) -> None:
@@ -394,12 +392,12 @@ def _build_numpy_handle(
     def _predict_proba(X: np.ndarray) -> np.ndarray:
         return model.predict_proba(X)
 
-    return OrdinalModelHandle(backend="numpy_proportional_odds", fit_fn=_fit, predict_proba_fn=_predict_proba)
+    return OrdinalModelHandle(
+        backend="numpy_proportional_odds", fit_fn=_fit, predict_proba_fn=_predict_proba
+    )
 
 
-def _build_statsmodels_handle(
-    *, classes: Sequence[str], alpha: float
-) -> OrdinalModelHandle:
+def _build_statsmodels_handle(*, classes: Sequence[str], alpha: float) -> OrdinalModelHandle:
     # Imported lazily; statsmodels is not in the backend's dependencies.
     from statsmodels.miscmodels.ordinal_model import OrderedModel  # type: ignore[import-not-found]
 
@@ -419,12 +417,12 @@ def _build_statsmodels_handle(
         # ``predict`` on OrderedModel returns per-class probabilities.
         return np.asarray(result.predict(X), dtype=np.float64)
 
-    return OrdinalModelHandle(backend="statsmodels_ordered_model", fit_fn=_fit, predict_proba_fn=_predict_proba)
+    return OrdinalModelHandle(
+        backend="statsmodels_ordered_model", fit_fn=_fit, predict_proba_fn=_predict_proba
+    )
 
 
-def _build_mord_handle(
-    *, classes: Sequence[str], alpha: float
-) -> OrdinalModelHandle:
+def _build_mord_handle(*, classes: Sequence[str], alpha: float) -> OrdinalModelHandle:
     # mord is an optional extra; not declared in pyproject.toml dependencies.
     from mord import LogisticIT  # type: ignore[import-not-found]
 
@@ -443,7 +441,9 @@ def _build_mord_handle(
         normalised: np.ndarray = exp / np.sum(exp, axis=1, keepdims=True)
         return normalised
 
-    return OrdinalModelHandle(backend="mord_logistic_it", fit_fn=_fit, predict_proba_fn=_predict_proba)
+    return OrdinalModelHandle(
+        backend="mord_logistic_it", fit_fn=_fit, predict_proba_fn=_predict_proba
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -477,8 +477,7 @@ def ois_baseline_probability(
         return _uniform()
     bp_signal = (float(implied_rate) - float(base_rate)) * 100.0
     weights = {
-        cls: math.exp(-0.5 * ((bp_signal - bp) / sigma_bp) ** 2)
-        for cls, bp in CLASS_BP.items()
+        cls: math.exp(-0.5 * ((bp_signal - bp) / sigma_bp) ** 2) for cls, bp in CLASS_BP.items()
     }
     total = sum(weights.values())
     if total <= 1e-18:
@@ -645,10 +644,13 @@ def _ois_feature_names() -> tuple[str, ...]:
 
 
 def _text_feature_names() -> tuple[str, ...]:
-    # 3 one-hot dims per axis * 5 axes = 15 dims.
+    # 3 one-hot dims per axis * 3 axes = 9 dims. The factor axis was
+    # retired (text cannot predict the GSS market-derived target); the
+    # topic axis was retired in ADR 0044 (no upstream source ships
+    # topic labels).
     return tuple(
         f"axis_{axis}_{label}"
-        for axis in ("stance", "time", "certainty", "factor", "topic")
+        for axis in ("stance", "time", "certainty")
         for label in ("dovish", "neutral", "hawkish")
     )
 
@@ -695,7 +697,7 @@ def _extract_ois_features(row: pd.Series) -> list[float]:
 
 def _extract_text_features(row: pd.Series) -> list[float]:
     out: list[float] = []
-    for axis_col in ("axis_stance", "axis_time", "axis_certainty", "axis_factor", "axis_topic"):
+    for axis_col in ("axis_stance", "axis_time", "axis_certainty"):
         d, n, h = _axis_to_float(row.get(axis_col))
         out.extend([d, n, h])
     return out
@@ -710,9 +712,7 @@ def _extract_credibility_features(row: pd.Series) -> list[float]:
     ]
 
 
-def _extract_macro_features(
-    macro: pd.DataFrame, as_of: _dt.date
-) -> list[float]:
+def _extract_macro_features(macro: pd.DataFrame, as_of: _dt.date) -> list[float]:
     if macro.empty:
         return [0.0] * len(_macro_feature_names())
     iso = as_of.isoformat()
@@ -790,7 +790,11 @@ def build_supervised_rows(
     if events_per_meeting.empty or mp_surprises.empty:
         return [], summary
 
-    ling_cols = _linguistic_feature_names(linguistic_features.columns) if not linguistic_features.empty else ()
+    ling_cols = (
+        _linguistic_feature_names(linguistic_features.columns)
+        if not linguistic_features.empty
+        else ()
+    )
 
     # Index mp_surprises by event_date.
     mp_by_date: dict[str, pd.Series] = {}
@@ -842,9 +846,12 @@ def build_supervised_rows(
         # Reconstruct target.
         prior = next_row.get("ff_target_prior")
         after = next_row.get("ff_target_after")
-        if prior is None or after is None or (
-            isinstance(prior, float) and math.isnan(prior)
-        ) or (isinstance(after, float) and math.isnan(after)):
+        if (
+            prior is None
+            or after is None
+            or (isinstance(prior, float) and math.isnan(prior))
+            or (isinstance(after, float) and math.isnan(after))
+        ):
             summary["dropped_target_missing"] += 1
             continue
         delta_bp = (float(after) - float(prior)) * 100.0
@@ -857,9 +864,7 @@ def build_supervised_rows(
         # ``target_as_of`` to the next meeting's date at 19:00 UTC
         # (the same placeholder convention the events builder uses for
         # FOMC kinds).
-        target_as_of = _dt.datetime.combine(
-            next_event_date, _dt.time(19, 0), _dt.timezone.utc
-        )
+        target_as_of = _dt.datetime.combine(next_event_date, _dt.time(19, 0), _dt.timezone.utc)
 
         # Feature vectors at meeting N (current event_row + current
         # mp_surprise row -- not the next meeting's).
@@ -871,7 +876,9 @@ def build_supervised_rows(
         text_vec = _extract_text_features(event_row)
         cred_vec = _extract_credibility_features(event_row)
         macro_vec = _extract_macro_features(macro_state, feature_event_date)
-        ling_vec = _extract_linguistic_features(event_row.get("text_hash"), linguistic_features, ling_cols)
+        ling_vec = _extract_linguistic_features(
+            event_row.get("text_hash"), linguistic_features, ling_cols
+        )
 
         # OIS baseline inputs use the *post-event* curve of meeting N
         # at the 1-month tenor (the closest free tenor to the ~6-week
@@ -897,12 +904,24 @@ def build_supervised_rows(
                 credibility=cred_vec,
                 macro=macro_vec,
                 ois_baseline_implied_rate=implied_rate,
-                ois_baseline_base_rate=(float(ff_after_current) if ff_after_current is not None else None),
+                ois_baseline_base_rate=(
+                    float(ff_after_current) if ff_after_current is not None else None
+                ),
                 feature_names=feature_names,
             )
         )
 
-    out_rows.sort(key=lambda r: r.target_event_date)
+    # One row per target meeting. Multiple source events can map to the same
+    # next scheduled meeting (e.g. the 2020 emergency inter-meeting cuts all
+    # precede 2020-04-29), which would emit duplicate target_event_date rows and
+    # trip the strict-ordering walk-forward guard. Keep the row built from the
+    # most recent pre-meeting information (latest feature_event_date).
+    by_target: dict[_dt.date, MeetingRow] = {}
+    for r in out_rows:
+        prev = by_target.get(r.target_event_date)
+        if prev is None or r.feature_event_date > prev.feature_event_date:
+            by_target[r.target_event_date] = r
+    out_rows = sorted(by_target.values(), key=lambda r: r.target_event_date)
     summary["rows_emitted"] = len(out_rows)
     return out_rows, summary
 
@@ -941,13 +960,11 @@ def _encode_targets(rows: Sequence[MeetingRow]) -> np.ndarray:
     return np.asarray([cls_to_idx[r.target_class] for r in rows], dtype=np.int64)
 
 
-def _standardise(
-    X_train: np.ndarray, X_test: np.ndarray
-) -> tuple[np.ndarray, np.ndarray]:
+def _standardise(X_train: np.ndarray, X_test: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Fit per-column ``(mean, std)`` on train; apply to both.
 
-    Train-only fit honours the leakage rules in CLAUDE.md. Zero-variance
-    columns are passed through unchanged.
+    Train-only fit honours the project's no-leakage contract.
+    Zero-variance columns are passed through unchanged.
     """
 
     if X_train.size == 0:
@@ -1031,12 +1048,12 @@ def walk_forward_predict(
                 try:
                     from sklearn.ensemble import HistGradientBoostingClassifier
 
-                    gbt = HistGradientBoostingClassifier(
-                        random_state=random_state, max_iter=200
-                    )
+                    gbt = HistGradientBoostingClassifier(random_state=random_state, max_iter=200)
                     gbt.fit(X_tr_s, y_train)
                     proba = gbt.predict_proba(X_te_s)
-                    proba = _align_proba_to_classes(proba, y_train, ORDINAL_CLASSES, classes_attr=gbt.classes_)
+                    proba = _align_proba_to_classes(
+                        proba, y_train, ORDINAL_CLASSES, classes_attr=gbt.classes_
+                    )
                     per_model["hist_gbt"] = _vec_to_class_dict(proba[0])
                 except Exception as exc:  # noqa: BLE001
                     LOGGER.warning("HistGradientBoostingClassifier failed at row %d: %s", i, exc)
@@ -1129,9 +1146,7 @@ def _model_predictions(
     return np.vstack(truths), np.vstack(probs), truth_class_names
 
 
-def compute_metrics(
-    preds: Sequence[FoldPrediction], model_name: str
-) -> dict[str, Any]:
+def compute_metrics(preds: Sequence[FoldPrediction], model_name: str) -> dict[str, Any]:
     """Brier (multi-class), log-loss, top-1 accuracy, macro-F1, confusion matrix."""
 
     truth_onehot, proba, truth_classes = _model_predictions(preds, model_name)
@@ -1185,9 +1200,7 @@ def _macro_f1(truth: np.ndarray, pred: np.ndarray, *, n_classes: int) -> float:
 def _confusion_matrix(
     truth_classes: Sequence[str], pred_classes: Sequence[str]
 ) -> dict[str, dict[str, int]]:
-    out: dict[str, dict[str, int]] = {
-        t: dict.fromkeys(ORDINAL_CLASSES, 0) for t in ORDINAL_CLASSES
-    }
+    out: dict[str, dict[str, int]] = {t: dict.fromkeys(ORDINAL_CLASSES, 0) for t in ORDINAL_CLASSES}
     for t, p in zip(truth_classes, pred_classes):
         if t not in out or p not in ORDINAL_CLASSES:
             continue
@@ -1255,9 +1268,7 @@ def run(
         random_state=random_state,
     )
     model_names = sorted({m for p in preds for m in p.probabilities})
-    metrics_full: dict[str, Any] = {
-        model: compute_metrics(preds, model) for model in model_names
-    }
+    metrics_full: dict[str, Any] = {model: compute_metrics(preds, model) for model in model_names}
     pandemic_excl = filter_predictions_excluding_window(
         preds, start=PANDEMIC_START, end=PANDEMIC_END
     )
@@ -1435,9 +1446,7 @@ def _format_attribution_md(ablations: Mapping[str, Any]) -> str:
             )
         )
     lines.append("")
-    lines.append(
-        "Note: the OIS-only and naive-carry rows are model-free baselines."
-    )
+    lines.append("Note: the OIS-only and naive-carry rows are model-free baselines.")
     return "\n".join(lines) + "\n"
 
 
@@ -1497,6 +1506,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Force a specific ordinal backend. Default: auto-detect.",
     )
     parser.add_argument("--seed", type=int, default=11)
+    parser.add_argument(
+        "--ablate-credibility",
+        action="store_true",
+        help=(
+            "Zero the credibility feature block before training. Pair with "
+            "an unablated baseline run to report the credibility-on vs "
+            "credibility-off delta and bound the same-day FOMC confound "
+            "documented in the credibility loader."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1513,10 +1532,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     macro_path = fred_dir / args.macro_state_name
     macro = _load_parquet_safely(macro_path) if macro_path.exists() else pd.DataFrame()
 
+    if args.ablate_credibility:
+        # Bound the credibility same-day confound by also reporting the
+        # zero-credibility arm. Setting every credibility column to 0.0
+        # before training removes the signal without changing the column
+        # layout downstream consumers expect.
+        for col in (
+            "credibility_drift_score",
+            "credibility_realized_vs_stated_gap",
+            "credibility_market_implied_gap",
+            "credibility_months_since_reversal",
+        ):
+            if col in events.columns:
+                events[col] = 0.0
+
+    default_subdir = "next_fomc_no_credibility" if args.ablate_credibility else "next_fomc"
     output_dir = (
-        Path(args.output_dir)
-        if args.output_dir
-        else data_dir / "artifacts" / "next_fomc"
+        Path(args.output_dir) if args.output_dir else data_dir / "artifacts" / default_subdir
     )
 
     artifacts = run(

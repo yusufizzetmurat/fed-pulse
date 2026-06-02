@@ -1,0 +1,32 @@
+{
+  "n_meetings": 122,
+  "date_range": [
+    "2011-01-26",
+    "2026-04-29"
+  ],
+  "action_counts": {
+    "cut": 9,
+    "hold": 93,
+    "hike": 20
+  },
+  "PRIMARY_spearman_s_vs_dff": 0.35695071419759156,
+  "PRIMARY_perm_p_onesided": 0.00019998000199980003,
+  "PRIMARY_boot_ci95": [
+    0.14159570599602103,
+    0.5344552727861557
+  ],
+  "mean_s_by_action": {
+    "cut": -0.28708944667838904,
+    "hold": -0.6547987872997891,
+    "hike": 0.3845326019345521
+  },
+  "secondary_auc_hike_vs_cut": 0.7944444444444444,
+  "secondary_auc_ci95": [
+    0.6055555555555555,
+    0.9333333333333333
+  ],
+  "secondary_ordinal_spearman": 0.35026684657845364,
+  "secondary_leading_spearman_st_vs_dff_next": 0.27246524631371555,
+  "secondary_leading_perm_p": 0.0006999300069993001,
+  "diagnostic_within_holds_lead_spearman": 0.15090613462049032
+}

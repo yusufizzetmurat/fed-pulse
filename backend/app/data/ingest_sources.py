@@ -13,6 +13,7 @@ from typing import Any, Iterable
 from app.data.source_type import infer_source_type
 
 from app.config import DATA_DIR as DEFAULT_DATA_DIR
+
 DEFAULT_OUTPUT_DIR = DEFAULT_DATA_DIR / "raw" / "phase2"
 DEFAULT_OUTPUT_FILE = "source_registry.jsonl"
 
@@ -38,6 +39,8 @@ _DATASET_REVISIONS: dict[str, str] = {
 def _dataset_revision(dataset_id: str) -> str | None:
     """Return the pinned revision SHA for a dataset id, or None if unpinned."""
     return _DATASET_REVISIONS.get(dataset_id)
+
+
 OP_FED_DEFAULT_RELATIVE = Path("external") / "op_fed" / "opfed_v1.csv"
 GSS_FACTORS_DEFAULT_RELATIVE = Path("external") / "gss" / "gss_factors.csv"
 GSS_SURPRISES_DEFAULT_RELATIVE = Path("external") / "gss" / "gss_surprises.csv"
@@ -209,7 +212,9 @@ def _build_registry_record(
     cleaned_text = _normalize_text(text)
     if not cleaned_text or not event_date:
         return None
-    record_id = hashlib.sha256(f"{source}:{source_record_id}:{event_date}".encode("utf-8")).hexdigest()[:16]
+    record_id = hashlib.sha256(
+        f"{source}:{source_record_id}:{event_date}".encode("utf-8")
+    ).hexdigest()[:16]
     resolved_source_type = source_type or infer_source_type(
         document_type=document_type, title=title
     )
@@ -245,12 +250,16 @@ def _iter_hf_records() -> list[dict[str, Any]]:
     for split_name, split in ds.items():
         for idx, row in enumerate(split):
             item = dict(row)
-            event_date = _coerce_event_date(item, ("date", "event_date", "published_date", "timestamp", "year"))
+            event_date = _coerce_event_date(
+                item, ("date", "event_date", "published_date", "timestamp", "year")
+            )
             text = _coerce_str(item, ("text", "sentence", "content", "document", "statement"))
             label = _coerce_str(item, ("label_text", "label", "stance", "class"))
             title = _coerce_str(item, ("title", "headline"))
             document_type = _coerce_str(item, ("document_type", "type")) or "statement"
-            source_record_id = _coerce_str(item, ("id", "uid", "record_id")) or f"{split_name}:{idx}"
+            source_record_id = (
+                _coerce_str(item, ("id", "uid", "record_id")) or f"{split_name}:{idx}"
+            )
             built = _build_registry_record(
                 source="hf_fomc_communication",
                 source_record_id=source_record_id,
@@ -693,8 +702,7 @@ def _iter_swanson_three_factor_records(
         )
     except Exception as exc:
         warnings.warn(
-            f"Swanson three-factor xlsx at {xlsx_path} failed to parse: "
-            f"{exc}; skipping.",
+            f"Swanson three-factor xlsx at {xlsx_path} failed to parse: " f"{exc}; skipping.",
             stacklevel=2,
         )
         return []
@@ -742,9 +750,7 @@ def _iter_swanson_three_factor_records(
             "swanson_lsap_factor": lsap,
         }
 
-        target_repr = (
-            f"{target:+.4f}" if target is not None else "n/a"
-        )
+        target_repr = f"{target:+.4f}" if target is not None else "n/a"
         fg_repr = f"{fg:+.4f}" if fg is not None else "n/a"
         lsap_repr = f"{lsap:+.4f}" if lsap is not None else "n/a"
         text = (
@@ -823,12 +829,18 @@ def _iter_kaggle_records() -> list[dict[str, Any]]:
             continue
         rows = _iter_candidate_records(file_path)
         for idx, row in enumerate(rows):
-            event_date = _coerce_event_date(row, ("date", "event_date", "published_date", "timestamp", "Date"))
+            event_date = _coerce_event_date(
+                row, ("date", "event_date", "published_date", "timestamp", "Date")
+            )
             text = _coerce_str(row, ("text", "Text", "content", "statement", "minutes"))
             label = _coerce_str(row, ("label_text", "label", "stance", "class"))
             title = _coerce_str(row, ("title", "headline"))
-            document_type = _map_kaggle_document_type(_coerce_str(row, ("document_type", "type", "Type")))
-            source_record_id = _coerce_str(row, ("id", "uid", "record_id")) or f"{file_path.name}:{idx}"
+            document_type = _map_kaggle_document_type(
+                _coerce_str(row, ("document_type", "type", "Type"))
+            )
+            source_record_id = (
+                _coerce_str(row, ("id", "uid", "record_id")) or f"{file_path.name}:{idx}"
+            )
             built = _build_registry_record(
                 source="kaggle_fed_statements_minutes",
                 source_record_id=source_record_id,
@@ -961,9 +973,7 @@ def main() -> int:
     include_scraped = args.all_sources or args.include_scraped
     include_op_fed = args.all_sources or args.include_op_fed
     include_gss_factors = args.all_sources or args.include_gss_factors
-    include_swanson_three_factor = (
-        args.all_sources or args.include_swanson_three_factor
-    )
+    include_swanson_three_factor = args.all_sources or args.include_swanson_three_factor
     include_gtfintechlab_fed = args.all_sources or args.include_gtfintechlab_fed
     include_gtfintechlab_cross_bank = args.all_sources or args.include_gtfintechlab_cross_bank
     include_fomc_archive = args.all_sources or args.include_fomc_archive
@@ -1010,7 +1020,9 @@ def main() -> int:
             data_dir / GSS_FACTORS_DEFAULT_RELATIVE,
             data_dir / GSS_SURPRISES_DEFAULT_RELATIVE,
         )
-        print(f"Ingested GSS factor records: {len(gss_records)} (per-FOMC target/path factors; factor axis only)")
+        print(
+            f"Ingested GSS factor records: {len(gss_records)} (per-FOMC target/path factors; factor axis only)"
+        )
         unified.extend(gss_records)
     if include_swanson_three_factor:
         swanson_records = _iter_swanson_three_factor_records(
@@ -1050,7 +1062,13 @@ def main() -> int:
         )
         unified.extend(archive_records)
 
-    unified.sort(key=lambda row: (row.get("event_date", ""), row.get("source", ""), row.get("source_record_id", "")))
+    unified.sort(
+        key=lambda row: (
+            row.get("event_date", ""),
+            row.get("source", ""),
+            row.get("source_record_id", ""),
+        )
+    )
     _write_jsonl(output_path, unified)
     _write_summary(output_dir / "ingestion_summary.json", unified)
     print(f"Unified source registry written to {output_path}")
@@ -1059,4 +1077,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
