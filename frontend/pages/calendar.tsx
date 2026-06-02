@@ -218,7 +218,7 @@ function MeetingRowDetails({
               available={Boolean(meeting[key])}
               href={
                 meeting[key]
-                  ? `/documents/${kind}/${meeting.meeting_date}`
+                  ? `/documents/${kind}/${meeting.statement_release_date ?? meeting.meeting_date}`
                   : null
               }
             />

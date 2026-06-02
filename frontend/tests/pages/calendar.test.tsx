@@ -184,19 +184,22 @@ describe("CalendarPage", () => {
     const presserBadges = screen.getAllByTestId("availability-presser");
 
     // Past row has on-file statement + minutes — both should be anchor
-    // tags pointing at the path-based viewer keyed off meeting_date.
+    // tags pointing at the path-based viewer keyed off the statement
+    // release date (day-2 of the two-day meeting), which is the date the
+    // scraper writes into the JSON cache's "date" field. Falling back to
+    // meeting_date would 404 every click.
     const pastStatement = badgeForMeeting(statementBadges, "2024-09-17");
     expect(pastStatement.tagName).toBe("A");
     expect(pastStatement).toHaveAttribute(
       "href",
-      "/documents/statement/2024-09-17",
+      "/documents/statement/2024-09-18",
     );
 
     const pastMinutes = badgeForMeeting(minutesBadges, "2024-09-17");
     expect(pastMinutes.tagName).toBe("A");
     expect(pastMinutes).toHaveAttribute(
       "href",
-      "/documents/minutes/2024-09-17",
+      "/documents/minutes/2024-09-18",
     );
 
     // Past row presser is not on file — must stay a span.
