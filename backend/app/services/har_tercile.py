@@ -139,11 +139,32 @@ def get_har_coef(horizon: int) -> list[float]:
     return list(row["har_coef"])
 
 
+def _fit_ols_har_coef(log_rv: np.ndarray) -> list[float]:
+    """Fit OLS HAR(1,5,22) on ``log_rv`` history.
+
+    Used for non-SPX symbols whose HAR coefficients are not pinned on the
+    QLIKE-DLq production artifact. The fit is per-call against whichever
+    history the caller supplied, which is also how the q33/q67 tercile
+    cutoffs are resolved when not pre-supplied (``_tercile_cutoffs``).
+    """
+
+    har = _har_lags(log_rv)
+    mask = ~np.isnan(har).any(axis=1) & ~np.isnan(log_rv[: len(har)])
+    x = har[mask]
+    y = log_rv[: len(har)][mask]
+    if len(y) < 25:
+        raise ValueError("not enough valid HAR observations to fit OLS")
+    a = np.column_stack([np.ones(len(x)), x])
+    coef, *_ = np.linalg.lstsq(a, y, rcond=None)
+    return [float(c) for c in coef.tolist()]
+
+
 def predict_har_regime(
     rv_history: list[float] | np.ndarray,
     cutoffs_q33: float | None = None,
     cutoffs_q67: float | None = None,
     har_coef: dict[int, list[float]] | None = None,
+    symbol: str = "^GSPC",
 ) -> dict[str, Any]:
     """HAR-tercile regime classification across the 1/5/22-day horizons.
 
@@ -151,9 +172,16 @@ def predict_har_regime(
     variance values, matching :func:`app.services.rv_forecaster.predict_rv`.
     When ``cutoffs_q33`` / ``cutoffs_q67`` are not supplied they are read
     off the series itself (per-horizon training cutoffs are not on the
-    production artifact). When ``har_coef`` is not supplied it is read off
-    the cached production spec so the bucket call uses the same OLS HAR
-    forecast that backs the QLIKE-DLq ensemble.
+    production artifact). When ``har_coef`` is not supplied **for the
+    canonical symbol** it is read off the cached production spec so the
+    bucket call uses the same OLS HAR forecast that backs the QLIKE-DLq
+    ensemble.
+
+    For non-canonical symbols (``^NDX``, ``^DJI``) the QLIKE-DLq spec
+    does not carry pinned coefficients; the function fits an OLS HAR on
+    the supplied ``rv_history`` at call time. The 80% conformal band
+    likewise falls back to a runtime estimate from the HAR OOS residual
+    standard deviation.
     """
 
     rv = np.asarray(rv_history, dtype=np.float64)
@@ -171,33 +199,73 @@ def predict_har_regime(
 
     from app.services.rv_forecaster import _RvPredictor
 
-    pred = _RvPredictor.get()
-    eval_block = (pred.eval or {}).get("by_horizon", {}) if pred.eval else {}
+    is_canonical = symbol == "^GSPC"
+    pred = _RvPredictor.get() if is_canonical else None
+    eval_block: dict[str, Any] = {}
+    if pred is not None and pred.eval:
+        eval_block = pred.eval.get("by_horizon", {}) or {}
+
+    # For non-canonical symbols, fit a per-call OLS HAR off the supplied
+    # series and derive sigma_log from the in-sample residuals. The
+    # canonical path keeps reading the QLIKE-DLq spec for byte-identical
+    # SPX serving against the artifact pin in the registry.
+    fallback_coef: list[float] | None = None
+    fallback_sigma_log: float = 0.0
+    if not is_canonical:
+        fallback_coef = _fit_ols_har_coef(log_rv)
+        har_full = _har_lags(log_rv)
+        valid = ~np.isnan(har_full).any(axis=1)
+        x_valid = har_full[valid]
+        # Align ``y`` to the same rows ``_har_lags`` produced lags for —
+        # the helper returns one row per ``log_rv`` index, so ``y`` is
+        # just ``log_rv[: len(har_full)]`` masked by the same predicate.
+        y_valid = log_rv[: len(har_full)][valid]
+        if len(y_valid) > 2:
+            a_full = np.column_stack([np.ones(len(x_valid)), x_valid])
+            resid = y_valid - a_full @ np.asarray(fallback_coef)
+            fallback_sigma_log = float(np.std(resid, ddof=1))
 
     horizons_out: list[dict[str, Any]] = []
     for h in _HORIZONS:
         hk = f"h{h}"
-        row = pred.spec["by_horizon"][hk]
-        coef = (har_coef or {}).get(h) or row["har_coef"]
+        if pred is not None:
+            row = pred.spec["by_horizon"][hk]
+        else:
+            row = {}
+        coef = (har_coef or {}).get(h)
+        if coef is None:
+            if is_canonical:
+                coef = row["har_coef"]
+            else:
+                assert fallback_coef is not None
+                coef = fallback_coef
         log_point = _har_point_log_rv(log_rv, coef)
         predicted_rv = float(math.exp(log_point))
         # 80% conformal band width -> sigma in log-RV space; the QLIKE-DLq
         # band is the QLIKE-DLq ensemble's, but the HAR baseline shares
-        # the same residual dispersion order-of-magnitude. Falls back to a
-        # one-hot when the band is missing.
+        # the same residual dispersion order-of-magnitude. Falls back to
+        # the in-sample residual sigma for non-canonical symbols, or to a
+        # one-hot when even that is unavailable.
         q80 = float(row.get("conformal_quantiles", {}).get("0.20", 0.0))
-        sigma_log = q80 / _CONFIDENCE_Z if q80 > 0.0 else 0.0
+        if q80 > 0.0:
+            sigma_log = q80 / _CONFIDENCE_Z
+        else:
+            sigma_log = fallback_sigma_log
         probs = _soft_tercile_probs(predicted_rv, cutoffs_q33, cutoffs_q67, sigma_log)
         tercile_idx = _bucket_index(predicted_rv, cutoffs_q33, cutoffs_q67)
         eval_row = eval_block.get(hk, {}) if isinstance(eval_block, dict) else {}
+        macro_f1 = _HAR_TERCILE_MACRO_F1[h] if is_canonical else None
+        macro_f1_src = _HAR_TERCILE_F1_SOURCE if is_canonical else (
+            "Per-call OLS HAR(1,5,22) fit; baseline macro-F1 not pinned for non-SPX symbols."
+        )
         horizons_out.append(
             {
                 "h": h,
                 "predicted_rv": predicted_rv,
                 "tercile": _TERCILE_LABELS[tercile_idx],
                 "tercile_probs": probs,
-                "macro_f1": _HAR_TERCILE_MACRO_F1[h],
-                "macro_f1_source": _HAR_TERCILE_F1_SOURCE,
+                "macro_f1": macro_f1,
+                "macro_f1_source": macro_f1_src,
                 "qlike_model": _safe_float(eval_row.get("qlike_ens")),
                 "qlike_har": _safe_float(eval_row.get("qlike_har")),
             }
@@ -206,7 +274,8 @@ def predict_har_regime(
         "horizons": horizons_out,
         "cutoffs_q33": float(cutoffs_q33),
         "cutoffs_q67": float(cutoffs_q67),
-        "model_revision": pred.revision,
+        "model_revision": (pred.revision if pred is not None else "per-call-ols-fit"),
+        "symbol": symbol,
     }
 
 

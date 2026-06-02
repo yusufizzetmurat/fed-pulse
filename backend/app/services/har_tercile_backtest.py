@@ -272,14 +272,16 @@ def _cutoffs_from_history(history: Any) -> tuple[float | None, float | None]:
 
 def _predict_for_meeting(
     rv_history: list[float],
+    symbol: str = "^GSPC",
 ) -> tuple[str | None, float | None, float | None, float | None]:
     """Run ``predict_har_regime`` on ``rv_history`` and read off the panel row.
 
     Returns ``(predicted_tercile, predicted_prob, q33, q67)``. Picks the
     h=1 row from the per-horizon output, matching the single forward-day
-    realized stat the panel buckets against. Any failure inside the
-    predict call collapses to a no-op tuple so the caller can skip the
-    row.
+    realized stat the panel buckets against. ``symbol`` is threaded so
+    ^NDX / ^DJI use the per-call OLS HAR fit while ^GSPC keeps reading
+    the pinned QLIKE-DLq coefficients. Any failure inside the predict
+    call collapses to a no-op tuple so the caller can skip the row.
     """
 
     if not rv_history or len(rv_history) < _MIN_RV_HISTORY:
@@ -287,7 +289,7 @@ def _predict_for_meeting(
     try:
         from app.services.har_tercile import predict_har_regime
 
-        out = predict_har_regime(rv_history)
+        out = predict_har_regime(rv_history, symbol=symbol)
     except Exception:
         return None, None, None, None
     horizons = out.get("horizons") if isinstance(out, dict) else None
@@ -398,7 +400,7 @@ def build_har_tercile_backtest(
             out_rows.append(_pending_row(event_date))
             continue
 
-        predicted_label, predicted_prob, q33, q67 = _predict_for_meeting(rv_history)
+        predicted_label, predicted_prob, q33, q67 = _predict_for_meeting(rv_history, symbol)
         if predicted_label is None or q33 is None or q67 is None:
             out_rows.append(_pending_row(event_date))
             continue

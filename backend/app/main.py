@@ -2268,11 +2268,17 @@ async def forecast_realized_vol(
     )
 
 
+_HAR_TERCILE_SUPPORTED_SYMBOLS = ("^GSPC", "^NDX", "^DJI")
+
+
 @app.get("/forecast/regime/baselines", response_model=HarTercileBaselineResponse)
 async def forecast_regime_baselines(
     symbol: str = Query(
         "^GSPC",
-        description="Market ticker; only ^GSPC is supported (artifact is SPX-trained).",
+        description=(
+            "Market ticker; ^GSPC serves from the pinned QLIKE-DLq artifact, "
+            "^NDX / ^DJI use a per-call OLS HAR fit off the symbol's own history."
+        ),
         min_length=1,
         max_length=32,
         pattern=r"^[A-Za-z0-9._=^/-]+$",
@@ -2285,16 +2291,20 @@ async def forecast_regime_baselines(
     h=1 and h=22 and ties it at h=5 on the canonical fold protocol.
     The frontend renders this response as the primary regime card and
     demotes the late-fusion classifier to a "second opinion" surface.
-    Returns 422 on a non-SPX symbol (the artifact is SPX-trained) and a
+    Returns 422 on a symbol outside the supported equity-index set
+    (HAR-tercile is meaningful only for equity-index RV), and a
     structured 503 on artifact-load failure.
     """
 
-    if symbol != "^GSPC":
+    if symbol not in _HAR_TERCILE_SUPPORTED_SYMBOLS:
         raise HTTPException(
             status_code=422,
             detail={
                 "error": "symbol_unsupported",
-                "message": ("HAR-tercile baseline is SPX-trained; only ^GSPC is supported."),
+                "message": (
+                    "HAR-tercile baseline is fit on equity-index RV; supported: "
+                    + ", ".join(_HAR_TERCILE_SUPPORTED_SYMBOLS)
+                ),
             },
         )
 
@@ -2310,7 +2320,7 @@ async def forecast_regime_baselines(
         ) from exc
 
     try:
-        out = await run_in_threadpool(predict_har_regime, rv_hist)
+        out = await run_in_threadpool(predict_har_regime, rv_hist, None, None, None, symbol)
     except RvForecasterUnavailable as exc:
         raise HTTPException(
             status_code=503,
@@ -2346,7 +2356,10 @@ async def forecast_regime_baselines(
 def forecast_har_tercile_backtest(
     symbol: str = Query(
         "^GSPC",
-        description="Market ticker; only ^GSPC is supported (HAR-tercile is SPX-trained).",
+        description=(
+            "Market ticker; ^GSPC serves from the pinned QLIKE-DLq artifact, "
+            "^NDX / ^DJI use a per-call OLS HAR fit off the symbol's own history."
+        ),
         min_length=1,
         max_length=32,
         pattern=r"^[A-Za-z0-9._=^/-]+$",
@@ -2365,17 +2378,20 @@ def forecast_har_tercile_backtest(
     runs the HAR-tercile prediction on the rolling RV history strictly
     before each event, and lines it up against the realized tercile
     from the forward 10-trading-day window. Returns the rows +
-    aggregate accuracy metrics. Mirrors the ``^GSPC``-only constraint
-    on the upstream HAR-tercile baseline endpoint (the cutoffs are
-    SPX-trained).
+    aggregate accuracy metrics. Supports the equity-index family
+    (^GSPC / ^NDX / ^DJI) — non-canonical symbols use the per-call OLS
+    HAR fit on the symbol's own RV history.
     """
 
-    if symbol != "^GSPC":
+    if symbol not in _HAR_TERCILE_SUPPORTED_SYMBOLS:
         raise HTTPException(
             status_code=400,
             detail={
                 "error": "symbol_unsupported",
-                "message": ("HAR-tercile backtest is SPX-trained; only ^GSPC is supported."),
+                "message": (
+                    "HAR-tercile backtest is fit on equity-index RV; supported: "
+                    + ", ".join(_HAR_TERCILE_SUPPORTED_SYMBOLS)
+                ),
             },
         )
 
