@@ -60,6 +60,23 @@ fedpulse.yusufizzetmurat.com {
         }
     }
 
+    # Defence-in-depth allowlist: a frontend build that forgets to
+    # include the /api prefix on ``NEXT_PUBLIC_API_URL`` used to
+    # surface as "no model files on disk" because every API call
+    # fell through to the Next.js 404 page. These prefixes mirror
+    # the backend route surface (see ``backend/app/main.py``) so a
+    # bare-domain call still reaches the backend instead of 404ing
+    # at the frontend. New backend routes need to be listed here.
+    @backend_routes path /analyze* /symbols /settings/* /forecast/* /forecasts/* /history* /fomc/* /research/* /evaluation/* /trajectory* /documents/*
+    handle @backend_routes {
+        reverse_proxy backend:8000 {
+            transport http {
+                read_timeout 120s
+                write_timeout 120s
+            }
+        }
+    }
+
     # Everything else is the Next.js standalone server.
     handle {
         reverse_proxy frontend:3000
