@@ -309,24 +309,50 @@ def test_load_spec_falls_back_to_cold_start_fit(
     """HF download failure must trigger the in-process cold-start fit.
 
     Monkeypatches ``_download_artifact`` to raise
-    ``VolumeForecasterUnavailable`` and ``_cold_start_fit`` to return a
-    minimal valid spec, then asserts ``_load_spec`` returns it from the
-    cold-start branch (no HF hit succeeded, no on-disk artifact existed).
+    ``VolumeForecasterUnavailable``, fakes yfinance to return a synthetic
+    180-bar volume frame, and monkeypatches
+    ``app.data.late_fusion_volume.fit_production_artifact`` to return a
+    minimal valid spec, then asserts ``_load_spec`` returns the spec
+    from the cold-start branch (no HF hit succeeded, no on-disk
+    artifact existed).
     """
+
+    import pandas as pd
+
+    from app.data import late_fusion_volume
 
     def _raise(_target_dir: Any) -> dict[str, Any]:
         raise volume_forecaster.VolumeForecasterUnavailable("hf repo missing")
 
-    fake_spec: dict[str, Any] = _make_spec()
-    cold_start_calls: list[Any] = []
+    class _FakeTicker:
+        def __init__(self, _symbol: str) -> None:
+            pass
 
-    def _stub_cold_start(target_dir: Any) -> dict[str, Any]:
-        cold_start_calls.append(target_dir)
+        def history(self, period: str, auto_adjust: bool) -> pd.DataFrame:
+            dates = pd.bdate_range(end="2026-05-30", periods=180)
+            return pd.DataFrame(
+                {"Volume": np.linspace(1.0e9, 1.2e9, len(dates))},
+                index=dates,
+            )
+
+    fake_spec: dict[str, Any] = _make_spec()
+    fit_calls: list[tuple[Any, Any]] = []
+
+    def _stub_fit(vol_path: Any, out_path: Any) -> dict[str, Any]:
+        fit_calls.append((vol_path, out_path))
         return fake_spec
 
+    import yfinance as yf
+
     monkeypatch.setattr(volume_forecaster, "_download_artifact", _raise)
-    monkeypatch.setattr(volume_forecaster, "_cold_start_fit", _stub_cold_start)
+    monkeypatch.setattr(yf, "Ticker", _FakeTicker)
+    monkeypatch.setattr(late_fusion_volume, "fit_production_artifact", _stub_fit)
 
     spec = volume_forecaster._load_spec(tmp_path)
     assert spec is fake_spec
-    assert cold_start_calls == [tmp_path]
+    assert len(fit_calls) == 1
+    # ``fit_production_artifact`` is called with the temp parquet path
+    # the cold-start writes plus the on-disk artifact target under
+    # ``tmp_path / ARTIFACT_FILENAME``.
+    _, out_path = fit_calls[0]
+    assert out_path == tmp_path / volume_forecaster.ARTIFACT_FILENAME

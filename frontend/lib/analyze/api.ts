@@ -348,7 +348,7 @@ export async function fetchExpectedVolumeForecast(
   baseUrl: string,
   symbol: string = "^GSPC",
   signal?: AbortSignal,
-): Promise<ExpectedVolumeForecastResponse | null> {
+): Promise<ExpectedVolumeForecastResponse> {
   const response = await axios.get(`${baseUrl}/forecast/abnormal-volume`, {
     params: { symbol },
     signal,
