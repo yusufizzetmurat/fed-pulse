@@ -112,6 +112,9 @@ export function TerminalTab(): JSX.Element {
 
   return (
     <div className="space-y-4">
+      <p className="text-xs text-muted-foreground">
+        Backtest runs automatically after analysis completes.
+      </p>
       <ActiveCheckpointBar
         registry={registry}
         activeEncoder={activeEncoder}
