@@ -42,8 +42,10 @@ InfoNCE/SupCon contrastive arms are retained as optional research arms only).
 
 The frontend "second opinion" (`SecondOpinionRegime`) and the research scope
 pane (`HonestScopePane`) now report the text-neutral story — fused **0.629**
-(1-day) vs gate-off market-only **0.631**, gate ≈ 0.01, fused−market 95% block
-CI includes 0 — instead of the old text-negative `0.592 < 0.608`. HAR-tercile
+(1-day) vs gate-off market-only **0.631**, gate ≈ 0.01, fused−market 90% block
+CI includes 0 only at h22 ([−0.0009, 0.0]), with small consistent negative
+deltas at h1 ([−0.0033, −0.0003]) and h5 ([−0.0073, −0.00007]) — instead of the
+old text-negative `0.592 < 0.608`. HAR-tercile
 (0.687) remains the headline predictor; the fusion is ~0.06 below it but no
 longer drags below its own market path. The live regime argmax is unchanged
 (served by the forecaster checkpoint, not this offline bake-off); only the

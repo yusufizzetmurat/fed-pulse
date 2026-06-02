@@ -3,8 +3,8 @@
 **Run id:** `execution_20260602T091722Z` · **Mode:** full ·
 **Training package:** `canonical` (5-fold expanding walk-forward, official seed set {11, 29, 47, 71, 97}).
 
-Re-run of the Phase 3 NLP baseline matrix tracked in earlier session memory
-as "bake-off rerun pending after PR #591/#594 stance label-map fix". Raw
+Re-run of the Phase 3 NLP baseline matrix tracked alongside the #591/#594
+stance label-map fix ("bake-off rerun pending after that fix"). Raw
 summary pinned alongside this writeup at
 [`nlp-baseline-bakeoff-2026-06-02-rerun.json`](./nlp-baseline-bakeoff-2026-06-02-rerun.json).
 
@@ -33,8 +33,8 @@ ZiweiChen at the top by ~0.011 macro-F1 over ProsusAI, just outside the
 
 - The wiki §20 "macro-F1 0.687" HAR-tercile headline is unaffected — that's
   a market-only classifier, not in this bake-off.
-- The session memory item ("bake-off re-run pending against PR #591/#594
-  stance label-map fix") is closed; the canonical baseline numbers are
+- The pending "bake-off re-run against PR #591/#594 stance label-map fix"
+  is closed following #591/#594; the canonical baseline numbers are
   the ones above.
 - Any downstream comparison (e.g. dashboard's late-fusion macro-F1 0.629
   surface) should reference these baselines, not pre-rerun snapshots.

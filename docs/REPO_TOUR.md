@@ -4,7 +4,7 @@ Single-page walkthrough of the Fed Pulse codebase, written so a reader who has n
 
 Read top to bottom the first time. After that, jump to §6 ("I want to …") for task-oriented entry points.
 
-**Last refresh: 2026-05-16, anchored at `dev` after PR #166 + the 2026-05-16 bundle.** When a change shifts the request flow, schema, or evaluation protocol, re-pin this anchor in your PR description so the reader knows the tour is current.
+**Last refresh: 2026-06-02, anchored at `dev` after PR #166 + the 2026-05-16 bundle.** When a change shifts the request flow, schema, or evaluation protocol, re-pin this anchor in your PR description so the reader knows the tour is current.
 
 ---
 
@@ -74,7 +74,7 @@ Ad-hoc CSV ingestion → versioned pipeline. Six capability-first entry points l
 
 ### Phase 3 (closed 2026-05-04) — Baseline NLP evaluation
 
-Three encoders × five seeds: BERT-base, FinBERT (ProsusAI), FinBERT-FOMC (ZiweiChen). Plus sanity baselines (majority-class, random-class). Headline: zero-shot does not clear the random-class floor on this corpus. Fine-tuned FinBERT-FOMC hits macro-F1 0.6192 ± 0.0192 on the fold-2 test slice. Artifacts under `data/artifacts/phase3/`.
+Three encoders × five seeds: BERT-base, FinBERT (ProsusAI), FinBERT-FOMC (ZiweiChen). Plus sanity baselines (majority-class, random-class). The 2026-06-02 re-run (after the #591/#594 stance label-map fix) is the current canonical reference: FinBERT-FOMC (ZiweiChen) leads at macro-F1 0.5082 ± 0.0069, ProsusAI FinBERT 0.4967 ± 0.0069, with random-class (0.3331) and majority (0.1871) below; BERT-base collapses to majority-class behaviour. Numbers and method in `docs/research/nlp-baseline-bakeoff-2026-06-02-rerun.md`. The original Phase-3 batch artifacts were not persisted under `data/artifacts/`.
 
 ### Phase 4 (closed 2026-05-04) — Attention + decay + NLP expansion
 
@@ -149,7 +149,7 @@ The wiki lives in a sibling directory `../fed-pulse.wiki/` — same git remote, 
 
 | File | Purpose | Used by |
 | --- | --- | --- |
-| `forecaster.py` | LSTM / GRU / TCN / Transformer cores, attention pooling, conformal bands, checkpoint I/O, RNG state. **~1,635 lines — Phase 7.1 decomposition target.** | `main.py` `/analyze` |
+| `forecaster.py` | LSTM / GRU / TCN / Transformer cores, attention pooling, conformal bands, checkpoint I/O, RNG state. **~1,740 lines — Phase 7.1 decomposition target.** | `main.py` `/analyze` |
 | `sentiment.py` | Thin wrapper around `text_encoder.aggregate_label()` | `main.py` |
 | `text_encoder.py` | HF classifier load + chunked embedding aggregation. `warmup_classifier()` called in lifespan. `split_into_chunks` is the canonical 480-token windower. | `sentiment.py`, `chunk_embedding_store.py`, `pseudo_labeling.py` (chunk-aware path) |
 | `market_data.py` | yfinance client with 7-day holiday fallback + 5-day rolling volatility. Forward trading dates. | `main.py`, `forecaster.py` |
@@ -284,9 +284,7 @@ data/
 │   ├── chunk_embeddings.parquet            (live HF embeddings, per chunk)
 │   └── quality_reports/
 ├── artifacts/                              Run outputs
-│   ├── phase3/                             NLP baseline batch artefacts
-│   ├── phase4_attention/                   Variant ablation artefacts + holdout_summary
-│   ├── phase4_llm_zero_shot/, phase4_embedding_comparator/
+│   ├── corner_*/ dense_*/ late_fusion_*/   Current experiment outputs (see docs/research/)
 │   ├── pseudo_label_audits/                audit_set.csv, audit_metrics.json, policy_sweep.json
 │   ├── audit.log                           Append-only JSONL hook log
 │   └── experiments/<run_id>/               Per-run artefacts
