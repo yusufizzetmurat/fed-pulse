@@ -56,6 +56,7 @@ def _fallback_allowed() -> bool:
     allow = (os.environ.get("FED_PULSE_ALLOW_SENTIMENT_FALLBACK") or "").strip().lower()
     return allow in _TRUTHY
 
+
 # The model id the singleton actually loaded; differs from MODEL_ID on fallback.
 _loaded_model_id: str | None = None
 
