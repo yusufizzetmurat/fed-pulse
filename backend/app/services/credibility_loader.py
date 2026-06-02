@@ -199,7 +199,11 @@ def _sep_terminal_at(as_of: datetime.date, *, sep_path: Path) -> float | None:
     if not mask.any():
         return None
     idx = parsed[mask].astype("string").sort_values().index[-1]
-    value = median.iloc[idx]
+    # ``idx`` is the row label returned by ``.index[-1]``, so use
+    # label-based ``loc`` rather than positional ``iloc``. Equivalent on
+    # the default RangeIndex but defensive against any future reindex
+    # that yields a non-positional label.
+    value = median.loc[idx]
     if value is None or pd.isna(value):
         return None
     return float(value)

@@ -61,7 +61,9 @@ function HorizonColumn({ horizon }: HorizonColumnProps) {
           className="numeric text-[10px]"
           title={horizon.macro_f1_source}
         >
-          macro-F1 {horizon.macro_f1.toFixed(3)}
+          {horizon.macro_f1 != null
+            ? `macro-F1 ${horizon.macro_f1.toFixed(3)}`
+            : "macro-F1 n/a"}
         </Badge>
       </div>
       <div className="flex flex-wrap items-baseline gap-2">

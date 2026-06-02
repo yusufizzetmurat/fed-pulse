@@ -789,7 +789,9 @@ export interface HarTercileHorizon {
   tercile: HarTercileLabel;
   tercile_probs: Record<HarTercileLabel, number>;
   predicted_rv: number;
-  macro_f1: number;
+  // Null for non-canonical symbols (^NDX / ^DJI) where the baseline macro-F1
+  // is not pinned and the backend serves a per-call OLS HAR fit.
+  macro_f1: number | null;
   macro_f1_source: string;
 }
 
