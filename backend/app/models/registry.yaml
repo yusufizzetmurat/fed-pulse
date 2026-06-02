@@ -445,21 +445,22 @@ artefacts:
 
   multi_axis_text_classifier:
     hf_uri: hf://yusufizzetmurat/fed-pulse-multi-axis-text-classifier
-    revision: "f3d2b524683a705f5940f71dc33e783bc20c2b8d"
+    revision: "c863f18753e87f2576b3609112a10efd85671e8f"
     eager: false
     description: |
-      §6.41 multi-axis text classifier checkpoints. Each
+      Multi-axis text classifier checkpoints. Each
       ``text_multi_axis_seedNN.pt`` is a single-seed fine-tuned
-      ``finbert_fed_adjacent`` encoder with a multi-task
-      classification head (stance / factor / certainty);
-      ``text_multi_axis_best.pt`` is the singleton inference
-      checkpoint the ``/analyze`` multi-axis service loads from
-      ``backend/models/text_multi_axis_best.pt``. Seeds 11, 47, 97
-      are mirrored; seeds 29 and 71 ran pod-side and were not
-      retained as artefacts (canonical 5-seed mean was computed at
-      training time from the metrics, not from per-seed
-      checkpoints). MIT-licensed; backbone encoder pin is
-      ``encoder_finbert_fed_adjacent`` above.
+      encoder with a multi-task classification head (stance /
+      certainty / time); ``text_multi_axis_best.pt`` is the
+      singleton inference checkpoint the ``/analyze`` multi-axis
+      service loads from ``backend/models/text_multi_axis_best.pt``.
+      Seeds 11, 47, 97 are mirrored. MIT-licensed; backbone encoder
+      pin is ``encoder_canonical`` (``finbert_fed_adjacent_xbank_dapt``)
+      above. Backbone was rotated off ``finbert_fed_adjacent`` after
+      the encoder-axis study showed +0.073 Spearman against DFF and
+      +0.016 AUC hike-vs-cut on the 122-meeting policy-anchor test;
+      see ``docs/research/multi-axis-xbank-dapt-promotion.md`` for
+      the head-to-head numbers.
     inference_features:
       - text_embedding
       - text_embedding_missing
