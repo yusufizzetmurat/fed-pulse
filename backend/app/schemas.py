@@ -245,9 +245,15 @@ class CredibilityResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     drift_score: float
-    realized_vs_stated_gap: float
-    market_implied_gap: float
-    months_since_reversal: int
+    realized_vs_stated_gap: float | None = None
+    market_implied_gap: float | None = None
+    months_since_reversal: int | None = None
+    # Per-meeting drift sparkline newest-last. Each entry is the cosine
+    # distance of one prior statement embedding to the mean of the
+    # remaining priors, giving the workspace a short trend curve next
+    # to the headline shift score. Empty when the embedding cache is
+    # absent or only one prior statement is available.
+    drift_trend: list[float] = Field(default_factory=list)
 
 
 class MultiAxisStanceCard(BaseModel):

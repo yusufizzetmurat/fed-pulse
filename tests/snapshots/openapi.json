@@ -867,24 +867,49 @@
             "title": "Drift Score",
             "type": "number"
           },
+          "drift_trend": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Drift Trend",
+            "type": "array"
+          },
           "market_implied_gap": {
-            "title": "Market Implied Gap",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Implied Gap"
           },
           "months_since_reversal": {
-            "title": "Months Since Reversal",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Months Since Reversal"
           },
           "realized_vs_stated_gap": {
-            "title": "Realized Vs Stated Gap",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Vs Stated Gap"
           }
         },
         "required": [
-          "drift_score",
-          "realized_vs_stated_gap",
-          "market_implied_gap",
-          "months_since_reversal"
+          "drift_score"
         ],
         "title": "CredibilityResponse",
         "type": "object"

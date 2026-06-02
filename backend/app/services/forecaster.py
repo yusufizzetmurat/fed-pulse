@@ -322,8 +322,7 @@ def _get_model() -> ForecasterServingModel:
             ok, _status = _validate_serving_contract(BEST_MODEL_PATH)
             if not ok:
                 raise RuntimeError(
-                    "checkpoint inference contract incompatible with serving "
-                    f"signature: {_status}"
+                    f"checkpoint inference contract incompatible with serving signature: {_status}"
                 )
             raw_config = payload.get("model_config") if isinstance(payload, dict) else None
             resolved = _coerce_model_config(raw_config)
@@ -486,21 +485,21 @@ def compute_credibility_for_inference(
         return None
 
     # Best-effort embedding cache lookup; if the file is absent the
-    # drift axis degrades to 0.0 inside the loader.
+    # drift axis degrades to 0.0 inside the loader. Resolve the path via
+    # ``app.data.embedding_cache.resolve_cache_paths`` so the slug stays
+    # in lockstep with the builder (12-char revision prefix, hyphens
+    # normalised) instead of a hand-rolled ``ref.revision[:14]`` that
+    # silently missed the canonical parquet on disk.
     embedding_path: Path | None = None
     try:
+        from app.data.embedding_cache import resolve_cache_paths
         from app.models.registry import encoder_ref
 
         ref = encoder_ref("finbert_fed_adjacent_xbank_dapt")
         if ref is not None and ref.revision:
-            candidate = (
-                DATA_DIR
-                / "raw"
-                / "embeddings"
-                / f"finbert_fed_adjacent_xbank_dapt_{ref.revision[:14]}.parquet"
-            )
-            if candidate.exists():
-                embedding_path = candidate
+            paths = resolve_cache_paths("finbert_fed_adjacent_xbank_dapt", revision=ref.revision)
+            if paths.parquet.exists():
+                embedding_path = paths.parquet
     except Exception:  # pragma: no cover -- defensive
         embedding_path = None
 
