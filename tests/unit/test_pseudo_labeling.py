@@ -227,6 +227,10 @@ def test_run_pseudo_labeling_scores_only_unlabelled_rows_and_writes_jsonl(tmp_pa
         threshold=0.85,
         teacher_model_id="fomc_roberta_s71",
         teacher_model_version="phase4_finetune_v1",
+        # Deterministic single-chunk splitter so the chunk-aware default strategy
+        # does not load the (gated) HF tokenizer — matches the sibling chunked
+        # tests and keeps this test independent of model availability.
+        splitter=lambda text: [text],
     )
 
     assert written == 1

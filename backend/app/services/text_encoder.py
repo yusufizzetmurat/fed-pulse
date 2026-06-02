@@ -38,16 +38,24 @@ MODEL_ID = _OVERRIDE or (
     DEFAULT_LOCAL_CHECKPOINT if Path(DEFAULT_LOCAL_CHECKPOINT).exists() else PRIMARY_HF_MODEL_ID
 )
 
-# When truthy, refuse to silently use the generic fallback classifier — raise
-# instead. Embedding/training pipelines set this so cached vectors can never be
-# built from the wrong encoder (the silent-fallback contamination bug: the
-# primary HF repo can 404, and the run would otherwise proceed on distilbert
-# sentiment vectors with no error).
-STRICT_PRIMARY = (os.environ.get("FED_PULSE_REQUIRE_PRIMARY_SENTIMENT") or "").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-}
+# Fallback policy. The silent fallback to the generic distilbert-sst-2 classifier
+# can contaminate cached embeddings undetected (the primary HF repo 404s and the
+# run proceeds on the wrong encoder with no error). We therefore FAIL CLOSED:
+# refuse the fallback by default for both build and serving. Degraded serving is
+# opt-in and explicit via FED_PULSE_ALLOW_SENTIMENT_FALLBACK, so it can never
+# happen silently. FED_PULSE_REQUIRE_PRIMARY_SENTIMENT is still honoured (now the
+# default behaviour) for backward compatibility.
+_TRUTHY = {"1", "true", "yes"}
+
+
+def _fallback_allowed() -> bool:
+    """True only when an operator has explicitly opted into the degraded fallback."""
+    require = (os.environ.get("FED_PULSE_REQUIRE_PRIMARY_SENTIMENT") or "").strip().lower()
+    if require in _TRUTHY:
+        return False
+    allow = (os.environ.get("FED_PULSE_ALLOW_SENTIMENT_FALLBACK") or "").strip().lower()
+    return allow in _TRUTHY
+
 
 # The model id the singleton actually loaded; differs from MODEL_ID on fallback.
 _loaded_model_id: str | None = None
@@ -174,27 +182,30 @@ def get_classifier() -> Any:
         global _loaded_model_id
         _loaded_model_id = loaded_model_id
         if loaded_model_id != MODEL_ID:
-            # We picked a fallback. The fallback's label space (e.g.
-            # POSITIVE / NEGATIVE for distilbert-sst-2) is NOT
-            # hawkish/dovish/neutral; the frontend's toStance() refuses to
-            # silently relabel POSITIVE -> hawkish, so the dashboard will
-            # surface "Sentiment unavailable" until the primary model loads.
-            if STRICT_PRIMARY:
+            # We picked a fallback. Its label space (e.g. POSITIVE / NEGATIVE for
+            # distilbert-sst-2) is NOT hawkish/dovish/neutral and its embeddings
+            # are generic, not FOMC-specific. Fail closed by default; only the
+            # explicit FED_PULSE_ALLOW_SENTIMENT_FALLBACK opt-out lets serving
+            # degrade (frontend toStance() then reports "Sentiment unavailable").
+            if not _fallback_allowed():
                 raise RuntimeError(
-                    f"sentiment classifier fell back to {loaded_model_id!r} instead of "
-                    f"the primary {MODEL_ID!r}; refusing because "
-                    "FED_PULSE_REQUIRE_PRIMARY_SENTIMENT is set (the primary model is "
-                    "unavailable — see preceding classifier_load_failed warnings)"
+                    f"refusing to use fallback sentiment model {loaded_model_id!r} "
+                    f"instead of the primary {MODEL_ID!r}: the fallback's labels are "
+                    "not hawkish/dovish/neutral and its embeddings are not "
+                    "FOMC-specific, so it can silently contaminate cached vectors. "
+                    "The primary model failed to load — see the preceding "
+                    "classifier_load_failed warnings. Set "
+                    "FED_PULSE_ALLOW_SENTIMENT_FALLBACK=1 to allow degraded serving."
                 )
-            _logger.error(
+            _logger.warning(
                 "sentiment.classifier_using_fallback",
                 extra={
                     "primary_model_id": MODEL_ID,
                     "loaded_model_id": loaded_model_id,
                     "note": (
-                        "Primary sentiment model failed to load. The active model's labels "
-                        "are NOT hawkish/dovish/neutral; the dashboard will report stance "
-                        "as unknown. Inspect the preceding classifier_load_failed warnings."
+                        "FED_PULSE_ALLOW_SENTIMENT_FALLBACK is set: serving on the generic "
+                        "fallback. Stance reports as unknown and any embeddings built now "
+                        "are NOT FOMC-specific."
                     ),
                 },
             )
@@ -220,6 +231,27 @@ def assert_primary_model_loaded() -> None:
             f"(active model: {_loaded_model_id!r}); refusing to build embeddings with "
             "a fallback encoder. Set FED_PULSE_SENTIMENT_MODEL to a valid model."
         )
+
+
+def loaded_encoder_provenance() -> dict[str, Any]:
+    """Provenance of the loaded sentiment encoder, for stamping built artifacts.
+
+    Returns the active model id, its pinned revision, and hidden size so a
+    ``<artifact>.encoder.json`` sidecar can record exactly which encoder produced
+    a cached embedding file.
+    """
+    classifier = get_classifier()
+    model = getattr(classifier, "model", None)
+    hidden = getattr(getattr(model, "config", None), "hidden_size", None)
+    try:
+        revision = revision_for(MODEL_ID)
+    except Exception:
+        revision = None
+    return {
+        "model_id": get_loaded_model_id(),
+        "revision": revision,
+        "hidden_size": int(hidden) if hidden is not None else None,
+    }
 
 
 def classifier_load_count() -> int:
@@ -330,6 +362,11 @@ def encode_chunks(text: str, classifier: Any = None) -> list[ChunkEncoding]:
     if not text:
         return []
     if classifier is None:
+        # Boundary guard: refuse to build encodings on a fallback encoder, so the
+        # silent-fallback contamination cannot occur for ANY caller of the global
+        # singleton — not just the build scripts that call this guard explicitly.
+        # Callers that inject their own classifier own that choice.
+        assert_primary_model_loaded()
         classifier = get_classifier()
     chunks = split_into_chunks(text, classifier=classifier)
     if not chunks:

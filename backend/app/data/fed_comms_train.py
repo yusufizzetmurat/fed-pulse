@@ -47,7 +47,12 @@ def build_corpus_embeddings(
     out_path = Path(out_path)
     if out_path.exists() and not force:
         return out_path
-    from app.services.text_encoder import assert_primary_model_loaded, encode_chunks
+    from app.services.encoder_provenance import write_encoder_sidecar
+    from app.services.text_encoder import (
+        assert_primary_model_loaded,
+        encode_chunks,
+        loaded_encoder_provenance,
+    )
 
     # Fail loudly rather than silently caching embeddings from a fallback model.
     assert_primary_model_loaded()
@@ -65,6 +70,8 @@ def build_corpus_embeddings(
     ]
     out_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_parquet(out_path, index=False)
+    # Stamp which encoder produced these vectors so provenance is auditable.
+    write_encoder_sidecar(out_path, loaded_encoder_provenance())
     print(f"[fed_comms_train] wrote {len(rows)} doc embeddings (dim={dim}) to {out_path}")
     return out_path
 
