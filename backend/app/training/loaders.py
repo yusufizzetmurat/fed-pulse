@@ -873,7 +873,7 @@ def _compute_sep_features_for_event(
 
 def _read_mp_surprise_lookup(
     package_dir: Path,
-) -> dict[str, dict[str, float]]:
+) -> dict[str, dict[str, float | None]]:
     """Return ``event_date -> {mp_surprise_level, ..., is_intermeeting}``.
 
     Looks first inside the training package and then under the canonical
