@@ -776,7 +776,7 @@ export default function WorkspacePage() {
             <div className="space-y-1">
               <h1 className="text-2xl font-semibold tracking-tight">Workspace</h1>
               <p className="max-w-2xl text-sm text-muted-foreground">
-                Paste an FOMC excerpt and the model returns a calibrated 10-day Volatility
+                Paste an FOMC excerpt and the model returns a calibrated Volatility
                 Regime prediction, a sentiment breakdown, a per-sentence explanation,
                 credibility checks, and a full pipeline trace. Everything comes from the live
                 backend.
@@ -785,10 +785,7 @@ export default function WorkspacePage() {
             <div className="flex flex-wrap items-center gap-2">
               <HistoricalContextBadge result={result} documentDate={request.date} />
               <Badge variant="outline" className="numeric text-[10px]">
-                horizon · 10 days
-              </Badge>
-              <Badge variant="outline" className="numeric text-[10px]">
-                target · Volatility Regime
+                horizon · {request.horizon}
               </Badge>
             </div>
           </div>
