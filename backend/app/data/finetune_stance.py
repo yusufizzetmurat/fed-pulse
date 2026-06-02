@@ -164,7 +164,7 @@ def _focal_loss(
     return -(modulator * target_weight * target_log_probs).mean()
 
 
-def train(
+def train(  # noqa: PLR0913 - encoder axis is the natural shape here
     df_tr: pd.DataFrame,
     df_va: pd.DataFrame,
     device: torch.device,
@@ -174,6 +174,7 @@ def train(
     loss_mode: str = "ce",
     cb_beta: float = 0.999,
     focal_gamma: float = 2.0,
+    base_encoder: str = BASE_ENCODER,
 ) -> tuple[Any, Any]:
     if loss_mode not in _VALID_LOSS_MODES:
         # argparse's choices= guards the CLI entry; this fires if a
@@ -181,9 +182,9 @@ def train(
         # typo. Silently falling through to plain CE would mask the
         # bug and run a different objective than the caller asked for.
         raise ValueError(f"loss_mode={loss_mode!r} is not one of {sorted(_VALID_LOSS_MODES)}")
-    tok = AutoTokenizer.from_pretrained(BASE_ENCODER)  # type: ignore[no-untyped-call]
+    tok = AutoTokenizer.from_pretrained(base_encoder)  # type: ignore[no-untyped-call]
     model = AutoModelForSequenceClassification.from_pretrained(
-        BASE_ENCODER,
+        base_encoder,
         num_labels=len(LABELS),
         id2label=dict(enumerate(LABELS)),
         label2id=_L2I,
@@ -286,6 +287,17 @@ def main() -> None:
         default=2.0,
         help="Focal-loss γ; only used with --loss focal",
     )
+    parser.add_argument(
+        "--base-encoder",
+        default=BASE_ENCODER,
+        help=(
+            "HF encoder slug to fine-tune. Defaults to "
+            "yusufizzetmurat/finbert-fed-adjacent. Swap for the encoder-axis "
+            "bake-off: ProsusAI/finbert, "
+            "yusufizzetmurat/finbert-fed-adjacent-xbank, "
+            "yusufizzetmurat/finbert-fed-adjacent-xbank-dapt."
+        ),
+    )
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -305,6 +317,7 @@ def main() -> None:
         loss_mode=args.loss,
         cb_beta=args.cb_beta,
         focal_gamma=args.focal_gamma,
+        base_encoder=args.base_encoder,
     )
     ours = _predict(model, tok, test_df["text"].tolist(), device)
 
@@ -320,6 +333,7 @@ def main() -> None:
     y_true = test_df["y"].to_numpy()
     report = {
         "design": "both trained on TDW; tested on Fed-stance held-out neither trained on",
+        "base_encoder": args.base_encoder,
         "loss": {
             "mode": args.loss,
             "cb_beta": args.cb_beta if args.loss == "ce_balanced" else None,
