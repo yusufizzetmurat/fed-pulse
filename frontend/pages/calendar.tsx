@@ -118,6 +118,29 @@ const TEXT_AVAILABILITY_BADGES: Array<{
   { key: "press_conference_available", label: "Presser", kind: "press_conference" },
 ];
 
+// Resolve the date segment used in the /documents/{kind}/{date} viewer
+// URL. Each document kind has its own release date and the backend's
+// JSON cache is keyed by that date, so a single blanket fallback would
+// 404 every minutes click whenever minutes_release_date differs from
+// statement_release_date. Falls back to meeting_date when the per-kind
+// release date is absent (e.g., far-future rows missing the field).
+function badgeHrefDate(
+  meeting: FomcMeeting,
+  kind: "statement" | "minutes" | "press_conference",
+): string {
+  if (kind === "statement") {
+    return meeting.statement_release_date ?? meeting.meeting_date;
+  }
+  if (kind === "minutes") {
+    return meeting.minutes_release_date ?? meeting.meeting_date;
+  }
+  // The calendar payload does not carry a dedicated press_conference
+  // date; the press conference happens on the meeting's concluding day,
+  // which lines up with statement_release_date. Fall back to
+  // meeting_date when the release date is absent.
+  return meeting.statement_release_date ?? meeting.meeting_date;
+}
+
 function AvailabilityBadge({
   label,
   available,
@@ -218,7 +241,7 @@ function MeetingRowDetails({
               available={Boolean(meeting[key])}
               href={
                 meeting[key]
-                  ? `/documents/${kind}/${meeting.meeting_date}`
+                  ? `/documents/${kind}/${badgeHrefDate(meeting, kind)}`
                   : null
               }
             />

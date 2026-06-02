@@ -385,11 +385,51 @@ def scrape_fomc_minutes(output_dir: str | Path = "/data") -> list[FomcDocument]:
     )
 
 
-if __name__ == "__main__":
-    statements = scrape_fomc_statements("/data")
-    minutes = scrape_fomc_minutes("/data")
-    print(
-        "Saved "
-        f"{len(statements)} statements to /data/fomc_statements.json and /data/fomc_statements.csv, "
-        f"and {len(minutes)} minutes to /data/fomc_minutes.json and /data/fomc_minutes.csv"
+def _cli_main(argv: list[str] | None = None) -> int:
+    """Command-line entry: walk the federalreserve.gov calendar archives
+    and write ``fomc_statements.{json,csv}`` and ``fomc_minutes.{json,csv}``
+    under ``--output-dir`` (defaults to ``/data`` to match the container
+    volume mount). Used by operators to refresh the on-disk caches the
+    ``/fomc/calendar`` availability badges and the ``/documents/{type}/
+    {date}`` viewer route both read against.
+
+    Returns 0 on success, non-zero on failure so docker-compose run exits
+    cleanly.
+    """
+
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="python -m app.services.scraper",
+        description=(
+            "Refresh the FOMC statement and minutes caches by walking the "
+            "Federal Reserve's calendar / historical archive pages."
+        ),
     )
+    parser.add_argument(
+        "output_dir",
+        nargs="?",
+        default="/data",
+        help="Directory to write the JSON + CSV caches into (default: /data).",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        statements = scrape_fomc_statements(args.output_dir)
+        minutes = scrape_fomc_minutes(args.output_dir)
+    except Exception as exc:  # pragma: no cover - surfaced at the CLI.
+        print(f"scrape failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"Saved {len(statements)} statements to {args.output_dir}/fomc_statements.json"
+        f" and {args.output_dir}/fomc_statements.csv, and "
+        f"{len(minutes)} minutes to {args.output_dir}/fomc_minutes.json and "
+        f"{args.output_dir}/fomc_minutes.csv"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli_main())
