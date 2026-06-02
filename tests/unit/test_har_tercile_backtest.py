@@ -492,6 +492,23 @@ def test_realized_variance_aliases_legacy_name() -> None:
     )
 
 
+def test_realized_variance_single_bar_returns_squared_return() -> None:
+    """h=1 forward window yields a single bar; variance must still resolve.
+
+    Earlier revisions kept a ``len < 2`` guard from the legacy 10-bar
+    window, which collapsed every row to pending once the horizon moved
+    to h=1. The realized stat for one bar is just ``r * r``.
+    """
+
+    assert har_tercile_backtest._realized_variance_from_log_returns([0.005]) == pytest.approx(
+        0.005 * 0.005
+    )
+    assert har_tercile_backtest._realized_variance_from_log_returns([-0.012]) == pytest.approx(
+        0.012 * 0.012
+    )
+    assert har_tercile_backtest._realized_variance_from_log_returns([]) is None
+
+
 # ---------------------------------------------------------------------------
 # TTL in-process cache on yfinance fetchers.
 # ---------------------------------------------------------------------------

@@ -112,47 +112,26 @@ export function MultiAxisInterpretation({
           Sentiment breakdown returned no labels
         </p>
         <p>
-          The sentiment model ran but produced no labels for any axis. This usually means
-          the active model file is missing, or the passage is too short for the model to
-          read. Load a sentiment model, or paste a longer FOMC statement to populate stance,
-          factor, and certainty.
+          The sentiment model ran but produced no labels for any axis. Paste a
+          longer FOMC excerpt and re-run.
         </p>
       </div>
     );
   }
 
+  // The forward-guidance vs near-term-shock factor was retired in the
+  // 2026-05-12 multi-axis pivot — the training pool never carried enough
+  // labels to estimate it. The card stays in the type so legacy
+  // checkpoints can still surface it, but we no longer reserve a placeholder
+  // tile or "hidden" badge when it is absent.
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-          Sentiment breakdown
-        </Badge>
-        {!multiAxis.factor ? (
-          <Badge
-            variant="outline"
-            className="text-[10px]"
-            title="The forward-guidance vs near-term shock split needs more labelled examples than the current training pool has, so this axis is hidden until coverage improves."
-          >
-            Forward-guidance factor — hidden (too few labels)
-          </Badge>
-        ) : null}
-      </div>
+      <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+        Sentiment breakdown
+      </Badge>
       <div className="grid gap-3 sm:grid-cols-2">
         {multiAxis.stance ? <StanceTile stance={multiAxis.stance} history={stanceHistory} /> : null}
-        {multiAxis.factor ? (
-          <FactorTile factor={multiAxis.factor} history={factorHistory} />
-        ) : (
-          <div className="rounded-md border border-dashed border-border bg-muted/10 p-3 text-xs text-muted-foreground">
-            <p className="mb-1 text-[10px] uppercase tracking-wide text-foreground">
-              Forward-guidance factor · hidden
-            </p>
-            <p>
-              The forward-guidance vs near-term shock split needs more labelled examples than
-              the current training pool carries, so this axis stays hidden until coverage
-              improves.
-            </p>
-          </div>
-        )}
+        {multiAxis.factor ? <FactorTile factor={multiAxis.factor} history={factorHistory} /> : null}
         {multiAxis.certainty ? (
           <CertaintyTile certainty={multiAxis.certainty} history={certaintyHistory} />
         ) : null}
