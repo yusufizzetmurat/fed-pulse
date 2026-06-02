@@ -1023,6 +1023,74 @@
         "title": "DocumentParseResponse",
         "type": "object"
       },
+      "EncoderAxisStanceRow": {
+        "properties": {
+          "auc_hike_vs_cut": {
+            "title": "Auc Hike Vs Cut",
+            "type": "number"
+          },
+          "encoder_alias": {
+            "title": "Encoder Alias",
+            "type": "string"
+          },
+          "encoder_display": {
+            "title": "Encoder Display",
+            "type": "string"
+          },
+          "held_out_f1": {
+            "title": "Held Out F1",
+            "type": "number"
+          },
+          "is_held_out_winner": {
+            "default": false,
+            "title": "Is Held Out Winner",
+            "type": "boolean"
+          },
+          "is_validity_winner": {
+            "default": false,
+            "title": "Is Validity Winner",
+            "type": "boolean"
+          },
+          "spearman_rho": {
+            "title": "Spearman Rho",
+            "type": "number"
+          }
+        },
+        "required": [
+          "encoder_alias",
+          "encoder_display",
+          "held_out_f1",
+          "spearman_rho",
+          "auc_hike_vs_cut"
+        ],
+        "title": "EncoderAxisStanceRow",
+        "type": "object"
+      },
+      "EncoderAxisStanceSection": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/EncoderAxisStanceRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "source_doc": {
+            "default": "",
+            "title": "Source Doc",
+            "type": "string"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "EncoderAxisStanceSection",
+        "type": "object"
+      },
       "EncoderBakeoffRow": {
         "properties": {
           "accuracy_mean": {
@@ -3705,6 +3773,9 @@
           },
           "cross_bank_transfer": {
             "$ref": "#/components/schemas/CrossBankTransferSection"
+          },
+          "encoder_axis_stance": {
+            "$ref": "#/components/schemas/EncoderAxisStanceSection"
           },
           "encoder_bakeoff": {
             "$ref": "#/components/schemas/EncoderBakeoffSection"
