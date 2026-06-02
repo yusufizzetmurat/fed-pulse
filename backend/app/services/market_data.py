@@ -174,10 +174,15 @@ def _parse_iso_date(value: str) -> date:
         raise ValueError("date must be in YYYY-MM-DD format") from exc
 
 
+def _snapshot_window(symbol: str, start: date, end: date) -> Any:
+    series = _load_snapshot_series(symbol)
+    return series.loc[(series.index.date >= start) & (series.index.date < end)]
+
+
+@lru_cache(maxsize=128)
 def _download_close_series_in_window(symbol: str, start: date, end: date) -> Any:
     if _market_source() == "snapshot":
-        series = _load_snapshot_series(symbol)
-        window = series.loc[(series.index.date >= start) & (series.index.date < end)]
+        window = _snapshot_window(symbol, start, end)
         if window.empty:
             raise RuntimeError(
                 f"Snapshot has no rows for {symbol} in [{start}, {end}). "
@@ -185,12 +190,29 @@ def _download_close_series_in_window(symbol: str, start: date, end: date) -> Any
             )
         return window
 
-    ticker = yf.Ticker(symbol)
-    frame = ticker.history(
-        start=start.isoformat(),
-        end=end.isoformat(),
-        auto_adjust=True,
-    )
+    try:
+        ticker = yf.Ticker(symbol)
+        frame = ticker.history(
+            start=start.isoformat(),
+            end=end.isoformat(),
+            auto_adjust=True,
+        )
+    except Exception as exc:
+        # yfinance throws YFRateLimitError plus various transient network
+        # errors. When a committed snapshot covers the window, prefer the
+        # snapshot over surfacing the upstream failure to the user.
+        try:
+            window = _snapshot_window(symbol, start, end)
+        except Exception:
+            window = None
+        if window is not None and not window.empty:
+            return window
+        raise RuntimeError(
+            f"Live market fetch failed for {symbol} ({type(exc).__name__}); "
+            "no snapshot fallback available. "
+            f"Run scripts/snapshot_market_data.py --symbols {symbol} to seed one."
+        ) from exc
+
     if frame.empty:
         raise RuntimeError(f"No market data found for {symbol}")
 
