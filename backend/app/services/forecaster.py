@@ -326,12 +326,33 @@ def _get_model() -> ForecasterServingModel:
                 )
             raw_config = payload.get("model_config") if isinstance(payload, dict) else None
             resolved = _coerce_model_config(raw_config)
-            model = build_serving_forecaster(resolved).to(device)
-            if payload is not None:
-                _load_state_dict_loose(model, payload["model_state_dict"], str(BEST_MODEL_PATH))
-            model.eval()  # set inference mode
+            # Build inside an explicit torch.device context so any lazy-init
+            # third-party layers (e.g. HF transformers under
+            # ``init_empty_weights``) materialise their tensors on the real
+            # device instead of staying on ``meta``. A subsequent ``.to(device)``
+            # on a model that holds meta tensors raises the NotImplementedError
+            # "Cannot copy out of meta tensor; no data!" which used to leave the
+            # singleton in a half-built state and break every later /analyze
+            # request until backend restart.
+            try:
+                with torch.device(device):
+                    model = build_serving_forecaster(resolved)
+                model = model.to(device)
+                if payload is not None:
+                    _load_state_dict_loose(
+                        model, payload["model_state_dict"], str(BEST_MODEL_PATH)
+                    )
+                model.eval()  # set inference mode
+            except Exception:
+                # Never publish a half-built model into the singleton; the
+                # next request must be free to rebuild from scratch.
+                _model = None
+                _model_artifact_metadata = None
+                raise
             _model = model
-            _model_artifact_metadata = _checkpoint_metadata(payload, BEST_MODEL_PATH, model=model)
+            _model_artifact_metadata = _checkpoint_metadata(
+                payload, BEST_MODEL_PATH, model=model
+            )
     return _model
 
 

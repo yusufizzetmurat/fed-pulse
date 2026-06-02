@@ -296,13 +296,16 @@ export default function HistoryPage() {
     [apiBaseUrl, reload],
   );
 
-  // Collect the available variant / symbol options from the loaded rows.
-  // Symbols also include the static universe so filters work pre-load.
-  const symbolOptions = React.useMemo(() => {
-    const set = new Set<string>(symbolUniverse.map((s) => s.symbol));
-    for (const row of items) set.add(row.symbol);
-    return [...set].sort();
-  }, [items, symbolUniverse]);
+  // Symbol filter mirrors whatever the live ``/symbols`` endpoint
+  // returns so the picker matches the Workspace asset selector. Older
+  // history rows whose symbol no longer appears on /symbols (e.g. a
+  // legacy ticker that was dropped from the universe) are reachable via
+  // search; surfacing them as filter chips would silently widen the
+  // supported set on this page only.
+  const symbolOptions = React.useMemo(
+    () => symbolUniverse.map((s) => s.symbol).sort(),
+    [symbolUniverse],
+  );
 
   const variantOptions = React.useMemo(() => {
     const set = new Set<string>();

@@ -58,7 +58,7 @@ const PAGE_ENTRIES = [
   { id: "page-compare", label: "Compare", hint: "/compare", icon: GitCompare, href: "/compare" },
   { id: "page-calendar", label: "Calendar", hint: "/calendar", icon: Calendar, href: "/calendar" },
   { id: "page-performance", label: "Performance", hint: "/performance", icon: LineChart, href: "/performance" },
-  { id: "page-research", label: "Research", hint: "/research", icon: FlaskConical, href: "/research" },
+  { id: "page-research", label: "Labs", hint: "/research", icon: FlaskConical, href: "/research" },
 ];
 
 function toggleTheme() {

@@ -7,7 +7,6 @@ import {
   Calendar,
   FlaskConical,
   Gavel,
-  GitCompare,
   Github,
   History as HistoryIcon,
   LineChart,
@@ -25,10 +24,9 @@ const NAV_ITEMS: Array<{ href: string; label: string; icon: React.ComponentType<
   { href: "/", label: "Workspace", icon: Activity },
   { href: "/decisions", label: "Decisions", icon: Gavel },
   { href: "/history", label: "History", icon: HistoryIcon },
-  { href: "/compare", label: "Compare", icon: GitCompare },
   { href: "/calendar", label: "Calendar", icon: Calendar },
   { href: "/performance", label: "Performance", icon: LineChart },
-  { href: "/research", label: "Research", icon: FlaskConical },
+  { href: "/research", label: "Labs", icon: FlaskConical },
 ];
 
 function isActive(currentPath: string, href: string): boolean {
