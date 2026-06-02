@@ -63,17 +63,28 @@ def build_fomc_embeddings(
 
     # Fail loudly rather than silently caching embeddings from a fallback model.
     assert_primary_model_loaded()
+    provenance = loaded_encoder_provenance()
     texts = statement_dates_and_text(events_parquet)
-    rows = []
+    encoded: list[tuple[str, np.ndarray | None]] = []
     for date_iso in sorted(texts):
         encs = encode_chunks(texts[date_iso])
         vecs = [np.asarray(e.embedding, dtype=np.float64) for e in encs if e.embedding]
-        emb = np.mean(vecs, axis=0) if vecs else np.zeros(768)
-        rows.append({"date": date_iso, **{f"emb_{i}": float(emb[i]) for i in range(len(emb))}})
+        encoded.append((date_iso, np.mean(vecs, axis=0) if vecs else None))
+    # Size to the encoder's actual width, not a hardcoded 768 (FOMC-RoBERTa is
+    # 1024); empty-text rows fall back to zeros of the SAME width.
+    dim = next(
+        (len(v) for _, v in encoded if v is not None),
+        provenance.get("hidden_size") or 768,
+    )
+    rows = [
+        {"date": date_iso, **{f"emb_{i}": float(emb[i]) for i in range(dim)}}
+        for date_iso, v in encoded
+        for emb in [v if v is not None else np.zeros(dim)]
+    ]
     out_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_parquet(out_path, index=False)
     # Stamp which encoder produced these vectors so provenance is auditable.
-    write_encoder_sidecar(out_path, loaded_encoder_provenance())
+    write_encoder_sidecar(out_path, provenance)
     print(f"[dense_fomc_text] wrote {len(rows)} FOMC embeddings to {out_path}")
     return out_path
 
