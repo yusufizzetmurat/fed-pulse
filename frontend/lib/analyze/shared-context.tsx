@@ -260,9 +260,13 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
             ...prev,
             [mapKey]: { data, loading: false, error: null },
           }));
-          // Clear the in-flight guard on success so a follow-up
-          // refresh (e.g., after /analyze persists a new row) can
-          // re-fetch instead of short-circuiting at the dedupe gate.
+          // Mirror ensureHarBaselines: only clear the in-flight guard on
+          // success so a follow-up refresh (e.g., after /analyze persists
+          // a new row) can re-fetch instead of short-circuiting at the
+          // dedupe gate. On error the guard stays set for the session
+          // lifetime to coalesce retries and prevent an effect that
+          // re-runs on every state change from thrashing the endpoint;
+          // the user can recover by changing the symbol or reloading.
           inFlight.current.delete(key);
         })
         .catch((err) => {
@@ -274,6 +278,8 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
               error: (err as Error).message || "history fetch failed",
             },
           }));
+          // Intentionally do NOT delete the in-flight guard here; see the
+          // success-path comment above for the rationale.
         });
     },
     [apiBaseUrl],
