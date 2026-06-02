@@ -50,6 +50,7 @@ def snapshot_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     from app.services import market_data
 
     market_data._load_snapshot_series.cache_clear()
+    market_data._download_close_series_in_window.cache_clear()
     return snapshot_dir
 
 

@@ -192,6 +192,12 @@ export function SymbolCalendarProvider({ children }: { children: React.ReactNode
             ...prev,
             [symKey]: { data, loading: false, error: null },
           }));
+          // Mirror ensureHarBaselines / ensureRecentHistory: clear the
+          // in-flight guard on success so an explicit refresh can re-fetch.
+          // On error the guard stays set so a re-running effect cannot
+          // thrash the endpoint; the user recovers by changing the symbol
+          // or reloading.
+          inFlight.current.delete(key);
         })
         .catch((err) => {
           setCoverageMap((prev) => ({

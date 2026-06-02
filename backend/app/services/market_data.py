@@ -181,6 +181,10 @@ def _snapshot_window(symbol: str, start: date, end: date) -> Any:
 
 @lru_cache(maxsize=128)
 def _download_close_series_in_window(symbol: str, start: date, end: date) -> Any:
+    # Returns a defensive copy of the underlying Series. The lru_cache
+    # holds the canonical object; copying on the way out keeps any caller
+    # in-place mutation (``.iloc[i] = ...``, ``.where(..., inplace=True)``)
+    # from corrupting the cached value for the next request.
     if _market_source() == "snapshot":
         window = _snapshot_window(symbol, start, end)
         if window.empty:
@@ -188,7 +192,7 @@ def _download_close_series_in_window(symbol: str, start: date, end: date) -> Any
                 f"Snapshot has no rows for {symbol} in [{start}, {end}). "
                 "Re-run scripts/snapshot_market_data.py to widen the window."
             )
-        return window
+        return window.copy()
 
     try:
         ticker = yf.Ticker(symbol)
@@ -206,7 +210,7 @@ def _download_close_series_in_window(symbol: str, start: date, end: date) -> Any
         except Exception:
             window = None
         if window is not None and not window.empty:
-            return window
+            return window.copy()
         raise RuntimeError(
             f"Live market fetch failed for {symbol} ({type(exc).__name__}); "
             "no snapshot fallback available. "
@@ -219,7 +223,7 @@ def _download_close_series_in_window(symbol: str, start: date, end: date) -> Any
     close_series = _close_series_from_frame(frame)
     if close_series.empty:
         raise RuntimeError(f"No close prices available for {symbol}")
-    return close_series
+    return close_series.copy()
 
 
 def _download_close_series(
