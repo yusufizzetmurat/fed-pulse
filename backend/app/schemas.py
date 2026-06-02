@@ -647,6 +647,12 @@ class HistoryEntry(BaseModel):
     forecast_mode: str
     stance: str
     sentiment_score: float | None = None
+    # Signed stance value ``P(hawkish) - P(dovish)`` derived from the persisted
+    # multi-axis distribution. ``None`` when the row pre-dates multi-axis or
+    # when the payload is regression-mode (no stance head). The History chart
+    # uses this for the Y-axis; ``sentiment_score`` is unsigned confidence and
+    # should not drive a signed axis.
+    stance_score: float | None = None
     predicted_close: float | None = None
     current_close: float | None = None
     predicted_volatility: float | None = None

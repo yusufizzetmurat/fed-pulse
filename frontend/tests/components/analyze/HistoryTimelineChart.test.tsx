@@ -23,13 +23,14 @@ vi.mock("recharts", () => {
             smoke test can count them and reason about the right-axis
             vol line covering only the rows that carry the metric. */}
         {(data ?? []).map((row, idx) => {
-          const r = row as { vol?: number | null; date?: string };
+          const r = row as { vol?: number | null; date?: string; stance?: number };
           return (
             <div
               key={idx}
               data-testid="rc-row"
               data-has-vol={r.vol != null ? "true" : "false"}
               data-date={r.date}
+              data-stance={typeof r.stance === "number" ? String(r.stance) : ""}
             />
           );
         })}
@@ -67,6 +68,7 @@ function makeRow(overrides: Partial<HistoryTimelineRow> = {}): HistoryTimelineRo
     forecast_mode: "fast",
     stance: overrides.stance ?? "neutral",
     sentiment_score: overrides.sentiment_score ?? 0,
+    stance_score: overrides.stance_score,
     predicted_close: null,
     current_close: null,
     predicted_volatility: null,
@@ -116,6 +118,98 @@ describe("HistoryTimelineChart", () => {
     expect(screen.queryByTestId("rc-line-vol")).toBeNull();
     // Card copy mirrors the axis state so the user sees a matching note.
     expect(screen.getByText(/No forward vol data on these rows\./i)).toBeInTheDocument();
+  });
+
+  it("uses the signed stance_score when present and falls back to the stance label otherwise", () => {
+    // sentiment_score is the winning-class confidence (always in [0, 1])
+    // so a dovish row used to render above the zero line. Surface stance_score
+    // from the multi-axis distribution instead. The row without stance_score
+    // falls back to stanceToScore("dovish") = -1.
+    const rows = [
+      makeRow({
+        id: "dove",
+        document_date: "2026-03-01",
+        stance: "dovish",
+        sentiment_score: 0.85,
+        stance_score: -0.45,
+      }),
+      makeRow({
+        id: "hawk",
+        document_date: "2026-03-08",
+        stance: "hawkish",
+        sentiment_score: 0.70,
+        stance_score: 0.30,
+      }),
+      makeRow({
+        id: "legacy",
+        document_date: "2026-03-15",
+        stance: "dovish",
+        sentiment_score: 0.62,
+        // No stance_score: pre-multi-axis row.
+      }),
+    ];
+    render(<HistoryTimelineChart rows={rows} />);
+    const dots = screen.getAllByTestId("rc-row");
+    const byDate = Object.fromEntries(
+      dots.map((d) => [d.getAttribute("data-date") ?? "", d.getAttribute("data-stance")]),
+    );
+    expect(byDate["2026-03-01"]).toBe("-0.45");
+    expect(byDate["2026-03-08"]).toBe("0.3");
+    // Legacy row drops to the categorical fallback: dovish → -1.
+    expect(byDate["2026-03-15"]).toBe("-1");
+  });
+
+  it("renders a line that crosses zero when the fixture mixes negative and positive stance_score", () => {
+    // Regression guard for the bug this PR fixes: before the fix, the
+    // chart fed `sentiment_score` (winning-class confidence, always in
+    // [0, 1]) into the stance line, so a series of dovish + hawkish
+    // runs sat entirely above the zero baseline. With the signed
+    // `stance_score`, the same fixture must straddle zero.
+    const rows = [
+      makeRow({
+        id: "dove-1",
+        document_date: "2026-02-01",
+        stance: "dovish",
+        sentiment_score: 0.80,
+        stance_score: -0.60,
+      }),
+      makeRow({
+        id: "dove-2",
+        document_date: "2026-02-08",
+        stance: "dovish",
+        sentiment_score: 0.55,
+        stance_score: -0.20,
+      }),
+      makeRow({
+        id: "hawk-1",
+        document_date: "2026-02-15",
+        stance: "hawkish",
+        sentiment_score: 0.65,
+        stance_score: 0.25,
+      }),
+      makeRow({
+        id: "hawk-2",
+        document_date: "2026-02-22",
+        stance: "hawkish",
+        sentiment_score: 0.90,
+        stance_score: 0.70,
+      }),
+    ];
+    render(<HistoryTimelineChart rows={rows} />);
+    const dots = screen.getAllByTestId("rc-row");
+    const stances = dots
+      .map((d) => d.getAttribute("data-stance"))
+      .filter((v): v is string => v != null && v !== "")
+      .map((v) => Number(v));
+    // Every emitted dot has a finite numeric stance; the fixture
+    // contains both signs, proving the rendered series crosses the
+    // zero line rather than staying in the [0, 1] confidence band.
+    expect(stances).toHaveLength(4);
+    expect(stances.every((v) => Number.isFinite(v))).toBe(true);
+    expect(stances.some((v) => v < 0)).toBe(true);
+    expect(stances.some((v) => v > 0)).toBe(true);
+    expect(Math.min(...stances)).toBeLessThan(0);
+    expect(Math.max(...stances)).toBeGreaterThan(0);
   });
 
   it("shows the right axis and the vol line, with vol present only on the rows that carry it", () => {

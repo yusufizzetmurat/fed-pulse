@@ -104,3 +104,54 @@ def test_text_excerpt_truncates_long_input(session):
     assert record.text_excerpt is not None
     assert len(record.text_excerpt) <= 281
     assert record.text_excerpt.endswith("…")
+
+
+def test_to_summary_surfaces_signed_stance_score(session):
+    """A dovish-leaning multi-axis payload yields a negative ``stance_score``.
+
+    Guards the History chart: ``sentiment_score`` is unsigned confidence
+    in [0, 1] and cannot encode direction. ``stance_score`` is the signed
+    ``P(hawkish) - P(dovish)`` from the persisted ``multi_axis`` block and
+    is what the chart's Y-axis must read off the summary.
+    """
+
+    payload = _sample_response(
+        multi_axis={
+            "stance": {
+                "distribution": {
+                    "hawkish": 0.15,
+                    "neutral": 0.25,
+                    "dovish": 0.60,
+                },
+            },
+        },
+    )
+    record = db_module.persist_analysis_run(
+        session,
+        payload=payload,
+        request=_sample_request(),
+        response=payload,
+    )
+    summary = record.to_summary()
+    assert "stance_score" in summary
+    assert summary["stance_score"] is not None
+    assert summary["stance_score"] == pytest.approx(0.15 - 0.60)
+    assert summary["stance_score"] < 0
+
+
+def test_to_summary_stance_score_none_when_multi_axis_absent(session):
+    """Pre-multi-axis / regression-mode rows return ``stance_score=None``.
+
+    The chart falls back to ``stanceToScore(row.stance)`` in that case so
+    the X-axis still renders something, but the summary must not fabricate
+    a zero — the ``None`` signal is what tells the frontend to fall back.
+    """
+
+    record = db_module.persist_analysis_run(
+        session,
+        payload=_sample_response(),
+        request=_sample_request(),
+        response=_sample_response(),
+    )
+    summary = record.to_summary()
+    assert summary["stance_score"] is None

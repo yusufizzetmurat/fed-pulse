@@ -59,6 +59,7 @@ class AnalysisRun(Base):
             "forecast_mode": self.forecast_mode,
             "stance": self.stance,
             "sentiment_score": self.sentiment_score,
+            "stance_score": _extract_stance_score(self.payload),
             "predicted_close": self.predicted_close,
             "current_close": self.current_close,
             "predicted_volatility": self.predicted_volatility,
@@ -72,6 +73,35 @@ class AnalysisRun(Base):
         summary = self.to_summary()
         summary["payload"] = self.payload
         return summary
+
+
+def _extract_stance_score(payload: Any) -> float | None:
+    """``P(hawkish) - P(dovish)`` from a persisted /analyze response.
+
+    Defined here rather than in ``app.services.stance_context`` because
+    ``db.py`` is the persistence boundary; co-locating the extractor
+    with the model keeps the schema-aware logic next to the column it
+    reads. Returns ``None`` when the payload lacks the multi-axis block
+    or either class probability so pre-#338 / regression-mode rows
+    degrade to ``null`` rather than fabricating a zero.
+    """
+
+    if not isinstance(payload, dict):
+        return None
+    multi_axis = payload.get("multi_axis")
+    if not isinstance(multi_axis, dict):
+        return None
+    stance = multi_axis.get("stance")
+    if not isinstance(stance, dict):
+        return None
+    distribution = stance.get("distribution")
+    if not isinstance(distribution, dict):
+        return None
+    hawk = distribution.get("hawkish")
+    dove = distribution.get("dovish")
+    if not isinstance(hawk, int | float) or not isinstance(dove, int | float):
+        return None
+    return float(hawk) - float(dove)
 
 
 def _extract_regime_summary(payload: Any) -> dict[str, Any]:

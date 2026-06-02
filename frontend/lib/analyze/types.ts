@@ -416,6 +416,7 @@ export interface HistoryEntry {
   forecast_mode: string;
   stance: string;
   sentiment_score?: number | null;
+  stance_score?: number | null;
   predicted_close?: number | null;
   current_close?: number | null;
   predicted_volatility?: number | null;
