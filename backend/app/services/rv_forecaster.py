@@ -17,6 +17,7 @@ for the process lifetime.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from pathlib import Path
@@ -29,6 +30,8 @@ from app.data.intraday_rv_forecast import _EPS as _RVEPS, _LOGV_CLAMP, _har_lags
 
 if TYPE_CHECKING:
     import torch
+
+logger = logging.getLogger("app.services.rv_forecaster")
 
 
 HF_REPO_ID = "yusufizzetmurat/fomc-rv-qlike-forecaster"
@@ -175,22 +178,48 @@ class _RvPredictor:
         self.eval = _load_eval(self.model_dir)
         self.seed_models = _load_seed_models(self.spec, self.model_dir)
         self.revision = f"{self.spec.get('model', 'rv')}@{self.spec.get('date_last', '')}"
+        # Drift guard: the serving layer's _REALIZED_FEAT_COLS is the
+        # contract that intraday_features.recent_realized_measures
+        # promises to fill at indices full[3:10]. If a future training
+        # artifact reorders or renames any of these columns the live
+        # intraday wiring would silently scramble the feature row, so
+        # we hard-fail at load time instead of degrading silently.
+        artifact_cols = tuple(self.spec.get("feature_order", [])[3 : 3 + len(_REALIZED_FEAT_COLS)])
+        if artifact_cols and artifact_cols != _REALIZED_FEAT_COLS:
+            raise RvForecasterUnavailable(
+                f"realized-measure column order drift: artifact has {artifact_cols}, "
+                f"serving expects {_REALIZED_FEAT_COLS}. Re-sync "
+                "rv_forecaster._REALIZED_FEAT_COLS with the training pipeline."
+            )
+
+
+# Feature-row column order pinned at training time
+# (intraday_rv_production._FEAT_COLS + log(rvol+1) last).
+# ``full[0:3]`` are the HAR daily/weekly/monthly lags. ``full[3:10]``
+# are the seven realized-measure columns; ``full[10]`` is log(rvol+1).
+_REALIZED_FEAT_COLS = ("rs_pos", "rs_neg", "bv", "rq", "rskew", "rkurt", "parkinson")
 
 
 def _ensemble_log_rv(
     log_rv: np.ndarray,
     row: dict[str, Any],
     seeds: list["torch.nn.Module"],
-) -> float:
-    """One-step ensemble forecast in log-RV space for the latest window."""
+    intraday_measures: dict[str, Any] | None = None,
+) -> tuple[float, str]:
+    """One-step ensemble forecast in log-RV space for the latest window.
+
+    Returns ``(log_point, realized_features_source)``. The source flag is
+    ``"live"`` when ``intraday_measures`` was supplied and used to fill
+    the seven realized-measure columns plus ``log(rvol+1)``, and
+    ``"training_means"`` when the QLIKE head falls back to feat_mean
+    (HAR-only effective prediction). The dashboard surfaces this so the
+    user knows whether the displayed forecast is the full edge or the
+    HAR-grade fallback.
+    """
 
     import torch
 
     har = _har_lags(log_rv)  # backward HAR regressors at every index
-    # Reproduce the training-time feature layout for the LAST observation only.
-    # The QLIKE-DLq head takes the standardized full feature row and emits a
-    # standardized residual that is un-standardized and added to the OLS HAR
-    # prediction (intercept + d/w/m coef).
     last = har[-1]
     har_coef = np.asarray(row["har_coef"], dtype=np.float64)
     har_pred = float(
@@ -199,14 +228,29 @@ def _ensemble_log_rv(
 
     feat_mean = np.asarray(row["feat_mean"], dtype=np.float64)
     feat_std = np.asarray(row["feat_std"], dtype=np.float64)
-    # The non-HAR realized-measure columns are not available from a bare RV
-    # history; we substitute their training-set means (standardized → zeros)
-    # so the head reduces to a HAR-only point forecast plus the learned
-    # bias on the realized lags. This keeps the predictor usable from a
-    # plain RV series; richer features can be plumbed when intraday bars
-    # are reachable.
     full = feat_mean.copy()
-    full[0:3] = last  # the HAR daily/weekly/monthly lags
+    full[0:3] = last  # HAR daily / weekly / monthly lags
+
+    source = "training_means"
+    if intraday_measures is not None and len(full) >= 11:
+        try:
+            for i, col in enumerate(_REALIZED_FEAT_COLS):
+                full[3 + i] = float(intraday_measures[col])
+            full[10] = float(np.log(float(intraday_measures["rvol"]) + 1.0))
+            source = "live"
+        except (KeyError, TypeError, ValueError) as exc:
+            # Any missing / malformed key short-circuits to feat_mean
+            # fallback. The forecast remains valid (HAR-grade); only the
+            # source flag changes. Log so a contract drift between the
+            # intraday fetcher and this consumer is diagnosable.
+            logger.warning(
+                "rv_forecaster: intraday_measures malformed (%s); falling back to training_means",
+                exc,
+            )
+            full = feat_mean.copy()
+            full[0:3] = last
+            source = "training_means"
+
     x = (full - feat_mean) / feat_std
     xt = torch.tensor(x, dtype=torch.float32).reshape(1, -1)
     rs = float(row["resid_std"])
@@ -218,17 +262,23 @@ def _ensemble_log_rv(
         log_pred = har_pred + (r_std * rs + rm)
         log_pred = float(np.clip(log_pred, -_LOGV_CLAMP, _LOGV_CLAMP))
         preds.append(log_pred)
-    return float(np.mean(preds))
+    return float(np.mean(preds)), source
 
 
-def predict_rv(rv_history: list[float] | np.ndarray) -> dict[str, Any]:
+def predict_rv(
+    rv_history: list[float] | np.ndarray,
+    intraday_measures: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Multi-horizon banded RV forecast off a recent realized-vol series.
 
     ``rv_history`` is a chronologically ordered series of daily realized
     variance values (NOT log). Each entry is the per-day realized variance
     that ``intraday_realized.daily_realized_measures`` would output. The
     function returns the per-horizon point forecast in RV space, 80%/90%
-    conformal bands, and the QLIKE / coverage diagnostics for the card.
+    conformal bands, the QLIKE / coverage diagnostics, and the
+    ``realized_features_source`` flag (``"live"`` when ``intraday_measures``
+    was supplied and used; ``"training_means"`` when the QLIKE head fell
+    back to feat_mean and the forecast collapses to HAR-grade).
     """
 
     rv = np.asarray(rv_history, dtype=np.float64)
@@ -240,11 +290,18 @@ def predict_rv(rv_history: list[float] | np.ndarray) -> dict[str, Any]:
     log_rv = np.log(rv + _RVEPS)
     pred = _RvPredictor.get()
     horizons_out: list[dict[str, Any]] = []
+    # Source flag is determined by the first horizon's pass and held
+    # constant across the three. The flag is intentionally a single
+    # value per request — if intraday is unavailable, every horizon
+    # falls back together, not piecemeal.
+    realized_features_source = "training_means"
     for h in HORIZONS:
         hk = f"h{h}"
         row = pred.spec["by_horizon"][hk]
         seeds = pred.seed_models[hk]
-        log_point = _ensemble_log_rv(log_rv, row, seeds)
+        log_point, source = _ensemble_log_rv(log_rv, row, seeds, intraday_measures)
+        if h == HORIZONS[0]:
+            realized_features_source = source
         point = float(np.exp(log_point))
         quants = row["conformal_quantiles"]
         q80 = float(quants.get("0.20", 0.0))
@@ -268,9 +325,18 @@ def predict_rv(rv_history: list[float] | np.ndarray) -> dict[str, Any]:
                 "coverage_empirical_90": coverage_90,
             }
         )
+    realized_features_date: str | None = None
+    if (
+        realized_features_source == "live"
+        and intraday_measures is not None
+        and isinstance(intraday_measures.get("date"), str)
+    ):
+        realized_features_date = intraday_measures["date"]
     return {
         "horizons": horizons_out,
         "model_revision": pred.revision,
+        "realized_features_source": realized_features_source,
+        "realized_features_date": realized_features_date,
     }
 
 
@@ -313,9 +379,12 @@ def predict_rv_historical_bands(
 
     out: list[dict[str, Any]] = []
     for i in range(_HISTORICAL_BANDS_WARMUP, len(rv)):
-        # Predict day i using only rv_history[:i] (no leakage).
+        # Predict day i using only rv_history[:i] (no leakage). The
+        # historical-band walk is deliberately HAR-grade (intraday
+        # measures are not reconstructed for past days), so the second
+        # return value is ignored.
         log_rv_prefix = np.log(rv[:i] + _RVEPS)
-        log_point = _ensemble_log_rv(log_rv_prefix, row, seeds)
+        log_point, _ = _ensemble_log_rv(log_rv_prefix, row, seeds)
         out.append(
             {
                 "date": str(dates[i]),

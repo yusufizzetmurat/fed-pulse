@@ -3400,6 +3400,22 @@
             "title": "Model Revision",
             "type": "string"
           },
+          "realized_features_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Features Date"
+          },
+          "realized_features_source": {
+            "default": "training_means",
+            "title": "Realized Features Source",
+            "type": "string"
+          },
           "symbol": {
             "title": "Symbol",
             "type": "string"

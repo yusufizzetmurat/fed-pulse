@@ -1945,6 +1945,7 @@ async def forecast_realized_vol(
     artifact cannot be loaded or the history is insufficient.
     """
 
+    from app.services.intraday_features import recent_realized_measures
     from app.services.rv_forecaster import (
         RvForecasterUnavailable,
         predict_rv,
@@ -1958,8 +1959,20 @@ async def forecast_realized_vol(
             status_code=503, detail={"error": "history_unavailable", "message": str(exc)}
         ) from exc
 
+    # Best-effort: pull the latest intraday realized measures so the
+    # QLIKE-DLq head sees real values for rs_pos/rs_neg/bv/rq/rskew/
+    # rkurt/parkinson/log(rvol) instead of training-set means. A
+    # ``None`` here is a soft degrade — predict_rv falls back to the
+    # feat_mean path (HAR-grade) and surfaces ``realized_features_source
+    # == "training_means"`` on the response.
     try:
-        out = await run_in_threadpool(predict_rv, rv_hist)
+        intraday_measures = await run_in_threadpool(recent_realized_measures, symbol)
+    except Exception:  # pragma: no cover -- defensive
+        logger.warning("rv_intraday_measures_failed", exc_info=True)
+        intraday_measures = None
+
+    try:
+        out = await run_in_threadpool(predict_rv, rv_hist, intraday_measures)
     except RvForecasterUnavailable as exc:
         raise HTTPException(
             status_code=503, detail={"error": "model_unavailable", "message": str(exc)}
@@ -1991,6 +2004,8 @@ async def forecast_realized_vol(
         history_dates=hist_dates,
         model_revision=out["model_revision"],
         historical_bands=historical_bands,
+        realized_features_source=out.get("realized_features_source", "training_means"),
+        realized_features_date=out.get("realized_features_date"),
     )
 
 

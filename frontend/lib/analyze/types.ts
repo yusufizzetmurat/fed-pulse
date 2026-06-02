@@ -711,6 +711,13 @@ export interface RealizedVolForecastResponse {
   history_dates: string[];
   model_revision: string;
   historical_bands?: RealizedVolHistoricalBand[] | null;
+  // "live" when the QLIKE-DLq head was filled with live intraday
+  // realized measures (full edge served). "training_means" when the
+  // head fell back to feat_mean and the forecast collapses to HAR-grade.
+  realized_features_source?: "live" | "training_means";
+  // ISO date of the most-recent full intraday session the live
+  // measures were derived from; null when the head fell back.
+  realized_features_date?: string | null;
 }
 
 export interface BacktestResponse {

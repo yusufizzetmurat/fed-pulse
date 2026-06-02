@@ -88,6 +88,40 @@ function HorizonColumn({ horizon }: HorizonColumnProps) {
   );
 }
 
+function RealizedFeatureSourceBadge({
+  source,
+  date,
+}: {
+  source: RealizedVolForecastResponse["realized_features_source"] | undefined;
+  date: RealizedVolForecastResponse["realized_features_date"] | undefined;
+}) {
+  if (source === "live") {
+    const tooltip = date
+      ? `Live intraday realized measures (rs_pos/rs_neg/bv/rq/rskew/rkurt/parkinson/log_rvol) from ${date} feed the QLIKE-DLq head this request. Full edge served.`
+      : "Live intraday realized measures feed the QLIKE-DLq head this request. Full edge served.";
+    return (
+      <Badge
+        variant="outline"
+        className="text-[10px] uppercase tracking-wide text-emerald-700 border-emerald-700/40"
+        title={tooltip}
+        data-testid="rv-source-live"
+      >
+        QLIKE-full{date ? ` · ${date}` : ""}
+      </Badge>
+    );
+  }
+  return (
+    <Badge
+      variant="outline"
+      className="text-[10px] uppercase tracking-wide text-amber-700 border-amber-700/40"
+      title="Intraday 5m bars unavailable for this symbol. The QLIKE-DLq head falls back to training-set means; the forecast collapses to HAR-grade. The ~10% QLIKE-over-HAR edge does not apply here."
+      data-testid="rv-source-fallback"
+    >
+      HAR-fallback
+    </Badge>
+  );
+}
+
 interface VolatilityOutlookCardProps {
   forecast: RealizedVolForecastResponse | null;
   loading?: boolean;
@@ -148,14 +182,22 @@ export function VolatilityOutlookCard({
         </CardDescription>
         <CardTitle className="flex items-center justify-between text-base">
           <span>QLIKE-DLq ensemble · {forecast.symbol}</span>
-          <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-            Market readout
-          </Badge>
+          <div className="flex items-center gap-1.5">
+            <RealizedFeatureSourceBadge
+              source={forecast.realized_features_source}
+              date={forecast.realized_features_date}
+            />
+            <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+              Market readout
+            </Badge>
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-[11px] text-muted-foreground">
-          Annualized realized volatility, ensemble mean with conformal bands.
+          {forecast.realized_features_source === "live"
+            ? "Annualized realized volatility, ensemble mean with conformal bands. Live intraday realized measures feed the QLIKE head."
+            : "Annualized realized volatility, ensemble mean with conformal bands. Intraday measures unavailable; the head falls back to HAR-grade."}
         </p>
         <div className="grid gap-2 md:grid-cols-3">
           {forecast.horizons.map((h) => (

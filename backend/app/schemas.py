@@ -1457,6 +1457,18 @@ class RealizedVolForecastResponse(BaseModel):
     history_dates: list[str] = Field(default_factory=list)
     model_revision: str
     historical_bands: list[RealizedVolHistoricalBand] | None = None
+    # "live" when the QLIKE head was filled with intraday-derived
+    # realized measures (full QLIKE edge); "training_means" when the
+    # head fell back to feat_mean (HAR-grade forecast). The dashboard
+    # surfaces this so the displayed point + bands are not misread as
+    # the full edge when intraday isn't reachable.
+    realized_features_source: str = "training_means"
+    # ISO date of the most-recent full intraday session the live
+    # measures were reduced from. ``None`` when the head fell back to
+    # training_means. The dashboard renders this in the badge tooltip
+    # so the reader can tell a Friday measure feeding a Tuesday forecast
+    # from one off the previous full session.
+    realized_features_date: str | None = None
 
 
 class HarTercileHorizon(BaseModel):
