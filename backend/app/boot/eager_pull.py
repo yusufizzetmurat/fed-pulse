@@ -66,9 +66,7 @@ _ARTEFACT_FILES: dict[str, tuple[str | tuple[str, str], ...]] = {
         "forecaster_best.pt.lora_adapter.pt",
         "forecaster_calibration_fresh.pt",
     ),
-    "volume_har_canonical": (
-        ("volume_har_artifact.json", "volume_har/volume_har_artifact.json"),
-    ),
+    "volume_har_canonical": (("volume_har_artifact.json", "volume_har/volume_har_artifact.json"),),
 }
 
 
