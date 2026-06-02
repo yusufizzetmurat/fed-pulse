@@ -9,6 +9,28 @@ and evaluate BOTH on a held-out Fed-stance set neither model trained on
 (``gtfintechlab_federal_reserve_system`` + ``op_fed`` — verified zero text-hash
 overlap with TDW). Both models face the same domain/scheme shift, so the
 head-to-head is apples-to-apples. We only swap in our model if it genuinely wins.
+
+Loss-function knobs (Lead 1 of the stance-instrument validity study)
+
+The validity study showed the classifier is a valid but narrow hike detector
+(Spearman +0.283 vs Δff, AUC hike-vs-cut 0.80) and that the dovish end cannot
+distinguish hold from cut. Two retrain knobs are wired in to give the
+hold-vs-cut resolution a better chance without changing the upstream label
+pool:
+
+- ``--loss ce_balanced`` swaps inverse-frequency CE for the Cui et al. (2019)
+  class-balanced effective-number weighting (``--cb-beta``, default 0.999).
+- ``--loss focal`` adds a focal-loss modulator (``--focal-gamma``, default 2.0)
+  on top of the same class weights so the optimiser spends more gradient on
+  hard examples — including the hold-leaning dovish region.
+
+These do NOT fix the data-side limit: TDW labels do not distinguish
+"hold-leaning text" from "cut-leaning text" within the dovish class. The
+loss knobs help when the model has under-fit the existing hard examples, not
+when the labels themselves conflate the two regions. Validate every retrain
+by re-running ``scripts/stance_instrument_validity.py`` and comparing
+``mean_s_by_action.cut`` against ``mean_s_by_action.hold`` — the gate is
+``mean(s|cut) < mean(s|hold)`` and ``AUC(s, cut-vs-hold) > 0.5``.
 """
 
 from __future__ import annotations
@@ -33,6 +55,7 @@ logger = logging.getLogger(__name__)
 LABELS = ["hawkish", "dovish", "neutral"]
 _L2I = {lab: i for i, lab in enumerate(LABELS)}
 BASE_ENCODER = "yusufizzetmurat/finbert-fed-adjacent"
+_VALID_LOSS_MODES: frozenset[str] = frozenset({"ce", "ce_balanced", "focal"})
 _ROBERTA_MAP = {"LABEL_0": "dovish", "LABEL_1": "hawkish", "LABEL_2": "neutral"}
 
 # FOMC-RoBERTa's training data — train ours on the same, exclude from the test.
@@ -78,9 +101,86 @@ def _predict(
     return np.concatenate(preds)
 
 
+def _class_weights(
+    counts: np.ndarray,
+    *,
+    mode: str,
+    cb_beta: float,
+    device: torch.device,
+) -> torch.Tensor:
+    """Build the per-class weight vector for ``CrossEntropy`` / focal loss.
+
+    - ``ce`` and ``focal`` use plain inverse-frequency weights (the
+      pre-Lead-1 default).
+    - ``ce_balanced`` uses Cui et al. (2019) class-balanced effective-
+      number weighting with ``β = cb_beta``. The effective number
+      asymptotes at ``(1 - β^n) / (1 - β)``; the regularising effect
+      is meaningful only when ``n × (1 - β)`` is small (β around 0.99
+      on ~100-row classes). At β = 0.999 with the TDW pool's per-class
+      counts in the hundreds, the weights converge to naive
+      inverse-frequency. The knob is wired in for completeness; the
+      retrain matrix has to actually run to see whether dropping β
+      to 0.99 / 0.95 changes the hold-vs-cut behaviour.
+    """
+
+    safe = np.maximum(counts.astype(np.float64), 1.0)
+    if mode == "ce_balanced":
+        eff_num = 1.0 - np.power(cb_beta, safe)
+        eff_num = np.maximum(eff_num, 1e-12)
+        weights = (1.0 - cb_beta) / eff_num
+    else:
+        weights = safe.sum() / (len(safe) * safe)
+    # Normalise so the largest class has weight 1.0 — keeps the loss
+    # magnitude comparable to the un-weighted baseline and avoids
+    # exploding gradients when an axis is near-empty.
+    weights = weights / float(np.max(weights))
+    return torch.tensor(weights, dtype=torch.float32, device=device)
+
+
+def _focal_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    weight: torch.Tensor,
+    gamma: float,
+) -> torch.Tensor:
+    """Class-balanced focal loss, ``(1 - p_t)^γ`` modulator on CE.
+
+    The naive form ``exp(log_softmax) → p_t → (1 - p_t)^γ`` underflows
+    to exactly 0 / exactly 1 once the suppressed-class log-prob crosses
+    the float32 floor (~-88). On a converging classifier the easy
+    examples regularly cross that floor, so the modulator silently
+    cancels itself out on the very samples focal-loss is supposed to
+    down-weight. ``torch.clamp`` on ``target_probs`` keeps the
+    modulator faithful at the boundary without changing behaviour
+    elsewhere.
+    """
+
+    log_probs = torch.log_softmax(logits, dim=-1)
+    target_log_probs = log_probs.gather(1, targets.unsqueeze(1)).squeeze(1)
+    target_probs = torch.exp(target_log_probs).clamp(min=1e-7, max=1.0 - 1e-7)
+    modulator = (1.0 - target_probs) ** gamma
+    target_weight = weight[targets]
+    return -(modulator * target_weight * target_log_probs).mean()
+
+
 def train(
-    df_tr: pd.DataFrame, df_va: pd.DataFrame, device: torch.device, epochs: int, lr: float
+    df_tr: pd.DataFrame,
+    df_va: pd.DataFrame,
+    device: torch.device,
+    epochs: int,
+    lr: float,
+    *,
+    loss_mode: str = "ce",
+    cb_beta: float = 0.999,
+    focal_gamma: float = 2.0,
 ) -> tuple[Any, Any]:
+    if loss_mode not in _VALID_LOSS_MODES:
+        # argparse's choices= guards the CLI entry; this fires if a
+        # caller imports and invokes train() programmatically with a
+        # typo. Silently falling through to plain CE would mask the
+        # bug and run a different objective than the caller asked for.
+        raise ValueError(f"loss_mode={loss_mode!r} is not one of {sorted(_VALID_LOSS_MODES)}")
     tok = AutoTokenizer.from_pretrained(BASE_ENCODER)  # type: ignore[no-untyped-call]
     model = AutoModelForSequenceClassification.from_pretrained(
         BASE_ENCODER,
@@ -89,10 +189,17 @@ def train(
         label2id=_L2I,
     ).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
-    # class weights (inverse frequency) — the stance classes are imbalanced.
     counts = df_tr["y"].value_counts().reindex(range(len(LABELS))).fillna(1).to_numpy()
-    cw = torch.tensor(counts.sum() / (len(LABELS) * counts), dtype=torch.float32, device=device)
-    loss_fn = torch.nn.CrossEntropyLoss(weight=cw)
+    cw = _class_weights(counts, mode=loss_mode, cb_beta=cb_beta, device=device)
+    use_focal = loss_mode == "focal"
+    loss_fn: torch.nn.Module | None = None if use_focal else torch.nn.CrossEntropyLoss(weight=cw)
+    logger.info(
+        "loss=%s cb_beta=%s focal_gamma=%s class_weights=%s",
+        loss_mode,
+        cb_beta if loss_mode == "ce_balanced" else "—",
+        focal_gamma if use_focal else "—",
+        cw.detach().cpu().tolist(),
+    )
 
     texts, ys = df_tr["text"].tolist(), torch.tensor(df_tr["y"].to_numpy())
     n, bs = len(texts), 16
@@ -112,7 +219,13 @@ def train(
             enc = {k: v.to(device) for k, v in enc.items()}
             opt.zero_grad()
             logits = model(**enc).logits
-            loss_fn(logits, ys[idx].to(device)).backward()
+            ys_batch = ys[idx].to(device)
+            if use_focal:
+                loss = _focal_loss(logits, ys_batch, weight=cw, gamma=focal_gamma)
+            else:
+                assert loss_fn is not None
+                loss = loss_fn(logits, ys_batch)
+            loss.backward()  # type: ignore[no-untyped-call]
             opt.step()
         f1 = f1_score(
             df_va["y"], _predict(model, tok, df_va["text"].tolist(), device), average="macro"
@@ -154,6 +267,25 @@ def main() -> None:
     parser.add_argument("--out-dir", type=Path, default=DATA_DIR / "processed" / "stance_finetune")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument(
+        "--loss",
+        choices=("ce", "ce_balanced", "focal"),
+        default="ce",
+        help="ce = inverse-frequency CE (baseline); ce_balanced = Cui et al. "
+        "effective-number weighting; focal = focal loss on top of inverse-freq",
+    )
+    parser.add_argument(
+        "--cb-beta",
+        type=float,
+        default=0.999,
+        help="Class-balanced effective-number β; only used with --loss ce_balanced",
+    )
+    parser.add_argument(
+        "--focal-gamma",
+        type=float,
+        default=2.0,
+        help="Focal-loss γ; only used with --loss focal",
+    )
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -164,7 +296,16 @@ def main() -> None:
     logger.info("test by class: %s", dict(test_df["mapped_label"].value_counts()))
     tr, va = _val_carve(train_pool)
 
-    model, tok = train(tr, va, device, args.epochs, args.lr)
+    model, tok = train(
+        tr,
+        va,
+        device,
+        args.epochs,
+        args.lr,
+        loss_mode=args.loss,
+        cb_beta=args.cb_beta,
+        focal_gamma=args.focal_gamma,
+    )
     ours = _predict(model, tok, test_df["text"].tolist(), device)
 
     tok_b = AutoTokenizer.from_pretrained(
@@ -179,6 +320,11 @@ def main() -> None:
     y_true = test_df["y"].to_numpy()
     report = {
         "design": "both trained on TDW; tested on Fed-stance held-out neither trained on",
+        "loss": {
+            "mode": args.loss,
+            "cb_beta": args.cb_beta if args.loss == "ce_balanced" else None,
+            "focal_gamma": args.focal_gamma if args.loss == "focal" else None,
+        },
         "n_test": int(len(test_df)),
         "ours": _scores(y_true, ours),
         "fomc_roberta": _scores(y_true, base),
