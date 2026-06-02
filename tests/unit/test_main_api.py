@@ -120,9 +120,9 @@ def test_analyze_happy_path_with_realized_overlay(monkeypatch):
 
 
 def test_analyze_rejects_unknown_field():
-    """Strict request schema (#265 Phase 2) — forecast_mode is no longer
-    a field, so a stale payload that includes it must 422 rather than
-    silently land on the fast-mode path."""
+    """Strict request schema (#265) — forecast_mode is no longer a field,
+    so a stale payload that includes it must 422 rather than silently
+    land on the fast-mode path."""
 
     client = TestClient(main_mod.app)
     response = client.post(
