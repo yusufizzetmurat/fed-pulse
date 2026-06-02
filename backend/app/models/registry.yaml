@@ -423,16 +423,21 @@ artefacts:
 
   forecaster_canonical:
     hf_uri: hf://yusufizzetmurat/fed-pulse-forecaster
-    revision: "2a178cb5470eb4f4cfe781b121fb5d3a4076632e"
+    revision: "7ab0a87399336b67ca4e2423a40ed8ab6666530b"
     eager: true
     description: |
-      Canonical multi-head forecaster checkpoint (#292). Loaded into
+      Canonical forecaster checkpoint loaded into
       ``backend/models/forecaster_best.pt`` on first boot. The
-      ``2a178cb5`` revision adds the LoRA adapter sidecar
-      (``forecaster_best.pt.lora_adapter.pt``) and the conformal
-      calibration sidecar (``forecaster_calibration_fresh.pt``)
-      alongside the singleton checkpoint so a reproducer can pull
-      both layers in one snapshot.
+      ``7ab0a873`` revision is the LSTM classification-only head
+      (text+market, regime_accuracy 0.838, regime_f1_macro 0.655)
+      and supersedes the earlier ``2a178cb5`` transformer dual-head
+      checkpoint (kept in HF history for any consumer still pinned
+      to it). The bundle ships the inference-contract sidecar
+      (``forecaster_best.pt.inference_contract.json``), the
+      conformal manifest (``forecaster_best.conformal.json``), the
+      FinBERT-side LoRA adapter
+      (``forecaster_best.pt.lora_adapter.pt``), and the calibration
+      sidecar (``forecaster_calibration_fresh.pt``).
     inference_features:
       - text_embedding
       - text_embedding_missing
@@ -462,7 +467,13 @@ artefacts:
   rates_heads_canonical:
     hf_uri: hf://yusufizzetmurat/fed-pulse-rates-heads
     revision: "0a76dabb67006b532e376d9b4dd69b8ad172e7d7"
-    eager: true
+    # eager: false until the rates-heads bundle has a filename distinct
+    # from ``forecaster_best.pt``. Today both this entry and
+    # ``forecaster_canonical`` map to the same MODELS_DIR filename, so
+    # eager-pulling both would race; the boot shim therefore omits this
+    # entry from its copy map. Flip back to true once the rates-heads
+    # checkpoint ships under its own filename.
+    eager: false
     description: Multi-target rates heads checkpoint (#292/#293).
     inference_features:
       - text_embedding

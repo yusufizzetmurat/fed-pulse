@@ -186,14 +186,17 @@ def test_resolve_repo_dispatches_hf_uri_to_resolver(monkeypatch, tmp_path: Path)
 def test_artefact_registry_loads_eager_set() -> None:
     # The boot entrypoint pulls these before uvicorn starts. The set is
     # the hot path: canonical DAPT encoder + canonical forecaster +
-    # rates heads + retrieval bundle + trajectory bundle. The training
-    # package + embedding caches stay lazy.
+    # retrieval bundle + trajectory bundle. The training package +
+    # embedding caches stay lazy. ``rates_heads_canonical`` is also
+    # lazy until it ships under a filename distinct from
+    # ``forecaster_best.pt`` — both entries map to the same MODELS_DIR
+    # path today, so eager-pulling both would race.
     eager = {a.name for a in registry.eager_artefacts()}
     assert "encoder_canonical" in eager
     assert "forecaster_canonical" in eager
     assert "retrieval_bundle" in eager
     assert "trajectory_bundle" in eager
-    assert "rates_heads_canonical" in eager
+    assert "rates_heads_canonical" not in eager
     assert "training_package" not in eager
     assert "embedding_caches" not in eager
 
