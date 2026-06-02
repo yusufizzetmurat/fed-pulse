@@ -124,8 +124,11 @@ def _train_regime_fold(
 
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_model(
-        emb.shape[1], mf.shape[1], _N_CLASSES,
-        gate_init_bias=gate_init_bias, residual_logits=residual_logits,
+        emb.shape[1],
+        mf.shape[1],
+        _N_CLASSES,
+        gate_init_bias=gate_init_bias,
+        residual_logits=residual_logits,
     ).to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 
@@ -150,7 +153,10 @@ def _train_regime_fold(
                 "labels": y_t[b],
             }
             loss = fusion_clf_loss(
-                model, batch, supcon_weight=lam, gate_l1_weight=gate_l1_weight,
+                model,
+                batch,
+                supcon_weight=lam,
+                gate_l1_weight=gate_l1_weight,
                 market_aux_weight=market_aux_weight,
             )["loss"]
             loss.backward()  # type: ignore[no-untyped-call]
@@ -218,9 +224,16 @@ def run(
         for tr_l, te_l in folds:
             tr, te = idx_all[np.array(tr_l)], idx_all[np.array(te_l)]
             out = _train_regime_fold(
-                data, tr, te, k, seed=seed, epochs=epochs,
-                supcon_weight=supcon_weight, gate_l1_weight=gate_l1_weight,
-                gate_init_bias=gate_init_bias, residual_logits=residual_logits,
+                data,
+                tr,
+                te,
+                k,
+                seed=seed,
+                epochs=epochs,
+                supcon_weight=supcon_weight,
+                gate_l1_weight=gate_l1_weight,
+                gate_init_bias=gate_init_bias,
+                residual_logits=residual_logits,
                 market_aux_weight=market_aux_weight,
             )
             for kk in pools:
