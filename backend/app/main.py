@@ -17,7 +17,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
-from app.config import DATA_DIR
+from app.config import DATA_DIR, REPO_ROOT
 from app.db import (
     AnalysisRun,
     delete_run,
@@ -1819,7 +1819,7 @@ def research_artifacts() -> ResearchArtifactsResponse:
             )
             for info in infos
         ]
-    bakeoff = load_encoder_bakeoff(artifacts_root)
+    bakeoff = load_encoder_bakeoff(artifacts_root, repo_root=REPO_ROOT)
     transfer = load_cross_bank_transfer(artifacts_root)
     return ResearchArtifactsResponse(
         artifacts_root=str(artifacts_root),
