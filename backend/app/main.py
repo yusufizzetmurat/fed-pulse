@@ -238,6 +238,16 @@ async def _lifespan(app: FastAPI):
             get_multi_axis_classifier()
     except Exception:  # pragma: no cover — never let warmup block startup
         get_logger("fed_pulse").warning("multi_axis_classifier_warmup_failed", exc_info=True)
+    # Warm the embedding parquet + FRED rate cache so the credibility
+    # tile on /analyze surfaces real numbers instead of an empty state.
+    # Both inputs degrade silently per axis when missing; the warm step
+    # tries the canonical encoder + DFF, logs on miss, and never raises.
+    try:
+        from app.boot.warm_load import warm_credibility_inputs
+
+        warm_credibility_inputs()
+    except Exception:  # pragma: no cover — never let warmup block startup
+        get_logger("fed_pulse").warning("credibility_warmup_failed", exc_info=True)
     get_logger("fed_pulse").info("startup", service="fomc-api")
     try:
         yield
@@ -683,6 +693,157 @@ def get_document_detail(type: str, date: str) -> DocumentDetailResponse:
     )
 
 
+def _build_credibility_block(
+    payload: AnalyzeRequest, *, sentiment: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Assemble the four-axis credibility block for the /analyze response.
+
+    Reads the encoder embedding parquet for the canonical DAPT encoder
+    plus the cached DFF FRED series, pulls prior-run stance scores out
+    of the local history table, and falls back per-axis to the loader's
+    zero defaults when any input is missing. Returns ``None`` only when
+    the underlying loader raises something other than a benign
+    ``ValueError`` / ``FileNotFoundError`` so the route still serialises.
+    """
+
+    from app.db import _extract_stance_score
+    from app.services.credibility_loader import load_credibility_for_run
+    from app.services.fred_client import DEFAULT_CACHE_DIR as _FRED_CACHE_DIR
+
+    as_of = str(payload.date)[:10]
+    if not as_of:
+        return None
+
+    embedding_path: Path | None = None
+    encoder_alias = "finbert_fed_adjacent_xbank_dapt"
+    try:
+        from app.data.embedding_cache import resolve_cache_paths
+        from app.models.registry import encoder_ref
+
+        ref = encoder_ref(encoder_alias)
+        if ref is not None and ref.revision:
+            paths = resolve_cache_paths(encoder_alias, revision=ref.revision)
+            if paths.parquet.exists():
+                embedding_path = paths.parquet
+    except Exception:  # noqa: BLE001
+        embedding_path = None
+
+    stance_by_date: list[tuple[str, float]] = []
+    current_stance_score = (
+        float(
+            (sentiment.get("score") or 0.0)
+            if isinstance(sentiment.get("score"), int | float)
+            else 0.0
+        )
+    )
+    try:
+        with session_scope() as session:
+            rows, _total = list_runs(session, limit=24, offset=0, symbol=payload.symbol)
+            for row in rows:
+                score = _extract_stance_score(row.payload)
+                if score is None:
+                    continue
+                doc_date = str(getattr(row, "document_date", "") or "")[:10]
+                if not doc_date:
+                    continue
+                stance_by_date.append((doc_date, float(score)))
+    except Exception:  # noqa: BLE001
+        logger.warning("credibility_history_load_failed", exc_info=True)
+    # Append the current run so the months-since-reversal axis can flip
+    # when the new statement breaks the trailing sign.
+    stance_by_date.append((as_of, current_stance_score))
+
+    fred_cache_dir = _FRED_CACHE_DIR if Path(_FRED_CACHE_DIR).exists() else None
+
+    try:
+        vector = load_credibility_for_run(
+            as_of_ts=as_of,
+            embedding_path=embedding_path,
+            stance_by_date=stance_by_date,
+            fred_response=None,
+            fred_cache_dir=fred_cache_dir,
+        )
+    except (ValueError, FileNotFoundError):
+        return None
+    except Exception:  # noqa: BLE001 — never break /analyze
+        logger.warning("credibility_loader_failed", exc_info=True)
+        return None
+
+    drift_trend = _build_drift_trend(
+        embedding_path=embedding_path, as_of_ts=as_of
+    )
+
+    # The realized-vs-stated axis is reliable only when both the stance
+    # series and the realized DFF window carry > 1 point. The loader
+    # returns 0.0 when either side is degenerate; treat that as
+    # unavailable so the UI renders N/A instead of an unearned reading.
+    realized_gap: float | None
+    if fred_cache_dir is not None and len(stance_by_date) >= 2:
+        realized_gap = float(vector.realized_vs_stated_gap)
+    else:
+        realized_gap = None
+    months_since: int | None = (
+        int(vector.months_since_reversal) if len(stance_by_date) >= 2 else None
+    )
+
+    return {
+        "drift_score": float(vector.drift_score),
+        "realized_vs_stated_gap": realized_gap,
+        # SEP / OIS scrape is still out — keep this axis as ``None`` so
+        # the dashboard renders N/A instead of an unearned zero.
+        "market_implied_gap": None,
+        "months_since_reversal": months_since,
+        "drift_trend": drift_trend,
+    }
+
+
+def _build_drift_trend(
+    *, embedding_path: Path | None, as_of_ts: str
+) -> list[float]:
+    """Per-prior cosine distance against the mean of the remaining priors.
+
+    Builds a short sparkline (newest-last) so the credibility card has
+    a trend curve next to the headline drift score. Returns an empty
+    list when fewer than two priors are available — the front-end
+    tolerates an empty array and renders the headline value alone.
+    """
+
+    if embedding_path is None or not embedding_path.exists():
+        return []
+    try:
+        import pandas as pd
+
+        from app.features.credibility import drift_vs_prior
+
+        df = pd.read_parquet(embedding_path)
+    except Exception:  # noqa: BLE001
+        return []
+    if df.empty or "event_date" not in df.columns or "embedding" not in df.columns:
+        return []
+    try:
+        df = df.copy()
+        df["event_date"] = df["event_date"].astype(str)
+        df = df[df["event_date"].str[:10] < as_of_ts]
+        df = df.sort_values("event_date").tail(6)
+    except Exception:  # noqa: BLE001
+        return []
+    embeddings = [
+        [float(v) for v in row]
+        for row in df["embedding"].tolist()
+        if row is not None
+    ]
+    if len(embeddings) < 2:
+        return []
+    trend: list[float] = []
+    for idx in range(1, len(embeddings)):
+        prior_window = embeddings[max(0, idx - 4) : idx]
+        if not prior_window:
+            continue
+        distance = drift_vs_prior(embeddings[idx], prior_window)
+        trend.append(float(distance))
+    return trend
+
+
 def _build_analyze_response(
     payload: AnalyzeRequest,
     *,
@@ -761,6 +922,7 @@ def _build_analyze_response(
         "regime_classification_status": regime_status,
         "rates_reaction": _safe_rates_reaction(history_vectors),
         "policy_action": _build_policy_action_card(payload),
+        "credibility": _build_credibility_block(payload, sentiment=sentiment),
     }
     if getattr(payload, "include_xai", False):
         attributions = attribute_text(payload.text)
