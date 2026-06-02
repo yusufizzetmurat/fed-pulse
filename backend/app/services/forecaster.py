@@ -339,9 +339,7 @@ def _get_model() -> ForecasterServingModel:
                     model = build_serving_forecaster(resolved)
                 model = model.to(device)
                 if payload is not None:
-                    _load_state_dict_loose(
-                        model, payload["model_state_dict"], str(BEST_MODEL_PATH)
-                    )
+                    _load_state_dict_loose(model, payload["model_state_dict"], str(BEST_MODEL_PATH))
                 model.eval()  # set inference mode
             except Exception:
                 # Never publish a half-built model into the singleton; the
@@ -350,9 +348,7 @@ def _get_model() -> ForecasterServingModel:
                 _model_artifact_metadata = None
                 raise
             _model = model
-            _model_artifact_metadata = _checkpoint_metadata(
-                payload, BEST_MODEL_PATH, model=model
-            )
+            _model_artifact_metadata = _checkpoint_metadata(payload, BEST_MODEL_PATH, model=model)
     return _model
 
 
