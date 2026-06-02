@@ -1004,9 +1004,9 @@ export default function WorkspacePage() {
               <SectionDivider label="Model internals" />
               <PipelineTrace result={result} inputText={request.text} />
 
-              {result.xai ? (
+              {(baselineResult?.xai ?? result.xai) ? (
                 <SentenceStrikeXaiPanel
-                  xai={result.xai}
+                  xai={(baselineResult?.xai ?? result.xai)!}
                   struck={struck}
                   onMaskChange={handleStruckChange}
                   baselineResult={baselineResult}
