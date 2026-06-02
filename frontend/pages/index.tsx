@@ -1009,7 +1009,7 @@ export default function WorkspacePage() {
 
               {result.xai ? (
                 <SentenceStrikeXaiPanel
-                  xai={result.xai}
+                  xai={(baselineResult?.xai ?? result.xai)!}
                   struck={struck}
                   onMaskChange={handleStruckChange}
                   baselineResult={baselineResult}

@@ -101,6 +101,52 @@ describe("SentenceStrikeXaiPanel cumulative drift chart", () => {
     expect(screen.getByText(/60\.0% → 41\.0%/i)).toBeInTheDocument();
   });
 
+  it("keeps every sentence chip visible when one entry is struck", () => {
+    const baseline = makeResult("normal", 0.6);
+    const afterOne = makeResult("normal", 0.52);
+    const { rerender } = render(
+      <SentenceStrikeXaiPanel
+        xai={XAI}
+        struck={new Set()}
+        onMaskChange={() => {}}
+        baselineResult={baseline}
+        currentResult={baseline}
+      />,
+    );
+
+    rerenderWith(
+      rerender,
+      <SentenceStrikeXaiPanel
+        xai={XAI}
+        struck={new Set([1])}
+        onMaskChange={() => {}}
+        baselineResult={baseline}
+        currentResult={afterOne}
+      />,
+    );
+
+    const buttons = screen.getAllByRole("button");
+    const sentenceButtons = buttons.filter((btn) =>
+      btn.getAttribute("aria-pressed") !== null,
+    );
+    expect(sentenceButtons).toHaveLength(3);
+    const pressedStates = sentenceButtons.map(
+      (btn) => btn.getAttribute("aria-pressed"),
+    );
+    expect(pressedStates.filter((state) => state === "true")).toHaveLength(1);
+    expect(pressedStates.filter((state) => state === "false")).toHaveLength(2);
+
+    expect(
+      screen.getByText("First sentence about inflation."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Second sentence about employment."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Third sentence about forward guidance."),
+    ).toBeInTheDocument();
+  });
+
   it("emits the next mask on click and shows the reset button", () => {
     const baseline = makeResult("normal", 0.6);
     const onMaskChange = vi.fn();
