@@ -64,10 +64,13 @@ fedpulse.yusufizzetmurat.com {
     # include the /api prefix on ``NEXT_PUBLIC_API_URL`` used to
     # surface as "no model files on disk" because every API call
     # fell through to the Next.js 404 page. These prefixes mirror
-    # the backend route surface (see ``backend/app/main.py``) so a
-    # bare-domain call still reaches the backend instead of 404ing
-    # at the frontend. New backend routes need to be listed here.
-    @backend_routes path /analyze* /symbols /settings/* /forecast/* /forecasts/* /history* /fomc/* /research/* /evaluation/* /trajectory* /documents/*
+    # the backend route surface (see ``backend/app/main.py``), MINUS
+    # any prefix that doubles as a Next.js page route — /history and
+    # /documents/* are browser-navigable pages, so forwarding them
+    # here would return JSON to a user clicking the nav link. New
+    # backend routes only get listed here when the frontend has no
+    # page at the same prefix.
+    @backend_routes path /analyze* /symbols /settings/* /forecast/* /forecasts/* /fomc/* /research/* /evaluation/* /trajectory*
     handle @backend_routes {
         reverse_proxy backend:8000 {
             transport http {
