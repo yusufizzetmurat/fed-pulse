@@ -78,10 +78,25 @@ def daily_realized_measures(
 
 
 def _measures_by_day(bars: list[Any]) -> dict[str, dict[str, float]]:
-    """Group AV intraday bars by ET date → daily realized measures."""
+    """Group AV intraday bars by ET date → daily realized measures.
+
+    On FOMC meeting days, bars stamped strictly after 14:00 ET are dropped
+    before the daily reduction. The 2pm statement release embeds the policy
+    decision into every later intraday return, so summing those into the
+    daily realized measure would back-door the announcement into the HAR
+    feature frame. The cutoff mirrors the serving path's
+    :func:`app.services.market_data._is_fomc_day_after_cutoff`.
+    """
+
+    from datetime import datetime as _datetime
+
+    from app.services.market_data import FOMC_ZONE, _is_fomc_day_after_cutoff
 
     by_date: dict[str, list[Any]] = {}
     for bar in bars:
+        ts_et = _datetime.fromisoformat(bar.timestamp_et).replace(tzinfo=FOMC_ZONE)
+        if _is_fomc_day_after_cutoff(ts_et):
+            continue
         by_date.setdefault(bar.timestamp_et[:10], []).append(bar)
     out: dict[str, dict[str, float]] = {}
     for date_iso, day in by_date.items():
