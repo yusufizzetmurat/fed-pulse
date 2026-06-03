@@ -981,9 +981,7 @@ def _build_analyze_response(
     return response
 
 
-def _maybe_attach_replay_blocks(
-    payload: AnalyzeRequest, response: dict[str, Any]
-) -> None:
+def _maybe_attach_replay_blocks(payload: AnalyzeRequest, response: dict[str, Any]) -> None:
     """Populate ``replay`` + ``realised_outcome`` when the request is
     in replay mode. No-op for live-mode payloads."""
 
@@ -1004,9 +1002,7 @@ def _maybe_attach_replay_blocks(
         # The per-fold checkpoint scheme is not deployed; bubble a
         # 422 reason so the API surfaces a clean error rather than
         # silently serving the post-X checkpoint sitting on disk.
-        raise ValueError(
-            f"replay_unavailable: {fold_ref.reason or 'fold_resolution_failed'}"
-        )
+        raise ValueError(f"replay_unavailable: {fold_ref.reason or 'fold_resolution_failed'}")
 
     response["replay"] = {
         "as_of_date": as_of.isoformat(),
@@ -1016,9 +1012,7 @@ def _maybe_attach_replay_blocks(
         "notes": notes,
     }
     try:
-        realised = replay_service.realised_outcome(
-            as_of, symbol=payload.symbol
-        )
+        realised = replay_service.realised_outcome(as_of, symbol=payload.symbol)
     except Exception:  # noqa: BLE001 -- defensive: never break /analyze
         logger.warning("realised_outcome_failed", exc_info=True)
         realised = None

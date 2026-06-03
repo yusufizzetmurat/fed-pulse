@@ -48,11 +48,7 @@ _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 _REPO_ROOT = _BACKEND_ROOT.parent
 
 _DEFAULT_MANIFEST_PATH = (
-    _REPO_ROOT
-    / "data"
-    / "processed"
-    / "canonical"
-    / "fold_manifest_expanding_walk_forward.json"
+    _REPO_ROOT / "data" / "processed" / "canonical" / "fold_manifest_expanding_walk_forward.json"
 )
 
 

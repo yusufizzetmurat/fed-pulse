@@ -99,9 +99,7 @@ class AnalyzeRequest(BaseModel):
             try:
                 return _date_t.fromisoformat(value[:10])
             except ValueError as exc:
-                raise ValueError(
-                    f"as_of_date must be ISO YYYY-MM-DD, got {value!r}"
-                ) from exc
+                raise ValueError(f"as_of_date must be ISO YYYY-MM-DD, got {value!r}") from exc
         return value
 
 
