@@ -914,6 +914,212 @@
         "title": "CredibilityResponse",
         "type": "object"
       },
+      "CrossBankCard": {
+        "description": "One central-bank card on the cross-bank dashboard panel.\n\nMirrors the dict shape emitted by\n:func:`app.services.cross_bank_snapshot.build_bank_card`. Heads\nthat could not be filled (corpus missing for a bank, classifier\ncheckpoint unavailable, market-data lookup failed) leave the\nmatching field as ``None`` and surface the reason in ``status`` /\n``vol_regime_status`` so the frontend renders an explicit\n\"Coming soon\" placeholder rather than blank space.",
+        "properties": {
+          "bank": {
+            "title": "Bank",
+            "type": "string"
+          },
+          "certainty_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Certainty Confidence"
+          },
+          "certainty_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Certainty Label"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "flag": {
+            "title": "Flag",
+            "type": "string"
+          },
+          "latest_statement_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Statement Date"
+          },
+          "sample_size": {
+            "title": "Sample Size",
+            "type": "integer"
+          },
+          "short_code": {
+            "title": "Short Code",
+            "type": "string"
+          },
+          "stance": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stance"
+          },
+          "stance_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stance Confidence"
+          },
+          "stance_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stance Label"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "time_axis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Axis"
+          },
+          "vol_regime_as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vol Regime As Of"
+          },
+          "vol_regime_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vol Regime Confidence"
+          },
+          "vol_regime_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vol Regime Label"
+          },
+          "vol_regime_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vol Regime Status"
+          }
+        },
+        "required": [
+          "bank",
+          "short_code",
+          "display_name",
+          "flag",
+          "symbol",
+          "latest_statement_date",
+          "stance",
+          "stance_label",
+          "stance_confidence",
+          "certainty_label",
+          "certainty_confidence",
+          "time_axis",
+          "vol_regime_label",
+          "vol_regime_confidence",
+          "vol_regime_as_of",
+          "vol_regime_status",
+          "sample_size",
+          "status"
+        ],
+        "title": "CrossBankCard",
+        "type": "object"
+      },
+      "CrossBankSnapshotResponse": {
+        "description": "Response wire shape for ``GET /cross-bank/snapshot``.\n\nSix-card side-by-side stance + vol-regime read across Fed, ECB,\nBoE, BoC, BoJ, RBA. Cached in-process for an hour (statements do\nnot change minute-to-minute and the classifier cold-start is\nexpensive).",
+        "properties": {
+          "banks": {
+            "items": {
+              "$ref": "#/components/schemas/CrossBankCard"
+            },
+            "title": "Banks",
+            "type": "array"
+          },
+          "cache_ttl_seconds": {
+            "title": "Cache Ttl Seconds",
+            "type": "integer"
+          },
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "banks",
+          "generated_at",
+          "cache_ttl_seconds"
+        ],
+        "title": "CrossBankSnapshotResponse",
+        "type": "object"
+      },
       "CrossBankTransferSection": {
         "properties": {
           "available": {
@@ -5407,6 +5613,25 @@
           }
         },
         "summary": "Analyze Trajectory"
+      }
+    },
+    "/cross-bank/snapshot": {
+      "get": {
+        "description": "Side-by-side stance + vol-regime read for Fed / ECB / BoE / BoC / BoJ / RBA.\n\nBacked by ``app.services.cross_bank_snapshot.build_snapshot``. The\nmulti-axis classifier was continued-pretrained on the xbank-DAPT\nsubstrate so it is valid across all six banks; the vol-regime tag\nis a coarse 5d-realised-vol band against the bank's flagship\nequity index. Results cache in-process for an hour.\n\nReturns an explicit ``status`` per card so the frontend can render\na \"Coming soon\" placeholder for any bank where the corpus or\nmarket lookup degraded, instead of a 500 across the whole panel.",
+        "operationId": "cross_bank_snapshot_cross_bank_snapshot_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrossBankSnapshotResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Cross Bank Snapshot"
       }
     },
     "/documents": {

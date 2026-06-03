@@ -1930,3 +1930,53 @@ class RvBacktestResponse(BaseModel):
     rows: list[RvBacktestRow]
     coverage: RvBacktestCoverage
     generated_at: str
+
+
+class CrossBankCard(BaseModel):
+    """One central-bank card on the cross-bank dashboard panel.
+
+    Mirrors the dict shape emitted by
+    :func:`app.services.cross_bank_snapshot.build_bank_card`. Heads
+    that could not be filled (corpus missing for a bank, classifier
+    checkpoint unavailable, market-data lookup failed) leave the
+    matching field as ``None`` and surface the reason in ``status`` /
+    ``vol_regime_status`` so the frontend renders an explicit
+    "Coming soon" placeholder rather than blank space.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    bank: str
+    short_code: str
+    display_name: str
+    flag: str
+    symbol: str
+    latest_statement_date: str | None
+    stance: dict[str, float] | None
+    stance_label: str | None
+    stance_confidence: float | None
+    certainty_label: str | None
+    certainty_confidence: float | None
+    time_axis: str | None
+    vol_regime_label: str | None
+    vol_regime_confidence: float | None
+    vol_regime_as_of: str | None
+    vol_regime_status: str | None
+    sample_size: int
+    status: str
+
+
+class CrossBankSnapshotResponse(BaseModel):
+    """Response wire shape for ``GET /cross-bank/snapshot``.
+
+    Six-card side-by-side stance + vol-regime read across Fed, ECB,
+    BoE, BoC, BoJ, RBA. Cached in-process for an hour (statements do
+    not change minute-to-minute and the classifier cold-start is
+    expensive).
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    banks: list[CrossBankCard]
+    generated_at: str
+    cache_ttl_seconds: int

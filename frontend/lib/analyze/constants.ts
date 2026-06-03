@@ -19,6 +19,15 @@ export const SYMBOL_OPTIONS: SymbolOption[] = [
   { value: "EURUSD=X", label: "EUR/USD (EURUSD=X)" },
   { value: "BTC-USD", label: "Bitcoin (BTC-USD)" },
   { value: "^TNX", label: "US 10Y Yield (^TNX)" },
+  // Cross-bank flagship indices. Available so the cross-bank page's
+  // "Open in Workspace" deep-link lands on a known symbol; the HAR-
+  // tercile + RV backtest panels gracefully degrade for tickers not
+  // in HAR_TERCILE_SUPPORTED_SYMBOLS below.
+  { value: "^STOXX50E", label: "Euro Stoxx 50 (^STOXX50E)" },
+  { value: "^FTSE", label: "FTSE 100 (^FTSE)" },
+  { value: "^GSPTSE", label: "S&P/TSX Composite (^GSPTSE)" },
+  { value: "^N225", label: "Nikkei 225 (^N225)" },
+  { value: "^AXJO", label: "ASX 200 (^AXJO)" },
 ];
 
 export const HORIZON_OPTIONS: Horizon[] = ["1d", "3d", "5d", "10d"];
