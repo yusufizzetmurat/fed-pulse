@@ -131,6 +131,26 @@ _ARTEFACT_FILES: dict[str, tuple[str | tuple[str, str] | tuple[str, str, str], .
 }
 
 
+# Inventory of artefact-name -> ``.pt`` files the inference container
+# reads out of the HF cache. Distinct from :data:`_ARTEFACT_FILES`
+# above, which controls the boot-time copy into ``MODELS_DIR``: this
+# table is metadata for the settings page so it can surface every
+# registered checkpoint file regardless of whether the eager-pull shim
+# copied it locally or the service is consuming it straight from the HF
+# snapshot cache (the multi-axis classifier path lazy-fetches via
+# :func:`huggingface_hub.hf_hub_download` and never lands under
+# ``MODELS_DIR``). Entries here must list the snapshot-side filename
+# only; the cache resolver supplies the absolute path.
+ARTEFACT_PT_INVENTORY: dict[str, tuple[str, ...]] = {
+    "forecaster_canonical": (
+        "forecaster_best.pt",
+        "forecaster_best.pt.lora_adapter.pt",
+        "forecaster_calibration_fresh.pt",
+    ),
+    "multi_axis_text_classifier": ("text_multi_axis_best.pt",),
+}
+
+
 # ``dst_root`` values recognised in the triple-form entry. Anything
 # else is logged and the entry is skipped.
 _DST_ROOT_MODELS = "MODELS"

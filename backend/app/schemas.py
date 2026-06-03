@@ -957,6 +957,21 @@ class SettingsCheckpoint(BaseModel):
     required_kwargs: list[str] = Field(default_factory=list)
     supplied_at_inference: dict[str, bool] = Field(default_factory=dict)
     inference_contract_status: str | None = None
+    # Where the file actually lives. ``models_dir`` is the host-mounted
+    # ``backend/models/`` directory; ``hf_cache`` is the
+    # ``huggingface_hub`` snapshot cache the eager-pull /
+    # ``hf_hub_download`` paths land into when the file is not yet on
+    # disk under MODELS_DIR. The settings page renders a small badge so
+    # the operator can see at a glance whether a checkpoint is being
+    # served straight from the HF cache instead of the local mount.
+    source: str = "models_dir"
+    # HF Hub provenance — populated only for ``source == "hf_cache"``
+    # rows. ``repo`` is the ``owner/name`` slug, ``revision`` is the
+    # pinned commit (empty for unpinned artefacts), ``snapshot_path`` is
+    # the absolute path inside the HF cache the file resolves to.
+    repo: str | None = None
+    revision: str | None = None
+    snapshot_path: str | None = None
 
 
 class SettingsCheckpointsResponse(BaseModel):

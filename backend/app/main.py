@@ -352,25 +352,140 @@ def _checkpoint_role(name: str) -> str:
     return "other"
 
 
+def _collect_hf_cache_checkpoints(
+    seen_filenames: set[str],
+    active_multi_axis: Path | None,
+    active_multi_axis_alias: str | None,
+) -> list[SettingsCheckpoint]:
+    """Walk the HF snapshot cache for registered ``.pt`` artefacts.
+
+    Mirror of the MODELS_DIR scan below, but for checkpoint files that
+    land in ``~/.cache/huggingface/`` instead of the host-mounted
+    ``backend/models/``. Drives the settings page so an operator can see
+    that e.g. the multi-axis classifier is being served straight out of
+    the HF cache (the lazy-fetch path) rather than from the local mount.
+
+    Each entry carries ``source="hf_cache"`` plus the HF Hub provenance
+    (``repo``, ``revision``, ``snapshot_path``). Files whose basename
+    already showed up under MODELS_DIR are skipped — MODELS_DIR is the
+    authoritative copy when both are present.
+    """
+
+    from app.boot.eager_pull import ARTEFACT_PT_INVENTORY
+    from app.models.registry import load_artefacts, parse_hf_uri
+
+    try:
+        from huggingface_hub import try_to_load_from_cache
+    except Exception:  # pragma: no cover -- defensive: huggingface_hub absent
+        logger.warning("settings_checkpoints_hf_cache_import_failed", exc_info=True)
+        return []
+
+    items: list[SettingsCheckpoint] = []
+    artefacts = load_artefacts()
+    for artefact_name, filenames in ARTEFACT_PT_INVENTORY.items():
+        artefact = artefacts.get(artefact_name)
+        if artefact is None:
+            continue
+        try:
+            ref = parse_hf_uri(artefact.hf_uri)
+        except Exception:
+            logger.warning(
+                "settings_checkpoints_hf_uri_parse_failed",
+                extra={"artefact": artefact_name},
+                exc_info=True,
+            )
+            continue
+        revision = artefact.revision or None
+        for filename in filenames:
+            if filename in seen_filenames:
+                # MODELS_DIR copy wins — already surfaced above.
+                continue
+            try:
+                cached = try_to_load_from_cache(
+                    repo_id=ref.repo_id,
+                    filename=filename,
+                    repo_type=ref.repo_type,
+                    revision=revision,
+                )
+            except Exception:  # pragma: no cover -- defensive
+                logger.warning(
+                    "settings_checkpoints_hf_cache_probe_failed",
+                    extra={"artefact": artefact_name, "filename": filename},
+                    exc_info=True,
+                )
+                continue
+            # try_to_load_from_cache returns None when the file was never
+            # fetched and the private _CACHED_NO_EXIST sentinel (NOT a str)
+            # when it was fetched and the repo since deleted it; the
+            # ``not isinstance(cached, str)`` guard subsumes both cases
+            # without taking a dependency on the sentinel name.
+            if not isinstance(cached, str):
+                continue
+            cached_path = Path(cached)
+            try:
+                stat = cached_path.stat()
+            except OSError:
+                continue
+            role = _checkpoint_role(filename)
+            resolved = cached_path.resolve()
+            is_active_multi_axis = (
+                role == "multi_axis"
+                and active_multi_axis is not None
+                and resolved == active_multi_axis.resolve()
+            )
+            items.append(
+                SettingsCheckpoint(
+                    filename=filename,
+                    relative_path=filename,
+                    role=role,
+                    size_bytes=int(stat.st_size),
+                    modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                    is_active=is_active_multi_axis,
+                    encoder_alias=(active_multi_axis_alias if is_active_multi_axis else None),
+                    source="hf_cache",
+                    repo=ref.repo_id,
+                    revision=artefact.revision or None,
+                    snapshot_path=str(cached_path),
+                )
+            )
+            seen_filenames.add(filename)
+    return items
+
+
 @app.get("/settings/checkpoints", response_model=SettingsCheckpointsResponse)
 def list_settings_checkpoints() -> SettingsCheckpointsResponse:
-    """Read-only inventory of model files under ``backend/models/``.
+    """Read-only inventory of model files visible to the backend.
 
-    Surfaces filename, size, mtime, inferred role, and an ``is_active``
-    flag pointing at the file each live service is currently loaded
-    from. Diagnostic fields (``output_mode``, ``encoder_alias``,
+    Two sources are aggregated:
+
+    - ``backend/models/`` (MODELS_DIR) — local files the eager-pull shim
+      copied in or that an operator dropped there. Entries get
+      ``source="models_dir"``.
+    - The HuggingFace cache (``~/.cache/huggingface/``) — for every
+      eager-pulled ``.pt`` artefact listed in
+      :data:`app.boot.eager_pull.ARTEFACT_PT_INVENTORY` we probe the
+      pinned revision via ``try_to_load_from_cache``. Hits get
+      ``source="hf_cache"`` plus repo and revision metadata.
+
+    Dedupe is filename-only: when a name lives in both sources, the
+    MODELS_DIR copy wins and the HF-cache entry is suppressed. The
+    contents of the two files are NOT compared — if the operator
+    dropped a hand-built ``forecaster_best.pt`` over the eager-pulled
+    one, the response will surface the local copy without warning.
+
+    Diagnostic fields (``output_mode``, ``encoder_alias``,
     ``conformal_sidecar_present``) only populate on the active
     forecaster and multi-axis entries — everything else stays None so
-    the response stays serialisable on a fresh checkout.
+    the response stays serialisable on a fresh checkout. The endpoint
+    no longer returns an empty list when MODELS_DIR is absent; a fresh
+    dev box with a warm HF cache will surface the cache-resident
+    checkpoints.
     """
 
     from app.models.config import MODELS_DIR
     from app.services.forecaster import BEST_MODEL_PATH
 
     items: list[SettingsCheckpoint] = []
-    if not MODELS_DIR.exists():
-        return SettingsCheckpointsResponse(models_dir=str(MODELS_DIR), checkpoints=items)
-
     active_forecaster = BEST_MODEL_PATH.resolve()
     active_forecaster_meta: dict[str, Any] = {}
     try:
@@ -432,60 +547,79 @@ def list_settings_checkpoints() -> SettingsCheckpointsResponse:
             logger.warning("settings_checkpoints_serving_kwargs_probe_failed", exc_info=True)
             serving_kwargs = SERVING_FORWARD_KWARGS
 
-    for entry in sorted(MODELS_DIR.glob("*.pt"), key=lambda p: p.name):
-        try:
-            stat = entry.stat()
-        except OSError:
-            continue
-        resolved = entry.resolve()
-        role = _checkpoint_role(entry.name)
-        is_active_forecaster = role == "forecaster" and resolved == active_forecaster
-        is_active_multi_axis = (
-            role == "multi_axis" and active_multi_axis is not None and resolved == active_multi_axis
-        )
-        sidecar_present: bool | None = None
-        if role == "forecaster":
-            sidecar_present = entry.with_suffix(".conformal.json").exists()
-
-        required_kwargs: list[str] = []
-        supplied: dict[str, bool] = {}
-        contract_status: str | None = None
-        if role == "forecaster" and read_sidecar is not None:
+    seen_filenames: set[str] = set()
+    if MODELS_DIR.exists():
+        for entry in sorted(MODELS_DIR.glob("*.pt"), key=lambda p: p.name):
             try:
-                contract = read_sidecar(entry)
-            except Exception:  # pragma: no cover -- defensive
-                contract = None
-            if contract is None:
-                contract_status = "sidecar_absent"
-            else:
-                contract_status = "present"
-                required_kwargs = [str(k) for k in contract.required_kwargs]
-                supplied = {name: (name in serving_kwargs) for name in required_kwargs}
-
-        items.append(
-            SettingsCheckpoint(
-                filename=entry.name,
-                relative_path=str(entry.relative_to(MODELS_DIR)),
-                role=role,
-                size_bytes=int(stat.st_size),
-                modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
-                is_active=is_active_forecaster or is_active_multi_axis,
-                output_mode=active_forecaster_meta.get("output_mode")
-                if is_active_forecaster
-                else None,
-                encoder_alias=(
-                    active_forecaster_meta.get("encoder_alias")
-                    if is_active_forecaster
-                    else active_multi_axis_alias
-                    if is_active_multi_axis
-                    else None
-                ),
-                conformal_sidecar_present=sidecar_present,
-                required_kwargs=required_kwargs,
-                supplied_at_inference=supplied,
-                inference_contract_status=contract_status,
+                stat = entry.stat()
+            except OSError:
+                continue
+            resolved = entry.resolve()
+            role = _checkpoint_role(entry.name)
+            is_active_forecaster = role == "forecaster" and resolved == active_forecaster
+            is_active_multi_axis = (
+                role == "multi_axis"
+                and active_multi_axis is not None
+                and resolved == active_multi_axis
             )
+            sidecar_present: bool | None = None
+            if role == "forecaster":
+                sidecar_present = entry.with_suffix(".conformal.json").exists()
+
+            required_kwargs: list[str] = []
+            supplied: dict[str, bool] = {}
+            contract_status: str | None = None
+            if role == "forecaster" and read_sidecar is not None:
+                try:
+                    contract = read_sidecar(entry)
+                except Exception:  # pragma: no cover -- defensive
+                    contract = None
+                if contract is None:
+                    contract_status = "sidecar_absent"
+                else:
+                    contract_status = "present"
+                    required_kwargs = [str(k) for k in contract.required_kwargs]
+                    supplied = {name: (name in serving_kwargs) for name in required_kwargs}
+
+            items.append(
+                SettingsCheckpoint(
+                    filename=entry.name,
+                    relative_path=str(entry.relative_to(MODELS_DIR)),
+                    role=role,
+                    size_bytes=int(stat.st_size),
+                    modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                    is_active=is_active_forecaster or is_active_multi_axis,
+                    output_mode=active_forecaster_meta.get("output_mode")
+                    if is_active_forecaster
+                    else None,
+                    encoder_alias=(
+                        active_forecaster_meta.get("encoder_alias")
+                        if is_active_forecaster
+                        else active_multi_axis_alias
+                        if is_active_multi_axis
+                        else None
+                    ),
+                    conformal_sidecar_present=sidecar_present,
+                    required_kwargs=required_kwargs,
+                    supplied_at_inference=supplied,
+                    inference_contract_status=contract_status,
+                    source="models_dir",
+                )
+            )
+            seen_filenames.add(entry.name)
+
+    # #XXX: surface eager-pulled and lazy-fetched ``.pt`` checkpoints
+    # that live in the HF cache (``~/.cache/huggingface/...``) rather
+    # than under MODELS_DIR. The multi-axis classifier is the canonical
+    # consumer here — ``hf_hub_download`` lands ``text_multi_axis_best.pt``
+    # in the snapshot cache and the service reads it from there.
+    items.extend(
+        _collect_hf_cache_checkpoints(
+            seen_filenames=seen_filenames,
+            active_multi_axis=active_multi_axis,
+            active_multi_axis_alias=active_multi_axis_alias,
         )
+    )
 
     return SettingsCheckpointsResponse(models_dir=str(MODELS_DIR), checkpoints=items)
 

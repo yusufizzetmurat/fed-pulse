@@ -4907,12 +4907,34 @@
             "title": "Relative Path",
             "type": "string"
           },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
           "required_kwargs": {
             "items": {
               "type": "string"
             },
             "title": "Required Kwargs",
             "type": "array"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
           },
           "role": {
             "title": "Role",
@@ -4921,6 +4943,22 @@
           "size_bytes": {
             "title": "Size Bytes",
             "type": "integer"
+          },
+          "snapshot_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Path"
+          },
+          "source": {
+            "default": "models_dir",
+            "title": "Source",
+            "type": "string"
           },
           "supplied_at_inference": {
             "additionalProperties": {
@@ -6971,7 +7009,7 @@
     },
     "/settings/checkpoints": {
       "get": {
-        "description": "Read-only inventory of model files under ``backend/models/``.\n\nSurfaces filename, size, mtime, inferred role, and an ``is_active``\nflag pointing at the file each live service is currently loaded\nfrom. Diagnostic fields (``output_mode``, ``encoder_alias``,\n``conformal_sidecar_present``) only populate on the active\nforecaster and multi-axis entries \u2014 everything else stays None so\nthe response stays serialisable on a fresh checkout.",
+        "description": "Read-only inventory of model files visible to the backend.\n\nTwo sources are aggregated:\n\n- ``backend/models/`` (MODELS_DIR) \u2014 local files the eager-pull shim\n  copied in or that an operator dropped there. Entries get\n  ``source=\"models_dir\"``.\n- The HuggingFace cache (``~/.cache/huggingface/``) \u2014 for every\n  eager-pulled ``.pt`` artefact listed in\n  :data:`app.boot.eager_pull.ARTEFACT_PT_INVENTORY` we probe the\n  pinned revision via ``try_to_load_from_cache``. Hits get\n  ``source=\"hf_cache\"`` plus repo and revision metadata.\n\nDedupe is filename-only: when a name lives in both sources, the\nMODELS_DIR copy wins and the HF-cache entry is suppressed. The\ncontents of the two files are NOT compared \u2014 if the operator\ndropped a hand-built ``forecaster_best.pt`` over the eager-pulled\none, the response will surface the local copy without warning.\n\nDiagnostic fields (``output_mode``, ``encoder_alias``,\n``conformal_sidecar_present``) only populate on the active\nforecaster and multi-axis entries \u2014 everything else stays None so\nthe response stays serialisable on a fresh checkout. The endpoint\nno longer returns an empty list when MODELS_DIR is absent; a fresh\ndev box with a warm HF cache will surface the cache-resident\ncheckpoints.",
         "operationId": "list_settings_checkpoints_settings_checkpoints_get",
         "responses": {
           "200": {
