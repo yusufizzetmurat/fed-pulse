@@ -247,3 +247,47 @@ def test_settings_checkpoints_handles_empty_hf_cache(tmp_path, monkeypatch):
     payload = resp.json()
     sources = {row["source"] for row in payload["checkpoints"]}
     assert sources == {"models_dir"}, payload
+
+
+def test_settings_checkpoints_works_with_no_models_dir(tmp_path, monkeypatch):
+    """A fresh dev box with no MODELS_DIR but a warm HF cache still
+    surfaces the cache-resident checkpoints rather than returning an
+    empty list. This pins the behaviour change introduced when the
+    handler stopped returning early on a missing MODELS_DIR."""
+
+    models_dir = tmp_path / "models"  # intentionally never created
+
+    cache_dir = tmp_path / "hf_cache"
+    cache_dir.mkdir()
+    multi_axis_cache = cache_dir / "text_multi_axis_best.pt"
+    _write_toy_checkpoint(multi_axis_cache)
+
+    import app.models.config as model_config_mod
+
+    monkeypatch.setattr(model_config_mod, "MODELS_DIR", models_dir)
+    monkeypatch.setattr(forecaster_service, "BEST_MODEL_PATH", models_dir / "forecaster_best.pt")
+    monkeypatch.setattr(forecaster_service, "_model", None)
+    monkeypatch.setattr(forecaster_service, "_model_artifact_metadata", None)
+
+    def fake_try_to_load_from_cache(*, filename, **_kwargs):
+        return str(multi_axis_cache) if filename == "text_multi_axis_best.pt" else None
+
+    import huggingface_hub as hf_mod
+
+    monkeypatch.setattr(hf_mod, "try_to_load_from_cache", fake_try_to_load_from_cache)
+    monkeypatch.setattr(
+        "app.models.registry.load_artefacts",
+        _stub_artefacts,
+        raising=True,
+    )
+
+    client = TestClient(main_mod.app)
+    resp = client.get("/settings/checkpoints")
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    sources = {row["source"] for row in payload["checkpoints"]}
+    assert sources == {"hf_cache"}, payload
+    assert len(payload["checkpoints"]) == 1, payload
+    row = payload["checkpoints"][0]
+    assert row["filename"] == "text_multi_axis_best.pt"
+    assert row["source"] == "hf_cache"

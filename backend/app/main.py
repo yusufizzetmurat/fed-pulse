@@ -373,7 +373,7 @@ def _collect_hf_cache_checkpoints(
     from app.models.registry import load_artefacts, parse_hf_uri
 
     try:
-        from huggingface_hub import _CACHED_NO_EXIST, try_to_load_from_cache
+        from huggingface_hub import try_to_load_from_cache
     except Exception:  # pragma: no cover -- defensive: huggingface_hub absent
         logger.warning("settings_checkpoints_hf_cache_import_failed", exc_info=True)
         return []
@@ -412,7 +412,12 @@ def _collect_hf_cache_checkpoints(
                     exc_info=True,
                 )
                 continue
-            if cached is None or cached is _CACHED_NO_EXIST or not isinstance(cached, str):
+            # try_to_load_from_cache returns None when the file was never
+            # fetched and the private _CACHED_NO_EXIST sentinel (NOT a str)
+            # when it was fetched and the repo since deleted it; the
+            # ``not isinstance(cached, str)`` guard subsumes both cases
+            # without taking a dependency on the sentinel name.
+            if not isinstance(cached, str):
                 continue
             cached_path = Path(cached)
             try:
@@ -447,14 +452,32 @@ def _collect_hf_cache_checkpoints(
 
 @app.get("/settings/checkpoints", response_model=SettingsCheckpointsResponse)
 def list_settings_checkpoints() -> SettingsCheckpointsResponse:
-    """Read-only inventory of model files under ``backend/models/``.
+    """Read-only inventory of model files visible to the backend.
 
-    Surfaces filename, size, mtime, inferred role, and an ``is_active``
-    flag pointing at the file each live service is currently loaded
-    from. Diagnostic fields (``output_mode``, ``encoder_alias``,
+    Two sources are aggregated:
+
+    - ``backend/models/`` (MODELS_DIR) — local files the eager-pull shim
+      copied in or that an operator dropped there. Entries get
+      ``source="models_dir"``.
+    - The HuggingFace cache (``~/.cache/huggingface/``) — for every
+      eager-pulled ``.pt`` artefact listed in
+      :data:`app.boot.eager_pull.ARTEFACT_PT_INVENTORY` we probe the
+      pinned revision via ``try_to_load_from_cache``. Hits get
+      ``source="hf_cache"`` plus repo and revision metadata.
+
+    Dedupe is filename-only: when a name lives in both sources, the
+    MODELS_DIR copy wins and the HF-cache entry is suppressed. The
+    contents of the two files are NOT compared — if the operator
+    dropped a hand-built ``forecaster_best.pt`` over the eager-pulled
+    one, the response will surface the local copy without warning.
+
+    Diagnostic fields (``output_mode``, ``encoder_alias``,
     ``conformal_sidecar_present``) only populate on the active
     forecaster and multi-axis entries — everything else stays None so
-    the response stays serialisable on a fresh checkout.
+    the response stays serialisable on a fresh checkout. The endpoint
+    no longer returns an empty list when MODELS_DIR is absent; a fresh
+    dev box with a warm HF cache will surface the cache-resident
+    checkpoints.
     """
 
     from app.models.config import MODELS_DIR
