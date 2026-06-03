@@ -18,6 +18,38 @@ export interface AnalyzeRequest {
   // Counterfactual: 0-based indices of sentences to drop from the text
   // before running the pipeline. Empty / omitted = no mask.
   mask_sentence_indices?: number[];
+  // Replay-mode anchor. When set (ISO YYYY-MM-DD), /analyze runs as
+  // if today were this date: only the walk-forward fold whose
+  // ``train_end`` precedes this date is used for serving, and
+  // historical-analog retrieval is filtered to ``event_date <=
+  // as_of_date``. ``null`` / omitted = live mode (default).
+  as_of_date?: string | null;
+}
+
+export interface ReplayModeBlock {
+  as_of_date: string;
+  fold_id: string | null;
+  train_end: string | null;
+  classifier_rewind: boolean;
+  // True once the forecaster service is wired to load the per-fold
+  // checkpoint identified by ``fold_id``. Until that follow-up lands
+  // this stays false so the UI can render the scaffold-gap callout.
+  forecaster_checkpoint_rewound: boolean;
+  notes: string[];
+}
+
+export interface RealisedOutcomeHorizon {
+  horizon: number;
+  log_return: number | null;
+  realised_volatility_5d_post_event: number | null;
+  close: number | null;
+  date: string | null;
+}
+
+export interface RealisedOutcomeBlock {
+  as_of_date: string;
+  symbol: string;
+  horizons: RealisedOutcomeHorizon[];
 }
 
 export interface SentimentResponse {
@@ -401,6 +433,11 @@ export interface AnalyzeResult {
   policy_action?: PolicyActionResponse | null;
   xai?: XaiResponse;
   credibility?: CredibilityResponse;
+  // Replay-mode metadata. Populated only when the request carried a
+  // non-null ``as_of_date``; the workspace renders a banner + the
+  // "what actually happened" reveal off these.
+  replay?: ReplayModeBlock | null;
+  realised_outcome?: RealisedOutcomeBlock | null;
 }
 
 export interface TrainJobState {

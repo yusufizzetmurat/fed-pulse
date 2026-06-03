@@ -973,7 +973,66 @@ def _build_analyze_response(
         if panel_attributions:
             xai_block["panels"] = panel_attributions
         response["xai"] = xai_block
+
+    # Replay-mode envelope. Populated only when the request carries
+    # ``as_of_date``. The fold resolution itself is delegated to
+    # ``app.services.replay``; cold failures (missing manifest, no fold
+    # before X) raise ``HTTPException(422, detail={error, message})``
+    # directly from inside the helper, propagate out of
+    # ``run_in_threadpool``, and are re-raised unchanged by the
+    # ``except HTTPException`` clause on the /analyze handler so the
+    # 422 reaches the client (the catch-all below would otherwise
+    # collapse it to a generic 500).
+    _maybe_attach_replay_blocks(payload, response)
     return response
+
+
+def _maybe_attach_replay_blocks(payload: AnalyzeRequest, response: dict[str, Any]) -> None:
+    """Populate ``replay`` + ``realised_outcome`` when the request is
+    in replay mode. No-op for live-mode payloads."""
+
+    as_of = getattr(payload, "as_of_date", None)
+    if as_of is None:
+        return
+
+    from app.services import replay as replay_service
+
+    fold_ref = replay_service.resolve_fold_for_date(as_of)
+    notes: list[str] = [
+        (
+            "Text classifier rewind not supported; the DAPT-pinned encoder "
+            "weights are post-X and not rewound to the replay date."
+        ),
+    ]
+    if not fold_ref.available:
+        # The per-fold checkpoint scheme is not deployed; surface a
+        # 422 with the structured ``{error, message}`` detail shape
+        # the rest of the API uses (mp_surprise_unavailable, history_
+        # unavailable, etc.) so a future consumer can read
+        # ``detail.error`` without a TypeError.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "replay_unavailable",
+                "message": fold_ref.reason or "fold_resolution_failed",
+            },
+        )
+
+    response["replay"] = {
+        "as_of_date": as_of.isoformat(),
+        "fold_id": fold_ref.fold_id,
+        "train_end": fold_ref.train_end.isoformat() if fold_ref.train_end else None,
+        "classifier_rewind": False,
+        "forecaster_checkpoint_rewound": False,
+        "notes": notes,
+    }
+    try:
+        realised = replay_service.realised_outcome(as_of, symbol=payload.symbol)
+    except Exception:  # noqa: BLE001 -- defensive: never break /analyze
+        logger.warning("realised_outcome_failed", exc_info=True)
+        realised = None
+    if realised is not None:
+        response["realised_outcome"] = realised
 
 
 def _build_regime_regression_block(
@@ -1287,6 +1346,12 @@ async def analyze(payload: AnalyzeRequest):
         if not payload.mask_sentence_indices:
             await run_in_threadpool(_record_history, run_payload, response)
         return response
+    except HTTPException:
+        # Already-structured 4xx/5xx (e.g. replay_unavailable from
+        # _maybe_attach_replay_blocks). Re-raise unchanged so the
+        # status_code and structured detail reach the client; without
+        # this the catch-all below would eat it and surface a generic 500.
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:  # pragma: no cover

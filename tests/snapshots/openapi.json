@@ -150,6 +150,19 @@
       "AnalyzeRequest": {
         "additionalProperties": false,
         "properties": {
+          "as_of_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Replay-mode anchor. When set, the pipeline runs as if today were this date: only the walk-forward fold whose train_end precedes this date is used for the forecaster + trajectory, and historical-analog retrieval is filtered to event_date <= as_of_date. None = live mode (default).",
+            "title": "As Of Date"
+          },
           "date": {
             "description": "Document date in ISO format: YYYY-MM-DD",
             "title": "Date",
@@ -256,6 +269,16 @@
             ],
             "title": "Rates Reaction"
           },
+          "realised_outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RealisedOutcomeBlock"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "regime_classification": {
             "anyOf": [
               {
@@ -280,6 +303,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/RegimeRegressionCard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replay": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReplayModeBlock"
               },
               {
                 "type": "null"
@@ -3685,6 +3718,90 @@
         "title": "RatesReactionCard",
         "type": "object"
       },
+      "RealisedOutcomeBlock": {
+        "properties": {
+          "as_of_date": {
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "horizons": {
+            "items": {
+              "$ref": "#/components/schemas/RealisedOutcomeHorizon"
+            },
+            "title": "Horizons",
+            "type": "array"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "as_of_date",
+          "symbol",
+          "horizons"
+        ],
+        "title": "RealisedOutcomeBlock",
+        "type": "object"
+      },
+      "RealisedOutcomeHorizon": {
+        "description": "A single (h, log_return, realised_vol, close) row in the\n\"what actually happened\" reveal.\n\n``realised_volatility_5d_post_event`` is the rolling stdev of the\nbar-to-bar log-returns over the 5 bars ending at t+h, where t is\nthe replay ``as_of_date``. This is **post-event** by construction\n-- it measures volatility AFTER the analyzed statement -- and is\ndeliberately not the same series as ``MarketDataResponse.\nvolatility_5d``, which measures the rolling 5d stdev over the bars\nBEFORE the request date (the value the forecaster consumes as a\nfeature). The two are intentionally distinct and never compared.",
+        "properties": {
+          "close": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "horizon": {
+            "title": "Horizon",
+            "type": "integer"
+          },
+          "log_return": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log Return"
+          },
+          "realised_volatility_5d_post_event": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realised Volatility 5D Post Event"
+          }
+        },
+        "required": [
+          "horizon"
+        ],
+        "title": "RealisedOutcomeHorizon",
+        "type": "object"
+      },
       "RealizedVolForecastResponse": {
         "description": "Multi-horizon QLIKE-DLq forecast plus last-60d realized history.",
         "properties": {
@@ -4000,6 +4117,59 @@
           "log_rv_point"
         ],
         "title": "RegimeRegressionCard",
+        "type": "object"
+      },
+      "ReplayModeBlock": {
+        "description": "Replay-mode metadata for the /analyze response.\n\nPopulated only when the request set ``as_of_date``. ``fold_id`` is\nthe walk-forward fold whose checkpoint served this prediction;\n``train_end`` is the latest date the model saw at training time --\neverything strictly after that is unseen ground truth from the\nmodel's point of view. ``classifier_rewind`` flags that the\ntext-encoder weights are NOT rewound to ``as_of_date`` (the\nDAPT-pinned encoder is post-X), so any text-conditioned head is\nserved with later-than-X weights -- documented as a known caveat\nrather than silently leaked.",
+        "properties": {
+          "as_of_date": {
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "classifier_rewind": {
+            "default": false,
+            "title": "Classifier Rewind",
+            "type": "boolean"
+          },
+          "fold_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fold Id"
+          },
+          "forecaster_checkpoint_rewound": {
+            "default": false,
+            "title": "Forecaster Checkpoint Rewound",
+            "type": "boolean"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "train_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Train End"
+          }
+        },
+        "required": [
+          "as_of_date"
+        ],
+        "title": "ReplayModeBlock",
         "type": "object"
       },
       "ResearchArtifactsResponse": {
