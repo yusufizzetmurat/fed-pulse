@@ -4531,12 +4531,34 @@
             "title": "Relative Path",
             "type": "string"
           },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
           "required_kwargs": {
             "items": {
               "type": "string"
             },
             "title": "Required Kwargs",
             "type": "array"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
           },
           "role": {
             "title": "Role",
@@ -4545,6 +4567,22 @@
           "size_bytes": {
             "title": "Size Bytes",
             "type": "integer"
+          },
+          "snapshot_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Path"
+          },
+          "source": {
+            "default": "models_dir",
+            "title": "Source",
+            "type": "string"
           },
           "supplied_at_inference": {
             "additionalProperties": {
