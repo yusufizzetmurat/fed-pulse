@@ -37,7 +37,7 @@ export interface ReplayModeBlock {
 export interface RealisedOutcomeHorizon {
   horizon: number;
   log_return: number | null;
-  realised_volatility_5d: number | null;
+  realised_volatility_5d_post_event: number | null;
   close: number | null;
   date: string | null;
 }

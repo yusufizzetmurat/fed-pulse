@@ -118,7 +118,7 @@ export function RealisedOutcomeCard({ outcome }: RealisedOutcomeCardProps) {
                   log-return: <span className="font-semibold">{_formatNumber(row.log_return)}</span>
                 </p>
                 <p className="numeric text-sm">
-                  vol_5d: <span className="font-semibold">{_formatNumber(row.realised_volatility_5d)}</span>
+                  vol_5d: <span className="font-semibold">{_formatNumber(row.realised_volatility_5d_post_event)}</span>
                 </p>
                 <p className="text-[10px] text-muted-foreground">
                   bar {row.date ?? "—"}

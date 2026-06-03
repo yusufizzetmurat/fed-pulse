@@ -244,7 +244,10 @@ def test_replay_mode_returns_422_when_per_fold_checkpoints_missing(monkeypatch):
         },
     )
     assert response.status_code == 422
-    assert "replay_unavailable" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert isinstance(detail, dict), detail
+    assert detail["error"] == "replay_unavailable"
+    assert detail["message"]
 
 
 def test_replay_mode_emits_replay_and_realised_blocks_when_fold_resolves(
@@ -283,21 +286,21 @@ def test_replay_mode_emits_replay_and_realised_blocks_when_fold_resolves(
                 {
                     "horizon": 1,
                     "log_return": 0.01,
-                    "realised_volatility_5d": 0.005,
+                    "realised_volatility_5d_post_event": 0.005,
                     "close": 5050.0,
                     "date": "2024-03-18",
                 },
                 {
                     "horizon": 5,
                     "log_return": 0.02,
-                    "realised_volatility_5d": 0.007,
+                    "realised_volatility_5d_post_event": 0.007,
                     "close": 5100.0,
                     "date": "2024-03-22",
                 },
                 {
                     "horizon": 10,
                     "log_return": None,
-                    "realised_volatility_5d": None,
+                    "realised_volatility_5d_post_event": None,
                     "close": None,
                     "date": None,
                 },

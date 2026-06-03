@@ -3539,6 +3539,7 @@
         "type": "object"
       },
       "RealisedOutcomeHorizon": {
+        "description": "A single (h, log_return, realised_vol, close) row in the\n\"what actually happened\" reveal.\n\n``realised_volatility_5d_post_event`` is the rolling stdev of the\nbar-to-bar log-returns over the 5 bars ending at t+h, where t is\nthe replay ``as_of_date``. This is **post-event** by construction\n-- it measures volatility AFTER the analyzed statement -- and is\ndeliberately not the same series as ``MarketDataResponse.\nvolatility_5d``, which measures the rolling 5d stdev over the bars\nBEFORE the request date (the value the forecaster consumes as a\nfeature). The two are intentionally distinct and never compared.",
         "properties": {
           "close": {
             "anyOf": [
@@ -3577,7 +3578,7 @@
             ],
             "title": "Log Return"
           },
-          "realised_volatility_5d": {
+          "realised_volatility_5d_post_event": {
             "anyOf": [
               {
                 "type": "number"
@@ -3586,7 +3587,7 @@
                 "type": "null"
               }
             ],
-            "title": "Realised Volatility 5D"
+            "title": "Realised Volatility 5D Post Event"
           }
         },
         "required": [
@@ -3934,6 +3935,11 @@
               }
             ],
             "title": "Fold Id"
+          },
+          "forecaster_checkpoint_rewound": {
+            "default": false,
+            "title": "Forecaster Checkpoint Rewound",
+            "type": "boolean"
           },
           "notes": {
             "items": {

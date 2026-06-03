@@ -632,11 +632,24 @@ class InferenceStatusSurface(BaseModel):
 
 
 class RealisedOutcomeHorizon(BaseModel):
+    """A single (h, log_return, realised_vol, close) row in the
+    "what actually happened" reveal.
+
+    ``realised_volatility_5d_post_event`` is the rolling stdev of the
+    bar-to-bar log-returns over the 5 bars ending at t+h, where t is
+    the replay ``as_of_date``. This is **post-event** by construction
+    -- it measures volatility AFTER the analyzed statement -- and is
+    deliberately not the same series as ``MarketDataResponse.
+    volatility_5d``, which measures the rolling 5d stdev over the bars
+    BEFORE the request date (the value the forecaster consumes as a
+    feature). The two are intentionally distinct and never compared.
+    """
+
     model_config = _FORBID_FROZEN_CONFIG
 
     horizon: int
     log_return: float | None = None
-    realised_volatility_5d: float | None = None
+    realised_volatility_5d_post_event: float | None = None
     close: float | None = None
     date: str | None = None
 
@@ -669,6 +682,12 @@ class ReplayModeBlock(BaseModel):
     fold_id: str | None = None
     train_end: str | None = None
     classifier_rewind: bool = False
+    # ``True`` once the forecaster service is wired to load the per-fold
+    # checkpoint identified by ``fold_id``. Until that follow-up lands,
+    # this stays ``False`` so a consumer comparing ``replay.fold_id`` to
+    # ``model.checkpoint_path`` can tell the scaffolding apart from the
+    # full feature.
+    forecaster_checkpoint_rewound: bool = False
     notes: list[str] = Field(default_factory=list)
 
 

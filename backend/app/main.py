@@ -999,16 +999,25 @@ def _maybe_attach_replay_blocks(payload: AnalyzeRequest, response: dict[str, Any
         ),
     ]
     if not fold_ref.available:
-        # The per-fold checkpoint scheme is not deployed; bubble a
-        # 422 reason so the API surfaces a clean error rather than
-        # silently serving the post-X checkpoint sitting on disk.
-        raise ValueError(f"replay_unavailable: {fold_ref.reason or 'fold_resolution_failed'}")
+        # The per-fold checkpoint scheme is not deployed; surface a
+        # 422 with the structured ``{error, message}`` detail shape
+        # the rest of the API uses (mp_surprise_unavailable, history_
+        # unavailable, etc.) so a future consumer can read
+        # ``detail.error`` without a TypeError.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "replay_unavailable",
+                "message": fold_ref.reason or "fold_resolution_failed",
+            },
+        )
 
     response["replay"] = {
         "as_of_date": as_of.isoformat(),
         "fold_id": fold_ref.fold_id,
         "train_end": fold_ref.train_end.isoformat() if fold_ref.train_end else None,
         "classifier_rewind": False,
+        "forecaster_checkpoint_rewound": False,
         "notes": notes,
     }
     try:
@@ -1331,6 +1340,12 @@ async def analyze(payload: AnalyzeRequest):
         if not payload.mask_sentence_indices:
             await run_in_threadpool(_record_history, run_payload, response)
         return response
+    except HTTPException:
+        # Already-structured 4xx/5xx (e.g. replay_unavailable from
+        # _maybe_attach_replay_blocks). Re-raise unchanged so the
+        # status_code and structured detail reach the client; without
+        # this the catch-all below would eat it and surface a generic 500.
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:  # pragma: no cover

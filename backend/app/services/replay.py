@@ -192,9 +192,13 @@ def realised_outcome(
     Realised log-return at horizon h is ``ln(close_{t+h} / close_{t})``
     where ``close_t`` is the last close on or before ``as_of`` and
     ``close_{t+h}`` is the h-th trading bar after ``as_of``. Realised
-    vol_h is the rolling-5d stdev of daily returns measured at bar
-    ``t+h`` (i.e. the same series the forecaster targets via the
-    ``volatility_5d`` field).
+    vol at horizon h is the rolling stdev of the bar-to-bar log-returns
+    over the 5 bars ending at ``t+h`` -- a **post-event** measure of
+    volatility on the trajectory AFTER ``as_of``. Distinct from the
+    forecaster-feature ``MarketDataResponse.volatility_5d`` which uses
+    the 5 bars BEFORE the request date; the two are intentionally
+    different windows on different sides of the event and the
+    ``realised_volatility_5d_post_event`` field name reflects that.
 
     Each per-horizon read is ``None`` when the underlying market
     history does not extend that far -- a near-current date may have
@@ -239,7 +243,7 @@ def realised_outcome(
                 {
                     "horizon": step,
                     "log_return": None,
-                    "realised_volatility_5d": None,
+                    "realised_volatility_5d_post_event": None,
                     "close": None,
                     "date": None,
                 }
@@ -281,7 +285,7 @@ def realised_outcome(
                     if isinstance(cum, float) and cum == cum  # filter NaN
                     else None
                 ),
-                "realised_volatility_5d": vol,
+                "realised_volatility_5d_post_event": vol,
                 "close": float(close_val) if close_val is not None else None,
                 "date": str(bar_h.get("date") or ""),
             }
