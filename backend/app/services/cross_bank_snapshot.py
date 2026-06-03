@@ -130,7 +130,7 @@ def _registry_path() -> Path:
     return DATA_DIR / "raw" / "phase2" / "source_registry.jsonl"
 
 
-def _load_recent_sentences(
+def _load_recent_sentences(  # noqa: C901 - branching is per-line defensive parsing
     source: str,
     *,
     limit: int = _SAMPLE_SIZE,
