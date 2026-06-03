@@ -267,7 +267,7 @@ def hydrate() -> None:
     for artefact in eager_artefacts():
         files = _ARTEFACT_FILES.get(artefact.name)
         if files is None:
-            logger.debug("eager-pull: %r has no MODELS_DIR copy mapping; skip", artefact.name)
+            logger.debug("eager-pull: %r not in copy map; skip", artefact.name)
             continue
         _hydrate_one(artefact, files, MODELS_DIR, DATA_DIR, token, parse_hf_uri, download_snapshot)
 
