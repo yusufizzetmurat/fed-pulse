@@ -1,6 +1,10 @@
 from datetime import date
 from typing import Any, Literal
 
+# Local alias so models that already have a ``date: str`` field can still
+# annotate other fields with the ``datetime.date`` type without shadowing.
+_date_t = date
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -71,6 +75,34 @@ class AnalyzeRequest(BaseModel):
             "same tokenizer that produces xai.sentences. Empty list = no mask."
         ),
     )
+    as_of_date: _date_t | None = Field(
+        default=None,
+        description=(
+            "Replay-mode anchor. When set, the pipeline runs as if today "
+            "were this date: only the walk-forward fold whose train_end "
+            "precedes this date is used for the forecaster + trajectory, "
+            "and historical-analog retrieval is filtered to "
+            "event_date <= as_of_date. None = live mode (default)."
+        ),
+    )
+
+    @field_validator("as_of_date", mode="before")
+    @classmethod
+    def _parse_as_of_date(cls, value: Any) -> Any:
+        """Accept ISO ``YYYY-MM-DD`` strings under the model's strict
+        config so the JSON wire shape stays a string. Pydantic v2 strict
+        otherwise refuses str->date coercion."""
+
+        if value is None or isinstance(value, _date_t):
+            return value
+        if isinstance(value, str):
+            try:
+                return _date_t.fromisoformat(value[:10])
+            except ValueError as exc:
+                raise ValueError(
+                    f"as_of_date must be ISO YYYY-MM-DD, got {value!r}"
+                ) from exc
+        return value
 
 
 class SentimentResponse(BaseModel):
@@ -601,6 +633,47 @@ class InferenceStatusSurface(BaseModel):
     detail: str | None = None
 
 
+class RealisedOutcomeHorizon(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    horizon: int
+    log_return: float | None = None
+    realised_volatility_5d: float | None = None
+    close: float | None = None
+    date: str | None = None
+
+
+class RealisedOutcomeBlock(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    as_of_date: str
+    symbol: str
+    horizons: list[RealisedOutcomeHorizon]
+
+
+class ReplayModeBlock(BaseModel):
+    """Replay-mode metadata for the /analyze response.
+
+    Populated only when the request set ``as_of_date``. ``fold_id`` is
+    the walk-forward fold whose checkpoint served this prediction;
+    ``train_end`` is the latest date the model saw at training time --
+    everything strictly after that is unseen ground truth from the
+    model's point of view. ``classifier_rewind`` flags that the
+    text-encoder weights are NOT rewound to ``as_of_date`` (the
+    DAPT-pinned encoder is post-X), so any text-conditioned head is
+    served with later-than-X weights -- documented as a known caveat
+    rather than silently leaked.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    as_of_date: str
+    fold_id: str | None = None
+    train_end: str | None = None
+    classifier_rewind: bool = False
+    notes: list[str] = Field(default_factory=list)
+
+
 class AnalyzeResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
@@ -609,6 +682,13 @@ class AnalyzeResponse(BaseModel):
     market: MarketDataResponse
     model: ModelDiagnosticsResponse
     series: ForecastSeriesResponse
+    # Replay-mode metadata + the "what actually happened" reveal. Both
+    # populated only when ``AnalyzeRequest.as_of_date`` is set. The
+    # frontend hides the replay banner + the reveal card when these are
+    # ``None`` so live-mode payloads stay byte-identical to the legacy
+    # shape.
+    replay: ReplayModeBlock | None = None
+    realised_outcome: RealisedOutcomeBlock | None = None
     xai: XaiResponse | None = None
     credibility: CredibilityResponse | None = None
     multi_axis: MultiAxisBlock | None = None

@@ -971,7 +971,59 @@ def _build_analyze_response(
         if panel_attributions:
             xai_block["panels"] = panel_attributions
         response["xai"] = xai_block
+
+    # Replay-mode envelope. Populated only when the request carries
+    # ``as_of_date``. The fold resolution itself is delegated to
+    # ``app.services.replay``; cold failures (missing manifest, no fold
+    # before X) surface as a ValueError up to the /analyze handler,
+    # which maps to a 422.
+    _maybe_attach_replay_blocks(payload, response)
     return response
+
+
+def _maybe_attach_replay_blocks(
+    payload: AnalyzeRequest, response: dict[str, Any]
+) -> None:
+    """Populate ``replay`` + ``realised_outcome`` when the request is
+    in replay mode. No-op for live-mode payloads."""
+
+    as_of = getattr(payload, "as_of_date", None)
+    if as_of is None:
+        return
+
+    from app.services import replay as replay_service
+
+    fold_ref = replay_service.resolve_fold_for_date(as_of)
+    notes: list[str] = [
+        (
+            "Text classifier rewind not supported; the DAPT-pinned encoder "
+            "weights are post-X and not rewound to the replay date."
+        ),
+    ]
+    if not fold_ref.available:
+        # The per-fold checkpoint scheme is not deployed; bubble a
+        # 422 reason so the API surfaces a clean error rather than
+        # silently serving the post-X checkpoint sitting on disk.
+        raise ValueError(
+            f"replay_unavailable: {fold_ref.reason or 'fold_resolution_failed'}"
+        )
+
+    response["replay"] = {
+        "as_of_date": as_of.isoformat(),
+        "fold_id": fold_ref.fold_id,
+        "train_end": fold_ref.train_end.isoformat() if fold_ref.train_end else None,
+        "classifier_rewind": False,
+        "notes": notes,
+    }
+    try:
+        realised = replay_service.realised_outcome(
+            as_of, symbol=payload.symbol
+        )
+    except Exception:  # noqa: BLE001 -- defensive: never break /analyze
+        logger.warning("realised_outcome_failed", exc_info=True)
+        realised = None
+    if realised is not None:
+        response["realised_outcome"] = realised
 
 
 def _build_regime_regression_block(

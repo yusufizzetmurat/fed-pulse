@@ -24,6 +24,10 @@ import { SecondOpinionRegime } from "@/components/analyze/SecondOpinionRegime";
 import { HistoricalContextBadge } from "@/components/analyze/HistoricalContextBadge";
 import { SemanticDiffPanel } from "@/components/analyze/SemanticDiffPanel";
 import { SentenceStrikeXaiPanel } from "@/components/analyze/SentenceStrikeXaiPanel";
+import {
+  RealisedOutcomeCard,
+  ReplayBanner,
+} from "@/components/analyze/ReplayModePanel";
 import { TldrCard } from "@/components/analyze/TldrCard";
 import { VolatilityOutlookCard } from "@/components/analyze/VolatilityOutlookCard";
 import { WorkspaceMetaStrip } from "@/components/analyze/WorkspaceMetaStrip";
@@ -95,6 +99,11 @@ function defaultRequest(): AnalyzeRequest {
     horizon: DEFAULT_HORIZON,
     include_realized: false,
     include_xai: true,
+    // Live mode by default. The Workspace's replay toggle flips this
+    // to a historical ISO date; the backend serves the walk-forward
+    // fold whose train_end precedes the date and the analogs fan-out
+    // is filtered to event_date <= as_of_date.
+    as_of_date: null,
   };
 }
 
@@ -618,7 +627,11 @@ export default function WorkspacePage() {
         postAnalyzeAnalogs(apiBaseUrl, {
           text: request.text,
           k: 5,
-          as_of_date: request.date,
+          // In replay mode, anchor the analog retrieval boundary at
+          // the replay date so historical neighbours from after the
+          // replay anchor are not eligible. Live mode falls back to
+          // the document date (current behaviour).
+          as_of_date: request.as_of_date ?? request.date,
         }),
       ]);
       if (analyzeRes.status === "fulfilled") {
@@ -792,6 +805,8 @@ export default function WorkspacePage() {
               </Badge>
             </div>
           </div>
+
+          <ReplayBanner replay={result?.replay ?? null} />
 
           <AnalyzeForm
             value={request}
@@ -1019,6 +1034,15 @@ export default function WorkspacePage() {
               ) : null}
 
               <RegimeHistoryStrip entries={historyEntries} symbol={request.symbol} />
+
+              {/*
+                Replay-mode "what actually happened" reveal. Collapsed by
+                default; rendered only when the request ran in replay
+                mode AND the backend returned a realised-outcome block.
+                In live mode the parent state is null so the card is
+                absent.
+              */}
+              <RealisedOutcomeCard outcome={result.realised_outcome ?? null} />
             </>
           ) : null}
 
