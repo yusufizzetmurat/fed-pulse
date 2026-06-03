@@ -72,9 +72,7 @@ except Exception:  # pragma: no cover - import-time defensive
 _TRAJECTORY_BUNDLE_RELDIR = "artifacts/trajectory/trajectory_transformer"
 _RETRIEVAL_BUNDLE_RELDIR = "artifacts/retrieval/finbert_fed_adjacent_xbank_dapt_retrieval"
 
-_ARTEFACT_FILES: dict[
-    str, tuple[str | tuple[str, str] | tuple[str, str, str], ...]
-] = {
+_ARTEFACT_FILES: dict[str, tuple[str | tuple[str, str] | tuple[str, str, str], ...]] = {
     "forecaster_canonical": (
         "forecaster_best.pt",
         "forecaster_best.pt.inference_contract.json",
@@ -271,9 +269,7 @@ def hydrate() -> None:
         if files is None:
             logger.debug("eager-pull: %r has no MODELS_DIR copy mapping; skip", artefact.name)
             continue
-        _hydrate_one(
-            artefact, files, MODELS_DIR, DATA_DIR, token, parse_hf_uri, download_snapshot
-        )
+        _hydrate_one(artefact, files, MODELS_DIR, DATA_DIR, token, parse_hf_uri, download_snapshot)
 
 
 def main() -> int:
