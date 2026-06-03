@@ -78,7 +78,7 @@ jobs:
       # and a reviewer can rely on the usual required-status checks
       # before merge.
       - name: create pull request
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.MP_SURPRISE_REFRESH_PAT }}
           branch: ci/refresh-mp-surprise
