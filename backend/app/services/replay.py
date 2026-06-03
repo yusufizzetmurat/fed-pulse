@@ -248,11 +248,11 @@ def realised_outcome(
         # Walk forward summing log_returns up to ``step``.
         path_sum = 0.0
         for s in range(1, step + 1):
-            bar = by_step.get(s)
-            if bar is None:
+            bar_at_step: dict[str, Any] | None = by_step.get(s)
+            if bar_at_step is None:
                 path_sum = float("nan")
                 break
-            path_sum += float(bar.get("log_return") or 0.0)
+            path_sum += float(bar_at_step.get("log_return") or 0.0)
         cum = path_sum
         bar_h = by_step[step]
         # Volatility: a rolling 5d stdev measured at the bar. We do not
@@ -272,6 +272,7 @@ def realised_outcome(
             vol = var**0.5
         else:
             vol = None
+        close_val = bar_h.get("close")
         realised["horizons"].append(
             {
                 "horizon": step,
@@ -281,7 +282,7 @@ def realised_outcome(
                     else None
                 ),
                 "realised_volatility_5d": vol,
-                "close": float(bar_h.get("close")) if bar_h.get("close") is not None else None,
+                "close": float(close_val) if close_val is not None else None,
                 "date": str(bar_h.get("date") or ""),
             }
         )
