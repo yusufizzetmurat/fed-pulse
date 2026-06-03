@@ -399,6 +399,38 @@ def build_snapshot(
             if entry is not None and entry.expires_at > now:
                 return entry.payload
 
+    # Double-checked locking: hold the lock across the full rebuild so a
+    # post-TTL burst of concurrent requests does not fan out N parallel
+    # classifier runs. Waiters re-check the cache after acquiring the
+    # lock and return the freshly built payload instead of rebuilding.
+    # The rebuild itself takes ~6 s cold which is acceptable to serialise;
+    # subsequent hits in the same TTL window are O(ms).
+    if use_cache:
+        with _cache_lock:
+            entry = _cache.get(cache_key)
+            now = time.time()
+            if entry is not None and entry.expires_at > now:
+                return entry.payload
+            banks = [
+                build_bank_card(
+                    spec,
+                    score_text=score_text,
+                    market_lookup=market_lookup,
+                    registry_path=registry_path,
+                )
+                for spec in BANK_SPECS
+            ]
+            payload = {
+                "banks": banks,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "cache_ttl_seconds": _CACHE_TTL_SECONDS,
+            }
+            _cache[cache_key] = _CacheEntry(payload=payload, expires_at=now + _CACHE_TTL_SECONDS)
+            return payload
+
+    # Cache disabled path (tests, ad-hoc calls): build without touching
+    # the cache so a test that monkeypatches ``score_text`` cannot
+    # poison the production cache for the next non-mocked request.
     banks = [
         build_bank_card(
             spec,
@@ -408,16 +440,11 @@ def build_snapshot(
         )
         for spec in BANK_SPECS
     ]
-    payload = {
+    return {
         "banks": banks,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "cache_ttl_seconds": _CACHE_TTL_SECONDS,
     }
-
-    if use_cache:
-        with _cache_lock:
-            _cache[cache_key] = _CacheEntry(payload=payload, expires_at=now + _CACHE_TTL_SECONDS)
-    return payload
 
 
 def reset_cache() -> None:

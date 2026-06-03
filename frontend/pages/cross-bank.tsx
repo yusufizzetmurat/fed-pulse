@@ -238,9 +238,18 @@ export default function CrossBankPage(): JSX.Element {
               Side-by-side stance and volatility-regime read across six major
               central banks, scored by the xbank-DAPT multi-axis classifier
               against the latest annotated sentences from each bank's
-              published communications. Vol regime is a coarse 5-day realised
-              volatility band on the bank's flagship equity index. Cards
-              refresh hourly.
+              published communications. Cards refresh hourly.
+            </p>
+            <p className="max-w-3xl text-xs text-muted-foreground">
+              Vol regime is a coarse 5-day annualised realised-vol band
+              (calm &lt; 12%, normal, high &gt; 22%) on each bank's flagship
+              equity index. The thresholds are deliberately uniform across
+              indices so cards are directly comparable on the same scale;
+              indices with a higher baseline vol (e.g. ^N225) will lean
+              toward "normal"/"high" and lower-vol indices (e.g. ^FTSE)
+              toward "calm"/"normal" by construction. Read the regime as
+              a within-card direction signal, not a cross-card severity
+              ranking.
             </p>
             {data?.generated_at ? (
               <p className="text-xs text-muted-foreground">
