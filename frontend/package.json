@@ -48,7 +48,7 @@
     "autoprefixer": "^10.4.20",
     "chrome-launcher": "^1.2.1",
     "eslint": "^8.57.1",
-    "eslint-config-next": "^14.2.26",
+    "eslint-config-next": "^16.2.7",
     "jsdom": "^29.1.1",
     "lighthouse": "^13.3.0",
     "postcss": "^8.4.49",
