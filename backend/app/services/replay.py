@@ -110,7 +110,7 @@ def _resolve_path(value: Any) -> Path | None:
     return candidate
 
 
-def resolve_fold_for_date(
+def resolve_fold_for_date(  # noqa: C901 - branching is defensive parsing
     as_of: date,
     *,
     manifest_path: Path | None = None,
