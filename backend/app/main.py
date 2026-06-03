@@ -975,8 +975,12 @@ def _build_analyze_response(
     # Replay-mode envelope. Populated only when the request carries
     # ``as_of_date``. The fold resolution itself is delegated to
     # ``app.services.replay``; cold failures (missing manifest, no fold
-    # before X) surface as a ValueError up to the /analyze handler,
-    # which maps to a 422.
+    # before X) raise ``HTTPException(422, detail={error, message})``
+    # directly from inside the helper, propagate out of
+    # ``run_in_threadpool``, and are re-raised unchanged by the
+    # ``except HTTPException`` clause on the /analyze handler so the
+    # 422 reaches the client (the catch-all below would otherwise
+    # collapse it to a generic 500).
     _maybe_attach_replay_blocks(payload, response)
     return response
 

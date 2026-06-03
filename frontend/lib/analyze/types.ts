@@ -31,6 +31,10 @@ export interface ReplayModeBlock {
   fold_id: string | null;
   train_end: string | null;
   classifier_rewind: boolean;
+  // True once the forecaster service is wired to load the per-fold
+  // checkpoint identified by ``fold_id``. Until that follow-up lands
+  // this stays false so the UI can render the scaffold-gap callout.
+  forecaster_checkpoint_rewound: boolean;
   notes: string[];
 }
 
