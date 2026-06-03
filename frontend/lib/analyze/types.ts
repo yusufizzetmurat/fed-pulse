@@ -465,6 +465,17 @@ export interface SettingsCheckpoint {
   required_kwargs?: string[];
   supplied_at_inference?: Record<string, boolean>;
   inference_contract_status?: string | null;
+  // Where the file lives. ``models_dir`` is the host-mounted
+  // ``backend/models/`` directory; ``hf_cache`` is the
+  // ``huggingface_hub`` snapshot cache that lazy-fetched checkpoints
+  // (e.g. the multi-axis classifier when no local file is present)
+  // land into. The Settings page renders a small "HF cache" badge so
+  // an operator can see at a glance which files are not on the local
+  // mount.
+  source?: string | null;
+  repo?: string | null;
+  revision?: string | null;
+  snapshot_path?: string | null;
 }
 
 export interface SettingsCheckpointsResponse {
