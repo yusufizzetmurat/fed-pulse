@@ -2844,9 +2844,7 @@ async def cross_bank_snapshot() -> CrossBankSnapshotResponse:
         payload = await run_in_threadpool(build_snapshot)
     except Exception:  # pragma: no cover -- defensive
         logger.exception("cross_bank_snapshot_failed")
-        raise HTTPException(
-            status_code=503, detail="Cross-bank snapshot unavailable"
-        ) from None
+        raise HTTPException(status_code=503, detail="Cross-bank snapshot unavailable") from None
 
     cards = [CrossBankCard(**row) for row in payload.get("banks", [])]
     return CrossBankSnapshotResponse(

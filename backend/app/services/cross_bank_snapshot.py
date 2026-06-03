@@ -243,9 +243,7 @@ def _build_vol_regime(symbol: str) -> dict[str, Any]:
     try:
         from app.services.market_data import fetch_market_snapshot
     except Exception as exc:  # pragma: no cover -- import-time only
-        _logger.warning(
-            "cross_bank_snapshot_market_data_import_failed err=%s", exc
-        )
+        _logger.warning("cross_bank_snapshot_market_data_import_failed err=%s", exc)
         return {
             "label": None,
             "confidence": None,
@@ -279,7 +277,7 @@ def _build_vol_regime(symbol: str) -> dict[str, Any]:
         }
 
     vol_5d_raw = float(snapshot.get("volatility_5d") or 0.0)
-    annualised = vol_5d_raw * (252 ** 0.5)
+    annualised = vol_5d_raw * (252**0.5)
     if annualised < 0.12:
         label = "calm"
     elif annualised > 0.22:
@@ -326,9 +324,7 @@ def build_bank_card(
     if market_lookup is None:
         market_lookup = _build_vol_regime
 
-    sentences, latest = _load_recent_sentences(
-        spec.source, registry_path=registry_path
-    )
+    sentences, latest = _load_recent_sentences(spec.source, registry_path=registry_path)
     scores: list[dict[str, Any]] = []
     if sentences:
         for sentence in sentences:
@@ -344,9 +340,7 @@ def build_bank_card(
             if result:
                 scores.append(result)
 
-    stance_dist = _aggregate_distribution(
-        scores, "stance", MULTI_TASK_STANCE_LABELS
-    )
+    stance_dist = _aggregate_distribution(scores, "stance", MULTI_TASK_STANCE_LABELS)
     stance_label, stance_conf = _argmax_label(stance_dist)
 
     certainty_dist = _aggregate_distribution(
@@ -354,9 +348,7 @@ def build_bank_card(
     )
     certainty_label, certainty_conf = _argmax_label(certainty_dist)
 
-    time_dist = _aggregate_distribution(
-        scores, "time", ("forward looking", "not forward looking")
-    )
+    time_dist = _aggregate_distribution(scores, "time", ("forward looking", "not forward looking"))
     time_label, _ = _argmax_label(time_dist)
 
     vol_regime = market_lookup(spec.symbol)
@@ -424,9 +416,7 @@ def build_snapshot(
 
     if use_cache:
         with _cache_lock:
-            _cache[cache_key] = _CacheEntry(
-                payload=payload, expires_at=now + _CACHE_TTL_SECONDS
-            )
+            _cache[cache_key] = _CacheEntry(payload=payload, expires_at=now + _CACHE_TTL_SECONDS)
     return payload
 
 
