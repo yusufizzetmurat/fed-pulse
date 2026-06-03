@@ -4,34 +4,34 @@
 
 ## Result (2026-06-02)
 
-n=130 meetings 2010–2026 (cut 9 / hold 101 / hike 20).
+n=122 meetings 2011-01-26..2026-04-29 (cut 9 / hold 93 / hike 20).
 
 | test | value | read |
 |---|---|---|
-| **PRIMARY** Spearman ρ(s, Δff) | **+0.283**, perm-p **0.0006**, CI95 **[0.081, 0.459]** | significant → **VALID**, but *weak* (0.2–0.4) |
-| (a) AUC hike-vs-cut | **0.800**, CI95 [0.62, 0.94] | **strong** discrimination at the extremes |
-| (b) ordinal ρ(s, {cut<hold<hike}) | +0.276 | monotone but weak |
-| (c) leading ρ(sₜ, Δff₊₁) | +0.212, p 0.008 | weak forward alignment (survives Bonferroni) |
-| diagnostic: within-holds ρ(sₜ, Δff₊₁) | +0.047 | **no** signalling inside the hold regime |
-| mean s by action | cut **−0.84** / hold **−0.82** / hike **+0.03** | the tell ↓ |
+| **PRIMARY** Spearman ρ(s, Δff) | **+0.357**, perm-p **0.0002**, CI95 **[0.142, 0.534]** | significant → **VALID**, low-moderate strength |
+| (a) AUC hike-vs-cut | **0.794**, CI95 [0.606, 0.933] | strong discrimination at the extremes |
+| (b) ordinal ρ(s, {cut<hold<hike}) | +0.350 | monotone, low-moderate |
+| (c) leading ρ(sₜ, Δff₊₁) | +0.272, perm-p 0.0007 | forward alignment survives Bonferroni |
+| diagnostic: within-holds ρ(sₜ, Δff₊₁) | +0.151 | weak signalling inside the hold regime |
+| mean s by action | cut **−0.287** / hold **−0.655** / hike **+0.385** | hike clears neutral; cut/hold ordering inverted |
 
 **Verdict: the stance instrument is a VALID measure of policy hawkishness
-(primary significant, both decision-rule conditions met) — but weak and
-asymmetric.** It is essentially a **hike detector**: it separates hikes from cuts
-well (AUC 0.80), but **cannot distinguish a hold from a cut** (mean s −0.82 vs
-−0.84, nearly identical) and is **dovish-skewed in absolute scale** (even hikes
-barely clear neutral). Its validity is carried by the hawkish extreme; the dovish
-end is undifferentiated, and it carries no forward guidance within the long hold
-regime (within-holds lead ≈ 0).
+(primary significant, both decision-rule conditions met) — but asymmetric.** It
+is essentially a **hike detector**: it separates hikes from cuts well (AUC
+0.794), and the hike end now clears neutral cleanly (mean s +0.385). The
+dovish-end ordering is **inverted**: cuts read more hawkish than holds (mean s
+−0.287 vs −0.655), so the instrument cannot be used as a fine-grained
+cut-vs-hold discriminator and the within-holds lead is weak (ρ +0.151).
 
 **What this sharpens (honest descriptive scope):** the dashboard's stance surface
 can credibly flag *hiking-hawkish* statements, but should NOT be read as a
 fine-grained hawk–dove thermometer on the dovish side, nor imply "more dovish
 than the last hold." Concrete instrument-improvement leads: (1) the dovish-end
-resolution (hold vs cut) is where the head is blind — a targeted re-label/training
-focus there would add the most; (2) the absolute scale is mis-centred (dovish
-bias) and would benefit from recalibration. Artifact:
-`data/artifacts/stance_instrument_validity/result.json`.
+resolution (cut vs hold) is where the head is blind — a targeted re-label /
+training focus there would add the most; (2) the inverted cut/hold ordering
+suggests the cut-associated statements carry hawkish framing that the classifier
+picks up, so re-labelling around concrete policy-direction cues would help.
+Artifact: `data/artifacts/stance_instrument_validity/result.json`.
 
 ## Motivation (adventure 1 — text as measurement)
 
