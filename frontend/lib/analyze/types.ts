@@ -972,3 +972,30 @@ export interface SemanticDiffResponse {
   summary: string;
   status?: SemanticDiffStatus | null;
 }
+
+export interface CrossBankCard {
+  bank: string;
+  short_code: string;
+  display_name: string;
+  flag: string;
+  symbol: string;
+  latest_statement_date: string | null;
+  stance: Record<string, number> | null;
+  stance_label: string | null;
+  stance_confidence: number | null;
+  certainty_label: string | null;
+  certainty_confidence: number | null;
+  time_axis: string | null;
+  vol_regime_label: string | null;
+  vol_regime_confidence: number | null;
+  vol_regime_as_of: string | null;
+  vol_regime_status: string | null;
+  sample_size: number;
+  status: string;
+}
+
+export interface CrossBankSnapshotResponse {
+  banks: CrossBankCard[];
+  generated_at: string;
+  cache_ttl_seconds: number;
+}

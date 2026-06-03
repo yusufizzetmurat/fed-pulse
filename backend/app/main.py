@@ -86,6 +86,8 @@ from app.schemas import (
     TrajectoryRequest,
     TrajectoryResponse,
     VolRegimeReactionCard,
+    CrossBankCard,
+    CrossBankSnapshotResponse,
 )
 from app.evaluation.xai import attribute_text, split_sentences, to_response as xai_to_response
 from app.services.document_parser import (
@@ -2815,4 +2817,38 @@ async def analyze_trajectory(payload: TrajectoryRequest) -> TrajectoryResponse:
         train_end=result.get("train_end"),
         as_of_date=str(result.get("as_of_date") or payload.as_of_date.isoformat()),
         warning=result.get("warning"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cross-bank dashboard panel (xbank-DAPT classifier surfaced across six banks)
+# ---------------------------------------------------------------------------
+@app.get("/cross-bank/snapshot", response_model=CrossBankSnapshotResponse)
+async def cross_bank_snapshot() -> CrossBankSnapshotResponse:
+    """Side-by-side stance + vol-regime read for Fed / ECB / BoE / BoC / BoJ / RBA.
+
+    Backed by ``app.services.cross_bank_snapshot.build_snapshot``. The
+    multi-axis classifier was continued-pretrained on the xbank-DAPT
+    substrate so it is valid across all six banks; the vol-regime tag
+    is a coarse 5d-realised-vol band against the bank's flagship
+    equity index. Results cache in-process for an hour.
+
+    Returns an explicit ``status`` per card so the frontend can render
+    a "Coming soon" placeholder for any bank where the corpus or
+    market lookup degraded, instead of a 500 across the whole panel.
+    """
+
+    from app.services.cross_bank_snapshot import build_snapshot
+
+    try:
+        payload = await run_in_threadpool(build_snapshot)
+    except Exception:  # pragma: no cover -- defensive
+        logger.exception("cross_bank_snapshot_failed")
+        raise HTTPException(status_code=503, detail="Cross-bank snapshot unavailable") from None
+
+    cards = [CrossBankCard(**row) for row in payload.get("banks", [])]
+    return CrossBankSnapshotResponse(
+        banks=cards,
+        generated_at=str(payload.get("generated_at") or ""),
+        cache_ttl_seconds=int(payload.get("cache_ttl_seconds") or 0),
     )
