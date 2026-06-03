@@ -432,13 +432,9 @@ def _collect_hf_cache_checkpoints(
                     relative_path=filename,
                     role=role,
                     size_bytes=int(stat.st_size),
-                    modified_at=datetime.fromtimestamp(
-                        stat.st_mtime, tz=timezone.utc
-                    ).isoformat(),
+                    modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
                     is_active=is_active_multi_axis,
-                    encoder_alias=(
-                        active_multi_axis_alias if is_active_multi_axis else None
-                    ),
+                    encoder_alias=(active_multi_axis_alias if is_active_multi_axis else None),
                     source="hf_cache",
                     repo=ref.repo_id,
                     revision=artefact.revision or None,
