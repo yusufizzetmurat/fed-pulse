@@ -63,7 +63,11 @@ def test_measures_by_day_drops_post_cutoff_bars_on_fomc_days(monkeypatch) -> Non
 
     from app.services import market_data as _md
 
-    monkeypatch.setattr(_md, "_fomc_days", lambda: frozenset({_date(2020, 1, 2)}))
+    # Patch the un-cached predicate rather than ``_fomc_days``. The latter is
+    # decorated with ``@lru_cache`` and a name-level monkeypatch can leave the
+    # original wrapper holding a stale cached set for unrelated tests in the
+    # same session.
+    monkeypatch.setattr(_md, "is_fomc_day", lambda d: d == _date(2020, 1, 2))
 
     rng = np.random.default_rng(2)
     bars = []
