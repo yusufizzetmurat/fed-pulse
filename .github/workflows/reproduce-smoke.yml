@@ -35,7 +35,7 @@ jobs:
       PYTHONPATH: backend
     steps:
       - name: checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.3
 
       - name: setup python
         uses: actions/setup-python@v6
