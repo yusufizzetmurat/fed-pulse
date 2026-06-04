@@ -1023,6 +1023,16 @@ def _build_analyze_response(
         document_date=payload.date,
         text_embedding=pooled_text_embedding,
     )
+
+    # Replay mode pre-resolution. When the request carries ``as_of_date``
+    # we resolve the walk-forward fold up-front so the forecast call
+    # below can be steered onto the per-fold checkpoint instead of the
+    # live serving singleton. The unavailable branch raises a 422
+    # immediately (matching the pre-#655 surface) so the heavy forecast
+    # path never runs against the live model when the client asked for
+    # a time-machine read.
+    fold_ref, fold_model, fold_metadata = _resolve_replay_fold(payload)
+
     forecast: dict[str, Any] | None
     try:
         forecast = forecast_quantitative_series(
@@ -1030,6 +1040,13 @@ def _build_analyze_response(
             forecast_mode=mode,
             horizon=payload.horizon,
             forecast_dates=forecast_dates,
+            model_override=fold_model,
+            model_metadata_override=fold_metadata,
+            checkpoint_path_override=(
+                fold_ref.forecaster_checkpoint
+                if fold_ref is not None and fold_ref.available
+                else None
+            ),
         )
     except Exception:  # noqa: BLE001 -- defensive: degrade gracefully
         logger.warning("forecast_quantitative_series_failed", exc_info=True)
@@ -1109,21 +1126,105 @@ def _build_analyze_response(
         response["xai"] = xai_block
 
     # Replay-mode envelope. Populated only when the request carries
-    # ``as_of_date``. The fold resolution itself is delegated to
-    # ``app.services.replay``; cold failures (missing manifest, no fold
-    # before X) raise ``HTTPException(422, detail={error, message})``
-    # directly from inside the helper, propagate out of
-    # ``run_in_threadpool``, and are re-raised unchanged by the
+    # ``as_of_date``. The fold resolution happens once up-front in
+    # ``_resolve_replay_fold`` so the forecast call (above) and the
+    # ``replay`` block here share the same fold ref + per-fold model
+    # state. Cold failures (missing manifest, no fold before X) already
+    # raised an ``HTTPException(422, ...)`` from
+    # ``_resolve_replay_fold`` before this point, propagated out of
+    # ``run_in_threadpool``, and re-raised unchanged by the
     # ``except HTTPException`` clause on the /analyze handler so the
     # 422 reaches the client (the catch-all below would otherwise
     # collapse it to a generic 500).
-    _maybe_attach_replay_blocks(payload, response)
+    _maybe_attach_replay_blocks(
+        payload,
+        response,
+        fold_ref=fold_ref,
+        forecaster_checkpoint_rewound=fold_model is not None,
+    )
     return response
 
 
-def _maybe_attach_replay_blocks(payload: AnalyzeRequest, response: dict[str, Any]) -> None:
+def _resolve_replay_fold(
+    payload: AnalyzeRequest,
+) -> tuple[Any, Any, dict[str, Any] | None]:
+    """Resolve the per-fold checkpoint for an ``as_of_date`` request.
+
+    Returns ``(fold_ref, fold_model, fold_metadata)``. For live-mode
+    requests (``as_of_date is None``) all three are ``None`` and the
+    caller stays on the live serving singleton.
+
+    Raises ``HTTPException(422, {error, message})`` when the request is
+    in replay mode but the fold (or its on-disk checkpoint) cannot be
+    resolved. The error surface is identical to the pre-wire branch:
+    ``message`` carries the structured reason
+    (``fold_manifest_missing`` / ``no_fold_before_as_of`` /
+    ``fold_checkpoint_missing``) so a frontend can render the right
+    empty state.
+    """
+
+    as_of = getattr(payload, "as_of_date", None)
+    if as_of is None:
+        return None, None, None
+
+    from app.services import forecaster as forecaster_service
+    from app.services import replay as replay_service
+
+    fold_ref = replay_service.resolve_fold_for_date(as_of)
+    if not fold_ref.available:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "replay_unavailable",
+                "message": fold_ref.reason or "fold_resolution_failed",
+            },
+        )
+
+    # Load the per-fold checkpoint into an isolated model + metadata
+    # pair. The cache inside ``load_for_fold`` keeps repeated requests
+    # on the same fold cheap. A FileNotFoundError here is the same race
+    # ``resolve_fold_for_date`` already guards against (the file
+    # disappeared between the manifest check and the load); coerce it
+    # to the same 422 so the client sees a coherent surface.
+    try:
+        fold_model = forecaster_service.load_for_fold(fold_ref.forecaster_checkpoint)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "replay_unavailable",
+                "message": "fold_checkpoint_missing",
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "replay_unavailable",
+                "message": "fold_checkpoint_invalid",
+            },
+        ) from exc
+
+    fold_metadata = forecaster_service.get_fold_metadata(fold_ref.forecaster_checkpoint)
+    return fold_ref, fold_model, fold_metadata
+
+
+def _maybe_attach_replay_blocks(
+    payload: AnalyzeRequest,
+    response: dict[str, Any],
+    *,
+    fold_ref: Any | None = None,
+    forecaster_checkpoint_rewound: bool = False,
+) -> None:
     """Populate ``replay`` + ``realised_outcome`` when the request is
-    in replay mode. No-op for live-mode payloads."""
+    in replay mode. No-op for live-mode payloads.
+
+    The ``fold_ref`` + ``forecaster_checkpoint_rewound`` arguments come
+    from :func:`_resolve_replay_fold`; the swap-actually-happened flag
+    is the single source of truth for the ``forecaster_checkpoint_rewound``
+    field on the ``replay`` block so the wire status matches the model
+    actually served on this request.
+    """
 
     as_of = getattr(payload, "as_of_date", None)
     if as_of is None:
@@ -1131,7 +1232,8 @@ def _maybe_attach_replay_blocks(payload: AnalyzeRequest, response: dict[str, Any
 
     from app.services import replay as replay_service
 
-    fold_ref = replay_service.resolve_fold_for_date(as_of)
+    if fold_ref is None:
+        fold_ref = replay_service.resolve_fold_for_date(as_of)
     notes: list[str] = [
         (
             "Text classifier rewind not supported; the DAPT-pinned encoder "
@@ -1143,7 +1245,9 @@ def _maybe_attach_replay_blocks(payload: AnalyzeRequest, response: dict[str, Any
         # 422 with the structured ``{error, message}`` detail shape
         # the rest of the API uses (mp_surprise_unavailable, history_
         # unavailable, etc.) so a future consumer can read
-        # ``detail.error`` without a TypeError.
+        # ``detail.error`` without a TypeError. _resolve_replay_fold
+        # already raised when invoked through /analyze; this branch
+        # stays for direct callers that bypass the resolve helper.
         raise HTTPException(
             status_code=422,
             detail={
@@ -1157,7 +1261,7 @@ def _maybe_attach_replay_blocks(payload: AnalyzeRequest, response: dict[str, Any
         "fold_id": fold_ref.fold_id,
         "train_end": fold_ref.train_end.isoformat() if fold_ref.train_end else None,
         "classifier_rewind": False,
-        "forecaster_checkpoint_rewound": False,
+        "forecaster_checkpoint_rewound": bool(forecaster_checkpoint_rewound),
         "notes": notes,
     }
     try:

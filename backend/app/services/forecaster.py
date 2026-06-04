@@ -14,6 +14,7 @@ import copy
 import logging
 import math
 import threading
+from collections import OrderedDict
 from datetime import date as _date_cls
 from pathlib import Path
 from collections.abc import Iterable
@@ -401,10 +402,136 @@ def _set_singleton_after_train(
         )
 
 
+# Per-fold replay-mode cache. Keyed on the absolute checkpoint path so
+# repeated /analyze requests for the same as_of_date reuse the in-memory
+# model + metadata pair instead of re-reading the .pt file every time.
+# Bounded so a long-running process serving many fold checkpoints does
+# not grow unbounded -- LRU evicts the least-recently-used entry.
+# Lives separately from the live ``_model`` singleton so replay loads
+# never mutate the live serving model.
+_FOLD_LOAD_CACHE_MAX = 4
+_fold_load_cache: "OrderedDict[str, tuple[ForecasterServingModel, dict[str, Any]]]" = (
+    OrderedDict()
+)
+_fold_load_lock = threading.Lock()
+
+
+def load_for_fold(
+    checkpoint_path: Path,
+) -> ForecasterServingModel:
+    """Load a per-fold forecaster checkpoint for replay mode.
+
+    Mirrors the cold-load path in :func:`_get_model` but:
+
+    * does NOT mutate the module-level ``_model`` singleton -- replay
+      requests must stay isolated from the live serving model so a
+      time-machine read cannot contaminate concurrent live /analyze
+      traffic;
+    * caches up to ``_FOLD_LOAD_CACHE_MAX`` per-path loads in an LRU so
+      back-to-back replay calls against the same fold reuse the in-
+      memory model + scaler metadata pair;
+    * raises :class:`FileNotFoundError` when the checkpoint file is
+      absent and :class:`ValueError` when the inference-contract sidecar
+      refuses to bind -- both are converted to HTTP 422 at the route
+      handler so the client sees a structured error instead of a 500.
+
+    The returned model is ready to call :func:`_predict_next_point` on;
+    the caller is responsible for threading the per-fold metadata
+    (rich-feature scaler, encoder alias) through the inference path via
+    :func:`predict_next_point_with_metadata` so the inference tensor
+    matches the per-fold training-time normalisation.
+    """
+
+    if not isinstance(checkpoint_path, Path):
+        checkpoint_path = Path(checkpoint_path)
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(
+            f"per-fold forecaster checkpoint not found: {checkpoint_path}"
+        )
+
+    cache_key = str(checkpoint_path.resolve())
+    with _fold_load_lock:
+        cached = _fold_load_cache.get(cache_key)
+        if cached is not None:
+            _fold_load_cache.move_to_end(cache_key)
+            return cached[0]
+
+        from app.models.factory import build_serving_forecaster
+
+        device = _resolve_device()
+        try:
+            payload = _read_checkpoint_payload(checkpoint_path, device)
+        except (FileNotFoundError, OSError) as exc:
+            raise FileNotFoundError(
+                f"per-fold checkpoint unreadable: {checkpoint_path}"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 -- propagate as ValueError
+            raise ValueError(
+                f"per-fold checkpoint payload invalid: {checkpoint_path}: {exc}"
+            ) from exc
+
+        ok, status = _validate_serving_contract(checkpoint_path)
+        if not ok:
+            raise ValueError(
+                f"per-fold checkpoint inference contract refused: {status}"
+            )
+
+        raw_config = payload.get("model_config") if isinstance(payload, dict) else None
+        resolved = _coerce_model_config(raw_config)
+        try:
+            with torch.device(device):
+                model = build_serving_forecaster(resolved)
+            model = model.to(device)
+            if payload is not None:
+                _load_state_dict_loose(
+                    model, payload["model_state_dict"], str(checkpoint_path)
+                )
+            model.eval()
+        except Exception as exc:  # noqa: BLE001 -- defensive: never leak partial
+            raise ValueError(
+                f"per-fold checkpoint failed to materialise on {device}: {exc}"
+            ) from exc
+
+        metadata = _checkpoint_metadata(payload, checkpoint_path, model=model)
+        _fold_load_cache[cache_key] = (model, metadata)
+        _fold_load_cache.move_to_end(cache_key)
+        while len(_fold_load_cache) > _FOLD_LOAD_CACHE_MAX:
+            _fold_load_cache.popitem(last=False)
+        return model
+
+
+def get_fold_metadata(checkpoint_path: Path) -> dict[str, Any] | None:
+    """Return the cached metadata dict for a previously loaded fold.
+
+    Companion to :func:`load_for_fold`. Returns ``None`` when the path
+    has not been loaded (or has been evicted from the LRU); callers
+    fall back to the live module-level metadata in that case so the
+    inference tensor build still has a rich-feature scaler to apply.
+    """
+
+    if not isinstance(checkpoint_path, Path):
+        checkpoint_path = Path(checkpoint_path)
+    cache_key = str(checkpoint_path.resolve())
+    with _fold_load_lock:
+        cached = _fold_load_cache.get(cache_key)
+        if cached is None:
+            return None
+        return cached[1]
+
+
+def clear_fold_load_cache() -> None:
+    """Drop every cached per-fold model. Test hook."""
+
+    with _fold_load_lock:
+        _fold_load_cache.clear()
+
+
 def _build_inference_tensor(
     sequence: list[FeatureVector],
     model: ForecasterServingModel,
     device: torch.device,
+    *,
+    metadata_override: dict[str, Any] | None = None,
 ) -> torch.Tensor:
     """Build the per-event input tensor for one forward pass.
 
@@ -414,12 +541,20 @@ def _build_inference_tensor(
     checkpoint metadata so inference matches training-time
     normalisation. Legacy 6-feature models keep the byte-identical
     ``as_list`` path so the existing /analyze contract is unchanged.
+
+    Replay-mode callers thread a per-fold ``metadata_override`` so the
+    fold's own RobustScaler is applied instead of the live singleton's
+    -- the two were fit on different train-end dates and cannot be
+    swapped without breaking the rich-feature normalisation contract.
     """
 
     if int(getattr(model, "input_size", FEATURE_SIZE)) == RICH_FEATURE_SIZE:
         rows = [item.as_rich_list() for item in sequence]
         x = torch.tensor([rows], dtype=torch.float32, device=device)
-        scaler = (_model_artifact_metadata or {}).get("rich_feature_scaler")
+        source_metadata = metadata_override if metadata_override is not None else (
+            _model_artifact_metadata or {}
+        )
+        scaler = source_metadata.get("rich_feature_scaler")
         if scaler is not None:
             from app.training.loaders import apply_rich_feature_scaler_tensor
 
@@ -632,7 +767,10 @@ def _log_serving_forward_kwargs(model: ForecasterServingModel) -> None:
 
 
 def _predict_next_point(
-    model: ForecasterServingModel, sequence: list[FeatureVector]
+    model: ForecasterServingModel,
+    sequence: list[FeatureVector],
+    *,
+    metadata_override: dict[str, Any] | None = None,
 ) -> tuple[float, float]:
     # Classification-mode checkpoints emit ``(B, n_classes)`` logits
     # from ``forward()`` (the stance branch under the MultiTaskHead);
@@ -649,7 +787,9 @@ def _predict_next_point(
         last_vol = float(getattr(last, "market_volatility", 0.0)) if last else 0.0
         return last_close, last_vol
     device = next(model.parameters()).device
-    x = _build_inference_tensor(sequence, model, device)
+    x = _build_inference_tensor(
+        sequence, model, device, metadata_override=metadata_override
+    )
     kwargs: dict[str, torch.Tensor] = {}
     if getattr(model, "credibility_features", False):
         # #339 finding #4: pull the live four-axis credibility vector
@@ -670,7 +810,10 @@ def _predict_next_point(
         kwargs["text_embedding_missing"] = text_embedding_missing
     with torch.no_grad():
         out = model(x, **kwargs).squeeze(0)
-    close_scale = float((_model_artifact_metadata or {}).get("close_scale", DEFAULT_CLOSE_SCALE))
+    source_metadata = metadata_override if metadata_override is not None else (
+        _model_artifact_metadata or {}
+    )
+    close_scale = float(source_metadata.get("close_scale", DEFAULT_CLOSE_SCALE))
     pred_close = float(out[0].item()) * close_scale
     pred_vol = float(out[1].item())
     return pred_close, pred_vol
@@ -1621,6 +1764,10 @@ def forecast_quantitative_series(
     forecast_mode: str = "fast",
     horizon: str = "3d",
     forecast_dates: list[str] | None = None,
+    *,
+    model_override: ForecasterServingModel | None = None,
+    model_metadata_override: dict[str, Any] | None = None,
+    checkpoint_path_override: Path | None = None,
 ) -> dict[str, object]:
     if not vectors:
         vectors = [
@@ -1632,7 +1779,19 @@ def forecast_quantitative_series(
     # always the cached checkpoint now. The quick_train adaptation
     # branch was retired in #265 along with the rest of the runtime
     # adaptation surface.
-    model = _get_model()
+    #
+    # Replay-mode (``model_override`` is set) bypasses the singleton
+    # entirely so per-fold checkpoint loads stay isolated from live
+    # /analyze traffic. ``model_metadata_override`` carries the per-fold
+    # rich-feature scaler + close_scale so the inference tensor + the
+    # final dequantisation match the fold's own training-time stats.
+    # ``checkpoint_path_override`` is consulted for the conformal sidecar
+    # (next to ``<stem>.conformal.json``) so per-fold residual bands
+    # ride off the per-fold calibration set, not the live one.
+    if model_override is not None:
+        model = model_override
+    else:
+        model = _get_model()
     training_result = None
 
     # #342: emit one structured INFO line per request listing the kwargs
@@ -1659,7 +1818,11 @@ def forecast_quantitative_series(
     last_date = history_timestamps[-1] if history_timestamps else ""
     for step in range(steps):
         fixed_sequence = build_lookback_sequence(rolling)
-        next_close, next_vol = _predict_next_point(model, fixed_sequence)
+        next_close, next_vol = _predict_next_point(
+            model,
+            fixed_sequence,
+            metadata_override=model_metadata_override,
+        )
         last_vector = fixed_sequence[-1]
         if forecast_dates and step < len(forecast_dates):
             next_date_label = str(forecast_dates[step])
@@ -1679,7 +1842,9 @@ def forecast_quantitative_series(
         forecast_close.append(next_close)
         forecast_vol.append(next_vol)
 
-    conformal_manifest = _conformal_manifest_for(BEST_MODEL_PATH)
+    conformal_manifest = _conformal_manifest_for(
+        checkpoint_path_override if checkpoint_path_override is not None else BEST_MODEL_PATH
+    )
     (
         forecast_close_lower,
         forecast_close_upper,
@@ -1705,17 +1870,33 @@ def forecast_quantitative_series(
     else:
         vol_scale = {"suggested_ymin": 0.0, "suggested_ymax": 1.0}
 
+    if model_metadata_override is not None:
+        # Replay mode: report the per-fold checkpoint's metadata so the
+        # /analyze diagnostics surface the fold-pinned weights instead
+        # of the live singleton. The override is stripped of the
+        # ``rich_feature_scaler`` dataclass for JSON-serialisability
+        # (mirrors ``get_model_artifact_metadata``).
+        model_block: dict[str, Any] = dict(model_metadata_override)
+        model_block.pop("rich_feature_scaler", None)
+        model_block["runtime_mode"] = forecast_mode
+        if checkpoint_path_override is not None:
+            model_block["checkpoint_path"] = str(checkpoint_path_override)
+    else:
+        model_block = get_model_artifact_metadata(
+            runtime_mode=forecast_mode,
+            model=model,
+            adaptation_summary=(
+                training_result.summary if training_result is not None else None
+            ),
+        )
+
     return {
         "prediction": {
             "close": float(forecast_close[-1]),
             "volatility": float(forecast_vol[-1]),
             "horizon": horizon,
         },
-        "model": get_model_artifact_metadata(
-            runtime_mode=forecast_mode,
-            model=model,
-            adaptation_summary=training_result.summary if training_result is not None else None,
-        ),
+        "model": model_block,
         "series": {
             "timestamps": history_timestamps,
             "history_close": history_close,

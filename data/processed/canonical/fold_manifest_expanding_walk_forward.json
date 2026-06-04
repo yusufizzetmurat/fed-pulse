@@ -1,0 +1,56 @@
+{
+  "training_package_id": "canonical",
+  "split_protocol": "expanding_walk_forward",
+  "folds": [
+    {
+      "fold_id": "wf_fold_1",
+      "train_start": "2008-01-01",
+      "train_end": "2018-12-31",
+      "val_start": "2019-01-02",
+      "val_end": "2019-06-28",
+      "test_start": "2019-07-01",
+      "test_end": "2020-06-30",
+      "checkpoint_dir": "data/processed/canonical/folds/wf_fold_1"
+    },
+    {
+      "fold_id": "wf_fold_2",
+      "train_start": "2008-01-01",
+      "train_end": "2020-06-30",
+      "val_start": "2020-07-01",
+      "val_end": "2020-12-31",
+      "test_start": "2021-01-04",
+      "test_end": "2021-12-31",
+      "checkpoint_dir": "data/processed/canonical/folds/wf_fold_2"
+    },
+    {
+      "fold_id": "wf_fold_3",
+      "train_start": "2008-01-01",
+      "train_end": "2021-12-31",
+      "val_start": "2022-01-03",
+      "val_end": "2022-06-30",
+      "test_start": "2022-07-01",
+      "test_end": "2023-06-30",
+      "checkpoint_dir": "data/processed/canonical/folds/wf_fold_3"
+    },
+    {
+      "fold_id": "wf_fold_4",
+      "train_start": "2008-01-01",
+      "train_end": "2023-06-30",
+      "val_start": "2023-07-03",
+      "val_end": "2023-12-29",
+      "test_start": "2024-01-02",
+      "test_end": "2024-12-31",
+      "checkpoint_dir": "data/processed/canonical/folds/wf_fold_4"
+    },
+    {
+      "fold_id": "wf_fold_5",
+      "train_start": "2008-01-01",
+      "train_end": "2024-12-31",
+      "val_start": "2025-01-02",
+      "val_end": "2025-06-30",
+      "test_start": "2025-07-01",
+      "test_end": "2026-04-30",
+      "checkpoint_dir": "data/processed/canonical/folds/wf_fold_5"
+    }
+  ]
+}
