@@ -941,30 +941,21 @@ def _build_credibility_block(
     )
 
     # SEP committee long-run median minus the market-implied long-run
-    # proxy (DGS5 5-year Treasury yield), both in percent. Stays ``None``
-    # only when either source's cache file is missing or the as-of date
-    # has no eligible strict-prior observation -- otherwise the card
-    # surfaces the actual gap so the dashboard stops reading "Waiting on
-    # SEP and OIS data feeds" when the data is right there on disk.
-    market_implied_gap: float | None = None
-    if fred_cache_dir is not None:
-        sep_path = Path(fred_cache_dir) / "sep_projections.parquet"
-        ois_path = Path(fred_cache_dir) / "DGS5.json"
-        if sep_path.exists() and ois_path.exists():
-            try:
-                from app.services.credibility_loader import (
-                    _ois_terminal_at,
-                    _sep_terminal_at,
-                )
-                from datetime import date as _date
-
-                as_of_date = _date.fromisoformat(as_of[:10])
-                sep_term = _sep_terminal_at(as_of_date, sep_path=sep_path)
-                ois_term = _ois_terminal_at(as_of_date, ois_path=ois_path)
-                if sep_term is not None and ois_term is not None:
-                    market_implied_gap = float(sep_term) - float(ois_term)
-            except Exception:  # noqa: BLE001 -- defensive: never break /analyze
-                logger.warning("credibility_market_implied_gap_failed", exc_info=True)
+    # proxy (DGS5 5-year Treasury yield), already scaled to [-1, 1] by
+    # ``app.features.credibility.market_implied_gap`` (raw pp / 4.0,
+    # clipped). ``load_credibility_for_run`` already computes the
+    # scaled value when ``fred_cache_dir`` is set; we just need to
+    # distinguish "no data on disk" (None on the wire) from
+    # "computed and happens to be zero" -- the loader collapses both
+    # to 0.0. The cache-file existence guard restores that distinction.
+    _sep_ois_cached = (
+        fred_cache_dir is not None
+        and (Path(fred_cache_dir) / "sep_projections.parquet").exists()
+        and (Path(fred_cache_dir) / "DGS5.json").exists()
+    )
+    market_implied_gap: float | None = (
+        float(vector.market_implied_gap) if _sep_ois_cached else None
+    )
 
     return {
         "drift_score": float(vector.drift_score),
