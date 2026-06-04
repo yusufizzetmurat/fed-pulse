@@ -290,6 +290,26 @@ def resolve_ood_manifest_path() -> Path | None:
     return None
 
 
+def resolve_ood_mahalanobis_manifest_path() -> Path | None:
+    """Locate the Mahalanobis-distance OOD manifest beside the active checkpoint.
+
+    Mirrors :func:`resolve_ood_manifest_path` for the alternate detector
+    (Lee et al. 2018). When this manifest exists it takes precedence
+    over the energy-based one in the serving path.
+    """
+
+    from app.evaluation.ood_mahalanobis import (  # lazy: avoids cycle
+        OOD_MAHALANOBIS_MANIFEST_NAME,
+    )
+
+    candidate = Path(MODEL_ID)
+    if candidate.exists() and candidate.is_dir():
+        manifest_path = candidate / OOD_MAHALANOBIS_MANIFEST_NAME
+        if manifest_path.exists():
+            return manifest_path
+    return None
+
+
 def split_into_chunks(
     text: str,
     classifier: Any = None,
@@ -418,11 +438,39 @@ def analyze_text(text: str) -> dict[str, Any]:
         response = aggregate_label(encode_chunks(text_value))
     response.setdefault("status", "ok")
 
+    # The Mahalanobis-distance manifest (Lee et al. 2018) is preferred
+    # over the energy-based manifest when both are present. Energy scoring
+    # reads classifier logit confidence; on a confidently miscalibrated head
+    # an out-of-domain input can still score in-distribution. Mahalanobis
+    # scoring measures distance in the encoder's representation space and
+    # survives that failure mode. The energy path remains as a fallback for
+    # checkpoints that ship without an embedding manifest.
+    mahalanobis_path = resolve_ood_mahalanobis_manifest_path()
+    if mahalanobis_path is not None:
+        from app.evaluation.ood_mahalanobis import (
+            load_mahalanobis_manifest,
+            score_text_mahalanobis,
+        )
+
+        mahalanobis_manifest = load_mahalanobis_manifest(mahalanobis_path)
+        if mahalanobis_manifest is not None:
+            classifier = get_classifier()
+            chunks = split_into_chunks(text_value, classifier=classifier)
+            ood = score_text_mahalanobis(
+                text_value,
+                classifier=classifier,
+                manifest=mahalanobis_manifest,
+                chunks=chunks,
+            )
+            response["ood_energy"] = ood.get("ood_energy")
+            response["ood_threshold"] = ood.get("ood_threshold")
+            response["is_in_distribution"] = ood.get("is_in_distribution")
+            return response
+
     manifest_path = resolve_ood_manifest_path()
     if manifest_path is None:
         return response
 
-    # Lazy import: keep torch + numpy out of the import-only path.
     from app.evaluation.ood import load_manifest, score_text as score_text_ood
 
     manifest = load_manifest(manifest_path)
