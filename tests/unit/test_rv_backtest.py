@@ -69,7 +69,7 @@ def _stub_predict_rv(monkeypatch, mapping: dict[str, dict[str, float]]) -> None:
 
     from app.services import rv_forecaster as _rv
 
-    def _fake_predict(rv_history):
+    def _fake_predict(rv_history, *_args, **_kwargs):
         key = f"{float(rv_history[0]):.6f}"
         spec = mapping[key]
         return {

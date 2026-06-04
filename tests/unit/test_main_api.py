@@ -506,7 +506,7 @@ def test_forecast_realized_vol_surfaces_historical_bands(monkeypatch):
     monkeypatch.setattr(
         rv_forecaster,
         "predict_rv",
-        lambda hist, intraday_measures=None: {
+        lambda hist, intraday_measures=None, **_: {
             "horizons": [
                 {
                     "h": 1,
