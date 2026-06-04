@@ -314,13 +314,11 @@ def test_replay_mode_emits_replay_and_realised_blocks_when_fold_resolves(
     # patch the per-fold loader to a no-op so the wire under test (422 vs
     # 200, replay block populated, ``forecaster_checkpoint_rewound``
     # flipped) is exercised without standing up a real per-fold model.
-    # ``load_for_fold`` now returns ``(model, metadata)`` directly so the
-    # caller doesn't have to re-enter the cache.
+    # ``load_for_fold`` returns ``(model, metadata)`` directly; the
+    # production wire reads both off this one call and never enters
+    # ``get_fold_metadata`` so we don't stub that surface here.
     monkeypatch.setattr(
         forecaster_service, "load_for_fold", lambda path: (object(), None)
-    )
-    monkeypatch.setattr(
-        forecaster_service, "get_fold_metadata", lambda path: None
     )
     monkeypatch.setattr(
         replay_service,
