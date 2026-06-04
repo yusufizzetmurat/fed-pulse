@@ -42,13 +42,15 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-# Resolved at import time so callers stay cheap; the file system is only
-# touched at resolve-time.
-_BACKEND_ROOT = Path(__file__).resolve().parents[2]
-_REPO_ROOT = _BACKEND_ROOT.parent
+from app.config import DATA_DIR
 
+# Resolved at import time so callers stay cheap; the file system is only
+# touched at resolve-time. The fold manifest and the per-fold
+# checkpoints live under ``DATA_DIR`` so the path resolves correctly
+# whether ``DATA_DIR`` is the in-repo ``./data`` (dev) or the ``/data``
+# volume mount (prod).
 _DEFAULT_MANIFEST_PATH = (
-    _REPO_ROOT / "data" / "processed" / "canonical" / "fold_manifest_expanding_walk_forward.json"
+    DATA_DIR / "processed" / "canonical" / "fold_manifest_expanding_walk_forward.json"
 )
 
 
@@ -105,9 +107,18 @@ def _resolve_path(value: Any) -> Path | None:
     if not isinstance(value, str) or not value:
         return None
     candidate = Path(value)
-    if not candidate.is_absolute():
-        candidate = _REPO_ROOT / candidate
-    return candidate
+    if candidate.is_absolute():
+        return candidate
+    # Manifest entries store checkpoint paths as ``data/processed/...``
+    # (relative to the repo root in dev). On prod ``DATA_DIR`` is the
+    # ``/data`` volume mount, so strip the leading ``data/`` segment and
+    # resolve under ``DATA_DIR`` instead. Paths that don't start with
+    # ``data/`` fall through to DATA_DIR's parent for backwards
+    # compatibility.
+    parts = candidate.parts
+    if parts and parts[0] == "data":
+        return DATA_DIR.joinpath(*parts[1:])
+    return DATA_DIR.parent / candidate
 
 
 def resolve_fold_for_date(  # noqa: C901 - branching is defensive parsing

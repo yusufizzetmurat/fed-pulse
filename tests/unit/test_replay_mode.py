@@ -412,13 +412,10 @@ def test_canonical_manifest_carries_checkpoint_dir_for_every_fold():
     surface the per-fold checkpoint path. Regression on the gap that
     /analyze replay 422'd before the manifest was extended."""
 
-    repo_root = Path(__file__).resolve().parents[2]
+    from app.config import DATA_DIR
+
     manifest_path = (
-        repo_root
-        / "data"
-        / "processed"
-        / "canonical"
-        / "fold_manifest_expanding_walk_forward.json"
+        DATA_DIR / "processed" / "canonical" / "fold_manifest_expanding_walk_forward.json"
     )
     assert manifest_path.exists(), (
         f"canonical fold manifest missing at {manifest_path}; replay "
@@ -434,8 +431,13 @@ def test_canonical_manifest_carries_checkpoint_dir_for_every_fold():
             f"fold {fold_id!r} is missing the checkpoint_dir field; "
             "_resolve_path will return None and replay will 422"
         )
-        # The relative path convention is anchored at the repo root.
-        resolved = repo_root / ckpt_dir
+        # checkpoint_dir entries store paths as ``data/processed/...``;
+        # strip the leading ``data/`` segment to resolve under DATA_DIR.
+        ckpt_parts = Path(ckpt_dir).parts
+        if ckpt_parts and ckpt_parts[0] == "data":
+            resolved = DATA_DIR.joinpath(*ckpt_parts[1:])
+        else:
+            resolved = DATA_DIR.parent / ckpt_dir
         assert resolved.parent.exists(), (
             f"checkpoint_dir parent does not exist on disk: {resolved.parent}"
         )
