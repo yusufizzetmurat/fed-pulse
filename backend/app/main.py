@@ -940,12 +940,25 @@ def _build_credibility_block(
         int(vector.months_since_reversal) if len(stance_by_date) >= 2 else None
     )
 
+    # SEP committee long-run median minus the market-implied long-run
+    # proxy (DGS5 5-year Treasury yield), already scaled to [-1, 1] by
+    # ``app.features.credibility.market_implied_gap`` (raw pp / 4.0,
+    # clipped). ``load_credibility_for_run`` already computes the
+    # scaled value when ``fred_cache_dir`` is set; we just need to
+    # distinguish "no data on disk" (None on the wire) from
+    # "computed and happens to be zero" -- the loader collapses both
+    # to 0.0. The cache-file existence guard restores that distinction.
+    _sep_ois_cached = (
+        fred_cache_dir is not None
+        and (Path(fred_cache_dir) / "sep_projections.parquet").exists()
+        and (Path(fred_cache_dir) / "DGS5.json").exists()
+    )
+    market_implied_gap: float | None = float(vector.market_implied_gap) if _sep_ois_cached else None
+
     return {
         "drift_score": float(vector.drift_score),
         "realized_vs_stated_gap": realized_gap,
-        # SEP / OIS scrape is still out — keep this axis as ``None`` so
-        # the dashboard renders N/A instead of an unearned zero.
-        "market_implied_gap": None,
+        "market_implied_gap": market_implied_gap,
         "months_since_reversal": months_since,
         "drift_trend": drift_trend,
     }
