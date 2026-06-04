@@ -1190,9 +1190,7 @@ def _resolve_replay_fold(
     # manifest check and the load); coerce it to the same 422 so the
     # client sees a coherent surface.
     try:
-        fold_model, fold_metadata = forecaster_service.load_for_fold(
-            fold_ref.forecaster_checkpoint
-        )
+        fold_model, fold_metadata = forecaster_service.load_for_fold(fold_ref.forecaster_checkpoint)
     except FileNotFoundError as exc:
         raise HTTPException(
             status_code=422,

@@ -423,9 +423,7 @@ def _set_singleton_after_train(
 # Lives separately from the live ``_model`` singleton so replay loads
 # never mutate the live serving model.
 _FOLD_LOAD_CACHE_MAX = 4
-_fold_load_cache: "OrderedDict[str, tuple[ForecasterServingModel, dict[str, Any]]]" = (
-    OrderedDict()
-)
+_fold_load_cache: "OrderedDict[str, tuple[ForecasterServingModel, dict[str, Any]]]" = OrderedDict()
 _fold_load_lock = threading.Lock()
 
 
@@ -462,9 +460,7 @@ def load_for_fold(
     if not isinstance(checkpoint_path, Path):
         checkpoint_path = Path(checkpoint_path)
     if not checkpoint_path.exists():
-        raise FileNotFoundError(
-            f"per-fold forecaster checkpoint not found: {checkpoint_path}"
-        )
+        raise FileNotFoundError(f"per-fold forecaster checkpoint not found: {checkpoint_path}")
 
     cache_key = str(checkpoint_path.resolve())
     with _fold_load_lock:
@@ -479,9 +475,7 @@ def load_for_fold(
         try:
             payload = _read_checkpoint_payload(checkpoint_path, device)
         except (FileNotFoundError, OSError) as exc:
-            raise FileNotFoundError(
-                f"per-fold checkpoint unreadable: {checkpoint_path}"
-            ) from exc
+            raise FileNotFoundError(f"per-fold checkpoint unreadable: {checkpoint_path}") from exc
         except Exception as exc:  # noqa: BLE001 -- propagate as ValueError
             raise ValueError(
                 f"per-fold checkpoint payload invalid: {checkpoint_path}: {exc}"
@@ -494,9 +488,7 @@ def load_for_fold(
         # so the replay path returns a clean 422 to the client.
         ok, status = _validate_serving_contract(checkpoint_path, record_status=False)
         if not ok:
-            raise ValueError(
-                f"per-fold checkpoint inference contract refused: {status}"
-            )
+            raise ValueError(f"per-fold checkpoint inference contract refused: {status}")
 
         raw_config = payload.get("model_config") if isinstance(payload, dict) else None
         resolved = _coerce_model_config(raw_config)
@@ -505,9 +497,7 @@ def load_for_fold(
                 model = build_serving_forecaster(resolved)
             model = model.to(device)
             if payload is not None:
-                _load_state_dict_loose(
-                    model, payload["model_state_dict"], str(checkpoint_path)
-                )
+                _load_state_dict_loose(model, payload["model_state_dict"], str(checkpoint_path))
             model.eval()
         except Exception as exc:  # noqa: BLE001 -- defensive: never leak partial
             raise ValueError(
@@ -578,8 +568,8 @@ def _build_inference_tensor(
     if int(getattr(model, "input_size", FEATURE_SIZE)) == RICH_FEATURE_SIZE:
         rows = [item.as_rich_list() for item in sequence]
         x = torch.tensor([rows], dtype=torch.float32, device=device)
-        source_metadata = metadata_override if metadata_override is not None else (
-            _model_artifact_metadata or {}
+        source_metadata = (
+            metadata_override if metadata_override is not None else (_model_artifact_metadata or {})
         )
         scaler = source_metadata.get("rich_feature_scaler")
         if scaler is not None:
@@ -823,9 +813,7 @@ def _predict_next_point(
         last_vol = float(getattr(last, "market_volatility", 0.0)) if last else 0.0
         return last_close, last_vol
     device = next(model.parameters()).device
-    x = _build_inference_tensor(
-        sequence, model, device, metadata_override=metadata_override
-    )
+    x = _build_inference_tensor(sequence, model, device, metadata_override=metadata_override)
     kwargs: dict[str, torch.Tensor] = {}
     if getattr(model, "credibility_features", False):
         # #339 finding #4: pull the live four-axis credibility vector
@@ -846,8 +834,8 @@ def _predict_next_point(
         kwargs["text_embedding_missing"] = text_embedding_missing
     with torch.no_grad():
         out = model(x, **kwargs).squeeze(0)
-    source_metadata = metadata_override if metadata_override is not None else (
-        _model_artifact_metadata or {}
+    source_metadata = (
+        metadata_override if metadata_override is not None else (_model_artifact_metadata or {})
     )
     close_scale = float(source_metadata.get("close_scale", DEFAULT_CLOSE_SCALE))
     pred_close = float(out[0].item()) * close_scale
@@ -1921,9 +1909,7 @@ def forecast_quantitative_series(
         model_block = get_model_artifact_metadata(
             runtime_mode=forecast_mode,
             model=model,
-            adaptation_summary=(
-                training_result.summary if training_result is not None else None
-            ),
+            adaptation_summary=(training_result.summary if training_result is not None else None),
         )
 
     return {
