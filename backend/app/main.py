@@ -2725,7 +2725,10 @@ def forecast_har_tercile_backtest(
 def forecast_rv_backtest(
     symbol: str = Query(
         "^GSPC",
-        description="Market ticker; only ^GSPC is supported (RV artifact is SPX-only).",
+        description=(
+            "Market ticker; supported tickers are listed in "
+            "``app.services.rv_forecaster.SYMBOL_ARTIFACTS`` (^GSPC, ^NDX, ^DJI)."
+        ),
         min_length=1,
         max_length=32,
         pattern=r"^[A-Za-z0-9._=^/-]+$",
@@ -2741,23 +2744,31 @@ def forecast_rv_backtest(
     """Empirical band coverage of the last N QLIKE-RV predictions.
 
     Walks the persisted ``analysis_runs`` table for ``symbol``, replays
-    the QLIKE-DLq h=1 ensemble on each event date's leading RV prefix,
-    and counts how many resolved rows fell inside the published 80% /
-    90% bands. Mirrors the ^GSPC-only constraint on the upstream RV
-    forecast endpoint (the artifact is SPX-trained).
+    the per-asset QLIKE-DLq h=1 ensemble on each event date's leading
+    RV prefix, and counts how many resolved rows fell inside the
+    published 80% / 90% bands. Tickers without a registered artifact
+    in :data:`app.services.rv_forecaster.SYMBOL_ARTIFACTS` return a
+    structured 400 so the frontend can surface a friendly stub.
     """
 
-    if symbol != "^GSPC":
+    from app.services.rv_forecaster import (
+        SYMBOL_ARTIFACTS,
+        RvForecasterUnavailable,
+    )
+
+    if symbol not in SYMBOL_ARTIFACTS:
         raise HTTPException(
             status_code=400,
             detail={
                 "error": "symbol_unsupported",
-                "message": ("RV backtest is SPX-only; only ^GSPC is supported."),
+                "message": (
+                    f"RV backtest is not registered for {symbol!r}; "
+                    f"supported: {', '.join(SYMBOL_ARTIFACTS.keys())}."
+                ),
             },
         )
 
     from app.services.rv_backtest import get_rv_backtest
-    from app.services.rv_forecaster import RvForecasterUnavailable
 
     try:
         out = get_rv_backtest(session, symbol=symbol, limit=limit)
