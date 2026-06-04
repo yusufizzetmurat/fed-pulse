@@ -163,7 +163,9 @@ def _build_tcn(d_in: int) -> Any:
                     _TCNBlock(ch, ch, dilation=4),
                 ]
             )
-            self.head = nn.Sequential(nn.Linear(ch, ch), nn.GELU(), nn.Linear(ch, 1))
+            self.head = nn.Sequential(
+                nn.LayerNorm(ch), nn.Linear(ch, ch), nn.GELU(), nn.Linear(ch, 1)
+            )
 
         def forward(self, seq: torch.Tensor) -> torch.Tensor:  # seq: (B, L, d)
             x = seq.transpose(1, 2)  # (B, d, L)
@@ -214,6 +216,130 @@ def _build_sigma_lstm(d_in: int) -> Any:
     return _SigmaLstm()
 
 
+_HIDDEN = 64  # shared core width: even, divisible by 4 heads, matches σLSTM/Informer defaults
+
+
+def _wrap_core(core: Any, hidden: int) -> Any:
+    """Wrap a reused project core ``(B,L,d) → ((B,L,H), _)`` into a residual head.
+
+    The repo's architecture cores (DLinear, Informer, SmallTransformer, TCN) and
+    ``nn.LSTM`` / ``nn.GRU`` all return ``(output, _)`` with ``output`` shaped
+    ``(B, L, H)``. This wrapper applies the same last-step pooling the inline
+    TCN uses (``output[:, -1, :]``) and a 2-layer GELU head to a scalar residual,
+    so every architecture meets the ``(B, L, d) → (B, 1)`` contract the
+    QLIKE/HAR-stacked fold trainer expects — a feature-for-feature comparison.
+    """
+
+    import torch
+    from torch import nn
+
+    class _Wrapped(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.core = core
+            # LayerNorm before the residual head — matches the production-stable
+            # _build_model recipe and prevents the exp-QLIKE loss from diverging
+            # on a minority of seeds for the non-recurrent cores.
+            self.head = nn.Sequential(
+                nn.LayerNorm(hidden), nn.Linear(hidden, hidden), nn.GELU(), nn.Linear(hidden, 1)
+            )
+
+        def forward(self, seq: torch.Tensor) -> torch.Tensor:  # seq: (B, L, d)
+            out = self.core(seq)
+            if isinstance(out, tuple):
+                out = out[0]
+            return cast(torch.Tensor, self.head(out[:, -1, :]))
+
+    return _Wrapped()
+
+
+def _build_lstm(d_in: int) -> Any:
+    """Vanilla single-layer LSTM core, last-step pooled."""
+    from torch import nn
+
+    return _wrap_core(nn.LSTM(d_in, _HIDDEN, num_layers=1, batch_first=True), _HIDDEN)
+
+
+def _build_gru(d_in: int) -> Any:
+    """Vanilla single-layer GRU core, last-step pooled."""
+    from torch import nn
+
+    return _wrap_core(nn.GRU(d_in, _HIDDEN, num_layers=1, batch_first=True), _HIDDEN)
+
+
+def _build_transformer(d_in: int) -> Any:
+    """Project's SmallTransformer encoder (2 layers, 4 heads, sinusoidal PE)."""
+    from app.models.transformer import SmallTransformer
+
+    return _wrap_core(
+        SmallTransformer(d_in, _HIDDEN, num_layers=2, num_heads=4, dropout=0.1), _HIDDEN
+    )
+
+
+def _build_dlinear(d_in: int) -> Any:
+    """Project's DLinear core (trend/seasonal decomposition; Zeng et al. 2023)."""
+    from app.models.dlinear import DLinear
+
+    return _wrap_core(DLinear(d_in, _HIDDEN, sequence_length=_SEQ_LEN), _HIDDEN)
+
+
+def _build_informer(d_in: int) -> Any:
+    """Project's Informer encoder (ProbSparse attention; Zhou et al. 2021)."""
+    from app.models.informer import InformerEncoder
+
+    return _wrap_core(
+        InformerEncoder(d_in, hidden_size=_HIDDEN, n_heads=4, e_layers=2, dropout=0.1), _HIDDEN
+    )
+
+
+def _build_mlp(d_in: int) -> Any:
+    """Flat MLP on the origin-t feature vector (last window step).
+
+    Mirrors the production DLq contender: a residual-stacked MLP that consumes
+    the ``full`` feature vector at the origin day, ignoring sequence order. Built
+    here so it runs through the identical fold/QLIKE/HAR-stack path as the
+    sequence cores — a fair flat-vs-sequence control.
+    """
+
+    import torch
+    from torch import nn
+
+    class _MLP(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            # Mirrors the production-stable _build_model trunk (LayerNorm after
+            # the first GELU) so the flat MLP converges on every seed.
+            self.net = nn.Sequential(
+                nn.Linear(d_in, _HIDDEN),
+                nn.GELU(),
+                nn.LayerNorm(_HIDDEN),
+                nn.Dropout(0.1),
+                nn.Linear(_HIDDEN, 32),
+                nn.GELU(),
+                nn.Linear(32, 1),
+            )
+
+        def forward(self, seq: torch.Tensor) -> torch.Tensor:  # seq: (B, L, d)
+            return cast(torch.Tensor, self.net(seq[:, -1, :]))
+
+    return _MLP()
+
+
+# Architecture registry. ``tcn`` / ``sigma_lstm`` map to the original inline
+# builders so existing callers (run(), qlike_heterogeneous_ensemble) are
+# byte-for-byte unchanged; the rest reuse the project's reviewed cores.
+_ARCH_BUILDERS = {
+    "mlp": _build_mlp,
+    "lstm": _build_lstm,
+    "gru": _build_gru,
+    "tcn": _build_tcn,
+    "sigma_lstm": _build_sigma_lstm,
+    "transformer": _build_transformer,
+    "dlinear": _build_dlinear,
+    "informer": _build_informer,
+}
+
+
 def _train_arch_fold(
     arch: str,
     seq_tr: np.ndarray,
@@ -225,6 +351,7 @@ def _train_arch_fold(
     seed: int,
     epochs: int,
     device: str,
+    loss: str = "qlike",
 ) -> np.ndarray:
     """Train one walk-forward fold of a sequence arch; QLIKE-trained, HAR-stacked.
 
@@ -267,13 +394,17 @@ def _train_arch_fold(
         resid = torch.clamp(resid_std * rs + rm, -_RESID_CLAMP, _RESID_CLAMP)
         log_pred = torch.clamp(har + resid, -_LOGV_CLAMP, _LOGV_CLAMP)
         log_true_c = torch.clamp(log_true, -_LOGV_CLAMP, _LOGV_CLAMP)
+        if loss == "mse":
+            # MSE on the log-target (used for the volume target, where the
+            # variance-space QLIKE loss is not meaningful).
+            return torch.mean((log_pred - log_true_c) ** 2)
         var_pred = torch.exp(log_pred) + _EPS
         var_true = torch.exp(log_true_c)
         ratio = var_true / var_pred
         return torch.mean(ratio - torch.log(ratio) - 1.0)
 
     d_in = seq_tr.shape[-1]
-    model = (_build_tcn(d_in) if arch == "tcn" else _build_sigma_lstm(d_in)).to(dev)
+    model = _ARCH_BUILDERS[arch](d_in).to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
     best, best_state, bad = float("inf"), None, 0
     rng = np.random.default_rng(seed)
@@ -284,8 +415,10 @@ def _train_arch_fold(
         for s in range(0, len(order), 256):
             b = core_pos[order[s : s + 256]]
             opt.zero_grad()
-            loss = qlike_loss(model(xtr[b]), har_t[b], log_true_t[b])
-            loss.backward()
+            # NB: do not name this `loss` — the qlike_loss closure reads the
+            # `loss` mode parameter, and shadowing it would break the mse branch.
+            batch_loss = qlike_loss(model(xtr[b]), har_t[b], log_true_t[b])
+            batch_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)  # exp-loss → bound grads
             opt.step()
         model.eval()

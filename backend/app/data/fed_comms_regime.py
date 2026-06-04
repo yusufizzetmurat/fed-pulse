@@ -255,6 +255,8 @@ def run(
             row["fused_f1_active"] = _macro_f1(cat["true"][active], cat["fused"][active])
             row["mkt_f1_active"] = _macro_f1(cat["true"][active], cat["mkt"][active])
             row["gate_mean_active"] = float(cat["gate"][active].mean())
+            row["gate_max_active"] = float(cat["gate"][active].max())
+            row["gate_p95_active"] = float(np.quantile(cat["gate"][active], 0.95))
         results["by_horizon"][f"h{h}"] = row
     return results
 
