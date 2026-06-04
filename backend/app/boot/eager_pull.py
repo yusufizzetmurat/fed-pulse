@@ -3,11 +3,13 @@
 Runs from the container entrypoint before uvicorn starts. For each
 eager artefact mapped in :data:`_ARTEFACT_FILES`, downloads the pinned
 revision via ``huggingface_hub.snapshot_download`` and copies the named
-files into ``MODELS_DIR`` or ``DATA_DIR`` only when the destination is
-absent. A dev box with a freshly trained checkpoint keeps it — the
-shim never clobbers a file already on disk. The shim never raises
-out: on missing token / network failure / 404 it logs and returns so
-the cold-start bootstrap in :mod:`app.main` still runs on first
+files into ``MODELS_DIR`` or ``DATA_DIR``. The copy is conditional on
+content drift: an existing destination that matches the snapshot
+byte-for-byte (same size + sha256) is skipped, but a drifted
+destination is OVERWRITTEN so a stale checkpoint baked into a base
+image cannot mask the pinned artefact. The shim never raises out: on
+missing token / network failure / 404 it logs and returns so the
+cold-start bootstrap in :mod:`app.main` still runs on first
 ``/analyze``.
 
 Mapping policy: each entry is either a flat filename (snapshot path
@@ -308,7 +310,9 @@ def _hydrate_one(  # noqa: PLR0913 - seven injected params is the natural shape 
 
 
 def hydrate() -> None:
-    """Pull every mapped eager artefact, copy each named file if absent."""
+    """Pull every mapped eager artefact, copying each named file when
+    absent or drifted (same size + sha256 skips, anything else
+    overwrites). See the module docstring for the rationale."""
 
     try:
         from app.config import DATA_DIR
