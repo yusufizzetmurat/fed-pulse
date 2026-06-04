@@ -221,6 +221,11 @@ class _RvPredictor:
                 cls._instances.pop(symbol, None)
 
     def __init__(self, *, symbol: str = "^GSPC") -> None:
+        if symbol not in SYMBOL_ARTIFACTS:
+            logger.warning(
+                "rv_forecaster: %s is not in SYMBOL_ARTIFACTS; serving ^GSPC weights instead",
+                symbol,
+            )
         model_dir, repo_id = SYMBOL_ARTIFACTS.get(symbol, SYMBOL_ARTIFACTS["^GSPC"])
         self.symbol = symbol
         self.model_dir = model_dir

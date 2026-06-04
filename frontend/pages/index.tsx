@@ -405,15 +405,15 @@ export default function WorkspacePage() {
     };
   }, [apiBaseUrl, request.symbol]);
 
-  // HAR-tercile backtest panel — the endpoint is ^GSPC-only (matches
-  // the regime/baselines constraint upstream). The fetcher folds a
-  // 503 (downstream artifact failure) into null; the panel renders
-  // the empty state when the symbol is supported but there are no
-  // resolved runs yet. For non-GSPC symbols we don't fire at all and
-  // surface a tailored "unavailable" placeholder.
+  // HAR-tercile backtest panel — gated on HAR_TERCILE_SUPPORTED_SYMBOLS
+  // (^GSPC, ^NDX, ^DJI). The fetcher folds a 503 (downstream artifact
+  // failure) into null; the panel renders the empty state when the
+  // symbol is supported but there are no resolved runs yet. For
+  // unsupported tickers we don't fire at all and surface a tailored
+  // "unavailable" placeholder.
   React.useEffect(() => {
     const controller = new AbortController();
-    if (request.symbol !== "^GSPC") {
+    if (!HAR_TERCILE_SUPPORTED_SYMBOLS.includes(request.symbol)) {
       setHarBacktest(null);
       setHarBacktestLoading(false);
       setHarBacktestError(null);
@@ -448,13 +448,13 @@ export default function WorkspacePage() {
     };
   }, [apiBaseUrl, request.symbol]);
 
-  // QLIKE-RV band coverage panel — same ^GSPC-only constraint as the
-  // HAR-tercile backtest (the RV artifact is SPX-trained). The
-  // fetcher folds a 503 (model / history unavailable) into null so
-  // the panel renders its tailored "unavailable" branch.
+  // QLIKE-RV band coverage panel — gated on QLIKE_RV_SUPPORTED_SYMBOLS
+  // (^GSPC, ^NDX, ^DJI). The fetcher folds a 503 (model / history
+  // unavailable) into null so the panel renders its tailored
+  // "unavailable" branch for unregistered tickers.
   React.useEffect(() => {
     const controller = new AbortController();
-    if (request.symbol !== "^GSPC") {
+    if (!QLIKE_RV_SUPPORTED_SYMBOLS.includes(request.symbol)) {
       setRvBacktest(null);
       setRvBacktestLoading(false);
       setRvBacktestError(null);
