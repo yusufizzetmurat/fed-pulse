@@ -13,6 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchCrossBankSnapshot, resolveApiBaseUrl } from "@/lib/analyze/api";
 import { errorMessage } from "@/lib/analyze/errors";
@@ -227,16 +228,23 @@ function BankCardView({ card }: { card: CrossBankCard }): JSX.Element {
   );
 }
 
+// The backend caches the snapshot for an hour, so warm requests return in
+// well under a second. The cold path runs the multi-axis classifier across
+// six central banks and can take up to ~30 seconds on a fresh process.
+const COLD_LOAD_BUDGET_MS = 30_000;
+
 export default function CrossBankPage(): JSX.Element {
   const apiBaseUrl = React.useMemo(() => resolveApiBaseUrl(), []);
   const [data, setData] = React.useState<CrossBankSnapshotResponse | null>(null);
   const [loading, setLoading] = React.useState(true);
+  const [elapsedMs, setElapsedMs] = React.useState(0);
 
   React.useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
     async function load() {
       setLoading(true);
+      setElapsedMs(0);
       try {
         const response = await fetchCrossBankSnapshot(apiBaseUrl, controller.signal);
         if (cancelled) return;
@@ -254,6 +262,31 @@ export default function CrossBankPage(): JSX.Element {
       controller.abort();
     };
   }, [apiBaseUrl]);
+
+  // Tick elapsed time while loading. Drives the progress indicator's value
+  // and the messaging that escalates from "Loading" to "First load can take
+  // up to 30 seconds" once the request has been outstanding long enough.
+  React.useEffect(() => {
+    if (!loading) return undefined;
+    const started = Date.now();
+    const id = window.setInterval(() => {
+      setElapsedMs(Date.now() - started);
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [loading]);
+
+  // Logistic curve that climbs fast at the start and crawls toward 95% so the
+  // bar reads "almost there" without overshooting if the cold path takes the
+  // full 30 seconds. The remaining 5% snaps to 100% once data arrives.
+  const progressValue = loading
+    ? Math.min(0.95, 1 - Math.exp(-elapsedMs / (COLD_LOAD_BUDGET_MS / 3)))
+    : 1;
+  const progressMessage = (() => {
+    if (elapsedMs < 1500) return "Loading the latest snapshot.";
+    if (elapsedMs < 8000) return "Scoring stance and certainty for six central banks.";
+    if (elapsedMs < 18000) return "First load after a backend restart can take up to 30 seconds while the classifier warms.";
+    return "Still working. The classifier is on the cold path. Hold on a moment.";
+  })();
 
   return (
     <>
@@ -298,13 +331,28 @@ export default function CrossBankPage(): JSX.Element {
           </div>
 
           {loading ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <BankCardSkeleton />
-              <BankCardSkeleton />
-              <BankCardSkeleton />
-              <BankCardSkeleton />
-              <BankCardSkeleton />
-              <BankCardSkeleton />
+            <div className="space-y-4">
+              <div
+                role="status"
+                aria-live="polite"
+                className="rounded-md border border-border bg-muted/30 p-3"
+              >
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>{progressMessage}</span>
+                  <span className="font-mono tabular-nums">
+                    {(elapsedMs / 1000).toFixed(1)}s
+                  </span>
+                </div>
+                <Progress value={progressValue} className="mt-2 h-1.5" />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <BankCardSkeleton />
+                <BankCardSkeleton />
+                <BankCardSkeleton />
+                <BankCardSkeleton />
+                <BankCardSkeleton />
+                <BankCardSkeleton />
+              </div>
             </div>
           ) : data ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

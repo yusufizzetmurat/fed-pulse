@@ -47,8 +47,8 @@ magnitude expectations:
 | CPU (Docker default) | ~30-60 min | ~3-5 hours |
 | Single CUDA GPU | ~5 min | ~25 min |
 
-Use the GPU profile (`make dev-gpu`) when training is the bottleneck;
-inference at replay time is fast either way because the per-fold model
+Use the GPU profile (`make dev-gpu`) when training is the bottleneck.
+Inference at replay time is fast either way because the per-fold model
 is cached in-process by `app.services.forecaster.load_for_fold`.
 
 ## After training

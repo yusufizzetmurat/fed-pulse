@@ -23,9 +23,9 @@ R² no-text is ≈0 by construction (intercept-only baseline).
 
 ## Findings
 
-Text-alone R² is negative on rv_1, rv_3, rv_10, and av — the text-only model
-forecasts worse than predicting the mean. Only rv_1 and av have CI90 entirely
-below 0; rv_3 and rv_10 are negative but wide. rv_5 is the lone positive
-(+0.077, CI90 includes 0), not enough to carry the panel. The result reinforces
-the text-null finding: FOMC text on its own carries no usable RV/AV forecast
-signal over the no-text baseline.
+Text-alone R² is negative on rv_1, rv_3, rv_10, and av; the text-only model
+forecasts worse than predicting the mean. CI90 sits entirely below 0 for rv_1
+and av. rv_3 and rv_10 are negative with wide intervals. rv_5 is the lone
+positive point estimate (+0.077, CI90 includes 0) and does not carry the
+panel. The text-null finding holds: FOMC text on its own carries no usable
+RV/AV forecast signal beyond the no-text baseline.
