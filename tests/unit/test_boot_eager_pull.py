@@ -2,7 +2,8 @@
 
 The shim must:
 - never raise out; failures degrade silently to the cold-start path
-- never overwrite a file that already exists in ``MODELS_DIR``
+- overwrite a file only when it differs from the snapshot (size or
+  sha256 mismatch); skip byte-identical copies
 - only touch artefacts mapped in ``_ARTEFACT_FILES`` (rates_heads et al.
   are intentionally left out to avoid clobbering the forecaster path)
 - no-op cleanly when ``HF_TOKEN`` is unset

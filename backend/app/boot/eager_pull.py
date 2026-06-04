@@ -33,6 +33,7 @@ avoid clobbering the forecaster path.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import shutil
@@ -288,21 +289,25 @@ def _hydrate_one(  # noqa: PLR0913 - seven injected params is the natural shape 
         if dst.exists() and _same_content(dst, src):
             logger.info("eager-pull: %s already present and matches snapshot; skip", dst_relpath)
             continue
-        if dst.exists():
-            logger.info(
-                "eager-pull: %s already present but DIFFERS from snapshot; overwriting",
-                dst_relpath,
-            )
+        # ``drifted`` flips when an existing local copy will be replaced;
+        # the actual overwrite logs AFTER the atomic rename so the
+        # "hydrated" line reflects what's on disk, not what we intended
+        # to do. If shutil.copy2 / os.replace raises mid-loop the
+        # caller's broad except in ``hydrate`` swallows it, so the post-
+        # success log is the only honest signal operators get.
+        drifted = dst.exists()
         dst.parent.mkdir(parents=True, exist_ok=True)
-        # Copy to a temp sibling and rename atomically so a mid-copy
-        # crash leaves the target either fully intact or absent, never
-        # half-written. Matters most for the forecaster checkpoint where
-        # a torn write surfaces as a cryptic state_dict load error.
         dst_tmp = Path(str(dst) + ".tmp")
-        shutil.copy2(src, dst_tmp)
-        os.replace(dst_tmp, dst)
+        try:
+            shutil.copy2(src, dst_tmp)
+            os.replace(dst_tmp, dst)
+        except OSError:
+            with contextlib.suppress(OSError):
+                dst_tmp.unlink()
+            raise
         logger.info(
-            "eager-pull: hydrated %s <- %s @ %s",
+            "eager-pull: %s %s <- %s @ %s",
+            "overwrote stale" if drifted else "hydrated",
             dst_relpath,
             artefact.hf_uri,
             revision or "main",
