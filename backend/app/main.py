@@ -2538,7 +2538,7 @@ async def forecast_realized_vol(
         intraday_measures = None
 
     try:
-        out = await run_in_threadpool(predict_rv, rv_hist, intraday_measures)
+        out = await run_in_threadpool(predict_rv, rv_hist, intraday_measures, symbol=symbol)
     except RvForecasterUnavailable as exc:
         raise HTTPException(
             status_code=503, detail={"error": "model_unavailable", "message": str(exc)}
@@ -2556,7 +2556,9 @@ async def forecast_realized_vol(
     # Walk-forward past 80% bands. Failure here must not break the
     # primary forecast surface, so degrade to None.
     try:
-        bands_rows = await run_in_threadpool(predict_rv_historical_bands, rv_hist, hist_dates)
+        bands_rows = await run_in_threadpool(
+            predict_rv_historical_bands, rv_hist, hist_dates, symbol=symbol
+        )
         historical_bands = [RealizedVolHistoricalBand(**row) for row in bands_rows] or None
     except Exception:  # pragma: no cover -- defensive
         logger.warning("rv_historical_bands_failed", exc_info=True)

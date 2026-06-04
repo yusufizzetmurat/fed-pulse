@@ -102,9 +102,16 @@ def stub_predictor(monkeypatch: pytest.MonkeyPatch) -> rv_forecaster._RvPredicto
     instance.seed_models = {  # type: ignore[attr-defined]
         f"h{h}": [_StubLinear(0.0) for _ in range(5)] for h in (1, 5, 22)
     }
+    instance.symbol = "^GSPC"  # type: ignore[attr-defined]
     instance.revision = "stub@2026-05-29"  # type: ignore[attr-defined]
+    # Per-symbol getter signature: ``get(cls, symbol="^GSPC")``. The
+    # stub ignores the symbol because every test in this file points at
+    # the SPX-pinned canonical predictor; per-asset routing has its
+    # own dedicated test (``test_per_symbol_artifact_lookup``).
     monkeypatch.setattr(
-        rv_forecaster._RvPredictor, "get", classmethod(lambda cls: instance)
+        rv_forecaster._RvPredictor,
+        "get",
+        classmethod(lambda cls, symbol="^GSPC": instance),
     )
     yield instance
     rv_forecaster._RvPredictor.reset()
@@ -231,3 +238,54 @@ def test_predict_rv_historical_bands_rejects_length_mismatch(
     dates = [f"2026-04-{i + 1:02d}" for i in range(29)]
     with pytest.raises(ValueError):
         rv_forecaster.predict_rv_historical_bands(rv, dates)
+
+
+def test_per_symbol_predictor_registry_is_keyed_by_symbol() -> None:
+    """SYMBOL_ARTIFACTS registers ^GSPC + ^NDX + ^DJI with distinct
+    artifact dirs. The predictor cache keys per symbol so a request
+    against ^NDX cannot leak into ^GSPC's loaded weights."""
+
+    from app.services.rv_forecaster import SYMBOL_ARTIFACTS
+
+    assert "^GSPC" in SYMBOL_ARTIFACTS
+    assert "^NDX" in SYMBOL_ARTIFACTS
+    assert "^DJI" in SYMBOL_ARTIFACTS
+    dirs = {sym: spec[0] for sym, spec in SYMBOL_ARTIFACTS.items()}
+    # Distinct dirs per symbol.
+    assert dirs["^GSPC"] != dirs["^NDX"]
+    assert dirs["^GSPC"] != dirs["^DJI"]
+    assert dirs["^NDX"] != dirs["^DJI"]
+
+
+def test_per_symbol_predictor_falls_back_to_gspc_on_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Symbols not in the registry route to the ^GSPC slot so legacy
+    call sites that pass FX/commodity tickers do not blow up."""
+
+    rv_forecaster._RvPredictor.reset()
+    canonical = rv_forecaster._RvPredictor.__new__(rv_forecaster._RvPredictor)
+    canonical.model_dir = rv_forecaster.MODEL_DIR  # type: ignore[attr-defined]
+    canonical.spec = _make_spec()  # type: ignore[attr-defined]
+    canonical.eval = _make_eval()  # type: ignore[attr-defined]
+    canonical.seed_models = {  # type: ignore[attr-defined]
+        f"h{h}": [_StubLinear(0.0)] for h in (1, 5, 22)
+    }
+    canonical.symbol = "^GSPC"  # type: ignore[attr-defined]
+    canonical.revision = "stub@2026-05-29"  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        rv_forecaster,
+        "_RvPredictor",
+        type(rv_forecaster._RvPredictor)(
+            "_RvPredictor",
+            (rv_forecaster._RvPredictor,),
+            {
+                "get": classmethod(
+                    lambda cls, symbol="^GSPC": canonical
+                    if symbol in rv_forecaster.SYMBOL_ARTIFACTS or symbol == "^GSPC"
+                    else canonical
+                ),
+            },
+        ),
+    )
+    pred = rv_forecaster._RvPredictor.get("EURUSD=X")
+    assert pred is canonical
+    rv_forecaster._RvPredictor.reset()

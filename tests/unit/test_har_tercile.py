@@ -64,9 +64,12 @@ def stub_predictor(monkeypatch: pytest.MonkeyPatch) -> rv_forecaster._RvPredicto
     instance.spec = _make_spec()  # type: ignore[attr-defined]
     instance.eval = _make_eval()  # type: ignore[attr-defined]
     instance.seed_models = {}  # type: ignore[attr-defined]
+    instance.symbol = "^GSPC"  # type: ignore[attr-defined]
     instance.revision = "stub@2026-05-29"  # type: ignore[attr-defined]
     monkeypatch.setattr(
-        rv_forecaster._RvPredictor, "get", classmethod(lambda cls: instance)
+        rv_forecaster._RvPredictor,
+        "get",
+        classmethod(lambda cls, symbol="^GSPC": instance),
     )
     yield instance
     rv_forecaster._RvPredictor.reset()

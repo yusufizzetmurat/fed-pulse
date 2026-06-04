@@ -52,7 +52,11 @@ import {
   postAnalyzeAnalogs,
   postAnalyzeMarket,
 } from "@/lib/analyze/api";
-import { DEFAULT_TEXT, HAR_TERCILE_SUPPORTED_SYMBOLS } from "@/lib/analyze/constants";
+import {
+  DEFAULT_TEXT,
+  HAR_TERCILE_SUPPORTED_SYMBOLS,
+  QLIKE_RV_SUPPORTED_SYMBOLS,
+} from "@/lib/analyze/constants";
 import { errorMessage } from "@/lib/analyze/errors";
 import { toStance } from "@/lib/analyze/format";
 import {
@@ -1098,10 +1102,12 @@ export default function WorkspacePage() {
               </p>
             </div>
           )}
-          {/* RV / QLIKE-DLq backtest remains SPX-only because the
-              QLIKE-DLq artifact pins per-fold coefficients on SPX RV
-              and is not yet refit per asset. */}
-          {request.symbol === "^GSPC" ? (
+          {/* RV / QLIKE-DLq backtest now supports each symbol with a
+              registered per-asset artifact (^GSPC, ^NDX, ^DJI). The
+              registry lives in
+              ``backend/app/services/rv_forecaster.SYMBOL_ARTIFACTS``
+              and mirrors ``QLIKE_RV_SUPPORTED_SYMBOLS`` above. */}
+          {QLIKE_RV_SUPPORTED_SYMBOLS.includes(request.symbol) ? (
             <RvAccuracyPanel
               data={rvBacktest}
               loading={rvBacktestLoading}
@@ -1116,8 +1122,10 @@ export default function WorkspacePage() {
                 QLIKE-RV band coverage not available for {request.symbol}.
               </p>
               <p className="mt-1">
-                The QLIKE-DLq ensemble is pinned on S&P 500 RV and not refit
-                per asset. Switch to ^GSPC to see the band-coverage backtest.
+                Switch to {QLIKE_RV_SUPPORTED_SYMBOLS.join(", ")} to see
+                the band-coverage backtest. The QLIKE-DLq ensemble is
+                refit per asset; cross-bank tickers (^FTSE, ^N225 etc.)
+                are not in the registry yet.
               </p>
             </div>
           )}

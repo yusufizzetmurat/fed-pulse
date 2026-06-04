@@ -41,6 +41,21 @@ EVAL_FILENAME = "production_eval.json"
 HORIZONS: tuple[int, ...] = (1, 5, 22)
 ALPHAS: tuple[float, ...] = (0.2, 0.1)
 
+# Symbol -> (local artifact dir, HF repo id or ``None``).
+# The canonical row is ^GSPC; new assets list a local directory so the
+# loader can serve them without an HF fetch (training writes the
+# artifact straight into ``data/processed/rv_qlike_dlq/<alias>/``). HF
+# repos can be filled in later as the per-asset checkpoints get
+# published. Lookup falls back to the canonical row when the requested
+# symbol is not registered.
+_DATA_ROOT = BACKEND_ROOT.parent / "data" / "processed" / "rv_qlike_dlq"
+SYMBOL_ARTIFACTS: dict[str, tuple[Path, str | None]] = {
+    "^GSPC": (MODEL_DIR, HF_REPO_ID),
+    "^NDX": (_DATA_ROOT / "ndx", None),
+    "^DJI": (_DATA_ROOT / "dji", None),
+}
+SUPPORTED_RV_FORECASTER_SYMBOLS: tuple[str, ...] = tuple(SYMBOL_ARTIFACTS.keys())
+
 
 class RvForecasterUnavailable(RuntimeError):
     """Raised when the artifact is missing and HF Hub fetch failed."""
@@ -50,8 +65,21 @@ def _hf_token() -> str | None:
     return os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
 
 
-def _download_artifact(target_dir: Path) -> dict[str, Any]:
-    """Download spec + eval + all per-seed weight files into ``target_dir``."""
+def _download_artifact(target_dir: Path, repo_id: str | None) -> dict[str, Any]:
+    """Download spec + eval + all per-seed weight files into ``target_dir``.
+
+    ``repo_id`` is the HF repo to pull from. When ``None`` (e.g. for
+    per-asset artifacts that have not been published to the Hub yet)
+    we raise :class:`RvForecasterUnavailable` immediately so the caller
+    surfaces a clean "asset unavailable" error instead of attempting a
+    repo lookup with no name.
+    """
+
+    if repo_id is None:
+        raise RvForecasterUnavailable(
+            f"no HF repo registered for artifact at {target_dir}; "
+            "produce the artifact locally or register a repo in SYMBOL_ARTIFACTS"
+        )
 
     from huggingface_hub import hf_hub_download
     from huggingface_hub.errors import (
@@ -63,7 +91,7 @@ def _download_artifact(target_dir: Path) -> dict[str, Any]:
     target_dir.mkdir(parents=True, exist_ok=True)
     token = _hf_token()
     base_kwargs: dict[str, Any] = {
-        "repo_id": HF_REPO_ID,
+        "repo_id": repo_id,
         "local_dir": str(target_dir),
     }
     if token:
@@ -85,30 +113,30 @@ def _download_artifact(target_dir: Path) -> dict[str, Any]:
                 _pull(fname)
     except RepositoryNotFoundError as exc:
         raise RvForecasterUnavailable(
-            f"HF repo {HF_REPO_ID!r} not found; set HF_TOKEN or grant access."
+            f"HF repo {repo_id!r} not found; set HF_TOKEN or grant access."
         ) from exc
     except (EntryNotFoundError, HfHubHTTPError) as exc:
-        raise RvForecasterUnavailable(f"HF fetch failed for {HF_REPO_ID!r}: {exc}") from exc
+        raise RvForecasterUnavailable(f"HF fetch failed for {repo_id!r}: {exc}") from exc
     except OSError as exc:
         # Catches the network-level failures (ConnectionError, timeouts,
         # disk full) that hf_hub_download can raise outside the HF-specific
         # exception hierarchy; surface them as the same "unavailable" 503
         # the endpoint contract promises instead of bubbling up as 500.
-        raise RvForecasterUnavailable(f"HF download failed for {HF_REPO_ID!r}: {exc}") from exc
+        raise RvForecasterUnavailable(f"HF download failed for {repo_id!r}: {exc}") from exc
     return cast(dict[str, Any], spec)
 
 
-def _load_spec(model_dir: Path) -> dict[str, Any]:
-    """Return the cached spec; fetch from HF Hub on a miss."""
+def _load_spec(model_dir: Path, repo_id: str | None) -> dict[str, Any]:
+    """Return the cached spec; fetch from HF Hub on a miss when ``repo_id`` is set."""
 
     spec_path = model_dir / ARTIFACT_FILENAME
     if not spec_path.exists():
-        return _download_artifact(model_dir)
+        return _download_artifact(model_dir, repo_id)
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     for row in spec["by_horizon"].values():
         for fname in row["seed_state_dicts"]:
             if not (model_dir / fname).exists():
-                return _download_artifact(model_dir)
+                return _download_artifact(model_dir, repo_id)
     return cast(dict[str, Any], spec)
 
 
@@ -146,35 +174,56 @@ def _load_seed_models(spec: dict[str, Any], model_dir: Path) -> dict[str, list["
 
 
 class _RvPredictor:
-    """Cached per-process serving bundle.
+    """Cached per-process serving bundle, keyed per symbol.
 
     Holds the parsed spec, per-horizon seed-ensembles, and the eval sidecar so
     the endpoint can answer in a single forward pass per horizon. Construction
     is wrapped under a class-level lock so concurrent callers do not race on
-    the HF download.
+    the local-load / HF download. A per-symbol registry lets the dashboard
+    serve multiple assets (^GSPC, ^NDX, ^DJI) off the same code path; the
+    artifact directory and HF repo for each symbol live in
+    :data:`SYMBOL_ARTIFACTS`.
     """
 
-    _instance: "_RvPredictor | None" = None
+    _instances: dict[str, "_RvPredictor"] = {}
     _lock = threading.Lock()
 
     @classmethod
-    def get(cls) -> "_RvPredictor":
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = cls()
-        return cls._instance
+    def get(cls, symbol: str = "^GSPC") -> "_RvPredictor":
+        """Return the predictor bound to ``symbol``.
+
+        Falls back to the ``^GSPC`` slot when the symbol is not registered
+        in :data:`SYMBOL_ARTIFACTS` so legacy call sites that do not know
+        about the per-asset map keep working.
+        """
+
+        key = symbol if symbol in SYMBOL_ARTIFACTS else "^GSPC"
+        cached = cls._instances.get(key)
+        if cached is not None:
+            return cached
+        with cls._lock:
+            cached = cls._instances.get(key)
+            if cached is not None:
+                return cached
+            instance = cls(symbol=key)
+            cls._instances[key] = instance
+            return instance
 
     @classmethod
-    def reset(cls) -> None:
-        """Drop the cached instance; used by tests."""
+    def reset(cls, symbol: str | None = None) -> None:
+        """Drop one or all cached predictors. Tests reach in here."""
 
         with cls._lock:
-            cls._instance = None
+            if symbol is None:
+                cls._instances.clear()
+            else:
+                cls._instances.pop(symbol, None)
 
-    def __init__(self) -> None:
-        self.model_dir = MODEL_DIR
-        self.spec = _load_spec(self.model_dir)
+    def __init__(self, *, symbol: str = "^GSPC") -> None:
+        model_dir, repo_id = SYMBOL_ARTIFACTS.get(symbol, SYMBOL_ARTIFACTS["^GSPC"])
+        self.symbol = symbol
+        self.model_dir = model_dir
+        self.spec = _load_spec(self.model_dir, repo_id)
         self.eval = _load_eval(self.model_dir)
         self.seed_models = _load_seed_models(self.spec, self.model_dir)
         self.revision = f"{self.spec.get('model', 'rv')}@{self.spec.get('date_last', '')}"
@@ -268,6 +317,8 @@ def _ensemble_log_rv(
 def predict_rv(
     rv_history: list[float] | np.ndarray,
     intraday_measures: dict[str, Any] | None = None,
+    *,
+    symbol: str = "^GSPC",
 ) -> dict[str, Any]:
     """Multi-horizon banded RV forecast off a recent realized-vol series.
 
@@ -288,7 +339,7 @@ def predict_rv(
         raise ValueError("rv_history values must be positive finite numbers")
 
     log_rv = np.log(rv + _RVEPS)
-    pred = _RvPredictor.get()
+    pred = _RvPredictor.get(symbol)
     horizons_out: list[dict[str, Any]] = []
     # Source flag is determined by the first horizon's pass and held
     # constant across the three. The flag is intentionally a single
@@ -346,6 +397,8 @@ _HISTORICAL_BANDS_WARMUP = 22
 def predict_rv_historical_bands(
     rv_history: list[float] | np.ndarray,
     dates: list[str],
+    *,
+    symbol: str = "^GSPC",
 ) -> list[dict[str, Any]]:
     """Walk-forward h=1 conformal bands over the recent RV window.
 
@@ -371,7 +424,7 @@ def predict_rv_historical_bands(
     if np.any(rv <= 0) or not np.all(np.isfinite(rv)):
         raise ValueError("rv_history values must be positive finite numbers")
 
-    pred = _RvPredictor.get()
+    pred = _RvPredictor.get(symbol)
     row = pred.spec["by_horizon"]["h1"]
     seeds = pred.seed_models["h1"]
     quants = row["conformal_quantiles"]
