@@ -421,8 +421,10 @@ def test_aggregate_coverage_all_pending() -> None:
     assert cov["empirical_coverage_90"] is None
 
 
-def test_endpoint_rejects_non_gspc_symbol(client) -> None:
-    response = client.get("/forecast/rv-backtest", params={"symbol": "^NDX"})
+def test_endpoint_rejects_unregistered_symbol(client) -> None:
+    # ^GSPC, ^NDX, ^DJI are registered per SYMBOL_ARTIFACTS; an FX or
+    # commodity ticker must come back 400 instead of attempting the load.
+    response = client.get("/forecast/rv-backtest", params={"symbol": "EURUSD=X"})
     assert response.status_code == 400
     body = response.json()
     assert body["detail"]["error"] == "symbol_unsupported"
