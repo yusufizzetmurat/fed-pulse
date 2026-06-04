@@ -92,12 +92,16 @@ function StanceMixBar({
   const hawkPct = (hawk / total) * 100;
   const neutralPct = (neutral / total) * 100;
   const dovePct = (dove / total) * 100;
+  // Largest-remainder rounding so the aria-label always sums to 100%.
+  const hawkR = Math.round(hawkPct);
+  const neutralR = Math.round(neutralPct);
+  const doveR = 100 - hawkR - neutralR;
   return (
     <div className="space-y-1">
       <div
         className="flex h-2 w-full overflow-hidden rounded-full bg-muted"
         role="img"
-        aria-label={`Stance mix: ${Math.round(hawkPct)}% hawkish, ${Math.round(neutralPct)}% neutral, ${Math.round(dovePct)}% dovish`}
+        aria-label={`Stance mix: ${hawkR}% hawkish, ${neutralR}% neutral, ${doveR}% dovish`}
       >
         <div
           className="h-full bg-rose-500/80"
