@@ -95,9 +95,7 @@ def extract_cls_embedding(
         device = next(model.parameters()).device
     except (StopIteration, AttributeError):
         device = torch.device("cpu")
-    raw_inputs = tokenizer(
-        text, truncation=True, max_length=max_length, return_tensors="pt"
-    )
+    raw_inputs = tokenizer(text, truncation=True, max_length=max_length, return_tensors="pt")
     if hasattr(raw_inputs, "to"):
         inputs = raw_inputs.to(device)
     elif isinstance(raw_inputs, dict):
