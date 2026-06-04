@@ -115,6 +115,9 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
   const regime = result.regime_classification;
   const encoderKey = (result.model as { encoder_key?: string } | undefined)?.encoder_key;
   const xaiSentences = result.xai?.sentences?.length ?? 0;
+  const oodEnergy = result.sentiment?.ood_energy ?? null;
+  const oodThreshold = result.sentiment?.ood_threshold ?? null;
+  const inDistribution = result.sentiment?.is_in_distribution ?? null;
 
   const ingestStep: Step = {
     key: "ingest",
@@ -153,10 +156,37 @@ function buildSteps({ result, inputText }: PipelineTraceProps): Step[] {
       ? `Model variant: ${friendlyEncoderName(encoderKey)}`
       : "Model variant: default",
     body: (
-      <p className="text-sm text-muted-foreground">
-        Model variant: <span className="numeric text-foreground">{encoderKey ?? "default"}</span>. No
-        OOD signal available.
-      </p>
+      <div className="space-y-1.5 text-sm text-muted-foreground">
+        <p>
+          Model variant: <span className="numeric text-foreground">{encoderKey ?? "default"}</span>.
+        </p>
+        {inDistribution === null ? (
+          <p>OOD signal not available on this checkpoint.</p>
+        ) : (
+          <p>
+            OOD check:{" "}
+            <span
+              className={
+                inDistribution
+                  ? "text-foreground numeric"
+                  : "text-hawkish numeric font-semibold"
+              }
+            >
+              {inDistribution ? "in-distribution" : "out-of-distribution"}
+            </span>
+            {oodEnergy !== null && oodThreshold !== null ? (
+              <>
+                {" "}
+                · Mahalanobis distance{" "}
+                <span className="numeric text-foreground">{oodEnergy.toFixed(1)}</span>{" "}
+                vs threshold{" "}
+                <span className="numeric text-foreground">{oodThreshold.toFixed(1)}</span>
+              </>
+            ) : null}
+            .
+          </p>
+        )}
+      </div>
     ),
   };
 
