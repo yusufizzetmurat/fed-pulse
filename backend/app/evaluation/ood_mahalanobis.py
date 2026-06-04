@@ -108,7 +108,7 @@ def extract_cls_embedding(
     if hidden_states is None:
         return None
     # Last layer, batch index 0, position 0 (CLS).
-    cls_vec = hidden_states[-1][0, 0]
+    cls_vec: torch.Tensor = hidden_states[-1][0, 0]
     return cls_vec.detach().to("cpu")
 
 
