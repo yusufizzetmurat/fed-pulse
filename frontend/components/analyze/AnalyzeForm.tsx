@@ -155,6 +155,48 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading, onSampleLoad }
             </div>
           </div>
 
+          <div className="rounded-md border border-dashed border-border/70 p-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={Boolean(value.as_of_date)}
+                  onChange={(event) =>
+                    patch({
+                      as_of_date: event.target.checked
+                        ? value.as_of_date || value.date
+                        : null,
+                    })
+                  }
+                />
+                <span className="font-medium">Replay mode</span>
+              </label>
+              {value.as_of_date ? (
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="as-of-date" className="text-xs uppercase tracking-wide">
+                    as of
+                  </Label>
+                  <Input
+                    id="as-of-date"
+                    type="date"
+                    value={value.as_of_date ?? ""}
+                    max={new Date().toISOString().slice(0, 10)}
+                    onChange={(event) =>
+                      patch({ as_of_date: event.target.value || null })
+                    }
+                    className="h-8 w-[10rem]"
+                  />
+                </div>
+              ) : null}
+              <p className="ml-auto max-w-md text-xs text-muted-foreground">
+                Runs as if today were the chosen historical date. Only the
+                walk-forward fold whose train_end precedes that date serves
+                the prediction; analogs are filtered to event_date ≤ as-of.
+              </p>
+            </div>
+          </div>
+
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             <Button
               type="submit"

@@ -143,6 +143,20 @@ function CheckpointRow({ checkpoint }: { checkpoint: SettingsCheckpoint }) {
                 {checkpoint.output_mode}
               </Badge>
             ) : null}
+            {checkpoint.source === "hf_cache" ? (
+              <Badge
+                variant="outline"
+                className="text-[10px] uppercase tracking-wide text-muted-foreground"
+                data-testid="checkpoint-source-hf-cache"
+                title={
+                  checkpoint.snapshot_path
+                    ? `Resolved from the HF cache at ${checkpoint.snapshot_path}`
+                    : "Resolved from the HF cache, not the local models directory"
+                }
+              >
+                HF cache
+              </Badge>
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
             <span className="numeric">{formatBytes(checkpoint.size_bytes)}</span>
@@ -166,6 +180,20 @@ function CheckpointRow({ checkpoint }: { checkpoint: SettingsCheckpoint }) {
                   ) : (
                     <span className="text-down">missing</span>
                   )}
+                </span>
+              </>
+            ) : null}
+            {checkpoint.source === "hf_cache" && checkpoint.repo ? (
+              <>
+                <span>·</span>
+                <span>
+                  HF repo: <span className="numeric">{checkpoint.repo}</span>
+                  {checkpoint.revision ? (
+                    <>
+                      {" @ "}
+                      <span className="numeric">{checkpoint.revision.slice(0, 8)}</span>
+                    </>
+                  ) : null}
                 </span>
               </>
             ) : null}

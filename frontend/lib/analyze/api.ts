@@ -7,6 +7,7 @@ import type {
   BacktestPositionEntry,
   BacktestResponse,
   ClassificationBreakdownResponse,
+  CrossBankSnapshotResponse,
   DocumentDetailResponse,
   EvaluationCoverageResponse,
   ExpectedVolumeForecastResponse,
@@ -515,4 +516,12 @@ export async function postResearchBacktest(
 ): Promise<BacktestResponse> {
   const response = await axios.post(`${baseUrl}/research/backtest`, body);
   return response.data as BacktestResponse;
+}
+
+export async function fetchCrossBankSnapshot(
+  baseUrl: string,
+  signal?: AbortSignal,
+): Promise<CrossBankSnapshotResponse> {
+  const response = await axios.get(`${baseUrl}/cross-bank/snapshot`, { signal });
+  return response.data as CrossBankSnapshotResponse;
 }

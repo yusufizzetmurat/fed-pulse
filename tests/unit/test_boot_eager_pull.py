@@ -178,19 +178,35 @@ def test_main_returns_zero_even_on_unexpected_error(
     assert eager_pull.main() == 0
 
 
-def test_split_entry_plain_string_collapses_to_pair() -> None:
-    """A flat filename maps to ``(name, name)`` — both sides identical."""
+def test_split_entry_plain_string_collapses_to_triple() -> None:
+    """A flat filename maps to ``(name, name, "MODELS")`` — the legacy
+    flat-file mapping defaults to the ``MODELS_DIR`` root.
+    """
 
     assert eager_pull._split_entry("forecaster_best.pt") == (
         "forecaster_best.pt",
         "forecaster_best.pt",
+        "MODELS",
     )
 
 
-def test_split_entry_tuple_form_returns_src_and_dst() -> None:
-    """A ``(snapshot_name, dst_relpath)`` pair is preserved as-is."""
+def test_split_entry_pair_form_defaults_to_models_root() -> None:
+    """A ``(snapshot_name, dst_relpath)`` pair expands to a ``"MODELS"``
+    root so the existing ``volume_har_canonical`` mapping is unchanged.
+    """
 
     entry = ("volume_har_artifact.json", "volume_har/volume_har_artifact.json")
+    assert eager_pull._split_entry(entry) == (
+        "volume_har_artifact.json",
+        "volume_har/volume_har_artifact.json",
+        "MODELS",
+    )
+
+
+def test_split_entry_triple_form_returns_src_dst_root() -> None:
+    """A ``(snapshot_name, dst_relpath, dst_root)`` triple is preserved as-is."""
+
+    entry = ("model.pt", "artifacts/trajectory/trajectory_transformer/model.pt", "DATA")
     assert eager_pull._split_entry(entry) == entry
 
 

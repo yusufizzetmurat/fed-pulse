@@ -1,6 +1,10 @@
 from datetime import date
 from typing import Any, Literal
 
+# Local alias so models that already have a ``date: str`` field can still
+# annotate other fields with the ``datetime.date`` type without shadowing.
+_date_t = date
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -71,6 +75,32 @@ class AnalyzeRequest(BaseModel):
             "same tokenizer that produces xai.sentences. Empty list = no mask."
         ),
     )
+    as_of_date: _date_t | None = Field(
+        default=None,
+        description=(
+            "Replay-mode anchor. When set, the pipeline runs as if today "
+            "were this date: only the walk-forward fold whose train_end "
+            "precedes this date is used for the forecaster + trajectory, "
+            "and historical-analog retrieval is filtered to "
+            "event_date <= as_of_date. None = live mode (default)."
+        ),
+    )
+
+    @field_validator("as_of_date", mode="before")
+    @classmethod
+    def _parse_as_of_date(cls, value: Any) -> Any:
+        """Accept ISO ``YYYY-MM-DD`` strings under the model's strict
+        config so the JSON wire shape stays a string. Pydantic v2 strict
+        otherwise refuses str->date coercion."""
+
+        if value is None or isinstance(value, _date_t):
+            return value
+        if isinstance(value, str):
+            try:
+                return _date_t.fromisoformat(value[:10])
+            except ValueError as exc:
+                raise ValueError(f"as_of_date must be ISO YYYY-MM-DD, got {value!r}") from exc
+        return value
 
 
 class SentimentResponse(BaseModel):
@@ -601,6 +631,66 @@ class InferenceStatusSurface(BaseModel):
     detail: str | None = None
 
 
+class RealisedOutcomeHorizon(BaseModel):
+    """A single (h, log_return, realised_vol, close) row in the
+    "what actually happened" reveal.
+
+    ``realised_volatility_5d_post_event`` is the rolling stdev of the
+    bar-to-bar log-returns over the 5 bars ending at t+h, where t is
+    the replay ``as_of_date``. This is **post-event** by construction
+    -- it measures volatility AFTER the analyzed statement -- and is
+    deliberately not the same series as ``MarketDataResponse.
+    volatility_5d``, which measures the rolling 5d stdev over the bars
+    BEFORE the request date (the value the forecaster consumes as a
+    feature). The two are intentionally distinct and never compared.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    horizon: int
+    log_return: float | None = None
+    realised_volatility_5d_post_event: float | None = None
+    close: float | None = None
+    date: str | None = None
+
+
+class RealisedOutcomeBlock(BaseModel):
+    model_config = _FORBID_FROZEN_CONFIG
+
+    as_of_date: str
+    symbol: str
+    horizons: list[RealisedOutcomeHorizon]
+
+
+class ReplayModeBlock(BaseModel):
+    """Replay-mode metadata for the /analyze response.
+
+    Populated only when the request set ``as_of_date``. ``fold_id`` is
+    the walk-forward fold whose checkpoint served this prediction;
+    ``train_end`` is the latest date the model saw at training time --
+    everything strictly after that is unseen ground truth from the
+    model's point of view. ``classifier_rewind`` flags that the
+    text-encoder weights are NOT rewound to ``as_of_date`` (the
+    DAPT-pinned encoder is post-X), so any text-conditioned head is
+    served with later-than-X weights -- documented as a known caveat
+    rather than silently leaked.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    as_of_date: str
+    fold_id: str | None = None
+    train_end: str | None = None
+    classifier_rewind: bool = False
+    # ``True`` once the forecaster service is wired to load the per-fold
+    # checkpoint identified by ``fold_id``. Until that follow-up lands,
+    # this stays ``False`` so a consumer comparing ``replay.fold_id`` to
+    # ``model.checkpoint_path`` can tell the scaffolding apart from the
+    # full feature.
+    forecaster_checkpoint_rewound: bool = False
+    notes: list[str] = Field(default_factory=list)
+
+
 class AnalyzeResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
@@ -609,6 +699,13 @@ class AnalyzeResponse(BaseModel):
     market: MarketDataResponse
     model: ModelDiagnosticsResponse
     series: ForecastSeriesResponse
+    # Replay-mode metadata + the "what actually happened" reveal. Both
+    # populated only when ``AnalyzeRequest.as_of_date`` is set. The
+    # frontend hides the replay banner + the reveal card when these are
+    # ``None`` so live-mode payloads stay byte-identical to the legacy
+    # shape.
+    replay: ReplayModeBlock | None = None
+    realised_outcome: RealisedOutcomeBlock | None = None
     xai: XaiResponse | None = None
     credibility: CredibilityResponse | None = None
     multi_axis: MultiAxisBlock | None = None
@@ -860,6 +957,21 @@ class SettingsCheckpoint(BaseModel):
     required_kwargs: list[str] = Field(default_factory=list)
     supplied_at_inference: dict[str, bool] = Field(default_factory=dict)
     inference_contract_status: str | None = None
+    # Where the file actually lives. ``models_dir`` is the host-mounted
+    # ``backend/models/`` directory; ``hf_cache`` is the
+    # ``huggingface_hub`` snapshot cache the eager-pull /
+    # ``hf_hub_download`` paths land into when the file is not yet on
+    # disk under MODELS_DIR. The settings page renders a small badge so
+    # the operator can see at a glance whether a checkpoint is being
+    # served straight from the HF cache instead of the local mount.
+    source: str = "models_dir"
+    # HF Hub provenance — populated only for ``source == "hf_cache"``
+    # rows. ``repo`` is the ``owner/name`` slug, ``revision`` is the
+    # pinned commit (empty for unpinned artefacts), ``snapshot_path`` is
+    # the absolute path inside the HF cache the file resolves to.
+    repo: str | None = None
+    revision: str | None = None
+    snapshot_path: str | None = None
 
 
 class SettingsCheckpointsResponse(BaseModel):
@@ -1915,3 +2027,53 @@ class RvBacktestResponse(BaseModel):
     rows: list[RvBacktestRow]
     coverage: RvBacktestCoverage
     generated_at: str
+
+
+class CrossBankCard(BaseModel):
+    """One central-bank card on the cross-bank dashboard panel.
+
+    Mirrors the dict shape emitted by
+    :func:`app.services.cross_bank_snapshot.build_bank_card`. Heads
+    that could not be filled (corpus missing for a bank, classifier
+    checkpoint unavailable, market-data lookup failed) leave the
+    matching field as ``None`` and surface the reason in ``status`` /
+    ``vol_regime_status`` so the frontend renders an explicit
+    "Coming soon" placeholder rather than blank space.
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    bank: str
+    short_code: str
+    display_name: str
+    flag: str
+    symbol: str
+    latest_statement_date: str | None
+    stance: dict[str, float] | None
+    stance_label: str | None
+    stance_confidence: float | None
+    certainty_label: str | None
+    certainty_confidence: float | None
+    time_axis: str | None
+    vol_regime_label: str | None
+    vol_regime_confidence: float | None
+    vol_regime_as_of: str | None
+    vol_regime_status: str | None
+    sample_size: int
+    status: str
+
+
+class CrossBankSnapshotResponse(BaseModel):
+    """Response wire shape for ``GET /cross-bank/snapshot``.
+
+    Six-card side-by-side stance + vol-regime read across Fed, ECB,
+    BoE, BoC, BoJ, RBA. Cached in-process for an hour (statements do
+    not change minute-to-minute and the classifier cold-start is
+    expensive).
+    """
+
+    model_config = _FORBID_FROZEN_CONFIG
+
+    banks: list[CrossBankCard]
+    generated_at: str
+    cache_ttl_seconds: int

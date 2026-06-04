@@ -18,6 +18,38 @@ export interface AnalyzeRequest {
   // Counterfactual: 0-based indices of sentences to drop from the text
   // before running the pipeline. Empty / omitted = no mask.
   mask_sentence_indices?: number[];
+  // Replay-mode anchor. When set (ISO YYYY-MM-DD), /analyze runs as
+  // if today were this date: only the walk-forward fold whose
+  // ``train_end`` precedes this date is used for serving, and
+  // historical-analog retrieval is filtered to ``event_date <=
+  // as_of_date``. ``null`` / omitted = live mode (default).
+  as_of_date?: string | null;
+}
+
+export interface ReplayModeBlock {
+  as_of_date: string;
+  fold_id: string | null;
+  train_end: string | null;
+  classifier_rewind: boolean;
+  // True once the forecaster service is wired to load the per-fold
+  // checkpoint identified by ``fold_id``. Until that follow-up lands
+  // this stays false so the UI can render the scaffold-gap callout.
+  forecaster_checkpoint_rewound: boolean;
+  notes: string[];
+}
+
+export interface RealisedOutcomeHorizon {
+  horizon: number;
+  log_return: number | null;
+  realised_volatility_5d_post_event: number | null;
+  close: number | null;
+  date: string | null;
+}
+
+export interface RealisedOutcomeBlock {
+  as_of_date: string;
+  symbol: string;
+  horizons: RealisedOutcomeHorizon[];
 }
 
 export interface SentimentResponse {
@@ -401,6 +433,11 @@ export interface AnalyzeResult {
   policy_action?: PolicyActionResponse | null;
   xai?: XaiResponse;
   credibility?: CredibilityResponse;
+  // Replay-mode metadata. Populated only when the request carried a
+  // non-null ``as_of_date``; the workspace renders a banner + the
+  // "what actually happened" reveal off these.
+  replay?: ReplayModeBlock | null;
+  realised_outcome?: RealisedOutcomeBlock | null;
 }
 
 export interface TrainJobState {
@@ -465,6 +502,17 @@ export interface SettingsCheckpoint {
   required_kwargs?: string[];
   supplied_at_inference?: Record<string, boolean>;
   inference_contract_status?: string | null;
+  // Where the file lives. ``models_dir`` is the host-mounted
+  // ``backend/models/`` directory; ``hf_cache`` is the
+  // ``huggingface_hub`` snapshot cache that lazy-fetched checkpoints
+  // (e.g. the multi-axis classifier when no local file is present)
+  // land into. The Settings page renders a small "HF cache" badge so
+  // an operator can see at a glance which files are not on the local
+  // mount.
+  source?: string | null;
+  repo?: string | null;
+  revision?: string | null;
+  snapshot_path?: string | null;
 }
 
 export interface SettingsCheckpointsResponse {
@@ -971,4 +1019,31 @@ export interface SemanticDiffResponse {
   topic_deltas: SemanticDiffTopic[];
   summary: string;
   status?: SemanticDiffStatus | null;
+}
+
+export interface CrossBankCard {
+  bank: string;
+  short_code: string;
+  display_name: string;
+  flag: string;
+  symbol: string;
+  latest_statement_date: string | null;
+  stance: Record<string, number> | null;
+  stance_label: string | null;
+  stance_confidence: number | null;
+  certainty_label: string | null;
+  certainty_confidence: number | null;
+  time_axis: string | null;
+  vol_regime_label: string | null;
+  vol_regime_confidence: number | null;
+  vol_regime_as_of: string | null;
+  vol_regime_status: string | null;
+  sample_size: number;
+  status: string;
+}
+
+export interface CrossBankSnapshotResponse {
+  banks: CrossBankCard[];
+  generated_at: string;
+  cache_ttl_seconds: number;
 }

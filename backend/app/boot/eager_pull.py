@@ -3,27 +3,30 @@
 Runs from the container entrypoint before uvicorn starts. For each
 eager artefact mapped in :data:`_ARTEFACT_FILES`, downloads the pinned
 revision via ``huggingface_hub.snapshot_download`` and copies the named
-files into ``MODELS_DIR`` only when the destination is absent. A dev
-box with a freshly trained checkpoint keeps it — the shim never
-clobbers a file already on disk. The shim never raises out: on
-missing token / network failure / 404 it logs and returns so the
-cold-start bootstrap in :mod:`app.main` still runs on first
+files into ``MODELS_DIR`` or ``DATA_DIR`` only when the destination is
+absent. A dev box with a freshly trained checkpoint keeps it — the
+shim never clobbers a file already on disk. The shim never raises
+out: on missing token / network failure / 404 it logs and returns so
+the cold-start bootstrap in :mod:`app.main` still runs on first
 ``/analyze``.
 
-Mapping policy: only artefacts whose files are read directly out of
-``MODELS_DIR`` appear in :data:`_ARTEFACT_FILES`. Each entry is either
-a flat filename (snapshot path == destination path relative to
-``MODELS_DIR``) or a ``(snapshot_name, dst_relpath)`` pair when the
-file must land in a sub-directory of ``MODELS_DIR``; the tuple form
-is what ``volume_har_canonical`` uses to drop its JSON spec under
-``models/volume_har/``. ``encoder_canonical``, ``retrieval``,
-``trajectory`` lazy-load via their own caches and are intentionally
-absent so they do not trip the copy step.
-``rates_heads_canonical`` historically pointed at the same
-``forecaster_best.pt`` file as ``forecaster_canonical``; with the LSTM
-canonical revision (``7ab0a873``) rates heads are absent, so we leave
-``rates_heads_canonical`` out of the copy map to avoid clobbering the
-forecaster path.
+Mapping policy: each entry is either a flat filename (snapshot path
+== destination path relative to ``MODELS_DIR``) or a
+``(snapshot_name, dst_relpath)`` pair when the file must land in a
+sub-directory, or a ``(snapshot_name, dst_relpath, dst_root)`` triple
+when the destination is rooted at ``DATA_DIR`` instead of
+``MODELS_DIR``. ``dst_root`` is ``"MODELS"`` (default, backwards
+compatible) or ``"DATA"``. ``volume_har_canonical`` uses the pair
+form to drop its JSON spec under ``models/volume_har/``;
+``trajectory_bundle`` and ``retrieval_bundle`` use the triple form so
+their files land under ``data/artifacts/...`` where
+:mod:`app.services.trajectory` and :mod:`app.services.analogs` read
+them. ``encoder_canonical`` lazy-loads via the HF cache and is
+intentionally absent. ``rates_heads_canonical`` historically pointed
+at the same ``forecaster_best.pt`` file as ``forecaster_canonical``;
+with the LSTM canonical revision (``7ab0a873``) rates heads are
+absent, so we leave ``rates_heads_canonical`` out of the copy map to
+avoid clobbering the forecaster path.
 """
 
 from __future__ import annotations
@@ -50,15 +53,26 @@ except Exception:  # pragma: no cover - import-time defensive
     snapshot_download = None
 
 # Artefact-name -> tuple of filenames to extract from the snapshot and
-# copy into MODELS_DIR. Anything not listed is left in the HF cache.
+# copy into ``MODELS_DIR`` or ``DATA_DIR``. Anything not listed is left
+# in the HF cache.
 #
-# Each entry is either a flat filename (snapshot path == destination
-# path relative to ``MODELS_DIR``) or a ``(snapshot_name, dst_relpath)``
-# pair when the destination needs to land in a sub-directory under
-# ``MODELS_DIR``. The ``volume_har_canonical`` artefact uses the pair
-# form so the JSON spec sits in ``models/volume_har/`` where
-# :mod:`app.services.volume_forecaster` reads it.
-_ARTEFACT_FILES: dict[str, tuple[str | tuple[str, str], ...]] = {
+# Each entry is one of:
+#   - a flat filename (snapshot path == destination path relative to
+#     ``MODELS_DIR``);
+#   - a ``(snapshot_name, dst_relpath)`` pair when the destination
+#     needs to land in a sub-directory under ``MODELS_DIR``
+#     (``volume_har_canonical`` uses this form);
+#   - a ``(snapshot_name, dst_relpath, dst_root)`` triple when the
+#     destination is rooted at ``DATA_DIR`` instead of ``MODELS_DIR``;
+#     ``dst_root`` is ``"MODELS"`` (default) or ``"DATA"``.
+#
+# ``trajectory_bundle`` and ``retrieval_bundle`` use the triple form
+# so their files land under ``data/artifacts/...`` where the trajectory
+# and analogs services read them.
+_TRAJECTORY_BUNDLE_RELDIR = "artifacts/trajectory/trajectory_transformer"
+_RETRIEVAL_BUNDLE_RELDIR = "artifacts/retrieval/finbert_fed_adjacent_xbank_dapt_retrieval"
+
+_ARTEFACT_FILES: dict[str, tuple[str | tuple[str, str] | tuple[str, str, str], ...]] = {
     "forecaster_canonical": (
         "forecaster_best.pt",
         "forecaster_best.pt.inference_contract.json",
@@ -67,25 +81,105 @@ _ARTEFACT_FILES: dict[str, tuple[str | tuple[str, str], ...]] = {
         "forecaster_calibration_fresh.pt",
     ),
     "volume_har_canonical": (("volume_har_artifact.json", "volume_har/volume_har_artifact.json"),),
+    "trajectory_bundle": (
+        ("embedding_index.parquet", f"{_TRAJECTORY_BUNDLE_RELDIR}/embedding_index.parquet", "DATA"),
+        ("embedding_index.npz", f"{_TRAJECTORY_BUNDLE_RELDIR}/embedding_index.npz", "DATA"),
+        ("model.pt", f"{_TRAJECTORY_BUNDLE_RELDIR}/model.pt", "DATA"),
+        ("manifest.json", f"{_TRAJECTORY_BUNDLE_RELDIR}/manifest.json", "DATA"),
+        ("conformal.json", f"{_TRAJECTORY_BUNDLE_RELDIR}/conformal.json", "DATA"),
+        ("metrics.json", f"{_TRAJECTORY_BUNDLE_RELDIR}/metrics.json", "DATA"),
+    ),
+    "retrieval_bundle": (
+        ("embeddings.npy", f"{_RETRIEVAL_BUNDLE_RELDIR}/embeddings.npy", "DATA"),
+        ("index.parquet", f"{_RETRIEVAL_BUNDLE_RELDIR}/index.parquet", "DATA"),
+        ("manifest.json", f"{_RETRIEVAL_BUNDLE_RELDIR}/manifest.json", "DATA"),
+        ("training_args.json", f"{_RETRIEVAL_BUNDLE_RELDIR}/training_args.json", "DATA"),
+        ("checkpoint/config.json", f"{_RETRIEVAL_BUNDLE_RELDIR}/checkpoint/config.json", "DATA"),
+        (
+            "checkpoint/config_sentence_transformers.json",
+            f"{_RETRIEVAL_BUNDLE_RELDIR}/checkpoint/config_sentence_transformers.json",
+            "DATA",
+        ),
+        (
+            "checkpoint/model.safetensors",
+            f"{_RETRIEVAL_BUNDLE_RELDIR}/checkpoint/model.safetensors",
+            "DATA",
+        ),
+        ("checkpoint/modules.json", f"{_RETRIEVAL_BUNDLE_RELDIR}/checkpoint/modules.json", "DATA"),
+        (
+            "checkpoint/sentence_bert_config.json",
+            f"{_RETRIEVAL_BUNDLE_RELDIR}/checkpoint/sentence_bert_config.json",
+            "DATA",
+        ),
+        (
+            "checkpoint/tokenizer.json",
+            f"{_RETRIEVAL_BUNDLE_RELDIR}/checkpoint/tokenizer.json",
+            "DATA",
+        ),
+        (
+            "checkpoint/tokenizer_config.json",
+            f"{_RETRIEVAL_BUNDLE_RELDIR}/checkpoint/tokenizer_config.json",
+            "DATA",
+        ),
+        (
+            "checkpoint/1_Pooling/config.json",
+            f"{_RETRIEVAL_BUNDLE_RELDIR}/checkpoint/1_Pooling/config.json",
+            "DATA",
+        ),
+        ("checkpoint/README.md", f"{_RETRIEVAL_BUNDLE_RELDIR}/checkpoint/README.md", "DATA"),
+    ),
 }
 
 
-def _split_entry(entry: str | tuple[str, str]) -> tuple[str, str]:
-    """Return ``(snapshot_relpath, dst_relpath)`` for one mapping entry.
+# Inventory of artefact-name -> ``.pt`` files the inference container
+# reads out of the HF cache. Distinct from :data:`_ARTEFACT_FILES`
+# above, which controls the boot-time copy into ``MODELS_DIR``: this
+# table is metadata for the settings page so it can surface every
+# registered checkpoint file regardless of whether the eager-pull shim
+# copied it locally or the service is consuming it straight from the HF
+# snapshot cache (the multi-axis classifier path lazy-fetches via
+# :func:`huggingface_hub.hf_hub_download` and never lands under
+# ``MODELS_DIR``). Entries here must list the snapshot-side filename
+# only; the cache resolver supplies the absolute path.
+ARTEFACT_PT_INVENTORY: dict[str, tuple[str, ...]] = {
+    "forecaster_canonical": (
+        "forecaster_best.pt",
+        "forecaster_best.pt.lora_adapter.pt",
+        "forecaster_calibration_fresh.pt",
+    ),
+    "multi_axis_text_classifier": ("text_multi_axis_best.pt",),
+}
 
-    Plain strings collapse to ``(entry, entry)`` so the legacy flat-file
-    mapping is byte-identical.
+
+# ``dst_root`` values recognised in the triple-form entry. Anything
+# else is logged and the entry is skipped.
+_DST_ROOT_MODELS = "MODELS"
+_DST_ROOT_DATA = "DATA"
+
+
+def _split_entry(
+    entry: str | tuple[str, str] | tuple[str, str, str],
+) -> tuple[str, str, str]:
+    """Return ``(snapshot_relpath, dst_relpath, dst_root)`` for one mapping entry.
+
+    Plain strings collapse to ``(entry, entry, "MODELS")`` so the legacy
+    flat-file mapping is byte-identical. Two-tuples expand to a default
+    ``"MODELS"`` root so the existing ``volume_har_canonical`` mapping
+    keeps working unchanged.
     """
 
     if isinstance(entry, tuple):
-        return entry[0], entry[1]
-    return entry, entry
+        if len(entry) == 3:
+            return entry[0], entry[1], entry[2]
+        return entry[0], entry[1], _DST_ROOT_MODELS
+    return entry, entry, _DST_ROOT_MODELS
 
 
-def _hydrate_one(  # noqa: PLR0913 - six injected params is the natural shape here
+def _hydrate_one(  # noqa: PLR0913 - seven injected params is the natural shape here
     artefact: Any,
-    files: tuple[str | tuple[str, str], ...],
+    files: tuple[str | tuple[str, str] | tuple[str, str, str], ...],
     models_dir: Path,
+    data_dir: Path,
     token: str,
     parse_hf_uri: Callable[[str], Any],
     download_snapshot: Callable[..., str],
@@ -100,8 +194,8 @@ def _hydrate_one(  # noqa: PLR0913 - six injected params is the natural shape he
         )
         return
 
-    pairs = [_split_entry(entry) for entry in files]
-    snapshot_names = [src_name for src_name, _ in pairs]
+    triples = [_split_entry(entry) for entry in files]
+    snapshot_names = [src_name for src_name, _, _ in triples]
 
     revision = artefact.revision or None
     try:
@@ -122,9 +216,19 @@ def _hydrate_one(  # noqa: PLR0913 - six injected params is the natural shape he
         )
         return
 
-    for src_name, dst_relpath in pairs:
+    roots = {_DST_ROOT_MODELS: models_dir, _DST_ROOT_DATA: data_dir}
+    for src_name, dst_relpath, dst_root in triples:
+        root = roots.get(dst_root)
+        if root is None:
+            logger.warning(
+                "eager-pull: unknown dst_root %r for %s in %s; skip",
+                dst_root,
+                dst_relpath,
+                artefact.hf_uri,
+            )
+            continue
         src = Path(snapshot_dir) / src_name
-        dst = models_dir / dst_relpath
+        dst = root / dst_relpath
         if not src.exists():
             logger.warning(
                 "eager-pull: %r missing from snapshot of %s; skip",
@@ -155,6 +259,7 @@ def hydrate() -> None:
     """Pull every mapped eager artefact, copy each named file if absent."""
 
     try:
+        from app.config import DATA_DIR
         from app.models.config import MODELS_DIR
         from app.models.registry import eager_artefacts, parse_hf_uri
     except Exception:
@@ -177,13 +282,14 @@ def hydrate() -> None:
         return
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     for artefact in eager_artefacts():
         files = _ARTEFACT_FILES.get(artefact.name)
         if files is None:
-            logger.debug("eager-pull: %r has no MODELS_DIR copy mapping; skip", artefact.name)
+            logger.debug("eager-pull: %r not in copy map; skip", artefact.name)
             continue
-        _hydrate_one(artefact, files, MODELS_DIR, token, parse_hf_uri, download_snapshot)
+        _hydrate_one(artefact, files, MODELS_DIR, DATA_DIR, token, parse_hf_uri, download_snapshot)
 
 
 def main() -> int:

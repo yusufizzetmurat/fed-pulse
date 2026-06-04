@@ -8,6 +8,7 @@ import {
   FlaskConical,
   Gavel,
   Github,
+  Globe,
   History as HistoryIcon,
   LineChart,
   Menu,
@@ -23,6 +24,7 @@ import { cn } from "@/lib/utils";
 const NAV_ITEMS: Array<{ href: string; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { href: "/", label: "Workspace", icon: Activity },
   { href: "/decisions", label: "Decisions", icon: Gavel },
+  { href: "/cross-bank", label: "Cross-bank", icon: Globe },
   { href: "/history", label: "History", icon: HistoryIcon },
   { href: "/calendar", label: "Calendar", icon: Calendar },
   { href: "/performance", label: "Performance", icon: LineChart },
