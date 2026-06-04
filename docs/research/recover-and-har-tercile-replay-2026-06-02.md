@@ -2,9 +2,9 @@
 
 ## Substrate
 
-All numbers in this note use the fusion training package pulled fresh from
-Hugging Face: `data/processed/tp_intraday_fomc_text_volatility/`. Relevant
-contents:
+All numbers in this note draw from the fusion training package pulled fresh
+from Hugging Face: `data/processed/tp_intraday_fomc_text_volatility/`.
+Relevant contents:
 
 - `fusion/daily_fusion.parquet`: 5,385 daily rows, 46 columns, 2005-01-03 to
   2026-05-29. Carries HAR lags (`rv_daily`, `rv_weekly`, `rv_monthly`),
@@ -19,13 +19,13 @@ contents:
 - `embeddings/{finbert_fed_adjacent,bge_large_en_v15,e5_large_v2,gte_large}.parquet`:
   768-d per-document embeddings.
 
-Two gaps in the fusion TP that affected this round:
+Two gaps in the fusion TP affected this round:
 
-1. No `_market_cache/` with per-symbol VIX/TNX/IRX daily parquets. The dense
-   daily forecast (B) and the late-fusion text leg (D) both need that
-   cache. Both were resolved by pointing at the canonical
-   `tp_v3_full_rebuild_2026_05_30/_market_cache`, which is the same cache
-   the production drivers (`scripts/late_fusion_gated_neutral.py`,
+1. No `_market_cache/` with per-symbol VIX/TNX/IRX daily parquets. The
+   dense daily forecast (B) and the late-fusion text leg (D) both need
+   that cache. Both resolved by pointing at the canonical
+   `tp_v3_full_rebuild_2026_05_30/_market_cache`, the same cache the
+   production drivers (`scripts/late_fusion_gated_neutral.py`,
    `scripts/dense_daily_forecast.py`) use. Protocol unchanged.
 2. No `events.parquet` and no cross-bank corpus. That blocked candidates E
    (NLP baseline batch on stance labels) and F (cross-bank transfer)
@@ -45,8 +45,7 @@ Five candidates produced real numbers in this session. Two were marked
 | C   | QLIKE bake-off C-vs-A 96.7% CI includes 0 at all 3 horizons  | identical to 4 dp at h1/h5/h22                         | yes    |
 | D   | Late-fusion gated text leg null vs market-only at h1/h5/h22  | fused 0.629 / 0.634 / 0.496 vs market 0.631 / 0.637 / 0.497, gate active ~0.01-0.04, 90% block CIs match | yes |
 
-All four numbers reproduce the wiki text to the printed precision.
-Specifically:
+All four numbers reproduce the wiki text to the printed precision:
 
 - A used `scripts/reproduce_har_tercile_fusion.py` (newly added in this
   round) reading directly off `fusion/daily_fusion.parquet`. Single OLS
@@ -75,9 +74,9 @@ Specifically:
 ## HAR-tercile replay: apples-to-apples results
 
 All four arms ran on the same fusion TP, same valid mask (n_valid=5,363;
-n_pooled=4,465), same expanding walk-forward (5 folds, embargo=23), same
-train-slice q33/q67 tercile labels as the recovered baseline. The
-comparator is the recovered baseline itself (0.6873 / 0.6850 / 0.6542
+n_pooled=4,465), same expanding walk-forward (5 folds, embargo=23), and
+the same train-slice q33/q67 tercile labels as the recovered baseline.
+The comparator is the recovered baseline itself (0.6873 / 0.6850 / 0.6542
 pooled at h1 / h5 / h22, fold std 0.042 / 0.034 / 0.046). The acceptance
 bar is "beats by at least 1 sigma of the baseline fold std at any
 horizon".
@@ -94,11 +93,11 @@ horizon".
 Per-arm summary:
 
 - `stacking_fusion`: HAR + DL meta-blend with inner-val grid search on
-  the blend weight. h1 essentially tied (-0.004 pooled, -0.01 sigma on
-  fold mean), h5 and h22 worse by roughly 1.1 to 1.4 sigma. Per-fold
-  blend weights were bimodal (h22 weights [0.0, 1.0, 0.0, 1.0, 0.95]),
-  which says the inner-val tail is reacting to local regime shifts that
-  do not generalise to the test slice. DL leg alone (MLP over the full
+  the blend weight. h1 is essentially tied (-0.004 pooled, -0.01 sigma on
+  fold mean); h5 and h22 are worse by roughly 1.1 to 1.4 sigma. Per-fold
+  blend weights came back bimodal (h22 weights [0.0, 1.0, 0.0, 1.0, 0.95]),
+  which suggests the inner-val tail reacts to local regime shifts that do
+  not generalise to the test slice. The DL leg alone (MLP over the full
   fusion feature stack) trails HAR pooled-F1 at every horizon.
 - `specialist_fusion`: 2-layer LSTM (hidden=64, dropout=0.2, seq_len=20)
   with class-balanced focal loss (beta=0.999, gamma=2.0), 5-seed logit
@@ -106,7 +105,7 @@ Per-arm summary:
 - `stress_route_fusion`: VIX-gated route to DL when prior-day VIX > 22.
   About 1,199 of 4,465 pooled test rows trip the gate; on those rows
   the DL prediction is materially weaker than HAR, so the gate degrades
-  the macro-F1 at every horizon. This is the same sign as the prior
+  the macro-F1 at every horizon. The sign matches the earlier
   `canonical_vix` stress_route arm, now confirmed on the fusion TP for
   all three horizons.
 - `per_asset_har` NDX / DJI: not a per-asset HAR failure. The fusion TP
@@ -128,9 +127,9 @@ protocol and the same valid mask. None beat the baseline outside the
 fold std band at any horizon. Three of them lose by more than 1 sigma at
 h5 or h22.
 
-The wiki claims that were audited in this round (A, B, C, D) all
-reproduced to the printed precision on the fusion TP, so the
-publishable text does not need to be revised on those findings.
+The wiki claims audited in this round (A, B, C, D) all reproduced to
+the printed precision on the fusion TP, so the publishable text does not
+need to be revised on those findings.
 
 Two recovery candidates remain open:
 
@@ -148,8 +147,8 @@ Two recovery candidates remain open:
 ## Next steps
 
 1. Re-launch the G transformer + `tier2_market_rich` sweep on the
-   canonical TP. The command is already validated, just needs a longer
-   wall-time budget than this session allowed.
+   canonical TP. The command is already validated; it just needs a
+   longer wall-time budget than this session allowed.
 2. Run E (`nlp_baseline_batch`) against `tp_v3_full_rebuild_2026_05_30`
    as a clean follow-up. The fusion TP is not the right substrate for
    that arm.

@@ -54,7 +54,7 @@ data/
 │   └── fed_pulse.db              SQLite history database (AnalysisRun + AnalysisResult).
 │
 └── schema/
-    └── labels.yaml               Multi-axis label schema (stance / factor / certainty / topic).
+    └── labels.yaml               Multi-axis label schema (stance / certainty / forward-looking).
 ```
 
 ## How to refresh

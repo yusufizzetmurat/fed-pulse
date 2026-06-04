@@ -6,21 +6,21 @@ committed prior to running so the test cannot be retro-fit to the outcome.
 
 ## Background and motivation
 
-Across this project, FOMC text is a confirmed **null for directional/level forecasting**
+FOMC text is a confirmed **null for directional/level forecasting** across this project
 (clean-room late-fusion rebuild: event n=167, daily n=1999, LoRA p=0.92, magnitude null;
 drift study null in equities; intraday pivot full negative). Directional bets on a public,
-instantly-priced statement are dead on arrival (efficient-market objection).
+instantly-priced statement run into the efficient-market objection.
 
 Two facts survive that objection and motivate this test:
-1. Our **one** positive deep-learning result is on **second moments**: the QLIKE-DLq
+1. The single positive deep-learning result is on **second moments**: the QLIKE-DLq
    ensemble beats HAR on realized volatility (RV). From `backend/models/rv_qlike/production_eval.json`:
    h1 QLIKE 0.197 (ens) vs 0.223 (HAR), gain CI90 [0.019, 0.033]; n=5385 days, 5 seeds × 5 folds.
-2. We now serve a **certainty axis** (textual hedging/uncertainty) on the multi-axis classifier.
-   "The Fed sounded uncertain → wider realized vol" is a *volatility* claim, not a return claim —
-   the kind a volatility-risk premium does not arbitrage away.
+2. The served multi-axis classifier exposes a **certainty axis** (textual hedging/uncertainty).
+   "Fed sounded uncertain → wider realized vol" is a *volatility* claim, not a return claim,
+   and a volatility-risk premium does not arbitrage it away.
 
 This corner tests **only** whether the certainty axis adds *incremental* RV-forecast skill on
-top of the model that already wins. It does **not** re-test the dead equity-direction cell.
+top of the model that already wins. It does **not** re-test the null equity-direction cell.
 
 ## Hypotheses
 
@@ -67,12 +67,12 @@ top of the model that already wins. It does **not** re-test the dead equity-dire
 ## Primary metric and comparison
 
 - **Metric:** out-of-sample QLIKE (lower is better).
-- **Primary comparison:** `ΔQLIKE_text = QLIKE(ens) − QLIKE(ens+text)` at each horizon —
-  does text improve the *already-winning* ensemble. (Secondary: each vs HAR.)
+- **Primary comparison:** `ΔQLIKE_text = QLIKE(ens) − QLIKE(ens+text)` at each horizon, asking
+  whether text improves the *already-winning* ensemble. (Secondary: each vs HAR.)
 - **Evaluation cells (pre-registered):**
   - (a) **full sample** — all OOS days.
   - (b) **post-FOMC window** — OOS days in `[d_i+1, d_i+5]` after each statement, where text
-    should bite. (The feature is near-constant elsewhere, diluting a full-sample test.)
+    should bite. The feature is near-constant elsewhere, which dilutes a full-sample test.
 
 ## Significance and multiplicity (fixed)
 
@@ -86,13 +86,13 @@ top of the model that already wins. It does **not** re-test the dead equity-dire
 ## Decision rule (fixed)
 
 - **Hit → Corner A positive →** proceed to Corner B (forward-guidance/time axis → 2Y/5Y curve).
-- **No hit → null →** report the null honestly and **stop**. Do **not** iterate on the feature
+- **No hit → null →** report the null and **stop**. Do not iterate on the feature
   definition, horizons, window, or signal transform to manufacture significance.
 
-## Honest ceiling (acknowledged in advance)
+## Ceiling (acknowledged in advance)
 
-Even a clean hit means "a marginally better FOMC-window volatility forecast," useful for
-risk/options sizing and as a thesis result — **not** a tradeable equity edge. FOMC is ~8
+Even a clean hit means a marginally better FOMC-window volatility forecast, useful for
+risk/options sizing and as a research result, not a tradeable equity edge. FOMC is ~8
 scheduled meetings/year; the signal is low-frequency by construction.
 
 ## Artifacts
@@ -108,7 +108,7 @@ scheduled meetings/year; the signal is low-frequency by construction.
 
 **Harness validated:** the baseline ensemble reproduces the known beat-HAR result —
 QLIKE(ens) < QLIKE(HAR) at every horizon (h1 0.197 vs 0.223; h5 0.198 vs 0.219;
-h22 0.327 vs 0.360). So the pipeline is correct; the null below is about the *text* increment.
+h22 0.327 vs 0.360). The pipeline is correct; the null below is about the *text* increment.
 
 **Incremental text effect ΔQLIKE = QLIKE(ens) − QLIKE(ens+text):**
 
@@ -121,17 +121,17 @@ h22 0.327 vs 0.360). So the pipeline is correct; the null below is about the *te
 | h22 / full      | 0.3597 | 0.3268 | 0.3359 | −0.0092 | [−0.0308, 0.0071] | no |
 | h22 / post-FOMC | 0.3102 | 0.2938 | 0.2928 | +0.0011 | [−0.0222, 0.0214] | no |
 
-**0 / 6 cells hit.** Every CI straddles zero; point estimates are tiny and mostly negative
-(text slightly *hurts* at h5/h22 full). **Verdict: NULL.**
+0 / 6 cells hit. Every CI straddles zero; point estimates are small and mostly negative
+(text slightly hurts at h5/h22 full). Verdict: null.
 
 **Why (the pre-flagged confound won):** the certainty signal varies (std 0.51) and spikes
-in crises — but textual uncertainty is collinear with the high-vol regime HAR already reads
+in crises, but textual uncertainty is collinear with the high-vol regime HAR already reads
 through its own lags + the realized measures (rs±, bv, rq, parkinson). Once the model knows
 realized vol is elevated, "the statement sounded uncertain" carries no *incremental*
-information. This is the same efficient-information story as the directional nulls, now
-confirmed for the second moment too.
+information. The same efficient-information story behind the directional nulls now
+extends to the second moment.
 
-**Decision (per the pre-registered rule):** null → **stop**. Do not proceed to Corner B by
+**Decision (per the pre-registered rule):** null → stop. Corner B is not run by
 default (the rule was "Corner B only if A shows anything"). Corner B (forward-guidance/time
-axis → 2Y/5Y curve) remains the only economically-motivated avenue left, but it should only
-be run as a fresh, separately-pre-registered test if we choose to spend on the last lottery ticket.
+axis → 2Y/5Y curve) remains the only economically-motivated avenue left, and would require
+a fresh, separately-pre-registered test.

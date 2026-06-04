@@ -1,6 +1,6 @@
 # Deployment guide
 
-This page is the operator runbook for the fed-pulse droplet. It covers the one-time setup, the deploy contract, and the rollback path. The deploy workflow under `.github/workflows/deploy.yml` is the automated half; this guide is everything outside that workflow.
+Operator runbook for the fed-pulse droplet. Covers one-time setup, the deploy contract, and the rollback path. The automated half is `.github/workflows/deploy.yml`; everything outside that workflow is documented here. The live deployment runs at https://fedpulse.yusufizzetmurat.com/.
 
 ## Topology
 
@@ -46,7 +46,7 @@ mkdir -p /etc/fed-pulse /etc/fed-pulse/data
 # The runtime container runs as a non-root `fedpulse` user (UID 10001
 # per Dockerfile.prod). Without an explicit chown the bind-mounted
 # /etc/fed-pulse/data sits at root:root on the host and the container
-# cannot write to /data/db on first boot — uvicorn aborts with
+# cannot write to /data/db on first boot; uvicorn aborts with
 # `PermissionError: [Errno 13]` and the healthcheck never goes green.
 chown -R 10001:0 /etc/fed-pulse/data
 chmod -R u+rwX,g+rwX /etc/fed-pulse/data
@@ -88,12 +88,12 @@ Pushing to `main` triggers `.github/workflows/deploy.yml`. The workflow does:
 1. Polls the GitHub Actions API for the `ci.yml` run targeting the same commit sha and refuses to proceed unless it concluded `success`. Times out at 10 minutes.
 2. Writes `DROPLET_SSH_KEY` to a temp file with `chmod 600`.
 3. Sshes to the droplet as `root` (override via the `ssh_user` workflow_dispatch input).
-4. Records the current droplet HEAD as the prior-known-good sha (BEFORE fetching `main` from origin), fetches `main`, hard-resets to it, and runs `docker compose -f compose.prod.yml up -d --build`.
+4. Records the current droplet HEAD as the prior-known-good sha (before fetching `main` from origin), fetches `main`, hard-resets to it, and runs `docker compose -f compose.prod.yml up -d --build`.
 5. Polls `https://fedpulse.yusufizzetmurat.com/health` until success or a 60-second timeout.
 6. On health-probe success: writes the now-current sha to `/etc/fed-pulse/last-deploy.sha` (the next rollback target).
 7. On health-probe failure: hard-resets to the recorded prior sha and rebuilds, then re-runs the smoke probe. Exit 1 on the original failure, exit 2 if the rollback also failed (the droplet is then in an inconsistent state and needs manual recovery).
 
-`dev` continues to be the integration branch; the deploy workflow does not fire on `dev` pushes. Releases happen by running the `promote.yml` workflow_dispatch — it fast-forwards `main` to a specified `dev` sha (default: `dev` HEAD), which in turn triggers `deploy.yml`. The promote workflow uses `git push --force-with-lease` so a stale view of `main` (e.g. a hotfix that landed in parallel) refuses the push instead of silently rewinding.
+`dev` continues to be the integration branch; the deploy workflow does not fire on `dev` pushes. Releases happen by running the `promote.yml` workflow_dispatch; it fast-forwards `main` to a specified `dev` sha (default: `dev` HEAD), which in turn triggers `deploy.yml`. The promote workflow uses `git push --force-with-lease` so a stale view of `main` (e.g. a hotfix that landed in parallel) refuses the push instead of silently rewinding.
 
 ## Pushing artefacts to HF Hub
 
@@ -123,11 +123,13 @@ After a deploy lands, the operator should:
 
 - `curl -sf https://fedpulse.yusufizzetmurat.com/health` returns 200
 - `curl -sf https://fedpulse.yusufizzetmurat.com/api/symbols` returns the symbol list
-- The browser smoke: open `https://fedpulse.yusufizzetmurat.com/`, post a sample FOMC sentence, confirm `/analyze` renders cards
+- Browser smoke: open `https://fedpulse.yusufizzetmurat.com/`, post a sample FOMC sentence, confirm `/analyze` renders the stance / certainty / forward-looking cards
+- Forecast smoke: request a `^GSPC`, `^NDX`, and `^DJI` forecast (the multi-asset QLIKE-DLq ensemble serves all three per PR #660) and confirm the HAR-tercile baseline renders alongside
 
 ## Known constraints
 
 - First request after a cold boot of a non-eager encoder pulls a ~600 MB parquet from HF Hub; allow 15-30 seconds. Subsequent requests hit the local cache.
 - Eager-pull at boot dominates the cold-start time. Budget under 90 seconds on the 8 GB droplet for the canonical hot path. The `hf-cache` named volume survives image rebuilds, so a deploy that does not bump artefact pins typically skips the eager pull entirely.
 - Caddy's Let's Encrypt cache lives in the `caddy_data` named volume; do not `docker compose down -v` in production or the next boot will retry the ACME challenge from scratch.
-- Container processes drop to UID 10001 (`fedpulse`) via `s6-setuidgid` before exec'ing uvicorn / node, so files written into `/etc/fed-pulse/data` land under that UID on the host. Do not `chown root` over them — the next container start will refuse to write.
+- Container processes drop to UID 10001 (`fedpulse`) via `s6-setuidgid` before exec'ing uvicorn / node, so files written into `/etc/fed-pulse/data` land under that UID on the host. Do not `chown root` over them; the next container start will refuse to write.
+- Only the `fast` inference mode is served at runtime (the `quick_train` and `real_train` modes plus the `/train-jobs` queue were retired in PR #265). Replay-mode requests resolve to pinned per-fold checkpoints; eight forecaster architectures are registered in `app.models.factory`.

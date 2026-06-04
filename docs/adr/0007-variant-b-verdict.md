@@ -22,12 +22,12 @@ three architectures for fusing text into that window:
   pooled with a scaled-dot-product attention head whose temperature is
   itself learnable, then projected down to the LSTM input width.
 - **Variant C** — same architecture as Variant B but with a different
-  encoder (e.g., the FOMC-RoBERTa checkpoint) to disentangle "the pooler
-  does not converge" from "FinBERT is the wrong encoder."
+  encoder (for example, the FOMC-RoBERTa checkpoint) to disentangle "the
+  pooler does not converge" from "FinBERT is the wrong encoder."
 
-Variant A converges and ships in the v1 reporting pack. The question this
-ADR closes is whether Variant B is worth carrying through to the same
-reporting pack alongside it.
+Variant A converges and ships in the v1 reporting pack. The open question
+is whether Variant B is worth carrying through to the same reporting pack
+alongside it.
 
 ## Decision
 
@@ -39,9 +39,9 @@ The outcome was reproducible across folds and seeds: λ_chunk stays at its
 zero-init value (drift on the order of 1e-4 over the entire training
 schedule), the attention head's softmax collapses to near-uniform weights,
 and combined RMSE / directional accuracy do not improve over the
-text-free baseline. The diagnosis — data starvation at ~2k labelled
-tuples — was confirmed fold-independent in Phase-7 (Plan-13 §1.0). With
-a 5-7k labelled corpus the calculus changes; at the current data scale
+text-free baseline. The diagnosis (data starvation at ~2k labelled
+tuples) was confirmed fold-independent in Phase-7 (Plan-13 §1.0). With
+a 5-7k labelled corpus the calculus changes; at the current data scale,
 adding Variant B to the reporting pack would publish a no-op result that
 is more confusing than informative.
 
@@ -49,7 +49,7 @@ is more confusing than informative.
 
 - The reporting pack carries Variant A only as the text-fusion architecture.
 - The chunk-embedding pipeline (`chunk_embedding_store.py`,
-  `chunk_embedding_retrieval.py`) stays in the repository — Variant B
+  `chunk_embedding_retrieval.py`) stays in the repository. Variant B
   remains runnable on demand and Variant C reuses the same retrieval seam.
 - Phase-6 corpus expansion (pseudo-labelling, gtfintechlab 3k addition)
   is the prerequisite for revisiting Variant B. When the labelled corpus

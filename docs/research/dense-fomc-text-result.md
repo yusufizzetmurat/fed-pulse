@@ -55,10 +55,10 @@ tp_v3_full_rebuild_2026_05_30 (full text block vs HAR/AR baseline):
 | rv_10 | 0.581 | −0.083 | −0.663 | [−1.750, −0.060] |
 | av    | 0.336 | 0.131 | −0.205 | [−0.393, −0.074] |
 
-**Verdict:** text adds no marginal value over the dense HAR/AR backbone — every
-arm's Δ is ≤ 0 or CI-straddles 0 except where it is significantly negative
-(full block drags every target, CIs clearing 0 below; av drags in all three
-arms), and text-alone cannot beat a train-mean baseline. An honest null inside a
-model that demonstrably works.
+**Verdict:** text adds no marginal value over the dense HAR/AR backbone. Every
+arm's Δ is ≤ 0 or CI-straddles 0 except where it is significantly negative: the
+full block drags every target with CIs clearing 0 below, and `av` drags in all
+three arms. Text-alone cannot beat a train-mean baseline. A null result inside
+a backbone that demonstrably works.
 
 See also [text-alone-forecast-result.md](text-alone-forecast-result.md).

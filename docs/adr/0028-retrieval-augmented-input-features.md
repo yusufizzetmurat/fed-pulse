@@ -2,7 +2,7 @@
 
 The on-disk retrieval index built under #294 already serves the historical-analog panel (#295): given an event's text, it returns the top-K past FOMC statements ranked by cosine similarity, each carrying its stance and a coarse post-event vol-regime bucket. The bundle is built once per training package, queried at inference time with a strict-backward `as_of_date < event_date` filter, and exposed via `/analyze/analogs`.
 
-#306 takes the same retrieval pipeline and wires it into the forecaster's training-input pipeline. For each event during loader assembly, the loader queries the index for the top-K analogs and appends a small derived feature block onto every bar of the supervised sequence. The block summarises the retrieval result — similarity moments, count above the panel's floor, stance-agreement against the current event — and rides the same per-fold `RobustScaler` slot the other rich-feature families use.
+#306 wires the same retrieval pipeline into the forecaster's training-input pipeline. For each event during loader assembly, the loader queries the index for the top-K analogs and appends a small derived feature block onto every bar of the supervised sequence. The block summarises the retrieval result (similarity moments, count above the panel's floor, stance-agreement against the current event) and rides the same per-fold `RobustScaler` slot the other rich-feature families use.
 
 The motivation is reuse. The retrieval system has been an engineering investment of its own (encoder fine-tune, on-disk index, panel-side rendering); reusing the same `find_analogs` entry point as an input feature family on the regime / rates heads earns the system double duty without forking a parallel pipeline. The methodology angle is the symmetry: retrieval used as a panel surface and as an input feature family on the heads, both reading off the same cached cosine-similarity computation under the same `as_of_date` walk-forward filter.
 
@@ -42,7 +42,7 @@ When the retrieval bundle is absent on disk (ops deployments that don't ship it 
 
 The #334 substitution finding (text-feature substitution / interaction sweep) showed that stacking multiple small text-derived feature families on top of the rich-feature input can give negative interaction lift: every new text-derived family fights the others for variance because the underlying signal is shared. This block is text-derived (the retrieval encoder is a fine-tuned sentence transformer over FOMC + cross-bank text), so the headline lift may be negative or near-zero rather than positive.
 
-The code path ships anyway. The architectural reuse (retrieval used as panel surface AND as input feature family, off the same encoder bundle and the same `as_of_date` filter) is defensible methodology on its own. The block is small (5 scalars + 1 flag), so it doesn't blow up the input dimension and the comparison sweep against `--use-retrieval-analogs` is cheap. The canonical sweep reports the honest delta and §16 frames the result accordingly — positive, negative, or null, the methodology claim stands.
+The code path ships anyway. The architectural reuse (retrieval used as panel surface and as input feature family, off the same encoder bundle and the same `as_of_date` filter) is defensible methodology on its own. The block is small (5 scalars + 1 flag), so it doesn't blow up the input dimension and the comparison sweep against `--use-retrieval-analogs` is cheap. The canonical sweep reports the delta and §16 frames the result accordingly — positive, negative, or null, the methodology claim stands.
 
 ## Why not the alternatives
 
@@ -62,7 +62,7 @@ Add the block to `_DERIVED_TEXT_SLICES` so the #309 derived-text-features toggle
 
 `FeatureVector.analog_features` is `list[float] | None`. The dataclass field-name machinery in `_coerce_model_config` already round-trips arbitrary new fields off the dict payload without bespoke wiring (the surface added under #305 for the `_fomc_attributable` fields).
 
-Compute: ~50-100 ms per event on the retrieval call (CPU-bound cosine similarity on a ~250-row index, K=3). Full canonical training package (~250 events) adds well under +30 s end-to-end. The CI smoke stays under 60 s on CPU. No HF Hub interaction — the runtime singleton already loads the retrieval bundle locally under #294.
+Compute: ~50-100 ms per event on the retrieval call (CPU-bound cosine similarity on a ~250-row index, K=3). A full canonical training package (~250 events) adds well under +30 s end-to-end. The CI smoke stays under 60 s on CPU. No HF Hub interaction — the runtime singleton already loads the retrieval bundle locally under #294.
 
 The headline cell against `--use-retrieval-analogs` is a Runpod follow-up; §16 populates with both modes side-by-side as the numbers arrive.
 
