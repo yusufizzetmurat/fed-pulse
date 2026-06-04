@@ -953,9 +953,7 @@ def _build_credibility_block(
         and (Path(fred_cache_dir) / "sep_projections.parquet").exists()
         and (Path(fred_cache_dir) / "DGS5.json").exists()
     )
-    market_implied_gap: float | None = (
-        float(vector.market_implied_gap) if _sep_ois_cached else None
-    )
+    market_implied_gap: float | None = float(vector.market_implied_gap) if _sep_ois_cached else None
 
     return {
         "drift_score": float(vector.drift_score),
