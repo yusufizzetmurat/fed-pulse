@@ -235,7 +235,7 @@ def test_analyze_emits_structured_kwarg_log_line(monkeypatch, caplog):
     monkeypatch.setattr(
         forecaster_service,
         "_predict_next_point",
-        lambda _model, _sequence: (0.0, 0.0),
+        lambda _model, _sequence, **_: (0.0, 0.0),
     )
     # Skip the conformal / get_model_artifact_metadata machinery by
     # exercising the function with a single-step horizon.
@@ -299,7 +299,7 @@ def test_analyze_log_line_lists_kwargs_for_text_path(monkeypatch, caplog):
     monkeypatch.setattr(
         forecaster_service,
         "_predict_next_point",
-        lambda _model, _sequence: (0.0, 0.0),
+        lambda _model, _sequence, **_: (0.0, 0.0),
     )
     monkeypatch.setattr(
         forecaster_service,
