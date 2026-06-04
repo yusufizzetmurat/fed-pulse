@@ -194,12 +194,15 @@ def _fetch_rv_history(event_date: str, symbol: str) -> list[float]:
 
 def _predict_for_meeting(
     rv_history: list[float],
+    *,
+    symbol: str = "^GSPC",
 ) -> tuple[float | None, float | None, float | None, float | None, float | None]:
     """Run ``predict_rv`` on ``rv_history`` and read off the h=1 row.
 
     Returns ``(point, lo80, hi80, lo90, hi90)`` in RV (variance) space.
     Any failure inside the predict call collapses to a no-op tuple so
-    the caller can surface the row as pending.
+    the caller can surface the row as pending. ``symbol`` selects which
+    per-asset artifact serves the prediction.
     """
 
     if not rv_history or len(rv_history) < _MIN_RV_HISTORY:
@@ -207,7 +210,7 @@ def _predict_for_meeting(
     try:
         from app.services.rv_forecaster import predict_rv
 
-        out = predict_rv(rv_history)
+        out = predict_rv(rv_history, symbol=symbol)
     except Exception:
         return None, None, None, None, None
     horizons = out.get("horizons") if isinstance(out, dict) else None
@@ -311,7 +314,7 @@ def get_rv_backtest(
     # handler inside ``_predict_for_meeting`` still absorbs transient
     # yfinance flakes without leaking them.
     try:
-        _RvPredictor.get()
+        _RvPredictor.get(symbol)
     except RvForecasterUnavailable:
         raise
 
@@ -334,7 +337,7 @@ def get_rv_backtest(
             out_rows.append(_pending_row(event_date))
             continue
 
-        point, lo80, hi80, lo90, hi90 = _predict_for_meeting(rv_history)
+        point, lo80, hi80, lo90, hi90 = _predict_for_meeting(rv_history, symbol=symbol)
         # _predict_for_meeting collapses any failure mode (predict raised,
         # horizons missing, partial band coverage) to an all-None tuple, so
         # narrowing on any single component is sufficient — but explicitly

@@ -379,7 +379,7 @@ def build_har_tercile_backtest(
     try:
         from app.services.rv_forecaster import _RvPredictor
 
-        _RvPredictor.get()
+        _RvPredictor.get(symbol)
     except RvForecasterUnavailable:
         raise
 

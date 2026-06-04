@@ -940,12 +940,25 @@ def _build_credibility_block(
         int(vector.months_since_reversal) if len(stance_by_date) >= 2 else None
     )
 
+    # SEP committee long-run median minus the market-implied long-run
+    # proxy (DGS5 5-year Treasury yield), already scaled to [-1, 1] by
+    # ``app.features.credibility.market_implied_gap`` (raw pp / 4.0,
+    # clipped). ``load_credibility_for_run`` already computes the
+    # scaled value when ``fred_cache_dir`` is set; we just need to
+    # distinguish "no data on disk" (None on the wire) from
+    # "computed and happens to be zero" -- the loader collapses both
+    # to 0.0. The cache-file existence guard restores that distinction.
+    _sep_ois_cached = (
+        fred_cache_dir is not None
+        and (Path(fred_cache_dir) / "sep_projections.parquet").exists()
+        and (Path(fred_cache_dir) / "DGS5.json").exists()
+    )
+    market_implied_gap: float | None = float(vector.market_implied_gap) if _sep_ois_cached else None
+
     return {
         "drift_score": float(vector.drift_score),
         "realized_vs_stated_gap": realized_gap,
-        # SEP / OIS scrape is still out — keep this axis as ``None`` so
-        # the dashboard renders N/A instead of an unearned zero.
-        "market_implied_gap": None,
+        "market_implied_gap": market_implied_gap,
         "months_since_reversal": months_since,
         "drift_trend": drift_trend,
     }
@@ -2538,7 +2551,7 @@ async def forecast_realized_vol(
         intraday_measures = None
 
     try:
-        out = await run_in_threadpool(predict_rv, rv_hist, intraday_measures)
+        out = await run_in_threadpool(predict_rv, rv_hist, intraday_measures, symbol=symbol)
     except RvForecasterUnavailable as exc:
         raise HTTPException(
             status_code=503, detail={"error": "model_unavailable", "message": str(exc)}
@@ -2556,7 +2569,9 @@ async def forecast_realized_vol(
     # Walk-forward past 80% bands. Failure here must not break the
     # primary forecast surface, so degrade to None.
     try:
-        bands_rows = await run_in_threadpool(predict_rv_historical_bands, rv_hist, hist_dates)
+        bands_rows = await run_in_threadpool(
+            predict_rv_historical_bands, rv_hist, hist_dates, symbol=symbol
+        )
         historical_bands = [RealizedVolHistoricalBand(**row) for row in bands_rows] or None
     except Exception:  # pragma: no cover -- defensive
         logger.warning("rv_historical_bands_failed", exc_info=True)
@@ -2723,7 +2738,10 @@ def forecast_har_tercile_backtest(
 def forecast_rv_backtest(
     symbol: str = Query(
         "^GSPC",
-        description="Market ticker; only ^GSPC is supported (RV artifact is SPX-only).",
+        description=(
+            "Market ticker; supported tickers are listed in "
+            "``app.services.rv_forecaster.SYMBOL_ARTIFACTS`` (^GSPC, ^NDX, ^DJI)."
+        ),
         min_length=1,
         max_length=32,
         pattern=r"^[A-Za-z0-9._=^/-]+$",
@@ -2739,23 +2757,31 @@ def forecast_rv_backtest(
     """Empirical band coverage of the last N QLIKE-RV predictions.
 
     Walks the persisted ``analysis_runs`` table for ``symbol``, replays
-    the QLIKE-DLq h=1 ensemble on each event date's leading RV prefix,
-    and counts how many resolved rows fell inside the published 80% /
-    90% bands. Mirrors the ^GSPC-only constraint on the upstream RV
-    forecast endpoint (the artifact is SPX-trained).
+    the per-asset QLIKE-DLq h=1 ensemble on each event date's leading
+    RV prefix, and counts how many resolved rows fell inside the
+    published 80% / 90% bands. Tickers without a registered artifact
+    in :data:`app.services.rv_forecaster.SYMBOL_ARTIFACTS` return a
+    structured 400 so the frontend can surface a friendly stub.
     """
 
-    if symbol != "^GSPC":
+    from app.services.rv_forecaster import (
+        SYMBOL_ARTIFACTS,
+        RvForecasterUnavailable,
+    )
+
+    if symbol not in SYMBOL_ARTIFACTS:
         raise HTTPException(
             status_code=400,
             detail={
                 "error": "symbol_unsupported",
-                "message": ("RV backtest is SPX-only; only ^GSPC is supported."),
+                "message": (
+                    f"RV backtest is not registered for {symbol!r}; "
+                    f"supported: {', '.join(SYMBOL_ARTIFACTS.keys())}."
+                ),
             },
         )
 
     from app.services.rv_backtest import get_rv_backtest
-    from app.services.rv_forecaster import RvForecasterUnavailable
 
     try:
         out = get_rv_backtest(session, symbol=symbol, limit=limit)

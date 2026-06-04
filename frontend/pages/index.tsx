@@ -52,7 +52,11 @@ import {
   postAnalyzeAnalogs,
   postAnalyzeMarket,
 } from "@/lib/analyze/api";
-import { DEFAULT_TEXT, HAR_TERCILE_SUPPORTED_SYMBOLS } from "@/lib/analyze/constants";
+import {
+  DEFAULT_TEXT,
+  HAR_TERCILE_SUPPORTED_SYMBOLS,
+  QLIKE_RV_SUPPORTED_SYMBOLS,
+} from "@/lib/analyze/constants";
 import { errorMessage } from "@/lib/analyze/errors";
 import { toStance } from "@/lib/analyze/format";
 import {
@@ -401,15 +405,15 @@ export default function WorkspacePage() {
     };
   }, [apiBaseUrl, request.symbol]);
 
-  // HAR-tercile backtest panel — the endpoint is ^GSPC-only (matches
-  // the regime/baselines constraint upstream). The fetcher folds a
-  // 503 (downstream artifact failure) into null; the panel renders
-  // the empty state when the symbol is supported but there are no
-  // resolved runs yet. For non-GSPC symbols we don't fire at all and
-  // surface a tailored "unavailable" placeholder.
+  // HAR-tercile backtest panel — gated on HAR_TERCILE_SUPPORTED_SYMBOLS
+  // (^GSPC, ^NDX, ^DJI). The fetcher folds a 503 (downstream artifact
+  // failure) into null; the panel renders the empty state when the
+  // symbol is supported but there are no resolved runs yet. For
+  // unsupported tickers we don't fire at all and surface a tailored
+  // "unavailable" placeholder.
   React.useEffect(() => {
     const controller = new AbortController();
-    if (request.symbol !== "^GSPC") {
+    if (!HAR_TERCILE_SUPPORTED_SYMBOLS.includes(request.symbol)) {
       setHarBacktest(null);
       setHarBacktestLoading(false);
       setHarBacktestError(null);
@@ -444,13 +448,13 @@ export default function WorkspacePage() {
     };
   }, [apiBaseUrl, request.symbol]);
 
-  // QLIKE-RV band coverage panel — same ^GSPC-only constraint as the
-  // HAR-tercile backtest (the RV artifact is SPX-trained). The
-  // fetcher folds a 503 (model / history unavailable) into null so
-  // the panel renders its tailored "unavailable" branch.
+  // QLIKE-RV band coverage panel — gated on QLIKE_RV_SUPPORTED_SYMBOLS
+  // (^GSPC, ^NDX, ^DJI). The fetcher folds a 503 (model / history
+  // unavailable) into null so the panel renders its tailored
+  // "unavailable" branch for unregistered tickers.
   React.useEffect(() => {
     const controller = new AbortController();
-    if (request.symbol !== "^GSPC") {
+    if (!QLIKE_RV_SUPPORTED_SYMBOLS.includes(request.symbol)) {
       setRvBacktest(null);
       setRvBacktestLoading(false);
       setRvBacktestError(null);
@@ -1079,11 +1083,31 @@ export default function WorkspacePage() {
               collapsible
               storageKey="workspace-card:har-accuracy"
             />
-          ) : null}
-          {/* RV / QLIKE-DLq backtest remains SPX-only because the
-              QLIKE-DLq artifact pins per-fold coefficients on SPX RV
-              and is not yet refit per asset. */}
-          {request.symbol === "^GSPC" ? (
+          ) : (
+            // Stub instead of an empty card slot: the cross-bank
+            // "Open in Workspace" deep-link lands on tickers (e.g.
+            // ^FTSE, ^N225) that the HAR-tercile baseline doesn't fit
+            // because it pins on US equity-index RV. Surface the gap
+            // explicitly so the user knows the panel was intentionally
+            // skipped rather than silently failing.
+            <div className="mt-3 rounded-md border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">
+                HAR-tercile accuracy not available for {request.symbol}.
+              </p>
+              <p className="mt-1">
+                The HAR-tercile baseline is fit on US equity-index realized vol.
+                Switch the asset to one of{" "}
+                {HAR_TERCILE_SUPPORTED_SYMBOLS.join(", ")} to see the
+                backtest surface.
+              </p>
+            </div>
+          )}
+          {/* RV / QLIKE-DLq backtest now supports each symbol with a
+              registered per-asset artifact (^GSPC, ^NDX, ^DJI). The
+              registry lives in
+              ``backend/app/services/rv_forecaster.SYMBOL_ARTIFACTS``
+              and mirrors ``QLIKE_RV_SUPPORTED_SYMBOLS`` above. */}
+          {QLIKE_RV_SUPPORTED_SYMBOLS.includes(request.symbol) ? (
             <RvAccuracyPanel
               data={rvBacktest}
               loading={rvBacktestLoading}
@@ -1092,7 +1116,19 @@ export default function WorkspacePage() {
               collapsible
               storageKey="workspace-card:rv-accuracy"
             />
-          ) : null}
+          ) : (
+            <div className="mt-3 rounded-md border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">
+                QLIKE-RV band coverage not available for {request.symbol}.
+              </p>
+              <p className="mt-1">
+                Switch to {QLIKE_RV_SUPPORTED_SYMBOLS.join(", ")} to see
+                the band-coverage backtest. The QLIKE-DLq ensemble is
+                refit per asset; cross-bank tickers (^FTSE, ^N225 etc.)
+                are not in the registry yet.
+              </p>
+            </div>
+          )}
         </main>
       </div>
     </>

@@ -34,17 +34,56 @@ const NETWORK_COPY = "Network error. Check your connection and try again.";
 const NOT_FOUND_COPY = "Not found.";
 const FALLBACK_COPY = "Something went wrong. Try again.";
 
+// Translation of backend error slugs into friendlier user copy.
+// Lives next to the extractor so the dictionary stays close to the
+// detail shape it consumes; add a row here whenever a new structured
+// ``{error, message}`` rejection is wired and the raw slug would
+// otherwise surface as the toast (``replay_unavailable``: ``fold_checkpoint_
+// missing`` is the canonical example).
+const _FRIENDLY_ERROR_COPY: Record<string, Record<string, string>> = {
+  replay_unavailable: {
+    fold_manifest_missing:
+      "Replay is unavailable: the per-fold checkpoint manifest is not deployed on this host.",
+    fold_manifest_unreadable:
+      "Replay is unavailable: the per-fold checkpoint manifest could not be parsed.",
+    fold_checkpoint_missing:
+      "Replay for this date is not available yet: the matching walk-forward fold has no trained checkpoint on disk.",
+    fold_checkpoint_invalid:
+      "Replay for this date is not available: the matching fold's checkpoint failed its inference-contract check.",
+    no_fold_before_as_of:
+      "Replay date is too early: no walk-forward fold's training window closed before that date.",
+    fold_id_missing:
+      "Replay is unavailable: the matching fold entry has no fold id.",
+    invalid_as_of_date: "Replay date is not a valid calendar date.",
+  },
+};
+
+function _translateError(error: string | undefined, message: string | undefined): string | null {
+  if (!error || !message) return null;
+  const codeMap = _FRIENDLY_ERROR_COPY[error];
+  if (codeMap && codeMap[message]) return codeMap[message];
+  return null;
+}
+
 function _extractDetail(err: AxiosLikeError): string | null {
   // Backend handlers return one of:
   //   detail: "human readable string"
   //   detail: { error: "code", message: "human readable string" }
   // Both forms should surface to the user; the dict form is the common
-  // shape for the per-symbol unsupported / unavailable rejections.
+  // shape for the per-symbol unsupported / unavailable rejections. The
+  // structured form runs through ``_translateError`` so the raw slug
+  // (``fold_checkpoint_missing``) becomes a sentence the user can act
+  // on instead of leaking dev jargon into the toast.
   const detail = err.response?.data?.detail;
   if (typeof detail === "string" && detail.trim().length > 0) return detail;
-  if (detail && typeof detail === "object" && typeof (detail as { message?: string }).message === "string") {
-    const msg = (detail as { message: string }).message.trim();
-    if (msg.length > 0) return msg;
+  if (detail && typeof detail === "object") {
+    const obj = detail as { error?: string; message?: string };
+    const friendly = _translateError(obj.error, obj.message);
+    if (friendly) return friendly;
+    if (typeof obj.message === "string") {
+      const msg = obj.message.trim();
+      if (msg.length > 0) return msg;
+    }
   }
   return null;
 }

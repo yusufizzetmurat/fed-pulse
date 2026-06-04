@@ -125,17 +125,19 @@ def _soft_tercile_probs(
     return {label: mass[i] / total for i, label in enumerate(_TERCILE_LABELS)}
 
 
-def get_har_coef(horizon: int) -> list[float]:
+def get_har_coef(horizon: int, *, symbol: str = "^GSPC") -> list[float]:
     """Read the HAR OLS coefficients for ``horizon`` off the cached spec.
 
     Importing inside the call keeps the module load cheap on the
     schemathesis path and mirrors how ``rv_forecaster`` defers its own
-    torch / HF imports.
+    torch / HF imports. ``symbol`` selects which per-asset artifact to
+    read; falls back to the ^GSPC slot when the symbol has no dedicated
+    artifact registered.
     """
 
     from app.services.rv_forecaster import _RvPredictor
 
-    pred = _RvPredictor.get()
+    pred = _RvPredictor.get(symbol)
     row = pred.spec["by_horizon"][f"h{horizon}"]
     return list(row["har_coef"])
 
@@ -198,10 +200,21 @@ def predict_har_regime(
     if cutoffs_q33 > cutoffs_q67:
         raise ValueError("cutoffs_q33 must be <= cutoffs_q67")
 
-    from app.services.rv_forecaster import _RvPredictor
+    from app.services.rv_forecaster import SYMBOL_ARTIFACTS, _RvPredictor
 
-    is_canonical = symbol == "^GSPC"
-    pred = _RvPredictor.get() if is_canonical else None
+    # A symbol counts as "QLIKE-DLq pinned" iff it has a per-asset
+    # artifact in the registry AND the artifact is loadable. ^GSPC is
+    # the original; ^NDX / ^DJI become pinned once their local artifact
+    # directories exist. Everything else still falls back to the
+    # per-call OLS HAR fit below.
+    is_canonical = symbol in SYMBOL_ARTIFACTS
+    pred = None
+    if is_canonical:
+        try:
+            pred = _RvPredictor.get(symbol)
+        except Exception:  # noqa: BLE001 - fall back to OLS path
+            is_canonical = False
+            pred = None
     eval_block: dict[str, Any] = {}
     if pred is not None and pred.eval:
         eval_block = pred.eval.get("by_horizon", {}) or {}

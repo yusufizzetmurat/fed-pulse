@@ -34,9 +34,22 @@ export const HORIZON_OPTIONS: Horizon[] = ["1d", "3d", "5d", "10d"];
 
 // Symbols the HAR-tercile baseline + backtest endpoints support. ^GSPC
 // serves from the pinned QLIKE-DLq artifact; ^NDX and ^DJI use a
-// per-call OLS HAR fit. FX / commodity tickers stay out of scope —
-// HAR-tercile is fit on equity-index RV.
+// per-call OLS HAR fit when their per-asset artifact is not on disk
+// yet. FX / commodity tickers stay out of scope — HAR-tercile is fit
+// on equity-index RV.
 export const HAR_TERCILE_SUPPORTED_SYMBOLS: readonly string[] = [
+  "^GSPC",
+  "^NDX",
+  "^DJI",
+];
+
+// Symbols that have a per-asset QLIKE-DLq production artifact on disk
+// (or are reachable via HF Hub). The workspace's QLIKE-RV band-coverage
+// panel renders only for these tickers; everything else falls through
+// to the "asset not supported" stub. Mirrors
+// ``backend/app/services/rv_forecaster.py:SYMBOL_ARTIFACTS`` -- keep
+// the two lists in sync.
+export const QLIKE_RV_SUPPORTED_SYMBOLS: readonly string[] = [
   "^GSPC",
   "^NDX",
   "^DJI",
