@@ -162,12 +162,28 @@ class MarketDataResponse(BaseModel):
 
     model_config = _STRICT_RESPONSE_CONFIG
 
-    symbol: str = Field(..., description="Yahoo Finance ticker the snapshot was fetched for, e.g. `^GSPC` or `DX-Y.NYB`.")
-    requested_date: str = Field(..., description="ISO `YYYY-MM-DD` date the caller asked for in the original request.")
-    date_used: str = Field(..., description="ISO `YYYY-MM-DD` of the trading session actually used after rolling back over weekends/holidays.")
-    lookback_days: int = Field(..., description="Calendar-day lookback window pulled from yfinance to populate the history series.")
-    close: float = Field(..., description="Adjusted close price at `date_used` in the ticker's native currency.")
-    volatility_5d: float = Field(..., description="Trailing 5-session realised volatility of log returns ending at `date_used`.")
+    symbol: str = Field(
+        ...,
+        description="Yahoo Finance ticker the snapshot was fetched for, e.g. `^GSPC` or `DX-Y.NYB`.",
+    )
+    requested_date: str = Field(
+        ..., description="ISO `YYYY-MM-DD` date the caller asked for in the original request."
+    )
+    date_used: str = Field(
+        ...,
+        description="ISO `YYYY-MM-DD` of the trading session actually used after rolling back over weekends/holidays.",
+    )
+    lookback_days: int = Field(
+        ...,
+        description="Calendar-day lookback window pulled from yfinance to populate the history series.",
+    )
+    close: float = Field(
+        ..., description="Adjusted close price at `date_used` in the ticker's native currency."
+    )
+    volatility_5d: float = Field(
+        ...,
+        description="Trailing 5-session realised volatility of log returns ending at `date_used`.",
+    )
 
 
 class PredictionResponse(BaseModel):
@@ -177,9 +193,18 @@ class PredictionResponse(BaseModel):
 
     model_config = _STRICT_RESPONSE_CONFIG
 
-    close: float = Field(..., description="Forecasted adjusted close at the end of the horizon, in the ticker's native currency.")
-    volatility: float = Field(..., description="Forecasted realised volatility at the end of the horizon, in the same units as `market.volatility_5d`.")
-    horizon: str = Field(..., description="Horizon label this forecast applies to, e.g. `1d`, `3d`, `5d` trading sessions ahead.")
+    close: float = Field(
+        ...,
+        description="Forecasted adjusted close at the end of the horizon, in the ticker's native currency.",
+    )
+    volatility: float = Field(
+        ...,
+        description="Forecasted realised volatility at the end of the horizon, in the same units as `market.volatility_5d`.",
+    )
+    horizon: str = Field(
+        ...,
+        description="Horizon label this forecast applies to, e.g. `1d`, `3d`, `5d` trading sessions ahead.",
+    )
 
 
 class ChunkAttentionDiagnostics(BaseModel):
@@ -190,11 +215,22 @@ class ChunkAttentionDiagnostics(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    chunk_count: int = Field(..., description="Number of fixed-size chunks the input was split into before pooling.")
-    weights: list[float] = Field(..., description="Post-softmax attention weight per chunk after time-decay; sums to ~1.0.")
-    decay_coeffs: list[float] = Field(..., description="Time-decay multiplier applied to each chunk before softmax; in `(0, 1]`.")
-    chunk_previews: list[str] = Field(..., description="Leading text snippet of each chunk for display in the XAI panel.")
-    lambda_value: float = Field(..., description="Decay rate used to compute `decay_coeffs`; higher = older chunks down-weighted faster.")
+    chunk_count: int = Field(
+        ..., description="Number of fixed-size chunks the input was split into before pooling."
+    )
+    weights: list[float] = Field(
+        ..., description="Post-softmax attention weight per chunk after time-decay; sums to ~1.0."
+    )
+    decay_coeffs: list[float] = Field(
+        ..., description="Time-decay multiplier applied to each chunk before softmax; in `(0, 1]`."
+    )
+    chunk_previews: list[str] = Field(
+        ..., description="Leading text snippet of each chunk for display in the XAI panel."
+    )
+    lambda_value: float = Field(
+        ...,
+        description="Decay rate used to compute `decay_coeffs`; higher = older chunks down-weighted faster.",
+    )
 
 
 class ModelDiagnosticsResponse(BaseModel):
@@ -204,24 +240,64 @@ class ModelDiagnosticsResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    checkpoint_path: str = Field(..., description="Absolute path of the forecaster checkpoint the service loaded.")
-    checkpoint_exists: bool = Field(..., description="True when the checkpoint file is present on disk at `checkpoint_path`.")
-    checkpoint_loaded: bool = Field(..., description="True when the in-memory forecaster matches the on-disk checkpoint.")
-    runtime_mode: str = Field(..., description="Runtime mode the model is served under, e.g. `fast`, `quick_train`, `real_train`.")
+    checkpoint_path: str = Field(
+        ..., description="Absolute path of the forecaster checkpoint the service loaded."
+    )
+    checkpoint_exists: bool = Field(
+        ..., description="True when the checkpoint file is present on disk at `checkpoint_path`."
+    )
+    checkpoint_loaded: bool = Field(
+        ..., description="True when the in-memory forecaster matches the on-disk checkpoint."
+    )
+    runtime_mode: str = Field(
+        ...,
+        description="Runtime mode the model is served under, e.g. `fast`, `quick_train`, `real_train`.",
+    )
     hidden_size: int = Field(..., description="Hidden dimension of the LSTM backbone in units.")
     num_layers: int = Field(..., description="Number of stacked LSTM layers in the forecaster.")
-    dropout: float = Field(..., description="Dropout probability applied between LSTM layers in `[0, 1)`.")
-    head_hidden_size: int = Field(..., description="Hidden dimension of the regression head MLP in units.")
-    close_scale: float = Field(..., description="Scaling factor applied to close-price targets before training.")
-    sequence_length: int = Field(..., description="Number of past timesteps fed into the LSTM each forward pass.")
-    best_loss: float | None = Field(default=None, description="Best validation loss recorded during the most recent training run; null when no run logged it.")
-    combined_rmse: float | None = Field(default=None, description="Combined close+volatility RMSE from the best run; null when unavailable.")
-    adaptation_epochs_completed: int | None = Field(default=None, description="Number of adaptation epochs completed in the most recent quick_train/real_train pass.")
-    adaptation_best_epoch: int | None = Field(default=None, description="Epoch index of the lowest adaptation loss in the most recent run.")
-    adaptation_loss: float | None = Field(default=None, description="Best loss value observed during the most recent adaptation pass.")
-    adaptation_combined_rmse: float | None = Field(default=None, description="Combined close+volatility RMSE from the most recent adaptation pass.")
-    decay_rate: float | None = Field(default=None, description="Elapsed-time decay rate (lambda) used by the chunk aggregator; null when no decay is configured.")
-    chunk_attention: ChunkAttentionDiagnostics | None = Field(default=None, description="Per-chunk attention trace from the encoder aggregator; null when the input was short enough to skip chunking.")
+    dropout: float = Field(
+        ..., description="Dropout probability applied between LSTM layers in `[0, 1)`."
+    )
+    head_hidden_size: int = Field(
+        ..., description="Hidden dimension of the regression head MLP in units."
+    )
+    close_scale: float = Field(
+        ..., description="Scaling factor applied to close-price targets before training."
+    )
+    sequence_length: int = Field(
+        ..., description="Number of past timesteps fed into the LSTM each forward pass."
+    )
+    best_loss: float | None = Field(
+        default=None,
+        description="Best validation loss recorded during the most recent training run; null when no run logged it.",
+    )
+    combined_rmse: float | None = Field(
+        default=None,
+        description="Combined close+volatility RMSE from the best run; null when unavailable.",
+    )
+    adaptation_epochs_completed: int | None = Field(
+        default=None,
+        description="Number of adaptation epochs completed in the most recent quick_train/real_train pass.",
+    )
+    adaptation_best_epoch: int | None = Field(
+        default=None,
+        description="Epoch index of the lowest adaptation loss in the most recent run.",
+    )
+    adaptation_loss: float | None = Field(
+        default=None, description="Best loss value observed during the most recent adaptation pass."
+    )
+    adaptation_combined_rmse: float | None = Field(
+        default=None,
+        description="Combined close+volatility RMSE from the most recent adaptation pass.",
+    )
+    decay_rate: float | None = Field(
+        default=None,
+        description="Elapsed-time decay rate (lambda) used by the chunk aggregator; null when no decay is configured.",
+    )
+    chunk_attention: ChunkAttentionDiagnostics | None = Field(
+        default=None,
+        description="Per-chunk attention trace from the encoder aggregator; null when the input was short enough to skip chunking.",
+    )
     encoder_key: str | None = Field(
         default=None,
         description="Encoder alias backing the multi-axis classifier (e.g. `finbert_fed_adjacent`); null when no multi-axis checkpoint is loaded.",
@@ -235,21 +311,58 @@ class ForecastSeriesResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    timestamps: list[str] = Field(..., description="ISO timestamps for the historical close/vol arrays, oldest-first.")
-    history_close: list[float] = Field(..., description="Historical close prices aligned to `timestamps`, in the ticker's native currency.")
-    history_volatility: list[float] = Field(..., description="Historical realised volatility aligned to `timestamps`.")
-    forecast_timestamps: list[str] = Field(..., description="ISO timestamps for each forecast step, ordered ascending.")
-    forecast_close: list[float] = Field(..., description="Forecast point estimate of close at each forecast timestamp.")
-    forecast_close_lower: list[float] = Field(..., description="Lower edge of the close confidence band at each forecast timestamp.")
-    forecast_close_upper: list[float] = Field(..., description="Upper edge of the close confidence band at each forecast timestamp.")
-    forecast_volatility: list[float] = Field(..., description="Forecast point estimate of realised volatility at each forecast timestamp.")
-    forecast_volatility_lower: list[float] = Field(..., description="Lower edge of the volatility confidence band at each forecast timestamp.")
-    forecast_volatility_upper: list[float] = Field(..., description="Upper edge of the volatility confidence band at each forecast timestamp.")
-    forecast_confidence_level: float = Field(..., description="Nominal confidence level of the forecast bands in `(0, 1)`, e.g. 0.8 for 80%.")
-    realized_timestamps: list[str] | None = Field(default=None, description="ISO timestamps for the realised overlay; null when replay mode is off.")
-    realized_close: list[float] | None = Field(default=None, description="Realised close prices aligned to `realized_timestamps`; null in live mode.")
-    realized_volatility: list[float] | None = Field(default=None, description="Realised volatility aligned to `realized_timestamps`; null in live mode.")
-    volatility_scale: dict[str, float] = Field(..., description="Scaling constants applied to the volatility series so chart axes can re-scale display units.")
+    timestamps: list[str] = Field(
+        ..., description="ISO timestamps for the historical close/vol arrays, oldest-first."
+    )
+    history_close: list[float] = Field(
+        ...,
+        description="Historical close prices aligned to `timestamps`, in the ticker's native currency.",
+    )
+    history_volatility: list[float] = Field(
+        ..., description="Historical realised volatility aligned to `timestamps`."
+    )
+    forecast_timestamps: list[str] = Field(
+        ..., description="ISO timestamps for each forecast step, ordered ascending."
+    )
+    forecast_close: list[float] = Field(
+        ..., description="Forecast point estimate of close at each forecast timestamp."
+    )
+    forecast_close_lower: list[float] = Field(
+        ..., description="Lower edge of the close confidence band at each forecast timestamp."
+    )
+    forecast_close_upper: list[float] = Field(
+        ..., description="Upper edge of the close confidence band at each forecast timestamp."
+    )
+    forecast_volatility: list[float] = Field(
+        ...,
+        description="Forecast point estimate of realised volatility at each forecast timestamp.",
+    )
+    forecast_volatility_lower: list[float] = Field(
+        ..., description="Lower edge of the volatility confidence band at each forecast timestamp."
+    )
+    forecast_volatility_upper: list[float] = Field(
+        ..., description="Upper edge of the volatility confidence band at each forecast timestamp."
+    )
+    forecast_confidence_level: float = Field(
+        ...,
+        description="Nominal confidence level of the forecast bands in `(0, 1)`, e.g. 0.8 for 80%.",
+    )
+    realized_timestamps: list[str] | None = Field(
+        default=None,
+        description="ISO timestamps for the realised overlay; null when replay mode is off.",
+    )
+    realized_close: list[float] | None = Field(
+        default=None,
+        description="Realised close prices aligned to `realized_timestamps`; null in live mode.",
+    )
+    realized_volatility: list[float] | None = Field(
+        default=None,
+        description="Realised volatility aligned to `realized_timestamps`; null in live mode.",
+    )
+    volatility_scale: dict[str, float] = Field(
+        ...,
+        description="Scaling constants applied to the volatility series so chart axes can re-scale display units.",
+    )
     forecast_band_source: str = Field(
         default="gaussian_z",
         description="Source of the forecast bands: 'gaussian_z' (z-score) or 'conformal'.",
@@ -269,8 +382,13 @@ class XaiTokenAttribution(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    token: str = Field(..., description="Surface token (whitespace-stripped) drawn from the input text.")
-    weight: float = Field(..., description="Salience weight in [0,1] indicating this token's share of the sentence score.")
+    token: str = Field(
+        ..., description="Surface token (whitespace-stripped) drawn from the input text."
+    )
+    weight: float = Field(
+        ...,
+        description="Salience weight in [0,1] indicating this token's share of the sentence score.",
+    )
 
 
 class XaiSentenceAttribution(BaseModel):
@@ -282,8 +400,13 @@ class XaiSentenceAttribution(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    text: str = Field(..., description="Verbatim sentence text as segmented from the input statement.")
-    score: float = Field(..., description="Salience score in [0,1] reflecting this sentence's influence on the prediction.")
+    text: str = Field(
+        ..., description="Verbatim sentence text as segmented from the input statement."
+    )
+    score: float = Field(
+        ...,
+        description="Salience score in [0,1] reflecting this sentence's influence on the prediction.",
+    )
     topTokens: list[XaiTokenAttribution] = Field(
         default_factory=list,
         description="Highest-weighted tokens within this sentence, descending by weight; empty when no tokens cross the threshold.",
@@ -301,9 +424,18 @@ class XaiFeatureFamilyAttribution(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    family: str = Field(..., description="Feature-family identifier (e.g., sentiment, rates, vol, calendar) grouping related input features.")
-    magnitude: float = Field(..., description="L1 sum of attribution across features in this family; always non-negative.")
-    signed: float = Field(..., description="Signed sum of attribution across features in this family; sign indicates push direction.")
+    family: str = Field(
+        ...,
+        description="Feature-family identifier (e.g., sentiment, rates, vol, calendar) grouping related input features.",
+    )
+    magnitude: float = Field(
+        ...,
+        description="L1 sum of attribution across features in this family; always non-negative.",
+    )
+    signed: float = Field(
+        ...,
+        description="Signed sum of attribution across features in this family; sign indicates push direction.",
+    )
 
 
 class XaiPanelAttribution(BaseModel):
@@ -319,15 +451,30 @@ class XaiPanelAttribution(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    panel: str = Field(..., description="Panel identifier this attribution covers, e.g. `regime`, `rates_2y`, `trajectory`.")
-    target: str = Field(..., description="Target output the attribution explains, e.g. predicted class or scalar head name.")
-    families: list[XaiFeatureFamilyAttribution] = Field(default_factory=list, description="Per-feature-family attribution bars; empty when the panel could not be explained.")
+    panel: str = Field(
+        ...,
+        description="Panel identifier this attribution covers, e.g. `regime`, `rates_2y`, `trajectory`.",
+    )
+    target: str = Field(
+        ...,
+        description="Target output the attribution explains, e.g. predicted class or scalar head name.",
+    )
+    families: list[XaiFeatureFamilyAttribution] = Field(
+        default_factory=list,
+        description="Per-feature-family attribution bars; empty when the panel could not be explained.",
+    )
     n_steps: int = Field(
         default=0,
         description="Integrated-gradients integration step count used to compute this panel's attribution.",
     )
-    unavailable: bool = Field(default=False, description="True when the panel could not be explained; the frontend then shows an unavailable badge.")
-    reason: str | None = Field(default=None, description="Structured reason string when `unavailable` is true; null otherwise.")
+    unavailable: bool = Field(
+        default=False,
+        description="True when the panel could not be explained; the frontend then shows an unavailable badge.",
+    )
+    reason: str | None = Field(
+        default=None,
+        description="Structured reason string when `unavailable` is true; null otherwise.",
+    )
 
 
 class XaiResponse(BaseModel):
@@ -337,8 +484,14 @@ class XaiResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    method: str = Field(default="keyword_salience_v1", description="XAI method identifier for the sentence-level explainer.")
-    sentences: list[XaiSentenceAttribution] = Field(default_factory=list, description="Per-sentence salience scores with top contributing tokens, in document order.")
+    method: str = Field(
+        default="keyword_salience_v1",
+        description="XAI method identifier for the sentence-level explainer.",
+    )
+    sentences: list[XaiSentenceAttribution] = Field(
+        default_factory=list,
+        description="Per-sentence salience scores with top contributing tokens, in document order.",
+    )
     panels: list[XaiPanelAttribution] = Field(
         default_factory=list,
         description="Per-panel integrated-gradients attribution; populated when include_xai is true and the checkpoint surfaces at least one explainable panel.",
@@ -353,10 +506,22 @@ class CredibilityResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    drift_score: float = Field(..., description="Cosine drift of the current statement embedding vs the mean of prior statements; higher = larger shift.")
-    realized_vs_stated_gap: float | None = Field(default=None, description="Signed gap between realised path and the statement's stated trajectory; null when no calibration is on disk.")
-    market_implied_gap: float | None = Field(default=None, description="Signed gap between market-implied path and the statement's stated trajectory; null when futures data is unavailable.")
-    months_since_reversal: int | None = Field(default=None, description="Months since the last hawkish<->dovish reversal in the stance series; null when no reversal is on record.")
+    drift_score: float = Field(
+        ...,
+        description="Cosine drift of the current statement embedding vs the mean of prior statements; higher = larger shift.",
+    )
+    realized_vs_stated_gap: float | None = Field(
+        default=None,
+        description="Signed gap between realised path and the statement's stated trajectory; null when no calibration is on disk.",
+    )
+    market_implied_gap: float | None = Field(
+        default=None,
+        description="Signed gap between market-implied path and the statement's stated trajectory; null when futures data is unavailable.",
+    )
+    months_since_reversal: int | None = Field(
+        default=None,
+        description="Months since the last hawkish<->dovish reversal in the stance series; null when no reversal is on record.",
+    )
     drift_trend: list[float] = Field(
         default_factory=list,
         description="Per-meeting drift sparkline newest-last; each entry is the cosine distance of one prior statement embedding to the mean of the remaining priors.",
@@ -369,7 +534,12 @@ class MultiAxisStanceCard(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     label: str = Field(..., description="hawkish | dovish | neutral")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Probability of the predicted stance label in `[0, 1]` after softmax.")
+    confidence: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Probability of the predicted stance label in `[0, 1]` after softmax.",
+    )
     distribution: dict[str, float] = Field(
         default_factory=dict,
         description="Per-class softmax probability over hawkish/dovish/neutral.",
@@ -388,8 +558,16 @@ class MultiAxisTimeCard(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     label: str = Field(..., description="forward looking | not forward looking")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Probability of the predicted label in `[0, 1]` after softmax.")
-    distribution: dict[str, float] = Field(default_factory=dict, description="Per-class softmax probability over the two forward-looking classes.")
+    confidence: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Probability of the predicted label in `[0, 1]` after softmax.",
+    )
+    distribution: dict[str, float] = Field(
+        default_factory=dict,
+        description="Per-class softmax probability over the two forward-looking classes.",
+    )
 
 
 class MultiAxisCertaintyCard(BaseModel):
@@ -398,8 +576,16 @@ class MultiAxisCertaintyCard(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     label: str = Field(..., description="certain | uncertain | neutral")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Probability of the predicted certainty label in `[0, 1]` after softmax.")
-    distribution: dict[str, float] = Field(default_factory=dict, description="Per-class softmax probability over the three certainty classes.")
+    confidence: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Probability of the predicted certainty label in `[0, 1]` after softmax.",
+    )
+    distribution: dict[str, float] = Field(
+        default_factory=dict,
+        description="Per-class softmax probability over the three certainty classes.",
+    )
 
 
 class MultiAxisBlock(BaseModel):
@@ -412,9 +598,17 @@ class MultiAxisBlock(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    stance: MultiAxisStanceCard = Field(..., description="Stance head prediction (hawkish/dovish/neutral) with class distribution.")
-    certainty: MultiAxisCertaintyCard | None = Field(default=None, description="Certainty head prediction; null when the active checkpoint omits this axis.")
-    time: MultiAxisTimeCard | None = Field(default=None, description="Forward-looking time head prediction; null when the active checkpoint omits this axis.")
+    stance: MultiAxisStanceCard = Field(
+        ..., description="Stance head prediction (hawkish/dovish/neutral) with class distribution."
+    )
+    certainty: MultiAxisCertaintyCard | None = Field(
+        default=None,
+        description="Certainty head prediction; null when the active checkpoint omits this axis.",
+    )
+    time: MultiAxisTimeCard | None = Field(
+        default=None,
+        description="Forward-looking time head prediction; null when the active checkpoint omits this axis.",
+    )
 
 
 class RatesReactionCard(BaseModel):
@@ -495,8 +689,14 @@ class VolRegimeReactionCard(BaseModel):
             "checkpoints."
         ),
     )
-    log_rv_lower: float | None = Field(default=None, description="Lower edge of the 80% conformal band on `log_rv_point`; null when no conformal sidecar is present.")
-    log_rv_upper: float | None = Field(default=None, description="Upper edge of the 80% conformal band on `log_rv_point`; null when no conformal sidecar is present.")
+    log_rv_lower: float | None = Field(
+        default=None,
+        description="Lower edge of the 80% conformal band on `log_rv_point`; null when no conformal sidecar is present.",
+    )
+    log_rv_upper: float | None = Field(
+        default=None,
+        description="Upper edge of the 80% conformal band on `log_rv_point`; null when no conformal sidecar is present.",
+    )
     regime_label: str = Field(
         ...,
         description="Argmax regime label: calm | normal | high.",
@@ -509,7 +709,10 @@ class VolRegimeReactionCard(BaseModel):
         default_factory=list,
         description="Calibrated APS prediction set (list of regime labels).",
     )
-    coverage: float | None = Field(default=None, description="Nominal conformal coverage (1 - alpha) for the APS set; null when no sidecar is on disk.")
+    coverage: float | None = Field(
+        default=None,
+        description="Nominal conformal coverage (1 - alpha) for the APS set; null when no sidecar is on disk.",
+    )
 
 
 class MarketReactionPanel(BaseModel):
@@ -523,10 +726,22 @@ class MarketReactionPanel(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    rates: list[RatesReactionCard] = Field(default_factory=list, description="One reaction card per mounted rates head (2y/5y/terminal); empty when no rates heads are mounted.")
-    vol_regime: VolRegimeReactionCard | None = Field(default=None, description="Vol-regime reaction card; null when the active checkpoint has no regime head.")
-    encoder_alias: str | None = Field(default=None, description="Registry alias of the encoder backing this market-reaction panel; null on a stateless build.")
-    checkpoint_path: str | None = Field(default=None, description="Absolute path of the checkpoint that produced these cards; null when no checkpoint is loaded.")
+    rates: list[RatesReactionCard] = Field(
+        default_factory=list,
+        description="One reaction card per mounted rates head (2y/5y/terminal); empty when no rates heads are mounted.",
+    )
+    vol_regime: VolRegimeReactionCard | None = Field(
+        default=None,
+        description="Vol-regime reaction card; null when the active checkpoint has no regime head.",
+    )
+    encoder_alias: str | None = Field(
+        default=None,
+        description="Registry alias of the encoder backing this market-reaction panel; null on a stateless build.",
+    )
+    checkpoint_path: str | None = Field(
+        default=None,
+        description="Absolute path of the checkpoint that produced these cards; null when no checkpoint is loaded.",
+    )
 
 
 class RegimeClassificationCard(BaseModel):
@@ -547,12 +762,26 @@ class RegimeClassificationCard(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    predicted_set: list[str] = Field(..., description="Calibrated APS prediction set of regime labels admitted at the `coverage` level.")
-    set_label: str = Field(..., description="UI-friendly bracketed label of the prediction set, e.g. `{calm, normal}`.")
-    set_size: int = Field(..., description="Cardinality of `predicted_set`; ranges 1-3 for the 3-class regime head.")
-    coverage: float = Field(..., description="Nominal coverage of the conformal APS set in `(0, 1)`.")
-    distribution: dict[str, float] = Field(..., description="Per-class softmax probabilities over the regime labels for the inference row.")
-    argmax_class: str = Field(..., description="Argmax regime label drawn from `distribution`; one of calm/normal/high.")
+    predicted_set: list[str] = Field(
+        ...,
+        description="Calibrated APS prediction set of regime labels admitted at the `coverage` level.",
+    )
+    set_label: str = Field(
+        ..., description="UI-friendly bracketed label of the prediction set, e.g. `{calm, normal}`."
+    )
+    set_size: int = Field(
+        ..., description="Cardinality of `predicted_set`; ranges 1-3 for the 3-class regime head."
+    )
+    coverage: float = Field(
+        ..., description="Nominal coverage of the conformal APS set in `(0, 1)`."
+    )
+    distribution: dict[str, float] = Field(
+        ...,
+        description="Per-class softmax probabilities over the regime labels for the inference row.",
+    )
+    argmax_class: str = Field(
+        ..., description="Argmax regime label drawn from `distribution`; one of calm/normal/high."
+    )
     log_rv_point: float | None = Field(
         default=None,
         description=(
@@ -607,9 +836,18 @@ class RegimeRegressionCard(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    log_rv_point: float = Field(..., description="Regression-head point prediction in standardised log(forward realized vol) space.")
-    log_rv_lower: float | None = Field(default=None, description="Lower edge of the symmetric conformal interval at `coverage`; null when no sidecar is on disk.")
-    log_rv_upper: float | None = Field(default=None, description="Upper edge of the symmetric conformal interval at `coverage`; null when no sidecar is on disk.")
+    log_rv_point: float = Field(
+        ...,
+        description="Regression-head point prediction in standardised log(forward realized vol) space.",
+    )
+    log_rv_lower: float | None = Field(
+        default=None,
+        description="Lower edge of the symmetric conformal interval at `coverage`; null when no sidecar is on disk.",
+    )
+    log_rv_upper: float | None = Field(
+        default=None,
+        description="Upper edge of the symmetric conformal interval at `coverage`; null when no sidecar is on disk.",
+    )
     coverage: float | None = Field(
         default=None,
         description=(
@@ -736,11 +974,24 @@ class RealisedOutcomeHorizon(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    horizon: int = Field(..., description="Trading-day horizon offset from the replay anchor, e.g. 1, 3, 5.")
-    log_return: float | None = Field(default=None, description="Realised log return from anchor close to t+h close; null when forward data is missing.")
-    realised_volatility_5d_post_event: float | None = Field(default=None, description="Rolling 5-bar realised volatility ending at t+h, measured strictly post-event.")
-    close: float | None = Field(default=None, description="Realised adjusted close at t+h in the ticker's native currency.")
-    date: str | None = Field(default=None, description="ISO `YYYY-MM-DD` of the trading session at t+h; null when the forward bar is unavailable.")
+    horizon: int = Field(
+        ..., description="Trading-day horizon offset from the replay anchor, e.g. 1, 3, 5."
+    )
+    log_return: float | None = Field(
+        default=None,
+        description="Realised log return from anchor close to t+h close; null when forward data is missing.",
+    )
+    realised_volatility_5d_post_event: float | None = Field(
+        default=None,
+        description="Rolling 5-bar realised volatility ending at t+h, measured strictly post-event.",
+    )
+    close: float | None = Field(
+        default=None, description="Realised adjusted close at t+h in the ticker's native currency."
+    )
+    date: str | None = Field(
+        default=None,
+        description="ISO `YYYY-MM-DD` of the trading session at t+h; null when the forward bar is unavailable.",
+    )
 
 
 class RealisedOutcomeBlock(BaseModel):
@@ -750,9 +1001,14 @@ class RealisedOutcomeBlock(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    as_of_date: str = Field(..., description="ISO `YYYY-MM-DD` replay anchor the realised outcomes are measured forward of.")
+    as_of_date: str = Field(
+        ...,
+        description="ISO `YYYY-MM-DD` replay anchor the realised outcomes are measured forward of.",
+    )
     symbol: str = Field(..., description="Yahoo Finance ticker the realised series was pulled for.")
-    horizons: list[RealisedOutcomeHorizon] = Field(..., description="Per-horizon realised outcomes ordered ascending by `horizon`.")
+    horizons: list[RealisedOutcomeHorizon] = Field(
+        ..., description="Per-horizon realised outcomes ordered ascending by `horizon`."
+    )
 
 
 class ReplayModeBlock(BaseModel):
@@ -771,15 +1027,29 @@ class ReplayModeBlock(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    as_of_date: str = Field(..., description="ISO `YYYY-MM-DD` replay anchor echoed from the request.")
-    fold_id: str | None = Field(default=None, description="Walk-forward fold identifier whose checkpoint served this prediction; null when no fold matched.")
-    train_end: str | None = Field(default=None, description="Latest date the fold's training slice contained; everything after is unseen by the model.")
-    classifier_rewind: bool = Field(default=False, description="True when the text-encoder weights are also rewound to `as_of_date`; false flags the known DAPT-pinned caveat.")
+    as_of_date: str = Field(
+        ..., description="ISO `YYYY-MM-DD` replay anchor echoed from the request."
+    )
+    fold_id: str | None = Field(
+        default=None,
+        description="Walk-forward fold identifier whose checkpoint served this prediction; null when no fold matched.",
+    )
+    train_end: str | None = Field(
+        default=None,
+        description="Latest date the fold's training slice contained; everything after is unseen by the model.",
+    )
+    classifier_rewind: bool = Field(
+        default=False,
+        description="True when the text-encoder weights are also rewound to `as_of_date`; false flags the known DAPT-pinned caveat.",
+    )
     forecaster_checkpoint_rewound: bool = Field(
         default=False,
         description="True once the forecaster is wired to load the per-fold checkpoint identified by `fold_id`; false flags the scaffolding-only state.",
     )
-    notes: list[str] = Field(default_factory=list, description="Free-text advisories on the replay run, e.g. caveats about partial rewind.")
+    notes: list[str] = Field(
+        default_factory=list,
+        description="Free-text advisories on the replay run, e.g. caveats about partial rewind.",
+    )
 
 
 class AnalyzeResponse(BaseModel):
@@ -790,17 +1060,45 @@ class AnalyzeResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    sentiment: SentimentResponse = Field(..., description="Stance classifier output for the input statement including OOD chip.")
-    prediction: PredictionResponse = Field(..., description="Headline scalar forecast at the chosen horizon.")
-    market: MarketDataResponse = Field(..., description="Market snapshot at the trading session used as forecast anchor.")
-    model: ModelDiagnosticsResponse = Field(..., description="Forecaster runtime + checkpoint diagnostics for this response.")
-    series: ForecastSeriesResponse = Field(..., description="Chart-ready history, forecast and band arrays for the panel.")
-    replay: ReplayModeBlock | None = Field(default=None, description="Replay-mode metadata; populated only when the request set `as_of_date`.")
-    realised_outcome: RealisedOutcomeBlock | None = Field(default=None, description="What-actually-happened reveal beside the forecast; populated only in replay mode.")
-    xai: XaiResponse | None = Field(default=None, description="XAI sentence + panel attribution; populated when `include_xai=true`.")
-    credibility: CredibilityResponse | None = Field(default=None, description="Stance-drift and credibility signals; null when no history is available.")
-    multi_axis: MultiAxisBlock | None = Field(default=None, description="Multi-task head per-axis predictions; null when no multi-axis checkpoint is loaded.")
-    regime_classification: RegimeClassificationCard | None = Field(default=None, description="Calibrated regime prediction set; null when the active checkpoint has no regime head.")
+    sentiment: SentimentResponse = Field(
+        ..., description="Stance classifier output for the input statement including OOD chip."
+    )
+    prediction: PredictionResponse = Field(
+        ..., description="Headline scalar forecast at the chosen horizon."
+    )
+    market: MarketDataResponse = Field(
+        ..., description="Market snapshot at the trading session used as forecast anchor."
+    )
+    model: ModelDiagnosticsResponse = Field(
+        ..., description="Forecaster runtime + checkpoint diagnostics for this response."
+    )
+    series: ForecastSeriesResponse = Field(
+        ..., description="Chart-ready history, forecast and band arrays for the panel."
+    )
+    replay: ReplayModeBlock | None = Field(
+        default=None,
+        description="Replay-mode metadata; populated only when the request set `as_of_date`.",
+    )
+    realised_outcome: RealisedOutcomeBlock | None = Field(
+        default=None,
+        description="What-actually-happened reveal beside the forecast; populated only in replay mode.",
+    )
+    xai: XaiResponse | None = Field(
+        default=None,
+        description="XAI sentence + panel attribution; populated when `include_xai=true`.",
+    )
+    credibility: CredibilityResponse | None = Field(
+        default=None,
+        description="Stance-drift and credibility signals; null when no history is available.",
+    )
+    multi_axis: MultiAxisBlock | None = Field(
+        default=None,
+        description="Multi-task head per-axis predictions; null when no multi-axis checkpoint is loaded.",
+    )
+    regime_classification: RegimeClassificationCard | None = Field(
+        default=None,
+        description="Calibrated regime prediction set; null when the active checkpoint has no regime head.",
+    )
     regime_regression: RegimeRegressionCard | None = Field(
         default=None,
         description="Regression sibling of the regime card carrying `log_rv_point` + conformal interval; null when the dual-head regression is absent.",
@@ -827,36 +1125,71 @@ class HistoryEntry(BaseModel):
     id: str = Field(..., description="UUID identifier of the persisted analyze run.")
     created_at: str = Field(..., description="ISO-8601 UTC timestamp the run was persisted.")
     symbol: str = Field(..., description="Yahoo Finance ticker the run was anchored to.")
-    document_date: str = Field(..., description="ISO `YYYY-MM-DD` event date of the analyzed FOMC document.")
+    document_date: str = Field(
+        ..., description="ISO `YYYY-MM-DD` event date of the analyzed FOMC document."
+    )
     horizon: str = Field(..., description="Forecast horizon label, e.g. `1d`, `3d`, `5d`.")
-    forecast_mode: str = Field(..., description="Forecast mode the run was executed under: `fast`, `quick_train`, or `real_train`.")
-    stance: str = Field(..., description="Aggregated stance label persisted with the row: hawkish/dovish/neutral/UNKNOWN.")
-    sentiment_score: float | None = Field(default=None, description="Unsigned confidence of the persisted stance label in `[0, 1]`; null when missing.")
+    forecast_mode: str = Field(
+        ...,
+        description="Forecast mode the run was executed under: `fast`, `quick_train`, or `real_train`.",
+    )
+    stance: str = Field(
+        ...,
+        description="Aggregated stance label persisted with the row: hawkish/dovish/neutral/UNKNOWN.",
+    )
+    sentiment_score: float | None = Field(
+        default=None,
+        description="Unsigned confidence of the persisted stance label in `[0, 1]`; null when missing.",
+    )
     stance_score: float | None = Field(
         default=None,
         description="Signed stance value `P(hawkish) - P(dovish)` from the multi-axis distribution; null when the row pre-dates multi-axis.",
     )
-    predicted_close: float | None = Field(default=None, description="Persisted point forecast of close at the chosen horizon; null when missing.")
-    current_close: float | None = Field(default=None, description="Anchor-session close from the persisted market snapshot; null when missing.")
-    predicted_volatility: float | None = Field(default=None, description="Persisted point forecast of realised volatility at the chosen horizon; null when missing.")
-    text_excerpt: str | None = Field(default=None, description="Leading excerpt of the analyzed statement text for the listing tile; null when redacted.")
+    predicted_close: float | None = Field(
+        default=None,
+        description="Persisted point forecast of close at the chosen horizon; null when missing.",
+    )
+    current_close: float | None = Field(
+        default=None,
+        description="Anchor-session close from the persisted market snapshot; null when missing.",
+    )
+    predicted_volatility: float | None = Field(
+        default=None,
+        description="Persisted point forecast of realised volatility at the chosen horizon; null when missing.",
+    )
+    text_excerpt: str | None = Field(
+        default=None,
+        description="Leading excerpt of the analyzed statement text for the listing tile; null when redacted.",
+    )
     argmax_regime: str | None = Field(
         default=None,
         description="Argmax regime label from the persisted regime card; null when the row pre-dates the regime head.",
     )
-    argmax_probability: float | None = Field(default=None, description="Probability of the `argmax_regime` label in `[0, 1]`; null when no regime card was persisted.")
-    regime_set_size: int | None = Field(default=None, description="Cardinality of the persisted conformal regime set; null when no regime card was persisted.")
+    argmax_probability: float | None = Field(
+        default=None,
+        description="Probability of the `argmax_regime` label in `[0, 1]`; null when no regime card was persisted.",
+    )
+    regime_set_size: int | None = Field(
+        default=None,
+        description="Cardinality of the persisted conformal regime set; null when no regime card was persisted.",
+    )
 
 
 class HistoryDetail(HistoryEntry):
-    payload: dict[str, Any] = Field(..., description="Full persisted analyze payload as a raw JSON object.")
+    payload: dict[str, Any] = Field(
+        ..., description="Full persisted analyze payload as a raw JSON object."
+    )
 
 
 class HistoryList(BaseModel):
     """Paginated listing envelope for the history page."""
 
-    items: list[HistoryEntry] = Field(..., description="History entries on the current page, newest-first by default.")
-    total: int = Field(..., description="Total number of history entries available across all pages.")
+    items: list[HistoryEntry] = Field(
+        ..., description="History entries on the current page, newest-first by default."
+    )
+    total: int = Field(
+        ..., description="Total number of history entries available across all pages."
+    )
     limit: int = Field(..., description="Page size echoed from the request.")
     offset: int = Field(..., description="Page offset echoed from the request.")
 
@@ -864,8 +1197,12 @@ class HistoryList(BaseModel):
 class StanceContextPoint(BaseModel):
     """One historical (date, score) pair for the rolling z-score baseline."""
 
-    document_date: str = Field(..., description="ISO `YYYY-MM-DD` event date of the historical FOMC row.")
-    stance_score: float = Field(..., description="Signed stance score `P(hawkish) - P(dovish)` for the historical row.")
+    document_date: str = Field(
+        ..., description="ISO `YYYY-MM-DD` event date of the historical FOMC row."
+    )
+    stance_score: float = Field(
+        ..., description="Signed stance score `P(hawkish) - P(dovish)` for the historical row."
+    )
 
 
 class StanceContextResponse(BaseModel):
@@ -879,9 +1216,17 @@ class StanceContextResponse(BaseModel):
     """
 
     n: int = Field(..., description="Number of usable historical rows in `history`.")
-    mean: float | None = Field(..., description="Trailing mean of `stance_score`; null when fewer than two rows are usable.")
-    std: float | None = Field(..., description="Trailing sample standard deviation of `stance_score`; null when fewer than two rows are usable.")
-    history: list[StanceContextPoint] = Field(..., description="Historical (date, score) pairs ordered oldest-first.")
+    mean: float | None = Field(
+        ...,
+        description="Trailing mean of `stance_score`; null when fewer than two rows are usable.",
+    )
+    std: float | None = Field(
+        ...,
+        description="Trailing sample standard deviation of `stance_score`; null when fewer than two rows are usable.",
+    )
+    history: list[StanceContextPoint] = Field(
+        ..., description="Historical (date, score) pairs ordered oldest-first."
+    )
 
 
 class HistoryRealizedResponse(BaseModel):
@@ -889,11 +1234,15 @@ class HistoryRealizedResponse(BaseModel):
     plus the bucketed realised regime label so the detail page can
     render a predicted-vs-realised badge."""
 
-    run_id: str = Field(..., description="UUID of the history run this realised payload belongs to.")
+    run_id: str = Field(
+        ..., description="UUID of the history run this realised payload belongs to."
+    )
     symbol: str = Field(..., description="Yahoo Finance ticker the realised series was pulled for.")
     document_date: str = Field(..., description="ISO `YYYY-MM-DD` event date the run anchored to.")
     horizon: str = Field(..., description="Forecast horizon label echoed from the run, e.g. `3d`.")
-    timestamps: list[str] = Field(..., description="ISO timestamps of the forward sessions, oldest-first.")
+    timestamps: list[str] = Field(
+        ..., description="ISO timestamps of the forward sessions, oldest-first."
+    )
     close: list[float] = Field(..., description="Realised close prices aligned to `timestamps`.")
     volatility: list[float] = Field(..., description="Realised volatility aligned to `timestamps`.")
     realized_regime: str | None = Field(
@@ -907,8 +1256,12 @@ class HistoryRealizedBatchResponse(BaseModel):
     yfinance failure) come back under ``missing`` so the caller can render
     a partial result instead of failing the whole page."""
 
-    items: dict[str, HistoryRealizedResponse] = Field(..., description="Realised payloads keyed by history run UUID.")
-    missing: list[str] = Field(..., description="Run UUIDs for which realised data could not be fetched.")
+    items: dict[str, HistoryRealizedResponse] = Field(
+        ..., description="Realised payloads keyed by history run UUID."
+    )
+    missing: list[str] = Field(
+        ..., description="Run UUIDs for which realised data could not be fetched."
+    )
 
 
 class HistoryEventStudyResponse(BaseModel):
@@ -919,14 +1272,31 @@ class HistoryEventStudyResponse(BaseModel):
     "predicted X, realized Y".
     """
 
-    event_date: str = Field(..., description="ISO `YYYY-MM-DD` event date the forward path is anchored to.")
+    event_date: str = Field(
+        ..., description="ISO `YYYY-MM-DD` event date the forward path is anchored to."
+    )
     symbol: str = Field(..., description="Yahoo Finance ticker the forward series was pulled for.")
-    forward_dates: list[str] = Field(..., description="ISO dates of the 10 forward trading sessions, oldest-first.")
-    forward_close: list[float] = Field(..., description="Realised close prices aligned to `forward_dates`.")
-    forward_log_returns: list[float] = Field(..., description="Bar-to-bar log returns aligned to `forward_dates`.")
-    realized_vol_10d: float | None = Field(default=None, description="Realised 10-day forward volatility derived from `forward_log_returns`; null when insufficient bars.")
-    predicted_regime: str | None = Field(default=None, description="Predicted regime label persisted with the original run; null when no regime card was persisted.")
-    realized_regime: str | None = Field(default=None, description="Realised regime label bucketed from `realized_vol_10d`; null when cutoffs are unavailable.")
+    forward_dates: list[str] = Field(
+        ..., description="ISO dates of the 10 forward trading sessions, oldest-first."
+    )
+    forward_close: list[float] = Field(
+        ..., description="Realised close prices aligned to `forward_dates`."
+    )
+    forward_log_returns: list[float] = Field(
+        ..., description="Bar-to-bar log returns aligned to `forward_dates`."
+    )
+    realized_vol_10d: float | None = Field(
+        default=None,
+        description="Realised 10-day forward volatility derived from `forward_log_returns`; null when insufficient bars.",
+    )
+    predicted_regime: str | None = Field(
+        default=None,
+        description="Predicted regime label persisted with the original run; null when no regime card was persisted.",
+    )
+    realized_regime: str | None = Field(
+        default=None,
+        description="Realised regime label bucketed from `realized_vol_10d`; null when cutoffs are unavailable.",
+    )
 
 
 class EvaluationCoverageResponse(BaseModel):
@@ -940,11 +1310,23 @@ class EvaluationCoverageResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    nominal: float | None = Field(default=None, description="Conformal target the active model was calibrated to; null when no recent run carries one.")
-    empirical: float | None = Field(default=None, description="Empirical hit rate of the predicted set across qualifying runs; null when no runs qualify.")
-    sample_size: int = Field(..., description="Number of qualifying runs the empirical coverage was computed over.")
-    runs_total: int = Field(..., description="Total number of history runs considered before filtering.")
-    computed_at: str = Field(..., description="ISO-8601 UTC timestamp the aggregate was computed at.")
+    nominal: float | None = Field(
+        default=None,
+        description="Conformal target the active model was calibrated to; null when no recent run carries one.",
+    )
+    empirical: float | None = Field(
+        default=None,
+        description="Empirical hit rate of the predicted set across qualifying runs; null when no runs qualify.",
+    )
+    sample_size: int = Field(
+        ..., description="Number of qualifying runs the empirical coverage was computed over."
+    )
+    runs_total: int = Field(
+        ..., description="Total number of history runs considered before filtering."
+    )
+    computed_at: str = Field(
+        ..., description="ISO-8601 UTC timestamp the aggregate was computed at."
+    )
 
 
 class ClassificationBreakdownClass(BaseModel):
@@ -952,13 +1334,30 @@ class ClassificationBreakdownClass(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    class_id: int = Field(..., description="Integer class index in canonical regime ordering (0=calm, 1=normal, 2=high).")
-    precision: float = Field(..., description="Precision for this class in `[0, 1]`: true positives / predicted positives.")
-    recall: float = Field(..., description="Recall for this class in `[0, 1]`: true positives / actual positives.")
-    f1: float = Field(..., description="F1 score for this class in `[0, 1]`: harmonic mean of precision and recall.")
+    class_id: int = Field(
+        ...,
+        description="Integer class index in canonical regime ordering (0=calm, 1=normal, 2=high).",
+    )
+    precision: float = Field(
+        ...,
+        description="Precision for this class in `[0, 1]`: true positives / predicted positives.",
+    )
+    recall: float = Field(
+        ..., description="Recall for this class in `[0, 1]`: true positives / actual positives."
+    )
+    f1: float = Field(
+        ...,
+        description="F1 score for this class in `[0, 1]`: harmonic mean of precision and recall.",
+    )
     support: int = Field(..., description="Number of ground-truth samples in this class.")
-    roc_auc: float | None = Field(default=None, description="One-vs-rest ROC AUC for this class; null when the source artifact omits it.")
-    pr_auc: float | None = Field(default=None, description="One-vs-rest PR AUC for this class; null when the source artifact omits it.")
+    roc_auc: float | None = Field(
+        default=None,
+        description="One-vs-rest ROC AUC for this class; null when the source artifact omits it.",
+    )
+    pr_auc: float | None = Field(
+        default=None,
+        description="One-vs-rest PR AUC for this class; null when the source artifact omits it.",
+    )
 
 
 class ClassificationBreakdownSource(BaseModel):
@@ -966,9 +1365,17 @@ class ClassificationBreakdownSource(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    relative_path: str = Field(..., description="Path of the source artifact relative to `data/artifacts/`.")
-    training_package_id: str | None = Field(default=None, description="Training package ID the artifact was produced under; null when the field is absent on disk.")
-    checkpoint_path: str | None = Field(default=None, description="Checkpoint path the breakdown was computed against; null when not recorded.")
+    relative_path: str = Field(
+        ..., description="Path of the source artifact relative to `data/artifacts/`."
+    )
+    training_package_id: str | None = Field(
+        default=None,
+        description="Training package ID the artifact was produced under; null when the field is absent on disk.",
+    )
+    checkpoint_path: str | None = Field(
+        default=None,
+        description="Checkpoint path the breakdown was computed against; null when not recorded.",
+    )
     modified_at: str = Field(..., description="ISO-8601 mtime of the source artifact in UTC.")
 
 
@@ -982,21 +1389,53 @@ class ClassificationBreakdownResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    available: bool = Field(..., description="True when a qualifying artifact was found; false flags UI fallback to client-side aggregation.")
-    confusion_matrix: list[list[int]] | None = Field(default=None, description="Row-actual, column-predicted confusion matrix in canonical class order; null when unavailable.")
-    per_class: list[ClassificationBreakdownClass] | None = Field(default=None, description="Per-class precision/recall/F1/support entries; null when the artifact is missing.")
-    macro_f1: float | None = Field(default=None, description="Unweighted mean F1 across classes in `[0, 1]`; null when unavailable.")
-    macro_precision: float | None = Field(default=None, description="Unweighted mean precision across classes in `[0, 1]`; null when unavailable.")
-    macro_recall: float | None = Field(default=None, description="Unweighted mean recall across classes in `[0, 1]`; null when unavailable.")
-    macro_roc_auc: float | None = Field(default=None, description="Unweighted mean one-vs-rest ROC AUC across classes; null when unavailable.")
-    macro_pr_auc: float | None = Field(default=None, description="Unweighted mean one-vs-rest PR AUC across classes; null when unavailable.")
-    weighted_f1: float | None = Field(default=None, description="Support-weighted mean F1 across classes in `[0, 1]`; null when unavailable.")
-    n_classes: int | None = Field(default=None, description="Number of classes in the breakdown; null when unavailable.")
+    available: bool = Field(
+        ...,
+        description="True when a qualifying artifact was found; false flags UI fallback to client-side aggregation.",
+    )
+    confusion_matrix: list[list[int]] | None = Field(
+        default=None,
+        description="Row-actual, column-predicted confusion matrix in canonical class order; null when unavailable.",
+    )
+    per_class: list[ClassificationBreakdownClass] | None = Field(
+        default=None,
+        description="Per-class precision/recall/F1/support entries; null when the artifact is missing.",
+    )
+    macro_f1: float | None = Field(
+        default=None,
+        description="Unweighted mean F1 across classes in `[0, 1]`; null when unavailable.",
+    )
+    macro_precision: float | None = Field(
+        default=None,
+        description="Unweighted mean precision across classes in `[0, 1]`; null when unavailable.",
+    )
+    macro_recall: float | None = Field(
+        default=None,
+        description="Unweighted mean recall across classes in `[0, 1]`; null when unavailable.",
+    )
+    macro_roc_auc: float | None = Field(
+        default=None,
+        description="Unweighted mean one-vs-rest ROC AUC across classes; null when unavailable.",
+    )
+    macro_pr_auc: float | None = Field(
+        default=None,
+        description="Unweighted mean one-vs-rest PR AUC across classes; null when unavailable.",
+    )
+    weighted_f1: float | None = Field(
+        default=None,
+        description="Support-weighted mean F1 across classes in `[0, 1]`; null when unavailable.",
+    )
+    n_classes: int | None = Field(
+        default=None, description="Number of classes in the breakdown; null when unavailable."
+    )
     class_labels: list[str] | None = Field(
         default=None,
         description="Ordered class labels (e.g. calm/normal/high) from the source artifact; null when the artifact omits them.",
     )
-    source: ClassificationBreakdownSource | None = Field(default=None, description="Provenance of the backing artifact; null when no artifact was found.")
+    source: ClassificationBreakdownSource | None = Field(
+        default=None,
+        description="Provenance of the backing artifact; null when no artifact was found.",
+    )
 
 
 class SymbolDescriptor(BaseModel):
@@ -1006,8 +1445,13 @@ class SymbolDescriptor(BaseModel):
 
     symbol: str = Field(..., description="Yahoo Finance ticker, e.g. `^GSPC` or `DX-Y.NYB`.")
     name: str = Field(..., description="Human-readable name of the instrument shown in the picker.")
-    category: str = Field(..., description="Category bucket the symbol falls into, e.g. `equity_index`, `currency`, `rates`.")
-    default_horizon: str = Field(..., description="Default forecast horizon label paired with this symbol on the workspace.")
+    category: str = Field(
+        ...,
+        description="Category bucket the symbol falls into, e.g. `equity_index`, `currency`, `rates`.",
+    )
+    default_horizon: str = Field(
+        ..., description="Default forecast horizon label paired with this symbol on the workspace."
+    )
 
 
 class SymbolListResponse(BaseModel):
@@ -1015,7 +1459,9 @@ class SymbolListResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    symbols: list[SymbolDescriptor] = Field(..., description="Supported symbols ordered for display in the picker.")
+    symbols: list[SymbolDescriptor] = Field(
+        ..., description="Supported symbols ordered for display in the picker."
+    )
 
 
 class SettingsCheckpoint(BaseModel):
@@ -1038,25 +1484,61 @@ class SettingsCheckpoint(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    filename: str = Field(..., description="Bare filename of the checkpoint under `backend/models/`.")
-    relative_path: str = Field(..., description="Path of the checkpoint relative to the models directory.")
-    role: str = Field(..., description="Inferred role: forecaster / multi_axis / lora / calibration.")
+    filename: str = Field(
+        ..., description="Bare filename of the checkpoint under `backend/models/`."
+    )
+    relative_path: str = Field(
+        ..., description="Path of the checkpoint relative to the models directory."
+    )
+    role: str = Field(
+        ..., description="Inferred role: forecaster / multi_axis / lora / calibration."
+    )
     size_bytes: int = Field(..., description="File size in bytes as reported by the filesystem.")
     modified_at: str = Field(..., description="ISO-8601 UTC mtime of the checkpoint file.")
-    is_active: bool = Field(default=False, description="True when the active service is currently loaded from this file.")
-    output_mode: str | None = Field(default=None, description="Output mode declared by the active checkpoint (e.g. classification/regression/dual); null on inactive rows.")
-    encoder_alias: str | None = Field(default=None, description="Registry alias of the encoder backing this checkpoint; null on inactive rows.")
-    conformal_sidecar_present: bool | None = Field(default=None, description="True when a sibling conformal calibration sidecar is on disk; null on inactive rows.")
-    required_kwargs: list[str] = Field(default_factory=list, description="Inference kwargs declared in the checkpoint's contract sidecar; empty for legacy artefacts.")
-    supplied_at_inference: dict[str, bool] = Field(default_factory=dict, description="Mapping from declared kwarg name to whether the live serving wiring supplies it.")
-    inference_contract_status: str | None = Field(default=None, description="`present` when a contract sidecar exists, `sidecar_absent` for legacy checkpoints.")
+    is_active: bool = Field(
+        default=False,
+        description="True when the active service is currently loaded from this file.",
+    )
+    output_mode: str | None = Field(
+        default=None,
+        description="Output mode declared by the active checkpoint (e.g. classification/regression/dual); null on inactive rows.",
+    )
+    encoder_alias: str | None = Field(
+        default=None,
+        description="Registry alias of the encoder backing this checkpoint; null on inactive rows.",
+    )
+    conformal_sidecar_present: bool | None = Field(
+        default=None,
+        description="True when a sibling conformal calibration sidecar is on disk; null on inactive rows.",
+    )
+    required_kwargs: list[str] = Field(
+        default_factory=list,
+        description="Inference kwargs declared in the checkpoint's contract sidecar; empty for legacy artefacts.",
+    )
+    supplied_at_inference: dict[str, bool] = Field(
+        default_factory=dict,
+        description="Mapping from declared kwarg name to whether the live serving wiring supplies it.",
+    )
+    inference_contract_status: str | None = Field(
+        default=None,
+        description="`present` when a contract sidecar exists, `sidecar_absent` for legacy checkpoints.",
+    )
     source: str = Field(
         default="models_dir",
         description="Origin of the file on disk: `models_dir` for the host-mounted directory or `hf_cache` for HF snapshot cache.",
     )
-    repo: str | None = Field(default=None, description="HF Hub `owner/name` slug when `source == hf_cache`; null otherwise.")
-    revision: str | None = Field(default=None, description="Pinned HF commit hash when known; empty/null for unpinned artefacts.")
-    snapshot_path: str | None = Field(default=None, description="Absolute path inside the HF cache the file resolves to; null when `source == models_dir`.")
+    repo: str | None = Field(
+        default=None,
+        description="HF Hub `owner/name` slug when `source == hf_cache`; null otherwise.",
+    )
+    revision: str | None = Field(
+        default=None,
+        description="Pinned HF commit hash when known; empty/null for unpinned artefacts.",
+    )
+    snapshot_path: str | None = Field(
+        default=None,
+        description="Absolute path inside the HF cache the file resolves to; null when `source == models_dir`.",
+    )
 
 
 class SettingsCheckpointsResponse(BaseModel):
@@ -1064,43 +1546,77 @@ class SettingsCheckpointsResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    models_dir: str = Field(..., description="Absolute path of the host-mounted `backend/models/` directory.")
-    checkpoints: list[SettingsCheckpoint] = Field(..., description="One entry per checkpoint file discovered under the models directory or HF cache.")
+    models_dir: str = Field(
+        ..., description="Absolute path of the host-mounted `backend/models/` directory."
+    )
+    checkpoints: list[SettingsCheckpoint] = Field(
+        ...,
+        description="One entry per checkpoint file discovered under the models directory or HF cache.",
+    )
 
 
 class FomcMeetingResponse(BaseModel):
     """One FOMC meeting row in the calendar response."""
 
     meeting_date: str = Field(..., description="ISO `YYYY-MM-DD` date of the FOMC meeting.")
-    meeting_type: str = Field(..., description="Meeting type label, e.g. `scheduled` or `unscheduled`.")
-    statement_release_date: str | None = Field(default=None, description="ISO date the statement was released; null when not yet scheduled or recorded.")
-    minutes_release_date: str | None = Field(default=None, description="ISO date the minutes were released; null when not yet released.")
-    notes: str | None = Field(default=None, description="Free-text annotation on the meeting, e.g. inter-meeting context; null when absent.")
-    statement_available: bool = Field(default=False, description="True when the statement body is available in the `/documents` cache.")
-    minutes_available: bool = Field(default=False, description="True when the minutes body is available in the `/documents` cache.")
-    press_conference_available: bool = Field(default=False, description="True when a press-conference transcript is available in the cache.")
+    meeting_type: str = Field(
+        ..., description="Meeting type label, e.g. `scheduled` or `unscheduled`."
+    )
+    statement_release_date: str | None = Field(
+        default=None,
+        description="ISO date the statement was released; null when not yet scheduled or recorded.",
+    )
+    minutes_release_date: str | None = Field(
+        default=None, description="ISO date the minutes were released; null when not yet released."
+    )
+    notes: str | None = Field(
+        default=None,
+        description="Free-text annotation on the meeting, e.g. inter-meeting context; null when absent.",
+    )
+    statement_available: bool = Field(
+        default=False,
+        description="True when the statement body is available in the `/documents` cache.",
+    )
+    minutes_available: bool = Field(
+        default=False,
+        description="True when the minutes body is available in the `/documents` cache.",
+    )
+    press_conference_available: bool = Field(
+        default=False,
+        description="True when a press-conference transcript is available in the cache.",
+    )
 
 
 class FomcCalendarResponse(BaseModel):
     """Past and upcoming FOMC meetings for the calendar panel."""
 
-    past: list[FomcMeetingResponse] = Field(..., description="Past FOMC meetings ordered newest-first.")
-    upcoming: list[FomcMeetingResponse] = Field(..., description="Scheduled future FOMC meetings ordered soonest-first.")
+    past: list[FomcMeetingResponse] = Field(
+        ..., description="Past FOMC meetings ordered newest-first."
+    )
+    upcoming: list[FomcMeetingResponse] = Field(
+        ..., description="Scheduled future FOMC meetings ordered soonest-first."
+    )
 
 
 class DocumentParseUrlRequest(BaseModel):
     """Request body for `POST /documents/parse-url` — fetch and parse a remote PDF/HTML page."""
 
-    url: str = Field(..., description="Remote URL of the FOMC document (PDF or HTML page) to fetch and parse.")
+    url: str = Field(
+        ..., description="Remote URL of the FOMC document (PDF or HTML page) to fetch and parse."
+    )
 
 
 class DocumentParseResponse(BaseModel):
     """Parsed plain-text payload extracted from a fetched FOMC document."""
 
-    text: str = Field(..., description="Extracted plain-text body after parsing the source document.")
+    text: str = Field(
+        ..., description="Extracted plain-text body after parsing the source document."
+    )
     char_count: int = Field(..., description="Length of `text` in characters.")
     source_kind: str = Field(..., description="Detected source kind, e.g. `pdf`, `html`, `text`.")
-    source_metadata: dict[str, str] = Field(..., description="Extracted metadata key/value pairs from the source, e.g. title or author.")
+    source_metadata: dict[str, str] = Field(
+        ..., description="Extracted metadata key/value pairs from the source, e.g. title or author."
+    )
 
 
 class DocumentDetailResponse(BaseModel):
@@ -1146,15 +1662,31 @@ class EncoderBakeoffRow(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     encoder_key: str = Field(..., description="Registry alias of the encoder being compared.")
-    checkpoint: str = Field(..., description="Checkpoint path or HF revision the bake-off was run against.")
+    checkpoint: str = Field(
+        ..., description="Checkpoint path or HF revision the bake-off was run against."
+    )
     seeds: list[int] = Field(..., description="Seed set the bake-off was averaged across.")
-    macro_f1_values: list[float] = Field(..., description="Per-seed macro-F1 values aligned to `seeds`.")
+    macro_f1_values: list[float] = Field(
+        ..., description="Per-seed macro-F1 values aligned to `seeds`."
+    )
     macro_f1_mean: float = Field(..., description="Mean macro-F1 across `seeds` in `[0, 1]`.")
-    macro_f1_ci_low: float | None = Field(default=None, description="Lower edge of the macro-F1 95% bootstrap CI; null when CI was not computed.")
-    macro_f1_ci_high: float | None = Field(default=None, description="Upper edge of the macro-F1 95% bootstrap CI; null when CI was not computed.")
-    weighted_f1_mean: float | None = Field(default=None, description="Support-weighted mean F1 across seeds; null when not recorded.")
-    accuracy_mean: float | None = Field(default=None, description="Mean accuracy across seeds in `[0, 1]`; null when not recorded.")
-    cohen_kappa: float | None = Field(default=None, description="Mean Cohen kappa across seeds; null when not recorded.")
+    macro_f1_ci_low: float | None = Field(
+        default=None,
+        description="Lower edge of the macro-F1 95% bootstrap CI; null when CI was not computed.",
+    )
+    macro_f1_ci_high: float | None = Field(
+        default=None,
+        description="Upper edge of the macro-F1 95% bootstrap CI; null when CI was not computed.",
+    )
+    weighted_f1_mean: float | None = Field(
+        default=None, description="Support-weighted mean F1 across seeds; null when not recorded."
+    )
+    accuracy_mean: float | None = Field(
+        default=None, description="Mean accuracy across seeds in `[0, 1]`; null when not recorded."
+    )
+    cohen_kappa: float | None = Field(
+        default=None, description="Mean Cohen kappa across seeds; null when not recorded."
+    )
 
 
 class EncoderBakeoffSection(BaseModel):
@@ -1162,10 +1694,21 @@ class EncoderBakeoffSection(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    available: bool = Field(..., description="True when at least one bake-off artifact was found on disk.")
-    coverage: float | None = Field(default=None, description="Fraction of the official seed set covered by the rows in `[0, 1]`; null when unavailable.")
-    rows: list[EncoderBakeoffRow] = Field(default_factory=list, description="Per-encoder bake-off rows ordered by descending macro-F1 mean.")
-    source_files: list[str] = Field(default_factory=list, description="Relative paths of artefact files contributing to this section.")
+    available: bool = Field(
+        ..., description="True when at least one bake-off artifact was found on disk."
+    )
+    coverage: float | None = Field(
+        default=None,
+        description="Fraction of the official seed set covered by the rows in `[0, 1]`; null when unavailable.",
+    )
+    rows: list[EncoderBakeoffRow] = Field(
+        default_factory=list,
+        description="Per-encoder bake-off rows ordered by descending macro-F1 mean.",
+    )
+    source_files: list[str] = Field(
+        default_factory=list,
+        description="Relative paths of artefact files contributing to this section.",
+    )
 
 
 class TransferMatrixCell(BaseModel):
@@ -1175,7 +1718,10 @@ class TransferMatrixCell(BaseModel):
 
     source: str = Field(..., description="Source bank short code the model was fine-tuned on.")
     target: str = Field(..., description="Target bank short code the model was evaluated on.")
-    metric: float = Field(..., description="Transfer metric value (e.g. macro-F1) on `target` after training on `source`.")
+    metric: float = Field(
+        ...,
+        description="Transfer metric value (e.g. macro-F1) on `target` after training on `source`.",
+    )
 
 
 class CrossBankTransferSection(BaseModel):
@@ -1183,12 +1729,29 @@ class CrossBankTransferSection(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    available: bool = Field(..., description="True when at least one source/target cell was found on disk.")
-    metric_name: str = Field(default="macro_f1", description="Metric carried in each cell, e.g. `macro_f1` or `accuracy`.")
-    sources: list[str] = Field(default_factory=list, description="Distinct source banks present in `cells`, ordered for display.")
-    targets: list[str] = Field(default_factory=list, description="Distinct target banks present in `cells`, ordered for display.")
-    cells: list[TransferMatrixCell] = Field(default_factory=list, description="Flattened (source, target, metric) cells of the transfer matrix.")
-    source_files: list[str] = Field(default_factory=list, description="Relative paths of artefact files contributing to this section.")
+    available: bool = Field(
+        ..., description="True when at least one source/target cell was found on disk."
+    )
+    metric_name: str = Field(
+        default="macro_f1",
+        description="Metric carried in each cell, e.g. `macro_f1` or `accuracy`.",
+    )
+    sources: list[str] = Field(
+        default_factory=list,
+        description="Distinct source banks present in `cells`, ordered for display.",
+    )
+    targets: list[str] = Field(
+        default_factory=list,
+        description="Distinct target banks present in `cells`, ordered for display.",
+    )
+    cells: list[TransferMatrixCell] = Field(
+        default_factory=list,
+        description="Flattened (source, target, metric) cells of the transfer matrix.",
+    )
+    source_files: list[str] = Field(
+        default_factory=list,
+        description="Relative paths of artefact files contributing to this section.",
+    )
 
 
 class EncoderAxisStanceRow(BaseModel):
@@ -1198,11 +1761,22 @@ class EncoderAxisStanceRow(BaseModel):
 
     encoder_alias: str = Field(..., description="Registry alias of the encoder being compared.")
     encoder_display: str = Field(..., description="Display name of the encoder for UI rendering.")
-    held_out_f1: float = Field(..., description="Held-out macro-F1 of the stance head fine-tuned on this encoder.")
-    spearman_rho: float = Field(..., description="Spearman correlation between predicted stance scores and the labelled axis.")
-    auc_hike_vs_cut: float = Field(..., description="AUC of stance scores separating hike vs cut meetings.")
-    is_validity_winner: bool = Field(default=False, description="True when this encoder won the validity-study tie-break.")
-    is_held_out_winner: bool = Field(default=False, description="True when this encoder won on the held-out macro-F1 metric.")
+    held_out_f1: float = Field(
+        ..., description="Held-out macro-F1 of the stance head fine-tuned on this encoder."
+    )
+    spearman_rho: float = Field(
+        ...,
+        description="Spearman correlation between predicted stance scores and the labelled axis.",
+    )
+    auc_hike_vs_cut: float = Field(
+        ..., description="AUC of stance scores separating hike vs cut meetings."
+    )
+    is_validity_winner: bool = Field(
+        default=False, description="True when this encoder won the validity-study tie-break."
+    )
+    is_held_out_winner: bool = Field(
+        default=False, description="True when this encoder won on the held-out macro-F1 metric."
+    )
 
 
 class EncoderAxisStanceSection(BaseModel):
@@ -1210,9 +1784,15 @@ class EncoderAxisStanceSection(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    available: bool = Field(..., description="True when at least one validity-study row was found on disk.")
-    rows: list[EncoderAxisStanceRow] = Field(default_factory=list, description="Per-encoder validity rows ordered by display priority.")
-    source_doc: str = Field(default="", description="Citation of the source document the rows were lifted from.")
+    available: bool = Field(
+        ..., description="True when at least one validity-study row was found on disk."
+    )
+    rows: list[EncoderAxisStanceRow] = Field(
+        default_factory=list, description="Per-encoder validity rows ordered by display priority."
+    )
+    source_doc: str = Field(
+        default="", description="Citation of the source document the rows were lifted from."
+    )
 
 
 class ResearchArtifactsResponse(BaseModel):
@@ -1221,14 +1801,22 @@ class ResearchArtifactsResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    artifacts_root: str = Field(..., description="Absolute path of the `data/artifacts/` root the listing was taken from.")
-    sections: dict[str, list[ArtifactFile]] = Field(..., description="Mapping from section name to its artifact file index.")
-    encoder_bakeoff: EncoderBakeoffSection = Field(..., description="Encoder bake-off table on the canonical seed set.")
+    artifacts_root: str = Field(
+        ..., description="Absolute path of the `data/artifacts/` root the listing was taken from."
+    )
+    sections: dict[str, list[ArtifactFile]] = Field(
+        ..., description="Mapping from section name to its artifact file index."
+    )
+    encoder_bakeoff: EncoderBakeoffSection = Field(
+        ..., description="Encoder bake-off table on the canonical seed set."
+    )
     encoder_axis_stance: EncoderAxisStanceSection = Field(
         default_factory=lambda: EncoderAxisStanceSection(available=False, rows=[]),
         description="Validity-study table for the stance axis.",
     )
-    cross_bank_transfer: CrossBankTransferSection = Field(..., description="Cross-bank transfer matrix across the six covered central banks.")
+    cross_bank_transfer: CrossBankTransferSection = Field(
+        ..., description="Cross-bank transfer matrix across the six covered central banks."
+    )
 
 
 class NextFomcMeetingPrediction(BaseModel):
@@ -1236,15 +1824,25 @@ class NextFomcMeetingPrediction(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    target_event_date: str = Field(..., description="ISO `YYYY-MM-DD` event date the prediction targets.")
-    target_as_of_ts: str = Field(..., description="ISO-8601 UTC timestamp the features were anchored at.")
+    target_event_date: str = Field(
+        ..., description="ISO `YYYY-MM-DD` event date the prediction targets."
+    )
+    target_as_of_ts: str = Field(
+        ..., description="ISO-8601 UTC timestamp the features were anchored at."
+    )
     target_class: str | None = Field(
         default=None,
         description="Realised class, when known. None for the next-scheduled meeting.",
     )
-    n_train_rows: int = Field(..., description="Number of training rows that fed the model for this target.")
-    probabilities: dict[str, dict[str, float]] = Field(..., description="Per-model dict of class -> probability for the target meeting.")
-    predicted_class: dict[str, str] = Field(..., description="Per-model argmax class label drawn from `probabilities`.")
+    n_train_rows: int = Field(
+        ..., description="Number of training rows that fed the model for this target."
+    )
+    probabilities: dict[str, dict[str, float]] = Field(
+        ..., description="Per-model dict of class -> probability for the target meeting."
+    )
+    predicted_class: dict[str, str] = Field(
+        ..., description="Per-model argmax class label drawn from `probabilities`."
+    )
 
 
 class NextFomcModelMetrics(BaseModel):
@@ -1253,11 +1851,22 @@ class NextFomcModelMetrics(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     n: int = Field(..., description="Number of resolved predictions in the window.")
-    brier: float | None = Field(default=None, description="Multiclass Brier score over the window; null when unavailable.")
-    log_loss: float | None = Field(default=None, description="Mean cross-entropy loss over the window; null when unavailable.")
-    top1_accuracy: float | None = Field(default=None, description="Top-1 argmax accuracy in `[0, 1]`; null when unavailable.")
-    macro_f1: float | None = Field(default=None, description="Unweighted mean F1 across classes in `[0, 1]`; null when unavailable.")
-    confusion_matrix: dict[str, dict[str, int]] = Field(default_factory=dict, description="Nested actual -> predicted counts over the window.")
+    brier: float | None = Field(
+        default=None, description="Multiclass Brier score over the window; null when unavailable."
+    )
+    log_loss: float | None = Field(
+        default=None, description="Mean cross-entropy loss over the window; null when unavailable."
+    )
+    top1_accuracy: float | None = Field(
+        default=None, description="Top-1 argmax accuracy in `[0, 1]`; null when unavailable."
+    )
+    macro_f1: float | None = Field(
+        default=None,
+        description="Unweighted mean F1 across classes in `[0, 1]`; null when unavailable.",
+    )
+    confusion_matrix: dict[str, dict[str, int]] = Field(
+        default_factory=dict, description="Nested actual -> predicted counts over the window."
+    )
 
 
 class NextFomcAttributionRow(BaseModel):
@@ -1265,14 +1874,31 @@ class NextFomcAttributionRow(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    subset: str = Field(..., description="Subset identifier the row was scored on (e.g. `full`, `ex_pandemic`).")
+    subset: str = Field(
+        ..., description="Subset identifier the row was scored on (e.g. `full`, `ex_pandemic`)."
+    )
     families: list[str] = Field(..., description="Feature families included in this ablation row.")
-    n_features: int | None = Field(default=None, description="Number of features used after the family subset was applied; null when unavailable.")
-    n: int | None = Field(default=None, description="Number of resolved predictions used for the metrics; null when unavailable.")
-    brier: float | None = Field(default=None, description="Multiclass Brier score for this row; null when unavailable.")
-    log_loss: float | None = Field(default=None, description="Mean cross-entropy loss for this row; null when unavailable.")
-    top1_accuracy: float | None = Field(default=None, description="Top-1 argmax accuracy in `[0, 1]`; null when unavailable.")
-    macro_f1: float | None = Field(default=None, description="Unweighted mean F1 across classes in `[0, 1]`; null when unavailable.")
+    n_features: int | None = Field(
+        default=None,
+        description="Number of features used after the family subset was applied; null when unavailable.",
+    )
+    n: int | None = Field(
+        default=None,
+        description="Number of resolved predictions used for the metrics; null when unavailable.",
+    )
+    brier: float | None = Field(
+        default=None, description="Multiclass Brier score for this row; null when unavailable."
+    )
+    log_loss: float | None = Field(
+        default=None, description="Mean cross-entropy loss for this row; null when unavailable."
+    )
+    top1_accuracy: float | None = Field(
+        default=None, description="Top-1 argmax accuracy in `[0, 1]`; null when unavailable."
+    )
+    macro_f1: float | None = Field(
+        default=None,
+        description="Unweighted mean F1 across classes in `[0, 1]`; null when unavailable.",
+    )
 
 
 class NextFomcUpcomingMeeting(BaseModel):
@@ -1282,8 +1908,13 @@ class NextFomcUpcomingMeeting(BaseModel):
 
     meeting_date: str = Field(..., description="ISO `YYYY-MM-DD` date of the next FOMC meeting.")
     meeting_type: str = Field(..., description="Meeting type label, e.g. `scheduled`.")
-    statement_release_date: str | None = Field(default=None, description="ISO date the statement is expected; null when not yet scheduled.")
-    days_until: int | None = Field(default=None, description="Calendar days from today to `meeting_date`; null when unavailable.")
+    statement_release_date: str | None = Field(
+        default=None, description="ISO date the statement is expected; null when not yet scheduled."
+    )
+    days_until: int | None = Field(
+        default=None,
+        description="Calendar days from today to `meeting_date`; null when unavailable.",
+    )
 
 
 class NextFomcForecastResponse(BaseModel):
@@ -1292,16 +1923,43 @@ class NextFomcForecastResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     available: bool = Field(..., description="True when a next-FOMC artifact was found on disk.")
-    artifacts_dir: str = Field(..., description="Absolute path of the artifacts directory backing this response.")
-    ordinal_classes: list[str] = Field(..., description="Ordered class labels the next-FOMC heads emit, e.g. cut/hold/hike.")
-    model_names: list[str] = Field(default_factory=list, description="Model identifiers compared in this response.")
-    upcoming_meeting: NextFomcUpcomingMeeting | None = Field(default=None, description="Descriptor of the upcoming meeting the headline targets; null when none is scheduled.")
-    headline: NextFomcMeetingPrediction | None = Field(default=None, description="Headline next-meeting prediction row; null when no prediction is available.")
-    history: list[NextFomcMeetingPrediction] = Field(default_factory=list, description="Historical next-meeting predictions ordered oldest-first.")
-    metrics_full_window: dict[str, NextFomcModelMetrics] = Field(default_factory=dict, description="Per-model aggregate metrics over the full window keyed by model name.")
-    metrics_ex_pandemic: dict[str, NextFomcModelMetrics] = Field(default_factory=dict, description="Per-model aggregate metrics excluding the COVID pandemic window.")
-    feature_attribution: list[NextFomcAttributionRow] = Field(default_factory=list, description="Feature-family ablation rows for the model attribution table.")
-    summary: dict[str, int] = Field(default_factory=dict, description="Free-form integer summary counters surfaced beside the response.")
+    artifacts_dir: str = Field(
+        ..., description="Absolute path of the artifacts directory backing this response."
+    )
+    ordinal_classes: list[str] = Field(
+        ..., description="Ordered class labels the next-FOMC heads emit, e.g. cut/hold/hike."
+    )
+    model_names: list[str] = Field(
+        default_factory=list, description="Model identifiers compared in this response."
+    )
+    upcoming_meeting: NextFomcUpcomingMeeting | None = Field(
+        default=None,
+        description="Descriptor of the upcoming meeting the headline targets; null when none is scheduled.",
+    )
+    headline: NextFomcMeetingPrediction | None = Field(
+        default=None,
+        description="Headline next-meeting prediction row; null when no prediction is available.",
+    )
+    history: list[NextFomcMeetingPrediction] = Field(
+        default_factory=list,
+        description="Historical next-meeting predictions ordered oldest-first.",
+    )
+    metrics_full_window: dict[str, NextFomcModelMetrics] = Field(
+        default_factory=dict,
+        description="Per-model aggregate metrics over the full window keyed by model name.",
+    )
+    metrics_ex_pandemic: dict[str, NextFomcModelMetrics] = Field(
+        default_factory=dict,
+        description="Per-model aggregate metrics excluding the COVID pandemic window.",
+    )
+    feature_attribution: list[NextFomcAttributionRow] = Field(
+        default_factory=list,
+        description="Feature-family ablation rows for the model attribution table.",
+    )
+    summary: dict[str, int] = Field(
+        default_factory=dict,
+        description="Free-form integer summary counters surfaced beside the response.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1589,9 +2247,18 @@ class ResearchRegistryBaseline(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     label: str = Field(..., description="Label of the no-text baseline, e.g. `market_only`.")
-    dual_f1: float | None = Field(default=None, description="Baseline macro-F1 on the dual-head surface; null when not recorded.")
-    cls_f1: float | None = Field(default=None, description="Baseline macro-F1 on the classification-only surface; null when not recorded.")
-    regression_f1: float | None = Field(default=None, description="Baseline macro-F1 on the regression-only surface; null when not recorded.")
+    dual_f1: float | None = Field(
+        default=None,
+        description="Baseline macro-F1 on the dual-head surface; null when not recorded.",
+    )
+    cls_f1: float | None = Field(
+        default=None,
+        description="Baseline macro-F1 on the classification-only surface; null when not recorded.",
+    )
+    regression_f1: float | None = Field(
+        default=None,
+        description="Baseline macro-F1 on the regression-only surface; null when not recorded.",
+    )
 
 
 class ResearchRegistryRow(BaseModel):
@@ -1601,9 +2268,18 @@ class ResearchRegistryRow(BaseModel):
 
     encoder_alias: str = Field(..., description="Registry alias of the encoder being compared.")
     encoder_display: str = Field(..., description="Display name of the encoder for UI rendering.")
-    dual_f1: float | None = Field(default=None, description="Encoder macro-F1 on the dual-head surface; null when not recorded.")
-    cls_f1: float | None = Field(default=None, description="Encoder macro-F1 on the classification-only surface; null when not recorded.")
-    regression_f1: float | None = Field(default=None, description="Encoder macro-F1 on the regression-only surface; null when not recorded.")
+    dual_f1: float | None = Field(
+        default=None,
+        description="Encoder macro-F1 on the dual-head surface; null when not recorded.",
+    )
+    cls_f1: float | None = Field(
+        default=None,
+        description="Encoder macro-F1 on the classification-only surface; null when not recorded.",
+    )
+    regression_f1: float | None = Field(
+        default=None,
+        description="Encoder macro-F1 on the regression-only surface; null when not recorded.",
+    )
     delta_dual: float | None = Field(
         default=None,
         description="Δ macro-F1 on the dual-head surface vs no-text baseline.",
@@ -1616,12 +2292,17 @@ class ResearchRegistryRow(BaseModel):
         default=False,
         description="True iff the active surfaces Δ is >= 0 (non-negative lift).",
     )
-    checkpoint_relpath: str | None = Field(default=None, description="Path of the encoder checkpoint relative to the models directory; null when not published.")
+    checkpoint_relpath: str | None = Field(
+        default=None,
+        description="Path of the encoder checkpoint relative to the models directory; null when not published.",
+    )
     cache_uri: str | None = Field(
         default=None,
         description="hf:// URI of the shareable embedding cache parquet, if published.",
     )
-    notes: str = Field(default="", description="Free-text notes for the row, e.g. caveats; empty when none.")
+    notes: str = Field(
+        default="", description="Free-text notes for the row, e.g. caveats; empty when none."
+    )
 
 
 class ResearchRegistryResponse(BaseModel):
@@ -1636,14 +2317,30 @@ class ResearchRegistryResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     available: bool = Field(..., description="True when a registry manifest was found on disk.")
-    surface: Literal["dual", "cls"] = Field(..., description="Which head surface the lift is computed on: `dual` or `cls`.")
-    baseline: ResearchRegistryBaseline | None = Field(default=None, description="Reference no-text baseline row; null when not recorded.")
-    rows: list[ResearchRegistryRow] = Field(default_factory=list, description="Per-encoder registry rows after filtering on lift sign.")
-    rejected_count: int = Field(default=0, description="Number of rows filtered out for negative or null lift.")
-    training_package_id: str = Field(default="", description="Training package ID the registry was assembled from.")
-    head: str = Field(default="", description="Head identifier within the package the rows were computed on.")
-    seeds: list[int] = Field(default_factory=list, description="Seed set the registry rows were averaged across.")
-    source_wiki_section: str = Field(default="", description="Wiki section identifier the registry sources its baseline from.")
+    surface: Literal["dual", "cls"] = Field(
+        ..., description="Which head surface the lift is computed on: `dual` or `cls`."
+    )
+    baseline: ResearchRegistryBaseline | None = Field(
+        default=None, description="Reference no-text baseline row; null when not recorded."
+    )
+    rows: list[ResearchRegistryRow] = Field(
+        default_factory=list, description="Per-encoder registry rows after filtering on lift sign."
+    )
+    rejected_count: int = Field(
+        default=0, description="Number of rows filtered out for negative or null lift."
+    )
+    training_package_id: str = Field(
+        default="", description="Training package ID the registry was assembled from."
+    )
+    head: str = Field(
+        default="", description="Head identifier within the package the rows were computed on."
+    )
+    seeds: list[int] = Field(
+        default_factory=list, description="Seed set the registry rows were averaged across."
+    )
+    source_wiki_section: str = Field(
+        default="", description="Wiki section identifier the registry sources its baseline from."
+    )
 
 
 # #299 PR-B — stance-directional backtest engine
@@ -1684,8 +2381,14 @@ class BacktestTradeRow(BaseModel):
 
     date: str = Field(..., description="ISO `YYYY-MM-DD` date of the signal entry.")
     position: int = Field(..., description="Position taken on `date`: -1 short, 0 flat, +1 long.")
-    forward_return_pct: float | None = Field(default=None, description="Forward holding-period close-to-close % return from `date`; null when forward bars are missing.")
-    strategy_return_pct: float | None = Field(default=None, description="Strategy % return for the trade = `position * forward_return_pct`; null when the trade is unresolved.")
+    forward_return_pct: float | None = Field(
+        default=None,
+        description="Forward holding-period close-to-close % return from `date`; null when forward bars are missing.",
+    )
+    strategy_return_pct: float | None = Field(
+        default=None,
+        description="Strategy % return for the trade = `position * forward_return_pct`; null when the trade is unresolved.",
+    )
 
 
 class BacktestResponse(BaseModel):
@@ -1693,15 +2396,37 @@ class BacktestResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    trades: list[BacktestTradeRow] = Field(default_factory=list, description="Per-signal trade rows produced by the backtest.")
+    trades: list[BacktestTradeRow] = Field(
+        default_factory=list, description="Per-signal trade rows produced by the backtest."
+    )
     n_trades: int = Field(..., description="Number of trades executed in the backtest.")
-    sharpe: float | None = Field(default=None, description="Annualised Sharpe ratio of the strategy returns; null when fewer than two resolved trades.")
-    hit_rate: float | None = Field(default=None, description="Fraction of resolved trades with positive strategy return in `[0, 1]`; null when none resolved.")
-    max_dd_pct: float | None = Field(default=None, description="Maximum % drawdown of the cumulative strategy curve; null when unavailable.")
-    cum_return_pct: float | None = Field(default=None, description="Cumulative % return of the strategy across all resolved trades; null when none resolved.")
-    benchmark_cum_pct: float | None = Field(default=None, description="Cumulative % return of buy-and-hold on `symbol` over the same window; null when unavailable.")
-    alpha_cum_pct: float | None = Field(default=None, description="Strategy cumulative return minus benchmark cumulative return; null when either side is unavailable.")
-    horizon_days: int = Field(..., description="Forward holding period in trading days echoed from the request.")
+    sharpe: float | None = Field(
+        default=None,
+        description="Annualised Sharpe ratio of the strategy returns; null when fewer than two resolved trades.",
+    )
+    hit_rate: float | None = Field(
+        default=None,
+        description="Fraction of resolved trades with positive strategy return in `[0, 1]`; null when none resolved.",
+    )
+    max_dd_pct: float | None = Field(
+        default=None,
+        description="Maximum % drawdown of the cumulative strategy curve; null when unavailable.",
+    )
+    cum_return_pct: float | None = Field(
+        default=None,
+        description="Cumulative % return of the strategy across all resolved trades; null when none resolved.",
+    )
+    benchmark_cum_pct: float | None = Field(
+        default=None,
+        description="Cumulative % return of buy-and-hold on `symbol` over the same window; null when unavailable.",
+    )
+    alpha_cum_pct: float | None = Field(
+        default=None,
+        description="Strategy cumulative return minus benchmark cumulative return; null when either side is unavailable.",
+    )
+    horizon_days: int = Field(
+        ..., description="Forward holding period in trading days echoed from the request."
+    )
     symbol: str = Field(..., description="Yahoo Finance ticker the backtest was run against.")
 
 
@@ -1719,13 +2444,30 @@ class RealizedVolHorizonForecast(BaseModel):
 
     h: int = Field(..., description="Forecast horizon in trading days, e.g. 1, 5, or 22.")
     point: float = Field(..., description="Point forecast of realized variance at horizon h.")
-    band_lo_80: float = Field(..., description="Lower edge of the 80% conformal band on `point` in RV units.")
-    band_hi_80: float = Field(..., description="Upper edge of the 80% conformal band on `point` in RV units.")
-    band_lo_90: float = Field(..., description="Lower edge of the 90% conformal band on `point` in RV units.")
-    band_hi_90: float = Field(..., description="Upper edge of the 90% conformal band on `point` in RV units.")
-    qlike_model: float | None = Field(default=None, description="Pooled walk-forward QLIKE loss for the model at this horizon (lower is better); null when unavailable.")
-    qlike_har: float | None = Field(default=None, description="Pooled walk-forward QLIKE loss for HAR-OLS at this horizon (baseline); null when unavailable.")
-    coverage_empirical_90: float | None = Field(default=None, description="Prospective empirical coverage of the 90% band in `[0, 1]`; null when unavailable.")
+    band_lo_80: float = Field(
+        ..., description="Lower edge of the 80% conformal band on `point` in RV units."
+    )
+    band_hi_80: float = Field(
+        ..., description="Upper edge of the 80% conformal band on `point` in RV units."
+    )
+    band_lo_90: float = Field(
+        ..., description="Lower edge of the 90% conformal band on `point` in RV units."
+    )
+    band_hi_90: float = Field(
+        ..., description="Upper edge of the 90% conformal band on `point` in RV units."
+    )
+    qlike_model: float | None = Field(
+        default=None,
+        description="Pooled walk-forward QLIKE loss for the model at this horizon (lower is better); null when unavailable.",
+    )
+    qlike_har: float | None = Field(
+        default=None,
+        description="Pooled walk-forward QLIKE loss for HAR-OLS at this horizon (baseline); null when unavailable.",
+    )
+    coverage_empirical_90: float | None = Field(
+        default=None,
+        description="Prospective empirical coverage of the 90% band in `[0, 1]`; null when unavailable.",
+    )
 
 
 class RealizedVolHistoricalBand(BaseModel):
@@ -1737,10 +2479,18 @@ class RealizedVolHistoricalBand(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    date: str = Field(..., description="ISO `YYYY-MM-DD` of the trading session this band targeted.")
-    band_lo_80: float = Field(..., description="Lower edge of the 80% conformal band at this session in RV units.")
-    band_hi_80: float = Field(..., description="Upper edge of the 80% conformal band at this session in RV units.")
-    realized_rv: float | None = Field(default=None, description="Realised RV on this session; null when the bar is unavailable.")
+    date: str = Field(
+        ..., description="ISO `YYYY-MM-DD` of the trading session this band targeted."
+    )
+    band_lo_80: float = Field(
+        ..., description="Lower edge of the 80% conformal band at this session in RV units."
+    )
+    band_hi_80: float = Field(
+        ..., description="Upper edge of the 80% conformal band at this session in RV units."
+    )
+    realized_rv: float | None = Field(
+        default=None, description="Realised RV on this session; null when the bar is unavailable."
+    )
 
 
 class RealizedVolForecastResponse(BaseModel):
@@ -1749,11 +2499,22 @@ class RealizedVolForecastResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     symbol: str = Field(..., description="Yahoo Finance ticker the RV forecast was produced for.")
-    horizons: list[RealizedVolHorizonForecast] = Field(..., description="Per-horizon point + conformal-band forecasts ordered ascending by `h`.")
-    history: list[float] = Field(default_factory=list, description="Last-60d realised RV history aligned to `history_dates`.")
-    history_dates: list[str] = Field(default_factory=list, description="ISO dates aligned to `history` entries, oldest-first.")
-    model_revision: str = Field(..., description="Model revision identifier the forecast was produced under.")
-    historical_bands: list[RealizedVolHistoricalBand] | None = Field(default=None, description="Per-day walk-forward h=1 conformal bands for the sparkline; null when unavailable.")
+    horizons: list[RealizedVolHorizonForecast] = Field(
+        ..., description="Per-horizon point + conformal-band forecasts ordered ascending by `h`."
+    )
+    history: list[float] = Field(
+        default_factory=list, description="Last-60d realised RV history aligned to `history_dates`."
+    )
+    history_dates: list[str] = Field(
+        default_factory=list, description="ISO dates aligned to `history` entries, oldest-first."
+    )
+    model_revision: str = Field(
+        ..., description="Model revision identifier the forecast was produced under."
+    )
+    historical_bands: list[RealizedVolHistoricalBand] | None = Field(
+        default=None,
+        description="Per-day walk-forward h=1 conformal bands for the sparkline; null when unavailable.",
+    )
     realized_features_source: str = Field(
         default="training_means",
         description="`live` when intraday-derived measures filled the QLIKE head; `training_means` when the head fell back to feat_mean.",
@@ -1781,8 +2542,12 @@ class HarTercileHorizon(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     h: int = Field(..., description="Forecast horizon in trading days, e.g. 1, 5, or 22.")
-    predicted_rv: float = Field(..., description="HAR-OLS point forecast of realized variance at horizon h.")
-    tercile: Literal["low", "medium", "high"] = Field(..., description="Argmax tercile bucket for `predicted_rv` against the q33/q67 cutoffs.")
+    predicted_rv: float = Field(
+        ..., description="HAR-OLS point forecast of realized variance at horizon h."
+    )
+    tercile: Literal["low", "medium", "high"] = Field(
+        ..., description="Argmax tercile bucket for `predicted_rv` against the q33/q67 cutoffs."
+    )
     tercile_probs: dict[str, float] = Field(
         default_factory=dict,
         description="Per-class probability over (low, medium, high). Sums to 1.0.",
@@ -1828,8 +2593,12 @@ class HarTercileBaselineResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    symbol: str = Field(..., description="Yahoo Finance ticker the HAR-tercile baseline was produced for.")
-    horizons: list[HarTercileHorizon] = Field(..., description="Per-horizon HAR-tercile rows ordered ascending by `h`.")
+    symbol: str = Field(
+        ..., description="Yahoo Finance ticker the HAR-tercile baseline was produced for."
+    )
+    horizons: list[HarTercileHorizon] = Field(
+        ..., description="Per-horizon HAR-tercile rows ordered ascending by `h`."
+    )
     cutoffs_q33: float = Field(
         ...,
         description=(
@@ -1842,8 +2611,12 @@ class HarTercileBaselineResponse(BaseModel):
         ...,
         description="Upper tercile cutoff on realized variance.",
     )
-    model_revision: str = Field(..., description="Model revision identifier the baseline was produced under.")
-    generated_at: str = Field(..., description="ISO-8601 UTC timestamp the response was generated at.")
+    model_revision: str = Field(
+        ..., description="Model revision identifier the baseline was produced under."
+    )
+    generated_at: str = Field(
+        ..., description="ISO-8601 UTC timestamp the response was generated at."
+    )
 
 
 # Workspace-spine bundle: shared response models for the four
@@ -1871,14 +2644,33 @@ class ExpectedVolumeHorizonForecast(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     h: int = Field(..., description="Forecast horizon in trading days, e.g. 1, 5, or 22.")
-    point_log_residual: float = Field(..., description="Point estimate in log-volume residual space after optional calendar adjustment.")
-    point_pct_vs_baseline: float = Field(..., description="Point estimate as a % deviation from the rolling calendar-adjusted baseline.")
-    band_lo_80: float = Field(..., description="Lower edge of the 80% conformal band on `point_log_residual`.")
-    band_hi_80: float = Field(..., description="Upper edge of the 80% conformal band on `point_log_residual`.")
-    band_lo_90: float = Field(..., description="Lower edge of the 90% conformal band on `point_log_residual`.")
-    band_hi_90: float = Field(..., description="Upper edge of the 90% conformal band on `point_log_residual`.")
-    r2_har: float | None = Field(default=None, description="Pooled walk-forward R^2 of the HAR volume head at this horizon; null when unavailable.")
-    calendar_adjusted: bool = Field(..., description="True when the baseline subtraction used a calendar-adjusted rolling mean.")
+    point_log_residual: float = Field(
+        ...,
+        description="Point estimate in log-volume residual space after optional calendar adjustment.",
+    )
+    point_pct_vs_baseline: float = Field(
+        ...,
+        description="Point estimate as a % deviation from the rolling calendar-adjusted baseline.",
+    )
+    band_lo_80: float = Field(
+        ..., description="Lower edge of the 80% conformal band on `point_log_residual`."
+    )
+    band_hi_80: float = Field(
+        ..., description="Upper edge of the 80% conformal band on `point_log_residual`."
+    )
+    band_lo_90: float = Field(
+        ..., description="Lower edge of the 90% conformal band on `point_log_residual`."
+    )
+    band_hi_90: float = Field(
+        ..., description="Upper edge of the 90% conformal band on `point_log_residual`."
+    )
+    r2_har: float | None = Field(
+        default=None,
+        description="Pooled walk-forward R^2 of the HAR volume head at this horizon; null when unavailable.",
+    )
+    calendar_adjusted: bool = Field(
+        ..., description="True when the baseline subtraction used a calendar-adjusted rolling mean."
+    )
 
 
 class ExpectedVolumeForecastResponse(BaseModel):
@@ -1888,10 +2680,18 @@ class ExpectedVolumeForecastResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    symbol: str = Field(..., description="Yahoo Finance ticker the volume forecast was produced for.")
-    horizons: list[ExpectedVolumeHorizonForecast] = Field(..., description="Per-horizon volume forecast rows ordered ascending by `h`.")
-    model_revision: str = Field(..., description="Model revision identifier the forecast was produced under.")
-    generated_at: str = Field(..., description="ISO-8601 UTC timestamp the response was generated at.")
+    symbol: str = Field(
+        ..., description="Yahoo Finance ticker the volume forecast was produced for."
+    )
+    horizons: list[ExpectedVolumeHorizonForecast] = Field(
+        ..., description="Per-horizon volume forecast rows ordered ascending by `h`."
+    )
+    model_revision: str = Field(
+        ..., description="Model revision identifier the forecast was produced under."
+    )
+    generated_at: str = Field(
+        ..., description="ISO-8601 UTC timestamp the response was generated at."
+    )
 
 
 class MonetaryPolicySurpriseResponse(BaseModel):
@@ -1907,12 +2707,27 @@ class MonetaryPolicySurpriseResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    event_date: str = Field(..., description="ISO `YYYY-MM-DD` of the FOMC event the surprise was measured at.")
-    mp_surprise_level_bps: float = Field(..., description="Realised rate-path surprise vs the pre-meeting fed-funds futures consensus, in basis points (signed).")
-    direction: Literal["hawkish", "dovish", "no_surprise"] = Field(..., description="Discrete sign bucket of the surprise the panel renders.")
-    magnitude_bps: float = Field(..., description="Absolute magnitude of the surprise in basis points (non-negative).")
-    is_intermeeting: bool = Field(..., description="True when the action was off-cycle and the consensus baseline was constructed differently.")
-    ff_target_prior_bps: float | None = Field(default=None, description="Prior fed-funds target midpoint in basis points; null when unavailable.")
+    event_date: str = Field(
+        ..., description="ISO `YYYY-MM-DD` of the FOMC event the surprise was measured at."
+    )
+    mp_surprise_level_bps: float = Field(
+        ...,
+        description="Realised rate-path surprise vs the pre-meeting fed-funds futures consensus, in basis points (signed).",
+    )
+    direction: Literal["hawkish", "dovish", "no_surprise"] = Field(
+        ..., description="Discrete sign bucket of the surprise the panel renders."
+    )
+    magnitude_bps: float = Field(
+        ..., description="Absolute magnitude of the surprise in basis points (non-negative)."
+    )
+    is_intermeeting: bool = Field(
+        ...,
+        description="True when the action was off-cycle and the consensus baseline was constructed differently.",
+    )
+    ff_target_prior_bps: float | None = Field(
+        default=None,
+        description="Prior fed-funds target midpoint in basis points; null when unavailable.",
+    )
 
 
 class FuturesConsensusHorizon(BaseModel):
@@ -1925,12 +2740,24 @@ class FuturesConsensusHorizon(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    horizon_label: str = Field(..., description="Horizon identifier for the futures contract, e.g. `next` or `+3m`.")
-    implied_rate_bps: float = Field(..., description="Futures-implied fed-funds rate at this horizon in basis points.")
-    change_vs_current_bps: float = Field(..., description="Signed change in basis points vs the current target midpoint.")
-    probability_hike: float = Field(..., description="Implied probability of a rate hike at this horizon in `[0, 1]`.")
-    probability_cut: float = Field(..., description="Implied probability of a rate cut at this horizon in `[0, 1]`.")
-    probability_pause: float = Field(..., description="Implied probability of a hold at this horizon in `[0, 1]`.")
+    horizon_label: str = Field(
+        ..., description="Horizon identifier for the futures contract, e.g. `next` or `+3m`."
+    )
+    implied_rate_bps: float = Field(
+        ..., description="Futures-implied fed-funds rate at this horizon in basis points."
+    )
+    change_vs_current_bps: float = Field(
+        ..., description="Signed change in basis points vs the current target midpoint."
+    )
+    probability_hike: float = Field(
+        ..., description="Implied probability of a rate hike at this horizon in `[0, 1]`."
+    )
+    probability_cut: float = Field(
+        ..., description="Implied probability of a rate cut at this horizon in `[0, 1]`."
+    )
+    probability_pause: float = Field(
+        ..., description="Implied probability of a hold at this horizon in `[0, 1]`."
+    )
 
 
 class FuturesConsensusResponse(BaseModel):
@@ -1942,13 +2769,27 @@ class FuturesConsensusResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    meeting_date: str = Field(..., description="ISO `YYYY-MM-DD` of the FOMC meeting the consensus targets.")
-    generated_at: str = Field(..., description="ISO-8601 UTC timestamp the response was generated at.")
-    current_target_lo_bps: float = Field(..., description="Lower bound of the current fed-funds target range in basis points.")
-    current_target_hi_bps: float = Field(..., description="Upper bound of the current fed-funds target range in basis points.")
-    horizons: list[FuturesConsensusHorizon] = Field(..., description="Per-horizon implied-rate + bucket-probability rows ordered by horizon.")
-    methodology: str = Field(..., description="Short description of how the implied probabilities were derived.")
-    data_source: str = Field(..., description="Upstream data source identifier, e.g. `FRED` or `CME`.")
+    meeting_date: str = Field(
+        ..., description="ISO `YYYY-MM-DD` of the FOMC meeting the consensus targets."
+    )
+    generated_at: str = Field(
+        ..., description="ISO-8601 UTC timestamp the response was generated at."
+    )
+    current_target_lo_bps: float = Field(
+        ..., description="Lower bound of the current fed-funds target range in basis points."
+    )
+    current_target_hi_bps: float = Field(
+        ..., description="Upper bound of the current fed-funds target range in basis points."
+    )
+    horizons: list[FuturesConsensusHorizon] = Field(
+        ..., description="Per-horizon implied-rate + bucket-probability rows ordered by horizon."
+    )
+    methodology: str = Field(
+        ..., description="Short description of how the implied probabilities were derived."
+    )
+    data_source: str = Field(
+        ..., description="Upstream data source identifier, e.g. `FRED` or `CME`."
+    )
 
 
 class SemanticDiffSpan(BaseModel):
@@ -1962,9 +2803,14 @@ class SemanticDiffSpan(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    kind: Literal["unchanged", "added", "removed", "substituted"] = Field(..., description="Alignment bucket of this span vs the prior statement.")
+    kind: Literal["unchanged", "added", "removed", "substituted"] = Field(
+        ..., description="Alignment bucket of this span vs the prior statement."
+    )
     text: str = Field(..., description="Surface text of the span on the current-statement side.")
-    paired_text: str | None = Field(default=None, description="Matched span on the prior-statement side for `substituted` kinds; null when no near-match neighbour was emitted.")
+    paired_text: str | None = Field(
+        default=None,
+        description="Matched span on the prior-statement side for `substituted` kinds; null when no near-match neighbour was emitted.",
+    )
 
 
 class SemanticDiffTopic(BaseModel):
@@ -1979,10 +2825,17 @@ class SemanticDiffTopic(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     topic: str = Field(..., description="Topic identifier from the topic model used for the diff.")
-    prior_emphasis: float = Field(..., description="Topic-share mass in the prior statement in `[0, 1]`.")
-    current_emphasis: float = Field(..., description="Topic-share mass in the current statement in `[0, 1]`.")
+    prior_emphasis: float = Field(
+        ..., description="Topic-share mass in the prior statement in `[0, 1]`."
+    )
+    current_emphasis: float = Field(
+        ..., description="Topic-share mass in the current statement in `[0, 1]`."
+    )
     delta: float = Field(..., description="Signed delta = current_emphasis - prior_emphasis.")
-    sample_phrases: list[str] = Field(default_factory=list, description="Highest-loading n-grams the panel surfaces alongside the topic bar.")
+    sample_phrases: list[str] = Field(
+        default_factory=list,
+        description="Highest-loading n-grams the panel surfaces alongside the topic bar.",
+    )
 
 
 class SemanticDiffRequest(BaseModel):
@@ -2022,11 +2875,23 @@ class SemanticDiffResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    current_date: str = Field(..., description="ISO `YYYY-MM-DD` event date of the current statement.")
-    prior_date: str = Field(..., description="ISO `YYYY-MM-DD` event date of the strict-prior statement on file; empty when none.")
-    token_spans: list[SemanticDiffSpan] = Field(..., description="Token-aligned span sequence between the two statements in current-statement order.")
-    topic_deltas: list[SemanticDiffTopic] = Field(..., description="Topic-emphasis delta rows ordered by absolute delta magnitude.")
-    summary: str = Field(..., description="Short human-readable summary of the diff, e.g. headline phrase changes.")
+    current_date: str = Field(
+        ..., description="ISO `YYYY-MM-DD` event date of the current statement."
+    )
+    prior_date: str = Field(
+        ...,
+        description="ISO `YYYY-MM-DD` event date of the strict-prior statement on file; empty when none.",
+    )
+    token_spans: list[SemanticDiffSpan] = Field(
+        ...,
+        description="Token-aligned span sequence between the two statements in current-statement order.",
+    )
+    topic_deltas: list[SemanticDiffTopic] = Field(
+        ..., description="Topic-emphasis delta rows ordered by absolute delta magnitude."
+    )
+    summary: str = Field(
+        ..., description="Short human-readable summary of the diff, e.g. headline phrase changes."
+    )
     status: Literal["ok", "no_input", "no_prior", "non_english"] | None = Field(
         default=None,
         description="Parseable status flag for the panel banner; null on legacy responses that pre-date the field.",
@@ -2046,11 +2911,26 @@ class HarTercileBacktestRow(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     event_date: str = Field(..., description="ISO `YYYY-MM-DD` event date the row was anchored to.")
-    predicted_tercile: str | None = Field(default=None, description="HAR-tercile predicted bucket (low/medium/high) at the event; null when the forecast was outside the warmup window.")
-    predicted_prob: float | None = Field(default=None, description="Probability of the predicted tercile in `[0, 1]`; null when the forecast is unavailable.")
-    realized_tercile: str | None = Field(default=None, description="Realised forward-vol tercile bucketed off the same cutoffs; null when the forward window has not yet closed.")
-    realized_rv: float | None = Field(default=None, description="Realised RV measured at the forward bar; null when the forward window has not yet closed.")
-    correct: bool | None = Field(default=None, description="True when `predicted_tercile == realized_tercile`; null when the row is unresolved.")
+    predicted_tercile: str | None = Field(
+        default=None,
+        description="HAR-tercile predicted bucket (low/medium/high) at the event; null when the forecast was outside the warmup window.",
+    )
+    predicted_prob: float | None = Field(
+        default=None,
+        description="Probability of the predicted tercile in `[0, 1]`; null when the forecast is unavailable.",
+    )
+    realized_tercile: str | None = Field(
+        default=None,
+        description="Realised forward-vol tercile bucketed off the same cutoffs; null when the forward window has not yet closed.",
+    )
+    realized_rv: float | None = Field(
+        default=None,
+        description="Realised RV measured at the forward bar; null when the forward window has not yet closed.",
+    )
+    correct: bool | None = Field(
+        default=None,
+        description="True when `predicted_tercile == realized_tercile`; null when the row is unresolved.",
+    )
 
 
 class HarAccuracyMetrics(BaseModel):
@@ -2066,10 +2946,19 @@ class HarAccuracyMetrics(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    total_runs: int = Field(..., description="Total rows in the window regardless of forward-window resolution.")
-    resolved_runs: int = Field(..., description="Number of rows whose realised tercile could be derived.")
-    accuracy_overall: float | None = Field(default=None, description="Hit rate across resolved rows in `[0, 1]`; null when none resolved.")
-    per_tercile_hit_rate: dict[str, float] = Field(default_factory=dict, description="Per-predicted-tercile hit rate keyed by predicted label.")
+    total_runs: int = Field(
+        ..., description="Total rows in the window regardless of forward-window resolution."
+    )
+    resolved_runs: int = Field(
+        ..., description="Number of rows whose realised tercile could be derived."
+    )
+    accuracy_overall: float | None = Field(
+        default=None,
+        description="Hit rate across resolved rows in `[0, 1]`; null when none resolved.",
+    )
+    per_tercile_hit_rate: dict[str, float] = Field(
+        default_factory=dict, description="Per-predicted-tercile hit rate keyed by predicted label."
+    )
 
 
 class HarTercileBacktestResponse(BaseModel):
@@ -2083,10 +2972,18 @@ class HarTercileBacktestResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     symbol: str = Field(..., description="Yahoo Finance ticker the backtest was run against.")
-    horizon: int = Field(..., description="Forward horizon in trading days the realised tercile was measured at.")
-    rows: list[HarTercileBacktestRow] = Field(..., description="Per-event backtest rows ordered by `event_date`.")
-    metrics: HarAccuracyMetrics = Field(..., description="Aggregate accuracy metrics across the rows.")
-    generated_at: str = Field(..., description="ISO-8601 UTC timestamp the response was generated at.")
+    horizon: int = Field(
+        ..., description="Forward horizon in trading days the realised tercile was measured at."
+    )
+    rows: list[HarTercileBacktestRow] = Field(
+        ..., description="Per-event backtest rows ordered by `event_date`."
+    )
+    metrics: HarAccuracyMetrics = Field(
+        ..., description="Aggregate accuracy metrics across the rows."
+    )
+    generated_at: str = Field(
+        ..., description="ISO-8601 UTC timestamp the response was generated at."
+    )
 
 
 class RvBacktestRow(BaseModel):
@@ -2103,14 +3000,34 @@ class RvBacktestRow(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     event_date: str = Field(..., description="ISO `YYYY-MM-DD` event date the row was anchored to.")
-    point_forecast_rv: float | None = Field(default=None, description="h=1 point forecast of realised variance; null on pending rows inside the HAR warmup or beyond RV history.")
-    band_lo_80: float | None = Field(default=None, description="Lower edge of the 80% conformal band; null on pending rows.")
-    band_hi_80: float | None = Field(default=None, description="Upper edge of the 80% conformal band; null on pending rows.")
-    band_lo_90: float | None = Field(default=None, description="Lower edge of the 90% conformal band; null on pending rows.")
-    band_hi_90: float | None = Field(default=None, description="Upper edge of the 90% conformal band; null on pending rows.")
-    realized_rv: float | None = Field(default=None, description="Realised RV on the predicted bar; null when the bar is unresolved.")
-    in_band_80: bool | None = Field(default=None, description="True when `realized_rv` lies inside the 80% band; null when realised RV is unresolved.")
-    in_band_90: bool | None = Field(default=None, description="True when `realized_rv` lies inside the 90% band; null when realised RV is unresolved.")
+    point_forecast_rv: float | None = Field(
+        default=None,
+        description="h=1 point forecast of realised variance; null on pending rows inside the HAR warmup or beyond RV history.",
+    )
+    band_lo_80: float | None = Field(
+        default=None, description="Lower edge of the 80% conformal band; null on pending rows."
+    )
+    band_hi_80: float | None = Field(
+        default=None, description="Upper edge of the 80% conformal band; null on pending rows."
+    )
+    band_lo_90: float | None = Field(
+        default=None, description="Lower edge of the 90% conformal band; null on pending rows."
+    )
+    band_hi_90: float | None = Field(
+        default=None, description="Upper edge of the 90% conformal band; null on pending rows."
+    )
+    realized_rv: float | None = Field(
+        default=None,
+        description="Realised RV on the predicted bar; null when the bar is unresolved.",
+    )
+    in_band_80: bool | None = Field(
+        default=None,
+        description="True when `realized_rv` lies inside the 80% band; null when realised RV is unresolved.",
+    )
+    in_band_90: bool | None = Field(
+        default=None,
+        description="True when `realized_rv` lies inside the 90% band; null when realised RV is unresolved.",
+    )
 
 
 class RvBacktestCoverage(BaseModel):
@@ -2128,13 +3045,30 @@ class RvBacktestCoverage(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    total_runs: int = Field(..., description="Total rows in the backtest window regardless of resolution.")
-    resolved_runs: int = Field(..., description="Number of rows with realised RV on the predicted bar.")
-    pending_runs: int = Field(default=0, description="Rows that could not be scored because the event sits in the HAR warmup or beyond available RV history.")
-    empirical_coverage_80: float | None = Field(default=None, description="Fraction of resolved rows whose realised RV landed inside the 80% band; null when none resolved.")
-    empirical_coverage_90: float | None = Field(default=None, description="Fraction of resolved rows whose realised RV landed inside the 90% band; null when none resolved.")
-    nominal_coverage_80: float = Field(default=0.80, description="Calibration target for the 80% band, pinned to 0.80.")
-    nominal_coverage_90: float = Field(default=0.90, description="Calibration target for the 90% band, pinned to 0.90.")
+    total_runs: int = Field(
+        ..., description="Total rows in the backtest window regardless of resolution."
+    )
+    resolved_runs: int = Field(
+        ..., description="Number of rows with realised RV on the predicted bar."
+    )
+    pending_runs: int = Field(
+        default=0,
+        description="Rows that could not be scored because the event sits in the HAR warmup or beyond available RV history.",
+    )
+    empirical_coverage_80: float | None = Field(
+        default=None,
+        description="Fraction of resolved rows whose realised RV landed inside the 80% band; null when none resolved.",
+    )
+    empirical_coverage_90: float | None = Field(
+        default=None,
+        description="Fraction of resolved rows whose realised RV landed inside the 90% band; null when none resolved.",
+    )
+    nominal_coverage_80: float = Field(
+        default=0.80, description="Calibration target for the 80% band, pinned to 0.80."
+    )
+    nominal_coverage_90: float = Field(
+        default=0.90, description="Calibration target for the 90% band, pinned to 0.90."
+    )
 
 
 class RvBacktestResponse(BaseModel):
@@ -2149,10 +3083,18 @@ class RvBacktestResponse(BaseModel):
     model_config = _FORBID_FROZEN_CONFIG
 
     symbol: str = Field(..., description="Yahoo Finance ticker the RV backtest was run against.")
-    horizon: int = Field(..., description="Forward horizon in trading days the bands were calibrated for (h=1).")
-    rows: list[RvBacktestRow] = Field(..., description="Per-event RV backtest rows ordered by `event_date`.")
-    coverage: RvBacktestCoverage = Field(..., description="Aggregate empirical-vs-nominal coverage across the rows.")
-    generated_at: str = Field(..., description="ISO-8601 UTC timestamp the response was generated at.")
+    horizon: int = Field(
+        ..., description="Forward horizon in trading days the bands were calibrated for (h=1)."
+    )
+    rows: list[RvBacktestRow] = Field(
+        ..., description="Per-event RV backtest rows ordered by `event_date`."
+    )
+    coverage: RvBacktestCoverage = Field(
+        ..., description="Aggregate empirical-vs-nominal coverage across the rows."
+    )
+    generated_at: str = Field(
+        ..., description="ISO-8601 UTC timestamp the response was generated at."
+    )
 
 
 class CrossBankCard(BaseModel):
@@ -2169,24 +3111,65 @@ class CrossBankCard(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    bank: str = Field(..., description="Full bank name identifier, e.g. `federal_reserve`, `european_central_bank`.")
-    short_code: str = Field(..., description="Short code used in artifacts/keys, e.g. `fed`, `ecb`, `boj`.")
+    bank: str = Field(
+        ...,
+        description="Full bank name identifier, e.g. `federal_reserve`, `european_central_bank`.",
+    )
+    short_code: str = Field(
+        ..., description="Short code used in artifacts/keys, e.g. `fed`, `ecb`, `boj`."
+    )
     display_name: str = Field(..., description="Human-readable bank name shown on the card.")
     flag: str = Field(..., description="Flag emoji or ISO code for the bank's jurisdiction.")
-    symbol: str = Field(..., description="Yahoo Finance ticker the vol-regime card was anchored to.")
-    latest_statement_date: str | None = Field(..., description="ISO `YYYY-MM-DD` event date of the latest statement scored; null when no statement was found.")
-    stance: dict[str, float] | None = Field(..., description="Per-class stance distribution over hawkish/dovish/neutral; null when the head is unavailable.")
-    stance_label: str | None = Field(..., description="Argmax stance label; null when the head is unavailable.")
-    stance_confidence: float | None = Field(..., description="Probability of `stance_label` in `[0, 1]`; null when the head is unavailable.")
-    certainty_label: str | None = Field(..., description="Argmax certainty label; null when the head is unavailable.")
-    certainty_confidence: float | None = Field(..., description="Probability of `certainty_label` in `[0, 1]`; null when the head is unavailable.")
-    time_axis: str | None = Field(..., description="Forward-looking time axis label; null when the head is unavailable.")
-    vol_regime_label: str | None = Field(..., description="Argmax vol-regime label (calm/normal/high); null when the head is unavailable.")
-    vol_regime_confidence: float | None = Field(..., description="Probability of `vol_regime_label` in `[0, 1]`; null when the head is unavailable.")
-    vol_regime_as_of: str | None = Field(..., description="ISO `YYYY-MM-DD` of the trading session the vol-regime card was anchored at; null when unavailable.")
-    vol_regime_status: str | None = Field(..., description="Status string for the vol-regime card, e.g. `ok` or a degradation reason.")
-    sample_size: int = Field(..., description="Number of historical statements that fed the card's distribution.")
-    status: str = Field(..., description="Overall status string for the card, e.g. `ok` or the reason the card is partial.")
+    symbol: str = Field(
+        ..., description="Yahoo Finance ticker the vol-regime card was anchored to."
+    )
+    latest_statement_date: str | None = Field(
+        ...,
+        description="ISO `YYYY-MM-DD` event date of the latest statement scored; null when no statement was found.",
+    )
+    stance: dict[str, float] | None = Field(
+        ...,
+        description="Per-class stance distribution over hawkish/dovish/neutral; null when the head is unavailable.",
+    )
+    stance_label: str | None = Field(
+        ..., description="Argmax stance label; null when the head is unavailable."
+    )
+    stance_confidence: float | None = Field(
+        ...,
+        description="Probability of `stance_label` in `[0, 1]`; null when the head is unavailable.",
+    )
+    certainty_label: str | None = Field(
+        ..., description="Argmax certainty label; null when the head is unavailable."
+    )
+    certainty_confidence: float | None = Field(
+        ...,
+        description="Probability of `certainty_label` in `[0, 1]`; null when the head is unavailable.",
+    )
+    time_axis: str | None = Field(
+        ..., description="Forward-looking time axis label; null when the head is unavailable."
+    )
+    vol_regime_label: str | None = Field(
+        ...,
+        description="Argmax vol-regime label (calm/normal/high); null when the head is unavailable.",
+    )
+    vol_regime_confidence: float | None = Field(
+        ...,
+        description="Probability of `vol_regime_label` in `[0, 1]`; null when the head is unavailable.",
+    )
+    vol_regime_as_of: str | None = Field(
+        ...,
+        description="ISO `YYYY-MM-DD` of the trading session the vol-regime card was anchored at; null when unavailable.",
+    )
+    vol_regime_status: str | None = Field(
+        ..., description="Status string for the vol-regime card, e.g. `ok` or a degradation reason."
+    )
+    sample_size: int = Field(
+        ..., description="Number of historical statements that fed the card's distribution."
+    )
+    status: str = Field(
+        ...,
+        description="Overall status string for the card, e.g. `ok` or the reason the card is partial.",
+    )
 
 
 class CrossBankSnapshotResponse(BaseModel):
@@ -2200,6 +3183,12 @@ class CrossBankSnapshotResponse(BaseModel):
 
     model_config = _FORBID_FROZEN_CONFIG
 
-    banks: list[CrossBankCard] = Field(..., description="Six-bank stance+vol-regime card list ordered for display.")
-    generated_at: str = Field(..., description="ISO-8601 UTC timestamp the snapshot was generated at.")
-    cache_ttl_seconds: int = Field(..., description="Seconds the in-process cache holds this snapshot before re-deriving.")
+    banks: list[CrossBankCard] = Field(
+        ..., description="Six-bank stance+vol-regime card list ordered for display."
+    )
+    generated_at: str = Field(
+        ..., description="ISO-8601 UTC timestamp the snapshot was generated at."
+    )
+    cache_ttl_seconds: int = Field(
+        ..., description="Seconds the in-process cache holds this snapshot before re-deriving."
+    )
