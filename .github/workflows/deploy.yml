@@ -18,11 +18,15 @@ jobs:
   # Gate the droplet deploy on ci.yml succeeding for this commit. Push
   # to main fans out ci.yml and deploy.yml in parallel; without this
   # guard a broken commit on main would deploy before its tests fail.
-  # The polling loop times out at 10 minutes — comfortable headroom for
-  # the ~6 min wall time the ci.yml jobs take on ubuntu-latest.
+  # ci.yml wall time on ubuntu-latest typically lands between 6 and 12
+  # minutes — pytest, the backend lint, the frontend build, and the two
+  # vulnerability scans run in parallel but cache misses or runner
+  # contention can push the slowest fan-out leg past 10 minutes. The
+  # polling loop times out at 25 minutes so a slow but otherwise
+  # green run still gates the deploy.
   wait-for-ci:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 28
     permissions:
       actions: read
     steps:
@@ -33,7 +37,7 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          deadline=$(( $(date +%s) + 600 ))
+          deadline=$(( $(date +%s) + 1500 ))
           while [ "$(date +%s)" -lt "${deadline}" ]; do
               # Look up the ci.yml run targeting this sha. ``head_sha``
               # filters to runs triggered by the same commit; the deploy
