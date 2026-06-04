@@ -1079,7 +1079,25 @@ export default function WorkspacePage() {
               collapsible
               storageKey="workspace-card:har-accuracy"
             />
-          ) : null}
+          ) : (
+            // Stub instead of an empty card slot: the cross-bank
+            // "Open in Workspace" deep-link lands on tickers (e.g.
+            // ^FTSE, ^N225) that the HAR-tercile baseline doesn't fit
+            // because it pins on US equity-index RV. Surface the gap
+            // explicitly so the user knows the panel was intentionally
+            // skipped rather than silently failing.
+            <div className="mt-3 rounded-md border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">
+                HAR-tercile accuracy not available for {request.symbol}.
+              </p>
+              <p className="mt-1">
+                The HAR-tercile baseline is fit on US equity-index realized vol.
+                Switch the asset to one of{" "}
+                {HAR_TERCILE_SUPPORTED_SYMBOLS.join(", ")} to see the
+                backtest surface.
+              </p>
+            </div>
+          )}
           {/* RV / QLIKE-DLq backtest remains SPX-only because the
               QLIKE-DLq artifact pins per-fold coefficients on SPX RV
               and is not yet refit per asset. */}
@@ -1092,7 +1110,17 @@ export default function WorkspacePage() {
               collapsible
               storageKey="workspace-card:rv-accuracy"
             />
-          ) : null}
+          ) : (
+            <div className="mt-3 rounded-md border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">
+                QLIKE-RV band coverage not available for {request.symbol}.
+              </p>
+              <p className="mt-1">
+                The QLIKE-DLq ensemble is pinned on S&P 500 RV and not refit
+                per asset. Switch to ^GSPC to see the band-coverage backtest.
+              </p>
+            </div>
+          )}
         </main>
       </div>
     </>
