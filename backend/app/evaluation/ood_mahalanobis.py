@@ -162,7 +162,7 @@ def fit_class_statistics(
     centered_parts = []
     n_total = 0
     for cls in unique_labels:
-        idx = [i for i, l in enumerate(labels) if l == cls]
+        idx = [i for i, label in enumerate(labels) if label == cls]
         if not idx:
             continue
         group = embeddings[idx]
