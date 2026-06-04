@@ -215,6 +215,7 @@
         "type": "object"
       },
       "AnalyzeResponse": {
+        "description": "Top-level envelope for `POST /analyze`. Bundles the stance classifier\noutput, the forecaster headline + bands, the market snapshot used as\nanchor, runtime diagnostics, and the optional XAI, replay, multi-axis,\nregime, rates and policy sub-blocks.",
         "properties": {
           "credibility": {
             "anyOf": [
@@ -224,13 +225,16 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Stance-drift and credibility signals; null when no history is available."
           },
           "market": {
-            "$ref": "#/components/schemas/MarketDataResponse"
+            "$ref": "#/components/schemas/MarketDataResponse",
+            "description": "Market snapshot at the trading session used as forecast anchor."
           },
           "model": {
-            "$ref": "#/components/schemas/ModelDiagnosticsResponse"
+            "$ref": "#/components/schemas/ModelDiagnosticsResponse",
+            "description": "Forecaster runtime + checkpoint diagnostics for this response."
           },
           "multi_axis": {
             "anyOf": [
@@ -240,7 +244,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Multi-task head per-axis predictions; null when no multi-axis checkpoint is loaded."
           },
           "policy_action": {
             "anyOf": [
@@ -250,10 +255,12 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Mechanical policy decision extracted from the text via regex/keyword; null when the statement names no target range."
           },
           "prediction": {
-            "$ref": "#/components/schemas/PredictionResponse"
+            "$ref": "#/components/schemas/PredictionResponse",
+            "description": "Headline scalar forecast at the chosen horizon."
           },
           "rates_reaction": {
             "anyOf": [
@@ -267,6 +274,7 @@
                 "type": "null"
               }
             ],
+            "description": "Per-rates-head reaction cards (2y/5y/terminal); null on legacy single-head runs, empty when heads exist but no rows were produced.",
             "title": "Rates Reaction"
           },
           "realised_outcome": {
@@ -277,7 +285,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "What-actually-happened reveal beside the forecast; populated only in replay mode."
           },
           "regime_classification": {
             "anyOf": [
@@ -287,7 +296,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Calibrated regime prediction set; null when the active checkpoint has no regime head."
           },
           "regime_classification_status": {
             "anyOf": [
@@ -297,7 +307,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Structured degradation surface mutually exclusive with `regime_classification`; carries the reason the regime card was not built."
           },
           "regime_regression": {
             "anyOf": [
@@ -307,7 +318,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Regression sibling of the regime card carrying `log_rv_point` + conformal interval; null when the dual-head regression is absent."
           },
           "replay": {
             "anyOf": [
@@ -317,13 +329,16 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Replay-mode metadata; populated only when the request set `as_of_date`."
           },
           "sentiment": {
-            "$ref": "#/components/schemas/SentimentResponse"
+            "$ref": "#/components/schemas/SentimentResponse",
+            "description": "Stance classifier output for the input statement including OOD chip."
           },
           "series": {
-            "$ref": "#/components/schemas/ForecastSeriesResponse"
+            "$ref": "#/components/schemas/ForecastSeriesResponse",
+            "description": "Chart-ready history, forecast and band arrays for the panel."
           },
           "xai": {
             "anyOf": [
@@ -333,7 +348,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "XAI sentence + panel attribution; populated when `include_xai=true`."
           }
         },
         "required": [
@@ -360,6 +376,7 @@
             "type": "string"
           },
           "size_bytes": {
+            "description": "File size in bytes as reported by the filesystem.",
             "title": "Size Bytes",
             "type": "integer"
           },
@@ -446,6 +463,7 @@
                 "type": "null"
               }
             ],
+            "description": "Strategy cumulative return minus benchmark cumulative return; null when either side is unavailable.",
             "title": "Alpha Cum Pct"
           },
           "benchmark_cum_pct": {
@@ -457,6 +475,7 @@
                 "type": "null"
               }
             ],
+            "description": "Cumulative % return of buy-and-hold on `symbol` over the same window; null when unavailable.",
             "title": "Benchmark Cum Pct"
           },
           "cum_return_pct": {
@@ -468,6 +487,7 @@
                 "type": "null"
               }
             ],
+            "description": "Cumulative % return of the strategy across all resolved trades; null when none resolved.",
             "title": "Cum Return Pct"
           },
           "hit_rate": {
@@ -479,9 +499,11 @@
                 "type": "null"
               }
             ],
+            "description": "Fraction of resolved trades with positive strategy return in `[0, 1]`; null when none resolved.",
             "title": "Hit Rate"
           },
           "horizon_days": {
+            "description": "Forward holding period in trading days echoed from the request.",
             "title": "Horizon Days",
             "type": "integer"
           },
@@ -494,9 +516,11 @@
                 "type": "null"
               }
             ],
+            "description": "Maximum % drawdown of the cumulative strategy curve; null when unavailable.",
             "title": "Max Dd Pct"
           },
           "n_trades": {
+            "description": "Number of trades executed in the backtest.",
             "title": "N Trades",
             "type": "integer"
           },
@@ -509,13 +533,16 @@
                 "type": "null"
               }
             ],
+            "description": "Annualised Sharpe ratio of the strategy returns; null when fewer than two resolved trades.",
             "title": "Sharpe"
           },
           "symbol": {
+            "description": "Yahoo Finance ticker the backtest was run against.",
             "title": "Symbol",
             "type": "string"
           },
           "trades": {
+            "description": "Per-signal trade rows produced by the backtest.",
             "items": {
               "$ref": "#/components/schemas/BacktestTradeRow"
             },
@@ -532,8 +559,10 @@
         "type": "object"
       },
       "BacktestTradeRow": {
+        "description": "One realised trade row from the stance-directional backtest.",
         "properties": {
           "date": {
+            "description": "ISO `YYYY-MM-DD` date of the signal entry.",
             "title": "Date",
             "type": "string"
           },
@@ -546,9 +575,11 @@
                 "type": "null"
               }
             ],
+            "description": "Forward holding-period close-to-close % return from `date`; null when forward bars are missing.",
             "title": "Forward Return Pct"
           },
           "position": {
+            "description": "Position taken on `date`: -1 short, 0 flat, +1 long.",
             "title": "Position",
             "type": "integer"
           },
@@ -561,6 +592,7 @@
                 "type": "null"
               }
             ],
+            "description": "Strategy % return for the trade = `position * forward_return_pct`; null when the trade is unresolved.",
             "title": "Strategy Return Pct"
           }
         },
@@ -612,12 +644,15 @@
         "type": "object"
       },
       "ChunkAttentionDiagnostics": {
+        "description": "Per-chunk attention trace from the encoder's long-document aggregator.\nExposed so the XAI panel can show which chunks of a long FOMC document\ndominated the pooled representation and how the elapsed-time decay\nreshaped their weights.",
         "properties": {
           "chunk_count": {
+            "description": "Number of fixed-size chunks the input was split into before pooling.",
             "title": "Chunk Count",
             "type": "integer"
           },
           "chunk_previews": {
+            "description": "Leading text snippet of each chunk for display in the XAI panel.",
             "items": {
               "type": "string"
             },
@@ -625,6 +660,7 @@
             "type": "array"
           },
           "decay_coeffs": {
+            "description": "Time-decay multiplier applied to each chunk before softmax; in `(0, 1]`.",
             "items": {
               "type": "number"
             },
@@ -632,10 +668,12 @@
             "type": "array"
           },
           "lambda_value": {
+            "description": "Decay rate used to compute `decay_coeffs`; higher = older chunks down-weighted faster.",
             "title": "Lambda Value",
             "type": "number"
           },
           "weights": {
+            "description": "Post-softmax attention weight per chunk after time-decay; sums to ~1.0.",
             "items": {
               "type": "number"
             },
@@ -654,12 +692,15 @@
         "type": "object"
       },
       "ClassificationBreakdownClass": {
+        "description": "Per-class accuracy metrics for one class in the regime breakdown.",
         "properties": {
           "class_id": {
+            "description": "Integer class index in canonical regime ordering (0=calm, 1=normal, 2=high).",
             "title": "Class Id",
             "type": "integer"
           },
           "f1": {
+            "description": "F1 score for this class in `[0, 1]`: harmonic mean of precision and recall.",
             "title": "F1",
             "type": "number"
           },
@@ -672,13 +713,16 @@
                 "type": "null"
               }
             ],
+            "description": "One-vs-rest PR AUC for this class; null when the source artifact omits it.",
             "title": "Pr Auc"
           },
           "precision": {
+            "description": "Precision for this class in `[0, 1]`: true positives / predicted positives.",
             "title": "Precision",
             "type": "number"
           },
           "recall": {
+            "description": "Recall for this class in `[0, 1]`: true positives / actual positives.",
             "title": "Recall",
             "type": "number"
           },
@@ -691,9 +735,11 @@
                 "type": "null"
               }
             ],
+            "description": "One-vs-rest ROC AUC for this class; null when the source artifact omits it.",
             "title": "Roc Auc"
           },
           "support": {
+            "description": "Number of ground-truth samples in this class.",
             "title": "Support",
             "type": "integer"
           }
@@ -712,6 +758,7 @@
         "description": "The richer eval emitted by app/evaluation/classification_breakdown.py.\n\nSurfaces the freshest ``best_trial.summary.metrics.classification_breakdown``\nblock written under ``data/artifacts/regime_*``. ``available`` is\nfalse when no qualifying artifact exists \u2014 the UI then falls back to\nits client-side aggregation across history rows.",
         "properties": {
           "available": {
+            "description": "True when a qualifying artifact was found; false flags UI fallback to client-side aggregation.",
             "title": "Available",
             "type": "boolean"
           },
@@ -727,6 +774,7 @@
                 "type": "null"
               }
             ],
+            "description": "Ordered class labels (e.g. calm/normal/high) from the source artifact; null when the artifact omits them.",
             "title": "Class Labels"
           },
           "confusion_matrix": {
@@ -744,6 +792,7 @@
                 "type": "null"
               }
             ],
+            "description": "Row-actual, column-predicted confusion matrix in canonical class order; null when unavailable.",
             "title": "Confusion Matrix"
           },
           "macro_f1": {
@@ -755,6 +804,7 @@
                 "type": "null"
               }
             ],
+            "description": "Unweighted mean F1 across classes in `[0, 1]`; null when unavailable.",
             "title": "Macro F1"
           },
           "macro_pr_auc": {
@@ -766,6 +816,7 @@
                 "type": "null"
               }
             ],
+            "description": "Unweighted mean one-vs-rest PR AUC across classes; null when unavailable.",
             "title": "Macro Pr Auc"
           },
           "macro_precision": {
@@ -777,6 +828,7 @@
                 "type": "null"
               }
             ],
+            "description": "Unweighted mean precision across classes in `[0, 1]`; null when unavailable.",
             "title": "Macro Precision"
           },
           "macro_recall": {
@@ -788,6 +840,7 @@
                 "type": "null"
               }
             ],
+            "description": "Unweighted mean recall across classes in `[0, 1]`; null when unavailable.",
             "title": "Macro Recall"
           },
           "macro_roc_auc": {
@@ -799,6 +852,7 @@
                 "type": "null"
               }
             ],
+            "description": "Unweighted mean one-vs-rest ROC AUC across classes; null when unavailable.",
             "title": "Macro Roc Auc"
           },
           "n_classes": {
@@ -810,6 +864,7 @@
                 "type": "null"
               }
             ],
+            "description": "Number of classes in the breakdown; null when unavailable.",
             "title": "N Classes"
           },
           "per_class": {
@@ -824,6 +879,7 @@
                 "type": "null"
               }
             ],
+            "description": "Per-class precision/recall/F1/support entries; null when the artifact is missing.",
             "title": "Per Class"
           },
           "source": {
@@ -834,7 +890,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Provenance of the backing artifact; null when no artifact was found."
           },
           "weighted_f1": {
             "anyOf": [
@@ -845,6 +902,7 @@
                 "type": "null"
               }
             ],
+            "description": "Support-weighted mean F1 across classes in `[0, 1]`; null when unavailable.",
             "title": "Weighted F1"
           }
         },
@@ -855,6 +913,7 @@
         "type": "object"
       },
       "ClassificationBreakdownSource": {
+        "description": "Provenance metadata for the artifact backing a classification breakdown.",
         "properties": {
           "checkpoint_path": {
             "anyOf": [
@@ -865,13 +924,16 @@
                 "type": "null"
               }
             ],
+            "description": "Checkpoint path the breakdown was computed against; null when not recorded.",
             "title": "Checkpoint Path"
           },
           "modified_at": {
+            "description": "ISO-8601 mtime of the source artifact in UTC.",
             "title": "Modified At",
             "type": "string"
           },
           "relative_path": {
+            "description": "Path of the source artifact relative to `data/artifacts/`.",
             "title": "Relative Path",
             "type": "string"
           },
@@ -884,6 +946,7 @@
                 "type": "null"
               }
             ],
+            "description": "Training package ID the artifact was produced under; null when the field is absent on disk.",
             "title": "Training Package Id"
           }
         },
@@ -895,12 +958,15 @@
         "type": "object"
       },
       "CredibilityResponse": {
+        "description": "Credibility / drift signals beside the headline forecast. Combines\na stance-drift score against prior statements with realised-vs-stated\nand market-implied gap estimates when those calibration sources are\navailable.",
         "properties": {
           "drift_score": {
+            "description": "Cosine drift of the current statement embedding vs the mean of prior statements; higher = larger shift.",
             "title": "Drift Score",
             "type": "number"
           },
           "drift_trend": {
+            "description": "Per-meeting drift sparkline newest-last; each entry is the cosine distance of one prior statement embedding to the mean of the remaining priors.",
             "items": {
               "type": "number"
             },
@@ -916,6 +982,7 @@
                 "type": "null"
               }
             ],
+            "description": "Signed gap between market-implied path and the statement's stated trajectory; null when futures data is unavailable.",
             "title": "Market Implied Gap"
           },
           "months_since_reversal": {
@@ -927,6 +994,7 @@
                 "type": "null"
               }
             ],
+            "description": "Months since the last hawkish<->dovish reversal in the stance series; null when no reversal is on record.",
             "title": "Months Since Reversal"
           },
           "realized_vs_stated_gap": {
@@ -938,6 +1006,7 @@
                 "type": "null"
               }
             ],
+            "description": "Signed gap between realised path and the statement's stated trajectory; null when no calibration is on disk.",
             "title": "Realized Vs Stated Gap"
           }
         },
@@ -951,6 +1020,7 @@
         "description": "One central-bank card on the cross-bank dashboard panel.\n\nMirrors the dict shape emitted by\n:func:`app.services.cross_bank_snapshot.build_bank_card`. Heads\nthat could not be filled (corpus missing for a bank, classifier\ncheckpoint unavailable, market-data lookup failed) leave the\nmatching field as ``None`` and surface the reason in ``status`` /\n``vol_regime_status`` so the frontend renders an explicit\n\"Coming soon\" placeholder rather than blank space.",
         "properties": {
           "bank": {
+            "description": "Full bank name identifier, e.g. `federal_reserve`, `european_central_bank`.",
             "title": "Bank",
             "type": "string"
           },
@@ -963,6 +1033,7 @@
                 "type": "null"
               }
             ],
+            "description": "Probability of `certainty_label` in `[0, 1]`; null when the head is unavailable.",
             "title": "Certainty Confidence"
           },
           "certainty_label": {
@@ -974,13 +1045,16 @@
                 "type": "null"
               }
             ],
+            "description": "Argmax certainty label; null when the head is unavailable.",
             "title": "Certainty Label"
           },
           "display_name": {
+            "description": "Human-readable bank name shown on the card.",
             "title": "Display Name",
             "type": "string"
           },
           "flag": {
+            "description": "Flag emoji or ISO code for the bank's jurisdiction.",
             "title": "Flag",
             "type": "string"
           },
@@ -993,13 +1067,16 @@
                 "type": "null"
               }
             ],
+            "description": "ISO `YYYY-MM-DD` event date of the latest statement scored; null when no statement was found.",
             "title": "Latest Statement Date"
           },
           "sample_size": {
+            "description": "Number of historical statements that fed the card's distribution.",
             "title": "Sample Size",
             "type": "integer"
           },
           "short_code": {
+            "description": "Short code used in artifacts/keys, e.g. `fed`, `ecb`, `boj`.",
             "title": "Short Code",
             "type": "string"
           },
@@ -1015,6 +1092,7 @@
                 "type": "null"
               }
             ],
+            "description": "Per-class stance distribution over hawkish/dovish/neutral; null when the head is unavailable.",
             "title": "Stance"
           },
           "stance_confidence": {
@@ -1026,6 +1104,7 @@
                 "type": "null"
               }
             ],
+            "description": "Probability of `stance_label` in `[0, 1]`; null when the head is unavailable.",
             "title": "Stance Confidence"
           },
           "stance_label": {
@@ -1037,13 +1116,16 @@
                 "type": "null"
               }
             ],
+            "description": "Argmax stance label; null when the head is unavailable.",
             "title": "Stance Label"
           },
           "status": {
+            "description": "Overall status string for the card, e.g. `ok` or the reason the card is partial.",
             "title": "Status",
             "type": "string"
           },
           "symbol": {
+            "description": "Yahoo Finance ticker the vol-regime card was anchored to.",
             "title": "Symbol",
             "type": "string"
           },
@@ -1056,6 +1138,7 @@
                 "type": "null"
               }
             ],
+            "description": "Forward-looking time axis label; null when the head is unavailable.",
             "title": "Time Axis"
           },
           "vol_regime_as_of": {
@@ -1067,6 +1150,7 @@
                 "type": "null"
               }
             ],
+            "description": "ISO `YYYY-MM-DD` of the trading session the vol-regime card was anchored at; null when unavailable.",
             "title": "Vol Regime As Of"
           },
           "vol_regime_confidence": {
@@ -1078,6 +1162,7 @@
                 "type": "null"
               }
             ],
+            "description": "Probability of `vol_regime_label` in `[0, 1]`; null when the head is unavailable.",
             "title": "Vol Regime Confidence"
           },
           "vol_regime_label": {
@@ -1089,6 +1174,7 @@
                 "type": "null"
               }
             ],
+            "description": "Argmax vol-regime label (calm/normal/high); null when the head is unavailable.",
             "title": "Vol Regime Label"
           },
           "vol_regime_status": {
@@ -1100,6 +1186,7 @@
                 "type": "null"
               }
             ],
+            "description": "Status string for the vol-regime card, e.g. `ok` or a degradation reason.",
             "title": "Vol Regime Status"
           }
         },
@@ -1130,6 +1217,7 @@
         "description": "Response wire shape for ``GET /cross-bank/snapshot``.\n\nSix-card side-by-side stance + vol-regime read across Fed, ECB,\nBoE, BoC, BoJ, RBA. Cached in-process for an hour (statements do\nnot change minute-to-minute and the classifier cold-start is\nexpensive).",
         "properties": {
           "banks": {
+            "description": "Six-bank stance+vol-regime card list ordered for display.",
             "items": {
               "$ref": "#/components/schemas/CrossBankCard"
             },
@@ -1137,10 +1225,12 @@
             "type": "array"
           },
           "cache_ttl_seconds": {
+            "description": "Seconds the in-process cache holds this snapshot before re-deriving.",
             "title": "Cache Ttl Seconds",
             "type": "integer"
           },
           "generated_at": {
+            "description": "ISO-8601 UTC timestamp the snapshot was generated at.",
             "title": "Generated At",
             "type": "string"
           }
@@ -1154,12 +1244,15 @@
         "type": "object"
       },
       "CrossBankTransferSection": {
+        "description": "Cross-bank transfer matrix surfaced on the research page.",
         "properties": {
           "available": {
+            "description": "True when at least one source/target cell was found on disk.",
             "title": "Available",
             "type": "boolean"
           },
           "cells": {
+            "description": "Flattened (source, target, metric) cells of the transfer matrix.",
             "items": {
               "$ref": "#/components/schemas/TransferMatrixCell"
             },
@@ -1168,10 +1261,12 @@
           },
           "metric_name": {
             "default": "macro_f1",
+            "description": "Metric carried in each cell, e.g. `macro_f1` or `accuracy`.",
             "title": "Metric Name",
             "type": "string"
           },
           "source_files": {
+            "description": "Relative paths of artefact files contributing to this section.",
             "items": {
               "type": "string"
             },
@@ -1179,6 +1274,7 @@
             "type": "array"
           },
           "sources": {
+            "description": "Distinct source banks present in `cells`, ordered for display.",
             "items": {
               "type": "string"
             },
@@ -1186,6 +1282,7 @@
             "type": "array"
           },
           "targets": {
+            "description": "Distinct target banks present in `cells`, ordered for display.",
             "items": {
               "type": "string"
             },
@@ -1257,12 +1354,15 @@
         "type": "object"
       },
       "DocumentParseResponse": {
+        "description": "Parsed plain-text payload extracted from a fetched FOMC document.",
         "properties": {
           "char_count": {
+            "description": "Length of `text` in characters.",
             "title": "Char Count",
             "type": "integer"
           },
           "source_kind": {
+            "description": "Detected source kind, e.g. `pdf`, `html`, `text`.",
             "title": "Source Kind",
             "type": "string"
           },
@@ -1270,10 +1370,12 @@
             "additionalProperties": {
               "type": "string"
             },
+            "description": "Extracted metadata key/value pairs from the source, e.g. title or author.",
             "title": "Source Metadata",
             "type": "object"
           },
           "text": {
+            "description": "Extracted plain-text body after parsing the source document.",
             "title": "Text",
             "type": "string"
           }
@@ -1288,34 +1390,42 @@
         "type": "object"
       },
       "EncoderAxisStanceRow": {
+        "description": "One encoder's validity-study row on the stance axis.",
         "properties": {
           "auc_hike_vs_cut": {
+            "description": "AUC of stance scores separating hike vs cut meetings.",
             "title": "Auc Hike Vs Cut",
             "type": "number"
           },
           "encoder_alias": {
+            "description": "Registry alias of the encoder being compared.",
             "title": "Encoder Alias",
             "type": "string"
           },
           "encoder_display": {
+            "description": "Display name of the encoder for UI rendering.",
             "title": "Encoder Display",
             "type": "string"
           },
           "held_out_f1": {
+            "description": "Held-out macro-F1 of the stance head fine-tuned on this encoder.",
             "title": "Held Out F1",
             "type": "number"
           },
           "is_held_out_winner": {
             "default": false,
+            "description": "True when this encoder won on the held-out macro-F1 metric.",
             "title": "Is Held Out Winner",
             "type": "boolean"
           },
           "is_validity_winner": {
             "default": false,
+            "description": "True when this encoder won the validity-study tie-break.",
             "title": "Is Validity Winner",
             "type": "boolean"
           },
           "spearman_rho": {
+            "description": "Spearman correlation between predicted stance scores and the labelled axis.",
             "title": "Spearman Rho",
             "type": "number"
           }
@@ -1331,12 +1441,15 @@
         "type": "object"
       },
       "EncoderAxisStanceSection": {
+        "description": "Validity-study table for the stance axis on the research page.",
         "properties": {
           "available": {
+            "description": "True when at least one validity-study row was found on disk.",
             "title": "Available",
             "type": "boolean"
           },
           "rows": {
+            "description": "Per-encoder validity rows ordered by display priority.",
             "items": {
               "$ref": "#/components/schemas/EncoderAxisStanceRow"
             },
@@ -1345,6 +1458,7 @@
           },
           "source_doc": {
             "default": "",
+            "description": "Citation of the source document the rows were lifted from.",
             "title": "Source Doc",
             "type": "string"
           }
@@ -1356,6 +1470,7 @@
         "type": "object"
       },
       "EncoderBakeoffRow": {
+        "description": "One encoder's seed-aggregated macro-F1 row in the bake-off table.",
         "properties": {
           "accuracy_mean": {
             "anyOf": [
@@ -1366,9 +1481,11 @@
                 "type": "null"
               }
             ],
+            "description": "Mean accuracy across seeds in `[0, 1]`; null when not recorded.",
             "title": "Accuracy Mean"
           },
           "checkpoint": {
+            "description": "Checkpoint path or HF revision the bake-off was run against.",
             "title": "Checkpoint",
             "type": "string"
           },
@@ -1381,9 +1498,11 @@
                 "type": "null"
               }
             ],
+            "description": "Mean Cohen kappa across seeds; null when not recorded.",
             "title": "Cohen Kappa"
           },
           "encoder_key": {
+            "description": "Registry alias of the encoder being compared.",
             "title": "Encoder Key",
             "type": "string"
           },
@@ -1396,6 +1515,7 @@
                 "type": "null"
               }
             ],
+            "description": "Upper edge of the macro-F1 95% bootstrap CI; null when CI was not computed.",
             "title": "Macro F1 Ci High"
           },
           "macro_f1_ci_low": {
@@ -1407,13 +1527,16 @@
                 "type": "null"
               }
             ],
+            "description": "Lower edge of the macro-F1 95% bootstrap CI; null when CI was not computed.",
             "title": "Macro F1 Ci Low"
           },
           "macro_f1_mean": {
+            "description": "Mean macro-F1 across `seeds` in `[0, 1]`.",
             "title": "Macro F1 Mean",
             "type": "number"
           },
           "macro_f1_values": {
+            "description": "Per-seed macro-F1 values aligned to `seeds`.",
             "items": {
               "type": "number"
             },
@@ -1421,6 +1544,7 @@
             "type": "array"
           },
           "seeds": {
+            "description": "Seed set the bake-off was averaged across.",
             "items": {
               "type": "integer"
             },
@@ -1436,6 +1560,7 @@
                 "type": "null"
               }
             ],
+            "description": "Support-weighted mean F1 across seeds; null when not recorded.",
             "title": "Weighted F1 Mean"
           }
         },
@@ -1450,8 +1575,10 @@
         "type": "object"
       },
       "EncoderBakeoffSection": {
+        "description": "Encoder bake-off table for the research artefacts response.",
         "properties": {
           "available": {
+            "description": "True when at least one bake-off artifact was found on disk.",
             "title": "Available",
             "type": "boolean"
           },
@@ -1464,9 +1591,11 @@
                 "type": "null"
               }
             ],
+            "description": "Fraction of the official seed set covered by the rows in `[0, 1]`; null when unavailable.",
             "title": "Coverage"
           },
           "rows": {
+            "description": "Per-encoder bake-off rows ordered by descending macro-F1 mean.",
             "items": {
               "$ref": "#/components/schemas/EncoderBakeoffRow"
             },
@@ -1474,6 +1603,7 @@
             "type": "array"
           },
           "source_files": {
+            "description": "Relative paths of artefact files contributing to this section.",
             "items": {
               "type": "string"
             },
@@ -1491,6 +1621,7 @@
         "description": "Empirical conformal coverage aggregated across recent history runs.\n\n``nominal`` is the conformal target the active model was calibrated\nto (read off the most-recent run that carries\n``series.forecast_confidence_level``). ``empirical`` is the fraction\nof runs whose realized regime label fell inside the predicted set.\nBoth are None when no qualifying runs exist.",
         "properties": {
           "computed_at": {
+            "description": "ISO-8601 UTC timestamp the aggregate was computed at.",
             "title": "Computed At",
             "type": "string"
           },
@@ -1503,6 +1634,7 @@
                 "type": "null"
               }
             ],
+            "description": "Empirical hit rate of the predicted set across qualifying runs; null when no runs qualify.",
             "title": "Empirical"
           },
           "nominal": {
@@ -1514,13 +1646,16 @@
                 "type": "null"
               }
             ],
+            "description": "Conformal target the active model was calibrated to; null when no recent run carries one.",
             "title": "Nominal"
           },
           "runs_total": {
+            "description": "Total number of history runs considered before filtering.",
             "title": "Runs Total",
             "type": "integer"
           },
           "sample_size": {
+            "description": "Number of qualifying runs the empirical coverage was computed over.",
             "title": "Sample Size",
             "type": "integer"
           }
@@ -1537,10 +1672,12 @@
         "description": "Multi-horizon HAR-volume forecast for the Expected Volume card.\nMarket-data-only forecast; never wired to text features.",
         "properties": {
           "generated_at": {
+            "description": "ISO-8601 UTC timestamp the response was generated at.",
             "title": "Generated At",
             "type": "string"
           },
           "horizons": {
+            "description": "Per-horizon volume forecast rows ordered ascending by `h`.",
             "items": {
               "$ref": "#/components/schemas/ExpectedVolumeHorizonForecast"
             },
@@ -1548,10 +1685,12 @@
             "type": "array"
           },
           "model_revision": {
+            "description": "Model revision identifier the forecast was produced under.",
             "title": "Model Revision",
             "type": "string"
           },
           "symbol": {
+            "description": "Yahoo Finance ticker the volume forecast was produced for.",
             "title": "Symbol",
             "type": "string"
           }
@@ -1569,34 +1708,42 @@
         "description": "HAR-based forecast of expected log-residual trading volume for\none horizon. ``point_log_residual`` is the model's point estimate\nin log-volume residual space (after calendar adjustment when the\nflag is set); ``point_pct_vs_baseline`` is the same number\nexpressed as a % deviation from the rolling calendar-adjusted\nbaseline so the card can render a human-readable headline.\n``r2_har`` is the offline pooled walk-forward R^2 of the HAR\nvolume head at this horizon, surfaced for the calibration chip.",
         "properties": {
           "band_hi_80": {
+            "description": "Upper edge of the 80% conformal band on `point_log_residual`.",
             "title": "Band Hi 80",
             "type": "number"
           },
           "band_hi_90": {
+            "description": "Upper edge of the 90% conformal band on `point_log_residual`.",
             "title": "Band Hi 90",
             "type": "number"
           },
           "band_lo_80": {
+            "description": "Lower edge of the 80% conformal band on `point_log_residual`.",
             "title": "Band Lo 80",
             "type": "number"
           },
           "band_lo_90": {
+            "description": "Lower edge of the 90% conformal band on `point_log_residual`.",
             "title": "Band Lo 90",
             "type": "number"
           },
           "calendar_adjusted": {
+            "description": "True when the baseline subtraction used a calendar-adjusted rolling mean.",
             "title": "Calendar Adjusted",
             "type": "boolean"
           },
           "h": {
+            "description": "Forecast horizon in trading days, e.g. 1, 5, or 22.",
             "title": "H",
             "type": "integer"
           },
           "point_log_residual": {
+            "description": "Point estimate in log-volume residual space after optional calendar adjustment.",
             "title": "Point Log Residual",
             "type": "number"
           },
           "point_pct_vs_baseline": {
+            "description": "Point estimate as a % deviation from the rolling calendar-adjusted baseline.",
             "title": "Point Pct Vs Baseline",
             "type": "number"
           },
@@ -1609,6 +1756,7 @@
                 "type": "null"
               }
             ],
+            "description": "Pooled walk-forward R^2 of the HAR volume head at this horizon; null when unavailable.",
             "title": "R2 Har"
           }
         },
@@ -1626,8 +1774,10 @@
         "type": "object"
       },
       "FomcCalendarResponse": {
+        "description": "Past and upcoming FOMC meetings for the calendar panel.",
         "properties": {
           "past": {
+            "description": "Past FOMC meetings ordered newest-first.",
             "items": {
               "$ref": "#/components/schemas/FomcMeetingResponse"
             },
@@ -1635,6 +1785,7 @@
             "type": "array"
           },
           "upcoming": {
+            "description": "Scheduled future FOMC meetings ordered soonest-first.",
             "items": {
               "$ref": "#/components/schemas/FomcMeetingResponse"
             },
@@ -1650,17 +1801,21 @@
         "type": "object"
       },
       "FomcMeetingResponse": {
+        "description": "One FOMC meeting row in the calendar response.",
         "properties": {
           "meeting_date": {
+            "description": "ISO `YYYY-MM-DD` date of the FOMC meeting.",
             "title": "Meeting Date",
             "type": "string"
           },
           "meeting_type": {
+            "description": "Meeting type label, e.g. `scheduled` or `unscheduled`.",
             "title": "Meeting Type",
             "type": "string"
           },
           "minutes_available": {
             "default": false,
+            "description": "True when the minutes body is available in the `/documents` cache.",
             "title": "Minutes Available",
             "type": "boolean"
           },
@@ -1673,6 +1828,7 @@
                 "type": "null"
               }
             ],
+            "description": "ISO date the minutes were released; null when not yet released.",
             "title": "Minutes Release Date"
           },
           "notes": {
@@ -1684,15 +1840,18 @@
                 "type": "null"
               }
             ],
+            "description": "Free-text annotation on the meeting, e.g. inter-meeting context; null when absent.",
             "title": "Notes"
           },
           "press_conference_available": {
             "default": false,
+            "description": "True when a press-conference transcript is available in the cache.",
             "title": "Press Conference Available",
             "type": "boolean"
           },
           "statement_available": {
             "default": false,
+            "description": "True when the statement body is available in the `/documents` cache.",
             "title": "Statement Available",
             "type": "boolean"
           },
@@ -1705,6 +1864,7 @@
                 "type": "null"
               }
             ],
+            "description": "ISO date the statement was released; null when not yet scheduled or recorded.",
             "title": "Statement Release Date"
           }
         },
@@ -1716,6 +1876,7 @@
         "type": "object"
       },
       "ForecastSeriesResponse": {
+        "description": "Chart-ready timeseries arrays for the forecaster panel \u2014 history,\nforecast point + confidence bands, and the optional realised overlay\nfor replay mode. Indices are aligned across all parallel lists.",
         "properties": {
           "conformal_coverage": {
             "anyOf": [
@@ -1736,6 +1897,7 @@
             "type": "string"
           },
           "forecast_close": {
+            "description": "Forecast point estimate of close at each forecast timestamp.",
             "items": {
               "type": "number"
             },
@@ -1743,6 +1905,7 @@
             "type": "array"
           },
           "forecast_close_lower": {
+            "description": "Lower edge of the close confidence band at each forecast timestamp.",
             "items": {
               "type": "number"
             },
@@ -1750,6 +1913,7 @@
             "type": "array"
           },
           "forecast_close_upper": {
+            "description": "Upper edge of the close confidence band at each forecast timestamp.",
             "items": {
               "type": "number"
             },
@@ -1757,10 +1921,12 @@
             "type": "array"
           },
           "forecast_confidence_level": {
+            "description": "Nominal confidence level of the forecast bands in `(0, 1)`, e.g. 0.8 for 80%.",
             "title": "Forecast Confidence Level",
             "type": "number"
           },
           "forecast_timestamps": {
+            "description": "ISO timestamps for each forecast step, ordered ascending.",
             "items": {
               "type": "string"
             },
@@ -1768,6 +1934,7 @@
             "type": "array"
           },
           "forecast_volatility": {
+            "description": "Forecast point estimate of realised volatility at each forecast timestamp.",
             "items": {
               "type": "number"
             },
@@ -1775,6 +1942,7 @@
             "type": "array"
           },
           "forecast_volatility_lower": {
+            "description": "Lower edge of the volatility confidence band at each forecast timestamp.",
             "items": {
               "type": "number"
             },
@@ -1782,6 +1950,7 @@
             "type": "array"
           },
           "forecast_volatility_upper": {
+            "description": "Upper edge of the volatility confidence band at each forecast timestamp.",
             "items": {
               "type": "number"
             },
@@ -1789,6 +1958,7 @@
             "type": "array"
           },
           "history_close": {
+            "description": "Historical close prices aligned to `timestamps`, in the ticker's native currency.",
             "items": {
               "type": "number"
             },
@@ -1796,6 +1966,7 @@
             "type": "array"
           },
           "history_volatility": {
+            "description": "Historical realised volatility aligned to `timestamps`.",
             "items": {
               "type": "number"
             },
@@ -1814,6 +1985,7 @@
                 "type": "null"
               }
             ],
+            "description": "Realised close prices aligned to `realized_timestamps`; null in live mode.",
             "title": "Realized Close"
           },
           "realized_timestamps": {
@@ -1828,6 +2000,7 @@
                 "type": "null"
               }
             ],
+            "description": "ISO timestamps for the realised overlay; null when replay mode is off.",
             "title": "Realized Timestamps"
           },
           "realized_volatility": {
@@ -1842,9 +2015,11 @@
                 "type": "null"
               }
             ],
+            "description": "Realised volatility aligned to `realized_timestamps`; null in live mode.",
             "title": "Realized Volatility"
           },
           "timestamps": {
+            "description": "ISO timestamps for the historical close/vol arrays, oldest-first.",
             "items": {
               "type": "string"
             },
@@ -1855,6 +2030,7 @@
             "additionalProperties": {
               "type": "number"
             },
+            "description": "Scaling constants applied to the volatility series so chart axes can re-scale display units.",
             "title": "Volatility Scale",
             "type": "object"
           }
@@ -1880,26 +2056,32 @@
         "description": "One horizon of the fed-funds futures implied-path consensus.\n\nProbabilities are derived from the implied-rate distribution and\nbucketed against the current target band; they sum to 1.0 across\nhike / cut / pause.",
         "properties": {
           "change_vs_current_bps": {
+            "description": "Signed change in basis points vs the current target midpoint.",
             "title": "Change Vs Current Bps",
             "type": "number"
           },
           "horizon_label": {
+            "description": "Horizon identifier for the futures contract, e.g. `next` or `+3m`.",
             "title": "Horizon Label",
             "type": "string"
           },
           "implied_rate_bps": {
+            "description": "Futures-implied fed-funds rate at this horizon in basis points.",
             "title": "Implied Rate Bps",
             "type": "number"
           },
           "probability_cut": {
+            "description": "Implied probability of a rate cut at this horizon in `[0, 1]`.",
             "title": "Probability Cut",
             "type": "number"
           },
           "probability_hike": {
+            "description": "Implied probability of a rate hike at this horizon in `[0, 1]`.",
             "title": "Probability Hike",
             "type": "number"
           },
           "probability_pause": {
+            "description": "Implied probability of a hold at this horizon in `[0, 1]`.",
             "title": "Probability Pause",
             "type": "number"
           }
@@ -1919,22 +2101,27 @@
         "description": "FRED / CME-derived futures consensus panel.\n\nDescriptive only \u2014 the rate-path expectations chart reads off\nrealized futures prices and never feeds the forecast cards.",
         "properties": {
           "current_target_hi_bps": {
+            "description": "Upper bound of the current fed-funds target range in basis points.",
             "title": "Current Target Hi Bps",
             "type": "number"
           },
           "current_target_lo_bps": {
+            "description": "Lower bound of the current fed-funds target range in basis points.",
             "title": "Current Target Lo Bps",
             "type": "number"
           },
           "data_source": {
+            "description": "Upstream data source identifier, e.g. `FRED` or `CME`.",
             "title": "Data Source",
             "type": "string"
           },
           "generated_at": {
+            "description": "ISO-8601 UTC timestamp the response was generated at.",
             "title": "Generated At",
             "type": "string"
           },
           "horizons": {
+            "description": "Per-horizon implied-rate + bucket-probability rows ordered by horizon.",
             "items": {
               "$ref": "#/components/schemas/FuturesConsensusHorizon"
             },
@@ -1942,10 +2129,12 @@
             "type": "array"
           },
           "meeting_date": {
+            "description": "ISO `YYYY-MM-DD` of the FOMC meeting the consensus targets.",
             "title": "Meeting Date",
             "type": "string"
           },
           "methodology": {
+            "description": "Short description of how the implied probabilities were derived.",
             "title": "Methodology",
             "type": "string"
           }
@@ -1987,20 +2176,24 @@
                 "type": "null"
               }
             ],
+            "description": "Hit rate across resolved rows in `[0, 1]`; null when none resolved.",
             "title": "Accuracy Overall"
           },
           "per_tercile_hit_rate": {
             "additionalProperties": {
               "type": "number"
             },
+            "description": "Per-predicted-tercile hit rate keyed by predicted label.",
             "title": "Per Tercile Hit Rate",
             "type": "object"
           },
           "resolved_runs": {
+            "description": "Number of rows whose realised tercile could be derived.",
             "title": "Resolved Runs",
             "type": "integer"
           },
           "total_runs": {
+            "description": "Total rows in the window regardless of forward-window resolution.",
             "title": "Total Runs",
             "type": "integer"
           }
@@ -2016,17 +2209,21 @@
         "description": "Response wire shape for ``GET /forecast/har-tercile-backtest``.\n\nSurfaces the last N FOMC meetings with their on-demand HAR-tercile\nprediction and the realized tercile derived from forward market\nhistory. Drives the HarAccuracyPanel card.",
         "properties": {
           "generated_at": {
+            "description": "ISO-8601 UTC timestamp the response was generated at.",
             "title": "Generated At",
             "type": "string"
           },
           "horizon": {
+            "description": "Forward horizon in trading days the realised tercile was measured at.",
             "title": "Horizon",
             "type": "integer"
           },
           "metrics": {
-            "$ref": "#/components/schemas/HarAccuracyMetrics"
+            "$ref": "#/components/schemas/HarAccuracyMetrics",
+            "description": "Aggregate accuracy metrics across the rows."
           },
           "rows": {
+            "description": "Per-event backtest rows ordered by `event_date`.",
             "items": {
               "$ref": "#/components/schemas/HarTercileBacktestRow"
             },
@@ -2034,6 +2231,7 @@
             "type": "array"
           },
           "symbol": {
+            "description": "Yahoo Finance ticker the backtest was run against.",
             "title": "Symbol",
             "type": "string"
           }
@@ -2060,9 +2258,11 @@
                 "type": "null"
               }
             ],
+            "description": "True when `predicted_tercile == realized_tercile`; null when the row is unresolved.",
             "title": "Correct"
           },
           "event_date": {
+            "description": "ISO `YYYY-MM-DD` event date the row was anchored to.",
             "title": "Event Date",
             "type": "string"
           },
@@ -2075,6 +2275,7 @@
                 "type": "null"
               }
             ],
+            "description": "Probability of the predicted tercile in `[0, 1]`; null when the forecast is unavailable.",
             "title": "Predicted Prob"
           },
           "predicted_tercile": {
@@ -2086,6 +2287,7 @@
                 "type": "null"
               }
             ],
+            "description": "HAR-tercile predicted bucket (low/medium/high) at the event; null when the forecast was outside the warmup window.",
             "title": "Predicted Tercile"
           },
           "realized_rv": {
@@ -2097,6 +2299,7 @@
                 "type": "null"
               }
             ],
+            "description": "Realised RV measured at the forward bar; null when the forward window has not yet closed.",
             "title": "Realized Rv"
           },
           "realized_tercile": {
@@ -2108,6 +2311,7 @@
                 "type": "null"
               }
             ],
+            "description": "Realised forward-vol tercile bucketed off the same cutoffs; null when the forward window has not yet closed.",
             "title": "Realized Tercile"
           }
         },
@@ -2131,10 +2335,12 @@
             "type": "number"
           },
           "generated_at": {
+            "description": "ISO-8601 UTC timestamp the response was generated at.",
             "title": "Generated At",
             "type": "string"
           },
           "horizons": {
+            "description": "Per-horizon HAR-tercile rows ordered ascending by `h`.",
             "items": {
               "$ref": "#/components/schemas/HarTercileHorizon"
             },
@@ -2142,10 +2348,12 @@
             "type": "array"
           },
           "model_revision": {
+            "description": "Model revision identifier the baseline was produced under.",
             "title": "Model Revision",
             "type": "string"
           },
           "symbol": {
+            "description": "Yahoo Finance ticker the HAR-tercile baseline was produced for.",
             "title": "Symbol",
             "type": "string"
           }
@@ -2165,6 +2373,7 @@
         "description": "HAR-tercile baseline classification for one forecast horizon.\n\n``predicted_rv`` is HAR's OLS point in realized-variance units.\n``tercile`` is the argmax bucket against the q33 / q67 cutoffs the\nresponse also returns; ``tercile_probs`` is the Gaussian-CDF mass\ntriple in log-RV space (sums to 1.0). ``macro_f1`` is wired through\nfrom wiki section 20 \u2014 the published HAR-tercile pooled macro-F1 on\nthe canonical 5-fold expanding walk-forward (0.687 / 0.685 / 0.654\nat h=1 / 5 / 22). The serving path does not recompute this number;\nit surfaces the offline-measured one so the frontend can render an\nhonest chip alongside the live point forecast.",
         "properties": {
           "h": {
+            "description": "Forecast horizon in trading days, e.g. 1, 5, or 22.",
             "title": "H",
             "type": "integer"
           },
@@ -2186,6 +2395,7 @@
             "type": "string"
           },
           "predicted_rv": {
+            "description": "HAR-OLS point forecast of realized variance at horizon h.",
             "title": "Predicted Rv",
             "type": "number"
           },
@@ -2214,6 +2424,7 @@
             "title": "Qlike Model"
           },
           "tercile": {
+            "description": "Argmax tercile bucket for `predicted_rv` against the q33/q67 cutoffs.",
             "enum": [
               "low",
               "medium",
@@ -2251,6 +2462,7 @@
                 "type": "null"
               }
             ],
+            "description": "Probability of the `argmax_regime` label in `[0, 1]`; null when no regime card was persisted.",
             "title": "Argmax Probability"
           },
           "argmax_regime": {
@@ -2262,9 +2474,11 @@
                 "type": "null"
               }
             ],
+            "description": "Argmax regime label from the persisted regime card; null when the row pre-dates the regime head.",
             "title": "Argmax Regime"
           },
           "created_at": {
+            "description": "ISO-8601 UTC timestamp the run was persisted.",
             "title": "Created At",
             "type": "string"
           },
@@ -2277,26 +2491,32 @@
                 "type": "null"
               }
             ],
+            "description": "Anchor-session close from the persisted market snapshot; null when missing.",
             "title": "Current Close"
           },
           "document_date": {
+            "description": "ISO `YYYY-MM-DD` event date of the analyzed FOMC document.",
             "title": "Document Date",
             "type": "string"
           },
           "forecast_mode": {
+            "description": "Forecast mode the run was executed under: `fast`, `quick_train`, or `real_train`.",
             "title": "Forecast Mode",
             "type": "string"
           },
           "horizon": {
+            "description": "Forecast horizon label, e.g. `1d`, `3d`, `5d`.",
             "title": "Horizon",
             "type": "string"
           },
           "id": {
+            "description": "UUID identifier of the persisted analyze run.",
             "title": "Id",
             "type": "string"
           },
           "payload": {
             "additionalProperties": true,
+            "description": "Full persisted analyze payload as a raw JSON object.",
             "title": "Payload",
             "type": "object"
           },
@@ -2309,6 +2529,7 @@
                 "type": "null"
               }
             ],
+            "description": "Persisted point forecast of close at the chosen horizon; null when missing.",
             "title": "Predicted Close"
           },
           "predicted_volatility": {
@@ -2320,6 +2541,7 @@
                 "type": "null"
               }
             ],
+            "description": "Persisted point forecast of realised volatility at the chosen horizon; null when missing.",
             "title": "Predicted Volatility"
           },
           "regime_set_size": {
@@ -2331,6 +2553,7 @@
                 "type": "null"
               }
             ],
+            "description": "Cardinality of the persisted conformal regime set; null when no regime card was persisted.",
             "title": "Regime Set Size"
           },
           "sentiment_score": {
@@ -2342,9 +2565,11 @@
                 "type": "null"
               }
             ],
+            "description": "Unsigned confidence of the persisted stance label in `[0, 1]`; null when missing.",
             "title": "Sentiment Score"
           },
           "stance": {
+            "description": "Aggregated stance label persisted with the row: hawkish/dovish/neutral/UNKNOWN.",
             "title": "Stance",
             "type": "string"
           },
@@ -2357,9 +2582,11 @@
                 "type": "null"
               }
             ],
+            "description": "Signed stance value `P(hawkish) - P(dovish)` from the multi-axis distribution; null when the row pre-dates multi-axis.",
             "title": "Stance Score"
           },
           "symbol": {
+            "description": "Yahoo Finance ticker the run was anchored to.",
             "title": "Symbol",
             "type": "string"
           },
@@ -2372,6 +2599,7 @@
                 "type": "null"
               }
             ],
+            "description": "Leading excerpt of the analyzed statement text for the listing tile; null when redacted.",
             "title": "Text Excerpt"
           }
         },
@@ -2389,6 +2617,7 @@
         "type": "object"
       },
       "HistoryEntry": {
+        "description": "One persisted analyze run summarised for the history list. Carries\nthe headline scalars and regime summary so the listing page can render\nwithout re-fetching the full payload.",
         "properties": {
           "argmax_probability": {
             "anyOf": [
@@ -2399,6 +2628,7 @@
                 "type": "null"
               }
             ],
+            "description": "Probability of the `argmax_regime` label in `[0, 1]`; null when no regime card was persisted.",
             "title": "Argmax Probability"
           },
           "argmax_regime": {
@@ -2410,9 +2640,11 @@
                 "type": "null"
               }
             ],
+            "description": "Argmax regime label from the persisted regime card; null when the row pre-dates the regime head.",
             "title": "Argmax Regime"
           },
           "created_at": {
+            "description": "ISO-8601 UTC timestamp the run was persisted.",
             "title": "Created At",
             "type": "string"
           },
@@ -2425,21 +2657,26 @@
                 "type": "null"
               }
             ],
+            "description": "Anchor-session close from the persisted market snapshot; null when missing.",
             "title": "Current Close"
           },
           "document_date": {
+            "description": "ISO `YYYY-MM-DD` event date of the analyzed FOMC document.",
             "title": "Document Date",
             "type": "string"
           },
           "forecast_mode": {
+            "description": "Forecast mode the run was executed under: `fast`, `quick_train`, or `real_train`.",
             "title": "Forecast Mode",
             "type": "string"
           },
           "horizon": {
+            "description": "Forecast horizon label, e.g. `1d`, `3d`, `5d`.",
             "title": "Horizon",
             "type": "string"
           },
           "id": {
+            "description": "UUID identifier of the persisted analyze run.",
             "title": "Id",
             "type": "string"
           },
@@ -2452,6 +2689,7 @@
                 "type": "null"
               }
             ],
+            "description": "Persisted point forecast of close at the chosen horizon; null when missing.",
             "title": "Predicted Close"
           },
           "predicted_volatility": {
@@ -2463,6 +2701,7 @@
                 "type": "null"
               }
             ],
+            "description": "Persisted point forecast of realised volatility at the chosen horizon; null when missing.",
             "title": "Predicted Volatility"
           },
           "regime_set_size": {
@@ -2474,6 +2713,7 @@
                 "type": "null"
               }
             ],
+            "description": "Cardinality of the persisted conformal regime set; null when no regime card was persisted.",
             "title": "Regime Set Size"
           },
           "sentiment_score": {
@@ -2485,9 +2725,11 @@
                 "type": "null"
               }
             ],
+            "description": "Unsigned confidence of the persisted stance label in `[0, 1]`; null when missing.",
             "title": "Sentiment Score"
           },
           "stance": {
+            "description": "Aggregated stance label persisted with the row: hawkish/dovish/neutral/UNKNOWN.",
             "title": "Stance",
             "type": "string"
           },
@@ -2500,9 +2742,11 @@
                 "type": "null"
               }
             ],
+            "description": "Signed stance value `P(hawkish) - P(dovish)` from the multi-axis distribution; null when the row pre-dates multi-axis.",
             "title": "Stance Score"
           },
           "symbol": {
+            "description": "Yahoo Finance ticker the run was anchored to.",
             "title": "Symbol",
             "type": "string"
           },
@@ -2515,6 +2759,7 @@
                 "type": "null"
               }
             ],
+            "description": "Leading excerpt of the analyzed statement text for the listing tile; null when redacted.",
             "title": "Text Excerpt"
           }
         },
@@ -2534,10 +2779,12 @@
         "description": "Forward 10-trading-day price path anchored on the event date.\n\nBacks the event-study chart on /history/[id]: the realised close path\nplus the bucketed realised regime label so the headline can read\n\"predicted X, realized Y\".",
         "properties": {
           "event_date": {
+            "description": "ISO `YYYY-MM-DD` event date the forward path is anchored to.",
             "title": "Event Date",
             "type": "string"
           },
           "forward_close": {
+            "description": "Realised close prices aligned to `forward_dates`.",
             "items": {
               "type": "number"
             },
@@ -2545,6 +2792,7 @@
             "type": "array"
           },
           "forward_dates": {
+            "description": "ISO dates of the 10 forward trading sessions, oldest-first.",
             "items": {
               "type": "string"
             },
@@ -2552,6 +2800,7 @@
             "type": "array"
           },
           "forward_log_returns": {
+            "description": "Bar-to-bar log returns aligned to `forward_dates`.",
             "items": {
               "type": "number"
             },
@@ -2567,6 +2816,7 @@
                 "type": "null"
               }
             ],
+            "description": "Predicted regime label persisted with the original run; null when no regime card was persisted.",
             "title": "Predicted Regime"
           },
           "realized_regime": {
@@ -2578,6 +2828,7 @@
                 "type": "null"
               }
             ],
+            "description": "Realised regime label bucketed from `realized_vol_10d`; null when cutoffs are unavailable.",
             "title": "Realized Regime"
           },
           "realized_vol_10d": {
@@ -2589,9 +2840,11 @@
                 "type": "null"
               }
             ],
+            "description": "Realised 10-day forward volatility derived from `forward_log_returns`; null when insufficient bars.",
             "title": "Realized Vol 10D"
           },
           "symbol": {
+            "description": "Yahoo Finance ticker the forward series was pulled for.",
             "title": "Symbol",
             "type": "string"
           }
@@ -2607,8 +2860,10 @@
         "type": "object"
       },
       "HistoryList": {
+        "description": "Paginated listing envelope for the history page.",
         "properties": {
           "items": {
+            "description": "History entries on the current page, newest-first by default.",
             "items": {
               "$ref": "#/components/schemas/HistoryEntry"
             },
@@ -2616,14 +2871,17 @@
             "type": "array"
           },
           "limit": {
+            "description": "Page size echoed from the request.",
             "title": "Limit",
             "type": "integer"
           },
           "offset": {
+            "description": "Page offset echoed from the request.",
             "title": "Offset",
             "type": "integer"
           },
           "total": {
+            "description": "Total number of history entries available across all pages.",
             "title": "Total",
             "type": "integer"
           }
@@ -2644,10 +2902,12 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/HistoryRealizedResponse"
             },
+            "description": "Realised payloads keyed by history run UUID.",
             "title": "Items",
             "type": "object"
           },
           "missing": {
+            "description": "Run UUIDs for which realised data could not be fetched.",
             "items": {
               "type": "string"
             },
@@ -2663,8 +2923,10 @@
         "type": "object"
       },
       "HistoryRealizedResponse": {
+        "description": "Realised forward market path for a single persisted history run,\nplus the bucketed realised regime label so the detail page can\nrender a predicted-vs-realised badge.",
         "properties": {
           "close": {
+            "description": "Realised close prices aligned to `timestamps`.",
             "items": {
               "type": "number"
             },
@@ -2672,10 +2934,12 @@
             "type": "array"
           },
           "document_date": {
+            "description": "ISO `YYYY-MM-DD` event date the run anchored to.",
             "title": "Document Date",
             "type": "string"
           },
           "horizon": {
+            "description": "Forecast horizon label echoed from the run, e.g. `3d`.",
             "title": "Horizon",
             "type": "string"
           },
@@ -2688,17 +2952,21 @@
                 "type": "null"
               }
             ],
+            "description": "Realised regime label derived from the 10d-forward vol path; null when the classifier cutoffs are unavailable on this host.",
             "title": "Realized Regime"
           },
           "run_id": {
+            "description": "UUID of the history run this realised payload belongs to.",
             "title": "Run Id",
             "type": "string"
           },
           "symbol": {
+            "description": "Yahoo Finance ticker the realised series was pulled for.",
             "title": "Symbol",
             "type": "string"
           },
           "timestamps": {
+            "description": "ISO timestamps of the forward sessions, oldest-first.",
             "items": {
               "type": "string"
             },
@@ -2706,6 +2974,7 @@
             "type": "array"
           },
           "volatility": {
+            "description": "Realised volatility aligned to `timestamps`.",
             "items": {
               "type": "number"
             },
@@ -2737,6 +3006,7 @@
                 "type": "null"
               }
             ],
+            "description": "Free-text message lifted from the caught exception so operators can grep without parsing logs.",
             "title": "Detail"
           },
           "exception_class": {
@@ -2748,6 +3018,7 @@
                 "type": "null"
               }
             ],
+            "description": "Python class name of the caught exception when status is 'unexpected_exception'; None otherwise.",
             "title": "Exception Class"
           },
           "missing_kwarg": {
@@ -2759,9 +3030,11 @@
                 "type": "null"
               }
             ],
+            "description": "Name of the inference kwarg the checkpoint expected but did not receive; only set when status is 'inference_kwarg_missing'.",
             "title": "Missing Kwarg"
           },
           "status": {
+            "description": "Degradation branch token: 'not_classification_mode', 'inference_kwarg_missing', or 'unexpected_exception'.",
             "title": "Status",
             "type": "string"
           }
@@ -2773,28 +3046,35 @@
         "type": "object"
       },
       "MarketDataResponse": {
+        "description": "Snapshot of the market series at the trading session used as the\nforecast anchor. ``requested_date`` is what the caller asked for and\n``date_used`` is the actual session resolved after weekend/holiday\nrollback.",
         "properties": {
           "close": {
+            "description": "Adjusted close price at `date_used` in the ticker's native currency.",
             "title": "Close",
             "type": "number"
           },
           "date_used": {
+            "description": "ISO `YYYY-MM-DD` of the trading session actually used after rolling back over weekends/holidays.",
             "title": "Date Used",
             "type": "string"
           },
           "lookback_days": {
+            "description": "Calendar-day lookback window pulled from yfinance to populate the history series.",
             "title": "Lookback Days",
             "type": "integer"
           },
           "requested_date": {
+            "description": "ISO `YYYY-MM-DD` date the caller asked for in the original request.",
             "title": "Requested Date",
             "type": "string"
           },
           "symbol": {
+            "description": "Yahoo Finance ticker the snapshot was fetched for, e.g. `^GSPC` or `DX-Y.NYB`.",
             "title": "Symbol",
             "type": "string"
           },
           "volatility_5d": {
+            "description": "Trailing 5-session realised volatility of log returns ending at `date_used`.",
             "title": "Volatility 5D",
             "type": "number"
           }
@@ -2822,6 +3102,7 @@
                 "type": "null"
               }
             ],
+            "description": "Absolute path of the checkpoint that produced these cards; null when no checkpoint is loaded.",
             "title": "Checkpoint Path"
           },
           "encoder_alias": {
@@ -2833,9 +3114,11 @@
                 "type": "null"
               }
             ],
+            "description": "Registry alias of the encoder backing this market-reaction panel; null on a stateless build.",
             "title": "Encoder Alias"
           },
           "rates": {
+            "description": "One reaction card per mounted rates head (2y/5y/terminal); empty when no rates heads are mounted.",
             "items": {
               "$ref": "#/components/schemas/RatesReactionCard"
             },
@@ -2850,13 +3133,15 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Vol-regime reaction card; null when the active checkpoint has no regime head."
           }
         },
         "title": "MarketReactionPanel",
         "type": "object"
       },
       "ModelDiagnosticsResponse": {
+        "description": "Forecaster runtime + checkpoint metadata surfaced beside the prediction.\nExposes which file the service loaded, the network shape it was built\nwith, and the most recent training/adaptation losses recorded on disk.",
         "properties": {
           "adaptation_best_epoch": {
             "anyOf": [
@@ -2867,6 +3152,7 @@
                 "type": "null"
               }
             ],
+            "description": "Epoch index of the lowest adaptation loss in the most recent run.",
             "title": "Adaptation Best Epoch"
           },
           "adaptation_combined_rmse": {
@@ -2878,6 +3164,7 @@
                 "type": "null"
               }
             ],
+            "description": "Combined close+volatility RMSE from the most recent adaptation pass.",
             "title": "Adaptation Combined Rmse"
           },
           "adaptation_epochs_completed": {
@@ -2889,6 +3176,7 @@
                 "type": "null"
               }
             ],
+            "description": "Number of adaptation epochs completed in the most recent quick_train/real_train pass.",
             "title": "Adaptation Epochs Completed"
           },
           "adaptation_loss": {
@@ -2900,6 +3188,7 @@
                 "type": "null"
               }
             ],
+            "description": "Best loss value observed during the most recent adaptation pass.",
             "title": "Adaptation Loss"
           },
           "best_loss": {
@@ -2911,17 +3200,21 @@
                 "type": "null"
               }
             ],
+            "description": "Best validation loss recorded during the most recent training run; null when no run logged it.",
             "title": "Best Loss"
           },
           "checkpoint_exists": {
+            "description": "True when the checkpoint file is present on disk at `checkpoint_path`.",
             "title": "Checkpoint Exists",
             "type": "boolean"
           },
           "checkpoint_loaded": {
+            "description": "True when the in-memory forecaster matches the on-disk checkpoint.",
             "title": "Checkpoint Loaded",
             "type": "boolean"
           },
           "checkpoint_path": {
+            "description": "Absolute path of the forecaster checkpoint the service loaded.",
             "title": "Checkpoint Path",
             "type": "string"
           },
@@ -2933,9 +3226,11 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Per-chunk attention trace from the encoder aggregator; null when the input was short enough to skip chunking."
           },
           "close_scale": {
+            "description": "Scaling factor applied to close-price targets before training.",
             "title": "Close Scale",
             "type": "number"
           },
@@ -2948,6 +3243,7 @@
                 "type": "null"
               }
             ],
+            "description": "Combined close+volatility RMSE from the best run; null when unavailable.",
             "title": "Combined Rmse"
           },
           "decay_rate": {
@@ -2959,9 +3255,11 @@
                 "type": "null"
               }
             ],
+            "description": "Elapsed-time decay rate (lambda) used by the chunk aggregator; null when no decay is configured.",
             "title": "Decay Rate"
           },
           "dropout": {
+            "description": "Dropout probability applied between LSTM layers in `[0, 1)`.",
             "title": "Dropout",
             "type": "number"
           },
@@ -2974,25 +3272,31 @@
                 "type": "null"
               }
             ],
+            "description": "Encoder alias backing the multi-axis classifier (e.g. `finbert_fed_adjacent`); null when no multi-axis checkpoint is loaded.",
             "title": "Encoder Key"
           },
           "head_hidden_size": {
+            "description": "Hidden dimension of the regression head MLP in units.",
             "title": "Head Hidden Size",
             "type": "integer"
           },
           "hidden_size": {
+            "description": "Hidden dimension of the LSTM backbone in units.",
             "title": "Hidden Size",
             "type": "integer"
           },
           "num_layers": {
+            "description": "Number of stacked LSTM layers in the forecaster.",
             "title": "Num Layers",
             "type": "integer"
           },
           "runtime_mode": {
+            "description": "Runtime mode the model is served under, e.g. `fast`, `quick_train`, `real_train`.",
             "title": "Runtime Mode",
             "type": "string"
           },
           "sequence_length": {
+            "description": "Number of past timesteps fed into the LSTM each forward pass.",
             "title": "Sequence Length",
             "type": "integer"
           }
@@ -3016,6 +3320,7 @@
         "description": "Monetary-policy surprise (descriptive panel, not a forecast input).\n\n``mp_surprise_level_bps`` is the realized rate-path surprise in\nbasis points relative to the pre-meeting fed-funds futures\nconsensus. ``direction`` is the discrete sign bucket the panel\nrenders; ``no_surprise`` covers the inside-the-band cases.\n``is_intermeeting`` flags off-cycle actions where the consensus\nbaseline is constructed differently.",
         "properties": {
           "direction": {
+            "description": "Discrete sign bucket of the surprise the panel renders.",
             "enum": [
               "hawkish",
               "dovish",
@@ -3025,6 +3330,7 @@
             "type": "string"
           },
           "event_date": {
+            "description": "ISO `YYYY-MM-DD` of the FOMC event the surprise was measured at.",
             "title": "Event Date",
             "type": "string"
           },
@@ -3037,17 +3343,21 @@
                 "type": "null"
               }
             ],
+            "description": "Prior fed-funds target midpoint in basis points; null when unavailable.",
             "title": "Ff Target Prior Bps"
           },
           "is_intermeeting": {
+            "description": "True when the action was off-cycle and the consensus baseline was constructed differently.",
             "title": "Is Intermeeting",
             "type": "boolean"
           },
           "magnitude_bps": {
+            "description": "Absolute magnitude of the surprise in basis points (non-negative).",
             "title": "Magnitude Bps",
             "type": "number"
           },
           "mp_surprise_level_bps": {
+            "description": "Realised rate-path surprise vs the pre-meeting fed-funds futures consensus, in basis points (signed).",
             "title": "Mp Surprise Level Bps",
             "type": "number"
           }
@@ -3073,10 +3383,12 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Certainty head prediction; null when the active checkpoint omits this axis."
           },
           "stance": {
-            "$ref": "#/components/schemas/MultiAxisStanceCard"
+            "$ref": "#/components/schemas/MultiAxisStanceCard",
+            "description": "Stance head prediction (hawkish/dovish/neutral) with class distribution."
           },
           "time": {
             "anyOf": [
@@ -3086,7 +3398,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Forward-looking time head prediction; null when the active checkpoint omits this axis."
           }
         },
         "required": [
@@ -3099,6 +3412,7 @@
         "description": "Certainty prediction from the multi-task head.",
         "properties": {
           "confidence": {
+            "description": "Probability of the predicted certainty label in `[0, 1]` after softmax.",
             "maximum": 1.0,
             "minimum": 0.0,
             "title": "Confidence",
@@ -3108,6 +3422,7 @@
             "additionalProperties": {
               "type": "number"
             },
+            "description": "Per-class softmax probability over the three certainty classes.",
             "title": "Distribution",
             "type": "object"
           },
@@ -3128,6 +3443,7 @@
         "description": "Stance prediction from the multi-task head.",
         "properties": {
           "confidence": {
+            "description": "Probability of the predicted stance label in `[0, 1]` after softmax.",
             "maximum": 1.0,
             "minimum": 0.0,
             "title": "Confidence",
@@ -3158,6 +3474,7 @@
         "description": "Forward-looking horizon classification from the multi-task head.\n\nTwo classes: ``forward looking`` (the statement references future\nactions or expectations) vs ``not forward looking`` (backward-looking\nor current-state only). Sourced from the gtfintechlab ``time_label``\ncolumn; trained on ~5 992 labelled sentences.",
         "properties": {
           "confidence": {
+            "description": "Probability of the predicted label in `[0, 1]` after softmax.",
             "maximum": 1.0,
             "minimum": 0.0,
             "title": "Confidence",
@@ -3167,6 +3484,7 @@
             "additionalProperties": {
               "type": "number"
             },
+            "description": "Per-class softmax probability over the two forward-looking classes.",
             "title": "Distribution",
             "type": "object"
           },
@@ -3184,6 +3502,7 @@
         "type": "object"
       },
       "NextFomcAttributionRow": {
+        "description": "One feature-family attribution row in the next-FOMC ablation table.",
         "properties": {
           "brier": {
             "anyOf": [
@@ -3194,9 +3513,11 @@
                 "type": "null"
               }
             ],
+            "description": "Multiclass Brier score for this row; null when unavailable.",
             "title": "Brier"
           },
           "families": {
+            "description": "Feature families included in this ablation row.",
             "items": {
               "type": "string"
             },
@@ -3212,6 +3533,7 @@
                 "type": "null"
               }
             ],
+            "description": "Mean cross-entropy loss for this row; null when unavailable.",
             "title": "Log Loss"
           },
           "macro_f1": {
@@ -3223,6 +3545,7 @@
                 "type": "null"
               }
             ],
+            "description": "Unweighted mean F1 across classes in `[0, 1]`; null when unavailable.",
             "title": "Macro F1"
           },
           "n": {
@@ -3234,6 +3557,7 @@
                 "type": "null"
               }
             ],
+            "description": "Number of resolved predictions used for the metrics; null when unavailable.",
             "title": "N"
           },
           "n_features": {
@@ -3245,9 +3569,11 @@
                 "type": "null"
               }
             ],
+            "description": "Number of features used after the family subset was applied; null when unavailable.",
             "title": "N Features"
           },
           "subset": {
+            "description": "Subset identifier the row was scored on (e.g. `full`, `ex_pandemic`).",
             "title": "Subset",
             "type": "string"
           },
@@ -3260,6 +3586,7 @@
                 "type": "null"
               }
             ],
+            "description": "Top-1 argmax accuracy in `[0, 1]`; null when unavailable.",
             "title": "Top1 Accuracy"
           }
         },
@@ -3271,16 +3598,20 @@
         "type": "object"
       },
       "NextFomcForecastResponse": {
+        "description": "Response envelope for `GET /forecast/next-fomc`.",
         "properties": {
           "artifacts_dir": {
+            "description": "Absolute path of the artifacts directory backing this response.",
             "title": "Artifacts Dir",
             "type": "string"
           },
           "available": {
+            "description": "True when a next-FOMC artifact was found on disk.",
             "title": "Available",
             "type": "boolean"
           },
           "feature_attribution": {
+            "description": "Feature-family ablation rows for the model attribution table.",
             "items": {
               "$ref": "#/components/schemas/NextFomcAttributionRow"
             },
@@ -3295,9 +3626,11 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Headline next-meeting prediction row; null when no prediction is available."
           },
           "history": {
+            "description": "Historical next-meeting predictions ordered oldest-first.",
             "items": {
               "$ref": "#/components/schemas/NextFomcMeetingPrediction"
             },
@@ -3308,6 +3641,7 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/NextFomcModelMetrics"
             },
+            "description": "Per-model aggregate metrics excluding the COVID pandemic window.",
             "title": "Metrics Ex Pandemic",
             "type": "object"
           },
@@ -3315,10 +3649,12 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/NextFomcModelMetrics"
             },
+            "description": "Per-model aggregate metrics over the full window keyed by model name.",
             "title": "Metrics Full Window",
             "type": "object"
           },
           "model_names": {
+            "description": "Model identifiers compared in this response.",
             "items": {
               "type": "string"
             },
@@ -3326,6 +3662,7 @@
             "type": "array"
           },
           "ordinal_classes": {
+            "description": "Ordered class labels the next-FOMC heads emit, e.g. cut/hold/hike.",
             "items": {
               "type": "string"
             },
@@ -3336,6 +3673,7 @@
             "additionalProperties": {
               "type": "integer"
             },
+            "description": "Free-form integer summary counters surfaced beside the response.",
             "title": "Summary",
             "type": "object"
           },
@@ -3347,7 +3685,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Descriptor of the upcoming meeting the headline targets; null when none is scheduled."
           }
         },
         "required": [
@@ -3359,8 +3698,10 @@
         "type": "object"
       },
       "NextFomcMeetingPrediction": {
+        "description": "One next-FOMC ordinal prediction row keyed by model name.",
         "properties": {
           "n_train_rows": {
+            "description": "Number of training rows that fed the model for this target.",
             "title": "N Train Rows",
             "type": "integer"
           },
@@ -3368,6 +3709,7 @@
             "additionalProperties": {
               "type": "string"
             },
+            "description": "Per-model argmax class label drawn from `probabilities`.",
             "title": "Predicted Class",
             "type": "object"
           },
@@ -3378,10 +3720,12 @@
               },
               "type": "object"
             },
+            "description": "Per-model dict of class -> probability for the target meeting.",
             "title": "Probabilities",
             "type": "object"
           },
           "target_as_of_ts": {
+            "description": "ISO-8601 UTC timestamp the features were anchored at.",
             "title": "Target As Of Ts",
             "type": "string"
           },
@@ -3398,6 +3742,7 @@
             "title": "Target Class"
           },
           "target_event_date": {
+            "description": "ISO `YYYY-MM-DD` event date the prediction targets.",
             "title": "Target Event Date",
             "type": "string"
           }
@@ -3413,6 +3758,7 @@
         "type": "object"
       },
       "NextFomcModelMetrics": {
+        "description": "Aggregate accuracy metrics for one next-FOMC model on a window.",
         "properties": {
           "brier": {
             "anyOf": [
@@ -3423,6 +3769,7 @@
                 "type": "null"
               }
             ],
+            "description": "Multiclass Brier score over the window; null when unavailable.",
             "title": "Brier"
           },
           "confusion_matrix": {
@@ -3432,6 +3779,7 @@
               },
               "type": "object"
             },
+            "description": "Nested actual -> predicted counts over the window.",
             "title": "Confusion Matrix",
             "type": "object"
           },
@@ -3444,6 +3792,7 @@
                 "type": "null"
               }
             ],
+            "description": "Mean cross-entropy loss over the window; null when unavailable.",
             "title": "Log Loss"
           },
           "macro_f1": {
@@ -3455,9 +3804,11 @@
                 "type": "null"
               }
             ],
+            "description": "Unweighted mean F1 across classes in `[0, 1]`; null when unavailable.",
             "title": "Macro F1"
           },
           "n": {
+            "description": "Number of resolved predictions in the window.",
             "title": "N",
             "type": "integer"
           },
@@ -3470,6 +3821,7 @@
                 "type": "null"
               }
             ],
+            "description": "Top-1 argmax accuracy in `[0, 1]`; null when unavailable.",
             "title": "Top1 Accuracy"
           }
         },
@@ -3480,6 +3832,7 @@
         "type": "object"
       },
       "NextFomcUpcomingMeeting": {
+        "description": "Lightweight descriptor of the upcoming meeting the headline targets.",
         "properties": {
           "days_until": {
             "anyOf": [
@@ -3490,13 +3843,16 @@
                 "type": "null"
               }
             ],
+            "description": "Calendar days from today to `meeting_date`; null when unavailable.",
             "title": "Days Until"
           },
           "meeting_date": {
+            "description": "ISO `YYYY-MM-DD` date of the next FOMC meeting.",
             "title": "Meeting Date",
             "type": "string"
           },
           "meeting_type": {
+            "description": "Meeting type label, e.g. `scheduled`.",
             "title": "Meeting Type",
             "type": "string"
           },
@@ -3509,6 +3865,7 @@
                 "type": "null"
               }
             ],
+            "description": "ISO date the statement is expected; null when not yet scheduled.",
             "title": "Statement Release Date"
           }
         },
@@ -3597,16 +3954,20 @@
         "type": "object"
       },
       "PredictionResponse": {
+        "description": "Point forecast emitted by the forecaster head for the chosen horizon.\nConfidence bands and the underlying trajectory are exposed separately in\n``ForecastSeriesResponse``; this object only carries the headline scalars.",
         "properties": {
           "close": {
+            "description": "Forecasted adjusted close at the end of the horizon, in the ticker's native currency.",
             "title": "Close",
             "type": "number"
           },
           "horizon": {
+            "description": "Horizon label this forecast applies to, e.g. `1d`, `3d`, `5d` trading sessions ahead.",
             "title": "Horizon",
             "type": "string"
           },
           "volatility": {
+            "description": "Forecasted realised volatility at the end of the horizon, in the same units as `market.volatility_5d`.",
             "title": "Volatility",
             "type": "number"
           }
@@ -3719,12 +4080,15 @@
         "type": "object"
       },
       "RealisedOutcomeBlock": {
+        "description": "Replay-mode reveal block \u2014 what actually happened forward of\n`as_of_date` for each tracked horizon. Surfaced only when the request\nset `as_of_date` and the forward bars are on disk.",
         "properties": {
           "as_of_date": {
+            "description": "ISO `YYYY-MM-DD` replay anchor the realised outcomes are measured forward of.",
             "title": "As Of Date",
             "type": "string"
           },
           "horizons": {
+            "description": "Per-horizon realised outcomes ordered ascending by `horizon`.",
             "items": {
               "$ref": "#/components/schemas/RealisedOutcomeHorizon"
             },
@@ -3732,6 +4096,7 @@
             "type": "array"
           },
           "symbol": {
+            "description": "Yahoo Finance ticker the realised series was pulled for.",
             "title": "Symbol",
             "type": "string"
           }
@@ -3756,6 +4121,7 @@
                 "type": "null"
               }
             ],
+            "description": "Realised adjusted close at t+h in the ticker's native currency.",
             "title": "Close"
           },
           "date": {
@@ -3767,9 +4133,11 @@
                 "type": "null"
               }
             ],
+            "description": "ISO `YYYY-MM-DD` of the trading session at t+h; null when the forward bar is unavailable.",
             "title": "Date"
           },
           "horizon": {
+            "description": "Trading-day horizon offset from the replay anchor, e.g. 1, 3, 5.",
             "title": "Horizon",
             "type": "integer"
           },
@@ -3782,6 +4150,7 @@
                 "type": "null"
               }
             ],
+            "description": "Realised log return from anchor close to t+h close; null when forward data is missing.",
             "title": "Log Return"
           },
           "realised_volatility_5d_post_event": {
@@ -3793,6 +4162,7 @@
                 "type": "null"
               }
             ],
+            "description": "Rolling 5-bar realised volatility ending at t+h, measured strictly post-event.",
             "title": "Realised Volatility 5D Post Event"
           }
         },
@@ -3817,9 +4187,11 @@
                 "type": "null"
               }
             ],
+            "description": "Per-day walk-forward h=1 conformal bands for the sparkline; null when unavailable.",
             "title": "Historical Bands"
           },
           "history": {
+            "description": "Last-60d realised RV history aligned to `history_dates`.",
             "items": {
               "type": "number"
             },
@@ -3827,6 +4199,7 @@
             "type": "array"
           },
           "history_dates": {
+            "description": "ISO dates aligned to `history` entries, oldest-first.",
             "items": {
               "type": "string"
             },
@@ -3834,6 +4207,7 @@
             "type": "array"
           },
           "horizons": {
+            "description": "Per-horizon point + conformal-band forecasts ordered ascending by `h`.",
             "items": {
               "$ref": "#/components/schemas/RealizedVolHorizonForecast"
             },
@@ -3841,6 +4215,7 @@
             "type": "array"
           },
           "model_revision": {
+            "description": "Model revision identifier the forecast was produced under.",
             "title": "Model Revision",
             "type": "string"
           },
@@ -3853,14 +4228,17 @@
                 "type": "null"
               }
             ],
+            "description": "ISO date of the most-recent intraday session the live measures were reduced from; null when the head fell back to training_means.",
             "title": "Realized Features Date"
           },
           "realized_features_source": {
             "default": "training_means",
+            "description": "`live` when intraday-derived measures filled the QLIKE head; `training_means` when the head fell back to feat_mean.",
             "title": "Realized Features Source",
             "type": "string"
           },
           "symbol": {
+            "description": "Yahoo Finance ticker the RV forecast was produced for.",
             "title": "Symbol",
             "type": "string"
           }
@@ -3877,14 +4255,17 @@
         "description": "Single walk-forward h=1 conformal band aligned to a realized day.\n\nRenders behind the realized sparkline so the card shows the band\nactually covered each day's outcome.",
         "properties": {
           "band_hi_80": {
+            "description": "Upper edge of the 80% conformal band at this session in RV units.",
             "title": "Band Hi 80",
             "type": "number"
           },
           "band_lo_80": {
+            "description": "Lower edge of the 80% conformal band at this session in RV units.",
             "title": "Band Lo 80",
             "type": "number"
           },
           "date": {
+            "description": "ISO `YYYY-MM-DD` of the trading session this band targeted.",
             "title": "Date",
             "type": "string"
           },
@@ -3897,6 +4278,7 @@
                 "type": "null"
               }
             ],
+            "description": "Realised RV on this session; null when the bar is unavailable.",
             "title": "Realized Rv"
           }
         },
@@ -3912,18 +4294,22 @@
         "description": "Banded RV forecast for one horizon (1, 5, or 22 trading days).\n\n``point`` and the four ``band_*`` numbers are RV (variance) units, not\nlog-RV. ``qlike_model`` / ``qlike_har`` are the pooled walk-forward\nQLIKE losses (lower is better); the card surfaces the gain as a\nbeat-HAR badge. ``coverage_empirical_90`` is the prospective empirical\ncoverage of the 90% conformal band, for the calibration chip.",
         "properties": {
           "band_hi_80": {
+            "description": "Upper edge of the 80% conformal band on `point` in RV units.",
             "title": "Band Hi 80",
             "type": "number"
           },
           "band_hi_90": {
+            "description": "Upper edge of the 90% conformal band on `point` in RV units.",
             "title": "Band Hi 90",
             "type": "number"
           },
           "band_lo_80": {
+            "description": "Lower edge of the 80% conformal band on `point` in RV units.",
             "title": "Band Lo 80",
             "type": "number"
           },
           "band_lo_90": {
+            "description": "Lower edge of the 90% conformal band on `point` in RV units.",
             "title": "Band Lo 90",
             "type": "number"
           },
@@ -3936,13 +4322,16 @@
                 "type": "null"
               }
             ],
+            "description": "Prospective empirical coverage of the 90% band in `[0, 1]`; null when unavailable.",
             "title": "Coverage Empirical 90"
           },
           "h": {
+            "description": "Forecast horizon in trading days, e.g. 1, 5, or 22.",
             "title": "H",
             "type": "integer"
           },
           "point": {
+            "description": "Point forecast of realized variance at horizon h.",
             "title": "Point",
             "type": "number"
           },
@@ -3955,6 +4344,7 @@
                 "type": "null"
               }
             ],
+            "description": "Pooled walk-forward QLIKE loss for HAR-OLS at this horizon (baseline); null when unavailable.",
             "title": "Qlike Har"
           },
           "qlike_model": {
@@ -3966,6 +4356,7 @@
                 "type": "null"
               }
             ],
+            "description": "Pooled walk-forward QLIKE loss for the model at this horizon (lower is better); null when unavailable.",
             "title": "Qlike Model"
           }
         },
@@ -3984,6 +4375,7 @@
         "description": "Calibrated prediction-set output from the vol-regime classifier (#216).\n\nSurfaces the conformal APS set on the /analyze response. ``predicted_set``\nholds the class labels the calibrated threshold admits at the\n``coverage`` level; ``set_label`` is the UI-friendly bracketed string;\n``distribution`` is the raw per-class softmax for the inference row so\nthe frontend can render a bar chart alongside the set chips.\n\nPopulated only when the active checkpoint is classification-mode AND\na sibling ``.conformal.json`` manifest with ``softmax_quantile`` exists.\nPre-#216 regression-only checkpoints leave the field as ``None`` on\nthe response and the legacy uncalibrated max-softmax stays on the\n``sentiment`` block.",
         "properties": {
           "argmax_class": {
+            "description": "Argmax regime label drawn from `distribution`; one of calm/normal/high.",
             "title": "Argmax Class",
             "type": "string"
           },
@@ -3998,6 +4390,7 @@
             "type": "string"
           },
           "coverage": {
+            "description": "Nominal coverage of the conformal APS set in `(0, 1)`.",
             "title": "Coverage",
             "type": "number"
           },
@@ -4005,6 +4398,7 @@
             "additionalProperties": {
               "type": "number"
             },
+            "description": "Per-class softmax probabilities over the regime labels for the inference row.",
             "title": "Distribution",
             "type": "object"
           },
@@ -4045,6 +4439,7 @@
             "title": "Log Rv Upper"
           },
           "predicted_set": {
+            "description": "Calibrated APS prediction set of regime labels admitted at the `coverage` level.",
             "items": {
               "type": "string"
             },
@@ -4052,10 +4447,12 @@
             "type": "array"
           },
           "set_label": {
+            "description": "UI-friendly bracketed label of the prediction set, e.g. `{calm, normal}`.",
             "title": "Set Label",
             "type": "string"
           },
           "set_size": {
+            "description": "Cardinality of `predicted_set`; ranges 1-3 for the 3-class regime head.",
             "title": "Set Size",
             "type": "integer"
           }
@@ -4095,9 +4492,11 @@
                 "type": "null"
               }
             ],
+            "description": "Lower edge of the symmetric conformal interval at `coverage`; null when no sidecar is on disk.",
             "title": "Log Rv Lower"
           },
           "log_rv_point": {
+            "description": "Regression-head point prediction in standardised log(forward realized vol) space.",
             "title": "Log Rv Point",
             "type": "number"
           },
@@ -4110,6 +4509,7 @@
                 "type": "null"
               }
             ],
+            "description": "Upper edge of the symmetric conformal interval at `coverage`; null when no sidecar is on disk.",
             "title": "Log Rv Upper"
           }
         },
@@ -4123,11 +4523,13 @@
         "description": "Replay-mode metadata for the /analyze response.\n\nPopulated only when the request set ``as_of_date``. ``fold_id`` is\nthe walk-forward fold whose checkpoint served this prediction;\n``train_end`` is the latest date the model saw at training time --\neverything strictly after that is unseen ground truth from the\nmodel's point of view. ``classifier_rewind`` flags that the\ntext-encoder weights are NOT rewound to ``as_of_date`` (the\nDAPT-pinned encoder is post-X), so any text-conditioned head is\nserved with later-than-X weights -- documented as a known caveat\nrather than silently leaked.",
         "properties": {
           "as_of_date": {
+            "description": "ISO `YYYY-MM-DD` replay anchor echoed from the request.",
             "title": "As Of Date",
             "type": "string"
           },
           "classifier_rewind": {
             "default": false,
+            "description": "True when the text-encoder weights are also rewound to `as_of_date`; false flags the known DAPT-pinned caveat.",
             "title": "Classifier Rewind",
             "type": "boolean"
           },
@@ -4140,14 +4542,17 @@
                 "type": "null"
               }
             ],
+            "description": "Walk-forward fold identifier whose checkpoint served this prediction; null when no fold matched.",
             "title": "Fold Id"
           },
           "forecaster_checkpoint_rewound": {
             "default": false,
+            "description": "True once the forecaster is wired to load the per-fold checkpoint identified by `fold_id`; false flags the scaffolding-only state.",
             "title": "Forecaster Checkpoint Rewound",
             "type": "boolean"
           },
           "notes": {
+            "description": "Free-text advisories on the replay run, e.g. caveats about partial rewind.",
             "items": {
               "type": "string"
             },
@@ -4163,6 +4568,7 @@
                 "type": "null"
               }
             ],
+            "description": "Latest date the fold's training slice contained; everything after is unseen by the model.",
             "title": "Train End"
           }
         },
@@ -4173,19 +4579,24 @@
         "type": "object"
       },
       "ResearchArtifactsResponse": {
+        "description": "Aggregate research-page envelope: artifact file index plus the\nbake-off / validity / cross-bank-transfer sections.",
         "properties": {
           "artifacts_root": {
+            "description": "Absolute path of the `data/artifacts/` root the listing was taken from.",
             "title": "Artifacts Root",
             "type": "string"
           },
           "cross_bank_transfer": {
-            "$ref": "#/components/schemas/CrossBankTransferSection"
+            "$ref": "#/components/schemas/CrossBankTransferSection",
+            "description": "Cross-bank transfer matrix across the six covered central banks."
           },
           "encoder_axis_stance": {
-            "$ref": "#/components/schemas/EncoderAxisStanceSection"
+            "$ref": "#/components/schemas/EncoderAxisStanceSection",
+            "description": "Validity-study table for the stance axis."
           },
           "encoder_bakeoff": {
-            "$ref": "#/components/schemas/EncoderBakeoffSection"
+            "$ref": "#/components/schemas/EncoderBakeoffSection",
+            "description": "Encoder bake-off table on the canonical seed set."
           },
           "sections": {
             "additionalProperties": {
@@ -4194,6 +4605,7 @@
               },
               "type": "array"
             },
+            "description": "Mapping from section name to its artifact file index.",
             "title": "Sections",
             "type": "object"
           }
@@ -4208,6 +4620,7 @@
         "type": "object"
       },
       "ResearchRegistryBaseline": {
+        "description": "No-text baseline reference row for the encoder registry.",
         "properties": {
           "cls_f1": {
             "anyOf": [
@@ -4218,6 +4631,7 @@
                 "type": "null"
               }
             ],
+            "description": "Baseline macro-F1 on the classification-only surface; null when not recorded.",
             "title": "Cls F1"
           },
           "dual_f1": {
@@ -4229,9 +4643,11 @@
                 "type": "null"
               }
             ],
+            "description": "Baseline macro-F1 on the dual-head surface; null when not recorded.",
             "title": "Dual F1"
           },
           "label": {
+            "description": "Label of the no-text baseline, e.g. `market_only`.",
             "title": "Label",
             "type": "string"
           },
@@ -4244,6 +4660,7 @@
                 "type": "null"
               }
             ],
+            "description": "Baseline macro-F1 on the regression-only surface; null when not recorded.",
             "title": "Regression F1"
           }
         },
@@ -4257,6 +4674,7 @@
         "description": "Quant-facing encoder registry response (\u00a76.41 manifest).\n\nFiltered by default to non-negative \u0394 on the requested surface so\nthe dashboard does not surface negative-lift encoders. Use\n?include_rejected=true to see the full table including nulls and\nnegatives.",
         "properties": {
           "available": {
+            "description": "True when a registry manifest was found on disk.",
             "title": "Available",
             "type": "boolean"
           },
@@ -4268,19 +4686,23 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Reference no-text baseline row; null when not recorded."
           },
           "head": {
             "default": "",
+            "description": "Head identifier within the package the rows were computed on.",
             "title": "Head",
             "type": "string"
           },
           "rejected_count": {
             "default": 0,
+            "description": "Number of rows filtered out for negative or null lift.",
             "title": "Rejected Count",
             "type": "integer"
           },
           "rows": {
+            "description": "Per-encoder registry rows after filtering on lift sign.",
             "items": {
               "$ref": "#/components/schemas/ResearchRegistryRow"
             },
@@ -4288,6 +4710,7 @@
             "type": "array"
           },
           "seeds": {
+            "description": "Seed set the registry rows were averaged across.",
             "items": {
               "type": "integer"
             },
@@ -4296,10 +4719,12 @@
           },
           "source_wiki_section": {
             "default": "",
+            "description": "Wiki section identifier the registry sources its baseline from.",
             "title": "Source Wiki Section",
             "type": "string"
           },
           "surface": {
+            "description": "Which head surface the lift is computed on: `dual` or `cls`.",
             "enum": [
               "dual",
               "cls"
@@ -4309,6 +4734,7 @@
           },
           "training_package_id": {
             "default": "",
+            "description": "Training package ID the registry was assembled from.",
             "title": "Training Package Id",
             "type": "string"
           }
@@ -4321,6 +4747,7 @@
         "type": "object"
       },
       "ResearchRegistryRow": {
+        "description": "One encoder's row in the registry table comparing it to the no-text baseline.",
         "properties": {
           "cache_uri": {
             "anyOf": [
@@ -4343,6 +4770,7 @@
                 "type": "null"
               }
             ],
+            "description": "Path of the encoder checkpoint relative to the models directory; null when not published.",
             "title": "Checkpoint Relpath"
           },
           "cls_f1": {
@@ -4354,6 +4782,7 @@
                 "type": "null"
               }
             ],
+            "description": "Encoder macro-F1 on the classification-only surface; null when not recorded.",
             "title": "Cls F1"
           },
           "delta_cls": {
@@ -4389,13 +4818,16 @@
                 "type": "null"
               }
             ],
+            "description": "Encoder macro-F1 on the dual-head surface; null when not recorded.",
             "title": "Dual F1"
           },
           "encoder_alias": {
+            "description": "Registry alias of the encoder being compared.",
             "title": "Encoder Alias",
             "type": "string"
           },
           "encoder_display": {
+            "description": "Display name of the encoder for UI rendering.",
             "title": "Encoder Display",
             "type": "string"
           },
@@ -4407,6 +4839,7 @@
           },
           "notes": {
             "default": "",
+            "description": "Free-text notes for the row, e.g. caveats; empty when none.",
             "title": "Notes",
             "type": "string"
           },
@@ -4419,6 +4852,7 @@
                 "type": "null"
               }
             ],
+            "description": "Encoder macro-F1 on the regression-only surface; null when not recorded.",
             "title": "Regression F1"
           }
         },
@@ -4441,6 +4875,7 @@
                 "type": "null"
               }
             ],
+            "description": "Fraction of resolved rows whose realised RV landed inside the 80% band; null when none resolved.",
             "title": "Empirical Coverage 80"
           },
           "empirical_coverage_90": {
@@ -4452,28 +4887,34 @@
                 "type": "null"
               }
             ],
+            "description": "Fraction of resolved rows whose realised RV landed inside the 90% band; null when none resolved.",
             "title": "Empirical Coverage 90"
           },
           "nominal_coverage_80": {
             "default": 0.8,
+            "description": "Calibration target for the 80% band, pinned to 0.80.",
             "title": "Nominal Coverage 80",
             "type": "number"
           },
           "nominal_coverage_90": {
             "default": 0.9,
+            "description": "Calibration target for the 90% band, pinned to 0.90.",
             "title": "Nominal Coverage 90",
             "type": "number"
           },
           "pending_runs": {
             "default": 0,
+            "description": "Rows that could not be scored because the event sits in the HAR warmup or beyond available RV history.",
             "title": "Pending Runs",
             "type": "integer"
           },
           "resolved_runs": {
+            "description": "Number of rows with realised RV on the predicted bar.",
             "title": "Resolved Runs",
             "type": "integer"
           },
           "total_runs": {
+            "description": "Total rows in the backtest window regardless of resolution.",
             "title": "Total Runs",
             "type": "integer"
           }
@@ -4489,17 +4930,21 @@
         "description": "Response wire shape for ``GET /forecast/rv-backtest``.\n\nWalks the last N persisted ^GSPC analyze runs and reports the\nQLIKE-RV h=1 point forecast + 80% / 90% bands against the realized\nRV on the same bar. Drives the RvAccuracyPanel card alongside the\nHAR-tercile accuracy surface.",
         "properties": {
           "coverage": {
-            "$ref": "#/components/schemas/RvBacktestCoverage"
+            "$ref": "#/components/schemas/RvBacktestCoverage",
+            "description": "Aggregate empirical-vs-nominal coverage across the rows."
           },
           "generated_at": {
+            "description": "ISO-8601 UTC timestamp the response was generated at.",
             "title": "Generated At",
             "type": "string"
           },
           "horizon": {
+            "description": "Forward horizon in trading days the bands were calibrated for (h=1).",
             "title": "Horizon",
             "type": "integer"
           },
           "rows": {
+            "description": "Per-event RV backtest rows ordered by `event_date`.",
             "items": {
               "$ref": "#/components/schemas/RvBacktestRow"
             },
@@ -4507,6 +4952,7 @@
             "type": "array"
           },
           "symbol": {
+            "description": "Yahoo Finance ticker the RV backtest was run against.",
             "title": "Symbol",
             "type": "string"
           }
@@ -4533,6 +4979,7 @@
                 "type": "null"
               }
             ],
+            "description": "Upper edge of the 80% conformal band; null on pending rows.",
             "title": "Band Hi 80"
           },
           "band_hi_90": {
@@ -4544,6 +4991,7 @@
                 "type": "null"
               }
             ],
+            "description": "Upper edge of the 90% conformal band; null on pending rows.",
             "title": "Band Hi 90"
           },
           "band_lo_80": {
@@ -4555,6 +5003,7 @@
                 "type": "null"
               }
             ],
+            "description": "Lower edge of the 80% conformal band; null on pending rows.",
             "title": "Band Lo 80"
           },
           "band_lo_90": {
@@ -4566,9 +5015,11 @@
                 "type": "null"
               }
             ],
+            "description": "Lower edge of the 90% conformal band; null on pending rows.",
             "title": "Band Lo 90"
           },
           "event_date": {
+            "description": "ISO `YYYY-MM-DD` event date the row was anchored to.",
             "title": "Event Date",
             "type": "string"
           },
@@ -4581,6 +5032,7 @@
                 "type": "null"
               }
             ],
+            "description": "True when `realized_rv` lies inside the 80% band; null when realised RV is unresolved.",
             "title": "In Band 80"
           },
           "in_band_90": {
@@ -4592,6 +5044,7 @@
                 "type": "null"
               }
             ],
+            "description": "True when `realized_rv` lies inside the 90% band; null when realised RV is unresolved.",
             "title": "In Band 90"
           },
           "point_forecast_rv": {
@@ -4603,6 +5056,7 @@
                 "type": "null"
               }
             ],
+            "description": "h=1 point forecast of realised variance; null on pending rows inside the HAR warmup or beyond RV history.",
             "title": "Point Forecast Rv"
           },
           "realized_rv": {
@@ -4614,6 +5068,7 @@
                 "type": "null"
               }
             ],
+            "description": "Realised RV on the predicted bar; null when the bar is unresolved.",
             "title": "Realized Rv"
           }
         },
@@ -4649,10 +5104,12 @@
         "description": "Semantic diff between the current statement and its prior.\n\nDescriptive panel \u2014 the spans and topic deltas are post-hoc\nexplanations of the realized text change and never feed the\nforecast surface.\n\n``status`` carries a parseable signal for the panel to surface\nan informational banner when the service could not produce a\nmeaningful diff (empty / near-empty / non-Latin input, or no\nstrict-prior on file). The field is optional and defaults to\n``None`` for backward compatibility \u2014 older clients that ignore\nit still see the same empty-list cold-start shape they used to.",
         "properties": {
           "current_date": {
+            "description": "ISO `YYYY-MM-DD` event date of the current statement.",
             "title": "Current Date",
             "type": "string"
           },
           "prior_date": {
+            "description": "ISO `YYYY-MM-DD` event date of the strict-prior statement on file; empty when none.",
             "title": "Prior Date",
             "type": "string"
           },
@@ -4671,13 +5128,16 @@
                 "type": "null"
               }
             ],
+            "description": "Parseable status flag for the panel banner; null on legacy responses that pre-date the field.",
             "title": "Status"
           },
           "summary": {
+            "description": "Short human-readable summary of the diff, e.g. headline phrase changes.",
             "title": "Summary",
             "type": "string"
           },
           "token_spans": {
+            "description": "Token-aligned span sequence between the two statements in current-statement order.",
             "items": {
               "$ref": "#/components/schemas/SemanticDiffSpan"
             },
@@ -4685,6 +5145,7 @@
             "type": "array"
           },
           "topic_deltas": {
+            "description": "Topic-emphasis delta rows ordered by absolute delta magnitude.",
             "items": {
               "$ref": "#/components/schemas/SemanticDiffTopic"
             },
@@ -4706,6 +5167,7 @@
         "description": "One token-aligned span of the current-vs-prior statement diff.\n\n``kind`` is the alignment bucket; ``paired_text`` carries the\nmatched span on the opposite side for ``substituted`` (and\noptionally for ``added`` / ``removed`` if the aligner emitted a\nnear-match neighbour).",
         "properties": {
           "kind": {
+            "description": "Alignment bucket of this span vs the prior statement.",
             "enum": [
               "unchanged",
               "added",
@@ -4724,9 +5186,11 @@
                 "type": "null"
               }
             ],
+            "description": "Matched span on the prior-statement side for `substituted` kinds; null when no near-match neighbour was emitted.",
             "title": "Paired Text"
           },
           "text": {
+            "description": "Surface text of the span on the current-statement side.",
             "title": "Text",
             "type": "string"
           }
@@ -4742,18 +5206,22 @@
         "description": "Topic-level emphasis delta across the two statements.\n\n``prior_emphasis`` and ``current_emphasis`` are the topic-share\nmasses in [0, 1]; ``delta`` = current - prior. ``sample_phrases``\nare the highest-loading n-grams the panel surfaces alongside the\nbar.",
         "properties": {
           "current_emphasis": {
+            "description": "Topic-share mass in the current statement in `[0, 1]`.",
             "title": "Current Emphasis",
             "type": "number"
           },
           "delta": {
+            "description": "Signed delta = current_emphasis - prior_emphasis.",
             "title": "Delta",
             "type": "number"
           },
           "prior_emphasis": {
+            "description": "Topic-share mass in the prior statement in `[0, 1]`.",
             "title": "Prior Emphasis",
             "type": "number"
           },
           "sample_phrases": {
+            "description": "Highest-loading n-grams the panel surfaces alongside the topic bar.",
             "items": {
               "type": "string"
             },
@@ -4761,6 +5229,7 @@
             "type": "array"
           },
           "topic": {
+            "description": "Topic identifier from the topic model used for the diff.",
             "title": "Topic",
             "type": "string"
           }
@@ -4775,6 +5244,7 @@
         "type": "object"
       },
       "SentimentResponse": {
+        "description": "Sentence-aggregated stance label for the FOMC excerpt plus an\nout-of-distribution chip so callers can tell when the input lies\noutside the corpus the head was trained on.",
         "properties": {
           "is_in_distribution": {
             "anyOf": [
@@ -4785,9 +5255,11 @@
                 "type": "null"
               }
             ],
+            "description": "`true` when `ood_energy <= ood_threshold`, i.e. the input embedding lies near the FOMC training distribution and the stance label is trustworthy. `false` flags off-domain inputs whose stance label should be ignored. `null` when no manifest is present.",
             "title": "Is In Distribution"
           },
           "label": {
+            "description": "Aggregated stance label across the input text. One of `hawkish`, `dovish`, `neutral`, or `UNKNOWN` when the input was empty / non-Latin / too short to score.",
             "title": "Label",
             "type": "string"
           },
@@ -4800,6 +5272,7 @@
                 "type": "null"
               }
             ],
+            "description": "OOD score for the input text. Carries the **Mahalanobis distance** to the nearest class centroid in the encoder's CLS embedding space when the active detector is the Lee et al. NeurIPS 2018 manifest (`forecaster_best.ood_mahalanobis.json`). Falls back to the Liu et al. NeurIPS 2020 free-energy score `E(x) = -T * logsumexp(logits / T)` when only the legacy manifest (`forecaster_best.ood.json`) is on disk. `null` when no calibration manifest is present. Lower means closer to the training distribution.",
             "title": "Ood Energy"
           },
           "ood_threshold": {
@@ -4811,9 +5284,11 @@
                 "type": "null"
               }
             ],
+            "description": "Calibrated in-distribution ceiling, set at the 95th percentile of training-corpus scores during calibration. Inputs above this score flag out-of-distribution. `null` when no manifest is present.",
             "title": "Ood Threshold"
           },
           "raw": {
+            "description": "Per-class probabilities from the underlying classifier before label selection. Each entry is `{label: str, score: float}`.",
             "items": {
               "additionalProperties": {
                 "anyOf": [
@@ -4831,6 +5306,7 @@
             "type": "array"
           },
           "score": {
+            "description": "Probability of the predicted `label` after chunk-level aggregation. In `[0, 1]`.",
             "title": "Score",
             "type": "number"
           }
@@ -4855,6 +5331,7 @@
                 "type": "null"
               }
             ],
+            "description": "True when a sibling conformal calibration sidecar is on disk; null on inactive rows.",
             "title": "Conformal Sidecar Present"
           },
           "encoder_alias": {
@@ -4866,9 +5343,11 @@
                 "type": "null"
               }
             ],
+            "description": "Registry alias of the encoder backing this checkpoint; null on inactive rows.",
             "title": "Encoder Alias"
           },
           "filename": {
+            "description": "Bare filename of the checkpoint under `backend/models/`.",
             "title": "Filename",
             "type": "string"
           },
@@ -4881,14 +5360,17 @@
                 "type": "null"
               }
             ],
+            "description": "`present` when a contract sidecar exists, `sidecar_absent` for legacy checkpoints.",
             "title": "Inference Contract Status"
           },
           "is_active": {
             "default": false,
+            "description": "True when the active service is currently loaded from this file.",
             "title": "Is Active",
             "type": "boolean"
           },
           "modified_at": {
+            "description": "ISO-8601 UTC mtime of the checkpoint file.",
             "title": "Modified At",
             "type": "string"
           },
@@ -4901,9 +5383,11 @@
                 "type": "null"
               }
             ],
+            "description": "Output mode declared by the active checkpoint (e.g. classification/regression/dual); null on inactive rows.",
             "title": "Output Mode"
           },
           "relative_path": {
+            "description": "Path of the checkpoint relative to the models directory.",
             "title": "Relative Path",
             "type": "string"
           },
@@ -4916,9 +5400,11 @@
                 "type": "null"
               }
             ],
+            "description": "HF Hub `owner/name` slug when `source == hf_cache`; null otherwise.",
             "title": "Repo"
           },
           "required_kwargs": {
+            "description": "Inference kwargs declared in the checkpoint's contract sidecar; empty for legacy artefacts.",
             "items": {
               "type": "string"
             },
@@ -4934,13 +5420,16 @@
                 "type": "null"
               }
             ],
+            "description": "Pinned HF commit hash when known; empty/null for unpinned artefacts.",
             "title": "Revision"
           },
           "role": {
+            "description": "Inferred role: forecaster / multi_axis / lora / calibration.",
             "title": "Role",
             "type": "string"
           },
           "size_bytes": {
+            "description": "File size in bytes as reported by the filesystem.",
             "title": "Size Bytes",
             "type": "integer"
           },
@@ -4953,10 +5442,12 @@
                 "type": "null"
               }
             ],
+            "description": "Absolute path inside the HF cache the file resolves to; null when `source == models_dir`.",
             "title": "Snapshot Path"
           },
           "source": {
             "default": "models_dir",
+            "description": "Origin of the file on disk: `models_dir` for the host-mounted directory or `hf_cache` for HF snapshot cache.",
             "title": "Source",
             "type": "string"
           },
@@ -4964,6 +5455,7 @@
             "additionalProperties": {
               "type": "boolean"
             },
+            "description": "Mapping from declared kwarg name to whether the live serving wiring supplies it.",
             "title": "Supplied At Inference",
             "type": "object"
           }
@@ -4979,8 +5471,10 @@
         "type": "object"
       },
       "SettingsCheckpointsResponse": {
+        "description": "Response envelope for the settings-page checkpoint inventory.",
         "properties": {
           "checkpoints": {
+            "description": "One entry per checkpoint file discovered under the models directory or HF cache.",
             "items": {
               "$ref": "#/components/schemas/SettingsCheckpoint"
             },
@@ -4988,6 +5482,7 @@
             "type": "array"
           },
           "models_dir": {
+            "description": "Absolute path of the host-mounted `backend/models/` directory.",
             "title": "Models Dir",
             "type": "string"
           }
@@ -5003,10 +5498,12 @@
         "description": "One historical (date, score) pair for the rolling z-score baseline.",
         "properties": {
           "document_date": {
+            "description": "ISO `YYYY-MM-DD` event date of the historical FOMC row.",
             "title": "Document Date",
             "type": "string"
           },
           "stance_score": {
+            "description": "Signed stance score `P(hawkish) - P(dovish)` for the historical row.",
             "title": "Stance Score",
             "type": "number"
           }
@@ -5022,6 +5519,7 @@
         "description": "Trailing stance-score summary for the dashboard tile.\n\n``stance_score = P(hawkish) - P(dovish)`` per the validity study;\nthe tile renders the current run as a z-score against this trailing\nmean/std rather than as a raw absolute number. ``mean`` and ``std``\nare ``null`` when fewer than two usable historical rows are found,\nin which case the tile falls back to the raw-value rendering.",
         "properties": {
           "history": {
+            "description": "Historical (date, score) pairs ordered oldest-first.",
             "items": {
               "$ref": "#/components/schemas/StanceContextPoint"
             },
@@ -5037,9 +5535,11 @@
                 "type": "null"
               }
             ],
+            "description": "Trailing mean of `stance_score`; null when fewer than two rows are usable.",
             "title": "Mean"
           },
           "n": {
+            "description": "Number of usable historical rows in `history`.",
             "title": "N",
             "type": "integer"
           },
@@ -5052,6 +5552,7 @@
                 "type": "null"
               }
             ],
+            "description": "Trailing sample standard deviation of `stance_score`; null when fewer than two rows are usable.",
             "title": "Std"
           }
         },
@@ -5065,20 +5566,25 @@
         "type": "object"
       },
       "SymbolDescriptor": {
+        "description": "One entry in the supported-symbols registry served to the asset picker.",
         "properties": {
           "category": {
+            "description": "Category bucket the symbol falls into, e.g. `equity_index`, `currency`, `rates`.",
             "title": "Category",
             "type": "string"
           },
           "default_horizon": {
+            "description": "Default forecast horizon label paired with this symbol on the workspace.",
             "title": "Default Horizon",
             "type": "string"
           },
           "name": {
+            "description": "Human-readable name of the instrument shown in the picker.",
             "title": "Name",
             "type": "string"
           },
           "symbol": {
+            "description": "Yahoo Finance ticker, e.g. `^GSPC` or `DX-Y.NYB`.",
             "title": "Symbol",
             "type": "string"
           }
@@ -5093,8 +5599,10 @@
         "type": "object"
       },
       "SymbolListResponse": {
+        "description": "Response envelope for `GET /symbols`.",
         "properties": {
           "symbols": {
+            "description": "Supported symbols ordered for display in the picker.",
             "items": {
               "$ref": "#/components/schemas/SymbolDescriptor"
             },
@@ -5343,16 +5851,20 @@
         "type": "object"
       },
       "TransferMatrixCell": {
+        "description": "One source -> target cell in the cross-bank transfer matrix.",
         "properties": {
           "metric": {
+            "description": "Transfer metric value (e.g. macro-F1) on `target` after training on `source`.",
             "title": "Metric",
             "type": "number"
           },
           "source": {
+            "description": "Source bank short code the model was fine-tuned on.",
             "title": "Source",
             "type": "string"
           },
           "target": {
+            "description": "Target bank short code the model was evaluated on.",
             "title": "Target",
             "type": "string"
           }
@@ -5417,6 +5929,7 @@
                 "type": "null"
               }
             ],
+            "description": "Nominal conformal coverage (1 - alpha) for the APS set; null when no sidecar is on disk.",
             "title": "Coverage"
           },
           "log_rv_lower": {
@@ -5428,6 +5941,7 @@
                 "type": "null"
               }
             ],
+            "description": "Lower edge of the 80% conformal band on `log_rv_point`; null when no conformal sidecar is present.",
             "title": "Log Rv Lower"
           },
           "log_rv_point": {
@@ -5451,6 +5965,7 @@
                 "type": "null"
               }
             ],
+            "description": "Upper edge of the 80% conformal band on `log_rv_point`; null when no conformal sidecar is present.",
             "title": "Log Rv Upper"
           },
           "predicted_set": {
@@ -5485,14 +6000,17 @@
         "description": "One feature-family bar on a panel attribution chart (#297).\n\nEmitted under :class:`XaiPanelAttribution.families`. ``magnitude`` is\nthe L1 attribution sum across all features in the family (always\nnon-negative); ``signed`` is the sum-with-sign so the frontend can\ncolour the bar by direction.",
         "properties": {
           "family": {
+            "description": "Feature-family identifier (e.g., sentiment, rates, vol, calendar) grouping related input features.",
             "title": "Family",
             "type": "string"
           },
           "magnitude": {
+            "description": "L1 sum of attribution across features in this family; always non-negative.",
             "title": "Magnitude",
             "type": "number"
           },
           "signed": {
+            "description": "Signed sum of attribution across features in this family; sign indicates push direction.",
             "title": "Signed",
             "type": "number"
           }
@@ -5509,6 +6027,7 @@
         "description": "Integrated-gradients attribution for one /analyze panel (#297).\n\nReturned under :class:`XaiResponse.panels`. One entry per active\npanel (regime, rates_2y/5y/terminal, trajectory). ``unavailable``\nflips to True when the panel cannot be explained (panel not active\non the checkpoint, kwarg mismatch, runtime error); the frontend\nthen renders the \"explanation unavailable\" badge rather than an\nempty bar chart.",
         "properties": {
           "families": {
+            "description": "Per-feature-family attribution bars; empty when the panel could not be explained.",
             "items": {
               "$ref": "#/components/schemas/XaiFeatureFamilyAttribution"
             },
@@ -5522,6 +6041,7 @@
             "type": "integer"
           },
           "panel": {
+            "description": "Panel identifier this attribution covers, e.g. `regime`, `rates_2y`, `trajectory`.",
             "title": "Panel",
             "type": "string"
           },
@@ -5534,14 +6054,17 @@
                 "type": "null"
               }
             ],
+            "description": "Structured reason string when `unavailable` is true; null otherwise.",
             "title": "Reason"
           },
           "target": {
+            "description": "Target output the attribution explains, e.g. predicted class or scalar head name.",
             "title": "Target",
             "type": "string"
           },
           "unavailable": {
             "default": false,
+            "description": "True when the panel could not be explained; the frontend then shows an unavailable badge.",
             "title": "Unavailable",
             "type": "boolean"
           }
@@ -5554,13 +6077,16 @@
         "type": "object"
       },
       "XaiResponse": {
+        "description": "XAI envelope on the /analyze response \u2014 keyword-salience sentence\nattribution plus optional per-panel integrated-gradients bars when\nthe active checkpoint exposes explainable panels.",
         "properties": {
           "method": {
             "default": "keyword_salience_v1",
+            "description": "XAI method identifier for the sentence-level explainer.",
             "title": "Method",
             "type": "string"
           },
           "panels": {
+            "description": "Per-panel integrated-gradients attribution; populated when include_xai is true and the checkpoint surfaces at least one explainable panel.",
             "items": {
               "$ref": "#/components/schemas/XaiPanelAttribution"
             },
@@ -5568,6 +6094,7 @@
             "type": "array"
           },
           "sentences": {
+            "description": "Per-sentence salience scores with top contributing tokens, in document order.",
             "items": {
               "$ref": "#/components/schemas/XaiSentenceAttribution"
             },
@@ -5579,16 +6106,20 @@
         "type": "object"
       },
       "XaiSentenceAttribution": {
+        "description": "One input sentence with its salience score and top contributing tokens.\n\nReturned under :class:`XaiResponse.sentences` for the keyword-salience\nexplainer. Sentences are listed in original document order.",
         "properties": {
           "score": {
+            "description": "Salience score in [0,1] reflecting this sentence's influence on the prediction.",
             "title": "Score",
             "type": "number"
           },
           "text": {
+            "description": "Verbatim sentence text as segmented from the input statement.",
             "title": "Text",
             "type": "string"
           },
           "topTokens": {
+            "description": "Highest-weighted tokens within this sentence, descending by weight; empty when no tokens cross the threshold.",
             "items": {
               "$ref": "#/components/schemas/XaiTokenAttribution"
             },
@@ -5604,12 +6135,15 @@
         "type": "object"
       },
       "XaiTokenAttribution": {
+        "description": "One token's contribution to a sentence's salience score.\n\nEmitted under :class:`XaiSentenceAttribution.topTokens` so the\nfrontend can highlight the highest-weighted tokens inline.",
         "properties": {
           "token": {
+            "description": "Surface token (whitespace-stripped) drawn from the input text.",
             "title": "Token",
             "type": "string"
           },
           "weight": {
+            "description": "Salience weight in [0,1] indicating this token's share of the sentence score.",
             "title": "Weight",
             "type": "number"
           }
