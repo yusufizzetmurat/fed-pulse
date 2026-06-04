@@ -6412,17 +6412,17 @@
     },
     "/forecast/rv-backtest": {
       "get": {
-        "description": "Empirical band coverage of the last N QLIKE-RV predictions.\n\nWalks the persisted ``analysis_runs`` table for ``symbol``, replays\nthe QLIKE-DLq h=1 ensemble on each event date's leading RV prefix,\nand counts how many resolved rows fell inside the published 80% /\n90% bands. Mirrors the ^GSPC-only constraint on the upstream RV\nforecast endpoint (the artifact is SPX-trained).",
+        "description": "Empirical band coverage of the last N QLIKE-RV predictions.\n\nWalks the persisted ``analysis_runs`` table for ``symbol``, replays\nthe per-asset QLIKE-DLq h=1 ensemble on each event date's leading\nRV prefix, and counts how many resolved rows fell inside the\npublished 80% / 90% bands. Tickers without a registered artifact\nin :data:`app.services.rv_forecaster.SYMBOL_ARTIFACTS` return a\nstructured 400 so the frontend can surface a friendly stub.",
         "operationId": "forecast_rv_backtest_forecast_rv_backtest_get",
         "parameters": [
           {
-            "description": "Market ticker; only ^GSPC is supported (RV artifact is SPX-only).",
+            "description": "Market ticker; supported tickers are listed in ``app.services.rv_forecaster.SYMBOL_ARTIFACTS`` (^GSPC, ^NDX, ^DJI).",
             "in": "query",
             "name": "symbol",
             "required": false,
             "schema": {
               "default": "^GSPC",
-              "description": "Market ticker; only ^GSPC is supported (RV artifact is SPX-only).",
+              "description": "Market ticker; supported tickers are listed in ``app.services.rv_forecaster.SYMBOL_ARTIFACTS`` (^GSPC, ^NDX, ^DJI).",
               "maxLength": 32,
               "minLength": 1,
               "pattern": "^[A-Za-z0-9._=^/-]+$",
