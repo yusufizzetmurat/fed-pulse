@@ -66,6 +66,11 @@ jobs:
       - name: pytest unit + property + contract + regression
         env:
           PYTHONPATH: backend
+          # Authenticated HF requests get a much higher rate-limit than
+          # the per-IP anonymous quota. Without this the burstier days
+          # of CI traffic hit 429s on the model-download path inside
+          # tests/unit/test_har_tercile_backtest.py and friends.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           pytest tests/unit tests/properties tests/contract tests/regression \
             -q --maxfail=5 \
