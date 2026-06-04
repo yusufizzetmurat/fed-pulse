@@ -142,6 +142,51 @@ def _bootstrap_delta_ci(
     return float(np.quantile(boots, 0.05)), float(np.quantile(boots, 0.95))
 
 
+def _diebold_mariano(
+    true: np.ndarray, notext: np.ndarray, text: np.ndarray, *, h: int = 1
+) -> dict[str, float]:
+    """Diebold-Mariano test of equal predictive accuracy (squared-error loss).
+
+    Loss differential d_t = e_notext² − e_text²; a positive mean means the text
+    model has lower error (text helps). The variance of the mean uses a
+    Newey-West HAC correction with lag h−1 (Bartlett kernel), the standard
+    small-sample fix for h-step overlapping forecasts. Two-sided p-value from
+    the standard normal. d̄>0 with p<0.05 ⇒ text significantly better; d̄<0 with
+    p<0.05 ⇒ text significantly worse.
+    """
+    import math
+
+    d = (true - notext) ** 2 - (true - text) ** 2
+    n = len(d)
+    if n < 8:
+        return {
+            "dm_stat": float("nan"),
+            "dm_p_two_sided": float("nan"),
+            "mean_loss_diff_notext_minus_text": float("nan"),
+            "hac_lag": 0,
+            "n": n,
+        }
+    dbar = float(d.mean())
+    dc = d - dbar
+    # Newey-West lag h-1, capped at n//4 so the HAC estimate stays determined on
+    # small FOMC-only pools (a deep lag on a short series can drive var negative).
+    lag = min(max(h - 1, 0), n // 4)
+    var = float(np.mean(dc * dc))  # gamma_0
+    for k in range(1, min(lag, n - 1) + 1):
+        w = 1.0 - k / (lag + 1)
+        var += 2.0 * w * float(np.mean(dc[k:] * dc[:-k]))
+    se = math.sqrt(var / n) if var > 0 else float("nan")
+    dm = dbar / se if se and not math.isnan(se) else float("nan")
+    p = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(abs(dm) / math.sqrt(2.0)))) if dm == dm else float("nan")
+    return {
+        "dm_stat": float(dm),
+        "dm_p_two_sided": float(p),
+        "mean_loss_diff_notext_minus_text": dbar,
+        "hac_lag": lag,
+        "n": n,
+    }
+
+
 def run_text_marginal(
     cache_dir: Path | str,
     embeddings_parquet: Path | str,
@@ -226,11 +271,14 @@ def run_text_marginal(
         r2_no = _oos_r2(p["notext"], p["true"], p["base"])
         r2_tx = _oos_r2(p["text"], p["true"], p["base"])
         lo, hi = _bootstrap_delta_ci(p["notext"], p["text"], p["true"], p["base"], seed=seed)
+        h_col = int(col.split("_")[1]) if col.startswith("rv_") else 1
+        dm = _diebold_mariano(p["true"], p["notext"], p["text"], h=h_col)
         results["by_target"][col] = {
             "r2_notext": r2_no,
             "r2_text": r2_tx,
             "delta": r2_tx - r2_no,
             "delta_ci90": [lo, hi],
+            "diebold_mariano": dm,
         }
     return results
 
