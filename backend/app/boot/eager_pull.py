@@ -284,9 +284,7 @@ def _hydrate_one(  # noqa: PLR0913 - seven injected params is the natural shape 
         # ``/analyze`` started returning ``regime_classification: null``
         # because the live model's output_mode mismatched.
         if dst.exists() and _same_content(dst, src):
-            logger.info(
-                "eager-pull: %s already present and matches snapshot; skip", dst_relpath
-            )
+            logger.info("eager-pull: %s already present and matches snapshot; skip", dst_relpath)
             continue
         if dst.exists():
             logger.info(
