@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChevronDown, ChevronUp, History, Sparkles } from "lucide-react";
+import { History, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -97,13 +97,7 @@ interface AnalogCardItemProps {
 }
 
 function AnalogCardItem({ card }: AnalogCardItemProps) {
-  const [expanded, setExpanded] = React.useState(false);
   const stance = stanceTone(card.axis_stance);
-  // The /analyze/analogs endpoint truncates to ~280 chars on the
-  // server; treat that ceiling as the "looks truncated" trigger so the
-  // expand affordance never appears on a short statement that's
-  // already fully rendered.
-  const looksTruncated = card.excerpt.length >= 280;
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -126,34 +120,7 @@ function AnalogCardItem({ card }: AnalogCardItemProps) {
       </CardHeader>
       <CardContent className="space-y-3">
         <WhatHappenedNext bucket={card.subsequent_vol_regime} />
-        <div className="space-y-1">
-          <p
-            className={cn(
-              "text-xs leading-relaxed text-foreground/80",
-              expanded ? "" : "line-clamp-4",
-            )}
-          >
-            {card.excerpt}
-          </p>
-          {looksTruncated ? (
-            <button
-              type="button"
-              onClick={() => setExpanded((prev) => !prev)}
-              className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring rounded-sm"
-              aria-expanded={expanded}
-            >
-              {expanded ? (
-                <>
-                  <ChevronUp className="h-3 w-3" /> Collapse
-                </>
-              ) : (
-                <>
-                  <ChevronDown className="h-3 w-3" /> Show full excerpt
-                </>
-              )}
-            </button>
-          ) : null}
-        </div>
+        <p className="text-xs leading-relaxed text-foreground/80">{card.excerpt}</p>
       </CardContent>
     </Card>
   );

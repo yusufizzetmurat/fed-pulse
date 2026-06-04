@@ -75,9 +75,11 @@ export function AnalyzeForm({ value, onChange, onSubmit, loading, onSampleLoad }
             onChange={(text) => patch({ text })}
           />
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid items-end gap-4 md:grid-cols-3">
             <div className="space-y-2">
-              <Label htmlFor="date">Document date</Label>
+              <div className="flex items-center gap-1">
+                <Label htmlFor="date">Document date</Label>
+              </div>
               <Input
                 id="date"
                 type="date"

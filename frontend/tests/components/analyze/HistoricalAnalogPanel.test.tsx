@@ -136,17 +136,19 @@ describe("HistoricalAnalogPanel", () => {
     expect(screen.getByText(/40.0%/)).toBeInTheDocument();
   });
 
-  it("expands a long excerpt when the user clicks the toggle", () => {
-    // The endpoint truncates to ~280 chars; pad the fixture excerpt
-    // to the ceiling so the toggle button is rendered.
+  it("renders the excerpt straight through without an expand toggle", () => {
+    // The /analyze/analogs endpoint truncates excerpts to ~280
+    // characters on the server, so any "Show full excerpt" affordance
+    // would promise content that does not exist on the client. The
+    // panel renders the excerpt directly and never shows a toggle.
     const longCard = {
       event_date: "2018-12-19",
       similarity: 0.78,
       axis_stance: "hawkish" as const,
       subsequent_vol_regime: "high" as const,
-        subsequent_close_pct_5d: null,
-        subsequent_close_pct_20d: null,
-      excerpt: "x".repeat(280),
+      subsequent_close_pct_5d: null,
+      subsequent_close_pct_20d: null,
+      excerpt: "y".repeat(280),
     };
     render(
       <HistoricalAnalogPanel
@@ -157,36 +159,13 @@ describe("HistoricalAnalogPanel", () => {
         }}
       />,
     );
-    const toggle = screen.getByRole("button", { name: /Show full excerpt/i });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(toggle);
-    expect(
-      screen.getByRole("button", { name: /Collapse/i }),
-    ).toHaveAttribute("aria-expanded", "true");
-  });
-
-  it("does not show the expand toggle for short excerpts", () => {
-    const shortCard = {
-      event_date: "2014-06-18",
-      similarity: 0.62,
-      axis_stance: "neutral" as const,
-      subsequent_vol_regime: "normal" as const,
-        subsequent_close_pct_5d: null,
-        subsequent_close_pct_20d: null,
-      excerpt: "Short statement under the 280 ceiling.",
-    };
-    render(
-      <HistoricalAnalogPanel
-        analogs={{
-          analogs: [shortCard],
-          index_size: 8,
-          encoder_alias: "test",
-        }}
-      />,
-    );
     expect(
       screen.queryByRole("button", { name: /Show full excerpt/i }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Collapse/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("y".repeat(280))).toBeInTheDocument();
   });
 
   it("renders both cards when two analogs share the same event_date", () => {
