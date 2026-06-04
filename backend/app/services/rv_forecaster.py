@@ -42,17 +42,18 @@ HORIZONS: tuple[int, ...] = (1, 5, 22)
 ALPHAS: tuple[float, ...] = (0.2, 0.1)
 
 # Symbol -> (local artifact dir, HF repo id or ``None``).
-# The canonical row is ^GSPC; new assets list a local directory so the
-# loader can serve them without an HF fetch (training writes the
-# artifact straight into ``data/processed/rv_qlike_dlq/<alias>/``). HF
-# repos can be filled in later as the per-asset checkpoints get
-# published. Lookup falls back to the canonical row when the requested
-# symbol is not registered.
+# The canonical row is ^GSPC; per-asset rows list a local directory
+# plus an HF repo so the loader either serves from a pre-populated
+# local checkout (training writes the artifact straight into
+# ``data/processed/rv_qlike_dlq/<alias>/``) or falls back to the HF
+# Hub on a fresh container with no local copy. Lookup falls back to
+# the canonical row when the requested symbol is not registered, so
+# FX / commodity tickers do not blow up the call site.
 _DATA_ROOT = BACKEND_ROOT.parent / "data" / "processed" / "rv_qlike_dlq"
 SYMBOL_ARTIFACTS: dict[str, tuple[Path, str | None]] = {
     "^GSPC": (MODEL_DIR, HF_REPO_ID),
-    "^NDX": (_DATA_ROOT / "ndx", None),
-    "^DJI": (_DATA_ROOT / "dji", None),
+    "^NDX": (_DATA_ROOT / "ndx", "yusufizzetmurat/fomc-rv-qlike-forecaster-ndx"),
+    "^DJI": (_DATA_ROOT / "dji", "yusufizzetmurat/fomc-rv-qlike-forecaster-dji"),
 }
 SUPPORTED_RV_FORECASTER_SYMBOLS: tuple[str, ...] = tuple(SYMBOL_ARTIFACTS.keys())
 
