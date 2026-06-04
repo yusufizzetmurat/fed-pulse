@@ -3,11 +3,13 @@
 Runs from the container entrypoint before uvicorn starts. For each
 eager artefact mapped in :data:`_ARTEFACT_FILES`, downloads the pinned
 revision via ``huggingface_hub.snapshot_download`` and copies the named
-files into ``MODELS_DIR`` or ``DATA_DIR`` only when the destination is
-absent. A dev box with a freshly trained checkpoint keeps it — the
-shim never clobbers a file already on disk. The shim never raises
-out: on missing token / network failure / 404 it logs and returns so
-the cold-start bootstrap in :mod:`app.main` still runs on first
+files into ``MODELS_DIR`` or ``DATA_DIR``. The copy is conditional on
+content drift: an existing destination that matches the snapshot
+byte-for-byte (same size + sha256) is skipped, but a drifted
+destination is OVERWRITTEN so a stale checkpoint baked into a base
+image cannot mask the pinned artefact. The shim never raises out: on
+missing token / network failure / 404 it logs and returns so the
+cold-start bootstrap in :mod:`app.main` still runs on first
 ``/analyze``.
 
 Mapping policy: each entry is either a flat filename (snapshot path
@@ -31,6 +33,7 @@ avoid clobbering the forecaster path.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import shutil
@@ -175,6 +178,43 @@ def _split_entry(
     return entry, entry, _DST_ROOT_MODELS
 
 
+_HASH_CHUNK_BYTES = 1024 * 1024
+
+
+def _same_content(a: Path, b: Path) -> bool:
+    """Return True iff ``a`` and ``b`` share the same size and sha256.
+
+    The size guard short-circuits the common case (a file baked into a
+    base image vs the HF snapshot of a different revision will almost
+    always differ in size) without paying the streamed-hash cost. When
+    sizes match we fall back to a streamed sha256 because byte-identical
+    files do exist across revisions (e.g. config JSONs that did not
+    change) and we want the skip-copy fast path there.
+    """
+
+    import hashlib
+
+    try:
+        if a.stat().st_size != b.stat().st_size:
+            return False
+    except OSError:
+        return False
+    try:
+        ah = hashlib.sha256()
+        bh = hashlib.sha256()
+        with a.open("rb") as af, b.open("rb") as bf:
+            while True:
+                ablock = af.read(_HASH_CHUNK_BYTES)
+                bblock = bf.read(_HASH_CHUNK_BYTES)
+                if not ablock and not bblock:
+                    break
+                ah.update(ablock)
+                bh.update(bblock)
+        return ah.digest() == bh.digest()
+    except OSError:
+        return False
+
+
 def _hydrate_one(  # noqa: PLR0913 - seven injected params is the natural shape here
     artefact: Any,
     files: tuple[str | tuple[str, str] | tuple[str, str, str], ...],
@@ -236,19 +276,38 @@ def _hydrate_one(  # noqa: PLR0913 - seven injected params is the natural shape 
                 artefact.hf_uri,
             )
             continue
-        if dst.exists():
-            logger.info("eager-pull: %s already present; not overwriting", dst_relpath)
+        # Drift guard: when the destination already exists and matches
+        # the snapshot byte-for-byte (size + sha256) we skip the copy.
+        # When it exists but differs, we OVERWRITE -- otherwise a stale
+        # checkpoint baked into a base image or left over from a prior
+        # revision masks the pinned artefact and the live serving model
+        # silently drifts away from the registry. Production hit exactly
+        # this: a regression-mode ``forecaster_best.pt`` in MODELS_DIR
+        # outlived a revision bump to a classification-mode pin and
+        # ``/analyze`` started returning ``regime_classification: null``
+        # because the live model's output_mode mismatched.
+        if dst.exists() and _same_content(dst, src):
+            logger.info("eager-pull: %s already present and matches snapshot; skip", dst_relpath)
             continue
+        # ``drifted`` flips when an existing local copy will be replaced;
+        # the actual overwrite logs AFTER the atomic rename so the
+        # "hydrated" line reflects what's on disk, not what we intended
+        # to do. If shutil.copy2 / os.replace raises mid-loop the
+        # caller's broad except in ``hydrate`` swallows it, so the post-
+        # success log is the only honest signal operators get.
+        drifted = dst.exists()
         dst.parent.mkdir(parents=True, exist_ok=True)
-        # Copy to a temp sibling and rename atomically so a mid-copy
-        # crash leaves the target either fully intact or absent, never
-        # half-written. Matters most for the forecaster checkpoint where
-        # a torn write surfaces as a cryptic state_dict load error.
         dst_tmp = Path(str(dst) + ".tmp")
-        shutil.copy2(src, dst_tmp)
-        os.replace(dst_tmp, dst)
+        try:
+            shutil.copy2(src, dst_tmp)
+            os.replace(dst_tmp, dst)
+        except OSError:
+            with contextlib.suppress(OSError):
+                dst_tmp.unlink()
+            raise
         logger.info(
-            "eager-pull: hydrated %s <- %s @ %s",
+            "eager-pull: %s %s <- %s @ %s",
+            "overwrote stale" if drifted else "hydrated",
             dst_relpath,
             artefact.hf_uri,
             revision or "main",
@@ -256,7 +315,9 @@ def _hydrate_one(  # noqa: PLR0913 - seven injected params is the natural shape 
 
 
 def hydrate() -> None:
-    """Pull every mapped eager artefact, copy each named file if absent."""
+    """Pull every mapped eager artefact, copying each named file when
+    absent or drifted (same size + sha256 skips, anything else
+    overwrites). See the module docstring for the rationale."""
 
     try:
         from app.config import DATA_DIR
