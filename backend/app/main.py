@@ -940,12 +940,36 @@ def _build_credibility_block(
         int(vector.months_since_reversal) if len(stance_by_date) >= 2 else None
     )
 
+    # SEP committee long-run median minus the market-implied long-run
+    # proxy (DGS5 5-year Treasury yield), both in percent. Stays ``None``
+    # only when either source's cache file is missing or the as-of date
+    # has no eligible strict-prior observation -- otherwise the card
+    # surfaces the actual gap so the dashboard stops reading "Waiting on
+    # SEP and OIS data feeds" when the data is right there on disk.
+    market_implied_gap: float | None = None
+    if fred_cache_dir is not None:
+        sep_path = Path(fred_cache_dir) / "sep_projections.parquet"
+        ois_path = Path(fred_cache_dir) / "DGS5.json"
+        if sep_path.exists() and ois_path.exists():
+            try:
+                from app.services.credibility_loader import (
+                    _ois_terminal_at,
+                    _sep_terminal_at,
+                )
+                from datetime import date as _date
+
+                as_of_date = _date.fromisoformat(as_of[:10])
+                sep_term = _sep_terminal_at(as_of_date, sep_path=sep_path)
+                ois_term = _ois_terminal_at(as_of_date, ois_path=ois_path)
+                if sep_term is not None and ois_term is not None:
+                    market_implied_gap = float(sep_term) - float(ois_term)
+            except Exception:  # noqa: BLE001 -- defensive: never break /analyze
+                logger.warning("credibility_market_implied_gap_failed", exc_info=True)
+
     return {
         "drift_score": float(vector.drift_score),
         "realized_vs_stated_gap": realized_gap,
-        # SEP / OIS scrape is still out — keep this axis as ``None`` so
-        # the dashboard renders N/A instead of an unearned zero.
-        "market_implied_gap": None,
+        "market_implied_gap": market_implied_gap,
         "months_since_reversal": months_since,
         "drift_trend": drift_trend,
     }
