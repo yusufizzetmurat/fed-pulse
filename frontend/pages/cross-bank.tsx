@@ -1,13 +1,11 @@
 import * as React from "react";
 import Head from "next/head";
-import Link from "next/link";
-import { ArrowUpRight, Clock, Globe } from "lucide-react";
+import { Clock, Globe } from "lucide-react";
 import { toast } from "sonner";
 
 import { Header } from "@/components/shell/header";
 import { StatusBar } from "@/components/shell/status-bar";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -81,11 +79,51 @@ function BankCardSkeleton(): JSX.Element {
   );
 }
 
+function StanceMixBar({
+  hawk,
+  neutral,
+  dove,
+}: {
+  hawk: number;
+  neutral: number;
+  dove: number;
+}): JSX.Element {
+  const total = Math.max(hawk + neutral + dove, 1e-9);
+  const hawkPct = (hawk / total) * 100;
+  const neutralPct = (neutral / total) * 100;
+  const dovePct = (dove / total) * 100;
+  // Largest-remainder rounding so the aria-label always sums to 100%.
+  const hawkR = Math.round(hawkPct);
+  const neutralR = Math.round(neutralPct);
+  const doveR = 100 - hawkR - neutralR;
+  return (
+    <div className="space-y-1">
+      <div
+        className="flex h-2 w-full overflow-hidden rounded-full bg-muted"
+        role="img"
+        aria-label={`Stance mix: ${hawkR}% hawkish, ${neutralR}% neutral, ${doveR}% dovish`}
+      >
+        <div
+          className="h-full bg-rose-500/80"
+          style={{ width: `${hawkPct}%` }}
+        />
+        <div
+          className="h-full bg-amber-400/70"
+          style={{ width: `${neutralPct}%` }}
+        />
+        <div
+          className="h-full bg-sky-500/80"
+          style={{ width: `${dovePct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function BankCardView({ card }: { card: CrossBankCard }): JSX.Element {
   const flag = flagFromCode(card.flag);
   const stanceVariant = stanceBadgeVariant(card.stance_label);
   const regimeVariant = regimeBadgeVariant(card.vol_regime_label);
-  const workspaceHref = `/?symbol=${encodeURIComponent(card.symbol)}`;
   const stanceUnavailable =
     card.status === "corpus_missing" || card.status === "classifier_unavailable";
   const stanceUnavailableMessage =
@@ -134,20 +172,27 @@ function BankCardView({ card }: { card: CrossBankCard }): JSX.Element {
                 </span>
               </div>
               {card.stance ? (
-                <dl className="grid grid-cols-3 gap-1 text-xs text-muted-foreground">
-                  <div className="space-y-0.5">
-                    <dt className="uppercase tracking-wide">Hawk</dt>
-                    <dd className="font-mono text-foreground">{formatPercent(card.stance.hawkish ?? 0)}</dd>
-                  </div>
-                  <div className="space-y-0.5">
-                    <dt className="uppercase tracking-wide">Neutral</dt>
-                    <dd className="font-mono text-foreground">{formatPercent(card.stance.neutral ?? 0)}</dd>
-                  </div>
-                  <div className="space-y-0.5">
-                    <dt className="uppercase tracking-wide">Dove</dt>
-                    <dd className="font-mono text-foreground">{formatPercent(card.stance.dovish ?? 0)}</dd>
-                  </div>
-                </dl>
+                <>
+                  <StanceMixBar
+                    hawk={card.stance.hawkish ?? 0}
+                    neutral={card.stance.neutral ?? 0}
+                    dove={card.stance.dovish ?? 0}
+                  />
+                  <dl className="grid grid-cols-3 gap-1 text-xs text-muted-foreground">
+                    <div className="space-y-0.5">
+                      <dt className="uppercase tracking-wide">Hawk</dt>
+                      <dd className="font-mono text-foreground">{formatPercent(card.stance.hawkish ?? 0)}</dd>
+                    </div>
+                    <div className="space-y-0.5">
+                      <dt className="uppercase tracking-wide">Neutral</dt>
+                      <dd className="font-mono text-foreground">{formatPercent(card.stance.neutral ?? 0)}</dd>
+                    </div>
+                    <div className="space-y-0.5">
+                      <dt className="uppercase tracking-wide">Dove</dt>
+                      <dd className="font-mono text-foreground">{formatPercent(card.stance.dovish ?? 0)}</dd>
+                    </div>
+                  </dl>
+                </>
               ) : null}
               {card.time_axis ? (
                 <p className="text-xs text-muted-foreground">
@@ -177,12 +222,6 @@ function BankCardView({ card }: { card: CrossBankCard }): JSX.Element {
           )}
         </section>
 
-        <Button asChild variant="ghost" size="sm" className="-mx-2 justify-between">
-          <Link href={workspaceHref} aria-label={`Open ${card.display_name} in Workspace`}>
-            <span>Open {card.symbol} in Workspace</span>
-            <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
-          </Link>
-        </Button>
       </CardContent>
     </Card>
   );
