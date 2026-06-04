@@ -2,7 +2,8 @@
 
 The shim must:
 - never raise out; failures degrade silently to the cold-start path
-- never overwrite a file that already exists in ``MODELS_DIR``
+- overwrite a file only when it differs from the snapshot (size or
+  sha256 mismatch); skip byte-identical copies
 - only touch artefacts mapped in ``_ARTEFACT_FILES`` (rates_heads et al.
   are intentionally left out to avoid clobbering the forecaster path)
 - no-op cleanly when ``HF_TOKEN`` is unset
@@ -76,10 +77,14 @@ def test_hydrate_skips_artefact_with_no_file_mapping(
     assert list(models_dir.iterdir()) == []
 
 
-def test_hydrate_copies_missing_files_only(
+def test_hydrate_copies_missing_files_and_overwrites_drift(
     monkeypatch: pytest.MonkeyPatch, models_dir: Path, tmp_path: Path
 ) -> None:
-    """Files absent on disk get copied; files already present are left alone."""
+    """Files absent on disk get copied; matching files are skipped;
+    drift (existing local file whose content differs from the snapshot)
+    is OVERWRITTEN so a stale checkpoint from a prior revision cannot
+    mask the pinned artefact.
+    """
 
     monkeypatch.setenv("HF_TOKEN", "stub")
     snapshot = tmp_path / "snap"
@@ -89,10 +94,17 @@ def test_hydrate_copies_missing_files_only(
     for fname in eager_pull._ARTEFACT_FILES["forecaster_canonical"]:
         (snapshot / fname).write_bytes(b"FROM_HF_" + fname.encode())
 
-    # Pre-populate one file locally to prove the shim does not overwrite.
-    pre_existing_name = "forecaster_best.pt"
-    pre_existing = models_dir / pre_existing_name
-    pre_existing.write_bytes(b"LOCAL_CANONICAL")
+    # Pre-populate one file locally with DIFFERENT content so the drift
+    # branch overwrites it. Pre-populate a second file with byte-identical
+    # content so the same-content branch keeps it untouched.
+    drift_name = "forecaster_best.pt"
+    drift_path = models_dir / drift_name
+    drift_path.write_bytes(b"STALE_LOCAL")  # differs from the snapshot payload
+
+    match_name = "forecaster_best.pt.inference_contract.json"
+    match_path = models_dir / match_name
+    match_payload = b"FROM_HF_" + match_name.encode()
+    match_path.write_bytes(match_payload)
 
     monkeypatch.setattr(
         "app.boot.eager_pull.snapshot_download",
@@ -106,12 +118,12 @@ def test_hydrate_copies_missing_files_only(
 
     eager_pull.hydrate()
 
-    # Pre-existing local file is untouched.
-    assert pre_existing.read_bytes() == b"LOCAL_CANONICAL"
+    # Drift was overwritten with the snapshot copy.
+    assert drift_path.read_bytes() == b"FROM_HF_" + drift_name.encode()
+    # Byte-identical local copy stayed in place.
+    assert match_path.read_bytes() == match_payload
     # Every other mapped file got pulled in.
     for fname in eager_pull._ARTEFACT_FILES["forecaster_canonical"]:
-        if fname == pre_existing_name:
-            continue
         assert (models_dir / fname).read_bytes() == b"FROM_HF_" + fname.encode()
 
 
