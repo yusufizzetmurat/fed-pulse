@@ -175,6 +175,43 @@ def _split_entry(
     return entry, entry, _DST_ROOT_MODELS
 
 
+_HASH_CHUNK_BYTES = 1024 * 1024
+
+
+def _same_content(a: Path, b: Path) -> bool:
+    """Return True iff ``a`` and ``b`` share the same size and sha256.
+
+    The size guard short-circuits the common case (a file baked into a
+    base image vs the HF snapshot of a different revision will almost
+    always differ in size) without paying the streamed-hash cost. When
+    sizes match we fall back to a streamed sha256 because byte-identical
+    files do exist across revisions (e.g. config JSONs that did not
+    change) and we want the skip-copy fast path there.
+    """
+
+    import hashlib
+
+    try:
+        if a.stat().st_size != b.stat().st_size:
+            return False
+    except OSError:
+        return False
+    try:
+        ah = hashlib.sha256()
+        bh = hashlib.sha256()
+        with a.open("rb") as af, b.open("rb") as bf:
+            while True:
+                ablock = af.read(_HASH_CHUNK_BYTES)
+                bblock = bf.read(_HASH_CHUNK_BYTES)
+                if not ablock and not bblock:
+                    break
+                ah.update(ablock)
+                bh.update(bblock)
+        return ah.digest() == bh.digest()
+    except OSError:
+        return False
+
+
 def _hydrate_one(  # noqa: PLR0913 - seven injected params is the natural shape here
     artefact: Any,
     files: tuple[str | tuple[str, str] | tuple[str, str, str], ...],
@@ -236,9 +273,26 @@ def _hydrate_one(  # noqa: PLR0913 - seven injected params is the natural shape 
                 artefact.hf_uri,
             )
             continue
-        if dst.exists():
-            logger.info("eager-pull: %s already present; not overwriting", dst_relpath)
+        # Drift guard: when the destination already exists and matches
+        # the snapshot byte-for-byte (size + sha256) we skip the copy.
+        # When it exists but differs, we OVERWRITE -- otherwise a stale
+        # checkpoint baked into a base image or left over from a prior
+        # revision masks the pinned artefact and the live serving model
+        # silently drifts away from the registry. Production hit exactly
+        # this: a regression-mode ``forecaster_best.pt`` in MODELS_DIR
+        # outlived a revision bump to a classification-mode pin and
+        # ``/analyze`` started returning ``regime_classification: null``
+        # because the live model's output_mode mismatched.
+        if dst.exists() and _same_content(dst, src):
+            logger.info(
+                "eager-pull: %s already present and matches snapshot; skip", dst_relpath
+            )
             continue
+        if dst.exists():
+            logger.info(
+                "eager-pull: %s already present but DIFFERS from snapshot; overwriting",
+                dst_relpath,
+            )
         dst.parent.mkdir(parents=True, exist_ok=True)
         # Copy to a temp sibling and rename atomically so a mid-copy
         # crash leaves the target either fully intact or absent, never

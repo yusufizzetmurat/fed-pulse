@@ -157,14 +157,14 @@ def test_retrieval_bundle_creates_nested_checkpoint_subdirs(
     assert list(models.iterdir()) == []
 
 
-def test_data_root_entry_does_not_overwrite_existing_file(
+def test_data_root_entry_keeps_byte_identical_local_file(
     monkeypatch: pytest.MonkeyPatch,
     models_and_data_dirs: tuple[Path, Path],
     tmp_path: Path,
 ) -> None:
-    """A locally-trained ``model.pt`` survives an eager pull — the no
-    overwrite contract holds for the ``DATA`` root the same way it does
-    for ``MODELS``.
+    """A byte-identical local copy under the ``DATA`` root is skipped
+    (no needless rewrite); a drifted copy is OVERWRITTEN so a stale
+    file from a prior revision cannot mask the pinned artefact.
     """
 
     _, data = models_and_data_dirs
@@ -177,9 +177,14 @@ def test_data_root_entry_does_not_overwrite_existing_file(
     ):
         (snapshot / src_name).write_bytes(b"FROM_HF")
 
-    pre = data / "artifacts" / "trajectory" / "trajectory_transformer" / "model.pt"
-    pre.parent.mkdir(parents=True, exist_ok=True)
-    pre.write_bytes(b"LOCAL_TRAINED")
+    bundle_dir = data / "artifacts" / "trajectory" / "trajectory_transformer"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    # Drift case: same name, different content — must be overwritten.
+    drift = bundle_dir / "model.pt"
+    drift.write_bytes(b"STALE_LOCAL_TRAINED")
+    # Match case: byte-identical to the snapshot copy — must stay put.
+    match = bundle_dir / "embedding_index.parquet"
+    match.write_bytes(b"FROM_HF")
 
     monkeypatch.setattr(
         "app.boot.eager_pull.snapshot_download",
@@ -192,9 +197,11 @@ def test_data_root_entry_does_not_overwrite_existing_file(
     )
 
     eager_pull.hydrate()
-    assert pre.read_bytes() == b"LOCAL_TRAINED"
-    # Other files still hydrate.
-    assert (pre.parent / "embedding_index.parquet").read_bytes() == b"FROM_HF"
+    # Drift was replaced with the snapshot copy.
+    assert drift.read_bytes() == b"FROM_HF"
+    # Byte-identical entry kept the same content (and the destination
+    # path is the same path, so no spurious copy churn either).
+    assert match.read_bytes() == b"FROM_HF"
 
 
 def test_unknown_dst_root_is_logged_not_raised(
