@@ -314,8 +314,10 @@ def test_replay_mode_emits_replay_and_realised_blocks_when_fold_resolves(
     # patch the per-fold loader to a no-op so the wire under test (422 vs
     # 200, replay block populated, ``forecaster_checkpoint_rewound``
     # flipped) is exercised without standing up a real per-fold model.
+    # ``load_for_fold`` now returns ``(model, metadata)`` directly so the
+    # caller doesn't have to re-enter the cache.
     monkeypatch.setattr(
-        forecaster_service, "load_for_fold", lambda path: object()
+        forecaster_service, "load_for_fold", lambda path: (object(), None)
     )
     monkeypatch.setattr(
         forecaster_service, "get_fold_metadata", lambda path: None
@@ -493,7 +495,7 @@ def test_load_for_fold_returns_isolated_model_distinct_from_live_singleton(
     monkeypatch.setattr(
         forecaster_service,
         "_validate_serving_contract",
-        lambda path: (True, "sidecar_absent"),
+        lambda path, *, record_status=True: (True, "sidecar_absent"),
     )
     monkeypatch.setattr(
         forecaster_service,
@@ -543,8 +545,8 @@ def test_load_for_fold_returns_isolated_model_distinct_from_live_singleton(
         lambda payload, ckpt, model: {"close_scale": 7777.0, "encoder_key": "fold_stub"},
     )
 
-    first = forecaster_service.load_for_fold(ckpt_path)
-    assert first is not live_singleton, (
+    first_model, first_meta = forecaster_service.load_for_fold(ckpt_path)
+    assert first_model is not live_singleton, (
         "load_for_fold leaked the live singleton; replay mode must "
         "return an isolated per-fold instance"
     )
@@ -552,14 +554,17 @@ def test_load_for_fold_returns_isolated_model_distinct_from_live_singleton(
         "load_for_fold mutated the module-level singleton; live /analyze "
         "would now serve the per-fold weights"
     )
-    assert first.eval_called and first.to_called_with is not None
+    assert first_model.eval_called and first_model.to_called_with is not None
+    assert first_meta is not None and first_meta.get("close_scale") == 7777.0
 
-    metadata = forecaster_service.get_fold_metadata(ckpt_path)
-    assert metadata is not None
-    assert metadata.get("close_scale") == 7777.0
+    # ``get_fold_metadata`` is the standalone fallback for callers that
+    # only need metadata; the tuple return covers the common combined
+    # case but the standalone surface stays.
+    standalone_meta = forecaster_service.get_fold_metadata(ckpt_path)
+    assert standalone_meta is first_meta
 
     # Second call on the same path must return the cached instance, not
     # re-invoke the factory.
-    second = forecaster_service.load_for_fold(ckpt_path)
-    assert second is first, "load_for_fold did not hit the LRU cache"
+    second_model, _ = forecaster_service.load_for_fold(ckpt_path)
+    assert second_model is first_model, "load_for_fold did not hit the LRU cache"
     assert len(stubs) == 1, "factory was invoked twice for the same path"

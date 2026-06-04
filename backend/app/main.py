@@ -1181,13 +1181,18 @@ def _resolve_replay_fold(
         )
 
     # Load the per-fold checkpoint into an isolated model + metadata
-    # pair. The cache inside ``load_for_fold`` keeps repeated requests
-    # on the same fold cheap. A FileNotFoundError here is the same race
-    # ``resolve_fold_for_date`` already guards against (the file
-    # disappeared between the manifest check and the load); coerce it
-    # to the same 422 so the client sees a coherent surface.
+    # pair in one call. The cache inside ``load_for_fold`` keeps
+    # repeated requests on the same fold cheap. Returning both halves
+    # avoids a follow-up ``get_fold_metadata`` lookup that could race
+    # against a concurrent fold load on a different path. A
+    # FileNotFoundError here is the same race ``resolve_fold_for_date``
+    # already guards against (the file disappeared between the
+    # manifest check and the load); coerce it to the same 422 so the
+    # client sees a coherent surface.
     try:
-        fold_model = forecaster_service.load_for_fold(fold_ref.forecaster_checkpoint)
+        fold_model, fold_metadata = forecaster_service.load_for_fold(
+            fold_ref.forecaster_checkpoint
+        )
     except FileNotFoundError as exc:
         raise HTTPException(
             status_code=422,
@@ -1205,7 +1210,6 @@ def _resolve_replay_fold(
             },
         ) from exc
 
-    fold_metadata = forecaster_service.get_fold_metadata(fold_ref.forecaster_checkpoint)
     return fold_ref, fold_model, fold_metadata
 
 

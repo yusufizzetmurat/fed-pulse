@@ -218,6 +218,8 @@ def _record_contract_status(
 
 def _validate_serving_contract(
     checkpoint_path: Path,
+    *,
+    record_status: bool = True,
 ) -> tuple[bool, str]:
     """Cross-check the sidecar against the serving signature + registry.
 
@@ -229,6 +231,14 @@ def _validate_serving_contract(
     under the #341 contract. (#374: the prior ``payload`` parameter
     was never read; the sidecar is what we validate, not the .pt
     payload.)
+
+    ``record_status`` controls whether the per-checkpoint result is
+    written to the module-level ``_serving_contract_status`` dict that
+    ``/health`` reads back. The live-load path (``_get_model``) wants
+    this side effect so ``/health`` reflects which forecaster the live
+    singleton is bound to. The per-fold load path (``load_for_fold``)
+    sets it ``False`` so a replay request cannot overwrite the live
+    contract status with the fold checkpoint's path.
     """
 
     from app.training.inference_contract import (
@@ -238,14 +248,15 @@ def _validate_serving_contract(
 
     contract = read_sidecar(checkpoint_path)
     if contract is None:
-        _record_contract_status(
-            status="sidecar_absent",
-            checkpoint_path=checkpoint_path,
-            message=(
-                "no inference_contract.json sidecar next to checkpoint; "
-                "treating as pre-#341 legacy artefact"
-            ),
-        )
+        if record_status:
+            _record_contract_status(
+                status="sidecar_absent",
+                checkpoint_path=checkpoint_path,
+                message=(
+                    "no inference_contract.json sidecar next to checkpoint; "
+                    "treating as pre-#341 legacy artefact"
+                ),
+            )
         return True, "sidecar_absent"
 
     registry_features: tuple[str, ...] | None = None
@@ -265,13 +276,14 @@ def _validate_serving_contract(
         registry_inference_features=registry_features,
     )
     if not validation.ok:
-        _record_contract_status(
-            status=validation.status,
-            checkpoint_path=checkpoint_path,
-            missing_kwargs=validation.missing_kwargs,
-            extra_kwargs=validation.extra_kwargs,
-            message=validation.message,
-        )
+        if record_status:
+            _record_contract_status(
+                status=validation.status,
+                checkpoint_path=checkpoint_path,
+                missing_kwargs=validation.missing_kwargs,
+                extra_kwargs=validation.extra_kwargs,
+                message=validation.message,
+            )
         logger.error(
             "checkpoint_inference_contract_mismatch path=%s status=%s missing=%s extra=%s",
             checkpoint_path,
@@ -281,11 +293,12 @@ def _validate_serving_contract(
         )
         return False, validation.status
 
-    _record_contract_status(
-        status="ok",
-        checkpoint_path=checkpoint_path,
-        message="inference contract matches serving signature",
-    )
+    if record_status:
+        _record_contract_status(
+            status="ok",
+            checkpoint_path=checkpoint_path,
+            message="inference contract matches serving signature",
+        )
     return True, "ok"
 
 
@@ -418,8 +431,13 @@ _fold_load_lock = threading.Lock()
 
 def load_for_fold(
     checkpoint_path: Path,
-) -> ForecasterServingModel:
+) -> tuple[ForecasterServingModel, dict[str, Any]]:
     """Load a per-fold forecaster checkpoint for replay mode.
+
+    Returns ``(model, metadata)`` -- callers that need both never have
+    to re-enter the cache via :func:`get_fold_metadata`, which removes
+    a race window where a concurrent fold load on a different path
+    could evict the just-inserted entry between the two calls.
 
     Mirrors the cold-load path in :func:`_get_model` but:
 
@@ -436,9 +454,8 @@ def load_for_fold(
       handler so the client sees a structured error instead of a 500.
 
     The returned model is ready to call :func:`_predict_next_point` on;
-    the caller is responsible for threading the per-fold metadata
-    (rich-feature scaler, encoder alias) through the inference path via
-    :func:`predict_next_point_with_metadata` so the inference tensor
+    the caller threads the per-fold metadata (rich-feature scaler,
+    encoder alias) through the inference path so the inference tensor
     matches the per-fold training-time normalisation.
     """
 
@@ -454,7 +471,7 @@ def load_for_fold(
         cached = _fold_load_cache.get(cache_key)
         if cached is not None:
             _fold_load_cache.move_to_end(cache_key)
-            return cached[0]
+            return cached
 
         from app.models.factory import build_serving_forecaster
 
@@ -470,7 +487,12 @@ def load_for_fold(
                 f"per-fold checkpoint payload invalid: {checkpoint_path}: {exc}"
             ) from exc
 
-        ok, status = _validate_serving_contract(checkpoint_path)
+        # ``record_status=False`` so the global serving-contract status
+        # the /health endpoint surfaces keeps tracking the live model
+        # singleton, not whichever per-fold checkpoint a transient
+        # replay request loaded. Per-fold load failures still raise here
+        # so the replay path returns a clean 422 to the client.
+        ok, status = _validate_serving_contract(checkpoint_path, record_status=False)
         if not ok:
             raise ValueError(
                 f"per-fold checkpoint inference contract refused: {status}"
@@ -497,7 +519,12 @@ def load_for_fold(
         _fold_load_cache.move_to_end(cache_key)
         while len(_fold_load_cache) > _FOLD_LOAD_CACHE_MAX:
             _fold_load_cache.popitem(last=False)
-        return model
+        # Return both halves so callers never have to re-enter the cache
+        # for the metadata they just produced. Closes the race where a
+        # concurrent fold load on a different path could evict this
+        # entry between the model load and a follow-up
+        # ``get_fold_metadata`` call.
+        return model, metadata
 
 
 def get_fold_metadata(checkpoint_path: Path) -> dict[str, Any] | None:
@@ -718,7 +745,11 @@ def _resolve_inference_text_embedding(
     return text_embedding, text_embedding_missing
 
 
-def _log_serving_forward_kwargs(model: ForecasterServingModel) -> None:
+def _log_serving_forward_kwargs(
+    model: ForecasterServingModel,
+    *,
+    checkpoint_path_override: Path | None = None,
+) -> None:
     """#342: structured INFO line describing the per-request kwarg set.
 
     Mirrors the kwarg gates in ``_predict_next_point`` so the log line
@@ -729,14 +760,16 @@ def _log_serving_forward_kwargs(model: ForecasterServingModel) -> None:
 
     The kwargs list is empty (``kwargs=``) for the legacy 6-feature
     regression-only path; checkpoints with text + credibility + chunks
-    paths active emit the full list. The checkpoint stem is taken from
-    ``BEST_MODEL_PATH`` so the operator can correlate against the
-    settings inventory + the inference contract sidecar. The ``mode``
-    field carries the active output_mode so a grep can distinguish
-    "kwargs declared but forward short-circuited" (classification-mode
-    request: ``_predict_next_point`` echoes the last bar without
-    calling forward) from "kwargs declared and forward invoked"
-    (regression mode). One log line per /analyze, NOT one per kwarg.
+    paths active emit the full list. The checkpoint stem normally comes
+    from ``BEST_MODEL_PATH``; a non-None ``checkpoint_path_override``
+    (replay mode passing a per-fold path) replaces it so the log line
+    actually correlates with whichever checkpoint served the prediction.
+    The ``mode`` field carries the active output_mode so a grep can
+    distinguish "kwargs declared but forward short-circuited"
+    (classification-mode request: ``_predict_next_point`` echoes the
+    last bar without calling forward) from "kwargs declared and forward
+    invoked" (regression mode). One log line per /analyze, NOT one per
+    kwarg.
     """
 
     populated: list[str] = []
@@ -752,7 +785,10 @@ def _log_serving_forward_kwargs(model: ForecasterServingModel) -> None:
         populated.append("elapsed_days")
 
     try:
-        checkpoint_stem = Path(BEST_MODEL_PATH).stem
+        active_checkpoint = (
+            checkpoint_path_override if checkpoint_path_override else Path(BEST_MODEL_PATH)
+        )
+        checkpoint_stem = Path(active_checkpoint).stem
     except Exception:  # pragma: no cover -- defensive
         checkpoint_stem = ""
 
@@ -1802,7 +1838,7 @@ def forecast_quantitative_series(
     # ``_predict_next_point`` (the canonical serving forward call site)
     # so the log line is the request-level intent, not a per-step
     # repetition.
-    _log_serving_forward_kwargs(model)
+    _log_serving_forward_kwargs(model, checkpoint_path_override=checkpoint_path_override)
 
     history_vectors = vectors[-30:]
     history_timestamps = [item.date for item in history_vectors]
