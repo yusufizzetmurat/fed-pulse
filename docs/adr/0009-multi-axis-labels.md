@@ -13,12 +13,12 @@ References:
 ## Context
 
 The v0 dashboard collapsed every FOMC excerpt into a single hawkish /
-dovish / neutral stance. That works for a headline read but loses three
-signals that the reviewer asked the project to expose:
+dovish / neutral stance. That captures the headline read but loses three
+signals the reviewer asked to be exposed:
 
-- **Direction** — hawkish vs dovish — is a useful headline but does not
-  by itself convey *how much* hawkishness, or *how confidently* the
-  language commits to it.
+- **Direction** — hawkish vs dovish — gives the headline but conveys
+  neither *how much* hawkishness nor *how confidently* the language
+  commits to it.
 - **Source of the lean** — is the hawkish read driven by inflation
   language or growth language? Two communications can both score
   hawkish-0.8 and respond differently to a CPI surprise.
@@ -54,12 +54,12 @@ history table and chip rendering.
   stance axis only; the other three are emitted as missing rather than
   spoofed.
 - The compare page in the dashboard renders a per-axis delta column so
-  reviewers can see at a glance "A is more decisive about inflation than
-  B is."
-- Future fine-tunes that learn the multi-axis schema directly (rather
-  than mapping from single-axis labels) should produce a measurable
-  improvement in factor / certainty. That improvement is the headline
-  for the second-half reporting pack and is tracked in
+  reviewers can read "A is more decisive about inflation than B is" at
+  a glance.
+- Fine-tunes that learn the multi-axis schema directly (rather than
+  mapping from single-axis labels) should produce a measurable lift on
+  factor / certainty. That lift is the headline metric for the
+  second-half reporting pack and is tracked in
   ``../../fed-pulse.wiki/06_Deep_Learning_Roadmap.md``.
 - Label leakage: the multi-axis fine-tune cannot be trained on the
   reporting holdout. The training package builder enforces this at

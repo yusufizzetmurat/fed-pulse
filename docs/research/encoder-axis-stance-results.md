@@ -45,17 +45,17 @@ mean(s|hold)`).
 
 ## The two winners disagree
 
-**xbank wins held-out F1 by 17 points.** The cross-bank DAPT'd encoder
+xbank wins held-out F1 by 17 points. The cross-bank DAPT'd encoder
 classifies hawkish / dovish / neutral on held-out Fed-stance text far
-better than any other variant. The next-best (finbert-fed-adjacent) is
-0.55; the xbank-DAPT regression (0.54) shows the extra Fed-text DAPT
+better than any other variant. The next-best (finbert-fed-adjacent) sits
+at 0.55; the xbank-DAPT regression (0.54) shows the extra Fed-text DAPT
 step on top of cross-bank actually hurts.
 
-**ProsusAI/FinBERT wins the validity anchor by 17 points of Spearman.**
-Even without any Fed-text or cross-bank pre-training, the plain
-FinBERT encoder produces a stance score whose correlation with realised
-policy moves is materially higher than any DAPT'd variant (+0.499 vs
-+0.32-+0.39). AUC hike-vs-cut climbs to 0.967, near-perfect.
+ProsusAI/FinBERT wins the validity anchor by 17 points of Spearman.
+Without Fed-text or cross-bank pre-training, the plain FinBERT encoder
+produces a stance score whose correlation with realised policy moves is
+materially higher than any DAPT'd variant (+0.499 vs +0.32-+0.39). AUC
+hike-vs-cut climbs to 0.967, near-perfect.
 
 ## What this says about DAPT
 
@@ -64,36 +64,34 @@ labels accurately (high held-out F1, especially xbank) but do not
 track the policy-action anchor as cleanly as plain FinBERT does. The
 DAPT signal and the validity signal point in different directions.
 
-This is not a bug in the project's DAPT pipeline. It's the same
-phenomenon the standing finding has called out for months: text
-classifiers can become very good at TDW-label discrimination without
-the discrimination being a useful policy-anchor predictor. The
-encoder-axis sweep makes the gap measurable.
+This is not a bug in the DAPT pipeline. It is the same phenomenon the
+standing finding has called out for months: text classifiers can become
+very good at TDW-label discrimination without the discrimination being a
+useful policy-anchor predictor. The encoder-axis sweep makes the gap
+measurable.
 
 ## Deployment recommendation
 
 Two paths, two different priorities:
 
-1. **Dashboard stance instrument (the displayed s).** Use ProsusAI/FinBERT
-   if the goal is "a number that tracks what the Fed actually does." The
+1. Dashboard stance instrument (the displayed s). ProsusAI/FinBERT fits
+   when the goal is a number that tracks what the Fed actually does. The
    z-score badge already in production lifts from a +0.284 baseline to
-   +0.499 — that's a substantial credibility win for the descriptive
-   layer.
-2. **TDW-label classification (Performance page macro-F1).** Use
-   xbank if the goal is the highest possible held-out classification
-   accuracy on the gtfintechlab + op_fed sets. The 0.720 figure beats
-   FOMC-RoBERTa (0.578) by a comfortable margin and is worth a
-   wiki §20 citation.
+   +0.499, a substantial credibility gain for the descriptive layer.
+2. TDW-label classification (Performance page macro-F1). xbank fits
+   when the goal is the highest held-out classification accuracy on the
+   gtfintechlab + op_fed sets. The 0.720 figure beats FOMC-RoBERTa
+   (0.578) by a comfortable margin and warrants a wiki §20 citation.
 
-These are not contradictory if the dashboard is honest about which
-backbone serves which surface — but they cannot be collapsed onto a
-single "canonical encoder" without paying the gap in whichever surface
+These are not contradictory if the dashboard is explicit about which
+backbone serves which surface, but they cannot be collapsed onto a
+single canonical encoder without paying the gap in whichever surface
 loses.
 
 The two checkpoints sit at:
 - `data/processed/stance_finetune_finbert/` (validity winner)
 - `data/processed/stance_finetune_xbank/` (held-out F1 winner)
 
-Production swap is NOT taken in this commit. The multi-axis classifier
+No production swap is taken in this commit. The multi-axis classifier
 keeps its current encoder. The artifacts above stand as validated
 research alternatives.

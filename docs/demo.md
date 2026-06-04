@@ -1,12 +1,12 @@
 # Demo + report figures
 
-Companion to `docs/reproduce.md`. Walks through driving the dashboard end-to-end, capturing the panel screenshots the report cites, and regenerating the per-head + cross-bank figure set. Both scripts are deterministic — the same backend state plus the same viewport gives diffable PNGs run-to-run.
+Companion to `docs/reproduce.md`. Drives the dashboard end-to-end, captures the panel screenshots cited in the report, and regenerates the per-head and cross-bank figure set. Both scripts are deterministic: the same backend state plus the same viewport yields diffable PNGs run-to-run.
 
 ## Prerequisites
 
 - Docker + Compose v2 (for the local backend stack), or a reachable deployed origin.
 - Python 3.11 with `playwright` installed (`pip install playwright && playwright install chromium`).
-- Pillow on the host running `build_thesis_figures.py` — already a backend dep, so the script also works inside the backend container if you would rather not install on the host.
+- Pillow on the host running `build_thesis_figures.py`. It is already a backend dep, so the script also runs inside the backend container if installing on the host is undesirable.
 
 ## End-to-end demo (screenshots)
 
@@ -20,9 +20,9 @@ make dev
 python scripts/demo_end_to_end.py
 ```
 
-The script captures five panels — statement decomposition, market reaction, historical analogs, trajectory, settings checkpoints — and writes one PNG per panel with a UTC timestamp suffix so a re-run does not overwrite the previous capture. Add `--headed` to watch the run; `--keep-open` pauses after the last capture so the live UI is inspectable before tear-down.
+The script captures five panels (statement decomposition, market reaction, historical analogs, trajectory, settings checkpoints) and writes one PNG per panel with a UTC timestamp suffix so a re-run does not overwrite the previous capture. Add `--headed` to watch the run; `--keep-open` pauses after the last capture so the live UI is inspectable before tear-down.
 
-Against the deployed droplet:
+Against the deployed origin at <https://fedpulse.yusufizzetmurat.com/>:
 
 ```sh
 python scripts/demo_end_to_end.py \
@@ -30,7 +30,7 @@ python scripts/demo_end_to_end.py \
     --backend-url https://fedpulse.yusufizzetmurat.com/api
 ```
 
-The frontend resolves its API base URL at build time from `NEXT_PUBLIC_API_URL` (see `frontend/lib/analyze/api.ts`), so the `--backend-url` flag is informational against a prebuilt bundle. Pass `--in-repo` to write captures under `docs/demo-screenshots/` instead of the wiki repo.
+The frontend resolves its API base URL at build time from `NEXT_PUBLIC_API_URL` (see `frontend/lib/analyze/api.ts`), so `--backend-url` is informational against a prebuilt bundle. Pass `--in-repo` to write captures under `docs/demo-screenshots/` instead of the wiki repo.
 
 ## Report figures
 
@@ -47,7 +47,7 @@ Default output is `../fed-pulse.wiki/assets/figures/`. Pass `--in-repo` to write
 | `text_path_ab.png` | `backend/artifacts/experiments/text_path_ab_canonical.json` |
 | `cross_bank_ladder.png` | wiki §6.14 (transcribed; no JSON artefact on disk) |
 
-Each PNG ships a paired `.caption.txt` carrying the reproducibility header (commit SHA at render time, canonical training-package id, source artefact path). The report can drop the caption verbatim.
+Each PNG ships a paired `.caption.txt` carrying the reproducibility header (commit SHA at render time, canonical training-package id, source artefact path). The report drops the caption verbatim.
 
 To regenerate one figure rather than the full set:
 
@@ -77,6 +77,7 @@ The demo screenshots land under `../fed-pulse.wiki/assets/demo/` and the figures
 
 ## Troubleshooting
 
-- The screenshot script raises `TimeoutError: locator "Multi-axis interpretation" not found` if the backend has no multi-axis checkpoint mounted. The panel renders an empty-state card with that string anyway, so the timeout almost always means the backend has not finished cold-starting — re-run after `/health` reports `"status": "ready"`.
-- `make dev` builds the frontend bundle with `NEXT_PUBLIC_API_URL=http://localhost:8000`. Against the droplet the prod build bakes the public origin in instead; do not point a local frontend at a remote backend by changing the env var at runtime — rebuild the image.
+- The screenshot script raises `TimeoutError: locator "Multi-axis interpretation" not found` if the backend has no multi-axis checkpoint mounted. The panel renders an empty-state card with that string regardless, so the timeout almost always indicates the backend has not finished cold-starting. Re-run after `/health` reports `"status": "ready"`. The multi-axis classifier covers stance, certainty, and forward-looking axes (the factor axis was retired in PR #597 and the topic axis in ADR 0044).
+- `make dev` builds the frontend bundle with `NEXT_PUBLIC_API_URL=http://localhost:8000`. Against the deployed origin the prod build bakes the public origin in instead; do not point a local frontend at a remote backend by changing the env var at runtime. Rebuild the image instead.
 - Pillow's default fonts vary by host. The script falls back to PIL's bitmap default if no truetype font is found, which renders correctly but at lower legibility. Install the DejaVu or system Arial fonts to match the published figures.
+- Only `forecast_mode=fast` is shipped (the `quick_train` / `real_train` modes and the `/train-jobs` queue were retired in PR #265). Replay mode loads pinned per-fold checkpoints. The eight forecaster architectures are registered in `app.models.factory`; the headline forecasters are the QLIKE-DLq ensemble (multi-asset, serving `^GSPC`, `^NDX`, `^DJI` per PR #660) and the HAR-tercile baseline.

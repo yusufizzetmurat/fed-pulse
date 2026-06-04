@@ -13,10 +13,10 @@ VIX.
 
 The fed-pulse HAR-tercile baseline (wiki section 21, daily-fusion pipeline)
 reports macro-F1 of 0.687 / 0.685 / 0.654 at h=1/5/22. That number is the bar
-the paper's claims have to clear on our data. The four arms below were designed
-to test, in order of expected strength, whether any combination of stacking,
-asymmetric loss, stress routing, or per-asset re-fitting moves macro-F1 above
-that bar.
+the paper's claims have to clear on this data. The four arms below were
+designed to test, in order of expected strength, whether any combination of
+stacking, asymmetric loss, stress routing, or per-asset re-fitting moves
+macro-F1 above that bar.
 
 ## Arms tested
 
@@ -86,7 +86,7 @@ Paired block-bootstrap on the stress slice: routed minus HAR-only macro-F1 has
 a 90 percent CI of `[-0.076, -0.017]` with mean -0.046. The CI excludes zero on
 the negative side. The paper's qualitative claim that "high-vol is where the DL
 model matters" is rejected on this evaluation surface: DL is significantly
-worse than HAR on exactly the stress rows the paper says DL should win.
+worse than HAR on exactly the stress rows the paper predicts DL should win on.
 
 ### Arm D: per-asset HAR-tercile on ^NDX and ^DJI (`per_asset_har`)
 
@@ -138,11 +138,11 @@ The deep-learning arms (A, B, C) all underperform it materially; the per-asset
 arm (D) is a correctness fill rather than a competitor and lands inside the
 expected band for a daily-r² RV proxy.
 
-Recommended next step: file a documented-null-result note plus the
+Recommended follow-up: file a documented-null-result note plus the
 correctness-fill code change (per-asset HAR symbol arg in
 `services.har_tercile.predict_har_regime`) as one PR. The four arms become
-negative-result citations in the writeup. Do not promote any deep-learning arm
-to the serving path.
+negative-result citations in the writeup. No deep-learning arm is promoted to
+the serving path.
 
 ## Caveats and threats to validity
 

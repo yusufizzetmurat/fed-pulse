@@ -24,7 +24,7 @@ Three text-side adapters compound the problem:
 - `EmbeddingAdapter` — projects the pooled chunk vector.
 - `TextEmbeddingAdapter` — projects the encoder-native pooled embedding.
 
-All three are zero-initialised so an activated text path starts from the rich-features-only baseline. The result: the text adapter sees no gradient signal until the loss surface accidentally finds a non-zero direction worth pushing in.
+All three are zero-initialised, so an activated text path starts from the rich-features-only baseline. The text adapter sees no gradient signal until the loss surface accidentally finds a non-zero direction worth pushing in.
 
 The advisor scope mandates a clean text-vs-market separation for the LLM-vs-LSTM comparison. The current broadcast-static framing makes that separation impossible to measure.
 
@@ -45,7 +45,7 @@ The implementation preserves the broadcast-static byte-identity contract: with `
 
 ### Arm B — flat MLP
 
-Drop the sequence wrap on the text path entirely. `app.models.flat_mlp.ForecasterFlatMLP` mean-pools the market window across the sequence axis and feeds `[pooled_market || pooled_text_adapter || rich]` through a two-layer MLP into the same multi-task / regression head shapes the recurrent forecaster mounts. The honest comparator for the LSTM-on-broadcast baseline: if Arm B matches or beats the current arm on the canonical objective, the LSTM's contribution to the text-conditional forecast is the broadcast plumbing, not the sequence-model capacity.
+Drop the sequence wrap on the text path entirely. `app.models.flat_mlp.ForecasterFlatMLP` mean-pools the market window across the sequence axis and feeds `[pooled_market || pooled_text_adapter || rich]` through a two-layer MLP into the same multi-task / regression head shapes the recurrent forecaster mounts. This is the direct comparator for the LSTM-on-broadcast baseline: if Arm B matches or beats the current arm on the canonical objective, the LSTM's contribution to the text-conditional forecast is the broadcast plumbing, not the sequence-model capacity.
 
 - `architecture='flat_mlp'` is added to `FORECASTER_ARCHITECTURES`.
 - `build_forecaster` dispatches the new architecture to `ForecasterFlatMLP`.
@@ -76,4 +76,4 @@ The proxy task is intentionally narrow: one linear classifier head, fixed LR, no
 - Text adapter dim: 64.
 - Runner: `make text-path-ab TRAINING_PACKAGE_ID=<id>`.
 
-The sweep is a follow-up; this PR ships the code + tests + the placeholder methodology section so the cells populate via `make text-path-ab` and the table updates in a follow-on commit.
+The sweep is a follow-up. This PR ships the code, tests, and the placeholder methodology section so the cells populate via `make text-path-ab` and the table updates in a follow-on commit.

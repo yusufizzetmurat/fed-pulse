@@ -1,14 +1,14 @@
 # Sealed-holdout pre-registration protocol (#501)
 
-This document is the pre-registered contract for the post-cutoff sealed
-holdout at `data/external/sealed_holdout/fomc_2025.jsonl`. Once
-committed it must not be edited; the one allowed final-submission read
-of the seal links back to the commit SHA that introduced this file as
-the integrity anchor.
+The pre-registered contract for the post-cutoff sealed holdout at
+`data/external/sealed_holdout/fomc_2025.jsonl`. Once committed, this
+file must not be edited. The one allowed final-submission read of the
+seal links back to the commit SHA that introduced this file as the
+integrity anchor.
 
-The companion technical documentation lives in
-`data/external/sealed_holdout/README.md`. This file is the procedural
-contract, not the technical one.
+Companion technical documentation lives in
+`data/external/sealed_holdout/README.md`. That file covers the
+technical surface; this one is the procedural contract.
 
 ## Holdout definition
 
@@ -18,11 +18,11 @@ contract, not the technical one.
   (`statement` | `minutes`), `text` (scraped from federalreserve.gov,
   no derivation), `url` (source URL), `scraped_at_utc` (scrape
   timestamp).
-- **Cutoff contract**: every row's `event_date` is strictly after the
-  canonical training package's cutoff (2024-12-31). No row appears in
-  any walk-forward train / val / test partition, no row appears in any
-  sweep / HP grid, no row appears in any embedding / DAPT / encoder
-  used during the training programme.
+- **Cutoff contract**: every row's `event_date` falls strictly after
+  the canonical training package's cutoff (2024-12-31). No row appears
+  in any walk-forward train / val / test partition, no row appears in
+  any sweep / HP grid, no row appears in any embedding / DAPT /
+  encoder used during the training programme.
 
 ### Holdout contents at pre-registration time
 
@@ -43,17 +43,17 @@ press-release pages and pinned in this same commit:
 | 2026-03-18 | Hold 3½–3¾% | `pressreleases/monetary20260318a.htm` |
 | 2026-04-29 | Hold 3½–3¾% (3-way dissent) | `pressreleases/monetary20260429a.htm` |
 
-Every text was extracted from the `div#article p` selector of the
-press-release page, joined with `\n\n`. The `Implementation Note
+Each text was extracted from the `div#article p` selector of the
+press-release page and joined with `\n\n`. The `Implementation Note
 issued <Month D, YYYY>` trailing line on each row was cross-checked
 against the row's `event_date` at pin time. Minutes (released ~3
-weeks after each meeting) are not included in this pre-registration;
+weeks after each meeting) are excluded from this pre-registration;
 adding them post-hoc would invalidate the contract.
 
 ## Pre-declared evaluation metrics
 
-These are the metrics that will be reported against the sealed
-holdout, declared before any model has seen the file:
+The metrics reported against the sealed holdout, declared before any
+model has seen the file:
 
 - **Classification head**:
   - `regime_f1_macro` (macro-averaged F1 over the 3 vol-regime bins).
@@ -67,8 +67,8 @@ holdout, declared before any model has seen the file:
 - **Conformal coverage** at the pre-declared significance level
   α = 0.20 (i.e. nominal 80% coverage band).
 
-No other metric will be added post-hoc. Adding one would invalidate
-the pre-registration.
+No other metric will be added post-hoc. Adding one invalidates the
+pre-registration.
 
 ## Number of model runs against the holdout
 
@@ -78,8 +78,8 @@ sweep batch on the dev / val partitions. The full sweep grid is
 selected and frozen on the dev splits; the holdout is read only after
 no methodology decision remains open.
 
-Any second read invalidates the pre-registration and the sealed-eval
-headline must be removed from the final report.
+Any second read invalidates the pre-registration, and the sealed-eval
+headline must then be removed from the final report.
 
 ## Seal-break protocol
 
@@ -111,10 +111,10 @@ shasum -a 256 data/external/sealed_holdout/fomc_2025.jsonl
 
 Captured at the commit that introduces the real scraped statements
 into `fomc_2025.jsonl`. Any future commit that mutates that file
-without producing the same sha after re-hash breaks the pre-
-registration. CI should hard-fail on a sha drift; until that check
-lands, manual verification before the one allowed seal-break run is
-the contract.
+without producing the same sha after re-hash breaks the
+pre-registration. CI should hard-fail on a sha drift; until that
+check lands, manual verification before the one allowed seal-break
+run is the contract.
 
 ## Code revision that defines this holdout
 

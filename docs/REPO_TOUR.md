@@ -1,24 +1,24 @@
 # Repo tour
 
-Single-page walkthrough of the Fed Pulse codebase, written so a reader who has never opened the repo can pick it up cold. The companion wiki (`../../fed-pulse.wiki/`) carries the long-form design, requirements, ADRs, and roadmap; this document is the **fast index** — what each directory holds, which files are alive vs historical, and where to start reading for any given change.
+Single-page walkthrough of the Fed Pulse codebase, aimed at a reader who has never opened the repo. The companion wiki (`../../fed-pulse.wiki/`) carries long-form design, requirements, ADRs, and the roadmap; this document is the fast index — what each directory holds, which files are alive vs historical, and where to start reading for any given change.
 
 Read top to bottom the first time. After that, jump to §6 ("I want to …") for task-oriented entry points.
 
-**Last refresh: 2026-06-02, anchored at `dev` after PR #166 + the 2026-05-16 bundle.** When a change shifts the request flow, schema, or evaluation protocol, re-pin this anchor in your PR description so the reader knows the tour is current.
+Last refresh: 2026-06-04, anchored at `dev`. When a change shifts the request flow, schema, or evaluation protocol, re-pin this anchor in your PR description so the reader knows the tour is current.
 
 ---
 
-## 1. What Fed Pulse actually does
+## 1. What Fed Pulse does
 
-Fed Pulse is a research project (SWE 599 thesis at Boğaziçi University) that takes a piece of FOMC text — a statement, minutes excerpt, speech, or pasted snippet — plus market history, and produces:
+Fed Pulse is a research project (SWE 599 at Boğaziçi University) that takes a piece of FOMC text — a statement, minutes excerpt, speech, or pasted snippet — plus market history, and produces:
 
 1. A short-horizon close-price + volatility forecast (next 1 / 3 / 5 / 10 trading days) with confidence bands.
-2. A stance classification (hawkish / dovish / neutral) plus three secondary axes (factor / certainty / topic) — the **multi-axis** schema.
+2. A multi-axis text classification: stance (hawkish / dovish / neutral), certainty, and forward-looking axes. The factor axis was retired in PR #597 and the topic axis in ADR 0044.
 3. Per-sentence XAI highlights showing which tokens drive the stance call.
 4. A credibility panel showing how the document compares to the prior four FOMC communications.
-5. A persisted history so each analysis is searchable / comparable across runs.
+5. A persisted history so each analysis is searchable and comparable across runs.
 
-The question this codebase tries to answer is whether fusing FOMC text with market history through a small sequence model produces better short-horizon forecasts than a market-only baseline, and when runtime adaptation is worth its compute cost. Done criteria live in `../../fed-pulse.wiki/05_Project_Plan.md §1`.
+The research question is whether fusing FOMC text with market history through a small sequence model produces better short-horizon forecasts than a market-only baseline, and when runtime adaptation is worth its compute cost. Done criteria live in `../../fed-pulse.wiki/05_Project_Plan.md §1`. A live deployment runs at https://fedpulse.yusufizzetmurat.com/.
 
 ---
 
@@ -30,7 +30,7 @@ Browser  ─POST /analyze─▶  FastAPI (backend/app/main.py)
                               ├─ sentiment           services/text_encoder.py  ─▶ multi-axis stance head (else chunked HF classifier)
                               ├─ market history     services/market_data.py   ─▶ yfinance
                               ├─ feature vectors    services/forecaster.py    ─▶ 6-feature sequence
-                              ├─ forecast           services/forecaster.py    ─▶ checkpoint inference / quick / real train
+                              ├─ forecast           services/forecaster.py    ─▶ checkpoint inference (fast mode)
                               ├─ confidence bands   evaluation/conformal.py   ─▶ Lei–Wasserman split-conformal (else Gaussian z fallback)
                               ├─ XAI                evaluation/xai.py         ─▶ keyword-salience per sentence/token
                               ├─ history write     db.py                      ─▶ SQLite at data/db/fed_pulse.db
@@ -38,7 +38,7 @@ Browser  ─POST /analyze─▶  FastAPI (backend/app/main.py)
                               └─ AnalyzeResponse (schemas.py)  ────────────────▶  Next.js dashboard
 ```
 
-The dashboard then renders:
+The dashboard renders:
 
 - Multi-axis cards (`frontend/components/analyze/MultiAxisCards.tsx`)
 - Forecast charts with confidence bands (`ForecastChart.tsx`)
@@ -46,69 +46,65 @@ The dashboard then renders:
 - Credibility panel (`CredibilityPanel.tsx`, currently fixture)
 - Market context, error metrics if the date is historical
 
-Three runtime modes on `/analyze`:
+Runtime modes on `/analyze`: only `fast` (checkpoint inference) ships to the live API. The `quick_train` and `real_train` modes plus the `/train-jobs` queue were retired in PR #265. Replay mode pins per-fold checkpoints for historical reproduction.
 
-- `fast` — checkpoint inference. Cold start triggers a one-shot bootstrap train against 252-day history.
-- `quick_train` — short bounded adaptation (history 30) before inference. Doesn't persist.
-- `real_train` — async: enqueue a job, return `{job_id, status: queued}`, client polls `GET /train-jobs/{job_id}`.
-
-The async job state is in-process only (`_train_jobs` dict + lock in `main.py`). Restarts lose queued/running jobs. Phase 7.12 (arq worker) is the fix; until then, the limitation is documented.
+The headline forecasters are the QLIKE-DLq ensemble and the HAR-tercile baseline. The multi-asset QLIKE-DLq serves `^GSPC`, `^NDX`, and `^DJI` per PR #660. Eight forecaster architectures are registered in `app.models.factory`.
 
 ---
 
-## 3. What's been built so far (project history in plain English)
+## 3. What has been built so far
 
-The strategic roadmap lives in `../../fed-pulse.wiki/05_Project_Plan.md`. This section translates the phase IDs into what actually changed on disk.
+The strategic roadmap lives in `../../fed-pulse.wiki/05_Project_Plan.md`. This section translates phase IDs into what actually changed on disk.
 
 ### Phase 0 (closed 2026-03-15) — Frame the project
 
-Locked the research question + evaluation protocol. Output: `docs/benchmark-policy.md` and the `docs/project-guide.md` referenced from the wiki. No code shipped.
+Locked the research question and evaluation protocol. Output: `docs/benchmark-policy.md` and the `docs/project-guide.md` referenced from the wiki. No code shipped.
 
-### Phase 1 (closed 2026-03-26) — Data contract + pipeline stabilisation
+### Phase 1 (closed 2026-03-26) — Data contract and pipeline stabilisation
 
-Ad-hoc CSV ingestion → versioned pipeline. Six capability-first entry points landed under `backend/app/data/`: `source_ingestion`, `label_normalization`, `quality_validation`, `training_package_builder`, `baseline_spec_generator`, `pipeline_data_prep`. Each capability-first name is a thin wrapper around a phase-named module (`ingest_sources.py`, `normalize_labels.py`, etc.). New code should call the capability-first names; the phase-named modules remain because Make targets call them and Phase 7.2 hasn't retired them yet.
+Ad-hoc CSV ingestion was replaced with a versioned pipeline. Six capability-first entry points landed under `backend/app/data/`: `source_ingestion`, `label_normalization`, `quality_validation`, `training_package_builder`, `baseline_spec_generator`, `pipeline_data_prep`. Each capability-first name is a thin wrapper around a phase-named module (`ingest_sources.py`, `normalize_labels.py`, etc.). New code should call the capability-first names; the phase-named modules remain because Make targets still call them.
 
 ### Phase 2 (closed 2026-03-26) — Baseline LSTM, no adaptation
 
-`services/forecaster.py` + `FeatureVector` + `bootstrap_checkpoint` + `forecast_quantitative_series`. The `fast` mode returns a forecast end-to-end. Frontend on Next.js 14 Pages Router. Docker Compose for `make dev-cpu` / `make dev-gpu`.
+`services/forecaster.py` plus `FeatureVector`, `bootstrap_checkpoint`, and `forecast_quantitative_series`. The `fast` mode returns a forecast end-to-end. Frontend on Next.js 14 Pages Router. Docker Compose for `make dev-cpu` / `make dev-gpu`.
 
 ### Phase 3 (closed 2026-05-04) — Baseline NLP evaluation
 
-Three encoders × five seeds: BERT-base, FinBERT (ProsusAI), FinBERT-FOMC (ZiweiChen). Plus sanity baselines (majority-class, random-class). The 2026-06-02 re-run (after the #591/#594 stance label-map fix) is the current canonical reference: FinBERT-FOMC (ZiweiChen) leads at macro-F1 0.5082 ± 0.0069, ProsusAI FinBERT 0.4967 ± 0.0069, with random-class (0.3331) and majority (0.1871) below; BERT-base collapses to majority-class behaviour. Numbers and method in `docs/research/nlp-baseline-bakeoff-2026-06-02-rerun.md`. The original Phase-3 batch artifacts were not persisted under `data/artifacts/`.
+Three encoders × five seeds: BERT-base, FinBERT (ProsusAI), FinBERT-FOMC (ZiweiChen). Plus sanity baselines (majority-class, random-class). The 2026-06-02 re-run, after the #591/#594 stance label-map fix, is the current canonical reference: FinBERT-FOMC (ZiweiChen) leads at macro-F1 0.5082 ± 0.0069, ProsusAI FinBERT 0.4967 ± 0.0069, random-class 0.3331 and majority 0.1871 below; BERT-base collapses to majority-class behaviour. Numbers and method in `docs/research/nlp-baseline-bakeoff-2026-06-02-rerun.md`. The original Phase-3 batch artifacts were not persisted under `data/artifacts/`.
 
-### Phase 4 (closed 2026-05-04) — Attention + decay + NLP expansion
+### Phase 4 (closed 2026-05-04) — Attention, decay, NLP expansion
 
-Variant A (time-decay on scalar sentiment): **wins on combined-RMSE by 32% over baseline** on fold-2-val (seed 11, 200 epochs). λ_time learns from 1.49 → 1.62. Wins again on the wf_fold_3 holdout (5 seeds, 8% margin over baseline). This is the cleanest signal in the project.
+Variant A (time-decay on scalar sentiment) wins on combined-RMSE by 32% over baseline on fold-2-val (seed 11, 200 epochs). λ_time learns from 1.49 → 1.62. It wins again on the wf_fold_3 holdout (5 seeds, 8% margin over baseline). This is the cleanest signal in the project.
 
-Variant B (FinBERT chunk-attention pooler) and Variant C (Gemini LLM embeddings): both fail to converge at 2.4k labelled tuples. The diagnosis is data-starvation (not encoder choice or architecture). Cross-encoder comparison holds the pooling architecture fixed; both encoders fail similarly.
+Variant B (FinBERT chunk-attention pooler) and Variant C (Gemini LLM embeddings) both fail to converge at 2.4k labelled tuples. The diagnosis is data-starvation rather than encoder choice or architecture; the cross-encoder comparison holds the pooling architecture fixed and both encoders fail similarly.
 
-Additional Phase 4 deliverables: LLM zero-shot Qwen-3B (macro-F1 0.229, below random floor — flagged as conservative lower-bound), MiniLM embedding comparator (0.543), encoder battery extension to 6 encoders (BERT-base, FinBERT, FinBERT-FOMC, FOMC-RoBERTa, distilbert, deberta-v3-base).
+Additional Phase 4 deliverables: LLM zero-shot Qwen-3B (macro-F1 0.229, below random floor, flagged as a conservative lower-bound), MiniLM embedding comparator (0.543), encoder battery extension to six encoders (BERT-base, FinBERT, FinBERT-FOMC, FOMC-RoBERTa, distilbert, deberta-v3-base).
 
-### Phase 6 (in flight) — Frontend product + corpus expansion
+### Phase 6 — Frontend product and corpus expansion
 
-Phase 6 came **before** Phase 5 in the execution order (the 2026-05-05 reorder). The frontend track is foundation-complete after the v2-foundation batches landed:
+Phase 6 came before Phase 5 in the execution order (the 2026-05-05 reorder). The frontend track is foundation-complete after the v2-foundation batches landed:
 
-- **PR #67** dashboard cutover: `/legacy` keeps the v1 page; new `/` redirects to `/analyze` on the shadcn shell. Multi-axis cards, XAI panel, credibility panel scaffolds.
-- **PR #68** history persistence (SQLite + `AnalysisRun` / `AnalysisResult` models), FOMC calendar widget, watchlist localStorage helper.
-- **PR #69** embedding adapter `768→128` + LayerNorm + GELU (Phase 4.1) and `text_channel: "scalar" | "embeddings"` flag.
-- **PR #70** split-conformal bands with the Lei–Wasserman correction; manifest persisted alongside the checkpoint. Block-bootstrap CIs (6-month blocks, 1000 resamples) in `regime_aggregator`.
-- **PR #71** SE hardening: structlog with `run_id` ContextVar, typed error middleware, audit log JSONL, RNG state in checkpoint, strict Pydantic on `AnalyzeRequest`.
-- **PR #106** CI hygiene: pip-audit, npm audit, Dependabot, gitlint, git-cliff CHANGELOG.
-- **PR #107** lifespan classifier warmup + threadpool offload on `/analyze`.
-- **PR #108** `POST /documents/parse` for paste / PDF / DOCX / URL ingestion.
-- **PR #109** credibility feature module (drift, realized-vs-stated, market-implied-gap, months-since-reversal).
-- **PR #110** keyword-salience XAI for `/analyze` (real attribution, drops fixture mode).
-- **PR #120** Op-Fed ingestion (+159 stance rows + multi-axis annotations), GSS IJCB 2005 factor adapter (+138 factor-axis rows), chunk-aggregated teacher for pseudo-labels (resolves §2.5.8 of `06_Deep_Learning_Roadmap.md`).
+- PR #67 dashboard cutover: `/legacy` keeps the v1 page; new `/` redirects to `/analyze` on the shadcn shell. Multi-axis cards, XAI panel, credibility panel scaffolds.
+- PR #68 history persistence (SQLite plus `AnalysisRun` / `AnalysisResult` models), FOMC calendar widget, watchlist localStorage helper.
+- PR #69 embedding adapter `768→128` with LayerNorm and GELU, plus `text_channel: "scalar" | "embeddings"` flag.
+- PR #70 split-conformal bands with the Lei–Wasserman correction; manifest persisted alongside the checkpoint. Block-bootstrap CIs (6-month blocks, 1000 resamples) in `regime_aggregator`.
+- PR #71 SE hardening: structlog with `run_id` ContextVar, typed error middleware, audit log JSONL, RNG state in checkpoint, strict Pydantic on `AnalyzeRequest`.
+- PR #106 CI hygiene: pip-audit, npm audit, Dependabot, gitlint, git-cliff CHANGELOG.
+- PR #107 lifespan classifier warmup and threadpool offload on `/analyze`.
+- PR #108 `POST /documents/parse` for paste / PDF / DOCX / URL ingestion.
+- PR #109 credibility feature module (drift, realized-vs-stated, market-implied-gap, months-since-reversal).
+- PR #110 keyword-salience XAI for `/analyze` (real attribution, drops fixture mode).
+- PR #120 Op-Fed ingestion (+159 stance rows plus multi-axis annotations), GSS IJCB 2005 factor adapter (+138 factor-axis rows), chunk-aggregated teacher for pseudo-labels (resolves §2.5.8 of `06_Deep_Learning_Roadmap.md`).
 
-Corpus expansion is the remaining Phase 6 work. The 92-row scraped pool is on disk but unlabelled. The earlier teacher-only pseudo-labelling failed audit at precision 0.30 (vs ≥0.90 gate); the chunk-aggregated teacher landed in PR #120 is the structural fix. Re-running the pipeline + audit + Phase 4 ablation against the expanded corpus is the next workflow operation.
+Corpus expansion is the remaining Phase 6 work. The 92-row scraped pool is on disk but unlabelled. The earlier teacher-only pseudo-labelling failed audit at precision 0.30 (vs ≥0.90 gate); the chunk-aggregated teacher landed in PR #120 is the structural fix.
 
-### Phase 5 (in flight) — v2 model expansion
+### Phase 5 — v2 model expansion
 
-The v2 architecture's foundation pieces (embedding adapter, conformal bands, credibility module, bootstrap CIs) all landed in the Phase 6 batches above. What still needs to run on a GPU: forecaster-alternatives production benchmark (LSTM / GRU / TCN / small Transformer), Variant C 6-cell × 200-epoch ablation, regime-stratified eval slicer over the wf_fold_3 holdout, stronger LLM zero-shot rerun (Gemini 2.5 Pro), λ sensitivity sweep, full calibration plot.
+The v2 architecture's foundation pieces (embedding adapter, conformal bands, credibility module, bootstrap CIs) all landed in the Phase 6 batches above. Still pending on a GPU: forecaster-alternatives production benchmark (LSTM / GRU / TCN / small Transformer), Variant C 6-cell × 200-epoch ablation, regime-stratified eval slicer over the wf_fold_3 holdout, stronger LLM zero-shot rerun (Gemini 2.5 Pro), λ sensitivity sweep, full calibration plot.
 
 ### Phase 7 — SE hardening lockdown
 
-In flight. Items landed so far: structlog + run_id middleware (7.7), Pydantic strict on `AnalyzeRequest` + frozen everywhere (7.8), error middleware + audit log (7.13), RNG state in checkpoint (7.4 partial), HF cache lifespan (7.11 partial), first CI hygiene pass (7.14 partial). Deferred: forecaster decomposition (7.1), phase-named module deletion (7.2), mypy strict on services (7.3), per-fold scaler + 2 pm ET cutoff (7.4 remainder), Pandera at stage boundaries (7.9), Schemathesis + perf regression (7.10), arq worker for real_train (7.12).
+Items landed so far: structlog plus run_id middleware (7.7), Pydantic strict on `AnalyzeRequest` and frozen everywhere (7.8), error middleware plus audit log (7.13), RNG state in checkpoint (7.4 partial), HF cache lifespan (7.11 partial), first CI hygiene pass (7.14 partial). Deferred: forecaster decomposition (7.1), phase-named module deletion (7.2), mypy strict on services (7.3), per-fold scaler plus 2 pm ET cutoff (7.4 remainder), Pandera at stage boundaries (7.9), Schemathesis plus perf regression (7.10).
 
 ---
 
@@ -137,11 +133,11 @@ The wiki lives in a sibling directory `../fed-pulse.wiki/` — same git remote, 
 
 | File | Lines | Purpose | Notes |
 | --- | --- | --- | --- |
-| `main.py` | ~483 | FastAPI router + lifespan. Nine endpoints. The only file that knows about FastAPI. | Async `/analyze` runs the synchronous forecaster via `run_in_threadpool`. |
-| `schemas.py` | ~216 | Pydantic request/response models. `AnalyzeRequest` is `extra="forbid", strict=True, frozen=True`. Response models stay `frozen=True` only to keep the OpenAPI snapshot stable. | Edit here when API contract changes. |
+| `main.py` | ~483 | FastAPI router and lifespan. Nine endpoints. The only file that knows about FastAPI. | Async `/analyze` runs the synchronous forecaster via `run_in_threadpool`. |
+| `schemas.py` | ~216 | Pydantic request/response models. `AnalyzeRequest` is `extra="forbid", strict=True, frozen=True`. Response models stay `frozen=True` to keep the OpenAPI snapshot stable. | Edit here when the API contract changes. |
 | `config.py` | small | `BaseSettings` reading `FED_PULSE_DATA_DIR`. Used by every module to resolve `data/` paths. | |
-| `determinism.py` | small | PyTorch seed logic + `worker_init_fn`. | |
-| `db.py` | ~235 | SQLAlchemy 2.0 declarative. `AnalysisRun` + `AnalysisResult`. SQLite at `data/db/fed_pulse.db`. | Hooked from `/analyze` success path. |
+| `determinism.py` | small | PyTorch seed logic and `worker_init_fn`. | |
+| `db.py` | ~235 | SQLAlchemy 2.0 declarative. `AnalysisRun` and `AnalysisResult`. SQLite at `data/db/fed_pulse.db`. | Hooked from `/analyze` success path. |
 | `audit.py` | ~82 | Append-only JSONL at `data/artifacts/audit.log`. | Hooks on checkpoint write, training-job finalization, benchmark publish. |
 | `logging.py` | ~75 | structlog JSON config. `bind_run_id()` context manager. | |
 
@@ -149,13 +145,13 @@ The wiki lives in a sibling directory `../fed-pulse.wiki/` — same git remote, 
 
 | File | Purpose | Used by |
 | --- | --- | --- |
-| `forecaster.py` | LSTM / GRU / TCN / Transformer cores, attention pooling, conformal bands, checkpoint I/O, RNG state. **~1,740 lines — Phase 7.1 decomposition target.** | `main.py` `/analyze` |
+| `forecaster.py` | LSTM / GRU / TCN / Transformer cores, attention pooling, conformal bands, checkpoint I/O, RNG state. ~1,740 lines; Phase 7.1 decomposition target. | `main.py` `/analyze` |
 | `sentiment.py` | Thin wrapper around `text_encoder.aggregate_label()` | `main.py` |
-| `text_encoder.py` | HF classifier load + chunked embedding aggregation. `warmup_classifier()` called in lifespan. `split_into_chunks` is the canonical 480-token windower. | `sentiment.py`, `chunk_embedding_store.py`, `pseudo_labeling.py` (chunk-aware path) |
-| `market_data.py` | yfinance client with 7-day holiday fallback + 5-day rolling volatility. Forward trading dates. | `main.py`, `forecaster.py` |
-| `document_parser.py` | Paste / PDF / DOCX / URL ingestion behind `POST /documents/parse`. Lazy pdfplumber + python-docx. Async httpx for URL fetching. | `main.py` |
+| `text_encoder.py` | HF classifier load plus chunked embedding aggregation. `warmup_classifier()` called in lifespan. `split_into_chunks` is the canonical 480-token windower. | `sentiment.py`, `chunk_embedding_store.py`, `pseudo_labeling.py` (chunk-aware path) |
+| `market_data.py` | yfinance client with 7-day holiday fallback and 5-day rolling volatility. Forward trading dates. | `main.py`, `forecaster.py` |
+| `document_parser.py` | Paste / PDF / DOCX / URL ingestion behind `POST /documents/parse`. Lazy pdfplumber and python-docx. Async httpx for URL fetching. | `main.py` |
 | `fomc_calendar.py` | Hardcoded Federal Reserve schedule 2023–2026. | `main.py` `GET /fomc/calendar` |
-| `gemini_client.py` | Google Gemini 2.5 Pro / Flash calls for the LLM judge. | `pseudo_labeling.py` follow-up + `llm_judge.py` |
+| `gemini_client.py` | Google Gemini 2.5 Pro / Flash calls for the LLM judge. | `pseudo_labeling.py` follow-up and `llm_judge.py` |
 | `langsmith_client.py` | LangSmith tracing client. | `gemini_client.py` |
 | `scraper*.py` | Six Fed-adjacent scrapers (FOMC base, beige book, chair/governor speeches, press conferences, congressional testimony, NY Fed Liberty Street). | Manual workflow ops |
 
@@ -166,13 +162,13 @@ Capability-first entry points (use these in new code):
 | File | Wraps | Purpose |
 | --- | --- | --- |
 | `source_ingestion.py` | `ingest_sources.py` | Pull rows from HF (`gtfintechlab/fomc_communication`), Kaggle (`drlexus/fed-statements-and-minutes`), scraped JSON, Op-Fed (`--include-op-fed`), GSS (`--include-gss-factors`). Writes `data/raw/phase2/source_registry.jsonl`. |
-| `label_normalization.py` | `normalize_labels.py` | Map raw label strings to `{hawkish, dovish, neutral}`. Drop unmappable rows + log exceptions. Sample-weight by provenance. |
+| `label_normalization.py` | `normalize_labels.py` | Map raw label strings to `{hawkish, dovish, neutral}`. Drop unmappable rows and log exceptions. Sample-weight by provenance. |
 | `quality_validation.py` | `quality_checks.py` | Near-duplicate filter (0.97), text-hash collisions, leakage checks. |
 | `training_package_builder.py` | `build_training_package.py` | Emit `registry_normalized.parquet`, `splits_train_val_test.parquet`, `fold_manifest_expanding_walk_forward.json`, `dataset_metadata.json`, `quality_reports/`. |
 | `baseline_spec_generator.py` | `generate_baseline_run_specs.py` | Pre-run-configuration markdown per planned run. |
 | `pipeline_data_prep.py` | — | Orchestrator for all of the above. `make data-prep` calls this. |
 
-Training / evaluation harnesses:
+Training and evaluation harnesses:
 
 | File | Purpose |
 | --- | --- |
@@ -181,7 +177,7 @@ Training / evaluation harnesses:
 | `finetune_pilot.py` | Single-seed fine-tune. Writes `predictions.jsonl` for the cross-source analyzer. |
 | `attention_ablation.py` | Variant A / B / C ablation sweep (6 cells × N seeds). |
 | `pseudo_labeling.py` | Chunk-aggregated teacher for the unlabelled scraped pool. Strategies: `chunk_max_pool` (default), `chunk_mean_pool`, `chunk_vote`, `doc_truncated` (legacy). |
-| `llm_judge.py` | Gemini judge + three gating policies + 100-row audit sampler + Cohen's κ. |
+| `llm_judge.py` | Gemini judge plus three gating policies, 100-row audit sampler, and Cohen's κ. |
 | `continued_pretraining.py` | MLM continued pretraining of FinBERT-FedAdjacent on the 9.7k unlabelled scraped rows. Checkpoint not yet trained. |
 
 Per-source scrapers (`backend/app/data/sources/`):
@@ -204,28 +200,29 @@ sources/
 | `bootstrap.py` | `block_bootstrap_ci()` with 6-month blocks, 1000 resamples. |
 | `calibration.py` | `coverage_curve()` for the 80% conformal bands. |
 | `conformal.py` | Split-conformal calibration with Lei–Wasserman finite-sample correction. Manifest persisted as `forecaster_best.conformal.json` next to the checkpoint. |
-| `regime_aggregator.py` | Aggregate runs across pre-2020 / 2020-shock / 2022-hike windows. Emits `ci_lo` / `ci_hi` columns. |
-| `xai.py` | `attribute_text()` keyword-salience over hawkish/dovish weight dictionaries. Per-sentence + per-token attributions. |
+| `regime_aggregator.py` | Aggregate runs across pre-2020 / 2020-shock / 2022-hike windows. Emits `ci_lo` and `ci_hi` columns. |
+| `xai.py` | `attribute_text()` keyword-salience over hawkish/dovish weight dictionaries. Per-sentence and per-token attributions. |
 
 ### `backend/app/features/` — feature engineering modules
 
 | File | Purpose |
 | --- | --- |
-| `credibility.py` | `CredibilityVector` dataclass + helpers (drift vs prior 4 docs, realized-vs-stated 90d Pearson, SEP-vs-OIS terminal gap, months-since-reversal). Backend wiring into the forecaster input pipeline is the Phase 4.4 follow-up bundle. |
+| `credibility.py` | `CredibilityVector` dataclass plus helpers (drift vs prior 4 docs, realized-vs-stated 90d Pearson, SEP-vs-OIS terminal gap, months-since-reversal). Backend wiring into the forecaster input pipeline is the Phase 4.4 follow-up bundle. |
 
 ### `backend/app/models/` — model definitions
 
 | File | Purpose |
 | --- | --- |
-| `embedding_adapter.py` | `768→128` projection + LayerNorm + GELU. Replaces the zero-init `768→8` bottleneck. |
+| `embedding_adapter.py` | `768→128` projection plus LayerNorm and GELU. Replaces the zero-init `768→8` bottleneck. |
 | `registry.py` | YAML loader for `registry.yaml`. |
 | `registry.yaml` | HF checkpoint pinning (model id + revision SHA + task). |
+| `factory.py` | Registers the eight forecaster architectures. |
 
 ### `backend/app/training/` — training-side utilities
 
 | File | Purpose |
 | --- | --- |
-| `manifest.py` | Run-manifest writer (dataset version + feature version + seed + training config + metrics). |
+| `manifest.py` | Run-manifest writer (dataset version, feature version, seed, training config, metrics). |
 | `config_loader.py` | YAML loader for ablation configs under `configs/`. |
 
 ### `backend/app/middleware/` — request middleware
@@ -244,16 +241,16 @@ frontend/
 │   ├── history.tsx            Persisted analyses with filters
 │   ├── calendar.tsx           FOMC calendar widget
 │   ├── preview.tsx            Component showcase (internal)
-│   └── legacy.jsx             The v1 dashboard kept for A/B during defense rehearsals
+│   └── legacy.jsx             The v1 dashboard, kept for A/B during defense rehearsals
 ├── components/
 │   ├── analyze/
 │   │   ├── AnalyzeForm.tsx           input form
 │   │   ├── DocumentIngestionTabs.tsx paste / PDF·DOCX / URL tabs (calls /documents/parse)
-│   │   ├── MultiAxisCards.tsx        stance / factor / certainty / topic
+│   │   ├── MultiAxisCards.tsx        stance / certainty / forward-looking
 │   │   ├── ForecastChart.tsx         close + volatility charts with confidence bands
 │   │   ├── XaiPanel.tsx              per-sentence highlights + token tooltips
 │   │   ├── CredibilityPanel.tsx      drift badge + 4 sub-stats (currently fixture-driven)
-│   │   ├── MarketContext.tsx, MarketSnapshot.tsx, RealTrainStatus.tsx, PredictionCards.tsx, SentimentCard.tsx, ErrorBadges.tsx, WatchlistChips.tsx, PreviewPanels.tsx
+│   │   ├── MarketContext.tsx, MarketSnapshot.tsx, PredictionCards.tsx, SentimentCard.tsx, ErrorBadges.tsx, WatchlistChips.tsx, PreviewPanels.tsx
 │   ├── shell/                  AppHeader, AppNav, AppFooter, Header
 │   ├── ui/                     shadcn primitives (button, card, dialog, tabs, tooltip, select, skeleton, progress, …)
 │   └── theme-toggle.tsx
@@ -309,16 +306,18 @@ tests/
 └── snapshots/             OpenAPI snapshot
 ```
 
+Total test count is roughly 1102 and growing.
+
 ### `scripts/`
 
 | File | Purpose |
 | --- | --- |
 | `build_toy_snapshot.py` | 50-event toy snapshot for `make verify`. |
-| `inventory_corpora.py` | Probes external corpora URLs + license terms. |
+| `inventory_corpora.py` | Probes external corpora URLs and license terms. |
 | `regen_openapi_snapshot.py` | Regenerate `tests/snapshots/openapi.json` after API changes. |
 | `snapshot_market_data.py` | One-shot yfinance pull. |
 | `verify_smoke.py` | End-to-end smoke for `make verify`. |
-| `extract_gss_factors.py` | Parse the GSS 2005 IJCB data appendix PDF into `gss_factors.csv` + `gss_surprises.csv`. Run via the backend container so pdfplumber is available. |
+| `extract_gss_factors.py` | Parse the GSS 2005 IJCB data appendix PDF into `gss_factors.csv` and `gss_surprises.csv`. Run via the backend container so pdfplumber is available. |
 
 ### `docs/` — executable contracts
 
@@ -326,24 +325,24 @@ These four short markdown files are what code and CI actually gate on:
 
 | File | What it pins down |
 | --- | --- |
-| `benchmark-policy.md` | Required IDs on every official run, splits + seeds, leakage rules, NLP-baseline winner criteria. |
+| `benchmark-policy.md` | Required IDs on every official run, splits and seeds, leakage rules, NLP-baseline winner criteria. |
 | `data-and-training-contracts.md` | Approved sources, ingestion contract fields, training package artifacts. |
-| `run-templates.md` | Naming conventions for `run_id` + artifact directories. |
-| `security-acceptance.md` | Known-accepted Next.js DoS advisories + pip-audit suppressions with mitigation owners. |
+| `run-templates.md` | Naming conventions for `run_id` and artifact directories. |
+| `security-acceptance.md` | Known-accepted Next.js DoS advisories and pip-audit suppressions with mitigation owners. |
 
 The wiki (sibling directory, separate checkout) carries the long-form material: 01 Progress Snapshot, 02 SRS, 03 System Architecture, 04 SDD, 05 Project Plan, 06 Deep Learning Roadmap, 07 Data Schema, 08 Test Plan, 09 Risk Register, 10 References, 11 ML Lifecycle, 12 ADRs, 13 External Corpora Inventory.
 
 ---
 
-## 5. Reading order if you're new
+## 5. Reading order for new contributors
 
-1. **README.md** — 30-second elevator pitch + how to start the dev stack.
-2. **This file** — orient yourself on what lives where.
-3. **`../../fed-pulse.wiki/01_Progress_Snapshot.md`** — what's done as of today, what's in flight, active risks.
-4. **`../../fed-pulse.wiki/05_Project_Plan.md`** — phase roadmap with hard deadlines and the Gantt chart.
-5. **`backend/app/main.py`** — every endpoint, in one file. Read top to bottom.
-6. **`backend/app/services/forecaster.py`** — the longest file; skim once to know it exists. Decomposition is Phase 7.1.
-7. **`docs/benchmark-policy.md`** — the rules every official run obeys.
+1. `README.md` — 30-second elevator pitch and how to start the dev stack.
+2. This file — orient yourself on what lives where.
+3. `../../fed-pulse.wiki/01_Progress_Snapshot.md` — current status, in-flight items, active risks.
+4. `../../fed-pulse.wiki/05_Project_Plan.md` — phase roadmap with hard deadlines and the Gantt chart.
+5. `backend/app/main.py` — every endpoint, in one file. Read top to bottom.
+6. `backend/app/services/forecaster.py` — the longest file; skim once to know it exists. Decomposition is Phase 7.1.
+7. `docs/benchmark-policy.md` — the rules every official run obeys.
 
 ---
 
@@ -352,10 +351,10 @@ The wiki (sibling directory, separate checkout) carries the long-form material: 
 ### Add a new Fed-adjacent source
 
 1. Write a scraper under `backend/app/data/sources/<source>.py` implementing `BaseSourceScraper` (see `governor_speeches.py` as the template).
-2. Add the `source_type` value to `backend/app/data/source_type.py::SOURCE_TYPE_VALUES` AND the parallel `_VALID_SOURCE_TYPES` set in `backend/app/data/sources/base.py`.
-3. Wire the scraper into the ingestion CLI in `backend/app/data/ingest_sources.py` (new `--include-<source>` flag + dispatch branch).
+2. Add the `source_type` value to `backend/app/data/source_type.py::SOURCE_TYPE_VALUES` and the parallel `_VALID_SOURCE_TYPES` set in `backend/app/data/sources/base.py`.
+3. Wire the scraper into the ingestion CLI in `backend/app/data/ingest_sources.py` (new `--include-<source>` flag plus dispatch branch).
 4. If the source is peer-reviewed, add it to `_PEER_REVIEWED_SOURCES` in `backend/app/data/normalize_labels.py`.
-5. Add a `SOURCES.lock` JSON under `data/external/<source>/` with download URLs + SHA-256s.
+5. Add a `SOURCES.lock` JSON under `data/external/<source>/` with download URLs and SHA-256s.
 6. Add unit tests under `tests/unit/test_<source>_*.py` (see `test_external_corpora_ingestion.py` for the pattern).
 7. Update the wiki inventory at `../fed-pulse.wiki/13_External_Corpora_Inventory.md`.
 
@@ -370,7 +369,7 @@ The wiki (sibling directory, separate checkout) carries the long-form material: 
 
 1. Edit `backend/app/services/forecaster.py`. Keep the `forecast_quantitative_series` signature stable — `/analyze` depends on it.
 2. If you touch the confidence-band path, also touch `backend/app/evaluation/conformal.py`.
-3. Run the regression test: `pytest tests/regression/test_plan13_variant_a.py` — this locks seed-11 wf_fold_3 numbers within ±1e-4.
+3. Run the regression test: `pytest tests/regression/test_plan13_variant_a.py`. This locks seed-11 wf_fold_3 numbers within ±1e-4.
 
 ### Score the unlabelled pseudo set
 
@@ -382,24 +381,24 @@ python -m app.data.pseudo_labeling \
   --output data/interim/phase2/registry_pseudo.jsonl
 ```
 
-Then sample a 100-row stratified audit via `llm_judge.sample_audit_set(rows, n=100)`, hand-label, re-run with the judge confirmation filter, check teacher precision ≥ 0.90 (audit gate from `docs/benchmark-policy.md`).
+Then sample a 100-row stratified audit via `llm_judge.sample_audit_set(rows, n=100)`, hand-label, re-run with the judge confirmation filter, and check teacher precision ≥ 0.90 (audit gate from `docs/benchmark-policy.md`).
 
 ### Tweak the frontend dashboard
 
 1. The page lives at `frontend/pages/analyze.tsx`. The component tree is mostly under `frontend/components/analyze/`.
 2. Fixtures for fixture-driven cards live in `frontend/lib/analyze/fixtures.ts`.
-3. Run `npm test` (vitest) + `npm run type-check` + `npm run build` before pushing.
+3. Run `npm test` (vitest), `npm run type-check`, and `npm run build` before pushing.
 
 ### Add a new training-package source
 
 1. Drop the source files under `data/external/<source>/` with a `SOURCES.lock`.
 2. Add a loader in `backend/app/data/ingest_sources.py` mirroring `_iter_op_fed_records` (CSV) or `_iter_hf_records` (HF datasets).
-3. Add a `--include-<source>` CLI flag + an entry in the `--all-sources` fan-out branch.
+3. Add a `--include-<source>` CLI flag and an entry in the `--all-sources` fan-out branch.
 4. If peer-reviewed, register in `_PEER_REVIEWED_SOURCES` in `normalize_labels.py`.
 
 ### Update the wiki
 
-The wiki lives at `../fed-pulse.wiki/`. It is a separate git remote; `cd` over and `git commit && git push origin master` like any repo. Code repo + wiki should stay in sync — when a code change drifts from a wiki page, the PR description should call out the page that needs updating.
+The wiki lives at `../fed-pulse.wiki/`. It is a separate git remote; `cd` over and `git commit && git push origin master` like any repo. The code repo and wiki should stay in sync — when a code change drifts from a wiki page, the PR description should call out the page that needs updating.
 
 ### Run the official benchmark
 
@@ -411,9 +410,7 @@ make train-batch TRAINING_PACKAGE_ID=<id> OWNER=<who>
 
 ### Reproduce the headline reporting numbers
 
-The reporting pack lives under `artifacts/experiments/<run_id>/` once a
-`train-batch` finishes. The fastest path to the same numbers without
-re-running the GPU sweep:
+The reporting pack lives under `artifacts/experiments/<run_id>/` once a `train-batch` finishes. The fastest path to the same numbers without re-running the GPU sweep:
 
 ```
 # 1. Pull the official training package (versioned).
@@ -435,37 +432,29 @@ docker compose run --rm backend \
   > artifacts/experiments/headline_<date>.json
 ```
 
-Determinism is locked by the regression test
-`tests/regression/test_forecaster_determinism.py` — same seed produces a
-bit-identical combined RMSE, so a re-run of step 3 will match the
-checked-in artefacts up to floating-point noise.
+Determinism is locked by the regression test `tests/regression/test_forecaster_determinism.py`. Same seed produces a bit-identical combined RMSE, so a re-run of step 3 will match the checked-in artefacts up to floating-point noise.
 
 ### Export a run as CSV
 
-The frontend ships a per-run CSV export and a compare-page CSV export
-(`frontend/lib/export/`). On the history detail page, click "Export CSV"
-to get a flat schema (`field,value` plus a `forecast_series` section);
-on the compare page, the same button emits a four-column CSV (`field,
-run_a, run_b, delta_a_minus_b`). The schema is stable across runs and
-documented inline in the export module.
+The frontend ships a per-run CSV export and a compare-page CSV export (`frontend/lib/export/`). On the history detail page, click "Export CSV" to get a flat schema (`field,value` plus a `forecast_series` section); on the compare page, the same button emits a four-column CSV (`field, run_a, run_b, delta_a_minus_b`). The schema is stable across runs and documented inline in the export module.
 
 ---
 
-## 7. What's currently dead vs alive
+## 7. Currently dead vs alive
 
 The audit ran on `dev` HEAD before PR #120. After the merge, the status of the modules under `backend/app/data/` is:
 
 | File | Status | Notes |
 | --- | --- | --- |
-| `pseudo_labeling.py` | **alive** | Chunk-aggregated teacher landed in PR #120. The primary path for pseudo-labelling the 9,696-row unlabelled pool. |
-| `llm_judge.py` | **alive** | Judge confirmation filter on top of pseudo-labelling. Three gating policies + audit sampler. |
-| `chunk_embedding_store.py` | **alive** | Persists per-document CLS embeddings used by both the Phase-4 chunk-attention pooler AND the new chunk-aggregated teacher. |
-| `chunk_embedding_retrieval.py` | **alive** | Lookback windowing for the chunk pooler. |
+| `pseudo_labeling.py` | alive | Chunk-aggregated teacher landed in PR #120. The primary path for pseudo-labelling the 9,696-row unlabelled pool. |
+| `llm_judge.py` | alive | Judge confirmation filter on top of pseudo-labelling. Three gating policies plus audit sampler. |
+| `chunk_embedding_store.py` | alive | Persists per-document CLS embeddings used by both the Phase-4 chunk-attention pooler and the new chunk-aggregated teacher. |
+| `chunk_embedding_retrieval.py` | alive | Lookback windowing for the chunk pooler. |
 | `llm_embedding_store.py` | partially alive | Variant C (Gemini embeddings) cell of the ablation grid. May be retired if Variant C is dropped from the final benchmark. |
 | `embedding_comparator.py` | historical | MiniLM frozen-head baseline (Phase 4 #35). One run already published. |
 | `llm_zero_shot_execution.py` | historical | Qwen-3B zero-shot baseline (Phase 4 #26). One run already published; stronger model rerun is a Phase-5 workflow operation. |
 | `source_type_stratified_analysis.py` | historical | Joiner utility for per-source-type tables. Run after each fine-tune batch. |
-| `nlp_baseline_batch.py` / `finetune_batch.py` / `finetune_pilot.py` / `attention_ablation.py` | **alive** | Make targets call these. Renamed from `phase3_*` / `phase4_attention_ablation` in Phase 7.2. |
+| `nlp_baseline_batch.py` / `finetune_batch.py` / `finetune_pilot.py` / `attention_ablation.py` | alive | Make targets call these. Renamed from `phase3_*` / `phase4_attention_ablation` in Phase 7.2. |
 | `continued_pretraining.py` | alive but unused | MLM pipeline ready; checkpoint not yet trained. |
 
 ---
@@ -475,47 +464,39 @@ The audit ran on `dev` HEAD before PR #120. After the merge, the status of the m
 | Wiki page | Code touchpoint |
 | --- | --- |
 | `02_SRS.md` (FR-01 … FR-43) | `main.py` endpoints, `services/`, `models/`, `evaluation/` |
-| `03_System_Architecture.md` (C4 diagrams) | `main.py` + `services/` directory + `db.py` + `audit.py` |
+| `03_System_Architecture.md` (C4 diagrams) | `main.py` plus `services/` directory plus `db.py` plus `audit.py` |
 | `04_SDD.md` (service-level design) | Per-service docstrings in `services/` |
 | `06_Deep_Learning_Roadmap.md` (Variants A/B/C, pseudo-labelling) | `services/forecaster.py`, `data/attention_ablation.py`, `data/pseudo_labeling.py` |
-| `07_Data_Schema.md` (ER + table layouts) | `data/schema/labels.yaml`, `db.py` models, the parquet outputs under `data/processed/<package_id>/` |
+| `07_Data_Schema.md` (ER and table layouts) | `data/schema/labels.yaml`, `db.py` models, the parquet outputs under `data/processed/<package_id>/` |
 | `08_Test_and_Verification_Plan.md` | `tests/properties/test_no_leakage.py`, `tests/regression/test_plan13_variant_a.py`, `tests/contract/test_openapi_snapshot.py` |
-| `09_Risk_Register.md` | The known threats in `01_Progress_Snapshot.md §Risks` — see `docs/security-acceptance.md` for the security slice |
-| `12_ADRs.md` | `docs/adr/` — currently 0007 (Variant B verdict), 0008 (conformal bands), 0009 (multi-axis labels), 0010 (event-study vs continuous-time forecasting) |
+| `09_Risk_Register.md` | Known threats in `01_Progress_Snapshot.md §Risks`; see `docs/security-acceptance.md` for the security slice |
+| `12_ADRs.md` | `docs/adr/` — currently 0007 (Variant B verdict), 0008 (conformal bands), 0009 (multi-axis labels), 0010 (event-study vs continuous-time forecasting), 0044 (topic-axis retirement) |
 | `13_External_Corpora_Inventory.md` | `data/external/`, `backend/app/data/ingest_sources.py` |
 
-If you change architecture, schema, API surface, or evaluation protocol, name the wiki page in your PR description.
+If a change touches architecture, schema, API surface, or evaluation protocol, name the wiki page in the PR description.
 
 ---
 
 ## 9. Conventions
 
-- **Branches:** `feat/<short-desc>`, never push to `main`, always PR into `dev`.
-- **Commits:** present-tense imperative ("add the X", not "added the X"). No AI co-author trailers.
-- **PRs:** terse and descriptive. ≤8 summary bullets, ≤15 words each, ≤3 test-plan commands. Describe what the change does. The PR description is the durable accounting; don't repeat it in commit bodies.
-- **Tests:** lint + typecheck + pytest + frontend + vuln-python + vuln-npm jobs must all be green before merge.
-- **Data conventions:** `BACKEND_ROOT` resolves via `Path(__file__).resolve().parents[2]`; `DEFAULT_DATA_DIR` falls back to `BACKEND_ROOT.parent / "data"` when `/data` is absent. `make` targets fail fast on missing `DATASET_VERSION` / `FEATURE_VERSION` / `TRAINING_PACKAGE_ID` — don't paper over with defaults.
+- Branches: `feat/<short-desc>`, never push to `main`, always PR into `dev`.
+- Commits: present-tense imperative ("add the X", not "added the X"). No AI co-author trailers.
+- PRs: terse and descriptive. ≤8 summary bullets, ≤15 words each, ≤3 test-plan commands. The PR description is the durable accounting; don't repeat it in commit bodies.
+- Tests: lint, typecheck, pytest, frontend, vuln-python, and vuln-npm jobs must all be green before merge.
+- Data conventions: `BACKEND_ROOT` resolves via `Path(__file__).resolve().parents[2]`; `DEFAULT_DATA_DIR` falls back to `BACKEND_ROOT.parent / "data"` when `/data` is absent. `make` targets fail fast on missing `DATASET_VERSION` / `FEATURE_VERSION` / `TRAINING_PACKAGE_ID` — don't paper over with defaults.
 
 ---
 
-## Accessibility + Lighthouse
+## Accessibility and Lighthouse
 
-The dashboard has a baked-in accessibility setup that keeps WCAG 2.1 AA and
-Lighthouse ≥ 90 (accessibility) reachable without per-PR tuning:
+The dashboard has a baked-in accessibility setup that keeps WCAG 2.1 AA and Lighthouse ≥ 90 (accessibility) reachable without per-PR tuning:
 
-- `frontend/pages/_app.js` boots `@axe-core/react` only in development; the
-  production bundle never imports it. Violations land in the browser console.
+- `frontend/pages/_app.js` boots `@axe-core/react` only in development; the production bundle never imports it. Violations land in the browser console.
 - `frontend/pages/_document.tsx` pins `lang="en"` on the `<html>` root.
-- `frontend/components/shell/skip-link.tsx` renders the skip-to-main-content
-  link as the first focusable node on every page.
-- Every page wraps its body in `<main id="main-content" tabIndex={-1}>`; the
-  skip link jumps focus directly there.
-- `frontend/components/shell/keyboard-shortcuts.tsx` binds `?` to a shortcut
-  dialog (Radix Dialog, Escape closes); two-key `g + {a,h,d,c,p}` jumps
-  between top-level routes; `t` toggles theme.
-- Branded `frontend/pages/404.tsx`, `frontend/pages/500.tsx`, and
-  `frontend/pages/_error.tsx` share `components/shell/error-page.tsx` so the
-  error surface still has theme + header + skip link + back-to-home.
+- `frontend/components/shell/skip-link.tsx` renders the skip-to-main-content link as the first focusable node on every page.
+- Every page wraps its body in `<main id="main-content" tabIndex={-1}>`; the skip link jumps focus directly there.
+- `frontend/components/shell/keyboard-shortcuts.tsx` binds `?` to a shortcut dialog (Radix Dialog, Escape closes); two-key `g + {a,h,d,c,p}` jumps between top-level routes; `t` toggles theme.
+- Branded `frontend/pages/404.tsx`, `frontend/pages/500.tsx`, and `frontend/pages/_error.tsx` share `components/shell/error-page.tsx` so the error surface still has theme, header, skip link, and back-to-home.
 
 Run the audit with the dev server up:
 
@@ -524,55 +505,13 @@ make dev-cpu                    # frontend at :3000
 npm --prefix frontend run audit:lighthouse
 ```
 
-The script (`frontend/scripts/lighthouse-audit.mjs`) sweeps `/analyze`,
-`/history`, `/decisions`, `/compare`, `/performance`, `/calendar`,
-`/research`, `/training` against Performance / Accessibility / Best Practices
-/ SEO, writes per-route scores to `frontend/audit/lighthouse-<YYYY-MM-DD>.md`,
-and lists every audit that scored below 0.9. It does not gate the build —
-it's a one-shot audit, not CI.
+The script (`frontend/scripts/lighthouse-audit.mjs`) sweeps `/analyze`, `/history`, `/decisions`, `/compare`, `/performance`, `/calendar`, `/research`, `/training` against Performance / Accessibility / Best Practices / SEO, writes per-route scores to `frontend/audit/lighthouse-<YYYY-MM-DD>.md`, and lists every audit that scored below 0.9. It does not gate the build; it's a one-shot audit, not CI.
 
 ---
 
 ## 10. When in doubt
 
 - Read the docstring at the top of the file. Most modules have a 5-line summary.
-- Grep for the function name across `tests/unit/` — the test usually shows how the function is meant to be used.
+- Grep for the function name across `tests/unit/`. The test usually shows how the function is meant to be used.
 - The wiki's `01_Progress_Snapshot.md` carries the freshest "what's done, what's in flight, what's at risk" snapshot.
 - The Makefile is the contract for every workflow — if it isn't in the Makefile, it isn't a supported flow.
-
----
-
-## Durable real_train queue (closes #103)
-
-Real-Train runs used to live on a daemon thread inside the FastAPI process — `app/main.py` spawned `_run_real_train_job` and stored state in an in-memory dict. The dict evaporated on restart and the thread had no horizontal scale path. Closing issue #103 replaced both with an `arq`-backed Redis queue.
-
-**Topology**
-
-```
-POST /analyze (real_train) ──▶ FastAPI
-                                  │  pool.enqueue_job("real_train_task", payload)
-                                  ▼
-                              Redis (redis:7-alpine, healthcheck=redis-cli ping)
-                                  ▲                 ▲
-                                  │ result_info()   │ blpop / status
-                                  │                 │
-                              FastAPI            arq worker
-                              /train-jobs/{id}   container running
-                              /train-jobs        `arq app.worker.WorkerSettings`
-```
-
-**Code**
-
-- `backend/app/worker.py` — defines `WorkerSettings.functions = [real_train_task]`. `real_train_task(ctx, payload)` mirrors the legacy daemon-thread body: sentiment + market history + `bootstrap_checkpoint` + `_build_analyze_response`. Audit rows still land via `app.audit.append_audit_entry`. The function re-raises on failure so arq records `JobResult.success=False`.
-- `backend/app/main.py` — the `/analyze` real_train branch calls `_enqueue_real_train`, which goes through `app.state.redis_pool.enqueue_job` when a pool is attached. The pool is created in the FastAPI `lifespan` from `REDIS_URL` (default `redis://redis:6379`). When Redis is unreachable the lifespan logs `arq_pool_unavailable` and falls back to the in-process daemon thread + `_train_jobs` dict so dev boxes without docker compose still work.
-- `/train-jobs/{id}` reads `ArqJob(id, pool).status() / .info() / .result_info()` and shapes it into the existing `TrainJobStatusResponse`. `/train-jobs` listing scans `arq:job:*` and `arq:result:*` keys for the same shaping.
-
-**Compose**
-
-- `redis: image: redis:7-alpine` with `redis-cli ping` healthcheck.
-- `worker` and `worker-gpu` services share the backend image and run `arq app.worker.WorkerSettings`. `make dev-cpu` brings up `redis backend worker frontend`; `make dev-gpu` swaps in the gpu profile.
-
-**Tests**
-
-- `tests/unit/test_arq_worker.py` — task signature is `(ctx, payload) -> dict`, `WorkerSettings.functions` exposes it, the task returns a dict, the task re-raises on failure.
-- `tests/unit/test_real_train_endpoints.py` — `/analyze` real_train against a `fakeredis`-backed `ArqRedis` returns `queued`; `/train-jobs/{id}` and `/train-jobs` read state out of the same Redis; the in-memory `_train_jobs` map stays empty when a pool is attached. A restart-survival test recreates the `TestClient` against the same fakeredis and asserts the queued job is still visible.

@@ -1,6 +1,6 @@
 # Run Templates
 
-Use these templates for every official run.
+Fill these out for every official run.
 
 ## 1) Pre-Run
 
@@ -12,7 +12,7 @@ Use these templates for every official run.
 - `feature_version`:
 - `training_package_id`:
 - `model_version`:
-- `runtime_mode`:
+- `runtime_mode` (`fast` or `replay`):
 - `seed`:
 - `horizons`:
 
@@ -54,7 +54,8 @@ Notes:
 - `metrics_sha256`:
 
 ## Acceptance Gate
-A run is report-ready only if:
+
+A run is report-ready when all four hold:
 1. required IDs are complete
 2. metrics are parseable
 3. artifacts are present and reproducible

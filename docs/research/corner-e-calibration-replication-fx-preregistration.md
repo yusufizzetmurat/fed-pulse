@@ -1,27 +1,28 @@
 # Corner E — Pre-registration: confirmatory replication of the Corner C h1 calibration finding
 
-**Status:** pre-registered 2026-06-01, *before any result was inspected*. This is a **confirmatory**
+**Status:** pre-registered 2026-06-01, *before any result was inspected*. A **confirmatory**
 test of a hypothesis **already fixed by discovery** (Corner C, h1). No horizon search, no feature
-search, no transform search — a single pre-specified test on an independent asset.
+search, no transform search: a single pre-specified test on an independent asset.
 
 ## What is being confirmed (fixed, not chosen here)
 
 Corner C found, on SPX RV, that the certainty signal `u = P(uncertain) − P(certain)` predicts the
 **1-day** RV-forecast error magnitude `|residual|` incrementally over `[forecast level, lagged
 |residual|]` (DM p=0.003, ΔMSE +0.26%, constant band under-covers more on high-`u` days). That
-result was at h1 only, tiny, and h5/h22 were null — i.e. fragile. The honest test of whether it is
+result was at h1 only, tiny, and h5/h22 were null, i.e. fragile. The honest test of whether it is
 real is **replication on a sample C never touched**, not tuning on the same SPX residuals (which
 C's own pre-registration forbade).
 
 ## Independent sample
 
-**DXY (dollar index)** RV-forecast residuals — a different asset, an independent draw. We already
-have the DXY QLIKE-DLq baseline from Corner D. SPX informed the *hypothesis*; DXY informs the *test*.
+**DXY (dollar index)** RV-forecast residuals: a different asset, an independent draw. The DXY
+QLIKE-DLq baseline from Corner D is already available. SPX informed the *hypothesis*; DXY informs
+the *test*.
 
 ## Hypothesis (single, fixed)
 
 - **H1:** on DXY h1 residuals, adding `u` to the `|residual|` predictor lowers OOS MSE (ΔMSE > 0),
-  and the constant 90% band under-covers more on high-`u` days — the same effect and direction as C-h1.
+  and the constant 90% band under-covers more on high-`u` days, the same effect and direction as C-h1.
 - **H0:** no effect (ΔMSE = 0) and no conditional-coverage gap.
 
 ## Design (identical to Corner C's h1 cell, transplanted to DXY)
@@ -64,17 +65,17 @@ noise would be the more striking outcome.
 | band coverage low-u / high-u | 0.861 / 0.855 (high-u under-covered ✓) | 0.896 / 0.900 (high-u **over**-covered ✗) |
 | pre-registered confirmation | — | **No** |
 
-**Verdict: C-h1 does not replicate.** On the independent DXY asset the effect **reverses sign on
-both metrics** — `u` makes the error-magnitude prediction worse, and the constant band
-over-covers (not under-covers) on high-`u` days. This is stronger evidence against a real effect
-than simple non-significance: a real-but-underpowered signal would show a positive-but-noisy point
-estimate; a sign reversal says the SPX h1 result was sample-specific — consistent with the
-h1-only, h5-backwards, h22-null fragility already noted in Corner C.
+**Verdict: C-h1 does not replicate.** On the independent DXY asset the effect reverses sign on
+both metrics: `u` makes the error-magnitude prediction worse, and the constant band over-covers
+(not under-covers) on high-`u` days. This is stronger evidence against a real effect than simple
+non-significance: a real-but-underpowered signal would show a positive-but-noisy point estimate;
+a sign reversal says the SPX h1 result was sample-specific, consistent with the h1-only,
+h5-backwards, h22-null fragility already noted in Corner C.
 
-**Caveat acknowledged:** DXY's `r²` proxy is noisier (lower power). But the failure mode here is a
+**Caveat acknowledged:** DXY's `r²` proxy is noisier (lower power). The failure mode here is a
 reversal, not just a wide confidence interval, so the noise caveat does not rescue C-h1.
 
 **Conclusion:** the project's single formally-passing pre-registered text result (Corner C h1) is
-a multiplicity/noise artifact, surfaced and killed by out-of-sample replication. **Text is now
-fully and definitively closed for forecasting** — level and calibration, equities, FX, and rates.
-The discipline did its job: we caught our own false positive instead of reporting it.
+a multiplicity/noise artifact, surfaced and killed by out-of-sample replication. Text is now
+closed for forecasting at level and calibration, across equities, FX, and rates. The discipline
+caught a false positive instead of reporting it.

@@ -1,15 +1,13 @@
 # Feature Provenance Audit (FeatureVector, issue #324)
 
 Per-column time-of-availability audit of `FeatureVector` (`backend/app/models/config.py:516`)
-against the supervised row's `event_date`. Motivated by the ADR 0014
-strict-forward target fix, which dropped the headline ~10pp on a
-mechanical 1-of-10-return overlap and suggested other leak paths may
-exist alongside the target-window correction.
+against the supervised row's `event_date`. The ADR 0014 strict-forward target fix dropped the
+headline by roughly 10pp on a mechanical 1-of-10-return overlap, which suggested other leak
+paths could exist alongside the target-window correction.
 
-The contract under audit is: every per-bar feature on a supervised
-sequence must read from a source dated strictly before `event_date`
-(i.e. `as_of_offset <= T-0` and computed from data observable at `T-0`),
-unless the row is the appended event-day target frame or the column is
+The contract under audit: every per-bar feature on a supervised sequence must read from a
+source dated strictly before `event_date` (i.e. `as_of_offset <= T-0` and computed from data
+observable at `T-0`), unless the row is the appended event-day target frame or the column is
 itself a documented training target.
 
 ## Notation
@@ -103,9 +101,8 @@ itself a documented training target.
 ## Per-fold transforms (outside FeatureVector but on the same input tensor)
 
 These quantities are applied to the per-bar tensor at training time and
-do not live on `FeatureVector` itself, but are listed here for
-completeness because they are part of the train→test feature-construction
-boundary.
+do not live on `FeatureVector` itself. Listed here for completeness because they sit on
+the train→test feature-construction boundary.
 
 | transform | source | as_of_offset | leak_risk | notes |
 | --- | --- | --- | --- | --- |
@@ -115,7 +112,7 @@ boundary.
 
 ## Leaks found
 
-Originally three columns read from post-event data by construction:
+Three columns originally read from post-event data by construction:
 `mp_surprise_level`, `mp_surprise_path_factor`, and `fed_info_factor`.
 All three were built from a `[T-1, T+1]` window centred on the
 announcement (`backend/app/data/mp_surprise.py` `_pre_post_yields` and
@@ -128,7 +125,7 @@ treating these `T+1`-derived quantities as known-at-`T` features is the
 same class of leak the strict-forward target fix addressed on the
 output side: a small mechanical overlap that the model can latch onto.
 
-**Resolved under #350 (ADR-0024).** All three columns now read from
+Resolved under #350 (ADR-0024). All three columns now read from
 strictly-prior inputs:
 
 - `mp_surprise_level` = `actual_target_change_bps - pre_implied_next_move_bps`

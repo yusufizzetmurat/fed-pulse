@@ -3,11 +3,11 @@
 **Date:** 2026-06-02 · **HF revision:** `c863f18753e87f2576b3609112a10efd85671e8f`
 
 The `/analyze` stance and certainty cards consume `text_multi_axis_best.pt` via
-`backend/app/services/multi_axis_classifier.py`. Until this change the canonical
-slot held a finbert-fed-adjacent backbone (val_loss 0.0974). The
-encoder-axis study at `encoder-axis-stance-results.md` had already shown the
-xbank-DAPT backbone was the held-out winner; this run swaps it into the
-multi-axis production path.
+`backend/app/services/multi_axis_classifier.py`. The canonical slot previously
+held a finbert-fed-adjacent backbone (val_loss 0.0974). The encoder-axis study
+at `encoder-axis-stance-results.md` had already identified the xbank-DAPT
+backbone as the held-out winner; this run promotes it into the multi-axis
+production path.
 
 ## Training
 
@@ -57,20 +57,19 @@ Per-action mean stance score:
 
 The xbank-DAPT model sharpens the hold/cut separation and the hike sign stays
 where it should. The mean-stance gap during holds reflects 2011-2026 hold-window
-composition (zero-bound + recent steady-state); it is not a regression.
+composition (zero-bound plus recent steady-state); it is not a regression.
 
 ## What changed downstream
 
 - `backend/app/models/registry.yaml` `multi_axis_text_classifier.revision`
   pinned to the new sha.
-- `backend/models/text_multi_axis_best.pt` rewritten on disk (the previous
+- `backend/models/text_multi_axis_best.pt` rewritten on disk. The previous
   finbert-fed-adjacent canonical is mirrored under
   `text_multi_axis_best.finbert-fed-adjacent.bak.pt` on the dev box as a
-  rollback handle; not pushed).
+  rollback handle; not pushed.
 - The stance / certainty tiles on `/analyze` now serve from the xbank-DAPT
-  backbone. The response shape gains a `time` axis (forward-looking /
-  not-forward-looking) — the old slot only carried stance + certainty +
-  legacy `factor` / `topic` zeros.
+  backbone. The response shape gains a `forward-looking` axis (forward-looking /
+  not-forward-looking); the old slot only carried stance and certainty.
 - `data/artifacts/corner_b_text_rates/stance_daily.parquet` regenerated off
   the new canonical; the validity result lands at
   `data/artifacts/stance_instrument_validity/result.json`.
