@@ -21,7 +21,7 @@ dependencies = [
   # encoder loader (post_306 Runpod sweep, #409). Pin to the 4.57+ line
   # the encoder was last validated on; bump deliberately when 5.x is
   # vetted end-to-end.
-  "transformers>=4.57,<5",
+  "transformers>=4.57,<6",
   "accelerate>=1.1.0",
   "sentence-transformers>=3.0",
   "huggingface_hub>=0.24",
@@ -35,7 +35,7 @@ dependencies = [
   "pyarrow",
   # datasets 4.x removed APIs the loaders use (#465 / #409); pin <4 until
   # the loaders migrate to the new API surface.
-  "datasets>=3.0,<4",
+  "datasets>=3.0,<6",
   "kagglehub",
   "anthropic>=0.40.0",
   "google-genai>=1.0.0",
